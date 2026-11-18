@@ -420,3 +420,91 @@ fn without_en7_a_schedulability_claim_has_no_engine() {
     );
     assert!(outcome.closed_form.is_empty(), "no item ran on EN-7");
 }
+
+/// FR-246-AC-4: S3 writes one `schedulability` requirement record per
+/// task-set claim, so FR-075's request builder routes each to EN-7.
+#[test]
+#[trace("TC-2961", "FR-246-AC-4")]
+#[ignore = "QSL-2131: the checked graph writes no requirement record for a task-set claim yet"]
+fn task_set_claims_have_requirement_records_that_route_to_en_7() {
+    let world = World::new();
+    let records = world.package.graph().requirements();
+    let schedulability: Vec<_> = records
+        .iter()
+        .filter(|(_, record)| record.requirements().kind() == Capability::Schedulability)
+        .collect();
+    assert_eq!(schedulability.len(), 2, "one record per response claim");
+    let engines = fsl_analyze::analyze::Engines::fsl().expect("the engines register");
+    let items = items_from_requirements(records, &registry_of(&engines), None);
+    let routed: Vec<_> = items
+        .iter()
+        .filter(|item| item.kind() == Capability::Schedulability)
+        .collect();
+    assert_eq!(routed.len(), 2);
+    for item in routed {
+        let CandidateOutcome::Candidates(set) = item.candidates() else {
+            panic!("EN-7 is a candidate");
+        };
+        let ids: Vec<_> = set.candidates().iter().map(|c| c.id().as_str()).collect();
+        assert_eq!(ids, [manifest::BACKEND_ID]);
+    }
+}
+
+/// ADR-026 §12's `Ctl` with the third WCET 6, which misses under both
+/// policies, and its two schedulability claims.
+const CTL_MISSES: &str = "language \"ix:native\" edition \"1-draft\";\n\
+     profile t = \"filament.temporal.complete/v1\";\n\
+     dimension Time;\nunit ms : Time = rational(1, 1);\n\
+     taskset Ctl {\n\
+     task a periodic 4 ms deadline 4 ms wcet 1 ms priority 1 lo;\n\
+     task b periodic 6 ms deadline 6 ms wcet 2 ms priority 2 lo;\n\
+     task c periodic 12 ms deadline 12 ms wcet 6 ms priority 3 lo;\n\
+     }\n\
+     schedulable CtlFp on Ctl under fixed_priority;\n\
+     schedulable CtlEdf on Ctl under edf;\n";
+
+fn rational(numerator: i64, denominator: i64) -> serde_json::Value {
+    serde_json::json!({"type": "rational", "numerator": numerator.to_string(),
+        "denominator": denominator.to_string()})
+}
+
+/// FR-621-AC-13, FSpec FR-419-AC-13: a refuted EN-7 item carries its miss as
+/// the FSpec FR-419 `schedulability-miss` counterexample, with no replay.
+#[test]
+#[trace("TC-2960", "FR-621-AC-13")]
+#[trace("FSpec-TC-2006", "FSpec-FR-419-AC-13")]
+#[ignore = "QSL-2131: a refuted EN-7 item fails the document with MissingCounterexample today"]
+fn a_refuted_schedulability_item_carries_its_miss_as_its_counterexample() {
+    use serde_json::json;
+    let ws = crate::analyze_cli_support::Workspace::new("schedulability-miss");
+    let request = crate::analyze_cli_support::request_over(
+        &ws,
+        CTL_MISSES,
+        &crate::counter::document(false),
+        &[],
+        json!({"items": [{"claim": "CtlFp"}, {"claim": "CtlEdf"}]}),
+    );
+    let run = crate::analyze_cli_support::analyze(&request);
+    assert_eq!(run.exit, 10, "{}", run.document());
+    let fp = run.item(0);
+    assert_eq!(crate::analyze_cli_support::label(&fp), "refuted", "{fp}");
+    assert!(fp.get("replay").is_none(), "{fp}");
+    let miss = &fp["counterexample"]["counterexample"];
+    assert_eq!(miss["type"], "schedulability-miss", "{fp}");
+    assert_eq!(miss["analysis"], "fixed-priority", "{fp}");
+    assert_eq!(miss["unit"], "ms", "{fp}");
+    assert_eq!(
+        miss["miss"],
+        json!({"kind": "response", "task": "c", "job": "0",
+            "iterates": [rational(6, 1), rational(10, 1), rational(13, 1)],
+            "response": rational(13, 1), "bound": rational(12, 1)}),
+        "{fp}"
+    );
+    let edf = run.item(1);
+    assert_eq!(
+        edf["counterexample"]["counterexample"]["miss"],
+        json!({"kind": "utilization", "utilization": rational(13, 12)}),
+        "{edf}"
+    );
+    assert_eq!(run.document()["last_stage"], "S7", "{}", run.document());
+}

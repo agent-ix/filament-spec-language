@@ -195,10 +195,11 @@ fn state_graph_instance_keys_and_budget_stops() {
 #[trace("TC-2291", "FR-628-AC-4")]
 #[trace("TC-2291", "FR-628-AC-5")]
 #[test]
-#[ignore = "QSL-2125 spec gap: FR-628-AC-4's target dividing by `3 - c.value` is refused at S3 `undefined_expression`/`unproved-nonzero`, so the undefined arm has no checked claim to run; the instance key and the budget stops are tested by `state_graph_instance_keys_and_budget_stops`"]
+#[ignore = "QSL-2296 (from QSL-2125): the `Ratio` target calls the Kernel-checked `r` (FR-628-AC-4, FR-952); a Kernel-checked function body reached by analyze and its undefined arm are not implemented yet"]
 fn state_graph_evidence_keys_loci_and_budget_stops() {
-    let body = "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n\
-                possible Ratio using v over (c: M::Counter) { 3 div (3 - c.value) = 1 }\n\
+    let body = "function r using v(x: Integer): Integer pure { 1 div x }\n\
+                possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n\
+                possible Ratio using v over (c: M::Counter) { r(3 - c.value) = 1 }\n\
                 always possible BackToZero using v over (c: M::Counter) { c.value = 0 }\n";
     let ws = Workspace::new("rulings-evidence");
     let run = analyze(&dividing_counter_request(

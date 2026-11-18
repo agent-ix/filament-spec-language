@@ -102,10 +102,13 @@ member is the same as the source route gives.
   FR-940 states: a `BarePackage` (FR-531) over the read `CheckedPackageV2`,
   with the supplied domain packages bound to its model selections, read by the
   engines through the sealed `AnalysisView`. It is never a `CheckedPackage`:
-  FR-087 R-10 keeps checked typestate to S3 and S4. The source route
-  reads its `CheckedPackage` through the same view as the
-  `AdmittedPackageRead` of its own S4 emission, so every engine, the default-item rule, the subject binding and
-  the replay of a counterexample read one value per fact on both routes.
+  FR-087 R-10 keeps checked typestate to S3 and S4. The source route reads
+  each fact of FR-531's table through the same view, as the
+  `AdmittedPackageRead` of its own S4 emission, and reads the source-checked
+  values of FR-531's inventory from its `CheckedGraph`, while the package route
+  reads them through their package forms (FR-940), so every engine, the
+  default-item rule, the subject binding and the replay of a counterexample
+  read one value per fact on both routes.
 - An item's `claim` SHALL resolve by name against the package: a temporal
   clause through its `temporal_clause_names` row, and any other claim through
   the `declaration.qualified_name` of its `claim` node (FSpec FR-322). The

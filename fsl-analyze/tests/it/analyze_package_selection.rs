@@ -206,3 +206,86 @@ fn a_package_request_reads_the_source_route_facts_through_the_view() {
     assert_eq!(run.document()["items"], source.document()["items"]);
     assert_eq!(run.exit, source.exit);
 }
+
+fn not_above_three() -> &'static str {
+    "invariant NotAboveThree using v on M::Counter at current { self.value <= 3 }\n"
+}
+
+/// FR-940-AC-4: analysis from source decides the temporal, refuted and
+/// invariant items over its compiled package, and no record is `unsupported`
+/// for a fact the package bytes lack.
+#[trace("TC-2958", "FR-940-AC-4")]
+#[test]
+#[ignore = "QSL-2271: source-route engines reading the CheckedGraph beside the view is not implemented yet"]
+fn source_analysis_decides_every_family_over_its_checked_graph() {
+    let body = format!("{}{}{}", bounded(), at_most_two(), not_above_three());
+    let items =
+        json!([{"claim": "Bounded"}, {"claim": "AtMostTwo"}, {"claim": "NotAboveThree"}]);
+    let ws = Workspace::new("source-route-families");
+    let run = analyze(&counter_request(&ws, &body, items));
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
+    assert_eq!(label(&run.item(1)), "refuted", "{}", run.document());
+    assert_eq!(run.item(1)["replay"]["reproduced"], true);
+    assert_eq!(label(&run.item(2)), "proved", "{}", run.document());
+    assert_eq!(
+        run.item(2)["record"]["proof_basis"]["type"],
+        "exhaustive",
+        "{}",
+        run.document()
+    );
+    for index in 0..3 {
+        assert_ne!(label(&run.item(index)), "unsupported", "{}", run.document());
+    }
+}
+
+/// FR-940-AC-5: the package route reaches the invariant and model-check
+/// evaluators through their package forms with the source route's records.
+#[trace("TC-2958", "FR-940-AC-5")]
+#[test]
+#[ignore = "QSL-2271: package forms of the source-checked evaluators are not implemented yet"]
+fn the_package_route_reaches_the_source_checked_evaluators() {
+    let body = format!("{}{}{}", bounded(), at_most_two(), not_above_three());
+    let items = json!([{"claim": "NotAboveThree"}, {"claim": "AtMostTwo"}]);
+    let ws = Workspace::new("package-route-evaluators");
+    let source = analyze(&counter_request(&ws, &body, items.clone()));
+    let (members, _) = package_request(&ws, &body, items);
+    let run = analyze_members(&ws, "analyze-evaluators.json", &members);
+    assert_eq!(run.item(0)["record"], source.item(0)["record"], "{}", run.document());
+    assert_eq!(run.item(1)["record"], source.item(1)["record"], "{}", run.document());
+    assert_eq!(run.item(1)["counterexample"], source.item(1)["counterexample"]);
+    assert_eq!(run.item(1)["replay"], source.item(1)["replay"]);
+    assert_eq!(run.item(1)["replay"]["reproduced"], true);
+}
+
+/// FR-940-AC-6: every item family settles equally on both routes, and a
+/// package the strict reader refuses settles no
+/// item and is never analyzed from source instead.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+#[ignore = "QSL-2271: the package route without a source fallback is not implemented yet"]
+fn a_refused_package_never_falls_back_to_source() {
+    let families = format!("{}{}{}", bounded(), at_most_two(), not_above_three());
+    let all = json!([{"claim": "Bounded"}, {"claim": "AtMostTwo"}, {"claim": "NotAboveThree"}]);
+    let ws = Workspace::new("package-equal-families");
+    let source = analyze(&counter_request(&ws, &families, all.clone()));
+    let (members, _) = package_request(&ws, &families, all);
+    let package = analyze_members(&ws, "analyze-families.json", &members);
+    assert_eq!(package.document()["items"], source.document()["items"]);
+    for index in 0..3 {
+        assert_ne!(label(&package.item(index)), "unsupported", "{}", package.document());
+    }
+    let body = format!("{}{}", bounded(), not_above_three());
+    let items = json!([{"claim": "NotAboveThree"}]);
+    let ws = Workspace::new("package-no-fallback");
+    let (members, _) = package_request(&ws, &body, items);
+    ws.write("package.json", b"{}");
+    let run = analyze_members(&ws, "analyze-refused.json", &members);
+    assert_eq!(run.exit, 20, "{}", run.document());
+    assert!(
+        run.document()["items"].as_array().is_some_and(Vec::is_empty),
+        "{}",
+        run.document()
+    );
+    assert_eq!(run.document()["last_stage"], Value::Null, "{}", run.document());
+    assert_eq!(first_diagnostic(&run)["code"], "invalid_package", "{}", run.document());
+}

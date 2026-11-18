@@ -25,6 +25,8 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-251
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-940
+    type: references
   - target: ix://agent-ix/filament-contract-ir/FR-357
     type: references
   - target: ix://agent-ix/filament-contract-ir/FR-358
@@ -221,7 +223,7 @@ from the bare package, or is listed here with the reason it needs source:
 | `AdmittedEvaluationView::admit_protocol_observation` | available as `BarePackage::admit_protocol_observation`; FR-533 "Observation admission" |
 | `call`, `call_supplied`, `call_observing_applications` (call by `QualifiedName`) | available; FR-945: the one-segment name resolves by the `declaration.qualified_name` of the package's function declarations (FSpec FR-322), and parameter and result types are read from its checked type nodes |
 | `evaluate` (a `CheckedExpression`) | unmet parity: its argument is a source-checked value a bytes-only consumer cannot hold; the slot call is its package form |
-| `evaluate_holds`, `evaluate_holds_traced`, `evaluate_guard`, `evaluate_hyper_holds`, `evaluate_step_predicate`, `evaluate_clause`, `evaluate_clause_set`, `evaluate_value_invariants`, `check_separation`, `evaluate_frame`, `evaluate_collection_write` | unmet parity: each takes a source-checked clause, node or state clause; the evidence route takes the `holds` valuations as request facts (FR-516), and no consumer of the handoff evaluates the others |
+| `evaluate_holds`, `evaluate_holds_traced`, `evaluate_guard`, `evaluate_hyper_holds`, `evaluate_step_predicate`, `evaluate_clause`, `evaluate_clause_set`, `evaluate_value_invariants`, `check_separation`, `evaluate_frame`, `evaluate_collection_write` | required in a package form for analysis of a selected package (FR-940 "Package forms of the source-checked evaluators"): each source form takes a source-checked clause, node or state clause, which analysis from source keeps reading from its `CheckedGraph`; the evidence route takes the `holds` valuations as request facts (FR-516) |
 
 ### The identity file
 

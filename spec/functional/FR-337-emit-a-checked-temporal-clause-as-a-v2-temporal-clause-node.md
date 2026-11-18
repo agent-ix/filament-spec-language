@@ -197,9 +197,15 @@ that object that the guard may read, as a hybrid claim's guard reads its
   time, and neither is an S3 obligation: a read through `c` or `q` at a key
   whose object does not conform to `U`, or at which no object is held,
   which is FR-125's `absent-key` undefined value; and a kernel undefined
-  value of an operation S3 types with no definedness law, such as an
-  integer `mod` by a divisor that may be zero (`division-by-zero`, as for a
-  `holds` condition, FR-125-AC-6). Either ends the run with
+  value reached through a Kernel-checked function the guard calls (a function
+  of a package checked under `CheckMode::Kernel`, FR-952, which a run selects
+  through its request's `package` member; a unit a `native-run/1` request
+  compiles from source is checked under `Linked`), such as
+  that function's integer `mod` by a divisor that may be zero
+  (`division-by-zero`). A possibly-zero `mod` or `div` written in the guard
+  itself is an `unproved-nonzero` obligation and S3 SHALL refuse it under
+  Linked (FR-495-AC-3, FR-952), because a declared clause is always checked
+  Linked. Either ends the run with
   `kind: UndefinedEvaluation` located at the activation (FR-126), never a
   false guard.
 - S3 SHALL check the activation, the binder's type and name and then the
@@ -281,10 +287,12 @@ FR-381 checks a protocol capture and keeps it.
 - S3 SHALL check the initializer's definedness as FR-381 checks a protocol
   capture's (FR-104 definedness over the current-state observation) and SHALL
   refuse an undischarged obligation with `undefined_expression` and FR-104's
-  tag at the operation that carries it. A kernel undefined value of an
-  operation S3 types with no definedness law, and a read at a key that holds
-  no object of the required type (`absent-key`), remain run-time undefined
-  readings (§ "Capture observation").
+  tag at the operation that carries it; a possibly-zero `mod` or `div`
+  written in the initializer is refused `undefined_expression`/`unproved-nonzero`
+  under Linked (FR-495-AC-3, FR-952). A kernel undefined value reached through
+  a Kernel-checked function the initializer calls, and a read at a key that
+  holds no object of the required type (`absent-key`), remain run-time
+  undefined readings (§ "Capture observation").
 - A capture is in the scope of the captures written after it and of the
   `holds` conditions of the formula. It is not in the scope of the
   activation's `when` guard, which decides whether the activation exists
