@@ -44,6 +44,7 @@ mod evaluation_rulings;
 mod evaluator_closure_cases;
 mod fairness_kernels;
 mod family_sums;
+mod finite_hyper;
 mod finite_simulation;
 mod finite_window;
 mod float_callables;

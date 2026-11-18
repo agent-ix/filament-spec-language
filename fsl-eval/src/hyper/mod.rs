@@ -23,6 +23,7 @@
 
 mod checked;
 mod copy_swap;
+mod finite;
 mod joint;
 mod product;
 mod projected;
@@ -33,6 +34,10 @@ mod witness;
 pub use crate::simulation::model::CheckedHyperLetters;
 pub use checked::CheckedStepMatch;
 pub use copy_swap::{copy_population, copy_symmetry, CopySwapInputs};
+pub use finite::{
+    FiniteFalseTuple, FiniteHyperOutcome, FinitePopulationError, FiniteTrace, FiniteTraceClosure,
+    FiniteTracePopulation, FiniteTupleOutcome, evaluate_finite_hyper, replays_finite_refutation,
+};
 pub use joint::cartesian;
 pub use product::{
     BodySense, ComponentStep, Halt, HyperFinding, HyperInputs, HyperKey, HyperProduct, HyperState,
