@@ -545,17 +545,38 @@ impl TemporalClaim {
         for key in named {
             domains.insert(key.clone(), DomainKind::Population);
         }
-        let requirements = Requirements::new(self.kind, ClaimExtent::from_domains(domains))
-            .with_fairness(self.fairness.iter().copied());
+        Ok(self.requirements_over(ClaimExtent::from_domains(domains)))
+    }
+
+    /// The claim's requirements over `extent`: its kind, fairness kinds,
+    /// model subject and punctual disposition, as [`Self::requirements`]
+    /// writes them around the extent it keys.
+    pub fn requirements_over(&self, extent: ClaimExtent) -> Requirements {
+        let requirements =
+            Requirements::new(self.kind, extent).with_fairness(self.fairness.iter().copied());
         let requirements = if self.model_subject {
             requirements.over_model_subject()
         } else {
             requirements
         };
-        Ok(match self.punctual {
+        match self.punctual {
             Some(span) => requirements.with_unsupported(UnsupportedItem::PunctualInterval { span }),
             None => requirements,
-        })
+        }
+    }
+
+    /// The kinds of the domains [`Self::requirements`] keys before the
+    /// populations its `holds` atoms name: each parameter's unbounded type
+    /// position, the formula's infinite trace and each unbounded population
+    /// of the `over` type (FR-290 reads an extent's classification from these
+    /// kinds alone).
+    pub fn domain_kinds(&self) -> Vec<DomainKind> {
+        let mut kinds: Vec<DomainKind> = self.parameter_domains.values().copied().collect();
+        if self.infinite_trace {
+            kinds.push(DomainKind::InfiniteTrace);
+        }
+        kinds.extend(self.populations.iter().map(|_| DomainKind::Population));
+        kinds
     }
 }
 
@@ -951,6 +972,11 @@ impl CheckedTemporalClause {
     pub fn unsupported_punctual(&self) -> Option<Span> {
         self.claim.punctual
     }
+
+    /// The clause's `temporal-satisfaction` claim (ADR-014 §4).
+    pub fn claim(&self) -> &TemporalClaim {
+        &self.claim
+    }
 }
 
 impl FamilyContract for TemporalTraceFamily {
@@ -1100,7 +1126,8 @@ pub(crate) fn checked_operators(
                         if interval.is_punctual() {
                             punctual.push(written.span);
                         }
-                        Some(CheckedInterval::Timed(interval))
+                        // `[0, *]` denotes the operator written with no interval.
+                        (!interval.is_whole()).then_some(CheckedInterval::Timed(interval))
                     }
                     Err(timed::IntervalFailure::Cause(cause)) => {
                         refusals.push(cause);
@@ -1127,7 +1154,7 @@ pub(crate) fn checked_operators(
                         if interval.is_punctual() {
                             punctual.push(written.span);
                         }
-                        Some(CheckedInterval::Timed(interval))
+                        (!interval.is_whole()).then_some(CheckedInterval::Timed(interval))
                     }
                     Err(cause) => {
                         refusals.push(cause);
@@ -1135,14 +1162,13 @@ pub(crate) fn checked_operators(
                     }
                 }
             }
-            (
-                Some(OperatorInterval::Steps(written)),
-                true,
-                IntervalReading::Timed(_) | IntervalReading::TimedUnread,
-            ) => {
-                // ADR-014 TR-3 refuses `[a, *]` where every interval needs a
-                // finite upper bound; a closed step interval's bounds have no
-                // unit (FR-233 "Intervals").
+            (Some(OperatorInterval::Steps(written)), true, IntervalReading::Timed(_)) => {
+                // A closed step interval's bounds have no unit (FR-233
+                // "Intervals"); `[a, *]` is no exception (FR-943-AC-1).
+                refusals.push(TemporalCause::UnitlessTimedBound { span: written.span });
+                None
+            }
+            (Some(OperatorInterval::Steps(written)), true, IntervalReading::TimedUnread) => {
                 refusals.push(match written.upper {
                     IntervalUpper::Open => TemporalCause::OpenInterval { span: written.span },
                     IntervalUpper::Finite(_) => {
@@ -2452,3 +2478,257 @@ pub fn check_clauses(
 
 #[cfg(test)]
 mod tests;
+
+/// One formula node of a temporal clause as a checked package carries it
+/// (FR-940 "Package forms of the source-checked evaluators"): the node's
+/// operation and the arena positions of its operands, in the arena order the
+/// source form gives its nodes (an operator before its operands).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PackageFormulaNode {
+    /// `true` or `false`.
+    Constant(bool),
+    /// A `holds(e)` atom, with the span of the whole atom.
+    Holds {
+        /// The span of the whole `holds(e)`.
+        span: Span,
+    },
+    /// `not`.
+    Not(usize),
+    /// `and`.
+    And(usize, usize),
+    /// `or`.
+    Or(usize, usize),
+    /// `implies`.
+    Implies(usize, usize),
+    /// An unbounded unary temporal operator.
+    Unary {
+        /// Which operator.
+        operator: UnaryTemporal,
+        /// Its operand.
+        operand: usize,
+    },
+    /// An unbounded binary temporal operator.
+    Binary {
+        /// Which operator.
+        operator: BinaryTemporal,
+        /// Its left operand.
+        left: usize,
+        /// Its right operand.
+        right: usize,
+    },
+}
+
+/// What a checked package carries of one temporal clause (FR-940): the
+/// facts [`CheckedTemporalClause::of_package_form`] rebuilds the clause's
+/// model-check form from, each read from the package's admitted nodes,
+/// source map and identity rows.
+#[derive(Clone, Debug)]
+pub struct PackageClauseForm {
+    /// The clause's declared name, from its `temporal_clause_names` row.
+    pub name: String,
+    /// The clause's source span: the region of its `claim` source-map entry,
+    /// its declared name. The package carries no region of the whole
+    /// declaration (FR-531 "What the bytes do not carry"), so this is the one
+    /// field of the package form that differs from the source form's, which
+    /// spans the declaration; it lies within it and orders clauses alike.
+    pub span: Span,
+    /// The clause's temporal profile, from its profile law.
+    pub profile: TemporalProfile,
+    /// The name of the package that declares the clause.
+    pub package_name: String,
+    /// The `over` parameter's name and type.
+    pub over: (String, ValueType),
+    /// The clock role, as the clause node spells it.
+    pub clock: String,
+    /// How the clause activates.
+    pub activation: Activation,
+    /// An `on each` activation's trigger binder.
+    pub trigger: Option<(String, ValueType)>,
+    /// The captures in source order.
+    pub captures: Vec<(String, ValueType)>,
+    /// The formula's nodes in arena order; the root is the first.
+    pub formula: Vec<PackageFormulaNode>,
+    /// The populations of the `over` type with no authored maximum.
+    pub populations: Vec<PopulationDomain>,
+}
+
+/// Why no package form of a temporal clause was built (FR-940): a fact the
+/// package route does not read yet, never a clause built without it.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum PackageClauseRefusal {
+    /// The clause's profile reads bounded or timed intervals, which the
+    /// package form does not read yet.
+    #[error("the package form does not read the {0:?} profile yet")]
+    Profile(TemporalProfile),
+    /// The formula's arena does not place each operator before its operands.
+    #[error("the package formula is not an arena in operator order")]
+    Arena,
+    /// The parameter types do not classify within the position limit.
+    #[error("the clause's parameter domains do not classify")]
+    Domains,
+    /// The clause's clock binding key is not a node key.
+    #[error("the clause's clock binding is not keyed")]
+    ClockBinding,
+}
+
+impl CheckedTemporalClause {
+    /// The clause with `span` as its source span: the source form of a clause
+    /// read with the span its package form carries ([`PackageClauseForm::span`]),
+    /// so the two forms compare field for field.
+    #[must_use]
+    pub fn with_span(mut self, span: Span) -> Self {
+        self.span = span;
+        self
+    }
+
+    /// FR-940: the model-check form of a temporal clause a checked package
+    /// carries, rebuilt from `form` as S3 builds it from source: the same
+    /// operators, formula, claim, property form and clock binding, so the
+    /// model checker reads an equal clause on both routes. `types` is the
+    /// package's type environment and `position_limit` S3's domain limit.
+    ///
+    /// Only an untimed clause over the infinite-trace profile with no
+    /// fairness, aggregate or interval is read yet; the package form of any
+    /// other clause is refused, never built without the fact it lacks.
+    ///
+    /// # Errors
+    ///
+    /// [`PackageClauseRefusal`] as above.
+    pub fn of_package_form(
+        form: PackageClauseForm,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
+        position_limit: u64,
+    ) -> Result<Self, PackageClauseRefusal> {
+        if form.profile != TemporalProfile::InfiniteTrace {
+            return Err(PackageClauseRefusal::Profile(form.profile));
+        }
+        let mut nodes = Vec::with_capacity(form.formula.len());
+        let mut operators = Vec::new();
+        for (index, node) in form.formula.iter().enumerate() {
+            let id = |operand: &usize| FormulaNodeId(*operand);
+            let (checked, operator) = match node {
+                PackageFormulaNode::Constant(value) => (FormulaNode::Constant(*value), None),
+                PackageFormulaNode::Holds { span } => (FormulaNode::Holds { span: *span }, None),
+                PackageFormulaNode::Not(only) => {
+                    (FormulaNode::Not(id(only)), Some(TemporalOperator::Not))
+                }
+                PackageFormulaNode::And(left, right) => (
+                    FormulaNode::And(id(left), id(right)),
+                    Some(TemporalOperator::And),
+                ),
+                PackageFormulaNode::Or(left, right) => (
+                    FormulaNode::Or(id(left), id(right)),
+                    Some(TemporalOperator::Or),
+                ),
+                PackageFormulaNode::Implies(left, right) => (
+                    FormulaNode::Implies(id(left), id(right)),
+                    Some(TemporalOperator::Implies),
+                ),
+                PackageFormulaNode::Unary { operator, operand } => (
+                    FormulaNode::Unary {
+                        operator: *operator,
+                        interval: None,
+                        operand: id(operand),
+                    },
+                    Some(match operator {
+                        UnaryTemporal::Eventually => TemporalOperator::Eventually,
+                        UnaryTemporal::Always => TemporalOperator::Always,
+                        UnaryTemporal::Once => TemporalOperator::Once,
+                        UnaryTemporal::Historically => TemporalOperator::Historically,
+                    }),
+                ),
+                PackageFormulaNode::Binary {
+                    operator,
+                    left,
+                    right,
+                } => (
+                    FormulaNode::Binary {
+                        operator: *operator,
+                        interval: None,
+                        left: id(left),
+                        right: id(right),
+                    },
+                    Some(match operator {
+                        BinaryTemporal::Until => TemporalOperator::Until,
+                        BinaryTemporal::Release => TemporalOperator::Release,
+                        BinaryTemporal::Since => TemporalOperator::Since,
+                        BinaryTemporal::Triggered => TemporalOperator::Triggered,
+                    }),
+                ),
+            };
+            if checked
+                .operands()
+                .any(|operand| operand.0 <= index || operand.0 >= form.formula.len())
+            {
+                return Err(PackageClauseRefusal::Arena);
+            }
+            if let Some(operator) = operator {
+                operators.push(CheckedOperator {
+                    node: TemporalNodeId::from_index(index),
+                    operator,
+                    interval: None,
+                });
+            }
+            nodes.push(checked);
+        }
+        if nodes.is_empty() {
+            return Err(PackageClauseRefusal::Arena);
+        }
+        let formula = CheckedFormula {
+            nodes,
+            root: FormulaNodeId(0),
+        };
+        let mut roots: Vec<&ValueType> = vec![&form.over.1];
+        roots.extend(form.trigger.iter().map(|(_, value_type)| value_type));
+        roots.extend(form.captures.iter().map(|(_, value_type)| value_type));
+        let parameter_domains = classify_domains(&roots, types, position_limit)
+            .map_err(|_| PackageClauseRefusal::Domains)?;
+        let model_subject = matches!(form.over.1, ValueType::Reference(_));
+        let property_form = property_form(form.profile, model_subject, &formula);
+        let clock_binding = clock_binding(&form.package_name, &form.clock, MODEL_STEPS, None)
+            .map_err(|_| PackageClauseRefusal::ClockBinding)?;
+        let profile_ref = DefinitionRef::new(
+            super::profile::CLAUSE_PROFILE_AUTHORITY,
+            form.profile.identity(),
+        )
+        .map_err(|_| PackageClauseRefusal::Profile(form.profile))?;
+        Ok(Self {
+            name: form.name,
+            span: form.span,
+            profile: form.profile,
+            profile_ref,
+            over: form.over,
+            clock: form.clock,
+            clock_binding,
+            operators,
+            horizon: None,
+            claim: TemporalClaim {
+                kind: Capability::TemporalSatisfaction,
+                parameter_domains,
+                infinite_trace: true,
+                populations: form
+                    .populations
+                    .into_iter()
+                    .filter(|domain| domain.maximum.is_none())
+                    .collect(),
+                fairness: BTreeSet::new(),
+                punctual: None,
+                model_subject,
+            },
+            formula,
+            activation: form.activation,
+            trigger: form.trigger,
+            captures: form.captures,
+            fairness: Vec::new(),
+            fairness_sources: Vec::new(),
+            fairness_order: Vec::new(),
+            protocol_fairness: Vec::new(),
+            aggregates: BTreeMap::new(),
+            property_form,
+            time_binding: None,
+            role_unit: None,
+            timed_form: None,
+            timed: false,
+        })
+    }
+}

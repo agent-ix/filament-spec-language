@@ -102,7 +102,7 @@ fn scratch_tests(extra: &str, skip: Option<&str>, attribute_on_pr_03: &str) -> t
         ));
     }
     source.push_str(extra);
-    fs::write(scratch.path().join("contract.rs"), source).expect("write the scratch tests");
+    fs::write(scratch.path().join("main.rs"), source).expect("write the scratch tests");
     scratch
 }
 
@@ -115,30 +115,7 @@ fn gate_over(directory: &Path) -> Output {
 }
 
 #[test]
-#[trace("TC-2578", "FR-912-AC-1")]
-fn test_prefix_is_the_lowercase_fact_id() {
-    assert_eq!(test_prefix("CF-PR-03"), "cf_pr_03_");
-    for fact in [
-        "CF-IR-01", "CF-PR-07", "CF-CG-04", "CF-RT-02", "CF-DR-03", "CF-OB-01",
-    ] {
-        let prefix = test_prefix(fact);
-        let parts: Vec<&str> = prefix.trim_end_matches('_').split('_').collect();
-        assert_eq!(parts.len(), 3, "{fact} is CF-<code>-<nn>");
-        assert_eq!(parts[0], "cf");
-        assert!(
-            ["ir", "pr", "cg", "rt", "dr", "ob"].contains(&parts[1]),
-            "{fact}"
-        );
-        assert!(
-            parts[2].len() == 2 && parts[2].bytes().all(|byte| byte.is_ascii_digit()),
-            "{fact}"
-        );
-    }
-}
-
-#[test]
 #[trace("TC-2574", "FR-911-AC-1")]
-#[ignore = "QSL-2231: the `facade-contract-consumer` crate is not implemented yet"]
 fn the_contract_consumer_sees_only_default_features() {
     let output = cargo(&["metadata", "--locked", "--offline", "--format-version", "1"]);
     assert!(output.status.success(), "{}", report(&output));
@@ -149,10 +126,12 @@ fn the_contract_consumer_sees_only_default_features() {
         .iter()
         .find(|package| package["name"] == CONSUMER)
         .unwrap_or_else(|| panic!("{CONSUMER} is not a workspace package"));
-    assert!(package["manifest_path"]
-        .as_str()
-        .expect("manifest path")
-        .contains(CONSUMER_DIR));
+    assert!(
+        package["manifest_path"]
+            .as_str()
+            .expect("manifest path")
+            .contains(CONSUMER_DIR)
+    );
     for dependency in package["dependencies"].as_array().expect("dependencies") {
         let name = dependency["name"].as_str().expect("dependency name");
         if name.starts_with("fsl-") {
@@ -184,7 +163,6 @@ fn the_contract_consumer_sees_only_default_features() {
 
 #[test]
 #[trace("TC-2575", "FR-911-AC-2", "FSpec-TC-1646", "FSpec-FR-661-AC-3")]
-#[ignore = "QSL-2231: the per-fact contract call tests are not implemented yet"]
 fn every_bound_fact_has_a_passing_contract_call_test() {
     let listed = cargo(&["test", "-p", CONSUMER, "--", "--list"]);
     assert!(listed.status.success(), "{}", report(&listed));
@@ -199,14 +177,13 @@ fn every_bound_fact_has_a_passing_contract_call_test() {
             "no contract test reads {fact}"
         );
     }
-    let run = cargo(&["test", "-p", CONSUMER, "--", "--include-ignored"]);
+    let run = cargo(&["test", "-p", CONSUMER]);
     assert!(run.status.success(), "{}", report(&run));
     assert!(report(&run).contains(" 0 ignored"), "{}", report(&run));
 }
 
 #[test]
 #[trace("TC-2576", "FR-911-AC-3")]
-#[ignore = "QSL-2231: the protocol contract tests' typed-refusal cases are not implemented yet"]
 fn a_wrong_input_to_a_protocol_accessor_gives_its_typed_refusal() {
     let source = fs::read_to_string(
         workspace_root()
@@ -222,7 +199,6 @@ fn a_wrong_input_to_a_protocol_accessor_gives_its_typed_refusal() {
 
 #[test]
 #[trace("TC-2577", "FR-911-AC-4")]
-#[ignore = "QSL-2231: the consumer crate's private-item compile-fail doctest is not implemented yet"]
 fn a_private_item_is_not_reachable_from_the_consumer_crate() {
     let library = fs::read_to_string(workspace_root().join(CONSUMER_DIR).join("src/lib.rs"))
         .expect("the consumer library");
@@ -234,8 +210,24 @@ fn a_private_item_is_not_reachable_from_the_consumer_crate() {
 
 #[test]
 #[trace("TC-2578", "FR-912-AC-1")]
-#[ignore = "QSL-2232: `xtask facade-tests` is not implemented yet"]
 fn gate_passes_when_every_fact_has_a_live_test() {
+    assert_eq!(test_prefix("CF-PR-03"), "cf_pr_03_");
+    for fact in [
+        "CF-IR-01", "CF-PR-07", "CF-CG-04", "CF-RT-02", "CF-DR-03", "CF-OB-01",
+    ] {
+        let prefix = test_prefix(fact);
+        let parts: Vec<&str> = prefix.trim_end_matches('_').split('_').collect();
+        assert_eq!(parts.len(), 3, "{fact} is CF-<code>-<nn>");
+        assert_eq!(parts[0], "cf");
+        assert!(
+            ["ir", "pr", "cg", "rt", "dr", "ob"].contains(&parts[1]),
+            "{fact}"
+        );
+        assert!(
+            parts[2].len() == 2 && parts[2].bytes().all(|byte| byte.is_ascii_digit()),
+            "{fact}"
+        );
+    }
     let scratch = scratch_tests("", None, "");
     let output = gate_over(scratch.path());
     assert_eq!(output.status.code(), Some(0), "{}", report(&output));
@@ -251,9 +243,13 @@ fn gate_passes_when_every_fact_has_a_live_test() {
 
 #[test]
 #[trace("TC-2579", "FR-912-AC-2")]
-#[ignore = "QSL-2232: `xtask facade-tests` is not implemented yet"]
 fn gate_fails_on_fact_without_test() {
     let scratch = scratch_tests("", Some("CF-PR-03"), "");
+    fs::write(
+        scratch.path().join("orphan.rs"),
+        "#[test] fn cf_pr_03_orphan() {}",
+    )
+    .expect("write the orphan Rust file");
     let output = gate_over(scratch.path());
     assert_eq!(output.status.code(), Some(1), "{}", report(&output));
     assert!(report(&output).contains("CF-PR-03"));
@@ -261,9 +257,8 @@ fn gate_fails_on_fact_without_test() {
 
 #[test]
 #[trace("TC-2580", "FR-912-AC-3")]
-#[ignore = "QSL-2232: `xtask facade-tests` is not implemented yet"]
 fn gate_fails_on_ignored_contract_test() {
-    for attribute in ["#[ignore]", "#[cfg(any())]"] {
+    for attribute in ["#[ignore]", "#[cfg(any())]", "#[ignore = \"QSL-1109\"]"] {
         let scratch = scratch_tests("", None, attribute);
         let output = gate_over(scratch.path());
         assert_eq!(
@@ -277,14 +272,13 @@ fn gate_fails_on_ignored_contract_test() {
             text.contains("cf_pr_03_reads_the_fact"),
             "{attribute}: {text}"
         );
-        assert!(text.contains("contract.rs"), "{attribute}: {text}");
+        assert!(text.contains("main.rs"), "{attribute}: {text}");
         assert!(text.contains("CF-PR-03"), "{attribute}: {text}");
     }
 }
 
 #[test]
 #[trace("TC-2581", "FR-912-AC-4")]
-#[ignore = "QSL-2232: `xtask facade-tests` and its `make ci` step are not implemented yet"]
 fn gate_fails_on_test_for_unlisted_fact() {
     let scratch = scratch_tests("#[test]\nfn cf_pr_99_unknown() {}\n", None, "");
     let output = gate_over(scratch.path());
@@ -293,5 +287,5 @@ fn gate_fails_on_test_for_unlisted_fact() {
     assert!(text.contains("cf_pr_99_unknown"));
     assert!(text.contains("CF-PR-99"));
     let makefile = fs::read_to_string(workspace_root().join("Makefile")).expect("Makefile");
-    assert!(makefile.contains("xtask facade-tests"));
+    assert!(makefile.contains("cargo run --locked --package xtask -- facade-tests"));
 }

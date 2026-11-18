@@ -19,9 +19,17 @@
 extern crate alloc;
 
 #[cfg(feature = "std")]
+mod analysis_view;
+#[cfg(feature = "std")]
+pub use analysis_view::{AnalysisView, DependencyClosure};
+#[cfg(feature = "std")]
+pub use model_input_form::UnreadModelForm;
+#[cfg(feature = "std")]
 mod bare;
 #[cfg(feature = "std")]
 mod bare_slot;
+#[cfg(feature = "std")]
+mod bare_term;
 #[cfg(feature = "std")]
 mod bare_units;
 #[cfg(feature = "std")]
@@ -41,7 +49,14 @@ mod export;
 #[cfg(feature = "std")]
 mod introduced_binders;
 #[cfg(feature = "std")]
+mod model_input_form;
+#[cfg(feature = "std")]
 mod native_row;
+mod obligation_identity;
+#[cfg(feature = "std")]
+mod probabilistic_read;
+#[cfg(feature = "std")]
+pub use probabilistic_read::ProbabilisticReadFault;
 #[cfg(feature = "std")]
 pub mod number;
 #[cfg(feature = "std")]
@@ -67,6 +82,10 @@ pub use bare::{
 };
 #[cfg(feature = "std")]
 pub use bare_slot::{BareSelectionFailure, BareSlot, BareSource};
+#[cfg(feature = "std")]
+pub use bare_term::{
+    BareClauseRefusal, BareClauseTerm, BareFrameOperation, BareStateClause, ClauseBinder,
+};
 #[cfg(feature = "std")]
 pub use bare_world::BareWorld;
 pub use checked::{CheckedPackage, ResolvedDependency};
@@ -105,7 +124,8 @@ pub use emit::{
     Emission, EmitRefusal, MonitorPlanWire, OmissionCause, OmittedNode, ProtocolEmission,
     ProtocolEmissionAggregate, ProtocolEmissionResult, SelectedSourceCollectionRow,
     SelectedSourceRecordMemberRow, SelectedSourceRecordRow, SourceObjectMemberFacts,
-    TemporalBindingRows, TemporalClauseRef, TemporalClockSelection, TemporalRows, TimedOrderFault,
+    SourceObjectOperationFacts, TemporalBindingRows, TemporalClauseRef, TemporalClockSelection,
+    TemporalRows, TimedOrderFault,
 };
 #[cfg(feature = "std")]
 pub use equality_file::{
@@ -122,6 +142,7 @@ pub use export::{export_bindings, BoundItem, ExportRefusal, UnboundElement};
 pub use filament_contract_model::{CheckedBindingNameKind, CheckedLiteralValue, CheckedTerm};
 #[cfg(feature = "std")]
 pub use native_row::{NativeRowError, NativeRowErrorCode};
+pub use obligation_identity::{ModelIdentity, ObligationIdentity};
 #[cfg(feature = "std")]
 pub use protocol_occurrence::{
     protocol_occurrence_schemas_from_read, CompensationEntry, ControlEntry, ControlOperator,
@@ -136,8 +157,8 @@ pub use protocol_occurrence_key::{
 pub use protocol_selection::{ProtocolSlotDescriptor, SlotSelectionFailure};
 #[cfg(feature = "std")]
 pub use reader_protocol_projection::{
-    MissingLocation, ReaderProtocolFunction, ReaderProtocolProjection, ReaderSlot,
-    UnsupportedReason, UnsupportedView, ViewLocus,
+    MissingLocation, ReaderProtocolFunction, ReaderProtocolParameter, ReaderProtocolProjection,
+    ReaderSlot, UnsupportedReason, UnsupportedView, ViewLocus,
 };
 
 #[cfg(feature = "std")]

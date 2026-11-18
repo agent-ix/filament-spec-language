@@ -17,7 +17,7 @@ use fsl_foundation::bound::ProofBound;
 use fsl_foundation::diagnostic::Code;
 
 use crate::execute::ReplayRefusal;
-use crate::identity::ObligationIdentity;
+use fsl_package::ObligationIdentity;
 use crate::proof_result::{
     Certification, IncompleteCause, InconclusiveCause, ProofBasis, TerminalValue,
 };

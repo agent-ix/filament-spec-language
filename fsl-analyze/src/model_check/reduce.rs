@@ -54,8 +54,13 @@ impl TableForm {
     /// The row of a model-check item; `None` for a clause with no property
     /// form.
     pub fn of(item: &ModelCheckItem<'_>) -> Option<Self> {
-        let ModelCheckItem::Clause { clause, .. } = item else {
-            return Some(Self::DeadlockFreedom);
+        let clause = match item {
+            ModelCheckItem::Clause { clause, .. } => clause,
+            // FR-951: an invariant item is a reachable-state invariant.
+            ModelCheckItem::Invariant { .. } => return Some(Self::ReachableInvariant),
+            ModelCheckItem::DeadlockFreedom | ModelCheckItem::RaceFreedom => {
+                return Some(Self::DeadlockFreedom)
+            }
         };
         let interval = clause
             .operators()

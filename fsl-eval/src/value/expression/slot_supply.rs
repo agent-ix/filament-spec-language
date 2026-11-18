@@ -150,7 +150,13 @@ pub(super) fn admit_slot_supply(
                     observation,
                 )) = supply.observation
                 {
-                    let occurrences = protocol_slot::reference_occurrences(value, host.types());
+                    let occurrences = protocol_slot::reference_occurrences(value, host.types())
+                        .map_err(|()| {
+                            super::unsupported_construct_failure(
+                                "map",
+                                filament_eval::CallAdmissionLocus::Binder(key.clone()),
+                            )
+                        })?;
                     let offending = occurrences.iter().find(|(_, reference)| {
                         protocol_slot::foreign_to_observation(reference, observation)
                             || !observation
@@ -194,7 +200,13 @@ pub(super) fn admit_slot_supply(
                         CallAdmissionLocus::Binder(key),
                     ));
                 }
-                let occurrences = protocol_slot::reference_occurrences(value, host.types());
+                let occurrences = protocol_slot::reference_occurrences(value, host.types())
+                    .map_err(|()| {
+                        super::unsupported_construct_failure(
+                            "map",
+                            filament_eval::CallAdmissionLocus::Binder(key.clone()),
+                        )
+                    })?;
                 for (position, metadata) in supplied.references.iter().enumerate() {
                     if supplied.references[..position]
                         .iter()

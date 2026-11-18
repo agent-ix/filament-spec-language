@@ -131,7 +131,7 @@ fn reachable(source: &str) -> fsl_eval::simulation::protocol::Reachable<Sc> {
     };
     let request = ModelSimulationRequest {
         emit: fsl_package::EmitLimits::fixture(),
-        package: &package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(&package),
         packages: &packages,
         normalization: ModelNormalizationLimits::default(),
         snapshots: &snapshots,
@@ -168,6 +168,7 @@ fn reachable(source: &str) -> fsl_eval::simulation::protocol::Reachable<Sc> {
                 model: tc1070::model::PACKAGE.to_owned(),
             })
             .collect(),
+        capacities: Vec::new(),
         memory: fsl_eval::simulation::protocol::ResolvedMemory::resolve(checked, &[])
             .expect("sc memory selected"),
     };
@@ -220,9 +221,7 @@ fn duplicate_then_effect(
                     duplicated = true;
                 }
                 StepKind::Receive => {
-                    let Some(delivery) = transition.delivery().cloned() else {
-                        return None;
-                    };
+                    let delivery = transition.delivery().cloned()?;
                     if Some(delivery.message()) != message.as_ref() {
                         continue;
                     }

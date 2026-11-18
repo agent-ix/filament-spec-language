@@ -19,7 +19,9 @@
 //! validated into a [`TimedInterval`]: a negative lower bound, `a > b` and an
 //! open end with `a = b` refuse `invalid_timed_model`/`invalid-interval` at
 //! the interval. A step interval `[a, b]` has bounds with no unit and refuses
-//! `ill_typed`/`type-mismatch`; `[a, *]` refuses as ADR-014 TR-3 states.
+//! `ill_typed`/`type-mismatch`, `[a, *]` included. A timed interval `[q, *]`
+//! has a least distance and no upper bound (FR-943); `[0 ms, *]` is the operator
+//! written with no interval.
 //!
 //! The clause is classified into one [`TimedPropertyForm`], in FR-234's
 //! order, and a `TimedInvariant`, `TimedSafety` or `TimedLiveness` clause
@@ -527,10 +529,15 @@ impl TimedReader<'_> {
     pub(crate) fn unit_free_interval(
         written: &fsl_forms::IntervalForm,
     ) -> Result<TimedInterval, TemporalCause> {
-        let fsl_forms::IntervalUpper::Finite(upper) = written.upper else {
-            return Err(TemporalCause::OpenInterval { span: written.span });
-        };
         let magnitude = |value: u64| Rational::from_integer(Integer::from(value));
+        let fsl_forms::IntervalUpper::Finite(upper) = written.upper else {
+            return TimedInterval::unbounded(magnitude(written.lower), true).map_err(|reason| {
+                TemporalCause::InvalidTimedInterval {
+                    reason,
+                    span: written.span,
+                }
+            });
+        };
         TimedInterval::new(magnitude(written.lower), true, magnitude(upper), true).map_err(
             |reason| TemporalCause::InvalidTimedInterval {
                 reason,
@@ -546,11 +553,13 @@ impl TimedReader<'_> {
     ) -> Result<TimedInterval, IntervalFailure> {
         let lower = self.bound(&written.lower)?;
         let TimedUpper::Finite(upper) = &written.upper else {
-            // `[q, *]` is a hybrid claim's form (FR-447); a model-subject
-            // clause has no unbounded timed interval (ADR-014 TR-3).
-            return Err(IntervalFailure::Cause(TemporalCause::OpenInterval {
-                span: written.span,
-            }));
+            // `[q, *]` (FR-943): a least distance and no upper bound.
+            return TimedInterval::unbounded(lower, written.lower_closed).map_err(|reason| {
+                IntervalFailure::Cause(TemporalCause::InvalidTimedInterval {
+                    reason,
+                    span: written.span,
+                })
+            });
         };
         let upper = self.bound(upper)?;
         TimedInterval::new(lower, written.lower_closed, upper, written.upper_closed).map_err(
@@ -605,13 +614,14 @@ pub(crate) fn property_form(formula: &CheckedFormula, activation: Activation) ->
     let only_interval_operators = nodes
         .iter()
         .filter(|node| is_temporal_node(node))
-        .all(|node| timed(node).is_some());
+        .all(|node| timed(node).is_some_and(TimedInterval::is_bounded));
     if activation == Activation::Origin && only_interval_operators {
         let horizon = nodes
             .iter()
             .filter_map(timed)
-            .fold(Rational::from_integer(Integer::zero()), |sum, interval| {
-                sum.add(interval.upper())
+            .filter_map(TimedInterval::upper)
+            .fold(Rational::from_integer(Integer::zero()), |sum, upper| {
+                sum.add(upper)
             });
         return TimedPropertyForm::BoundedWindow { horizon };
     }

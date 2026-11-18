@@ -470,6 +470,8 @@ fn a_finite_window_run_never_reads_an_aggregate_atom_as_a_valuation() {
     let trace = TimestampedTrace::admit(
         "C",
         WindowClock {
+            name: "clock".to_owned(),
+            profile: "profile".to_owned(),
             unit: "ms".to_owned(),
             cover: ClockCover::Exact,
         },

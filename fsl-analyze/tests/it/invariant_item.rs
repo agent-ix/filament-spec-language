@@ -17,7 +17,6 @@ const AT_MOST_TWO: &str =
 /// certificate is checked.
 #[trace("TC-2661", "FR-951-AC-1")]
 #[test]
-#[ignore = "QSL-2301: EN-1 has no invariant item form, root or closure certificate yet"]
 fn a_holding_invariant_is_proved_and_certified_on_en_1() {
     let ws = Workspace::new("invariant-certified");
     let run = analyze(&counter_request(
@@ -36,7 +35,6 @@ fn a_holding_invariant_is_proved_and_certified_on_en_1() {
 /// at `value = 3`, with an empty loop, and the replay reproduces it.
 #[trace("TC-2661", "FR-951-AC-2")]
 #[test]
-#[ignore = "QSL-2301: EN-1 has no invariant item form or replayed state-clause counterexample yet"]
 fn a_violated_invariant_is_refuted_by_a_replayed_finite_prefix() {
     let ws = Workspace::new("invariant-refuted");
     let run = analyze(&counter_request(
@@ -66,7 +64,6 @@ fn a_violated_invariant_is_refuted_by_a_replayed_finite_prefix() {
 /// check, whatever the check mode, and a nonzero literal divisor checks.
 #[trace("TC-2661", "FR-951-AC-4")]
 #[test]
-#[ignore = "QSL-2301: EN-1 has no invariant item form yet"]
 fn a_declared_invariant_keeps_the_linked_nonzero_refusal() {
     let ws = Workspace::new("invariant-nonzero");
     let run = analyze(&counter_request(

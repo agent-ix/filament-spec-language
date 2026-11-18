@@ -11,6 +11,8 @@
 //! it; a lasso position past the represented ones reads the environment its
 //! wrapped index names.
 
+use std::collections::BTreeMap;
+
 use filament_eval::{FamilyOutcome, FamilyResult};
 use filament_exact::{Meter, ObjectReference, Outcome, Value};
 use filament_semantic_value::catalog::InternalFault;
@@ -58,6 +60,10 @@ pub struct ObservedRun {
     /// The violation's decisive atom, found by [`evaluate_observed_decisive`]
     /// on the run's own evaluator and meter; `None` for every other run.
     pub decisive: Option<DecisiveSearch>,
+    /// The captures the violating activation fixed (FR-860), which the
+    /// decisive atom is read again with; empty for every other run and for a
+    /// clause with no capture.
+    pub captures: Vec<Value>,
 }
 
 /// The expression an observed run first read as undefined: a `holds` atom,
@@ -261,6 +267,8 @@ fn evaluate_observed_goal(
         absent: &[],
         classes: &[],
         silent_from,
+        fixed: BTreeMap::new(),
+        active: None,
     };
     let (result, decisive) = super::engine::run_seeking(
         super::engine::Subject::of_clause(clause.clause()),
@@ -277,11 +285,18 @@ fn evaluate_observed_goal(
         (Some(HoldsStop::Refused { .. }), Ok(_)) => None,
         (stopped, _) => stopped,
     };
+    let captures = match &result {
+        Ok(TemporalOutcome::Violated { at }) => {
+            letters.fixed.remove(&at.index()).unwrap_or_default()
+        }
+        _ => Vec::new(),
+    };
     ObservedRun {
         result,
         stopped,
         undefined: letters.undefined,
         decisive,
+        captures,
     }
 }
 
@@ -381,6 +396,8 @@ fn evaluate_window_over(
         absent: valuations.absent,
         classes: valuations.classes,
         silent_from: valuations.silent_from,
+        fixed: BTreeMap::new(),
+        active: None,
     };
     let facts = match positions {
         ObservedPositions::Tape(_) => {
@@ -407,7 +424,7 @@ fn evaluate_window_over(
 
 /// FR-820: [`evaluate_positions_finite_window`] carried across a trace that
 /// grows. The state reads only the positions an open activation can still
-/// read ([`WindowState`]), so each step's work is bounded by them, and its
+/// read ([`WindowState`](super::finite_window::WindowState)), so each step's work is bounded by them, and its
 /// report equals the batch report over the prefix.
 #[derive(Clone, Debug, Default)]
 pub struct CarriedWindow {
@@ -465,7 +482,7 @@ impl CarriedWindow {
                         result: Err(refusal),
                         stopped: None,
                         undefined: None,
-                    }
+                    };
                 }
             },
         };
@@ -488,6 +505,8 @@ impl CarriedWindow {
             absent: valuations.absent,
             classes: valuations.classes,
             silent_from: valuations.silent_from,
+            fixed: BTreeMap::new(),
+            active: None,
         };
         let result = state.evaluate(
             &facts,
@@ -570,6 +589,11 @@ pub(super) struct ObservedLetters<'a> {
     classes: &'a [usize],
     /// The first silent sample, where every `holds` atom reads false.
     silent_from: Option<u64>,
+    /// The capture values of each activation, by its position, fixed once
+    /// when the activation was read (FR-860).
+    fixed: BTreeMap<u64, Vec<Value>>,
+    /// The activation whose captures a `holds` atom reads.
+    active: Option<u64>,
 }
 
 impl<'a> ObservedLetters<'a> {
@@ -592,6 +616,8 @@ impl<'a> ObservedLetters<'a> {
             absent: &[],
             classes: &[],
             silent_from: None,
+            fixed: BTreeMap::new(),
+            active: None,
         }
     }
 
@@ -783,9 +809,16 @@ impl TemporalLetters for ObservedLetters<'_> {
                 });
         }
         let (objects, over) = self.subject(position)?;
+        let captures = self.active_captures()?;
+        let named = crate::value::HoldsAtom::of_source(self.clause, atom).ok_or_else(|| {
+            LetterStop::Fault(InternalFault::new(
+                "temporal.observed",
+                "atom-is-a-formula-use",
+            ))
+        })?;
         let evaluation = self
             .package
-            .evaluate_holds(self.clause, atom, over, objects, meter);
+            .evaluate_holds(&named, over, captures, objects, meter);
         let reading = Self::reading(&mut self.stopped, position, evaluation, HOLDS_CODES)?;
         if let AtomReading::Undefined(cause) = &reading {
             self.note(|| ObservedLocus::Atom(atom), position, cause);
@@ -835,7 +868,7 @@ impl TemporalLetters for ObservedLetters<'_> {
         let (objects, over) = self.subject(position)?;
         let evaluation = self
             .package
-            .evaluate_guard(self.clause, over, objects, meter);
+            .evaluate_guard(&self.clause.identity(), over, objects, meter);
         let reading = Self::reading(&mut self.stopped, position, evaluation, ACTIVATION_CODES)?;
         if let AtomReading::Undefined(cause) = &reading {
             self.note(|| ObservedLocus::Activation, position, cause);
@@ -860,9 +893,41 @@ impl TemporalLetters for ObservedLetters<'_> {
         }
         self.fix_captures(position, meter)
     }
+
+    fn reads_captures(&self, atom: FormulaNodeId) -> bool {
+        self.clause.atom_reads_captures(atom)
+    }
+
+    fn select_activation(&mut self, activation: TemporalPosition) -> Result<(), LetterStop> {
+        if !self.fixed.contains_key(&activation.index()) {
+            return Err(LetterStop::Fault(InternalFault::new(
+                "temporal.observed",
+                "selected-activation-fixed-its-captures",
+            )));
+        }
+        self.active = Some(activation.index());
+        Ok(())
+    }
 }
 
 impl ObservedLetters<'_> {
+    /// The captures a `holds` atom reads: those of the selected activation
+    /// (FR-860), none for a clause that declares no capture.
+    fn active_captures(&self) -> Result<&[Value], LetterStop> {
+        if self.clause.clause().captures().len() == 0 {
+            return Ok(&[]);
+        }
+        self.active
+            .and_then(|active| self.fixed.get(&active))
+            .map(Vec::as_slice)
+            .ok_or_else(|| {
+                LetterStop::Fault(InternalFault::new(
+                    "temporal.observed",
+                    "holds-atom-reads-its-activation-captures",
+                ))
+            })
+    }
+
     /// FR-337 "Capture observation": the clause's captures at `position`, in
     /// source order, each through the clause evaluator with the `over`
     /// parameter and the trigger binder both `over` and each earlier capture
@@ -915,6 +980,8 @@ impl ObservedLetters<'_> {
                 )),
             };
         }
+        self.fixed.insert(position.index(), values);
+        self.active = Some(position.index());
         Ok(CaptureReading::Fixed)
     }
 }
@@ -1105,6 +1172,7 @@ fn read_position_stop(
             fsl_semantics::check::Activation::Each { guarded: true }
         ),
         captured: checked.capture_site(),
+        deferred: &[],
     };
     // The reading only recovers what the letters noted; its letter was read
     // when the position was pushed.
@@ -1194,6 +1262,7 @@ mod tests {
             })),
             location: None,
             losses: Vec::new(),
+            frame_depth: 0,
         };
         let reading = ObservedLetters::reading(
             &mut stopped,
@@ -1242,6 +1311,7 @@ mod tests {
             outcome: FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(Box::new(FamilyCause))),
             location: None,
             losses: Vec::new(),
+            frame_depth: 0,
         };
         let reading = ObservedLetters::reading(
             &mut stopped,
@@ -1301,18 +1371,9 @@ pub fn observed_valuation(
     trace: TemporalTrace,
     meter: &mut Meter,
 ) -> Result<ObservedValuation, ValuationStop> {
-    let TemporalTrace::Finite { len } = trace else {
+    if !matches!(trace, TemporalTrace::Finite { .. }) {
         return Err(ValuationStop::NotFinite);
-    };
-    let checked = clause.clause();
-    let atoms: Vec<FormulaNodeId> = checked
-        .formula()
-        .nodes()
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }))
-        .map(|(index, _)| FormulaNodeId::from_arena_index(index))
-        .collect();
+    }
     let mut letters = ObservedLetters {
         package,
         clause,
@@ -1324,7 +1385,38 @@ pub fn observed_valuation(
         absent: &[],
         classes: &[],
         silent_from: None,
+        fixed: BTreeMap::new(),
+        active: None,
     };
+    letters_valuation(clause.clause(), &mut letters, trace, meter)
+}
+
+/// [`observed_valuation`] over any letter source: each `holds` atom of
+/// `clause` read through `letters` at every position of the closed finite
+/// `trace`, the activation positions, and the formula's value at each, on
+/// the one clause evaluator. A model behaviour's letters reach FR-931's
+/// cross-evaluation through this entry.
+///
+/// # Errors
+///
+/// [`ValuationStop`], as for [`observed_valuation`].
+pub fn letters_valuation<L: TemporalLetters>(
+    clause: &fsl_semantics::check::CheckedTemporalClause,
+    letters: &mut L,
+    trace: TemporalTrace,
+    meter: &mut Meter,
+) -> Result<ObservedValuation, ValuationStop> {
+    let TemporalTrace::Finite { len } = trace else {
+        return Err(ValuationStop::NotFinite);
+    };
+    let atoms: Vec<FormulaNodeId> = clause
+        .formula()
+        .nodes()
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }))
+        .map(|(index, _)| FormulaNodeId::from_arena_index(index))
+        .collect();
     let mut readings = Vec::new();
     let mut activations = Vec::new();
     for index in 0..len {
@@ -1335,7 +1427,7 @@ pub fn observed_valuation(
             .collect::<Result<Vec<_>, _>>()
             .map_err(ValuationStop::Letter)?;
         readings.push(row);
-        let active = match checked.activation() {
+        let active = match clause.activation() {
             fsl_semantics::check::Activation::Origin => index == 0,
             fsl_semantics::check::Activation::Each { guarded: false } => true,
             fsl_semantics::check::Activation::Each { guarded: true } => matches!(
@@ -1347,11 +1439,11 @@ pub fn observed_valuation(
         };
         if active {
             let (result, _) = super::engine::run_seeking(
-                super::engine::Subject::of_clause(checked),
+                super::engine::Subject::of_clause(clause),
                 trace,
                 super::engine::Goal::At(position),
                 false,
-                &mut letters,
+                letters,
                 meter,
             );
             activations.push((position, result.map_err(ValuationStop::Refused)?));

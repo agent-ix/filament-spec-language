@@ -348,7 +348,7 @@ fn source_and_types(g: &mut Grammar) {
             star(r(P::Profile)),
             star(r(P::ImportDeclaration)),
             star(r(P::Model)),
-            plus(r(P::Declaration)),
+            star(r(P::Declaration)),
             Rule::Terminal(Terminal::End),
         ]),
     );
@@ -1029,6 +1029,10 @@ fn expressions(g: &mut Grammar) {
         ]),
     );
     g.insert(
+        P::ReferenceLiteral,
+        s(vec![r(P::QualifiedName), x("#"), text()]),
+    );
+    g.insert(
         P::CollectionValue,
         s(vec![
             c(vec![
@@ -1174,6 +1178,7 @@ fn expressions(g: &mut Grammar) {
             x("self"),
             x("result"),
             s(vec![x("protocol"), r(P::QualifiedName)]),
+            r(P::ReferenceLiteral),
             r(P::QuantityLiteral),
             decimal_literal(),
             uint(),
@@ -3248,7 +3253,7 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::{complete_compound_spellings, complete_reserved_words, complete_v1};
-    use crate::{Limits, parse};
+    use crate::{parse, Limits};
     use fsl_foundation::SourceIdentity;
 
     #[trace("FSpec-TC-180", "FSpec-FR-339-AC-1", "FSpec-FR-302-AC-1")]

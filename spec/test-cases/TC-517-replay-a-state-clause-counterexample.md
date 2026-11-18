@@ -61,14 +61,15 @@ Tag the tests `#[trace("TC-517", "FR-122-AC-n")]`.
 ## Expected Results
 
 - Step 1: `reproduced-with-evaluated-witness`,
-  `reproduced-without-witness`, `reproduced-with-evaluated-witness`. No
-  payload carries a `witness` and no result carries an FSpec FR-351 record; each
+  `reproduced-without-witness`, `reproduced-with-evaluated-witness`. Each
+  payload carries FR-266-AC-2's decisive comparison record, each `Witness`-arm
+  result holds it, and each
   result holds the evaluated `false`. Each
   result holds the sources, `package_id`, the request's `state_clause`, the
   envelope's `clause_node` and `occurrence_key`, and the identities of the
   invocation and both snapshots, or of the one current snapshot.
 - Step 2: `inconclusive`, `Verdicts` (`violation`, `success`) twice, each
-  holding the evaluated `true` and no FSpec FR-351 record;
+  holding the evaluated `true` and no compared record;
   `inconclusive`, `NoValue`.
 - Step 3: `missing_declaration`/`missing-name` twice, each naming the target.
 - Step 4: `reproduced-with-evaluated-witness`, holding the one pre

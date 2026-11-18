@@ -35,6 +35,6 @@ pub(crate) fn variant_id(seed: impl AsRef<[u8]>) -> VariantId {
 }
 
 /// A structural fixture obligation identity.
-pub(crate) fn obligation_identity() -> fsl_replay::ObligationIdentity {
-    fsl_replay::ObligationIdentity::new(node_key([3]), None, 0)
+pub(crate) fn obligation_identity() -> fsl_package::ObligationIdentity {
+    fsl_package::ObligationIdentity::new(node_key([3]), None, 0)
 }

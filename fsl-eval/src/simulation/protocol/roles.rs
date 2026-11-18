@@ -27,8 +27,8 @@ use super::program::{Cursor, Lifetime};
 use super::settle::{SettleError, Settled};
 use super::steps::Gathered;
 use super::{
-    Bound, Disposition, Instance, ProtocolRefusal, ProtocolState, ProtocolSystem, RoleStatus,
-    Status, Thread, undetermined,
+    undetermined, Bound, Disposition, Instance, ProtocolRefusal, ProtocolState, ProtocolSystem,
+    RoleStatus, Status, Thread,
 };
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::model::encode::value_enc;
@@ -40,7 +40,12 @@ pub(super) enum Started {
     /// The instance, its root thread settled from the start of `run`.
     Instance(Box<Instance>),
     /// A guard or `check` the evaluator does not decide.
-    Undecided(Box<ModelFinding>),
+    Undecided {
+        /// The instance at its initial guard or check, if activation took it.
+        instance: Box<Instance>,
+        /// The evaluation finding to report at the reached state.
+        finding: Box<ModelFinding>,
+    },
 }
 
 /// Who takes the steps of a node (ADR-027 RR-2).
@@ -64,14 +69,16 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         ordinal: u64,
         trigger: Option<Bound>,
         model: &ModelSimState,
+        over: &Value,
     ) -> Result<Started, SettleError> {
         let root = ThreadPath::root(ordinal);
         let mut instance = Instance {
             trigger,
+            over: over.clone(),
             ..Instance::default()
         };
         for capture in &self.program.captures {
-            let mut frame = vec![Some(self.over.clone())];
+            let mut frame = vec![Some(instance.over.clone())];
             frame.extend(self.activation_value(&instance));
             frame.extend(Self::protocol_values(&instance));
             let owner = format!("{}::{}", self.protocol.name, capture.name);
@@ -80,7 +87,12 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     enc: value_enc(&value, self.model.typing()),
                     value: Some(value),
                 }),
-                Decided::Undecided(finding) => return Ok(Started::Undecided(finding)),
+                Decided::Undecided(finding) => {
+                    return Ok(Started::Undecided {
+                        instance: Box::new(instance),
+                        finding,
+                    });
+                }
             }
         }
         let rest = match self.settle(
@@ -90,7 +102,12 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             model,
         )? {
             Settled::Rest(rest) => rest,
-            Settled::Undecided(finding) => return Ok(Started::Undecided(finding)),
+            Settled::Undecided(finding) => {
+                return Ok(Started::Undecided {
+                    instance: Box::new(instance),
+                    finding,
+                });
+            }
         };
         instance.threads.insert(
             root,
@@ -123,13 +140,13 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
 
     /// The steps `step` gathers for a node owned by the replicated role
     /// `owner`, each given to every live instance of the role as its actor
-    /// (ADR-027 RR-2). With `only`, only the steps of that kind are the
+    /// (ADR-027 RR-2). With `only`, only steps of those kinds are the
     /// role's; the others are kept as they are.
     pub(super) fn by_owner(
         &self,
         instance: &Instance,
         owner: Option<usize>,
-        only: Option<StepKind>,
+        only: Option<&[StepKind]>,
         gathered: &mut Gathered<M>,
         step: impl FnOnce(&mut Gathered<M>) -> Result<(), ExpansionStop>,
     ) -> Result<(), ExpansionStop> {
@@ -144,7 +161,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         };
         let fresh: Vec<_> = gathered.successors.drain(from..).collect();
         for (transition, next) in fresh {
-            if only.is_some_and(|kind| transition.kind() != kind) {
+            if only.is_some_and(|kinds| !kinds.contains(&transition.kind())) {
                 gathered.successors.push((transition, next));
                 continue;
             }
@@ -236,7 +253,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 if *status != RoleStatus::Live {
                     continue;
                 }
-                let mut frame = vec![Some(self.over.clone())];
+                let mut frame = vec![Some(instance.over.clone())];
                 frame.extend(self.activation_value(instance));
                 frame.extend(Self::protocol_values(instance));
                 frame.push(Some(Value::Reference(object.clone())));
@@ -339,7 +356,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         let mut enabled = false;
         for record in records {
             if let Some(guard) = activation.guard {
-                let frame = vec![Some(record.clone()), Some(self.over.clone())];
+                let frame = vec![Some(record.clone()), Some(state.over.clone())];
                 match self.evaluate(guard, frame, &state.model)? {
                     Verdict::True => {}
                     Verdict::False => continue,
@@ -360,7 +377,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 value: Some(record),
                 enc: enc.clone(),
             };
-            match self.start(ordinal, Some(trigger), &state.model)? {
+            match self.start(ordinal, Some(trigger), &state.model, &state.over)? {
                 Started::Instance(started) => {
                     let mut next = state.clone();
                     next.instances.insert(ordinal, *started);
@@ -369,7 +386,14 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         .successors
                         .push((ProtocolTransition::activate(enc), next));
                 }
-                Started::Undecided(finding) => gathered.findings.push(*finding),
+                Started::Undecided { instance, finding } => {
+                    let mut next = state.clone();
+                    next.instances.insert(ordinal, *instance);
+                    next.initial_findings.push(*finding);
+                    gathered
+                        .successors
+                        .push((ProtocolTransition::activate(enc), next));
+                }
             }
         }
         Ok(enabled && at_bound)

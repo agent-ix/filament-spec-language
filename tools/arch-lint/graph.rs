@@ -164,16 +164,22 @@ pub fn construct_violations(edges: &[ConstructEdge]) -> Vec<ConstructEdge> {
         .collect()
 }
 
-/// The FSL crate that holds the layer-6 `replay` facade, the one FSL crate
-/// CG may take a normal dependency on (ADR-011 FB-05).
+/// The FSL crate that holds the layer-6 `replay` facade (ADR-011 FB-05).
 const REPLAY_FACADE_CRATE: &str = "fsl-replay";
 
+/// The FSL crate that owns `ObligationIdentity` (QSL-1109, CF-IR-04), which
+/// `fsl-replay` does not re-export. `fsl-replay` already depends on it, so a
+/// CG edge to it adds no crate to CG's graph (QSL-2166).
+const PACKAGE_CRATE: &str = "fsl-package";
+
+/// The FSL crates CG may take a normal dependency on (ADR-011 FB-05).
+const CG_ALLOWED_FSL_CRATES: [&str; 2] = [REPLAY_FACADE_CRATE, PACKAGE_CRATE];
+
 /// ADR-011 §3 FB-05: no backend (IR, RT, CG) depends on FSL, normal or dev,
-/// except CG's normal dependency on the layer-6 `replay` facade's crate,
-/// [`REPLAY_FACADE_CRATE`]. A CG edge to any other FSL crate, such as
-/// `fsl-semantics`, is a finding. This check is crate-level only -- FR-060's
-/// API-surface check is what verifies the dependency is used through
-/// `replay` alone. A shared leaf lives in its own repository, which
+/// except CG's normal dependencies on [`CG_ALLOWED_FSL_CRATES`]. A CG edge to
+/// any other FSL crate, such as `fsl-semantics`, is a finding. This check is
+/// crate-level only -- FR-060's API-surface check is what verifies the facade
+/// is used through `replay` alone. A shared leaf lives in its own repository, which
 /// `classify` places in no ecosystem repository, so its edges never reach
 /// this check.
 fn fb05_violations(edges: &[Edge]) -> Vec<Fb05Violation> {
@@ -183,7 +189,7 @@ fn fb05_violations(edges: &[Edge]) -> Vec<Fb05Violation> {
         .filter(|edge| {
             !(edge.from == Repo::Cg
                 && edge.kind == EdgeKind::Normal
-                && edge.via_crate == REPLAY_FACADE_CRATE)
+                && CG_ALLOWED_FSL_CRATES.contains(&edge.via_crate.as_str()))
         })
         .cloned()
         .map(|edge| Fb05Violation { edge })
@@ -357,17 +363,21 @@ mod tests {
         assert_eq!(report.fb05[0].edge.kind, EdgeKind::Dev);
     }
 
-    /// tc_arch_lint_direction_004: CG's normal dependency on the replay
-    /// facade's crate is the one stated exception and is not reported; its
-    /// normal dependency on any other FSL crate, the layer-3
+    /// tc_arch_lint_direction_004: CG's normal dependencies on the replay
+    /// facade's crate and on `fsl-package` are the stated exception and are
+    /// not reported; its normal dependency on any other FSL crate, the layer-3
     /// `fsl-semantics` or the root crate, is reported.
     #[trace("TC-156", "FR-059-AC-1", "FR-356-AC-1")]
     #[test]
     fn tc_arch_lint_direction_004_cg_normal_edge_is_the_named_exception() {
-        let report = check(&[edge(Repo::Cg, Repo::Fsl, EdgeKind::Normal, "fsl-replay")]);
+        let report = check(&[
+            edge(Repo::Cg, Repo::Fsl, EdgeKind::Normal, "fsl-replay"),
+            edge(Repo::Cg, Repo::Fsl, EdgeKind::Normal, "fsl-package"),
+        ]);
         assert!(report.fb05.is_empty(), "{report:?}");
         let edges = vec![
             edge(Repo::Cg, Repo::Fsl, EdgeKind::Normal, "fsl-semantics"),
+            edge(Repo::Cg, Repo::Fsl, EdgeKind::Normal, "fsl-eval"),
             edge(
                 Repo::Cg,
                 Repo::Fsl,
@@ -380,7 +390,10 @@ mod tests {
             .into_iter()
             .map(|violation| violation.edge.via_crate)
             .collect();
-        assert_eq!(flagged, ["fsl-semantics", "filament-spec-language"]);
+        assert_eq!(
+            flagged,
+            ["fsl-semantics", "fsl-eval", "filament-spec-language"]
+        );
     }
 
     /// tc_arch_lint_direction_005 (negative control): CG's *dev* dependency
@@ -389,14 +402,12 @@ mod tests {
     #[trace("TC-156", "FR-059-AC-3")]
     #[test]
     fn tc_arch_lint_direction_005_cg_dev_edge_into_fsl_is_violation() {
-        let edges = vec![edge(
-            Repo::Cg,
-            Repo::Fsl,
-            EdgeKind::Dev,
-            "filament-spec-language",
-        )];
+        let edges = vec![
+            edge(Repo::Cg, Repo::Fsl, EdgeKind::Dev, "filament-spec-language"),
+            edge(Repo::Cg, Repo::Fsl, EdgeKind::Dev, "fsl-package"),
+        ];
         let report = check(&edges);
-        assert_eq!(report.fb05.len(), 1);
+        assert_eq!(report.fb05.len(), 2);
     }
 
     /// tc_arch_lint_direction_006 (negative control): FSL -> IR -> FSL is a

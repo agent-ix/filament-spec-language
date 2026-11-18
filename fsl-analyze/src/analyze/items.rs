@@ -31,10 +31,10 @@ use fsl_semantics::model::observation::AdmissionFailure;
 use filament_exact::{Cancel, ObjectReference, ValueType};
 
 use super::{AnalyzeItem, EngineReport, Refusal};
-use crate::claim_family::claim_family;
+use crate::claim_family::{claim_family, kind_family};
 use crate::model_check::{
-    check_model, check_protocol, manifest as en1, HyperRefusal, LivenessRefusal, ModelCheckRefusal,
-    ModelCheckRequest, ProtocolCheckRequest,
+    check_model, check_protocol_constrained, manifest as en1, HyperRefusal, LivenessRefusal,
+    ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
 };
 use crate::statistical::{check_statistical, manifest as en4, StatisticalRequest};
 use crate::zone_check::{
@@ -124,6 +124,13 @@ pub fn model_item<'a>(
 ) -> Result<AnalyzeItem<'a>, DerivedItemMismatch> {
     match item.request.item {
         ModelCheckItem::Clause { .. } => Ok(run_model_item(index, CLAUSE_FAMILY, item)),
+        // FR-625, FR-951: an invariant runs on EN-1 as its `state-model`
+        // family's `operation-contract` item.
+        ModelCheckItem::Invariant { .. } => Ok(run_model_item(
+            index,
+            Some(DeclarationFamily::StateModel),
+            item,
+        )),
         ModelCheckItem::DeadlockFreedom | ModelCheckItem::RaceFreedom => {
             Err(DerivedItemMismatch::DerivedRun { index })
         }
@@ -137,16 +144,24 @@ pub(super) fn run_model_item(
     family: Option<DeclarationFamily>,
     item: ModelItem<'_>,
 ) -> AnalyzeItem<'_> {
+    let kind = match item.request.item {
+        ModelCheckItem::Invariant { .. } => Capability::OperationContract,
+        ModelCheckItem::Clause { .. }
+        | ModelCheckItem::DeadlockFreedom
+        | ModelCheckItem::RaceFreedom => Capability::TemporalSatisfaction,
+    };
     AnalyzeItem::new(
         index,
-        Capability::TemporalSatisfaction,
+        kind,
         family,
         Mode::Bounded,
         en1::BACKEND_ID,
         move |cancel| {
             let clause = match &item.request.item {
                 ModelCheckItem::Clause { clause, .. } => Some(*clause),
-                ModelCheckItem::DeadlockFreedom | ModelCheckItem::RaceFreedom => None,
+                ModelCheckItem::DeadlockFreedom
+                | ModelCheckItem::RaceFreedom
+                | ModelCheckItem::Invariant { .. } => None,
             };
             let simulation = item.request.subject.simulation.clone();
             match settle_model_item(item, cancel) {
@@ -238,14 +253,14 @@ pub fn protocol_item<'a>(
 ) -> Result<AnalyzeItem<'a>, DerivedItemMismatch> {
     match item.request.item {
         ModelCheckItem::Clause { .. } => Ok(run_protocol_item(index, CLAUSE_FAMILY, item)),
-        ModelCheckItem::DeadlockFreedom | ModelCheckItem::RaceFreedom => {
-            Err(DerivedItemMismatch::DerivedRun { index })
-        }
+        ModelCheckItem::DeadlockFreedom
+        | ModelCheckItem::RaceFreedom
+        | ModelCheckItem::Invariant { .. } => Err(DerivedItemMismatch::DerivedRun { index }),
     }
 }
 
 /// [`protocol_item`] with no check of what `item` runs.
-fn run_protocol_item(
+pub(super) fn run_protocol_item(
     index: RequestIndex,
     family: Option<DeclarationFamily>,
     item: ProtocolItem<'_>,
@@ -256,69 +271,70 @@ fn run_protocol_item(
         family,
         Mode::Bounded,
         en1::BACKEND_ID,
-        move |cancel| {
-            let ProtocolItem {
-                request,
-                certificate,
-                replay,
-            } = item;
-            let limits = request.limits;
-            let protocol = request.subject.protocol.clone();
-            let on_each = request
-                .subject
-                .model
-                .simulation
-                .package
-                .graph()
-                .protocol(&protocol)
-                .is_some_and(fsl_eval::simulation::protocol::activates_on_each);
-            let max_live_instances =
-                fsl_eval::simulation::protocol::live_instance_bound(request.max_live_instances);
-            let roles: Vec<_> = request
-                .subject
-                .roles
-                .iter()
-                .map(|binding| (binding.role.clone(), binding.model.clone()))
-                .collect();
-            let capacities: Vec<_> = request
-                .subject
-                .capacities
-                .iter()
-                .map(|binding| (binding.name.clone(), binding.value))
-                .collect();
-            let over = request.subject.over.clone();
-            let simulation = request.subject.model.simulation.clone();
-            match check_protocol(request, cancel) {
-                Ok(outcome) => {
-                    let record = fsl_replay::settle_protocol_check(
-                        &outcome,
-                        &limits,
-                        &certificate,
-                        cancel,
-                        replay,
-                    );
-                    // The model system is rebuilt only for a counterexample.
-                    let subject = record
-                        .counterexample
-                        .as_ref()
-                        .and_then(|_| {
-                            fsl_eval::simulation::protocol::over_reference(
-                                simulation, &protocol, &over,
-                            )
-                        })
-                        .map(|over| fsl_replay::ProtocolWire {
-                            protocol,
-                            over,
-                            roles,
-                            capacities,
-                            max_live_instances: on_each.then_some(max_live_instances),
-                        });
-                    EngineReport::Protocol(Box::new(record), subject)
-                }
-                Err(refusal) => EngineReport::Refused(model_refusal(&refusal)),
-            }
-        },
+        move |cancel| settle_protocol_item(item, None, cancel),
     )
+}
+
+/// Run `item` on EN-1 over its protocol subject and settle it (FR-215,
+/// FR-217).
+pub(super) fn settle_protocol_item(
+    item: ProtocolItem<'_>,
+    constraint: Option<&str>,
+    cancel: &Cancel,
+) -> EngineReport {
+    let ProtocolItem {
+        request,
+        certificate,
+        replay,
+    } = item;
+    let limits = request.limits;
+    let protocol = request.subject.protocol.clone();
+    let on_each = request
+        .subject
+        .model
+        .simulation
+        .input
+        .evaluator
+        .protocol(&protocol)
+        .is_some_and(fsl_eval::simulation::protocol::activates_on_each);
+    let max_live_instances =
+        fsl_eval::simulation::protocol::live_instance_bound(request.max_live_instances);
+    let roles: Vec<_> = request
+        .subject
+        .roles
+        .iter()
+        .map(|binding| (binding.role.clone(), binding.model.clone()))
+        .collect();
+    let capacities: Vec<_> = request
+        .subject
+        .capacities
+        .iter()
+        .map(|binding| (binding.name.clone(), binding.value))
+        .collect();
+    let over = request.subject.over.clone();
+    let simulation = request.subject.model.simulation.clone();
+    match check_protocol_constrained(request, constraint, cancel) {
+        Ok(outcome) => {
+            let record =
+                fsl_replay::settle_protocol_check(&outcome, &limits, &certificate, cancel, replay);
+            // The model system is rebuilt only for a counterexample.
+            let subject = record
+                .counterexample
+                .as_ref()
+                .and_then(|_| {
+                    fsl_eval::simulation::protocol::over_reference(simulation, &protocol, &over)
+                })
+                .map(|over| fsl_replay::ProtocolWire {
+                    protocol,
+                    over,
+                    roles,
+                    capacities,
+                    max_live_instances: on_each.then_some(max_live_instances),
+                });
+            EngineReport::Protocol(Box::new(record), subject)
+        }
+        Err(refusal) => EngineReport::Refused(model_refusal(&refusal)),
+    }
 }
 
 /// The `probabilistic-satisfaction` item that runs `request` on EN-4 and
@@ -520,21 +536,84 @@ pub enum DerivedItemMismatch {
     },
 }
 
+/// What the FR-411 "Deadlock-freedom verdict join" reads of the package a
+/// derived item's run or certificate check is over.
+#[derive(Clone, Copy)]
+enum JoinPackage<'p> {
+    /// The source route: the package's `CheckedGraph` (FR-531).
+    Source(&'p CheckedPackage),
+    /// The package route (FR-940): the model selections the admitted package
+    /// records. The package route's input admits no `terminal` node
+    /// ([`fsl_package::BarePackage::first_unread_model_form`] refuses one), so
+    /// the package declares no terminal state.
+    Package(&'p [fsl_semantics::model::domain_package::DomainPackageRef]),
+}
+
+impl JoinPackage<'_> {
+    /// Whether the package holds a `model_root` node whose `generated`
+    /// occurrence 0 is `claim`.
+    fn anchors(self, claim: &OccurrenceKey) -> bool {
+        match self {
+            Self::Source(package) => package
+                .graph()
+                .model_roots()
+                .any(|(_, root)| OccurrenceKey::generated(root) == *claim),
+            Self::Package(selections) => selections
+                .iter()
+                .filter_map(|selection| fsl_semantics::check::model_root_key(selection).ok())
+                .any(|root| OccurrenceKey::generated(root) == *claim),
+        }
+    }
+
+    /// Each selected model's terminal node key.
+    fn terminal_keys(self) -> TerminalKeys {
+        match self {
+            Self::Source(package) => package.graph().terminal_keys(),
+            Self::Package(_) => TerminalKeys::default(),
+        }
+    }
+}
+
+/// The source package a derived item's run or check is over: a
+/// package-route subject carries none to read `derived`'s anchor from.
+fn source<'p>(
+    package: Option<&'p CheckedPackage>,
+    derived: &RequestItem,
+) -> Result<&'p CheckedPackage, DerivedItemMismatch> {
+    package.ok_or_else(|| DerivedItemMismatch::OtherAnchor {
+        index: derived.index(),
+        occurrence: derived.occurrence().clone(),
+    })
+}
+
+/// The package a model subject's run or check reading `input` is over: the
+/// source package on the source route, the admitted package's model
+/// selections on the package route (FR-940).
+fn joined<'p>(
+    input: &fsl_eval::simulation::model::ModelCheckInput<'p>,
+    derived: &RequestItem,
+) -> Result<JoinPackage<'p>, DerivedItemMismatch> {
+    match (input.source_package(), input.admitted_package()) {
+        (Some(package), _) => Ok(JoinPackage::Source(package)),
+        (None, Some(_)) => Ok(JoinPackage::Package(input.model_selections)),
+        (None, None) => Err(DerivedItemMismatch::OtherAnchor {
+            index: derived.index(),
+            occurrence: derived.occurrence().clone(),
+        }),
+    }
+}
+
 /// FSpec FR-368 "Claim and anchor": every package a run or a certificate
 /// check of `derived` is over holds the `model_root` node `derived` is
 /// anchored at, with its `generated` occurrence 0 (FR-411
 /// "Deadlock-freedom verdict join": the node of the obligation identity).
 fn join_anchor<'p>(
     derived: &RequestItem,
-    packages: impl IntoIterator<Item = &'p CheckedPackage>,
+    packages: impl IntoIterator<Item = JoinPackage<'p>>,
 ) -> Result<(), DerivedItemMismatch> {
     let claim = derived.occurrence();
     for package in packages {
-        let anchored = package
-            .graph()
-            .model_roots()
-            .any(|(_, root)| OccurrenceKey::generated(root) == *claim);
-        if !anchored {
+        if !package.anchors(claim) {
             return Err(DerivedItemMismatch::OtherAnchor {
                 index: derived.index(),
                 occurrence: claim.clone(),
@@ -549,14 +628,14 @@ fn join_anchor<'p>(
 /// certificate check of it is over.
 fn join_terminals<'p>(
     derived: &RequestItem,
-    packages: impl IntoIterator<Item = &'p CheckedPackage>,
+    packages: impl IntoIterator<Item = JoinPackage<'p>>,
 ) -> Result<TerminalKeys, DerivedItemMismatch> {
     let index = derived.index();
     let expected = derived
         .derived_terminals()
         .ok_or(DerivedItemMismatch::NotDerived { index })?;
     for package in packages {
-        if let Some(mismatch) = expected.mismatch(&package.graph().terminal_keys()) {
+        if let Some(mismatch) = expected.mismatch(&package.terminal_keys()) {
             return Err(DerivedItemMismatch::TerminalDeclaration { index, mismatch });
         }
     }
@@ -649,19 +728,15 @@ pub fn derived_model_item<'a>(
         });
     }
     let packages = [
-        item.request.subject.simulation.package,
-        item.certificate.subject.simulation.package,
+        joined(&item.request.subject.simulation.input, derived)?,
+        joined(&item.certificate.subject.simulation.input, derived)?,
     ];
     join_anchor(derived, packages)?;
     let expected = join_terminals(derived, packages)?;
     item.replay = joined_replay(item.replay, expected);
     item.request.limits.limits = derived_graph_limits(limits);
     item.request.max_depth = None;
-    let family = claim_family(
-        item.request.subject.simulation.package,
-        ItemKind::DeadlockFreedom,
-        derived.occurrence(),
-    );
+    let family = kind_family(ItemKind::DeadlockFreedom);
     Ok(run_model_item(index, family, item))
 }
 
@@ -735,7 +810,10 @@ pub fn derived_protocol_item<'a, S>(
     item.certificate.max_messages = max_messages;
     item.certificate.max_live_instances = max_live_instances;
     let family = claim_family(
-        item.request.subject.model.simulation.package,
+        source(
+            item.request.subject.model.simulation.source_package(),
+            derived,
+        )?,
         kind,
         derived.occurrence(),
     );
@@ -788,8 +866,14 @@ pub fn derived_zone_item<'a, S: Clone + Eq + 'a>(
     // deadlock-freedom run settles `Proved{Reduced, Uncertified}` with no
     // certificate check (FR-160), so the run alone can decide the verdict.
     let packages = [
-        item.request.subject.system().package(),
-        item.certificate.simulation.package,
+        JoinPackage::Source(source(
+            item.request.subject.system().source_package(),
+            derived,
+        )?),
+        JoinPackage::Source(source(
+            item.certificate.simulation.source_package(),
+            derived,
+        )?),
     ];
     join_anchor(derived, packages)?;
     if kind == ItemKind::DeadlockFreedom {
@@ -823,7 +907,7 @@ pub fn derived_zone_item<'a, S: Clone + Eq + 'a>(
         defaults.max_symbolic_transitions,
     );
     let family = claim_family(
-        item.request.subject.system().package(),
+        source(item.request.subject.system().source_package(), derived)?,
         kind,
         derived.occurrence(),
     );
@@ -932,19 +1016,27 @@ fn timed_refinement_refusal(refusal: &TimedRefinementRefusal) -> Refusal {
         // request does not give, or a concrete subject that is not timed.
         TimedRefinementRefusal::Subject(SubjectRefusal::NoModels | SubjectRefusal::NoUniverse)
         | TimedRefinementRefusal::Timed(_) => Refusal::Failed(INVALID_VALUE),
+        // EN-6 opens its subjects from snapshots, which stop on no budget.
+        TimedRefinementRefusal::Subject(SubjectRefusal::Stopped(_)) => Refusal::Failed(BROKEN),
     }
 }
 
 pub(crate) fn admission(failure: &AdmissionFailure) -> Refusal {
     let declined = |cause, record: &fsl_semantics::model::observation::AdmissionRecord| {
-        Refusal::Declined(
-            cause,
-            DeclineCode::Fsl(
-                fsl_foundation::diagnostic::Code::from_code(record.catalog.code())
-                    .unwrap_or(fsl_foundation::diagnostic::Code::RuntimeInvariant),
-            ),
-            record.catalog,
-        )
+        let decline = DeclineCode::Fsl(
+            fsl_foundation::diagnostic::Code::from_code(record.catalog.code())
+                .unwrap_or(fsl_foundation::diagnostic::Code::RuntimeInvariant),
+        );
+        if record.fields.is_empty() {
+            Refusal::Declined(cause, decline, record.catalog)
+        } else {
+            let detail = record
+                .fields
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), serde_json::json!(value)))
+                .collect();
+            Refusal::DeclinedWithDetail(cause, decline, record.catalog, detail)
+        }
     };
     match failure {
         AdmissionFailure::Refused(record) => declined(ProofRefusalCause::InvalidInput, record),
@@ -1009,6 +1101,7 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         // A request defect: an operation or subject count the request names
         // wrongly, or the race-freedom item over a model subject.
         ModelCheckRefusal::RaceOverModel
+        | ModelCheckRefusal::InvariantOverProtocol
         | ModelCheckRefusal::Liveness(LivenessRefusal::UnknownOperation { .. })
         | ModelCheckRefusal::Hyper(
             HyperRefusal::UnknownOperation { .. } | HyperRefusal::SubjectCount { .. },
@@ -1018,6 +1111,24 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal)) => {
             Refusal::Failed(CatalogCode::new(refusal.code().as_str(), refusal.cause()))
         }
+        // FSL FR-1033: a protocol binding FR-205's subject builder refuses is
+        // the request's own `invalid_runtime_input`, so the item settles
+        // `declined` `invalid-input` with that code.
+        ModelCheckRefusal::Protocol(ProtocolRefusal::UnknownProtocol { protocol }) => {
+            named_decline(INVALID_VALUE, "protocol", protocol.clone())
+        }
+        ModelCheckRefusal::Protocol(
+            ProtocolRefusal::OverBinding { .. } | ProtocolRefusal::RolePopulation { .. },
+        ) => Refusal::Declined(
+            ProofRefusalCause::InvalidInput,
+            DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+            INVALID_VALUE,
+        ),
+        ModelCheckRefusal::Protocol(ProtocolRefusal::RoleMapping { role }) => named_decline(
+            CatalogCode::new("invalid_runtime_input", "wrong-role-mapping"),
+            "role",
+            role.clone(),
+        ),
         // Engine defects, and refusals whose types name no catalog code
         // (a spec point for STD-444's follow-up): `failed` with the
         // broken-invariant diagnostic.
@@ -1051,6 +1162,20 @@ pub(super) fn statistical_refusal(
     })
 }
 
+/// FSL FR-1033-AC-5: a protocol binding the request's own input does not admit
+/// settles `declined` `invalid-input`, its diagnostic naming the `member`
+/// `name` it refused.
+fn named_decline(code: CatalogCode, member: &str, name: String) -> Refusal {
+    let mut detail = serde_json::Map::new();
+    detail.insert(member.to_owned(), serde_json::json!(name));
+    Refusal::DeclinedWithDetail(
+        ProofRefusalCause::InvalidInput,
+        DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+        code,
+        detail,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -1077,9 +1202,7 @@ mod tests {
             Refusal::Declined(_, _, code)
             | Refusal::DeclinedWithDetail(_, _, code, _)
             | Refusal::Unsupported(code)
-            | Refusal::Failed(code) => {
-                Some(code.to_string())
-            }
+            | Refusal::Failed(code) => Some(code.to_string()),
             Refusal::RequiresBound
             | Refusal::NotStatistical
             | Refusal::NotEmitted
@@ -1119,6 +1242,25 @@ mod tests {
             diagnostic.to_string(),
             "unavailable_observation/missing-required-artifact"
         );
+    }
+
+    /// FR-1000-AC-4/10: subject-binding admission fields reach the outcome's
+    /// structured diagnostic details.
+    #[trace("TC-2957", "FR-1000-AC-4", "FR-1000-AC-10")]
+    #[test]
+    fn admission_preserves_reference_literal_type_and_key_details() {
+        let mut admission_record = record(Code::IllTyped, "operator-ineligible");
+        admission_record
+            .fields
+            .insert("type", "Counter".to_owned());
+        admission_record.fields.insert("key", "62".to_owned());
+        let failure = AdmissionFailure::Refused(Box::new(admission_record));
+        let Refusal::DeclinedWithDetail(_, _, diagnostic, details) = admission(&failure) else {
+            panic!("expected the admission fields to be retained");
+        };
+        assert_eq!(diagnostic.to_string(), "ill_typed/operator-ineligible");
+        assert_eq!(details["type"], "Counter");
+        assert_eq!(details["key"], "62");
     }
 
     /// FR-281-AC-11: a malformed symmetry declaration is `declined`,

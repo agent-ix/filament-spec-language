@@ -47,7 +47,7 @@ through FR-059-AC-6 and FR-059-AC-8 through FR-059-AC-11.
    `filament-semantic-value`, sourced from the `agent-ix/filament-semantic-value` git
    url, and on `fsl-semantics` and `fsl-eval`, sourced from the FSL
    repository's git url, and run the check on the resulting edges.
-9. Build a graph in which CG has normal dependencies on `fsl-replay` and
+9. Build a graph in which CG has normal dependencies on `fsl-replay`, `fsl-package` and
    `fsl-eval`, sourced from the FSL repository's git url, on
    `filament-semantic-value`, sourced from the `agent-ix/filament-semantic-value`
    git url, and on `filament-eval` and `filament-eval-corpus`, sourced from the
@@ -85,12 +85,12 @@ through FR-059-AC-6 and FR-059-AC-8 through FR-059-AC-11.
   the FB-05 report names exactly those two; the `filament-semantic-value`
   dependency contributes no edge.
 - Step 9: the FB-05 report names exactly the CG → FSL edge via `fsl-eval`;
-  the `fsl-replay`, `filament-semantic-value`, `filament-eval` and
+  the `fsl-replay`, `fsl-package`, `filament-semantic-value`, `filament-eval` and
   `filament-eval-corpus` dependencies are not reported.
   Without `fsl-eval`, the FB-05 report is empty (FR-059-AC-10).
-- Step 10: the listed dependencies are only `fsl-replay`,
+- Step 10: the listed dependencies are only `fsl-replay`, `fsl-package`,
   `filament-semantic-value` and crates of `agent-ix/filament-eval`; every CG → FSL
-  normal edge is via `fsl-replay`, and the FB-05 report names no CG edge
+  normal edge is via `fsl-replay` or `fsl-package`, and the FB-05 report names no CG edge
   (FR-059-AC-11). This output is captured for the
   PR body as real evidence, as step 6's is.
 

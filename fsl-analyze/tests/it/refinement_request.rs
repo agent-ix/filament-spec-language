@@ -284,7 +284,7 @@ fn settle(world: &World, initial: &DocumentRef) -> TerminalValue {
             refinement: world.refinement(),
             concrete: subject(world),
             abstract_package: world.package(),
-            abstract_initial: vec![initial.clone()],
+            abstract_initial: vec![initial.clone()].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -313,7 +313,7 @@ fn settle(world: &World, initial: &DocumentRef) -> TerminalValue {
             refinement: world.refinement(),
             concrete: concrete.clone(),
             abstract_package: world.package(),
-            abstract_initial: vec![initial.clone()],
+            abstract_initial: vec![initial.clone()].into(),
         },
         &Cancel::new(),
         |payload| replay_refinement_trace(world.refinement(), &systems, payload),
@@ -464,4 +464,62 @@ fn the_refinement_record_is_also_an_smt_unrolling_candidate() {
     let mut expected = vec![en1::BACKEND_ID.to_owned(), "smt".to_owned()];
     expected.sort();
     assert_eq!(ids, expected);
+}
+
+/// FR-962-AC-5 (TC-2702 step 5): over a registry holding `en-1` and an SMT
+/// backend advertising `operation-contract` in bounded mode, each FR-146
+/// per-step record item matches exactly `[smt]`, since FR-962 excludes
+/// `en-1` from an `operation-contract` item that is not an invariant over a
+/// model subject; an unnamed `operation-contract` item for the `invariant`
+/// state clause `self.value <= 3` in a request naming a model subject still
+/// matches `en-1`, and with no model subject it does not.
+#[trace("TC-2702", "FR-962-AC-5")]
+#[test]
+fn per_step_records_exclude_en1_and_an_invariant_keeps_it() {
+    let registry = registry(Some(smt_backend(&[(
+        Capability::OperationContract,
+        fsl_route::Mode::Bounded,
+    )])));
+    let world = World::new(&cas_refines_counter());
+    let items = per_step_items(&world, &registry);
+    assert!(!items.is_empty());
+    for item in &items {
+        assert_eq!(candidate_ids(item.candidates()), ["smt"]);
+    }
+
+    let document = crate::counter::document(false);
+    let package = crate::counter::package(
+        &document,
+        &format!(
+            "{}invariant AtMostThree using v on M::Counter at current {{ self.value <= 3 }}\n",
+            crate::counter::CONTRACT
+        ),
+    );
+    let clause = package
+        .graph()
+        .state_clauses()
+        .iter()
+        .find(|clause| clause.name() == "AtMostThree")
+        .expect("the invariant is checked");
+    let claim = OccurrenceKey::new(clause.identity(), clause.claim().clone());
+    let matched = |model_subject: bool| {
+        candidate_ids(&fsl_analyze::tie_rule::resolve_tie(
+            &package,
+            &claim,
+            Capability::OperationContract,
+            None,
+            model_subject,
+            registry.candidates(Capability::OperationContract, None),
+        ))
+    };
+    assert!(
+        matched(true).contains(&"en-1".to_owned()),
+        "{:?}",
+        matched(true)
+    );
+    assert!(
+        !matched(false).contains(&"en-1".to_owned()),
+        "{:?}",
+        matched(false)
+    );
 }

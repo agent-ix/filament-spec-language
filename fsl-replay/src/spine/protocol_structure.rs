@@ -10,9 +10,9 @@ use filament_contract_model::{
     CheckedNodeId, CheckedPackageV2, CheckedSemanticNodeV2, CheckedTerm, LiteralKind,
 };
 use fsl_package::protocol_view::{
-    ChannelOrdering, ControlBody, EdgeKind, Port, PortRef, ViewRefusal, causal_relation,
-    channel_endpoints, channel_ordering, control_body, control_operation, decision_reads,
-    fifo_key_reads_message, protocol_view, role_replication_maximum,
+    causal_relation, channel_endpoints, channel_ordering, control_body, control_operation,
+    decision_reads, fifo_key_reads_message, protocol_view, role_replication_maximum,
+    ChannelOrdering, ControlBody, EdgeKind, Port, PortRef, ViewRefusal,
 };
 
 use crate::protocol_analysis::{
@@ -492,8 +492,8 @@ pub fn replay_protocol_analysis(
     budget: RunBudget,
 ) -> Result<crate::result::ReplayResult, ProtocolReplayRefusal> {
     use crate::protocol_analysis::{
-        ProtocolAnalysisKey, ProtocolReplayResult, ProtocolReplaySettlement,
-        replay_projection_counterexample,
+        replay_projection_counterexample, ProtocolAnalysisKey, ProtocolReplayResult,
+        ProtocolReplaySettlement,
     };
     let crate::witness::ReplaySource::ProtocolAnalysis(evidence) = source else {
         return Err(ProtocolReplayRefusal::WrongSource);

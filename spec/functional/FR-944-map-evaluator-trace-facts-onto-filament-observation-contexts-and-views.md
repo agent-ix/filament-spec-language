@@ -44,16 +44,45 @@ trace the evaluator already admitted (FR-106) keeps one admission authority
 for the trace's identities and stamps, so the identity of a position in an
 owner document is the identity FR-502's covered set records.
 
-### Decision: an uncertain cover is a closed interval in half-ticks
+### Decision: an uncertain cover is a closed interval in quarter-ticks
 
 The owner's `EventTimeInterval` is closed with integer endpoints, and its
-`relation_to` answers which orders two intervals admit. FR-501's counter cover
-of a reading `k` is the half-open interval `[k-u, k+1+u)` of the counter unit.
-Mapping it to the closed integer interval `[2(k-u), 2(k+1+u) - 1]` in units of
-half a tick, and an exact stamp `k` to `[2k, 2k]`, makes the owner's answers
-equal FR-501's on every reading: definitely-before of two covers, and the
+`relation_to` answers which orders two intervals admit. FR-501's covers are
+not all closed: the counter cover of a reading `k` is the half-open interval
+`[k-u, k+1+u)` of the counter unit, and an interval stamp (FR-966) may be
+open at either end (`earliest_open`, `latest_open`). Every cover is therefore
+mapped, uniformly, to a closed integer interval in units of a quarter tick:
+a closed endpoint `c` maps to `4c`, an open lower endpoint `a` to `4a+1` and
+an open upper endpoint `b` to `4b-1`. The counter cover becomes
+`[4(k-u), 4(k+1+u) - 1]`, an exact stamp `k` becomes `[4k, 4k]`, a bounded
+cover `[t-u, t+u]` becomes `[4(t-u), 4(t+u)]`, and every bound `b` the
+comparison reads is scaled to `4b`.
+
+Quarter ticks keep every strict comparison strict. An open end moves its
+endpoint inward by one quarter tick, less than the distance to the next whole
+tick, so it never reaches a value a closed endpoint could hold. A difference
+of two covers reads one endpoint of each, so a doubly-open difference moves
+by at most two quarter ticks, less than the four between two whole-tick
+thresholds: a difference whose true supremum is the integer `D` has a scaled
+supremum in `[4D-2, 4D]`, and one whose true infimum is `D` a scaled infimum
+in `[4D, 4D+2]`, so no scaled endpoint crosses an integer threshold `4b`
+unless the true endpoint does. An open supremum `D = b` still lands at or
+below `4b`, and an open supremum `D = b+1` lands at `4b+2`, above it. Half
+ticks are not enough: an open lower end at `a` and an open upper end at `l`
+give `2a+1` and `2l-1`, a difference of `2(l-a) - 2`, so a doubly-open
+difference with supremum `l-a = B+1` against the bound `B` scales to exactly
+`2B` and reads `True`, while the difference can lie anywhere in `(B, B+1)`
+and the truth is `Indeterminate`. With the quarter-tick mapping the owner's
+answers equal FR-501's on every reading: definitely-before of two covers, the
 bound comparison `later - earlier <= b` as the order of `later` against
-`earlier` shifted by `2b`. No owner rule is added for it.
+`earlier` shifted by `4b`, and the eligibility comparisons below. No owner
+rule is added for it.
+
+Scaling and shifting run in `i128` over the trace input's stamps and
+uncertainties (`u64`) and a clause's bounds (64-bit integers). Every scaled
+endpoint, scaled bound and shifted endpoint is then below `2^68` in
+magnitude, far inside `i128`, so the mapping cannot overflow: every admitted
+reading maps exactly, with no wrapping, saturation or refusal.
 
 ## Inputs
 
@@ -119,15 +148,41 @@ FR-526's reports, read from them.
 
 ### Partial values and interval order
 
-- A reading `k` under `ClockCover::Counter { uncertainty: u }` SHALL map to
-  `EventTimeInterval::new(clock, profile, unit, 2(k-u), 2(k+1+u) - 1)`, and
-  under `ClockCover::Exact` to `[2k, 2k]`, the unit identity the clock unit
-  with the suffix `/2`. These intervals are compared with each other and never
-  written into an owner document.
+- Every cover SHALL map to a quarter-tick `EventTimeInterval::new(clock,
+  profile, unit, earliest, latest)`, the unit identity the clock unit with
+  the suffix `/4`, each closed endpoint `c` as `4c`, an open lower endpoint
+  `a` (FR-966 `earliest_open`) as `4a+1` and an open upper endpoint `b`
+  (FR-966 `latest_open`) as `4b-1`: a reading `k` under
+  `ClockCover::Counter { uncertainty: u }` maps to `[4(k-u), 4(k+1+u) - 1]`,
+  under `ClockCover::Exact` to `[4k, 4k]`, a point stamp `t` under
+  `ClockCover::Bounded { uncertainty: u }` to `[4(t-u), 4(t+u)]`, and an
+  observation's interval stamp, which overrides the cover (FR-501, FR-966),
+  to its own endpoints mapped by their flags. These intervals are compared
+  with each other and never written into an owner document.
+- Every bound `b` SHALL scale to `4b`. Every scaled endpoint, scaled bound and
+  shifted endpoint SHALL be computed exactly in `i128` from the `u64` stamps
+  and uncertainties and the 64-bit bounds; bounded below `2^68` in
+  magnitude, no such value overflows.
 - `definitely_before(a, b)` SHALL be `relation_to(a, b).definitely_before()`.
 - `within_bound(b, request, ack)` SHALL be read from `relation_to(ack,
-  request shifted by 2b)`: `True` when the relation admits no `after`, `False`
+  request shifted by 4b)`: `True` when the relation admits no `after`, `False`
   when it admits neither `before` nor `equal`, and `Indeterminate` otherwise.
+- Eligibility (FR-501 "Positions, anchor and eligible instants") SHALL read
+  the scaled difference of the candidate and the anchor, `[lo, hi]` with
+  `lo` the candidate's scaled earliest minus the anchor's scaled latest and
+  `hi` the candidate's scaled latest minus the anchor's scaled earliest
+  (anchor and candidate swapped for a backward bound, and `[0, 0]` for a
+  position's distance to itself), and SHALL decide each one-sided bound by
+  its endpoints alone:
+  - `at_least b`: eligible when `lo >= 4b`, ineligible when `hi < 4b`, and
+    otherwise `Indeterminate` with reason `StraddlesBound`;
+  - `at_most b`: eligible when `hi <= 4b`, ineligible when `lo > 4b`, and
+    otherwise `Indeterminate` with reason `StraddlesBound`;
+  - a window `[a, b]` is `at_least a` and `at_most b`, eligible when both
+    are, ineligible when either is, and otherwise `Indeterminate`.
+
+  No unbounded owner interval is formed for a one-sided bound: the
+  comparison reads the two endpoints against `4b` and nothing else.
 - A position's Kleene value SHALL map to the owner's `PossibilitySet`: `true`
   to `{can_be_true}` and `false` to `{can_be_false}`, reason `Known`;
   `indeterminate` for missing history (FR-501 `MissingHistory`) to both,
@@ -208,10 +263,13 @@ the owner.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-944-AC-1 | For readings 0 to 6 under `Counter { uncertainty: 1 }` and under `Exact`, with bounds 0 to 6, `definitely_before` and `within_bound` read through the owner's `relation_to` on the half-tick intervals equal `ClockCover`'s answers on every pair. | Test (TC-2624) |
+| FR-944-AC-1 | For readings 0 to 6 under `Counter { uncertainty: 1 }` and under `Exact`, with bounds 0 to 6, `definitely_before` and `within_bound` read through the owner's `relation_to` on the quarter-tick intervals (reading 3 maps to `[8, 19]` under `Counter { uncertainty: 1 }` and to `[12, 12]` under `Exact`, unit `ms/4`, and bound `b` shifts the request by `4b`) equal `ClockCover`'s answers on every pair. | Test (TC-2624) |
 | FR-944-AC-2 | FR-501-AC-13's counter-cover trace admits through `filament_observation::admit` with one record per position whose identity is the owner's `record_identity`, and every report names the position's FR-106 identity through the side mapping; a `ms` stamp 3 admits as `event_time_nanos` 3000000, and stamp 3 under a declared unit of factor `rational(1, 2000000000)` (1/2 ns) refuses at stage `admit` naming its position; and the partial facts of its atoms read back through `partial::read` with the possibility sets and reasons of their Kleene values. | Test (TC-2624) |
 | FR-944-AC-3 | FR-524-AC-27 to AC-29's scopes give `Active`, `Inactive` and the three `Unknown` kinds through `activation::derive` and the mapping above, equal to the dispositions the evaluator reports; FR-526-AC-2's superseding request gives a repair plan that invalidates exactly the superseded result and retains the other's bytes. | Test (TC-2624) |
 | FR-944-AC-4 | Once filament-observation FR-013 lands, FR-502-AC-2's cases through `completeness::revise` refuse `Complete { through: 60 }`, `Incomplete` and the uncovered position stamped 80, refuse a covered position re-delivered under a different observation identity (`MemberObservationChanged`, FR-502's changed-fingerprint case), accept a successor over its own admitted history with another subject, and accept `Complete { through: 100 }` and `{ through: 140 }`, exactly as FR-502's ledger does. | Test (TC-2624) |
+| FR-944-AC-5 | Under `Bounded { uncertainty: 0 }` and unit `ms`, a request `holds(req)` stamped 1 with interval `(0, 1]` maps to `[1, 4]` and an `ack` stamped 3 with interval `[3, 4)` maps to `[12, 15]`; `within_bound(3, req, ack)` read through `relation_to(ack, req shifted by 12)` is `Indeterminate`, and `holds(req) implies eventually[0,3] holds(ack)` with `W` and `Complete { through: 10 }` gives `Indeterminate { reason: StraddlesBound }`, equal to `ClockCover`'s answer, where the half-tick mapping (`[1, 2]`, `[6, 7]`, shift 6) would read `True`. The same request with the `ack` stamped 2 with interval `[2, 3)`, mapped to `[8, 11]`, gives `Completed(true)`. | Test (TC-2624) |
+| FR-944-AC-6 | With an anchor of interval `[0, 0]` (`[0, 0]` in quarter ticks) under `Counter { uncertainty: 0 }`: for `at_least 2`, reading 2 (`[8, 11]`) is eligible, reading 1 (`[4, 7]`) ineligible, and reading 2 under `Counter { uncertainty: 1 }` (`[4, 15]`) `Indeterminate` with reason `StraddlesBound`; for `at_most 2`, reading 1 is eligible, reading 3 (`[12, 15]`) ineligible and reading 2 `Indeterminate` with reason `StraddlesBound`; a candidate of interval `(1, 2]` (`[5, 8]`) is eligible for `at_least 1`, one of interval `[0, 1)` (`[0, 3]`) is ineligible for `at_least 1` and `Indeterminate` for `at_most 0`; and against an anchor of interval `(0, 1]` (`[1, 4]`) a candidate of interval `[3, 4)` (`[12, 15]`) is `Indeterminate` for `at_most 3` and eligible for `at_least 2`. Each decision equals `ClockCover`'s eligibility, and no owner interval with an unbounded end is formed. | Test (TC-2624) |
+| FR-944-AC-7 | Scaling is exact at the domain's edge: a reading `18446744073709551615` under `Counter { uncertainty: 18446744073709551615 }` maps to `[0, 147573952589676412923]`, reading 0 under the same cover to `[-73786976294838206460, 73786976294838206463]`, and the bounds `9223372036854775807` and `-9223372036854775808` scale to `36893488147419103228` and `-36893488147419103232`; `within_bound` and `definitely_before` over these readings and bounds equal `ClockCover`'s answers. | Test (TC-2624) |
 
 ## Dependencies
 

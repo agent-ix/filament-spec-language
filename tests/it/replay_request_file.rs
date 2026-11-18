@@ -340,3 +340,19 @@ fn a_replay_request_file_replays_a_library_clock_from_the_package() {
         assert!(envelope.contains(named), "names {named}: {envelope}");
     }
 }
+
+/// FR-286-AC-21: a replay's outcome document carries the `replayed` result,
+/// each entry the `results` document's row.
+#[test]
+#[trace("TC-2963", "FR-286-AC-21")]
+#[ignore = "QSL-2292: the replay outcome document carries no result member yet"]
+fn a_replay_outcome_carries_and_renders_its_results() {
+    let fixture = Fixture::compile(OWN_VALUE, LIBRARY_HEAD, None);
+    let path = fixture.request_file(&fixture.package);
+    let result = fsl_command::command::run(&path, &crate::negotiation::Fr290).expect("replays");
+    let rows = result.value.as_value()["results"].clone();
+    let outcome = result.outcome.expect("an outcome document");
+    let document: Value = serde_json::from_slice(&outcome.to_bytes().expect("serializes")).unwrap();
+    assert_eq!(document["result"]["kind"], "replayed", "{document}");
+    assert_eq!(document["result"]["results"], rows, "{document}");
+}

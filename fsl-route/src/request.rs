@@ -1074,6 +1074,29 @@ pub enum EvidenceSelection {
     Both,
 }
 
+/// The candidate outcome [`items_from_requirements`] gives an item whose
+/// record carries `requirements` and no evidence kind, for the backend
+/// `named`: for a package-route item (FR-850) whose record is rebuilt from
+/// the package form of its claim rather than read from a checked graph.
+pub fn requirement_candidates(
+    requirements: &Requirements,
+    registry: &Registry,
+    named: Option<&BackendId>,
+) -> CandidateOutcome {
+    crate::tie::exclude_en1(
+        reduced_candidates(
+            requirements,
+            None,
+            registry,
+            named,
+            &std::collections::BTreeSet::new(),
+        ),
+        requirements.kind(),
+        named,
+        requirements.invariant_clause(),
+    )
+}
+
 /// The requested items of a checked package's requirement `records`
 /// (`CheckedPackage::graph().requirements()`) for a request naming no
 /// evidence selection: [`items_with_evidence`] with
@@ -1158,7 +1181,15 @@ pub fn items_with_reductions(
                 // evidence kind; one without has no backend to settle it.
                 CandidateOutcome::Candidates(CandidateSet::none(requirements.kind(), named))
             } else {
-                reduced_candidates(requirements, evidence, registry, named, &selected)
+                // FR-962: EN-1 matches an `operation-contract` record only
+                // when it is an `invariant` state clause's; whether the
+                // request names a model subject is the tie rule's to read.
+                crate::tie::exclude_en1(
+                    reduced_candidates(requirements, evidence, registry, named, &selected),
+                    requirements.kind(),
+                    named,
+                    requirements.invariant_clause(),
+                )
             },
             unsupported: requirements.unsupported().cloned(),
             evidence,

@@ -272,6 +272,7 @@ pub struct ResultEntry {
     input_identity: InputIdentity,
     correspondence: Box<[u8]>,
     lineage: u64,
+    superseded: Box<[ResultIdentity]>,
 }
 
 impl ResultEntry {
@@ -280,12 +281,14 @@ impl ResultEntry {
         input_identity: InputIdentity,
         correspondence: Box<[u8]>,
         lineage: u64,
+        superseded: Box<[ResultIdentity]>,
     ) -> Self {
         Self {
             result_identity,
             input_identity,
             correspondence,
             lineage,
+            superseded,
         }
     }
 
@@ -307,6 +310,12 @@ impl ResultEntry {
     /// The result's lineage number.
     pub fn lineage(&self) -> u64 {
         self.lineage
+    }
+
+    /// The `result_identity` of each earlier result of the chain, oldest
+    /// first; its length is the lineage (FR-526).
+    pub fn superseded(&self) -> &[ResultIdentity] {
+        &self.superseded
     }
 }
 

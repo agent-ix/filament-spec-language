@@ -807,17 +807,9 @@ mod schema_tests {
     #[test]
     #[trace("TC-1325", "FR-350-AC-11", "FR-350-AC-14")]
     fn required_kind_guards_preserve_published_witness_admission_and_oneof_ambiguity() {
-        let fspec = std::env::var_os("FSPEC_DIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .ancestors()
-                    .map(|parent| parent.join("filament-specification"))
-                    .find(|path| path.is_dir())
-                    .unwrap()
-            });
         let original: Value = serde_json::from_slice(
-            &fs::read(fspec.join("proposals/conformance-corpus-v1/schema.json")).unwrap(),
+            filament_specification::published_file("proposals/conformance-corpus-v1/schema.json")
+                .expect("pinned FSpec publishes the corpus schema"),
         )
         .unwrap();
         let mut guarded = original.clone();

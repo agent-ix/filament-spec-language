@@ -35,7 +35,8 @@ use crate::execute::{
     callable_parameter_keys, declaration_occurrence, value_parity_obligation,
     value_parity_preimage, ValueParityPreimage,
 };
-use crate::identity::{ModelIdentity, ObligationIdentity, QualifiedName};
+use crate::identity::QualifiedName;
+use fsl_package::{ModelIdentity, ObligationIdentity};
 use crate::spine::{self, CompileRefusal, DependencyInput, DependencyInputRefusal, OperationName};
 use crate::FrameOperation;
 

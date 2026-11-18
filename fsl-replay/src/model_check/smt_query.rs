@@ -30,6 +30,13 @@ pub fn encode_smt_query(
         ModelCheckItem::Clause { clause, .. } => SmtItem::Clause(clause),
         ModelCheckItem::DeadlockFreedom => SmtItem::DeadlockFreedom,
         ModelCheckItem::RaceFreedom => return Err(Refusal::RaceOverModel.into()),
+        // FR-315 gives an invariant item (FR-951) no proof query.
+        ModelCheckItem::Invariant { .. } => {
+            return Err(Refusal::ItemForm {
+                form: "an invariant item",
+            }
+            .into())
+        }
     };
     fsl_eval::smt::encode_smt_query(subject, item, kind, limits)
 }

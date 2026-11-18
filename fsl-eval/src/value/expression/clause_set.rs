@@ -46,6 +46,48 @@ pub struct ClauseSetEvaluation {
 }
 
 /// How one clause's evaluation counts toward its set's outcome.
+/// What a clause set reads of the package it evaluates over (FR-107 "Clause
+/// sets"): each named clause's observation, which groups it, and its
+/// evaluation. The source route resolves the name in its checked graph;
+/// the package route reads the clause node the observations were admitted
+/// for (FR-940).
+pub(crate) trait ClauseHost {
+    /// The observation the clause's reads take, refusing as
+    /// [`CheckedPackageEvaluation::evaluate_clause`] does.
+    fn clause_observation(
+        &self,
+        name: &QualifiedName,
+        observations: &AdmittedObservations,
+    ) -> Result<Observation, CallFailure>;
+
+    /// The clause's evaluation.
+    fn clause(
+        &self,
+        name: &QualifiedName,
+        observations: &AdmittedObservations,
+        meter: &mut Meter,
+    ) -> Result<ClauseEvaluation, CallFailure>;
+}
+
+impl ClauseHost for CheckedPackage {
+    fn clause_observation(
+        &self,
+        name: &QualifiedName,
+        observations: &AdmittedObservations,
+    ) -> Result<Observation, CallFailure> {
+        Ok(resolve_clause(self, name, observations)?.observation())
+    }
+
+    fn clause(
+        &self,
+        name: &QualifiedName,
+        observations: &AdmittedObservations,
+        meter: &mut Meter,
+    ) -> Result<ClauseEvaluation, CallFailure> {
+        self.evaluate_clause(name, observations, meter)
+    }
+}
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum Verdict {
     True,
@@ -78,8 +120,8 @@ fn verdict(evaluation: &ClauseEvaluation) -> Verdict {
 /// with `short_circuit`, on the first clause that is not `Completed(true)`
 /// (FR-006's short-circuit, FSpec FR-151-AC-19). The clauses after the stop
 /// are neither evaluated nor charged.
-fn run_group(
-    package: &CheckedPackage,
+fn run_group<H: ClauseHost + ?Sized>(
+    package: &H,
     group: &[(&QualifiedName, &AdmittedObservations)],
     limits: ScalarLimits,
     short_circuit: bool,
@@ -92,7 +134,7 @@ fn run_group(
         if let Some(cancel) = cancel {
             meter = meter.with_cancel(cancel.clone());
         }
-        let evaluation = package.evaluate_clause(name, observations, &mut meter)?;
+        let evaluation = package.clause(name, observations, &mut meter)?;
         let verdict = verdict(&evaluation);
         results.push(ClauseSetEntry {
             name: (*name).clone(),
@@ -119,16 +161,16 @@ fn combine(verdicts: &[Verdict]) -> ClauseSetOutcome {
     }
 }
 
-pub(super) fn evaluate(
-    package: &CheckedPackage,
+pub(super) fn evaluate<H: ClauseHost + ?Sized>(
+    package: &H,
     clauses: &[(QualifiedName, &AdmittedObservations)],
     limits: ScalarLimits,
 ) -> Result<ClauseSetEvaluation, CallFailure> {
     evaluate_with_cancel(package, clauses, limits, None)
 }
 
-pub(crate) fn evaluate_with_cancel(
-    package: &CheckedPackage,
+pub(crate) fn evaluate_with_cancel<H: ClauseHost + ?Sized>(
+    package: &H,
     clauses: &[(QualifiedName, &AdmittedObservations)],
     limits: ScalarLimits,
     cancel: Option<&filament_exact::Cancel>,
@@ -144,7 +186,7 @@ pub(crate) fn evaluate_with_cancel(
     let mut preconditions = Vec::new();
     let mut postconditions = Vec::new();
     for (name, observations) in clauses {
-        let group = match resolve_clause(package, name, observations)?.observation() {
+        let group = match package.clause_observation(name, observations)? {
             Observation::Current => &mut invariants,
             Observation::Pre => &mut preconditions,
             Observation::Post => &mut postconditions,

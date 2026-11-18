@@ -39,6 +39,11 @@ impl<'a> SchedulabilityRoot<'a> {
         &self.occurrence
     }
 
+    /// The structural obligation identity of this claim occurrence (O-09).
+    pub fn obligation_identity(&self) -> crate::ObligationIdentity {
+        crate::ObligationIdentity::from_claim_occurrence(&self.occurrence)
+    }
+
     /// The admitted claim: kind, policy, `response` task and bound, and the
     /// task set.
     pub fn claim(&self) -> &CheckedSchedulabilityClaimRef<'a> {

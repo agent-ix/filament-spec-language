@@ -7,7 +7,7 @@ use filament_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
-use filament_exact::{ObjectId, ObjectReference, ScalarLimits, Value};
+use filament_exact::{ObjectId, ObjectReference, ScalarLimits, Value, ValueType};
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
@@ -348,7 +348,7 @@ impl Subject {
     ) -> ModelSystem<'s> {
         ModelSystem::new(ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
-            package: &self.package,
+            input: fsl_eval::simulation::model::ModelCheckInput::source(&self.package),
             packages: &self.packages,
             normalization: ModelNormalizationLimits::default(),
             snapshots: &self.snapshots,
@@ -500,6 +500,12 @@ fn membership(population: &str, object: &FootprintObject) -> SymbolicLocation {
 
 fn any_membership(population: &str) -> SymbolicLocation {
     SymbolicLocation::AnyMembership {
+        population: key(population),
+    }
+}
+
+fn any_membership_location(population: &str) -> Location {
+    Location::AnyMembership {
         population: key(population),
     }
 }
@@ -990,6 +996,8 @@ fn gates_subject() -> Subject {
                     ],
                     vec![
                         operation("Gate", "disarm", &[], None, &gate_frame("Gate/armed")),
+                        operation("Gate", "literal", &[], None, &gate_frame("Gate/alarm")),
+                        operation("Gate", "literalFixed", &[], None, &gate_frame("Gate/alarm")),
                         operation("Gate", "boom", &[], None, &gate_frame("Gate/alarm")),
                         operation("Gate", "boomNav", &[], None, &gate_frame("Gate/alarm")),
                         operation("Gate", "point", &[], None, &gate_frame("Gate/cell")),
@@ -1004,10 +1012,12 @@ fn gates_subject() -> Subject {
                     ],
                 ),
             ],
-            &[("cells", "Cell"), ("gates", "Gate")],
+            &[("cells", "Cell"), ("gates", "Gate"), ("spares", "Cell")],
         ),
         &[
             "post Disarmed using v on M::Gate::disarm { not self.armed }",
+            "pre LiteralIsCreated using v on M::Gate::literal { self.cell = M::Cell#\"b\" }",
+            "pre LiteralIsFixed using v on M::Gate::literalFixed { self.cell = M::Cell#\"a\" }",
             "pre BoomArmed using v on M::Gate::boom { self.armed }",
             "post BoomRaised using v on M::Gate::boom { self.alarm and pre(self.cell.v) = 1 }",
             "pre NavArmed using v on M::Gate::boomNav { self.armed and self.cell.v = 1 }",
@@ -1022,6 +1032,83 @@ fn gates_subject() -> Subject {
     )
 }
 
+/// FR-1000 literals resolve to fixed or created objects per subject. A
+/// created lookup reads every population overlapping its type; a fixed
+/// literal is a constant and adds no membership location.
+#[trace("TC-589", "FR-155-AC-5", "FSpec-FR-480-AC-5")]
+#[test]
+fn a_reference_literal_in_a_clause_reads_related_population_membership() {
+    let mut subject = gates_subject();
+    let cell = Obj {
+        population: "cells",
+        key: "a",
+        object_type: "Cell",
+        fields: json!({"v": integer(0)}),
+    };
+    let start = subject.start(
+        "literal-s0",
+        &["cells", "gates", "spares"],
+        &[
+            cell,
+            Obj {
+                population: "spares",
+                key: "c",
+                object_type: "Cell",
+                fields: json!({"v": integer(0)}),
+            },
+            Obj {
+                population: "gates",
+                key: "g",
+                object_type: "Gate",
+                fields: json!({"armed": boolean(true), "alarm": boolean(false),
+                    "cell": reference("cells", "a"), "alt": reference("cells", "a")}),
+            },
+        ],
+    );
+    let system = subject.system(
+        start,
+        &[
+            ("cells", &["a", "b"]),
+            ("gates", &["g"]),
+            ("spares", &["b", "c"]),
+        ],
+    );
+    let receiver = subject.reference("Gate", "g");
+    let created = footprint_on(&system, "Gate", "literal", &receiver);
+    assert!(created.reads.contains(&any_membership_location("cells")));
+    assert!(created.reads.contains(&any_membership_location("spares")));
+    assert!(created.enabling.contains(&any_membership_location("cells")));
+    assert!(created.enabling.contains(&any_membership_location("spares")));
+    let fixed = footprint_on(&system, "Gate", "literalFixed", &receiver);
+    assert!(!fixed.reads.contains(&any_membership_location("cells")));
+    assert!(!fixed.reads.contains(&any_membership_location("spares")));
+    assert!(!fixed.enabling.contains(&any_membership_location("cells")));
+    assert!(!fixed.enabling.contains(&any_membership_location("spares")));
+
+    let over = (
+        "g".to_owned(),
+        ValueType::Reference(receiver.object_type().clone()),
+    );
+    let graph = subject.package.graph();
+    let clause = |name: &str| {
+        graph
+            .state_clauses()
+            .iter()
+            .find(|clause| clause.name() == name)
+            .expect("the checked literal clause exists")
+    };
+    let created_reads = system
+        .atom_reads(&over, clause("LiteralIsCreated").body())
+        .expect("created literal has an atom footprint");
+    assert!(created_reads.contains(&any_membership("cells")));
+    assert!(created_reads.contains(&any_membership("spares")));
+    let fixed_reads = system
+        .atom_reads(&over, clause("LiteralIsFixed").body())
+        .expect("fixed literal has an atom footprint");
+    assert!(!fixed_reads.contains(&any_membership("cells")));
+    assert!(!fixed_reads.contains(&any_membership("spares")));
+}
+
 fn gates_start(subject: &mut Subject) -> DocumentRef {
     let cell = |key, v| Obj {
         population: "cells",
@@ -1031,10 +1118,16 @@ fn gates_start(subject: &mut Subject) -> DocumentRef {
     };
     subject.start(
         "s0",
-        &["cells", "gates"],
+        &["cells", "gates", "spares"],
         &[
             cell("a", 0),
             cell("b", 1),
+            Obj {
+                population: "spares",
+                key: "c",
+                object_type: "Cell",
+                fields: json!({"v": integer(0)}),
+            },
             Obj {
                 population: "gates",
                 key: "g",
@@ -1067,7 +1160,14 @@ fn footprint_on(
 fn a_guard_in_a_postcondition_and_a_navigated_reference_are_in_the_enabling_footprint() {
     let mut subject = gates_subject();
     let start = gates_start(&mut subject);
-    let system = subject.system(start, &[("cells", &["a", "b"]), ("gates", &["g"])]);
+    let system = subject.system(
+        start,
+        &[
+            ("cells", &["a", "b"]),
+            ("gates", &["g"]),
+            ("spares", &["c"]),
+        ],
+    );
     let receiver = FootprintObject::Receiver;
 
     let boom = subject.symbolic("Gate", "boom");
@@ -1111,7 +1211,14 @@ fn a_guard_in_a_postcondition_and_a_navigated_reference_are_in_the_enabling_foot
 fn a_postcondition_reading_through_result_reads_the_result_populations() {
     let mut subject = gates_subject();
     let start = gates_start(&mut subject);
-    let system = subject.system(start, &[("cells", &["a", "b"]), ("gates", &["g"])]);
+    let system = subject.system(
+        start,
+        &[
+            ("cells", &["a", "b"]),
+            ("gates", &["g"]),
+            ("spares", &["c"]),
+        ],
+    );
     let receiver = FootprintObject::Receiver;
 
     let pick = subject.symbolic("Gate", "pick");

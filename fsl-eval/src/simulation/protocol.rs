@@ -49,10 +49,7 @@ use filament_exact::{Meter, NodeKey, ObjectReference, Value, ValueType};
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::Code;
-use fsl_package::CheckedPackage;
-use fsl_semantics::check::{
-    CheckedActivation, CheckedGraph, CheckedProtocol, CheckedTerminalMember,
-};
+use fsl_semantics::check::{CheckedActivation, CheckedProtocol, CheckedTerminalMember};
 use fsl_semantics::family::ClaimExtent;
 use quire_canonical::{Encode, Error, Sink, Writer};
 
@@ -62,16 +59,15 @@ use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::explore::TransitionSystem;
 use crate::simulation::footprint::Location;
 use crate::simulation::key::{self, EncodingRefusal};
-use crate::simulation::model::encode::{Canonicalizer, Enc, map_enc, reference_enc, value_enc};
+use crate::simulation::model::encode::{map_enc, reference_enc, value_enc, Canonicalizer, Enc};
 use crate::simulation::model::{
-    BROKEN, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, Observed, TerminalClass,
-    Verdict, verdict,
+    verdict, ClauseOutcome, ModelEvaluator, ModelFinding, ModelSimState, ModelSystem, Observed,
+    TerminalClass, Verdict, BROKEN,
 };
-use crate::simulation::not_simulated::{NotSimulated, RequiresBound, check_requires_bound};
+use crate::simulation::not_simulated::{check_requires_bound, NotSimulated, RequiresBound};
 use crate::simulation::progress::ZeroProgressError;
 use crate::simulation::subject::ConstraintError;
 use crate::simulation::subject::{Bounded, Cut, SubjectSystem};
-use crate::value::evaluate_protocol_slot;
 use fsl_semantics::model::observation::Observation;
 use steps::ProtocolExpansion;
 
@@ -81,11 +77,11 @@ pub use access::{
 };
 pub use capacity::{capacity_value, Capacities, CapacityRefusal, UnboundCapacity};
 pub use fairness::{
-    FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError, ProtocolTarget,
-    protocol_constraints,
+    protocol_constraints, FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError,
+    ProtocolTarget,
 };
 pub use footprint::{
-    AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation, visible,
+    visible, AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation,
 };
 pub use identity::{
     Actor, BlockedThread, BusinessEffectOccurrence, CarriedComponent, DeliveryIdentity,
@@ -103,7 +99,7 @@ pub use reach::{ReachRefusal, Reachable, ReachedState};
 pub use selection::{
     MemorySelection, MemorySelectionRefusal, ResolvedMemory, ResolvedParallel, SubjectMemory,
 };
-pub use tso::{Buffered, DEFAULT_MEMORY_BOUND, Tso, TsoComponent};
+pub use tso::{Buffered, Tso, TsoComponent, DEFAULT_MEMORY_BOUND};
 pub use wire::{
     blocked_json, fairness_json, location_json, over_reference, send_record_json, transition_json,
 };
@@ -111,22 +107,9 @@ pub use wire::{
 /// A construct this protocol system does not step yet.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Unsupported {
-    /// A `run` control of this kind, by its keyword.
-    Control(&'static str),
     /// A `parallel` whose resolved memory model the system's memory model
     /// does not implement.
     WeakMemory,
-    /// An attempt of a weak `parallel` whose application has no footprint
-    /// to classify its access by (FR-220).
-    AccessFootprint,
-    /// A protocol capture, `choice` guard, `repeat` guard or `check`
-    /// undecided at an initial state, before any position a finding can name.
-    UndecidedInitialGuard,
-    /// An `over` input whose type is not an object type.
-    OverNotAnObject,
-    /// A slot that reads an attempt binder whose operation returns no value
-    /// of the binder's type, so the binder is never bound.
-    UnboundAttemptBinder,
     /// A step binder whose record type has no enumeration here: a type with
     /// a field of no finite domain, such as a text type or a map.
     UnenumerableRecord,
@@ -136,12 +119,7 @@ impl Unsupported {
     /// The construct, as a diagnostic names it.
     pub fn construct(self) -> &'static str {
         match self {
-            Self::Control(keyword) => keyword,
             Self::WeakMemory => "memory",
-            Self::AccessFootprint => "attempt footprint under a weak memory model",
-            Self::UndecidedInitialGuard => "undecided guard at an initial state",
-            Self::OverNotAnObject => "over input of no object type",
-            Self::UnboundAttemptBinder => "read of an unbound attempt binder",
             Self::UnenumerableRecord => "step binder of an unenumerable record type",
         }
     }
@@ -501,8 +479,10 @@ impl RoleStatus {
 }
 
 /// One live protocol instance (ADR-027 AE-2).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct Instance {
+    /// The value bound to the protocol's `over` input for this instance.
+    over: Value,
     /// The trigger record that started the instance under `activation on
     /// each`, which the activation binder reads (ADR-027 AE-1).
     trigger: Option<Bound>,
@@ -540,6 +520,29 @@ struct Instance {
     compensating: BTreeMap<ThreadPath, Compensating>,
     /// Each template commit node a step has occurred at (CP-4).
     committed: std::collections::BTreeSet<fsl_semantics::check::ProtocolNodeId>,
+}
+
+impl Default for Instance {
+    fn default() -> Self {
+        Self {
+            over: Value::Boolean(false),
+            trigger: None,
+            captures: Vec::new(),
+            roles: BTreeMap::new(),
+            threads: BTreeMap::new(),
+            parallels: BTreeMap::new(),
+            environments: BTreeMap::new(),
+            counters: BTreeMap::new(),
+            message_ordinals: BTreeMap::new(),
+            effect_ordinals: BTreeMap::new(),
+            next_deliveries: BTreeMap::new(),
+            queues: BTreeMap::new(),
+            pending_sends: BTreeMap::new(),
+            registrations: BTreeMap::new(),
+            compensating: BTreeMap::new(),
+            committed: std::collections::BTreeSet::new(),
+        }
+    }
 }
 
 impl Instance {
@@ -607,6 +610,13 @@ pub struct ProtocolState<M: MemoryModel> {
     model: ModelSimState,
     instances: BTreeMap<u64, Instance>,
     memory: M::Component,
+    /// The value used for this root state, including before an `on each`
+    /// instance is activated.
+    over: Value,
+    /// Findings raised while creating the initial protocol instance. An
+    /// undefined expression at that position is settled by the ordinary
+    /// finding path, with the empty prefix.
+    initial_findings: Vec<ModelFinding>,
 }
 
 impl<M: MemoryModel> Clone for ProtocolState<M> {
@@ -615,6 +625,8 @@ impl<M: MemoryModel> Clone for ProtocolState<M> {
             model: self.model.clone(),
             instances: self.instances.clone(),
             memory: self.memory.clone(),
+            over: self.over.clone(),
+            initial_findings: self.initial_findings.clone(),
         }
     }
 }
@@ -626,6 +638,8 @@ impl<M: MemoryModel> std::fmt::Debug for ProtocolState<M> {
             .field("model", &self.model)
             .field("instances", &self.instances)
             .field("memory", &self.memory)
+            .field("over", &self.over)
+            .field("initial_findings", &self.initial_findings)
             .finish()
     }
 }
@@ -634,6 +648,12 @@ impl<M: MemoryModel> ProtocolState<M> {
     /// The model state.
     pub fn model(&self) -> &ModelSimState {
         &self.model
+    }
+
+    /// The value this protocol instance was created for, including a finite
+    /// scalar `over` input.
+    pub fn over(&self) -> &Value {
+        &self.over
     }
 
     /// The memory component.
@@ -731,9 +751,9 @@ impl<C: Encode> Envelope<'_, C> {
 /// cannot enumerate is an unbounded root.
 pub fn protocol_domains(
     protocol: &CheckedProtocol,
-    graph: &CheckedGraph,
+    evaluator: &dyn ModelEvaluator,
 ) -> Vec<(NodeKey, ValueType)> {
-    let Some(keys) = graph.protocol_node_keys(&protocol.name) else {
+    let Some(keys) = evaluator.protocol_node_keys(&protocol.name) else {
         return Vec::new();
     };
     let binders = protocol
@@ -777,10 +797,10 @@ pub fn protocol_domains(
 fn check_attempt_types(
     model: &ModelSystem<'_>,
     protocol: &CheckedProtocol,
-    graph: &CheckedGraph,
+    evaluator: &dyn ModelEvaluator,
 ) -> Result<(), NotSimulated> {
     let mut domains = BTreeMap::new();
-    let keys = graph.protocol_node_keys(&protocol.name);
+    let keys = evaluator.protocol_node_keys(&protocol.name);
     for (index, template) in protocol.obligations.compensations.iter().enumerate() {
         let Some(node) = keys.and_then(|keys| keys.compensations.get(&index)) else {
             continue;
@@ -822,10 +842,10 @@ pub fn check_protocol_bounds(
     model: &ModelSystem<'_>,
     protocol: &CheckedProtocol,
     capacities: &Capacities,
-    graph: &CheckedGraph,
+    evaluator: &dyn ModelEvaluator,
     position_limit: u64,
 ) -> Result<(), NotSimulated> {
-    let domains = subject_domains(model, protocol, graph);
+    let domains = subject_domains(model, protocol, evaluator);
     let with_capacities = |refusal| match refusal {
         NotSimulated::RequiresBound(mut bound) => {
             bound.capacities = capacities.unbound().to_vec();
@@ -835,7 +855,7 @@ pub fn check_protocol_bounds(
     };
     check_requires_bound(&roots(&domains), model.types(), position_limit)
         .map_err(with_capacities)?;
-    check_attempt_types(model, protocol, graph).map_err(with_capacities)?;
+    check_attempt_types(model, protocol, evaluator).map_err(with_capacities)?;
     if capacities.unbound().is_empty() {
         Ok(())
     } else {
@@ -847,11 +867,11 @@ pub fn check_protocol_bounds(
 fn subject_domains(
     model: &ModelSystem<'_>,
     protocol: &CheckedProtocol,
-    graph: &CheckedGraph,
+    evaluator: &dyn ModelEvaluator,
 ) -> Vec<(NodeKey, Vec<u32>, ValueType)> {
     let mut domains = model.rooted_domains();
     domains.extend(
-        protocol_domains(protocol, graph)
+        protocol_domains(protocol, evaluator)
             .into_iter()
             .map(|(node, value_type)| (node, Vec::new(), value_type)),
     );
@@ -879,8 +899,8 @@ pub fn explore_protocol<M: MemoryModel>(
     limits: crate::simulation::explore::Limits,
     poll: impl FnMut() -> bool,
 ) -> Result<crate::simulation::explore::Exploration<ModelFinding>, NotSimulated> {
-    check_attempt_types(&system.model, system.protocol, system.package.graph())?;
-    let domains = subject_domains(&system.model, system.protocol, system.package.graph());
+    check_attempt_types(&system.model, system.protocol, system.evaluator)?;
+    let domains = subject_domains(&system.model, system.protocol, system.evaluator);
     crate::simulation::explore::explore_request(
         system,
         &roots(&domains),
@@ -910,8 +930,8 @@ pub(crate) fn over_value(
         parameter: input.name.clone(),
         object: over.key.clone(),
     };
-    let ValueType::Reference(ref object_type) = input.value_type else {
-        return Err(ProtocolRefusal::Unsupported(Unsupported::OverNotAnObject));
+    let ValueType::Reference(object_type) = &input.value_type else {
+        return Err(ProtocolRefusal::fault("over-value-request-is-reference"));
     };
     let instances = model.instances(&input.value_type).map_err(|_| refused())?;
     if !instances.contains(over) {
@@ -923,6 +943,33 @@ pub(crate) fn over_value(
         .map_err(|_| refused())
 }
 
+/// The finite values of a protocol's `over` binder. FR-882-AC-3 binds an
+/// object input as the subject's selected object and enumerates every value
+/// of any other finite type.
+fn over_values(
+    model: &ModelSystem<'_>,
+    protocol: &CheckedProtocol,
+    over: &ModelInstance,
+) -> Result<Vec<Value>, ProtocolRefusal> {
+    let input = protocol
+        .slots
+        .binders
+        .first()
+        .filter(|binder| binder.node.is_none())
+        .ok_or_else(|| ProtocolRefusal::fault("a-protocol-has-an-over-input"))?;
+    if matches!(input.value_type, ValueType::Reference(_)) {
+        return over_value(model, protocol, over).map(|value| vec![value]);
+    }
+    if !model.enumerates(&input.value_type) {
+        return Err(ProtocolRefusal::Unsupported(
+            Unsupported::UnenumerableRecord,
+        ));
+    }
+    model
+        .domain_values(&input.value_type, &[])
+        .map_err(ProtocolRefusal::InitialStop)
+}
+
 /// FR-220 "Sharing and classification" (ADR-025 MA-1, MA-2): EN-1's
 /// sharing and classification of every attempt of each `parallel` `memory`
 /// resolves weak, over the initial states of `model`. It reads no memory
@@ -931,10 +978,9 @@ pub(crate) fn over_value(
 /// # Errors
 ///
 /// [`ProtocolRefusal`] when `memory` does not resolve the protocol's
-/// outermost `parallel` controls; [`ProtocolRefusal::OverBinding`] or
-/// [`Unsupported::OverNotAnObject`] when `over`, the instance the
-/// protocol's `over` input is bound to, is not an object of the input's
-/// type; for a construct this system does not step; when an attempt's
+/// outermost `parallel` controls; [`ProtocolRefusal::OverBinding`] when a
+/// reference-typed `over` input is bound to an object outside its universe;
+/// for a construct this system does not step; when an attempt's
 /// application has no footprint; and [`ProtocolRefusal::NodeFootprint`] when
 /// the constraint of an `event`, `effect`, `commit`, `send` or `receive`
 /// node of a weak `parallel` reads through a form with no footprint rule.
@@ -950,16 +996,19 @@ pub fn classify_accesses(
         .map_err(ProtocolRefusal::Memory)?;
     let capacities = Capacities::admit(protocol, capacities).map_err(ProtocolRefusal::Capacity)?;
     let program = Program::new(model, protocol, &capacities)?;
-    let over = over_value(model, protocol, over)?;
-    access::classify(
-        model,
-        protocol,
-        &program,
-        &governing,
-        model.initial().first(),
-        &over,
-        access::ClassificationMode::Enabled,
-    )
+    let mut accesses = WeakAccesses::default();
+    for over in over_values(model, protocol, over)? {
+        accesses.extend(access::classify(
+            model,
+            protocol,
+            &program,
+            &governing,
+            model.initial().first(),
+            &over,
+            access::ClassificationMode::Enabled,
+        )?);
+    }
+    Ok(accesses)
 }
 
 /// FR-226 (ADR-025 MX-4): EN-1's pre-check of the load-buffering shapes of
@@ -1005,10 +1054,12 @@ pub type ProtocolSuccessorsAndTerminal<M> = (
 /// FR-215: the transition system of a protocol subject.
 pub struct ProtocolSystem<'a, M: MemoryModel> {
     model: ModelSystem<'a>,
-    package: &'a CheckedPackage,
+    evaluator: &'a dyn ModelEvaluator,
     protocol: &'a CheckedProtocol,
     program: Program<'a>,
     memory: M,
+    /// The per-channel queue occupancy bound supplied by model checking.
+    channel_message_bound: Option<u64>,
     /// The model governing each `parallel`: its outermost `parallel`'s
     /// resolved model (FR-219, ADR-025 MM-3).
     governing: BTreeMap<fsl_semantics::check::ProtocolNodeId, fsl_foundation::MemoryModelName>,
@@ -1028,8 +1079,9 @@ pub struct ProtocolSystem<'a, M: MemoryModel> {
     /// The shared locations some attempt accesses with no `ordering`: those
     /// with a race summary (ADR-025 DR-3).
     non_atomic: BTreeSet<Location>,
-    /// The `over` parameter's bound value.
-    over: Value,
+    /// The finite domain of the `over` input. Object inputs have one bound
+    /// value; finite scalar inputs have one entry for each value.
+    over_values: Vec<Value>,
     /// Each static role's binding: role name, then model identity.
     roles: Vec<(String, String)>,
     /// The objects of each replicated role's population in the subject's
@@ -1102,8 +1154,8 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         subject: &ProtocolSubject<'a>,
         memory: M,
     ) -> Result<Self, ProtocolRefusal> {
-        let package = subject.model.simulation.package;
-        let protocol = package.graph().protocol(&subject.protocol).ok_or_else(|| {
+        let evaluator = subject.model.simulation.input.evaluator;
+        let protocol = evaluator.protocol(&subject.protocol).ok_or_else(|| {
             ProtocolRefusal::UnknownProtocol {
                 protocol: subject.protocol.clone(),
             }
@@ -1129,7 +1181,18 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             }
             roles.push((role.name.clone(), binding.model.clone()));
         }
-        let over = over_value(&model, protocol, &subject.over)?;
+        // FSL FR-1033-AC-5: a binding naming no role of the protocol is not one
+        // the protocol admits.
+        if let Some(unknown) = subject
+            .roles
+            .iter()
+            .find(|binding| !protocol.roles.iter().any(|role| role.name == binding.role))
+        {
+            return Err(ProtocolRefusal::RoleMapping {
+                role: unknown.role.clone(),
+            });
+        }
+        let over_values = over_values(&model, protocol, &subject.over)?;
         let governing = subject
             .memory
             .governing(protocol)
@@ -1144,24 +1207,28 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         let capacities =
             Capacities::admit(protocol, &subject.capacities).map_err(ProtocolRefusal::Capacity)?;
         let program = Program::new(&model, protocol, &capacities)?;
-        let enabled = access::classify(
-            &model,
-            protocol,
-            &program,
-            &governing,
-            model.initial().first(),
-            &over,
-            access::ClassificationMode::Enabled,
-        )?;
-        let weak = access::classify(
-            &model,
-            protocol,
-            &program,
-            &governing,
-            model.initial().first(),
-            &over,
-            access::ClassificationMode::Potential,
-        )?;
+        let mut enabled = WeakAccesses::default();
+        let mut weak = WeakAccesses::default();
+        for over in &over_values {
+            enabled.extend(access::classify(
+                &model,
+                protocol,
+                &program,
+                &governing,
+                model.initial().first(),
+                over,
+                access::ClassificationMode::Enabled,
+            )?);
+            weak.extend(access::classify(
+                &model,
+                protocol,
+                &program,
+                &governing,
+                model.initial().first(),
+                over,
+                access::ClassificationMode::Potential,
+            )?);
+        }
         let weak_ancestors = access::weak_ancestors(&program, &governing)?;
         let mut weak_parallel_paths = BTreeSet::new();
         for (node, model) in &governing {
@@ -1191,10 +1258,11 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         }
         let mut system = Self {
             model,
-            package,
+            evaluator,
             protocol,
             program,
             memory,
+            channel_message_bound: None,
             governing,
             weak_ancestors,
             weak_parallel_paths,
@@ -1202,7 +1270,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             non_atomic: weak.non_atomic(),
             potential: weak,
             initial_enabled: enabled,
-            over,
+            over_values,
             roles,
             universes: Vec::new(),
             max_live_instances: DEFAULT_MAX_LIVE_INSTANCES,
@@ -1222,6 +1290,25 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
     pub fn with_max_live_instances(mut self, bound: u64) -> Self {
         self.max_live_instances = bound;
         self
+    }
+
+    /// This system with a per-channel `max_messages` bound (FR-225-AC-6).
+    /// A send offered to a full channel is left unexpanded before its
+    /// overflow policy is applied.
+    #[must_use]
+    pub fn with_channel_message_bound(mut self, bound: u64) -> Self {
+        self.channel_message_bound = Some(bound);
+        self
+    }
+
+    /// Whether the checked protocol declares at least one channel.
+    pub fn has_channels(&self) -> bool {
+        !self.program.channels.is_empty()
+    }
+
+    /// The selected per-channel message bound, when model checking supplied one.
+    pub fn channel_message_bound(&self) -> Option<u64> {
+        self.channel_message_bound
     }
 
     /// Whether any live instance holds an undelivered message on an
@@ -1279,27 +1366,35 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
     fn initial_states(&self) -> Result<Vec<ProtocolState<M>>, ProtocolRefusal> {
         let mut states = Vec::new();
         for model in self.model.initial() {
-            let instances = if self.program.activation.is_some() {
-                BTreeMap::new()
-            } else {
-                let started = self.start(0, None, &model).map_err(|error| match error {
-                    settle::SettleError::Refused(refusal) => refusal,
-                    settle::SettleError::Stopped(stop) => ProtocolRefusal::InitialStop(stop),
-                })?;
-                match started {
-                    roles::Started::Instance(instance) => BTreeMap::from([(0, *instance)]),
-                    roles::Started::Undecided(_) => {
-                        return Err(ProtocolRefusal::Unsupported(
-                            Unsupported::UndecidedInitialGuard,
-                        ));
+            for over in &self.over_values {
+                let (instances, initial_findings) = if self.program.activation.is_some() {
+                    (BTreeMap::new(), Vec::new())
+                } else {
+                    let started =
+                        self.start(0, None, &model, over)
+                            .map_err(|error| match error {
+                                settle::SettleError::Refused(refusal) => refusal,
+                                settle::SettleError::Stopped(stop) => {
+                                    ProtocolRefusal::InitialStop(stop)
+                                }
+                            })?;
+                    match started {
+                        roles::Started::Instance(instance) => {
+                            (BTreeMap::from([(0, *instance)]), Vec::new())
+                        }
+                        roles::Started::Undecided { finding, .. } => {
+                            (BTreeMap::new(), vec![*finding])
+                        }
                     }
-                }
-            };
-            states.push(ProtocolState {
-                model,
-                instances,
-                memory: self.memory.initial(),
-            });
+                };
+                states.push(ProtocolState {
+                    model: model.clone(),
+                    instances,
+                    memory: self.memory.initial(),
+                    over: over.clone(),
+                    initial_findings,
+                });
+            }
         }
         Ok(states)
     }
@@ -1525,6 +1620,12 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         let mut roles = Vec::new();
         let mut queues = Vec::new();
         let mut bounds = Vec::new();
+        if self.over_values.len() > 1 {
+            observations.push((
+                Enc::tagged("protocol-over", Vec::new()),
+                value_enc(&state.over, self.model.typing()),
+            ));
+        }
         for (ordinal, instance) in &state.instances {
             control.push((
                 Enc::tagged(
@@ -1973,7 +2074,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         let mut frame = Vec::with_capacity(self.program.slots.len());
         for (slot, node) in self.program.slots.iter().enumerate() {
             let value = match node {
-                None if slot == 0 => Some(self.over.clone()),
+                None if slot == 0 => Some(instance.over.clone()),
                 None if Some(slot) == self.program.activation_slot => instance
                     .trigger
                     .as_ref()
@@ -2023,14 +2124,15 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         frame: Vec<Option<Value>>,
         observation: &Observation,
     ) -> Result<Verdict, ExpansionStop> {
-        let evaluation = evaluate_protocol_slot(
-            self.package,
-            body,
-            frame,
-            &observation.environment,
-            &mut Meter::new(self.model.meter()),
-        )
-        .map_err(|_| broken())?;
+        let evaluation = self
+            .evaluator
+            .evaluate_protocol_slot(
+                body,
+                frame,
+                &observation.environment,
+                &mut Meter::new(self.model.meter()),
+            )
+            .map_err(|_| broken())?;
         Ok(verdict(&evaluation.outcome))
     }
 
@@ -2071,7 +2173,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             CheckedTerminalMember::When { predicate, .. } => {
                 let mut frame = vec![None; self.program.slots.len()];
                 if let Some(first) = frame.first_mut() {
-                    *first = Some(self.over.clone());
+                    *first = Some(state.over.clone());
                 }
                 // Only `on origin` lets the predicate read the captures
                 // (FR-381), and then the one instance is ordinal 0.

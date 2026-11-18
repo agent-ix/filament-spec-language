@@ -29,8 +29,9 @@ pub const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile pp = \"filament.protocol.finite-global/v1\";\n\
     model M = \"example/protocol-fixture\";\n";
 
-/// `M::Actor` and its `ready: Boolean` field, `op` and `other` operations
-/// (no parameters, no result, an empty frame), normalized to a [`SelectedModel`] aliased `M` --
+/// `M::Actor` and its `ready: Boolean` field, `op` (no parameters, a
+/// `Boolean` result, an empty frame) and `other` (no parameters, no result,
+/// an empty frame) operations, normalized to a [`SelectedModel`] aliased `M` --
 /// the FR-114 fixture, so every `attempt ... on M::Actor::op` this
 /// module's fixtures already write (FR-114's own assembler resolution,
 /// which now runs for every protocol) resolves rather than refusing at
@@ -71,7 +72,17 @@ pub fn m_actor_model() -> SelectedModel {
                 key: key("Actor/op"),
                 owner: key("Actor"),
                 parameters: Vec::new(),
-                result: None,
+                // An attempt binder reads the result (FR-218 "Attempts"):
+                // `op` returns a `Boolean`.
+                result: Some(semantics::model::domain_package::OperationResult {
+                    value_type: ValueTypeRef::Native(NativeValueType::Boolean),
+                    multiplicity: Multiplicity {
+                        lower: 1,
+                        upper: Some(1),
+                        ordered: false,
+                        unique: true,
+                    },
+                }),
                 effect: OperationEffect::default(),
                 requires: Vec::new(),
                 ensures: Vec::new(),

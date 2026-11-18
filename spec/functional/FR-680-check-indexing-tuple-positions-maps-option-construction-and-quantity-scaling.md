@@ -70,6 +70,21 @@ or map index to `filament.op.collection.index` and a tuple read to
 **Tuple positions.** `p.0` stays `invalid_syntax`/`unexpected-token` at `0`;
 the position read is `p[n]` only.
 
+**The key a checked position read carries.** The checked `TupleProject`
+node SHALL name its tuple by the tuple type's node key, the content key that
+the operand's checked type `Composite(key)` already carries (FR-092 "Source
+tuple identity rows": the declaration's key is the type handle), together
+with the zero-based position; it SHALL NOT name it by a domain-package
+declaration key (`{package, node}`). A source tuple has a node key and no
+domain-package identity, so a declaration key can name only a model tuple and
+leaves every source tuple unkeyable, while the node key names a source tuple
+and a model tuple alike (FR-094 keys model-owned type nodes) and is the key
+the S4 lowering already reads for the position member. S3 SHALL set the key
+from the operand's checked type, and S4 SHALL lower it to the package's
+`{kind: "position", declaration, position}` member, `declaration` the emitted
+node of that key (FSpec FR-322 "Position member"). The package wire form is
+unchanged; only the checked node form names its tuple by node key.
+
 **Source maps.** S1 SHALL parse `Map<K, V>` and `Map<K, V>[a, b]` as a type
 reference wherever a type is written, S3 SHALL type it as the map type a
 domain-package map type reads as (FR-056) and refuse a non-scalar key type
@@ -109,6 +124,7 @@ the expected `Int[lo,hi]` and the operand that supplied it.
 | FR-680-AC-4 | `Some(3)` as the body of a function whose result is `Option<Int[0, 9]>`, and as the `=` operand against an `Option<Int[0, 9]>` parameter, checks; `Some(30)` there refuses `ill_typed`/`type-mismatch` at `30`; `Some(1)` in a state clause outside any refinement is the option constructor. | Test (TC-1823) |
 | FR-680-AC-5 | With `ms` of scale `1/1000` over `s`, `d * 2`, `2 * d` and `d / 2` for `d: Quantity<ms>` check as `Quantity<ms>` at a `Quantity<ms>` result; `d / k` for `k: Int[0, 9]` with no fact refuses `undefined_expression`/`unproved-nonzero`; `d * f` for `f: Float64` and `2 / d` refuse `ill_typed`/`type-mismatch`. | Test (TC-1824) |
 | FR-680-AC-6 | `c = a + b` over `a`, `b`, `c` of `Int[0, 10]` refuses `undefined_expression`/`unproved-range` at `a + b` with a message naming `[0, 20]`, `Int[0, 10]` and `c`; `convert<Integer>(c) = a + b` checks. | Test (TC-1825) |
+| FR-680-AC-7 | For a source `tuple Pair(Boolean, Integer);` and for a model tuple `M::Slot` of a selected domain package, `p[1]` checks to a `TupleProject` node whose tuple key equals the node key of the operand's checked type `Composite(key)` and whose position is 1, for the source tuple as for the model tuple, never a `{package, node}` declaration key; the checked package of each carries `filament.op.tuple.project` with the member `{kind: "position", declaration, position: 1}`, `declaration` the emitted tuple node of that key. | Test (TC-2973) |
 
 ## Dependencies
 

@@ -45,12 +45,12 @@ use super::{
 use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::footprint::Location;
 use crate::simulation::model::encode::{reference_enc, value_enc, Enc};
+use crate::simulation::model::FootprintError;
 use crate::simulation::model::{
     verdict, Applied, Budget, ClauseOutcome, FirstApplication, ModelFinding, ModelSimState,
     Observed, ObservedIdentities, OperationRef, Verdict, EXHAUSTED,
 };
 use crate::simulation::subject::Cut;
-use crate::value::evaluate_join_predicate;
 
 /// One application of an attempt, the observation it was applied over and
 /// the message it read there (FR-229).
@@ -225,6 +225,9 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             findings: self.model.invariant_findings(&state.model)?,
             cut: Cut::default(),
         };
+        gathered
+            .findings
+            .extend(state.initial_findings.iter().cloned());
         gathered.findings.extend(access_findings);
         let mut running = Vec::new();
         for (ordinal, instance) in &state.instances {
@@ -314,7 +317,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     self.by_owner(
                         instance,
                         self.program.template(index)?.role,
-                        Some(StepKind::CAttempt),
+                        Some(&[StepKind::CAttempt, StepKind::CFail, StepKind::CTimeout]),
                         &mut gathered,
                         |gathered| self.compensation(state, ordinal, path, thread.rest, gathered),
                     )?;
@@ -630,10 +633,19 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         if let Some(footprint) = footprints().get(&key) {
             return Ok(Arc::clone(footprint));
         }
+        let node_name = self.program.text(node)?;
         let footprint = self
             .model
             .footprint_selecting(transition, Some(&attempt.contracts))
-            .map_err(|_| ProtocolRefusal::Unsupported(super::Unsupported::AccessFootprint))?;
+            .map_err(|error| match error {
+                FootprintError::Refused(refusal) => ProtocolRefusal::NodeFootprint {
+                    node: node_name.to_owned(),
+                    refusal,
+                },
+                FootprintError::UnknownTransition | FootprintError::UnknownConstraint => {
+                    ProtocolRefusal::fault("an-attempt-transition-has-a-footprint")
+                }
+            })?;
         let model_only = |locations: BTreeSet<Location>| -> BTreeSet<Location> {
             locations
                 .into_iter()
@@ -813,6 +825,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
     /// ST-2: for a domain `event` or `commit` node, one step per record of
     /// its type that satisfies its constraint; the binder is bound and the
     /// model state is unchanged.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+    )]
     fn event(
         &self,
         state: &ProtocolState<M>,
@@ -1272,13 +1288,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 .into_iter()
                 .map(|label| Value::Boolean(is_completed(label)))
                 .collect();
-            let evaluation = evaluate_join_predicate(
-                self.package,
-                function,
-                arguments,
-                &mut Meter::new(self.model.meter()),
-            )
-            .map_err(|_| ProtocolRefusal::fault("a-join-predicate-evaluates"))?;
+            let evaluation = self
+                .evaluator
+                .evaluate_join_predicate(function, arguments, &mut Meter::new(self.model.meter()))
+                .map_err(|_| ProtocolRefusal::fault("a-join-predicate-evaluates"))?;
             return match verdict(&evaluation.outcome) {
                 Verdict::True => Ok(true),
                 Verdict::False => Ok(false),
@@ -1636,11 +1649,13 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     }
                 }
             }
-            // ST-1 binds the record (receiver, arguments, result). With no
-            // result of the binder's type, the record is kept only for the
-            // attempt's effects, whose ST-2 enabledness reads it.
+            // ST-1 binds every attempt binder to the record (receiver,
+            // arguments, result). With no result of the binder's type the
+            // binder is still bound, but S3 refuses each read of it
+            // (FR-218-AC-44), so no expression reads it here; the attempt's
+            // effects' ST-2 enabledness reads the record.
             let bound = bound.or_else(|| {
-                self.program.effected(node).then(|| Bound {
+                self.program.binder_of.contains_key(&node).then(|| Bound {
                     value: None,
                     enc: Enc::tagged(
                         "attempt-record",
@@ -1790,6 +1805,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
 
     /// Take the next per-location load of a multi-location application and
     /// retain its value in the thread state until the apply step (FR-902).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+    )]
     fn read_pending_access(
         &self,
         state: &ProtocolState<M>,
@@ -2472,6 +2491,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
     /// EN-1 classified it; local for an attempt outside every weak
     /// `parallel`. A read-modify-write whose post-state leaves its location
     /// at the value `observed` gives it applies as a load (ADR-025 MA-5).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+    )]
     fn access<'s>(
         &'s self,
         state: &ProtocolState<M>,

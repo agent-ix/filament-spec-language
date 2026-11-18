@@ -60,16 +60,23 @@ fn compile(units: &[&str]) -> Result<Vec<u8>, Box<CompileRefusal>> {
     Ok(emitted.package().bytes().to_vec())
 }
 
-fn admitted_by_the_strict_reader(bytes: &[u8]) -> bool {
-    let evidence = filament_contract_model::CheckedPackageEvidence::new();
-    matches!(
-        filament_contract_model::read_checked_package(
-            bytes,
-            filament_contract_model::CheckedPackageReadLimits::bounded(),
-            &evidence,
-        ),
-        filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(_)
-    )
+fn strict_reader_error(bytes: &[u8]) -> Option<String> {
+    let mut evidence = filament_contract_model::CheckedPackageEvidence::new();
+    let wire: Value = serde_json::from_slice(bytes).expect("the package is JSON");
+    for feature in wire["lock"]["required_features"]
+        .as_array()
+        .expect("required features array")
+    {
+        evidence.support_feature(feature.as_str().expect("feature identity string"));
+    }
+    match filament_contract_model::read_checked_package(
+        bytes,
+        filament_contract_model::CheckedPackageReadLimits::bounded(),
+        &evidence,
+    ) {
+        filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(_) => None,
+        other => Some(format!("{other:?}")),
+    }
 }
 
 fn nodes(bytes: &[u8]) -> Vec<Value> {
@@ -81,13 +88,23 @@ fn nodes(bytes: &[u8]) -> Vec<Value> {
 }
 
 fn declares(node: &Value, name: &str) -> bool {
-    node["declaration"]["qualified_name"]
+    let qualified = &node["declaration"]["qualified_name"];
+    qualified
         .as_str()
         .is_some_and(|qualified| qualified == name || qualified.ends_with(&format!("::{name}")))
+        || qualified
+            .as_array()
+            .and_then(|segments| segments.last())
+            .and_then(Value::as_str)
+            == Some(name)
 }
 
 fn assert_empty_package(refused: &CompileRefusal) {
-    assert_eq!(refused.code(), Code::MissingDeclaration, "{refused}");
+    assert_eq!(
+        refused.code(),
+        Code::MissingDeclaration,
+        "{refused:?}: {refused}"
+    );
     assert_eq!(refused.cause(), Some("empty-package"), "{refused}");
     assert_ne!(refused.code(), Code::UnsupportedProjection);
     assert!(
@@ -102,22 +119,21 @@ fn assert_empty_package(refused: &CompileRefusal) {
     let retained = format!("{refused:?}");
     assert!(retained.contains("fixture"), "no package name: {retained}");
     assert!(
-        retained.contains(&format!("{:?}", SourceIdentity::new("a", "u"))),
+        retained.contains("authority: \"a\"") && retained.contains("identity: \"u\""),
         "no source identity: {retained}"
     );
 }
 
 #[test]
 #[trace("TC-2570", "FR-910-AC-1", "FSpec-TC-1810", "FSpec-FR-746-AC-1")]
-#[ignore = "QSL-2226: writing an unreferenced dimension or unit node is not implemented yet"]
 fn dimension_only_unit_check_and_run_agree() {
     let is_form = |node: &Value, form: &str| {
-        node["node_id"]["path"][0] == "scalar_type" && node["node_id"]["path"][1] == form
+        node["node_tag"] == "scalar_type" && node["semantic_form"] == form
     };
     let only = [HEADER, "dimension Length;\n"];
     check(&only).expect("a dimension-only unit checks");
     let bytes = compile(&only).expect("a dimension-only unit compiles");
-    assert!(admitted_by_the_strict_reader(&bytes));
+    assert_eq!(strict_reader_error(&bytes), None, "strict-read failed");
     let dimensions: Vec<Value> = nodes(&bytes)
         .into_iter()
         .filter(|node| is_form(node, "dimension"))
@@ -135,7 +151,7 @@ fn dimension_only_unit_check_and_run_agree() {
     ];
     check(&with_unit).expect("a dimension-and-unit unit checks");
     let bytes = compile(&with_unit).expect("a dimension-and-unit unit compiles");
-    assert!(admitted_by_the_strict_reader(&bytes));
+    assert_eq!(strict_reader_error(&bytes), None, "strict-read failed");
     let graph = nodes(&bytes);
     let length = graph
         .iter()
@@ -149,7 +165,6 @@ fn dimension_only_unit_check_and_run_agree() {
 
 #[test]
 #[trace("TC-2571", "FR-910-AC-2", "FSpec-TC-1811", "FSpec-FR-746-AC-2")]
-#[ignore = "QSL-2226: the check-stage `empty-package` refusal is not implemented yet"]
 fn alias_only_unit_check_and_run_agree() {
     for units in [
         [HEADER, "type I = Integer;\n"],
@@ -167,31 +182,36 @@ fn alias_only_unit_check_and_run_agree() {
 
 #[test]
 #[trace("TC-2572", "FR-910-AC-3", "FSpec-TC-1812", "FSpec-FR-746-AC-3")]
-#[ignore = "QSL-2226: writing an unreferenced dimension node beside an alias is not implemented yet"]
 fn mixed_alias_and_dimension_unit_agrees() {
     let units = [HEADER, "type I = Integer;\ndimension Length;\n"];
     check(&units).expect("an alias and a dimension check");
     let bytes = compile(&units).expect("an alias and a dimension compile");
-    assert!(nodes(&bytes).iter().any(|node| declares(node, "Length")));
+    assert!(
+        nodes(&bytes).iter().any(|node| declares(node, "Length")),
+        "emitted nodes: {:?}",
+        nodes(&bytes)
+    );
     assert!(!nodes(&bytes).iter().any(|node| declares(node, "I")));
 }
 
 #[test]
 #[trace("TC-2572", "FR-910-AC-3", "FSpec-TC-1812", "FSpec-FR-746-AC-3")]
-#[ignore = "QSL-2226: the declaration-only agreement is not implemented yet"]
 fn alias_plus_function_still_compiles() {
     let bytes = compile(&[
         HEADER,
         "type I = Integer;\nfunction f(x: I): I pure { x }\n",
     ])
     .expect("an alias beside a function compiles");
-    assert!(nodes(&bytes).iter().any(|node| declares(node, "f")));
+    assert!(
+        nodes(&bytes).iter().any(|node| declares(node, "f")),
+        "emitted nodes: {:?}",
+        nodes(&bytes)
+    );
     assert!(!nodes(&bytes).iter().any(|node| declares(node, "I")));
 }
 
 #[test]
 #[trace("TC-2573", "FR-910-AC-4", "FSpec-TC-1812", "FSpec-FR-746-AC-4")]
-#[ignore = "QSL-2226: the check-stage `empty-package` refusal is not implemented yet"]
 fn alias_only_unit_resolves_in_another_unit_and_refuses_alone() {
     let alias = "type Port = Integer;\n";
     let function = "function f(p: Port): Port pure { p }\n";

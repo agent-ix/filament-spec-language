@@ -7,7 +7,8 @@
 
 use std::collections::BTreeSet;
 
-use crate::identity::{DeclaredDomain, ObligationIdentity, ProfileSelection};
+use crate::identity::{DeclaredDomain, ProfileSelection};
+use fsl_package::ObligationIdentity;
 use crate::witness::FamilyPayload;
 use filament_exact::{NodeKey, ObjectReference, ScalarLimits};
 use filament_semantic_value::location::ExpressionLocation as Location;

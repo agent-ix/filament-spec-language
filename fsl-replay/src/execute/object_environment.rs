@@ -152,6 +152,8 @@ pub(super) fn holds_reference(types: &TypeEnvironment, declared: &[ValueType]) -
             | ValueType::CarriedQuantity(_)
             | ValueType::String
             | ValueType::Text(_)
+            | ValueType::Bytes
+            | ValueType::JsonObject
             | ValueType::Enum(_)
             | ValueType::Population(_)
             | ValueType::Uuid

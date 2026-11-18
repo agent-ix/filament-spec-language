@@ -59,6 +59,19 @@ fn record(name: &str) -> DomainPackageRecord {
     })
 }
 
+/// An operation result of `value_type`, exactly one.
+fn one_of(value_type: ValueTypeRef) -> semantics::model::domain_package::OperationResult {
+    semantics::model::domain_package::OperationResult {
+        value_type,
+        multiplicity: Multiplicity {
+            lower: 1,
+            upper: Some(1),
+            ordered: false,
+            unique: true,
+        },
+    }
+}
+
 fn package(name: &str) -> ValueTypeRef {
     ValueTypeRef::Package(key(name))
 }
@@ -116,7 +129,9 @@ pub fn obligation_model_with(extra: Vec<DomainPackageRecord>) -> SelectedModel {
             key: key("Node/step"),
             owner: key("Node"),
             parameters: Vec::new(),
-            result: None,
+            // An attempt binder reads the result (FR-218 "Attempts"): `step`
+            // returns a `Flag`.
+            result: Some(one_of(package("Flag"))),
             effect: OperationEffect::default(),
             requires: Vec::new(),
             ensures: Vec::new(),
@@ -129,7 +144,9 @@ pub fn obligation_model_with(extra: Vec<DomainPackageRecord>) -> SelectedModel {
             key: key("Node/undo"),
             owner: key("Node"),
             parameters: Vec::new(),
-            result: None,
+            // An attempt binder of type `Receipt` reads it (FR-218
+            // "Attempts").
+            result: Some(one_of(package("Receipt"))),
             effect: OperationEffect {
                 receiver_modifies: vec![key("Node/total")],
                 ..OperationEffect::default()

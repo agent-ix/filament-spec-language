@@ -18,8 +18,8 @@ pub use analyze::{
     AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
     analyze_with_providers_and_limits, prepare_analyze,
 };
-pub use flow::{FlowAnalyzeError, analyze_flow_report};
-pub use monitor::{MonitorEvent, MonitorSummary, monitor};
+pub use flow::{analyze_flow_report, FlowAnalyzeError};
+pub use monitor::{monitor, MonitorEvent, MonitorProviders, MonitorSummary};
 pub use output::NativeResult;
 pub use tl::{AtomMapping, TlRecord, record as tl_record};
 
@@ -120,11 +120,6 @@ pub enum LimitKind {
         /// The effective aggregate dependent byte ceiling.
         maximum: usize,
     },
-    /// One selected observation exceeded its document byte ceiling.
-    ObservationDocumentBytes {
-        /// Effective observation document byte ceiling.
-        maximum: usize,
-    },
     /// Total selected file count.
     SelectedFiles {
         /// Group that could not be charged.
@@ -145,7 +140,6 @@ impl LimitKind {
             Self::FileBytes => "file bytes",
             Self::RequestBytes { .. } | Self::FixedRequestBytes { .. } => "request_bytes",
             Self::DependentBytes { .. } | Self::FixedDependentBytes { .. } => "dependent_bytes",
-            Self::ObservationDocumentBytes { .. } => "observation.document_bytes",
             Self::SelectedFiles { .. } => "selected files",
         }
     }
@@ -273,7 +267,8 @@ pub fn check_outcome(source_path: &Path, inputs: &CheckInputs) -> CheckOutcome {
     let result = check_outcome_inner(source_path, inputs);
     match result {
         Ok((document, sources)) => CheckOutcome { document, sources },
-        Err((cause, sources)) => {
+        Err(failure) => {
+            let (cause, sources) = *failure;
             let document = RunError {
                 cause,
                 sources: sources.clone(),
@@ -287,8 +282,10 @@ pub fn check_outcome(source_path: &Path, inputs: &CheckInputs) -> CheckOutcome {
 fn check_outcome_inner(
     source_path: &Path,
     inputs: &CheckInputs,
-) -> std::result::Result<(fsl_replay::OutcomeDocument, crate::Sources), (RunCause, crate::Sources)>
-{
+) -> std::result::Result<
+    (fsl_replay::OutcomeDocument, crate::Sources),
+    Box<(RunCause, crate::Sources)>,
+> {
     let mut intake = intake_with_bytes(
         Path::new("."),
         FileCounts {
@@ -299,7 +296,7 @@ fn check_outcome_inner(
         },
         inputs.dependent_bytes,
     )
-    .map_err(|cause| (cause, crate::Sources::default()))?;
+    .map_err(|cause| Box::new((cause, crate::Sources::default())))?;
     let run = (|| -> Result<fsl_replay::OutcomeDocument> {
         validate_check_selections(&inputs.models, "--model")?;
         validate_check_selections(&inputs.libraries, "--library")?;
@@ -323,8 +320,9 @@ fn check_outcome_inner(
             .collect::<Vec<_>>();
         validate_extension_entries(&extensions)?;
 
+        let source_identity = source_path.to_string_lossy();
         let source = intake.source(
-            &check_source_file(source_path, "check-source", "CheckSource"),
+            &check_source_file(source_path, "filament", &source_identity, "CheckSource"),
             "source",
         )?;
         let extension_catalog = extension_catalog(&extensions, &mut intake)?;
@@ -371,7 +369,7 @@ fn check_outcome_inner(
             .map(|(identity, path)| {
                 Ok(wire::Model {
                     format: DOMAIN_PACKAGE_PROFILE.to_owned(),
-                    source: check_source_file(path, identity, "CheckModel"),
+                    source: check_source_file(path, "fsl-command", identity, "CheckModel"),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -402,7 +400,7 @@ fn check_outcome_inner(
             .iter()
             .map(|(identity, path)| {
                 let source = intake.source(
-                    &check_source_file(path, identity, "CheckLibrary"),
+                    &check_source_file(path, "fsl-command", identity, "CheckLibrary"),
                     "libraries",
                 )?;
                 Ok(fsl_replay::spine::SuppliedLibrary {
@@ -446,7 +444,7 @@ fn check_outcome_inner(
     })();
     let sources = crate::Sources::from_sources(intake.sources);
     run.map(|document| (document, sources.clone()))
-        .map_err(|cause| (cause, sources))
+        .map_err(|cause| Box::new((cause, sources)))
 }
 
 fn check_missing_model_help(
@@ -523,11 +521,16 @@ fn reject_unselected_check_inputs(
     Ok(())
 }
 
-fn check_source_file(path: &Path, identity: &str, document: &str) -> wire::SourceFile {
+fn check_source_file(
+    path: &Path,
+    authority: &str,
+    identity: &str,
+    document: &str,
+) -> wire::SourceFile {
     wire::SourceFile {
         file: path.to_string_lossy().into_owned(),
         identity: wire::Identity {
-            authority: "fsl-command".to_owned(),
+            authority: authority.to_owned(),
             identity: identity.to_owned(),
             document: document.to_owned(),
             formal_revision: 1,
@@ -565,6 +568,7 @@ struct FunctionRunData {
     dependencies: fsl_replay::spine::DependencyInput,
     extension_catalog: Option<fsl_semantics::library::bundle::DefinitionCatalog>,
     call: fsl_replay::spine::Call,
+    integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     /// FR-960: the call's `requirements`; `None` settles no item.
     requirements: Option<requirements::Requirements>,
 }
@@ -740,6 +744,35 @@ pub enum RunCause {
     /// FR-031: an extracted program is a run input, not a source-only compile.
     #[error("an extracted program requires run")]
     ExtractionRequiresRun,
+    /// FR-031-AC-6: the request cannot select a package artifact and extracted source.
+    #[error("an extracted program cannot select a package artifact")]
+    ExtractionPackageConflict,
+    /// FR-031-AC-6: exactly one authored clause binding is required.
+    #[error("extracted program has {actual} clause bindings; expected exactly one")]
+    ExtractionClauseCount {
+        /// Number of bindings supplied in the request.
+        actual: usize,
+    },
+    /// FR-031-AC-7: Quire rejected the clause-only semantic context.
+    #[cfg(feature = "quire-extraction")]
+    #[error("Quire rejected the clause-only context")]
+    InvalidQuireContext {
+        /// Unchanged diagnostics returned by Quire's semantic-block validator.
+        diagnostics: Vec<fsl_source::SemanticFailure>,
+    },
+    /// FR-031: extraction failed after the request's Quire context validated.
+    #[cfg(feature = "quire-extraction")]
+    #[error("{message}")]
+    ExtractionFailure {
+        /// FR-030's catalog code.
+        code: Code,
+        /// The command-error stage for this extraction failure.
+        stage: ExtractionFailureStage,
+        /// Original identity, selected binding and any completed Quire outcome.
+        details: serde_json::Map<String, serde_json::Value>,
+        /// The upstream extraction diagnostic.
+        message: String,
+    },
     /// FR-027/FR-480: a source-unit list must not be empty.
     #[error("the compile program has no source units")]
     EmptyCompileProgram,
@@ -751,6 +784,16 @@ pub enum RunCause {
         /// The value given.
         value: String,
     },
+    /// FR-767: `integer_division` names no supported division law.
+    #[error(
+        "unknown_profile/unsupported-selection: integer-division law `{value}` supplied by `{member}` is not one of euclidean, floor and truncating"
+    )]
+    IntegerDivisionLaw {
+        /// The member that supplied the value.
+        member: String,
+        /// The value given.
+        value: String,
+    },
     /// FR-931: `tl_lowering.clause` names no temporal clause of the program.
     #[error(
         "missing_declaration/missing-name: tl_lowering.clause {name:?} names no temporal clause"
@@ -759,13 +802,10 @@ pub enum RunCause {
         /// The name given.
         name: String,
     },
-    /// FR-931: a `tl_lowering` form this build does not run yet
-    /// (`unsupported_construct`/`not-yet-implemented`).
-    #[error("unsupported_construct/not-yet-implemented: {member} is not implemented yet")]
-    TlNotYetImplemented {
-        /// The request member the gap is in.
-        member: &'static str,
-    },
+    /// FR-931: the model subject builder refused the
+    /// `cross_evaluate.initial` snapshot (FR-120's admission refusals).
+    #[error("tl_lowering.cross_evaluate.initial is refused: {}/{}", .0.catalog.code(), .0.catalog.cause())]
+    TlSubject(Box<fsl_semantics::model::observation::AdmissionRecord>),
     /// FR-931: the lowering of a supported clause broke an invariant.
     #[error("the TL lowering faulted: {0}")]
     TlFault(String),
@@ -811,6 +851,16 @@ pub enum RunCause {
         /// Why it is refused.
         reason: String,
     },
+    /// FSL FR-1033: a `memory` entry names no outermost `parallel` of a
+    /// protocol of the package, or two entries name one
+    /// (`invalid_runtime_input`/`invalid-value`).
+    #[error("invalid analyze request member {member}: {reason}")]
+    AnalyzeMemory {
+        /// The entry at fault, by its pointer.
+        member: String,
+        /// Why it is refused.
+        reason: String,
+    },
     /// FR-620: a `subject.universes` entry names no provisioned snapshot
     /// (`invalid-request`), or a population of a referenced snapshot is
     /// incomplete (`incomplete_population`).
@@ -833,11 +883,14 @@ pub enum RunCause {
     /// (`unsupported_construct`/`not-yet-implemented`, FR-763), such as a
     /// checked-package selection (QSL-2271).
     #[error(
-        "unsupported_construct/not-yet-implemented: analyzing a {member} selection is not implemented yet"
+        "unsupported_construct/not-yet-implemented: analyzing a {member} selection is not implemented yet{detail}"
     )]
     AnalyzeNotYetImplemented {
         /// The request member the gap is in.
         member: &'static str,
+        /// What of the request is pending: empty, or the item family and
+        /// request index the gap is at.
+        detail: String,
     },
     /// FR-624: the shared subject binding or source provision of an
     /// analyze request was refused before any item ran.
@@ -877,6 +930,16 @@ pub enum RunCause {
     /// An item run violated an internal runtime invariant.
     #[error("an items run faulted")]
     ItemsFault,
+}
+
+#[cfg(feature = "quire-extraction")]
+/// Stage that refused a Markdown extraction request.
+#[derive(Clone, Copy, Debug)]
+pub enum ExtractionFailureStage {
+    /// The authored binding did not identify an extracted clause.
+    Selection,
+    /// Quire rejected or could not provide the clause context.
+    Quire,
 }
 
 /// The two owner projections of the same source-intake refusal.
@@ -957,17 +1020,26 @@ impl RunCause {
             | Self::CompleteRunSelection(_)
             | Self::EmptyCompileProgram => Code::InvalidRequest,
             Self::ExtractionRequiresRun => Code::ExtractionRequiresRun,
+            Self::ExtractionPackageConflict => Code::ExtractionPackageConflict,
+            Self::ExtractionClauseCount { .. } => Code::ExtractionClauseCount,
+            #[cfg(feature = "quire-extraction")]
+            Self::InvalidQuireContext { .. } => Code::InvalidQuireContext,
+            #[cfg(feature = "quire-extraction")]
+            Self::ExtractionFailure { code, .. } => *code,
             Self::Spine(failure) => failure.refusal.code(),
             Self::ExtensionCatalog(_) => Code::InvalidPackage,
             Self::SpineRun(refusal) => refusal.code(),
             Self::UnknownRequirementClaim { .. } => Code::MissingDeclaration,
             Self::TemporalCorrection(_) => Code::InvalidRuntimeInput,
             Self::AnalyzeRequest { .. } => Code::InvalidRequest,
+            Self::AnalyzeMemory { .. } => Code::InvalidRuntimeInput,
             Self::AnalyzePackage { code, .. } => *code,
             Self::AnalyzeNotYetImplemented { .. } => Code::UnsupportedConstruct,
-            Self::TlCorrespondence { .. } => Code::UnknownProfile,
+            Self::TlCorrespondence { .. } | Self::IntegerDivisionLaw { .. } => Code::UnknownProfile,
             Self::TlClause { .. } => Code::MissingDeclaration,
-            Self::TlNotYetImplemented { .. } => Code::UnsupportedConstruct,
+            Self::TlSubject(record) => {
+                Code::from_code(record.catalog.code()).unwrap_or(Code::InvalidRuntimeInput)
+            }
             Self::TlFault(_) => Code::RuntimeInvariant,
             Self::AnalyzeUniverse(
                 fsl_analyze::analyze::document::UniverseRefusal::Unprovisioned { .. },
@@ -1119,8 +1191,9 @@ impl RunError {
             | RunCause::Json(_)
             | RunCause::ClauseRequest { .. }
             | RunCause::TlCorrespondence { .. }
+            | RunCause::IntegerDivisionLaw { .. }
             | RunCause::TlClause { .. }
-            | RunCause::TlNotYetImplemented { .. }
+            | RunCause::TlSubject(_)
             | RunCause::TlFault(_)
             | RunCause::ClocksGivenTwice
             | RunCause::OutputGivenTwice
@@ -1132,6 +1205,8 @@ impl RunError {
             | RunCause::Identifier { .. }
             | RunCause::CompleteSelection(_)
             | RunCause::ExtractionRequiresRun
+            | RunCause::ExtractionPackageConflict
+            | RunCause::ExtractionClauseCount { .. }
             | RunCause::EmptyCompileProgram
             | RunCause::Libraries(_)
             | RunCause::ExtensionCatalog(_)
@@ -1153,6 +1228,39 @@ impl RunError {
                     None,
                     self.outcome_message(),
                 )]),
+            RunCause::AnalyzeMemory { .. } => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        Some("invalid-value"),
+                        self.cause.code().as_str(),
+                        None,
+                        self.outcome_message(),
+                    ),
+                ])
+            }
+            #[cfg(feature = "quire-extraction")]
+            RunCause::ExtractionFailure { stage, details, .. } => {
+                let mut details = details.clone();
+                details.insert(
+                    "stage".to_owned(),
+                    serde_json::Value::String(
+                        match stage {
+                            ExtractionFailureStage::Selection => "selection",
+                            ExtractionFailureStage::Quire => "quire",
+                        }
+                        .to_owned(),
+                    ),
+                );
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        None,
+                        self.cause.code().as_str(),
+                        None,
+                        self.outcome_message(),
+                    )
+                    .with_details(Some(details)),
+                ])
+            }
             RunCause::AnalyzePackage { cause, .. } => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
@@ -1167,6 +1275,17 @@ impl RunError {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
                         Some("not-yet-implemented"),
+                        self.cause.code().as_str(),
+                        None,
+                        self.outcome_message(),
+                    ),
+                ])
+            }
+            #[cfg(feature = "quire-extraction")]
+            RunCause::InvalidQuireContext { .. } => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        None,
                         self.cause.code().as_str(),
                         None,
                         self.outcome_message(),
@@ -1189,11 +1308,6 @@ impl RunError {
             }
             RunCause::Limit(LimitKind::FixedDependentBytes { maximum }) => {
                 format!("dependent_bytes limit {maximum} exceeded")
-            }
-            RunCause::Limit(LimitKind::ObservationDocumentBytes { maximum }) => {
-                format!(
-                    "observation.document_bytes limit {maximum} exceeded; raise --limit observation.document_bytes"
-                )
             }
             RunCause::Limit(LimitKind::SelectedFiles {
                 category,
@@ -1262,42 +1376,6 @@ impl Intake<'_> {
             return Ok(bytes);
         }
         self.bounded_file(path, ceiling)
-    }
-
-    fn observation_file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
-        if let Some(bytes) = self.prefetched_observations.remove(path) {
-            if bytes.len() > ceiling {
-                return Err(RunCause::Limit(LimitKind::ObservationDocumentBytes {
-                    maximum: ceiling,
-                }));
-            }
-            return Ok(bytes);
-        }
-        let remaining = self.remaining;
-        let bytes =
-            read_file(&self.directory.join(path), ceiling.min(remaining)).map_err(|cause| {
-                match cause {
-                    RunCause::Limit(LimitKind::FileBytes) if ceiling <= remaining => {
-                        RunCause::Limit(LimitKind::ObservationDocumentBytes { maximum: ceiling })
-                    }
-                    RunCause::Limit(LimitKind::FileBytes) => match self.dependent_limit {
-                        Some(DependentLimit::CallerConfigured) => {
-                            RunCause::Limit(LimitKind::DependentBytes {
-                                maximum: self.maximum,
-                            })
-                        }
-                        Some(DependentLimit::Fixed) => {
-                            RunCause::Limit(LimitKind::FixedDependentBytes {
-                                maximum: self.maximum,
-                            })
-                        }
-                        None => RunCause::Limit(LimitKind::FileBytes),
-                    },
-                    cause => cause,
-                }
-            })?;
-        self.remaining -= bytes.len();
-        Ok(bytes)
     }
 
     fn bounded_file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
@@ -1457,10 +1535,34 @@ pub fn run_with_providers(
     options: &ProviderOptions,
     cancel: &filament_exact::Cancel,
 ) -> std::result::Result<RunResult, Box<RunError>> {
-    run_configured(
+    run_with_providers_and_limits_and_overrides(
         path,
         RunLimits::default(),
         &RequestOverrides::default(),
+        negotiate,
+        providers,
+        options,
+        cancel,
+    )
+}
+
+/// Run with providers, caller-selected request/dependent byte ceilings, and
+/// request members supplied beside the request file (FR-312, FR-640).
+/// This is the provider-backed counterpart of
+/// [`run_with_limits_and_overrides`].
+pub fn run_with_providers_and_limits_and_overrides(
+    path: &Path,
+    limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+    negotiate: &dyn Negotiate,
+    providers: Vec<fsl_analyze::analyze::Engine>,
+    options: &ProviderOptions,
+    cancel: &filament_exact::Cancel,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    run_configured(
+        path,
+        limits,
+        overrides,
         Settlement {
             negotiate,
             providers,
@@ -1507,7 +1609,7 @@ fn run_configured(
     // stream.
     let special = with_request_limits(path, limits.request_bytes, |directory, bytes| {
         if monitor::is_monitor_request(bytes) {
-            monitor::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
+            monitor::run_bytes(directory, bytes, limits.dependent_bytes, &settle).map(Some)
         } else if replay::is_replay_request(bytes) {
             // FR-862: a `native-replay/1` request replays its FR-336 request.
             replay::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
@@ -1517,7 +1619,22 @@ fn run_configured(
             } else if let Some(result) = check_argv(directory, bytes)? {
                 Ok(Some(result))
             } else {
-                items::run_bytes(directory, bytes, limits, overrides, &settle)
+                if let Some(result) =
+                    items::run_bytes(directory, bytes, limits, overrides, &settle)?
+                {
+                    Ok(Some(result))
+                } else {
+                    #[cfg(feature = "quire-extraction")]
+                    if let Some(result) = run_extracted_clause_bytes(
+                        directory,
+                        bytes,
+                        limits.dependent_bytes,
+                        overrides.observation.copied(),
+                    )? {
+                        return Ok(Some(result));
+                    }
+                    Ok(None)
+                }
             }
         }
     })?;
@@ -1527,6 +1644,36 @@ fn run_configured(
     let prepared = prepare_run_with_overrides(path, limits, overrides)?;
     let sources = prepared.admitted_sources();
     execute_prepared(prepared, &settle).map_err(|cause| Box::new(RunError { cause, sources }))
+}
+
+#[cfg(feature = "quire-extraction")]
+fn run_extracted_clause_bytes(
+    directory: &Path,
+    bytes: &[u8],
+    dependent_bytes: usize,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
+) -> Result<Option<RunResult>> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(RunCause::Json)?;
+    if !value
+        .pointer("/request/program/extraction")
+        .is_some_and(|extraction| !extraction.is_null())
+    {
+        return Ok(None);
+    }
+    let request = read_clause_run_request_bytes(
+        directory,
+        bytes,
+        Some(dependent_bytes),
+        observation_override,
+    )?;
+    let (extraction, map) = extraction_record(&request, &value)?;
+    let selection = request.selection.clone();
+    let report =
+        fsl_replay::spine::run_clause(request).map_err(|error| RunCause::ClauseRequest {
+            member: "clause".to_owned(),
+            reason: error.to_string(),
+        })?;
+    output::clause_report_with_extraction(report, &selection, extraction, &map).map(Some)
 }
 
 /// FR-661: handle the driver's in-process `version` invocation used by the
@@ -1774,38 +1921,269 @@ pub fn read_clause_run_request(
     path: &Path,
 ) -> std::result::Result<fsl_replay::spine::ClauseRunRequest, ClauseRunRequestRefusal> {
     with_request(path, |directory, bytes| {
-        let request: wire::Request = request(bytes)?;
-        let clause = request
-            .clause
-            .as_ref()
-            .ok_or_else(|| RunCause::ClauseRequest {
-                member: "clause".to_owned(),
-                reason: "missing clause run".to_owned(),
-            })?;
-        if request.call.is_some() {
-            return Err(RunCause::ClauseRequest {
-                member: "call".to_owned(),
-                reason: "call and clause are mutually exclusive".to_owned(),
-            });
-        }
-        let mut intake = intake(
-            directory,
-            FileCounts {
-                programs: request.libraries.len().saturating_add(1),
-                models: request.models.len(),
-                observations: clause
-                    .observations
-                    .values()
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .len(),
-                extensions: request.extensions.len(),
-            },
-        )?;
-        reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
-        let source = intake.source(&request.program.source, "program.source")?;
-        require_complete_edition(source.source())?;
-        clause::read(&mut intake, &request, clause, source)
+        read_clause_run_request_bytes(directory, bytes, None, None)
     })
+}
+
+fn read_clause_run_request_bytes(
+    directory: &Path,
+    bytes: &[u8],
+    dependent_bytes: Option<usize>,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
+) -> Result<fsl_replay::spine::ClauseRunRequest> {
+    let request: wire::Request = request(bytes)?;
+    #[cfg(feature = "quire-extraction")]
+    if request.program.extraction.is_some() && request.package.is_some() {
+        return Err(RunCause::ExtractionPackageConflict);
+    }
+    #[cfg(feature = "quire-extraction")]
+    if request.program.extraction.is_some() && request.call.is_some() {
+        return Err(RunCause::ExtractionRequiresRun);
+    }
+    #[cfg(feature = "quire-extraction")]
+    if request.program.extraction.is_some() && request.program.clauses.len() != 1 {
+        return Err(RunCause::ExtractionClauseCount {
+            actual: request.program.clauses.len(),
+        });
+    }
+    let clause = request
+        .clause
+        .as_ref()
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: "clause".to_owned(),
+            reason: "missing clause run".to_owned(),
+        })?;
+    if request.call.is_some() {
+        return Err(RunCause::ClauseRequest {
+            member: "call".to_owned(),
+            reason: "call and clause are mutually exclusive".to_owned(),
+        });
+    }
+    let counts = FileCounts {
+        programs: request.libraries.len().saturating_add(1),
+        models: request.models.len(),
+        observations: clause
+            .observations
+            .values()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        extensions: request.extensions.len(),
+    };
+    let mut intake = match dependent_bytes {
+        Some(maximum) => intake_with_bytes(directory, counts, maximum)?,
+        None => intake(directory, counts)?,
+    };
+    reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
+    let source = intake.source(&request.program.source, "program.source")?;
+    #[cfg(feature = "quire-extraction")]
+    if let Some(extraction) = &request.program.extraction {
+        let binding = &request.program.clauses[0];
+        let context = fsl_source::clause_context(&binding.package, source.source())
+            .map_err(|diagnostics| RunCause::InvalidQuireContext { diagnostics })?;
+        let body_identity = fsl_foundation::SourceIdentity::new(
+            extraction.body.authority.clone(),
+            extraction.body.identity.clone(),
+        );
+        let extracted = match fsl_source::extract(
+            source.source().clone(),
+            &context,
+            fsl_source::Selection {
+                clause_id: binding.clause.clone(),
+                package: binding.package.clone(),
+                body: body_identity,
+            },
+            fsl_source::Limits::default(),
+        ) {
+            Ok(extracted) => extracted,
+            Err(error) => return Err(extraction_failure(error)?),
+        };
+        return clause::read_extracted(
+            &mut intake,
+            &request,
+            clause,
+            source,
+            extracted,
+            observation_override,
+        );
+    } else {
+        require_complete_edition(source.source())?;
+    }
+    #[cfg(not(feature = "quire-extraction"))]
+    require_complete_edition(source.source())?;
+    clause::read(&mut intake, &request, clause, source, observation_override)
+}
+
+#[cfg(feature = "quire-extraction")]
+fn extraction_failure(error: Box<fsl_source::Error>) -> Result<RunCause> {
+    let code = error.code();
+    let stage = match &error.cause {
+        fsl_source::Cause::Preflight(_) => ExtractionFailureStage::Selection,
+        fsl_source::Cause::Join(_)
+            if error.extraction().is_some_and(|outcome| {
+                outcome.availability.state != fsl_source::AvailabilityState::Available
+            }) =>
+        {
+            ExtractionFailureStage::Quire
+        }
+        fsl_source::Cause::Join(_) => ExtractionFailureStage::Selection,
+    };
+    let original = error.original();
+    let identity = original.identity();
+    let selection = error.selection();
+    let mut details = serde_json::Map::from_iter([
+        (
+            "original".to_owned(),
+            serde_json::json!({
+                "authority": identity.authority,
+                "identity": identity.identity,
+            }),
+        ),
+        (
+            "path".to_owned(),
+            serde_json::Value::String(original.path().to_owned()),
+        ),
+        (
+            "body".to_owned(),
+            serde_json::json!({
+                "authority": selection.body.authority,
+                "identity": selection.body.identity,
+            }),
+        ),
+        (
+            "binding".to_owned(),
+            serde_json::json!({
+                "clause": selection.clause_id,
+                "package": selection.package,
+            }),
+        ),
+    ]);
+    if let Some(outcome) = error.extraction() {
+        let mut value = serde_json::Map::from_iter([
+            (
+                "availability".to_owned(),
+                serde_json::to_value(&outcome.availability).map_err(RunCause::Output)?,
+            ),
+            (
+                "clause_text".to_owned(),
+                serde_json::to_value(&outcome.clause_text).map_err(RunCause::Output)?,
+            ),
+            (
+                "diagnostics".to_owned(),
+                serde_json::to_value(&outcome.diagnostics).map_err(RunCause::Output)?,
+            ),
+        ]);
+        if let Some(clauses) = &outcome.clauses {
+            value.insert(
+                "clauses".to_owned(),
+                serde_json::to_value(clauses).map_err(RunCause::Output)?,
+            );
+        }
+        details.insert("outcome".to_owned(), serde_json::Value::Object(value));
+    }
+    Ok(RunCause::ExtractionFailure {
+        code,
+        stage,
+        details,
+        message: error.to_string(),
+    })
+}
+
+#[cfg(feature = "quire-extraction")]
+fn extraction_record(
+    request: &fsl_replay::spine::ClauseRunRequest,
+    envelope: &serde_json::Value,
+) -> Result<(serde_json::Value, fsl_foundation::source_map::SourceMap)> {
+    let fsl_replay::spine::ClauseRunSource::Extracted(extracted) = &request.source else {
+        return Err(RunCause::ClauseRequest {
+            member: "program.extraction".to_owned(),
+            reason: "extraction request did not produce an extracted source".to_owned(),
+        });
+    };
+    let body_document = envelope
+        .pointer("/request/program/extraction/body/document")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: "program.extraction.body.document".to_owned(),
+            reason: "missing body document identity".to_owned(),
+        })?;
+    let binding = envelope
+        .pointer("/request/program/clauses/0")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: "program.clauses[0]".to_owned(),
+            reason: "missing extraction binding".to_owned(),
+        })?;
+    let clause = binding
+        .get("clause")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: "program.clauses[0].clause".to_owned(),
+            reason: "missing extraction clause".to_owned(),
+        })?;
+    let package = binding
+        .get("package")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: "program.clauses[0].package".to_owned(),
+            reason: "missing extraction package".to_owned(),
+        })?;
+    let map = extracted.map();
+    let original = map.original();
+    let body = map.body();
+    let outcome = extracted.extraction();
+    let mut outcome_value = serde_json::Map::from_iter([
+        (
+            "availability".to_owned(),
+            serde_json::to_value(&outcome.availability).map_err(RunCause::Output)?,
+        ),
+        (
+            "clause_text".to_owned(),
+            serde_json::to_value(&outcome.clause_text).map_err(RunCause::Output)?,
+        ),
+        (
+            "diagnostics".to_owned(),
+            serde_json::to_value(&outcome.diagnostics).map_err(RunCause::Output)?,
+        ),
+    ]);
+    if let Some(clauses) = &outcome.clauses {
+        outcome_value.insert(
+            "clauses".to_owned(),
+            serde_json::to_value(clauses).map_err(RunCause::Output)?,
+        );
+    }
+    let segments: Vec<_> = map
+        .segments()
+        .iter()
+        .map(|segment| {
+            serde_json::json!({
+                "body_start": segment.body.start,
+                "body_end": segment.body.end,
+                "original_start": segment.original.start,
+                "original_end": segment.original.end,
+            })
+        })
+        .collect();
+    let record = serde_json::json!({
+        "original": {
+            "authority": original.identity().authority,
+            "identity": original.identity().identity,
+            "path": original.path(),
+            "bytes": original.text().as_bytes(),
+        },
+        "body": {
+            "authority": body.identity().authority,
+            "identity": body.identity().identity,
+            "document": body_document,
+            "bytes": body.text().as_bytes(),
+        },
+        "binding": {"clause": clause, "package": package},
+        "outcome": outcome_value,
+        "map": {
+            "region": {"start": map.region().start, "end": map.region().end},
+            "segments": segments,
+        }
+    });
+    Ok((record, map.clone()))
 }
 
 /// Compile a `1-draft` source-only job through the spine (FR-027).
@@ -2235,6 +2613,10 @@ fn handoff_clock_selections(
 /// The pipeline of [`complete_sources`] through S4: the checked unit is
 /// handed to `finish` with the admitted domain packages, the library
 /// sources and the map from a spine failure to its located cause.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+)]
 fn check_sources<T>(
     request: &wire::CompileRequest,
     intake: &mut Intake<'_>,
@@ -2407,6 +2789,7 @@ fn check_sources<T>(
                 refinement_internals: request.refinement_internals.clone(),
                 temporal_selections: &check_selections,
                 clocks: Some(&request.clocks),
+                check_mode: Some(request.check_mode),
             },
             &models,
             &dependencies,
@@ -2444,6 +2827,7 @@ fn check_sources<T>(
                 refinement_internals: request.refinement_internals.clone(),
                 temporal_selections: &check_selections,
                 clocks: Some(&request.clocks),
+                check_mode: Some(request.check_mode),
             },
             &models,
             &dependencies,
@@ -2667,6 +3051,10 @@ pub struct RequestOverrides<'a> {
     /// Compile-stage limits supplied by the caller (FR-869). `None` uses the
     /// published defaults.
     pub limits: Option<&'a fsl_replay::spine::SpineLimits>,
+    /// Clause observation limits supplied by the caller (FR-312). A request
+    /// that also carries `clause.observation_limits` is refused at request
+    /// stage before any observation file is read.
+    pub observation: Option<&'a fsl_semantics::model::observation::ObservationLimits>,
 }
 
 fn request_with_overrides<T: wire::ClocksRequest>(
@@ -2782,6 +3170,35 @@ fn prepare_run_bytes_with_sources(
     admitted_sources: &mut crate::Sources,
 ) -> Result<PreparedRun> {
     let request: wire::Request = request_with_overrides(bytes, overrides)?;
+    if request.package.is_some() && request.integer_division.is_some() {
+        return Err(RunCause::ClauseRequest {
+            member: "integer_division".to_owned(),
+            reason: "a package already carries its selected integer-division law".to_owned(),
+        });
+    }
+    if request.package.is_some() {
+        return Err(RunCause::ClauseRequest {
+            member: "package".to_owned(),
+            reason: "package-only native-run execution is tracked by QSL-2390".to_owned(),
+        });
+    }
+    let integer_division =
+        read_integer_division(request.integer_division.as_ref(), "integer_division")?;
+    let library_integer_division = request
+        .libraries
+        .iter()
+        .enumerate()
+        .map(|(index, library)| {
+            read_integer_division(
+                library.integer_division.as_ref(),
+                &format!("libraries[{index}].integer_division"),
+            )
+            .map(|law| law.map(|law| (library.identity.clone(), law)))
+        })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
     validate_extension_entries(&request.extensions)?;
     // FR-931: a malformed `tl_lowering` member refuses before any source
     // file is read.
@@ -2824,7 +3241,14 @@ fn prepare_run_bytes_with_sources(
         // the runner before any model or library source is read (FR-100).
         let source = intake.source(&request.program.source, "program.source")?;
         require_complete_edition(source.source())?;
-        prepare_complete_run(&mut intake, &request, source)
+        prepare_complete_run(
+            &mut intake,
+            &request,
+            source,
+            integer_division,
+            library_integer_division,
+            overrides.observation.copied(),
+        )
     })();
     *admitted_sources = crate::Sources::from_sources(intake.sources.iter().cloned());
     prepared
@@ -2839,6 +3263,7 @@ fn prepare_lowering(
     request: &wire::Request,
     member: &serde_json::Value,
     source: FormalSource,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<PreparedRun> {
     if request.call.is_some() || request.clause.is_some() {
         return Err(RunCause::ClauseRequest {
@@ -2847,32 +3272,101 @@ fn prepare_lowering(
         });
     }
     let lowering = tl::decode(member)?;
-    if matches!(lowering.cross, Some(tl::CrossEvaluate::Initial)) {
-        return Err(RunCause::TlNotYetImplemented {
-            member: "tl_lowering.cross_evaluate.initial",
-        });
-    }
     let clause: wire::ClauseRun = serde_json::from_value(tl::selection(&lowering))?;
     let text = source.source().text().to_owned();
-    let run = clause::read(intake, request, &clause, source)?;
+    let run = clause::read(intake, request, &clause, source, observation_override)?;
+    let behaviours = match &lowering.cross {
+        Some(tl::CrossEvaluate::Initial { max_steps, .. }) => {
+            Some(initial_subject(&run, *max_steps)?)
+        }
+        Some(tl::CrossEvaluate::Trace { .. }) | None => None,
+    };
     let sources = crate::Sources::from_sources(intake.sources.iter().cloned());
     Ok(PreparedRun::TlLowering(Box::new(PreparedLowering {
         request: run,
         lowering,
+        behaviours,
         source: text,
         sources,
     })))
 }
 
+/// FR-931 `cross_evaluate.initial`: the snapshot the lowering's model
+/// subject is built from, and the longest behaviour. A universe is a
+/// complete population, so a population the snapshot marks incomplete
+/// refuses `incomplete_population` naming it, as FR-620 refuses a universe
+/// snapshot's.
+fn initial_subject(
+    run: &fsl_replay::spine::ClauseRunRequest,
+    max_steps: u64,
+) -> Result<(fsl_semantics::model::observation::DocumentRef, usize)> {
+    let mut snapshots = run.snapshots.keys();
+    let (Some(initial), None) = (snapshots.next(), snapshots.next()) else {
+        return Err(RunCause::ClauseRequest {
+            member: "tl_lowering.cross_evaluate.initial".to_owned(),
+            reason: "expected one snapshot file".to_owned(),
+        });
+    };
+    let reference =
+        serde_json::json!({"authority": initial.authority, "identity": initial.identity});
+    let subject: fsl_analyze::analyze::document::SubjectSelection =
+        serde_json::from_value(serde_json::json!({
+            "initial_states": [reference],
+            "universes": [reference],
+            "proof_bounds": [],
+        }))?;
+    subject
+        .check_universes(&run.snapshots)
+        .map_err(RunCause::AnalyzeUniverse)?;
+    let max_steps = usize::try_from(max_steps).map_err(|_| RunCause::ClauseRequest {
+        member: "tl_lowering.cross_evaluate.max_steps".to_owned(),
+        reason: "the step bound does not fit this platform".to_owned(),
+    })?;
+    Ok((initial.clone(), max_steps))
+}
+
 /// Prepare FR-100's function or clause selection without executing a stage.
 /// `source` is the program source, already read by bounded intake.
+fn read_integer_division(
+    value: Option<&serde_json::Value>,
+    member: &str,
+) -> Result<Option<fsl_replay::AdmittedIntegerDivision>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let law = value.as_str().ok_or_else(|| RunCause::ClauseRequest {
+        member: member.to_owned(),
+        reason: "expected one of euclidean, floor and truncating".to_owned(),
+    })?;
+    let role = match law {
+        "euclidean" => fsl_replay::DefinitionRole::IntegerDivisionEuclidean,
+        "floor" => fsl_replay::DefinitionRole::IntegerDivisionFloor,
+        "truncating" => fsl_replay::DefinitionRole::IntegerDivisionTruncating,
+        _ => {
+            return Err(RunCause::IntegerDivisionLaw {
+                member: member.to_owned(),
+                value: law.to_owned(),
+            });
+        }
+    };
+    fsl_replay::admit_integer_division(&[role.reference()], None)
+        .map(Some)
+        .map_err(|_| RunCause::ClauseRequest {
+            member: member.to_owned(),
+            reason: "the selected law could not be admitted".to_owned(),
+        })
+}
+
 fn prepare_complete_run(
     intake: &mut Intake<'_>,
     request: &wire::Request,
     source: FormalSource,
+    integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
+    library_integer_division: Vec<(String, fsl_replay::AdmittedIntegerDivision)>,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<PreparedRun> {
     if let Some(member) = &request.tl_lowering {
-        return prepare_lowering(intake, request, member, source);
+        return prepare_lowering(intake, request, member, source, observation_override);
     }
     if let Some(clause) = &request.clause {
         if request.call.is_some() {
@@ -2881,7 +3375,7 @@ fn prepare_complete_run(
                 reason: "call and clause are mutually exclusive".to_owned(),
             });
         }
-        let request = clause::read(intake, request, clause, source)?;
+        let request = clause::read(intake, request, clause, source, observation_override)?;
         let sources = crate::Sources::from_sources(intake.sources.iter().cloned());
         return Ok(PreparedRun::Clause(Box::new(PreparedClauseRun {
             request: Box::new(request),
@@ -2928,7 +3422,7 @@ fn prepare_complete_run(
                 intake.source(&library.source, &format!("libraries[{index}].source"))?,
             ))
         })
-        .collect::<Result<Vec<(&wire::Library, FormalSource)>>>()?;
+        .collect::<Result<Vec<(&wire::RunLibrary, FormalSource)>>>()?;
     // FR-660: the same request-owned catalog is available to run compilation.
     let extension_catalog = Some(extension_catalog(&request.extensions, intake)?);
     let dependencies =
@@ -2940,6 +3434,15 @@ fn prepare_complete_run(
                 bytes: read.source().text().as_bytes().to_vec(),
             }
         }))
+        .and_then(|dependencies| {
+            dependencies.with_refinement_internals(libraries.iter().filter_map(|(library, _)| {
+                library
+                    .refinement_internals
+                    .as_ref()
+                    .map(|value| (library.identity.clone(), value.clone()))
+            }))
+        })
+        .and_then(|dependencies| dependencies.with_integer_division(library_integer_division))
         .map_err(|refusal| {
             spine_run_failure(
                 &source,
@@ -3002,6 +3505,7 @@ fn prepare_complete_run(
             dependencies,
             extension_catalog,
             call: spine_call,
+            integer_division,
             requirements,
         }),
     }))
@@ -3012,6 +3516,8 @@ fn prepare_complete_run(
 pub struct PreparedLowering {
     request: fsl_replay::spine::ClauseRunRequest,
     lowering: tl::TlLowering,
+    /// `cross_evaluate.initial`'s snapshot and longest behaviour.
+    behaviours: Option<(fsl_semantics::model::observation::DocumentRef, usize)>,
     source: String,
     sources: crate::Sources,
 }
@@ -3034,20 +3540,31 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
     let PreparedLowering {
         request,
         lowering,
+        behaviours,
         source,
         sources,
     } = prepared;
     let selection = request.selection.clone();
-    let report = fsl_replay::spine::run_temporal_valuation(request).map_err(|error| {
-        RunCause::ClauseRequest {
-            member: "tl_lowering".to_owned(),
-            reason: error.to_string(),
+    let report = match &behaviours {
+        Some((initial, max_steps)) => {
+            fsl_replay::spine::run_temporal_behaviours(request, initial, *max_steps)
         }
+        None => fsl_replay::spine::run_temporal_valuation(request),
+    }
+    .map_err(|error| RunCause::ClauseRequest {
+        member: "tl_lowering".to_owned(),
+        reason: error.to_string(),
     })?;
     let valuation = match &report.disposition {
         fsl_replay::spine::ClauseDisposition::TemporalValuation(valuation) => valuation,
         fsl_replay::spine::ClauseDisposition::MissingName { name } => {
             return Err(RunCause::TlClause { name: name.clone() });
+        }
+        // FR-931: a snapshot the subject builder refuses refuses the request.
+        fsl_replay::spine::ClauseDisposition::Admit(
+            fsl_semantics::model::observation::AdmissionFailure::Refused(record),
+        ) if behaviours.is_some() => {
+            return Err(RunCause::TlSubject(record.clone()));
         }
         _ => return output::clause_report(report, &selection),
     };
@@ -3090,8 +3607,30 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
     // evaluation is the same with and without them.
     let call_cancel = filament_exact::Cancel::new();
     let objects = fsl_semantics::model::object_environment::ObjectEnvironment::default();
-    let run = |catalog: Option<&fsl_semantics::library::bundle::DefinitionCatalog>| match catalog {
-        Some(catalog) => fsl_replay::spine::run_with_profile_catalog(
+    let run = |catalog: Option<&fsl_semantics::library::bundle::DefinitionCatalog>| match (
+        catalog,
+        prepared.integer_division,
+    ) {
+        (Some(catalog), Some(integer_division)) => {
+            fsl_replay::spine::run_with_profile_catalog_and_integer_division(
+                source.source().identity().clone(),
+                package_name(source.source().identity()),
+                source.source().path(),
+                source.source().text().as_bytes(),
+                &prepared.packages,
+                &prepared.dependencies,
+                fsl_replay::spine::SpineLimits::default(),
+                &prepared.call,
+                &objects,
+                fsl_replay::spine::ProfileCatalogInput {
+                    catalog,
+                    limits: fsl_semantics::library::bundle::PackageLimits::default(),
+                },
+                integer_division,
+                &call_cancel,
+            )
+        }
+        (Some(catalog), None) => fsl_replay::spine::run_with_profile_catalog(
             source.source().identity().clone(),
             package_name(source.source().identity()),
             source.source().path(),
@@ -3107,7 +3646,7 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
             },
             &call_cancel,
         ),
-        None => fsl_replay::spine::run(
+        (None, _) => fsl_replay::spine::run(
             source.source().identity().clone(),
             package_name(source.source().identity()),
             source.source().path(),
@@ -3139,31 +3678,32 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
     };
     // FR-961 step 3 to 5: the call runs through FR-395's
     // `run_with_requirements`, and its items are settled on the same compile.
-    let (ran, settled) = fsl_replay::run_with_requirements_reading_and_profile_catalog(
-        &fsl_replay::RequirementsRun {
-            source: source.source().identity().clone(),
-            package_name: package_name(source.source().identity()),
-            path: source.source().path(),
-            bytes: source.source().text().as_bytes(),
-            packages: &prepared.packages,
-            dependencies: &prepared.dependencies,
-            limits: fsl_replay::spine::SpineLimits::default(),
-            call: &prepared.call,
-            objects: &objects,
-            cancel: &call_cancel,
-        },
-        prepared
-            .extension_catalog
-            .as_ref()
-            .map(|catalog| fsl_replay::spine::ProfileCatalogInput {
-                catalog,
-                limits: fsl_semantics::library::bundle::PackageLimits::default(),
+    let (ran, settled) =
+        fsl_replay::run_with_requirements_reading_and_profile_catalog_and_integer_division(
+            &fsl_replay::RequirementsRun {
+                source: source.source().identity().clone(),
+                package_name: package_name(source.source().identity()),
+                path: source.source().path(),
+                bytes: source.source().text().as_bytes(),
+                packages: &prepared.packages,
+                dependencies: &prepared.dependencies,
+                limits: fsl_replay::spine::SpineLimits::default(),
+                call: &prepared.call,
+                objects: &objects,
+                cancel: &call_cancel,
+            },
+            prepared.extension_catalog.as_ref().map(|catalog| {
+                fsl_replay::spine::ProfileCatalogInput {
+                    catalog,
+                    limits: fsl_semantics::library::bundle::PackageLimits::default(),
+                }
             }),
-        |checked, members| {
-            settle::settle_call(checked, members, selection, &prepared.packages, settle)
-        },
-    )
-    .map_err(compile_failure)?;
+            prepared.integer_division,
+            |checked, members| {
+                settle::settle_call(checked, members, selection, &prepared.packages, settle)
+            },
+        )
+        .map_err(compile_failure)?;
     let (outcome, _) = ran.into_parts();
     let mut result =
         output::spine_run_result(source, &prepared.call.function, outcome, Some(settled?))?;

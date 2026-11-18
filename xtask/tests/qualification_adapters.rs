@@ -22,36 +22,26 @@ struct Fixture {
 }
 
 fn fspec_repository() -> PathBuf {
-    std::env::var_os("FSPEC_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .ancestors()
-                .find_map(|parent| {
-                    let candidate = parent.join("filament-specification");
-                    candidate.is_dir().then_some(candidate)
-                })
-                .expect("an FSpec checkout or FSPEC_DIR")
-        })
+    xtask::published_fspec::directory("proposals/")
 }
 
 fn published(path: &str) -> Vec<u8> {
-    fs::read(fspec_repository().join(path)).expect("read the selected FSpec contract")
+    filament_specification::published_file(path)
+        .expect("pinned FSpec publishes the selected contract")
+        .to_vec()
 }
 
 impl Fixture {
     fn new(subject: &str, operation: &str, source: &str, expected: Value) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let corpus = temp.path().join("corpus");
-        let fspec = temp.path().join("fspec");
+        let fspec = fspec_repository();
         fs::create_dir_all(corpus.join("inputs")).unwrap();
         for path in [
             "proposals/conformance-corpus-v1/schema.json",
             "proposals/checked-package-v2/schema.json",
         ] {
-            let destination = fspec.join(path);
-            fs::create_dir_all(destination.parent().unwrap()).unwrap();
-            fs::write(destination, published(path)).unwrap();
+            assert!(filament_specification::published_file(path).is_some());
         }
         fs::write(corpus.join("inputs/unit.native"), source).unwrap();
         let value = json!({

@@ -156,20 +156,10 @@ impl super::ReferenceEvaluation for ProtocolClauseFamily {
                     .ok_or_else(|| {
                         InternalFault::new("S6a", "checked-identity-not-resolved-by-package")
                     })?;
-                return Ok(
-                    match invocation.check_frame(frame.operation().declaration.effect())? {
-                        FrameVerdict::Holds => {
-                            EvalOutcome::Kernel(Outcome::Completed(Value::Boolean(true)))
-                        }
-                        FrameVerdict::Violation(witness) => {
-                            env.witness = Some(witness);
-                            EvalOutcome::Kernel(Outcome::Completed(Value::Boolean(false)))
-                        }
-                        FrameVerdict::Refused(record) => EvalOutcome::Family(
-                            FamilyResult::Refused(Box::new(ProtocolClauseFrameRefusal { record })),
-                        ),
-                    },
-                );
+                let (outcome, witness) =
+                    frame_outcome(invocation, frame.operation().declaration.effect())?;
+                env.witness = witness;
+                return Ok(outcome);
             }
         };
         let clause = env
@@ -214,4 +204,33 @@ impl super::ReferenceEvaluation for ProtocolClauseFamily {
             }
         }
     }
+}
+
+/// FR-106 check 11 over `invocation` with the frame `effect`, as the S6a
+/// outcome: nothing outside the frame is `Completed(true)`, a change outside
+/// it `Completed(false)` with its witness, and an invocation the frame cannot
+/// be evaluated over the family's own refusal. Both routes' frame forms read
+/// their verdict here (FR-940): the source route with the effect of its
+/// checked frame, the package route with the effect of the operation its
+/// frame node binds. Charges nothing.
+pub(crate) fn frame_outcome(
+    invocation: &AdmittedInvocation<'_>,
+    effect: &fsl_semantics::model::domain_package::OperationEffect,
+) -> Result<(EvalOutcome<Value>, Option<Box<FrameWitness>>), InternalFault> {
+    Ok(match invocation.check_frame(effect)? {
+        FrameVerdict::Holds => (
+            EvalOutcome::Kernel(Outcome::Completed(Value::Boolean(true))),
+            None,
+        ),
+        FrameVerdict::Violation(witness) => (
+            EvalOutcome::Kernel(Outcome::Completed(Value::Boolean(false))),
+            Some(witness),
+        ),
+        FrameVerdict::Refused(record) => (
+            EvalOutcome::Family(FamilyResult::Refused(Box::new(
+                ProtocolClauseFrameRefusal { record },
+            ))),
+            None,
+        ),
+    })
 }

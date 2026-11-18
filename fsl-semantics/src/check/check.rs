@@ -100,7 +100,7 @@ use filament_semantic_value::location::{
 use filament_semantic_value::quantity::UnitTable;
 use filament_semantic_value::quantity::{
     check_comparable, evaluate_quantity_unit, result_unit, IdentifiedUnit, QuantityOperation,
-    QuantityRefusal, UnitOperation, UnitScope,
+    QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
 };
 use fsl_forms::{
     Accumulation, BinaryOperator, BinderQuery, ClauseKind, ExprId, ExprNode, ExprRef,
@@ -416,9 +416,6 @@ pub struct PackageDeclarations {
     /// resolve to, ascending; the lock's `definition_selections` hold their
     /// `requires` closure.
     pub header_layers: Vec<crate::value::layer::HeaderLayer>,
-    /// The span of the unit's first source `object` declaration, which the
-    /// package emitter refuses until it can write source object types.
-    pub first_source_object: Option<(RawSourceRef, fsl_foundation::Span)>,
     /// Authored identity-field names for each checked source object type,
     /// keyed by the source model's declaration key.
     pub(crate) source_object_identity_fields:
@@ -494,7 +491,8 @@ pub struct PackageDeclarations {
     /// FR-098-AC-34: the mode a replay recompile checks a named function body
     /// under, by function name, overriding the requested mode. A declared
     /// clause function is checked `Linked` whatever this holds.
-    pub function_modes: std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
+    pub function_modes:
+        std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
     /// Resolved signatures standing in for some `functions` entries' own
     /// type forms; see [`ResolvedSignatures`].
     pub resolved_signatures: ResolvedSignatures,
@@ -818,7 +816,6 @@ impl PackageDeclarations {
             package_name: package_name.into(),
             protocol_profile: None,
             header_layers: Vec::new(),
-            first_source_object: None,
             source_object_identity_fields: BTreeMap::new(),
             types: TypeEnvironment::default(),
             model_records: ModelRecords::default(),
@@ -1151,6 +1148,14 @@ impl<'a> SourceScope<'a> {
     /// [`Scope::unit_packages`].
     pub(crate) fn unit_packages(&self, name: &str) -> Vec<String> {
         self.scope.unit_packages(self.source, name)
+    }
+
+    /// Whether `name` names an unbounded package Rational in this unit; see
+    /// [`ModelSpellings::unbounded_rational`](super::model_spelling::ModelSpellings::unbounded_rational).
+    pub(crate) fn unbounded_rational(&self, name: &str) -> bool {
+        self.scope
+            .model_spellings
+            .unbounded_rational(self.source, name)
     }
 
     /// The object type `name` names in this unit; see
@@ -2339,6 +2344,9 @@ pub(crate) struct HyperTyping {
     /// The fields of each HP-1 execution variable, with their shared body
     /// binder slots and checked types.
     pub(crate) executions: BTreeMap<String, BTreeMap<String, (usize, ValueType)>>,
+    /// The fields of each finite trace variable's state record, with their
+    /// shared body binder slots and checked types.
+    pub(crate) finite_traces: BTreeMap<String, BTreeMap<String, (usize, ValueType)>>,
 }
 
 /// One history field a refinement row's expression may read (FR-138).
@@ -2603,6 +2611,15 @@ fn uncarried_quantity_unit(value_type: &ValueType) -> Option<&filament_exact::Un
     }
 }
 
+/// Exact scalar operands that preserve the explicitly written quantity unit
+/// under FR-142 quantity scaling.
+fn is_exact_quantity_factor(value_type: &ValueType) -> bool {
+    matches!(
+        value_type,
+        ValueType::Integer | ValueType::Int(_) | ValueType::Rational(_) | ValueType::Decimal(_)
+    )
+}
+
 fn ineligible(location: &Location) -> CheckRefusal {
     CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible)
 }
@@ -2615,6 +2632,7 @@ fn node(kind: NodeKind<NodeId>, value_type: ValueType, location: &Location) -> N
         equality_producer: None,
         ordering_part: false,
         field_population: None,
+        equality_range_context: None,
     }
 }
 
@@ -2773,6 +2791,7 @@ impl Typer<'_> {
                         equality_producer: None,
                         ordering_part: false,
                         field_population: None,
+                        equality_range_context: None,
                     });
                 }
             }
@@ -2809,6 +2828,7 @@ impl Typer<'_> {
                     equality_producer: None,
                     ordering_part: false,
                     field_population: None,
+                    equality_range_context: None,
                 })
             }
             (ValueType::Int(source), ValueType::Int(target))
@@ -2825,6 +2845,7 @@ impl Typer<'_> {
                     equality_producer: None,
                     ordering_part: false,
                     field_population: None,
+                    equality_range_context: None,
                 })
             }
             _ => Err(mismatch(&node.location)),
@@ -3450,6 +3471,7 @@ impl<'a> Typer<'a> {
                 | ValueType::Reference(_)
                 | ValueType::Population(_) => {}
                 ValueType::Uuid | ValueType::Timestamp => {}
+                ValueType::Bytes | ValueType::JsonObject => {}
             }
         }
         Ok(())
@@ -3718,13 +3740,27 @@ impl<'a> Typer<'a> {
                 location,
             ));
         }
-        let undeclared_case = name.rsplit_once("::").is_some_and(|(type_name, _)| {
-            self.scope
+        if let Some((type_name, case)) = name.rsplit_once("::") {
+            if let Some(declared) = self
+                .scope
                 .variant_type_named(self.source_owner.as_ref(), type_name)
-                .is_some()
-        });
-        if undeclared_case
-            || self.signatures.declares(name)
+            {
+                let owner = declared
+                    .name()
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(declared.name())
+                    .to_owned();
+                return Err(refuse(
+                    location,
+                    CheckCause::UndeclaredVariantCase {
+                        owner,
+                        case: case.to_owned(),
+                    },
+                ));
+            }
+        }
+        if self.signatures.declares(name)
             || (self.scope.is_variant_case_name(name)
                 && matches!(expected, Some(ValueType::Enum(shape)) if self.scope.is_variant_shape(shape)))
         {
@@ -3822,6 +3858,8 @@ impl<'a> Typer<'a> {
                 | ValueType::String
                 | ValueType::Uuid
                 | ValueType::Timestamp
+                | ValueType::Bytes
+                | ValueType::JsonObject
                 | ValueType::Enum(_)
                 | ValueType::Option(_)
                 | ValueType::Composite(_)
@@ -3969,6 +4007,8 @@ impl<'a> Typer<'a> {
             | (ValueType::String, ValueType::String)
             | (ValueType::Uuid, ValueType::Uuid)
             | (ValueType::Timestamp, ValueType::Timestamp) => return Err(ineligible(location)),
+            (ValueType::Bytes, ValueType::Bytes)
+            | (ValueType::JsonObject, ValueType::JsonObject) => return Err(ineligible(location)),
             _ => return Err(mismatch(location)),
         };
         Ok(node(
@@ -4110,6 +4150,40 @@ impl<'a> Typer<'a> {
         let (left_type, right_type) = (left.value_type.clone(), right.value_type.clone());
         let (left_box, right_box) = (self.push(left), self.push(right));
         let (kind, value_type) = match (&left_type, &right_type, operator) {
+            (ValueType::Quantity(unit), factor, ArithmeticOperator::Multiply)
+                if is_exact_quantity_factor(factor) =>
+            {
+                let Some(quantity_unit) = self.units.get(unit.clone()) else {
+                    return Err(mismatch(location));
+                };
+                if matches!(quantity_unit, QuantityUnit::Declared(unit) if unit.is_affine()) {
+                    return Err(mismatch(location));
+                }
+                (
+                    NodeKind::QuantityScale {
+                        quantity: left_box,
+                        factor: right_box,
+                    },
+                    ValueType::Quantity(unit.clone()),
+                )
+            }
+            (factor, ValueType::Quantity(unit), ArithmeticOperator::Multiply)
+                if is_exact_quantity_factor(factor) =>
+            {
+                let Some(quantity_unit) = self.units.get(unit.clone()) else {
+                    return Err(mismatch(location));
+                };
+                if matches!(quantity_unit, QuantityUnit::Declared(unit) if unit.is_affine()) {
+                    return Err(mismatch(location));
+                }
+                (
+                    NodeKind::QuantityScale {
+                        quantity: right_box,
+                        factor: left_box,
+                    },
+                    ValueType::Quantity(unit.clone()),
+                )
+            }
             (l, r, ArithmeticOperator::Divide) if is_integer(l) && is_integer(r) => {
                 if !self.complete_value {
                     return Err(refuse(
@@ -4240,8 +4314,8 @@ impl<'a> Typer<'a> {
                     location: location.clone(),
                     cause: CheckCause::OperandTypeMismatch {
                         operator,
-                        left_type,
-                        right_type,
+                        left_type: Box::new(left_type),
+                        right_type: Box::new(right_type),
                     },
                 });
             }
@@ -4387,6 +4461,7 @@ impl<'a> Typer<'a> {
             | ValueType::Uuid
             | ValueType::String
             | ValueType::Timestamp => return Err(mismatch(&location.child(0))),
+            ValueType::Bytes | ValueType::JsonObject => return Err(mismatch(&location.child(0))),
             // FR-497-AC-2: a carried quantity is no operand of unary `-`.
             ValueType::CarriedQuantity(_) => return Err(mismatch(location)),
         };
@@ -4729,6 +4804,7 @@ impl<'a> Typer<'a> {
             | ValueType::Quantity(_)
             | ValueType::BoundedQuantity(_)
             | ValueType::CarriedQuantity(_) => false,
+            ValueType::Bytes | ValueType::JsonObject => false,
         }
     }
 
@@ -4754,6 +4830,7 @@ impl<'a> Typer<'a> {
             | ValueType::BoundedQuantity(_)
             | ValueType::CarriedQuantity(_)
             | ValueType::Population(_) => false,
+            ValueType::Bytes | ValueType::JsonObject => false,
         }
     }
 
@@ -4999,8 +5076,8 @@ impl<'a> Typer<'a> {
                 refuse(
                     location,
                     CheckCause::UnknownField {
-                        owner: declaration.name().to_owned(),
-                        field: field.to_owned(),
+                        owner: declaration.name().into(),
+                        field: field.into(),
                         span: member_span,
                     },
                 )
@@ -5107,6 +5184,7 @@ impl<'a> Typer<'a> {
                     equality_producer: None,
                     ordering_part: false,
                     field_population: None,
+                    equality_range_context: None,
                 });
             }
             return Ok(typed);
@@ -5889,6 +5967,7 @@ pub(super) fn holds_float(mut ty: &ValueType) -> bool {
             | ValueType::Composite(_)
             | ValueType::Reference(_)
             | ValueType::Population(_) => return false,
+            ValueType::Bytes | ValueType::JsonObject => return false,
         }
     }
 }

@@ -476,7 +476,7 @@ pub(crate) fn channel_form(
             if token.kind() != TokenKind::Identifier {
                 return Err(unexpected(channel));
             }
-            Ok(declared(token, channel)?)
+            declared(token, channel)
         })
         .transpose()?;
     let ordering = only(&channel_items, Production::Ordering, channel)?;

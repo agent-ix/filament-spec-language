@@ -23,7 +23,7 @@ relationships:
 ## Description
 
 Text is the driver's default output format, so the first command a reader
-types, `fsl check rule.fsl`, prints a result without a flag. The verbs `parse`, `check`, `compile` and `run` SHALL write, in text
+types, `fsl check rule.fsl`, prints a result without a flag. The verbs `parse`, `check`, `compile`, `run`, `replay` and `export` SHALL write, in text
 mode, the text form of the FR-286 outcome document they write that FR-298's `render_outcome`
 returns, and SHALL exit with the same FR-285 code it exits with in machine
 mode. `analyze` and `monitor` keep the text forms FR-621 and FR-624 and
@@ -69,7 +69,31 @@ mode.
    completed value reads `result: completed {"value":{"integer":"7"}}`
    and an undefined call `result: undefined {"reason":"sum-out-of-domain"}`.
    A `format` outcome's text is the formatted source itself, as it is
-   today (FR-003), and has no header.
+   today (FR-003), and has no header. A `replay` outcome's `replayed` result is
+   written as one line per entry, `result <index>: <arm> <settlement>`,
+   `index` the entry's zero-based position (FR-286).
+
+An `export` outcome (FR-286 "Export outcomes") whose `result` is
+`exported` is written as exactly these four lines, in order, and no item or
+result line:
+
+1. The header line of rule 1, for example `export: success (exit 0) at S4`.
+2. `target: <target_family> <mapping_profile_id>`, for example
+   `target: tla filament.output.tla2/v1`.
+3. `bytes written: <n>`, `<n>` the export outcome's `output.bytes_written`
+   in ASCII decimal, or `0` when the outcome has no `output` member.
+4. `output: <path>`, `<path>` the export outcome's `output.path` as the
+   caller gave it, or `output: none` when the outcome has no `output`
+   member, because no file was named.
+
+A non-`assembled` export also writes, after line 4, the rule 2 diagnostic
+lines and, for each record with causes, `  cause: <cause>` naming the
+record's obligation and cause in FR-331's wire spelling, so a floor or limit
+stop shows why no file was written. An `export` outcome whose `result` is
+`null` (a refusal before the mapper runs) is written by rules 1 and 2 alone.
+The text names the file and its size rather than printing the target text,
+because the target text is the file's content and a reader of the terminal
+needs to know where it went.
 
 Each line is one FR-298 output unit, charged against `render.output_bytes`.
 
@@ -82,7 +106,7 @@ Each line is one FR-298 output unit, charged against `render.output_bytes`.
 - In text mode the driver SHALL build the document exactly as in machine
   mode, render it through `render_outcome` with a `RenderSources` built
   from the admitted sources the command read, and write the rendered bytes
-  to stdout, for `parse`, `check`, `compile` and `run`. None of these verbs
+  to stdout, for `parse`, `check`, `compile`, `run`, `replay` and `export`. None of these verbs
   refuses text mode as `unimplemented_capability`.
 - `command`'s compile, run and check outcomes, and `RunError`, SHALL expose
   the admitted FR-001 `Source` values the command read, so the driver
@@ -127,6 +151,8 @@ exit code of the document's category.
 | FR-865-AC-3 | `fsl check <file>`, `fsl parse <authority> <identity> <file>`, `fsl compile <request>` and `fsl run <request>` without `--format`, each over a succeeding input and a refused input, write the text form of the document `--format json` writes for the same invocation, and exit with the same code. | Driver test (TC-2456): the `fsl` binary selects the format, so the code ticket adds the test in the filament-driver repository. |
 | FR-865-AC-4 | `fsl run nosuch.json` and `fsl compile nosuch.json` without `--format` refuse with the I/O failure's code and exit 20, as with `--format json`, never `unimplemented_capability` or exit 21; `--format text` is accepted on every verb; `--format bogus` refuses `invalid-request`, exit 20, naming `--format` and `bogus`, before any file is opened. | Driver test (TC-2456) |
 | FR-865-AC-5 | The text of AC-1's document rendered with a `RenderSources` holding its source admitted under path `src/rule.fsl` prints `src/rule.fsl:<line>:<column>`, and the same document rendered through the driver's text mode over a compile request prints the program source's path, because the compile outcome exposes the admitted sources. | Test (TC-2455) |
+| FR-865-AC-6 | `render_outcome` with `RenderForm::Text` over FR-286-AC-21's replay outcome writes `replay: success (exit 0) at S8` followed by `result 0: input reproduced-without-witness`; over the refused replay of FR-862-AC-1 it writes `replay: refusal (exit 20)` and one diagnostic line with code `invalid-request`, and no `result` line. | Test (TC-2963) |
+| FR-865-AC-7 | `render_outcome` with `RenderForm::Text` over FR-286-AC-22's counter export document written to `m.tla` writes exactly `export: success (exit 0) at S4`, `target: tla filament.output.tla2/v1`, `bytes written: <n>` with `<n>` the target text's length, and `output: m.tla`, and no other line; over the same export with no output file named its last two lines are `bytes written: 0` and `output: none`; over the export under `export.output_bytes` 1 it writes `export: incomplete (exit 22) at S4`, `bytes written: 0` and a line naming `export.output_bytes`. | Test (TC-2996) |
 
 ## Dependencies
 

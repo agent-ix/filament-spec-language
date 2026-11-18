@@ -5,7 +5,9 @@
 use fsl_cst::TokenKind;
 
 use crate::dispatch::{Construct, FormsRefusal};
-use crate::syntax::{DeclarationForm, DeclaredName, SynthesisForm, UsingAlias, VerificationPlanForm};
+use crate::syntax::{
+    DeclarationForm, DeclaredName, SynthesisForm, UsingAlias, VerificationPlanForm,
+};
 use crate::value::{significant_tokens, text, unexpected};
 
 /// Build the source-bearing S2 form for `synthesis` (FR-754).
@@ -19,16 +21,16 @@ pub(crate) fn synthesis(construct: Construct<'_>) -> Result<DeclarationForm, For
     })))
 }
 /// Build the source-bearing S2 form for `verify` (FR-753).
-pub(crate) fn verification_plan(
-    construct: Construct<'_>,
-) -> Result<DeclarationForm, FormsRefusal> {
+pub(crate) fn verification_plan(construct: Construct<'_>) -> Result<DeclarationForm, FormsRefusal> {
     let (name, profile, source, span) = identity(construct)?;
-    Ok(DeclarationForm::VerificationPlan(Box::new(VerificationPlanForm {
-        name,
-        profile,
-        source,
-        span,
-    })))
+    Ok(DeclarationForm::VerificationPlan(Box::new(
+        VerificationPlanForm {
+            name,
+            profile,
+            source,
+            span,
+        },
+    )))
 }
 
 fn identity(

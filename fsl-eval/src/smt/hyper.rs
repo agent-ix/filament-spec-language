@@ -271,7 +271,9 @@ pub fn encode_hyper_script(
         .first()
         .ok_or_else(|| fault("one subject for each alias"))?
         .simulation
-        .package;
+        .input
+        .source_package()
+        .ok_or_else(|| fault("hyper-encoding-reads-source-forms"))?;
     let matcher = CheckedStepMatch::new(first_package, clause);
     let mut kept: Vec<Joint> = Vec::new();
     let mut digits = vec![0usize; variables];

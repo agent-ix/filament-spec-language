@@ -1881,11 +1881,12 @@ mod tests {
             ),
         ]);
         forms.push(case_source("case x { A(z): x + z; B: x; }"));
+        forms.push(case_source("M::Counter#\"a\""));
         forms
     }
 
     /// Every name [`form_name`] gives, one per `Expression` form.
-    const FORM_NAMES: [&str; 44] = [
+    const FORM_NAMES: [&str; 45] = [
         "Case",
         "Boolean",
         "Absent",
@@ -1896,6 +1897,7 @@ mod tests {
         "Float64",
         "Quantity",
         "String",
+        "ReferenceLiteral",
         "Name",
         "Let",
         "If",
@@ -1949,6 +1951,7 @@ mod tests {
             ExprNode::Float64(_) => "Float64",
             ExprNode::Quantity(_) => "Quantity",
             ExprNode::String(_) => "String",
+            ExprNode::ReferenceLiteral { .. } => "ReferenceLiteral",
             ExprNode::Name(_) => "Name",
             ExprNode::Let { .. } => "Let",
             ExprNode::If { .. } => "If",

@@ -45,7 +45,7 @@ pub(crate) fn subject(world: &World, limits: ClauseLimits) -> ClauseSubject<'_> 
     let node = &world.package.graph().temporal_clauses()[0];
     let key = OccurrenceKey::new(node.identity(), node.claim().clone());
     ClauseSubject::new(
-        &world.package,
+        &fsl_analyze::analyze::RunInput::source(&world.package),
         world.binding(&["c"]),
         AnalyzeLimits::unbounded(),
         &world.provision,
@@ -132,13 +132,14 @@ fn a_clause_a_transition_breaks_settles_refuted_with_a_replayed_counterexample()
 #[trace("TC-763", "FR-281-AC-7")]
 #[test]
 fn a_claim_that_takes_a_modulus_by_zero_settles_refuted_with_a_replayed_undefined_counterexample() {
-    let world = World::new(
+    let world = World::with_kernel_functions(
         model_world::counter(),
         CONTRACT,
+        "function q using v(x: Integer): Integer pure { 6 mod x }\n",
         INFINITE,
         &[Clause {
             activation: "on each (q: M::Counter)",
-            formula: "always holds(6 mod (2 - c.value) >= 0)",
+            formula: "always holds(q(2 - c.value) >= 0)",
         }],
         &[("c", json!({"value": {"integer": "2"}}))],
     );
@@ -204,7 +205,7 @@ fn a_claim_that_takes_a_modulus_by_zero_settles_refuted_with_a_replayed_undefine
     let written = serde_json::to_value(&item).expect("an item is JSON");
     assert_eq!(written["result"], "refuted");
     assert_eq!(written["cause"]["kind"], "undefined-evaluation");
-    assert_eq!(written["cause"]["cause"], "division-by-zero");
+    assert_eq!(written["cause"]["code"], "division-by-zero");
     assert!(
         written["cause"]["where"]
             .as_str()
@@ -221,13 +222,14 @@ fn a_claim_that_takes_a_modulus_by_zero_settles_refuted_with_a_replayed_undefine
 #[trace("TC-770", "FR-286-AC-14")]
 #[test]
 fn an_unspelled_counterexample_fails_its_item_and_not_the_document() {
-    let world = World::new(
+    let world = World::with_kernel_functions(
         model_world::counter(),
         CONTRACT,
+        "function q using v(x: Integer): Integer pure { 6 mod x }\n",
         INFINITE,
         &[Clause {
             activation: "on each (q: M::Counter)",
-            formula: "always holds(6 mod (2 - c.value) >= 0)",
+            formula: "always holds(q(2 - c.value) >= 0)",
         }],
         &[("c", json!({"value": {"integer": "2"}}))],
     );
@@ -294,7 +296,7 @@ fn the_same_clause_under_one_state_settles_incomplete_naming_the_state_budget() 
 
 fn refused(world: &World, key: &OccurrenceKey) -> ClauseItemRefusal {
     ClauseSubject::new(
-        &world.package,
+        &fsl_analyze::analyze::RunInput::source(&world.package),
         world.binding(&["c"]),
         AnalyzeLimits::unbounded(),
         &world.provision,
@@ -390,7 +392,7 @@ fn a_package_of_two_source_units_replays_from_its_complete_provision() {
         );
     }
     let subject = ClauseSubject::new(
-        package,
+        &fsl_analyze::analyze::RunInput::source(package),
         world.binding(&["c"]),
         AnalyzeLimits::unbounded(),
         &provision,
@@ -399,7 +401,7 @@ fn a_package_of_two_source_units_replays_from_its_complete_provision() {
     )
     .expect("the complete multi-unit subject is accepted");
     let mut raw_subject = world.subject(&["c"], crate::counter::UNLIMITED);
-    raw_subject.simulation.package = package;
+    raw_subject.simulation.input = fsl_eval::simulation::model::ModelCheckInput::source(package);
     let system = fsl_eval::simulation::model::ModelSystem::new(raw_subject.simulation.clone())
         .expect("the multi-unit system admits");
     let letters = system
@@ -481,7 +483,7 @@ fn a_tampered_counterexample_or_another_unit_is_refused_by_the_replay() {
     let other_unit = b"language \"ix:native\" edition \"1-draft\";\n";
     let other_provision = SourceProvision::single(world.package.graph().source(), other_unit);
     let wrong = ClauseSubject::new(
-        &world.package,
+        &fsl_analyze::analyze::RunInput::source(&world.package),
         world.binding(&["c"]),
         AnalyzeLimits::unbounded(),
         &other_provision,
@@ -490,4 +492,189 @@ fn a_tampered_counterexample_or_another_unit_is_refused_by_the_replay() {
     )
     .expect("construction does not compare the bytes");
     assert!(wrong.replay_counterexample(&counterexample).is_err());
+}
+
+/// FR-850-AC-2, FR-940-AC-5 (QSL-2406 bytes-only replay): over the package
+/// a Counter unit with domain operations is written to, the package route's
+/// clause item refutes the clause with the source route's record, and its
+/// counterexample replays from the package bytes and the handoff's identity
+/// and equality files alone: the replay request carries no source entry.
+#[trace("TC-2410", "FR-850-AC-2")]
+#[trace("TC-2958", "FR-940-AC-5")]
+#[test]
+fn a_package_route_refutation_replays_from_the_handoff_as_the_source_refutation() {
+    use fsl_package::{BarePackage, BareSupply, V2ReadLimits};
+    let world = World::new(
+        model_world::counter(),
+        "",
+        INFINITE,
+        &[Clause {
+            activation: "on each (q: M::Counter)",
+            formula: "always holds(c.value <= 1)",
+        }],
+        &[("c", json!({"value": {"integer": "0"}}))],
+    );
+    let source = run(&world, ClauseLimits::default());
+    assert_eq!(
+        source.terminal().expect("a terminal record").value(),
+        &TerminalValue::Refuted
+    );
+    let binding = world.binding(&["c"]);
+    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .expect("the package emits");
+    let bytes = emission.package().bytes().to_vec();
+    let admitted =
+        fsl_package::admit_checked_package(&bytes, binding.packages, V2ReadLimits::fixture())
+            .expect("the strict reader admits the bytes");
+    let mut budget = V2ReadLimits::fixture().native_join_budget();
+    let identities = emission
+        .identity_rows(&admitted, &mut budget)
+        .expect("the identity rows");
+    let equality = emission
+        .equality_witness(&admitted, &mut budget)
+        .expect("the equality rows");
+    let identity_bytes = identities.to_bytes(&admitted).expect("identities.json");
+    let equality_bytes = equality.to_bytes(&admitted).expect("equality.json");
+    let bare = BarePackage::new(&admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut budget,
+        )
+        .expect("the supply joins");
+    let input = fsl_eval::simulation::model::PackageModelInput::of(
+        &bare,
+        binding.packages,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .expect("the package route reads every form");
+    let key = world.package.graph().temporal_clauses()[0].identity();
+    let subject = fsl_analyze::analyze::PackageClauseSubject::new(
+        &input,
+        &bytes,
+        fsl_replay::HandoffSupply {
+            identities: &identity_bytes,
+            equality: Some(&equality_bytes),
+        },
+        world.binding(&["c"]),
+        AnalyzeLimits::unbounded(),
+        &key,
+        ClauseLimits::default(),
+    )
+    .expect("the package holds the clause");
+    let mut engines = Engines::default();
+    engines
+        .with(Engine::model_check().expect("EN-1's own manifest is admitted"))
+        .expect("one engine");
+    let mut records = analyze_items(
+        &engines,
+        vec![subject.item(RequestIndex::new(0))],
+        &Cancel::new(),
+    );
+    let package = records.remove(0);
+    assert_eq!(format!("{package:?}"), format!("{source:?}"));
+}
+
+/// Run `check` over the package route's model-check input of `world`'s
+/// emitted package, its bytes and its handoff supply.
+fn over_package_route(
+    world: &World,
+    check: impl FnOnce(
+        &fsl_eval::simulation::model::PackageModelInput<'_>,
+        &[u8],
+        fsl_replay::HandoffSupply<'_>,
+    ),
+) {
+    use fsl_package::{BarePackage, BareSupply, V2ReadLimits};
+    let binding = world.binding(&["c"]);
+    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .expect("the package emits");
+    let bytes = emission.package().bytes().to_vec();
+    let admitted =
+        fsl_package::admit_checked_package(&bytes, binding.packages, V2ReadLimits::fixture())
+            .expect("the strict reader admits the bytes");
+    let mut budget = V2ReadLimits::fixture().native_join_budget();
+    let identities = emission
+        .identity_rows(&admitted, &mut budget)
+        .expect("the identity rows");
+    let equality = emission
+        .equality_witness(&admitted, &mut budget)
+        .expect("the equality rows");
+    let identity_bytes = identities.to_bytes(&admitted).expect("identities.json");
+    let equality_bytes = equality.to_bytes(&admitted).expect("equality.json");
+    let bare = BarePackage::new(&admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut budget,
+        )
+        .expect("the supply joins");
+    let input = fsl_eval::simulation::model::PackageModelInput::of(
+        &bare,
+        binding.packages,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .expect("the package route reads every form");
+    check(
+        &input,
+        &bytes,
+        fsl_replay::HandoffSupply {
+            identities: &identity_bytes,
+            equality: Some(&equality_bytes),
+        },
+    );
+}
+
+/// QSL-2432 (FR-940 "Package forms of the source-checked evaluators"): a
+/// clause whose package form reads a fact the package route does not read
+/// yet is refused by the package route's clause subject with that fact and
+/// the clause's node, never as an unknown clause: a fairness set, and a
+/// capture, which the package route's letters do not evaluate yet, so no
+/// engine reaches a capture fault.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn a_pending_package_clause_fact_is_refused_typed_naming_it() {
+    for (formula, expected) in [
+        (
+            "fair weak M::Counter::inc; eventually holds(c.value = 3)",
+            "fairness",
+        ),
+        (
+            "capture n: Int[0, 3] = c.value; always holds(c.value >= n)",
+            "capture",
+        ),
+    ] {
+        let world = World::new(
+            model_world::counter(),
+            "",
+            INFINITE,
+            &[Clause {
+                activation: "on each (q: M::Counter) when (true)",
+                formula,
+            }],
+            &[("c", json!({"value": {"integer": "0"}}))],
+        );
+        let key = world.package.graph().temporal_clauses()[0].identity();
+        over_package_route(&world, |input, bytes, supply| {
+            let refused = fsl_analyze::analyze::PackageClauseSubject::new(
+                input,
+                bytes,
+                supply,
+                world.binding(&["c"]),
+                AnalyzeLimits::unbounded(),
+                &key,
+                ClauseLimits::default(),
+            )
+            .err()
+            .expect("the pending clause is refused");
+            let fsl_analyze::analyze::ClauseItemRefusal::Pending { fact, .. } = refused else {
+                panic!("{formula}: a typed pending refusal, not {refused:?}");
+            };
+            assert_eq!(fact, expected, "{formula}");
+        });
+    }
 }

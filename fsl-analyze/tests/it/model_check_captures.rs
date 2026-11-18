@@ -30,9 +30,10 @@ fn world(profile: &str, activation: &str, formula: &str) -> World {
 }
 
 fn world_from(profile: &str, activation: &str, formula: &str, start: i64) -> World {
-    World::new(
+    World::with_kernel_functions(
         model_world::counter(),
         CONTRACT,
+        "function q using v(x: Integer): Integer pure { 6 mod x }\n",
         profile,
         &[Clause {
             activation,
@@ -112,7 +113,7 @@ fn an_unread_capture_returns_the_verdict_of_the_clause_without_it() {
 #[trace("TC-1267", "FR-337-AC-11")]
 #[test]
 fn an_undefined_capture_is_an_undefined_evaluation_located_at_it() {
-    let formula = "capture z: Boolean = (6 mod (2 - c.value) = 0); always holds(true)";
+    let formula = "capture z: Boolean = (q(2 - c.value) = 0); always holds(true)";
     let world = world(INFINITE, &each("true"), formula);
     let outcome = run(&world, ModelCheckLimits::default()).expect("checked");
     let ModelCheckOutcome::Violated { counterexample, .. } = &outcome else {
@@ -145,7 +146,7 @@ fn an_origin_clause_fixes_its_captures_at_position_zero() {
     let world = world(
         INFINITE,
         "on origin",
-        "capture z: Boolean = (6 mod (2 - c.value) = 0); always holds(true)",
+        "capture z: Boolean = (q(2 - c.value) = 0); always holds(true)",
     );
     holds(&run(&world, ModelCheckLimits::default()).expect("checked"));
 }
@@ -324,7 +325,7 @@ fn an_unbounded_root_is_refused_before_a_capture_read() {
 #[trace("TC-1267", "FR-337-AC-11")]
 #[test]
 fn the_liveness_reader_fixes_captures_at_the_activation() {
-    let formula = "capture z: Boolean = (6 mod (2 - c.value) = 0); eventually holds(c.value = 3)";
+    let formula = "capture z: Boolean = (q(2 - c.value) = 0); eventually holds(c.value = 3)";
     for guard in ["true", "c.value = 2"] {
         let world = world(INFINITE, &each(guard), formula);
         let outcome = run(&world, ModelCheckLimits::default()).expect("checked");
@@ -365,7 +366,7 @@ fn the_liveness_reader_fixes_captures_at_the_activation() {
 #[trace("TC-1267", "FR-337-AC-13")]
 #[test]
 fn the_closure_checker_reads_the_captures_and_rejects_an_undefined_one() {
-    let formula = "capture z: Boolean = (6 mod (2 - c.value) = 0); always holds(true)";
+    let formula = "capture z: Boolean = (q(2 - c.value) = 0); always holds(true)";
     let check = |world: &World, certificate: &fsl_replay::ClosureCertificate| {
         let system = ModelSystem::new(world.subject(&["c"], UNLIMITED).simulation)
             .expect("the subject admits");
@@ -417,7 +418,7 @@ fn the_closure_checker_reads_the_captures_and_rejects_an_undefined_one() {
 #[trace("TC-1267", "FR-337-AC-13")]
 #[test]
 fn replay_reproduces_an_undefined_capture_located_at_it() {
-    let formula = "capture z: Boolean = (6 mod (2 - c.value) = 0); always holds(true)";
+    let formula = "capture z: Boolean = (q(2 - c.value) = 0); always holds(true)";
     let world = world(INFINITE, &each("true"), formula);
     let outcome = run(&world, ModelCheckLimits::default()).expect("checked");
     let ModelCheckOutcome::Violated { counterexample, .. } = &outcome else {

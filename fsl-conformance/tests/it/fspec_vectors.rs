@@ -5,31 +5,13 @@
 //! operation anchor carrying an `execution_point` binding validates against
 //! the published checked-package V2 schema (FSpec FR-342-AC-12).
 //!
-//! Reads the filament-specification checkout named by `FSPEC_DIR`.
-
-use std::path::PathBuf;
-
 use fsl_foundation::{Code, IntakeLimits};
 use fsl_semantics::model::intake::{admit, package_input, read_records};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-/// The `proposals/checked-package-v2` directory of the FSpec checkout.
-fn checked_package_v2() -> PathBuf {
-    let fspec = std::env::var_os("FSPEC_DIR")
-        .expect("FSPEC_DIR must name a filament-specification checkout");
-    PathBuf::from(fspec).join("proposals/checked-package-v2")
-}
-
-fn read_json(path: &std::path::Path) -> Value {
-    let bytes =
-        std::fs::read(path).unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
-    serde_json::from_slice(&bytes)
-        .unwrap_or_else(|error| panic!("parsing {}: {error}", path.display()))
-}
-
 fn orders() -> Value {
-    read_json(&checked_package_v2().join("domain-package-acme-orders.json"))
+    crate::published_fspec::json("proposals/checked-package-v2/domain-package-acme-orders.json")
 }
 
 /// The record refusals of a domain package document, empty when every node
@@ -81,7 +63,7 @@ fn a_rendered_type_text_type_ref_refuses() {
 
 /// The published V2 schema, compiled.
 fn v2_schema() -> jsonschema::JSONSchema {
-    let schema = read_json(&checked_package_v2().join("schema.json"));
+    let schema = crate::published_fspec::json("proposals/checked-package-v2/schema.json");
     jsonschema::JSONSchema::compile(&schema)
         .unwrap_or_else(|error| panic!("the published schema compiles: {error}"))
 }
@@ -89,8 +71,9 @@ fn v2_schema() -> jsonschema::JSONSchema {
 /// `positive-timed-clause-nodes.json` with `point` inserted as the fourth
 /// binding of node 70, the operation anchor CL-03 patches.
 fn anchor_with_point(point: Value) -> Value {
-    let mut package =
-        read_json(&checked_package_v2().join("fixtures/positive-timed-clause-nodes.json"));
+    let mut package = crate::published_fspec::json(
+        "proposals/checked-package-v2/fixtures/positive-timed-clause-nodes.json",
+    );
     let members = package["semantic_graph"]["nodes"][70]["body"]["members"]
         .as_array_mut()
         .expect("the anchor body has members");

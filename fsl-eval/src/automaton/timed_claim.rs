@@ -67,6 +67,20 @@
 //! such a negation in general (Alur and Dill, 1994), and FR-234 admits
 //! punctual intervals in TT-2 windows only.
 //!
+//! **No upper end (`[q, *]`, FR-1034).** An interval with no upper end has
+//! no deadline, so it takes neither blocks nor a horizon: one clock per
+//! operator, compared with `q` only, however many positions start it. Of two
+//! pending `until[q, *]` instances the newer implies the older, so the newer
+//! is kept and the clock reset at each start; of two `release[q, *]`
+//! instances the older implies the newer, so the older keeps its clock. Such
+//! an `until` has an acceptance set, fulfilled where it is discharged or
+//! kept pending at a position holding its right operand: on a time-divergent
+//! run its left operand then holds from every start on and its right one
+//! infinitely often, so every instance is discharged. `since[q, *]` keeps one
+//! clock from its earliest live candidate, and `once[q, *]` stays true, its
+//! clock inactive, once its lower guard holds. `[0, *]` is the operator with
+//! no interval.
+//!
 //! **Past operators** are tracked deterministically as memory. One read at
 //! position 0 only reads its single offset 0. Otherwise `since_I`
 //! remembers, after the last position its guard failed, the witnesses whose
@@ -166,6 +180,10 @@ struct Config {
     started: bool,
     /// Per tracker: whether a witness holds with its guard ever since.
     seen: Vec<bool>,
+    /// Per open-window tracker whose guard is `true` (`once[q, *]`): whether
+    /// its lower guard has held, after which it stays true and its clock is
+    /// inactive (FR-1034).
+    held: Vec<bool>,
     /// The single-instance `until` and `release` nodes with a pending
     /// instance.
     pending: BTreeSet<usize>,
@@ -523,8 +541,8 @@ impl Lowering<'_> {
         deep: bool,
     ) -> Result<usize, AutomatonError> {
         let shape = match &window {
-            Some(window) if deep && !from_zero(window) => {
-                if window.lower() == window.upper() {
+            Some(window) if deep && !from_zero(window) && !open(window) => {
+                if window.is_punctual() {
                     return Err(AutomatonError::RepeatedPunctualInterval);
                 }
                 Shape::Blocks(spread(window)? + 1)
@@ -547,11 +565,30 @@ impl Lowering<'_> {
 fn window(interval: Option<&CheckedInterval>) -> Result<Option<TimedInterval>, AutomatonError> {
     match interval {
         None => Ok(None),
+        // `[0, *]` is the operator with no interval (FR-943).
+        Some(CheckedInterval::Timed(interval))
+            if interval.upper().is_none() && from_zero(interval) =>
+        {
+            Ok(None)
+        }
         Some(CheckedInterval::Timed(interval)) => Ok(Some(interval.clone())),
         Some(CheckedInterval::Steps(_)) => Err(AutomatonError::Invariant {
             invariant: "timed-claim-reads-timed-intervals",
         }),
     }
+}
+
+/// The greatest constant `window` compares a clock with: its upper end, or
+/// its lower end when it has none (FR-1034). Only a bounded window builds
+/// blocks, so the block guards read a real upper end.
+fn upper(window: &TimedInterval) -> Rational {
+    window.upper().unwrap_or_else(|| window.lower()).clone()
+}
+
+/// Whether `window` has no upper end (`[q, *]`, FR-1034): its operator keeps
+/// one lower-bound-only clock however many positions start it.
+fn open(window: &TimedInterval) -> bool {
+    window.upper().is_none()
 }
 
 /// Whether `window` starts at a closed 0.
@@ -567,8 +604,8 @@ fn future_shape(
     until: bool,
 ) -> Result<Shape, AutomatonError> {
     match window {
-        Some(window) if many && !from_zero(window) => {
-            if window.lower() == window.upper() {
+        Some(window) if many && !from_zero(window) && !open(window) => {
+            if window.is_punctual() {
                 return Err(AutomatonError::RepeatedPunctualInterval);
             }
             let spread = spread(window)?;
@@ -595,7 +632,7 @@ const MAX_CLOCKS: usize = 64;
 /// of `until` blocks), so this bounds the copies by the interval's
 /// variability.
 fn spread(window: &TimedInterval) -> Result<usize, AutomatonError> {
-    let width = window.upper().sub(window.lower());
+    let width = upper(window).sub(window.lower());
     let ratio = window
         .lower()
         .div(&width)
@@ -630,7 +667,7 @@ fn spread(window: &TimedInterval) -> Result<usize, AutomatonError> {
 
 /// `b - a` of `window`.
 fn width(window: &TimedInterval) -> Rational {
-    window.upper().sub(window.lower())
+    upper(window).sub(window.lower())
 }
 
 /// `clock` has reached `window`'s lower end; empty for a closed 0.
@@ -670,7 +707,7 @@ fn upper_ok(window: &TimedInterval, clock: usize) -> Vec<PlaceConstraint> {
     } else {
         ClockOp::Less
     };
-    vec![PlaceConstraint::new(clock, op, window.upper().clone())]
+    vec![PlaceConstraint::new(clock, op, upper(window))]
 }
 
 /// `clock` has passed `window`'s upper end.
@@ -680,7 +717,7 @@ fn upper_fail(window: &TimedInterval, clock: usize) -> Vec<PlaceConstraint> {
     } else {
         ClockOp::GreaterOrEqual
     };
-    vec![PlaceConstraint::new(clock, op, window.upper().clone())]
+    vec![PlaceConstraint::new(clock, op, upper(window))]
 }
 
 /// A block whose first start is `clock` ago can still be discharged at one
@@ -728,7 +765,7 @@ enum Region {
 /// the region is empty.
 fn region(window: &TimedInterval, clock: usize, region: Region) -> Option<Vec<PlaceConstraint>> {
     let lower = window.lower().clone();
-    let upper = window.upper().clone();
+    let upper = upper(window);
     match region {
         Region::Before => {
             if lower == zero() && window.lower_closed() {
@@ -756,9 +793,14 @@ fn region(window: &TimedInterval, clock: usize, region: Region) -> Option<Vec<Pl
             if !(lower == zero() && window.lower_closed()) {
                 constraints.push(PlaceConstraint::new(clock, low, lower));
             }
-            constraints.push(PlaceConstraint::new(clock, high, upper));
+            // An open window has no upper guard (FR-1034).
+            if !open(window) {
+                constraints.push(PlaceConstraint::new(clock, high, upper));
+            }
             Some(constraints)
         }
+        // An open window never closes.
+        Region::After if open(window) => None,
         Region::After => {
             let op = if window.upper_closed() {
                 ClockOp::Greater
@@ -777,6 +819,7 @@ struct PastCase {
     guard: Vec<PlaceConstraint>,
     values: Vec<bool>,
     seen: Vec<bool>,
+    held: Vec<bool>,
     /// Per tracker, its witness blocks after the position.
     witnesses: Vec<Vec<usize>>,
     resets: BTreeSet<usize>,
@@ -796,6 +839,9 @@ struct Branch {
     /// The block-shaped nodes started at the position.
     started: BTreeSet<usize>,
     discharged: BTreeSet<usize>,
+    /// The open-window `until` nodes kept pending at a position that holds
+    /// their right operand.
+    witnessed: BTreeSet<usize>,
     /// The formulas the position must satisfy, still to expand.
     now: Vec<usize>,
 }
@@ -908,7 +954,11 @@ impl TimedClaim {
         let eventualities = nodes
             .iter()
             .enumerate()
-            .filter(|(_, node)| matches!(node, Node::Until { window: None, .. }))
+            // An `until` with no deadline: no interval, or one with no upper
+            // end (FR-1034).
+            .filter(|(_, node)| {
+                matches!(node, Node::Until { window, .. } if window.as_ref().is_none_or(open))
+            })
             .map(|(at, _)| at)
             .collect();
         // Every atom fits the letter.
@@ -962,7 +1012,7 @@ impl TimedClaim {
             };
             for clock in first..first + count {
                 if let Some(constant) = constants.get_mut(clock) {
-                    *constant = window.upper().clone();
+                    *constant = upper(window);
                 }
             }
         };
@@ -1011,9 +1061,12 @@ impl TimedClaim {
             );
         for window in windows {
             all.push(window.lower().clone());
-            all.push(window.upper().clone());
-            // Blocks join and meet by the width.
-            all.push(width(window));
+            // An open window's lower end is its only constant (FR-1034).
+            if !open(window) {
+                all.push(upper(window));
+                // Blocks join and meet by the width.
+                all.push(width(window));
+            }
         }
         all.sort();
         all.dedup();
@@ -1029,6 +1082,7 @@ impl TimedClaim {
         let config = Config {
             started: false,
             seen: vec![false; self.trackers.len()],
+            held: vec![false; self.trackers.len()],
             pending: BTreeSet::new(),
             blocks: BTreeMap::new(),
             witnesses: vec![Vec::new(); self.trackers.len()],
@@ -1037,7 +1091,7 @@ impl TimedClaim {
         self.intern(config)
     }
 
-    /// The number of acceptance sets: one per unbounded `until`.
+    /// The number of acceptance sets: one per `until` with no deadline.
     pub fn acceptance_set_count(&self) -> usize {
         self.eventualities.len()
     }
@@ -1098,13 +1152,18 @@ impl TimedClaim {
                 let fulfilled = self
                     .eventualities
                     .iter()
-                    .map(|node| !config.pending.contains(node) || branch.discharged.contains(node))
+                    .map(|node| {
+                        !config.pending.contains(node)
+                            || branch.discharged.contains(node)
+                            || branch.witnessed.contains(node)
+                    })
                     .collect();
                 let mut blocks = branch.blocks.clone();
                 blocks.retain(|_, slots| !slots.is_empty());
                 let target = Config {
                     started: true,
                     seen: case.seen.clone(),
+                    held: case.held.clone(),
                     pending: branch.pending.clone(),
                     blocks,
                     witnesses: case.witnesses.clone(),
@@ -1136,7 +1195,9 @@ impl TimedClaim {
                     };
                     match tracker.shape {
                         Shape::Single => {
-                            if !target.seen.get(at).copied().unwrap_or(false) {
+                            if !target.seen.get(at).copied().unwrap_or(false)
+                                || target.held.get(at).copied().unwrap_or(false)
+                            {
                                 resets.insert(clock);
                             }
                         }
@@ -1181,6 +1242,7 @@ impl TimedClaim {
             guard: Vec::new(),
             values: Vec::with_capacity(self.trackers.len()),
             seen: Vec::with_capacity(self.trackers.len()),
+            held: Vec::with_capacity(self.trackers.len()),
             witnesses: Vec::with_capacity(self.trackers.len()),
             resets: BTreeSet::new(),
         }];
@@ -1201,6 +1263,7 @@ impl TimedClaim {
                     {
                         case.values.push(value);
                         case.seen.push(false);
+                        case.held.push(false);
                         case.witnesses.push(slots);
                         next.push(case);
                     }
@@ -1213,12 +1276,33 @@ impl TimedClaim {
                     let mut case = case;
                     case.values.push(false);
                     case.seen.push(false);
+                    case.held.push(false);
                     next.push(case);
                     continue;
                 }
                 let witness = past_value(&tracker.witness, letter, &case.values)?;
                 let guard = past_value(&tracker.guard, letter, &case.values)?;
                 let previous = config.started && config.seen.get(at).copied().unwrap_or(false);
+                if let (Some(window), Some(clock)) = (
+                    tracker.window.as_ref().filter(|window| open(window)),
+                    tracker.clock,
+                ) {
+                    let held = config.started && config.held.get(at).copied().unwrap_or(false);
+                    next.extend(open_tracker_cases(
+                        case,
+                        window,
+                        clock,
+                        OpenRead {
+                            settles: matches!(tracker.guard, PastExpr::Const(true)),
+                            held,
+                            previous,
+                            guard,
+                            witness,
+                        },
+                    ));
+                    continue;
+                }
+                case.held.push(false);
                 if witness {
                     let mut case = case;
                     case.values
@@ -1277,6 +1361,7 @@ impl TimedClaim {
             blocks: BTreeMap::new(),
             started: BTreeSet::new(),
             discharged: BTreeSet::new(),
+            witnessed: BTreeSet::new(),
             now: if config.started {
                 Vec::new()
             } else {
@@ -1311,11 +1396,28 @@ impl TimedClaim {
                         .collect(),
                     _ => vec![(Region::In, Vec::new())],
                 };
+            let lower_only = window.is_some_and(open);
             let mut next = Vec::new();
             for branch in branches {
                 for (part, constraints) in &regions {
                     let mut base = branch.clone();
                     base.guard.extend(constraints.iter().cloned());
+                    // FR-1034: an open-window `until` keeps its newest
+                    // instance, which implies the older ones; a run that keeps
+                    // it pending at a position holding its right operand
+                    // fulfils it. Every instance it superseded is then
+                    // discharged on a time-divergent run (EN-6's divergence
+                    // set), as its left operand holds at every later
+                    // position and the right one infinitely often.
+                    if until && lower_only && *part != Region::After {
+                        let mut witness = base.clone();
+                        witness.now.push(left);
+                        witness.now.push(right);
+                        witness.kept.insert(node);
+                        witness.pending.insert(node);
+                        witness.witnessed.insert(node);
+                        next.push(witness);
+                    }
                     match (until, part) {
                         (true, Region::After) => {}
                         (true, Region::Before) => {
@@ -1495,8 +1597,12 @@ impl TimedClaim {
                         branches.push(now);
                     }
                     branch.now.push(*left);
-                    // The older instance implies the one started now.
-                    if !branch.pending.contains(&node) {
+                    // With an upper end from a closed 0 the older instance
+                    // implies the one started now; with no upper end the one
+                    // started now implies the older (FR-1034), so it is kept
+                    // and its clock reset.
+                    let newest = window.as_ref().is_some_and(open);
+                    if newest || !branch.pending.contains(&node) {
                         branch.pending.insert(node);
                         if let Some(&clock) = self.clocks.get(&node) {
                             branch.resets.insert(clock);
@@ -1515,11 +1621,16 @@ impl TimedClaim {
                     let mut escape = branch.clone();
                     escape.now.push(*left);
                     branches.push(escape);
-                    // The instance started now implies an older one.
-                    branch.pending.insert(node);
-                    if let Some(&clock) = self.clocks.get(&node) {
-                        branch.resets.insert(clock);
+                    // With an upper end the instance started now implies an
+                    // older one; with no upper end the older implies it
+                    // (FR-1034), so the older keeps its clock.
+                    let oldest = window.as_ref().is_some_and(open);
+                    if !(oldest && branch.pending.contains(&node)) {
+                        if let Some(&clock) = self.clocks.get(&node) {
+                            branch.resets.insert(clock);
+                        }
                     }
+                    branch.pending.insert(node);
                     branches.push(branch);
                 }
             }
@@ -1621,6 +1732,65 @@ fn witness_blocks(
         }
     }
     found
+}
+
+/// What an open-window tracker reads at a position.
+struct OpenRead {
+    /// Its guard is `true`, so once its lower guard holds it stays true.
+    settles: bool,
+    /// It has settled true.
+    held: bool,
+    /// A candidate was live before the position.
+    previous: bool,
+    guard: bool,
+    witness: bool,
+}
+
+/// The cases of `guard since[q, *] witness` at a position (FR-1034): one
+/// clock from the earliest live candidate, a witness with the guard at every
+/// later position. A false guard clears the candidate, and a witness then
+/// starts a new one; a witness while one is live keeps its clock. The
+/// operator is true where a candidate is live and its clock has reached the
+/// lower end.
+fn open_tracker_cases(
+    case: PastCase,
+    window: &TimedInterval,
+    clock: usize,
+    read: OpenRead,
+) -> Vec<PastCase> {
+    let mut case = case;
+    if read.held {
+        case.values.push(true);
+        case.seen.push(true);
+        case.held.push(true);
+        return vec![case];
+    }
+    if read.previous && read.guard {
+        let mut found = Vec::with_capacity(2);
+        for (inside, part) in [(false, Region::Before), (true, Region::In)] {
+            let Some(constraints) = region(window, clock, part) else {
+                continue;
+            };
+            let mut case = case.clone();
+            case.guard.extend(constraints);
+            case.values.push(inside);
+            case.seen.push(true);
+            case.held.push(inside && read.settles);
+            found.push(case);
+        }
+        return found;
+    }
+    if read.witness {
+        case.values.push(window.contains(&zero()));
+        case.seen.push(true);
+        case.held.push(false);
+        case.resets.insert(clock);
+    } else {
+        case.values.push(false);
+        case.seen.push(false);
+        case.held.push(false);
+    }
+    vec![case]
 }
 
 /// Whether a conjunction of single-clock constraints has a solution.

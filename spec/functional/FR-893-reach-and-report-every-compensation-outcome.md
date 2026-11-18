@@ -78,8 +78,14 @@ live instance, and the `finish` step carries it for the finished instance.
 **Where the outcomes appear.** The outcomes, the `retry_of` relation, the
 aggregate facts and the summary are carried in four places:
 
-- the state key's `control` member, so two states that differ in an outcome
-  are different states;
+- the state key's `control` member, as each registration's attempt history:
+  one entry per dispatched attempt in dispatch order, holding its record,
+  its outcome and its `retry_of`, kept from the attempt's step until the
+  instance finishes and removed with the registration (ADR-027 PS-8, AE-3),
+  so two states that differ in a dispatched attempt's record, outcome or
+  `retry_of` are different states, whether or not the retry relation reads
+  `earlier` (the separate `observations` attempt record, PS-8's retry input,
+  is kept only under PS-8's four conditions);
 - the states of every protocol counterexample (FSpec FR-433), so replay
   reproduces them;
 - the protocol-analysis record (FR-574);

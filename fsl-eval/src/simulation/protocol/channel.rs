@@ -34,7 +34,6 @@ use super::{
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::model::encode::{value_enc, Enc};
 use crate::simulation::model::{verdict, ModelFinding, ModelSimState, Verdict};
-use crate::value::evaluate_protocol_slot;
 
 /// How many entries of `queue` ahead of `position` have the bytes of the one
 /// at `position`.
@@ -141,14 +140,15 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             }));
         };
         let observation = self.model.observation_of(observed)?;
-        let evaluation = evaluate_protocol_slot(
-            self.package,
-            body,
-            vec![Some(payload.clone())],
-            &observation.environment,
-            &mut Meter::new(self.model.meter()),
-        )
-        .map_err(|_| broken())?;
+        let evaluation = self
+            .evaluator
+            .evaluate_protocol_slot(
+                body,
+                vec![Some(payload.clone())],
+                &observation.environment,
+                &mut Meter::new(self.model.meter()),
+            )
+            .map_err(|_| broken())?;
         if let FamilyOutcome::Evaluated(Outcome::Completed(value)) = &evaluation.outcome {
             let enc = value_enc(value, self.model.typing());
             return Ok(Ok(QueueKey {
@@ -180,6 +180,21 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         let channel = self.channel_of(node)?;
         let text = self.program.text(node)?.to_owned();
         let instance = Self::instance(state, ordinal)?;
+        if self.channel_message_bound.is_some_and(|bound| {
+            let occupancy = instance
+                .queues
+                .iter()
+                .filter(|(key, _)| key.channel == message.channel)
+                .fold(0_u64, |total, (_, entries)| {
+                    total.saturating_add(u64::try_from(entries.len()).unwrap_or(u64::MAX))
+                });
+            occupancy >= bound
+        }) {
+            // MB-3: this send is a boundary cut before capacity and overflow
+            // semantics run. Counts are scoped to this channel instance.
+            gathered.cut.messages = true;
+            return Ok(());
+        }
         if let Some(pending) = instance.pending_sends.get(&(path.clone(), node)) {
             let payload = pending.payload.clone();
             let remaining = pending.remaining;
@@ -942,6 +957,16 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
     }
 }
 
+/// Set the queue `key` of `instance` to `queue`; an empty queue leaves the
+/// state (PS-8).
+fn store(instance: &mut Instance, key: QueueKey, queue: Vec<Entry>) {
+    if queue.is_empty() {
+        instance.queues.remove(&key);
+    } else {
+        instance.queues.insert(key, queue);
+    }
+}
+
 #[cfg(test)]
 mod delivery_index_tests {
     use super::resume_delivery_index;
@@ -961,15 +986,5 @@ mod delivery_index_tests {
         assert_eq!(duplicate.index(), 2);
         assert_eq!(resumed_delivery.index(), 3);
         assert_ne!(duplicate, resumed_delivery);
-    }
-}
-
-/// Set the queue `key` of `instance` to `queue`; an empty queue leaves the
-/// state (PS-8).
-fn store(instance: &mut Instance, key: QueueKey, queue: Vec<Entry>) {
-    if queue.is_empty() {
-        instance.queues.remove(&key);
-    } else {
-        instance.queues.insert(key, queue);
     }
 }

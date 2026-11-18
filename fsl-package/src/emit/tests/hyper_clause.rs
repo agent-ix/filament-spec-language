@@ -79,6 +79,67 @@ fn compile(unit: &str) -> Compiled {
     }
 }
 
+/// FR-898-AC-1: S4 emits the finite trace population domain and source-order
+/// quantifiers as one admitted hyperproperty node.
+#[trace("TC-2534", "FR-898-AC-1")]
+#[test]
+fn a_finite_trace_set_hyperproperty_emits_its_finite_domain() {
+    let text = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile t = \"{EVENT}\";\n\
+         record Obs {{ inp: Int[0, 3]; out: Int[0, 3]; }}\n\
+         {FINITE_DET}"
+    );
+    let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+        .expect("no selected model packages");
+    let graph = assemble_with_models(text.as_bytes(), &packages)
+        .expect("the finite unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the finite clause checks: {refusals:?}\n{text}"));
+    assert_eq!(graph.finite_hyper_clauses().len(), 1);
+    let package = CheckedPackage::link(graph);
+    let emission = emit_checked(&package).expect("the finite clause emits");
+    assert!(emission.omitted.is_empty());
+    let wire = wire(&emission);
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    crate::checked_v2::read_checked_package_v2(
+        emission.package.bytes(),
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence,
+    )
+    .unwrap_or_else(|failure| panic!("the I2 reader admits the finite clause: {failure:?}"));
+    let clause = hyper_node(&wire);
+    let body = &clause["body"];
+    let domain = node_via(&wire, binding(body, "domain"));
+    assert_eq!(domain["node_tag"], "bounded_domain");
+    assert_eq!(domain["semantic_form"], "finite_trace_population");
+    assert_eq!(target(binding(body, "domain")), &domain["node_id"]);
+    assert_eq!(domain["body"]["members"][0]["name"], "bound");
+    assert_eq!(domain["body"]["members"][0]["value"]["value"], "3");
+    assert_eq!(
+        node_via(&wire, &domain["semantic_type"])["semantic_form"],
+        "record"
+    );
+    for member in ["subjects", "parameters", "match", "align_skip"] {
+        assert_eq!(binding(body, member)["members"], json!([]));
+    }
+    let quantifiers = binding(body, "quantifiers")["members"].as_array().unwrap();
+    assert_eq!(quantifiers.len(), 2);
+    for (group, variable) in quantifiers.iter().zip(["a", "b"]) {
+        assert_eq!(group["members"][0]["name"], "variable");
+        assert_eq!(text(&group["members"][0]["value"]), variable);
+        assert_eq!(group["members"][1]["name"], "quantifier");
+        assert_eq!(text(&group["members"][1]["value"]), "forall");
+    }
+    let expression = node_via(&wire, binding(body, "body"));
+    assert_eq!(expression["node_tag"], "expression");
+}
+
 /// The refusals of `unit`'s check.
 fn refusals(unit: &str) -> Vec<fsl_semantics::check::CheckRefusal> {
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();

@@ -26,8 +26,8 @@ use fsl_eval::value::CheckedPackageEvaluation;
 use fsl_forms::{Accumulation, BinaryOperator, BinderQuery, Expression, FunctionDeclaration};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
-    CheckCause, CheckRefusal, CollectionLoss, CollectionProperty, Obligation, PackageDeclarations,
-    ProvedInterval,
+    CheckCause, CheckRefusal, CollectionLoss, CollectionProperty, Obligation, OperandText,
+    PackageDeclarations, ProvedInterval,
 };
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
@@ -312,6 +312,59 @@ fn completed(run: &Run) -> &Value {
     match &run.outcome {
         Outcome::Completed(value) => value,
         other => panic!("a completed value, not {other:?}"),
+    }
+}
+
+#[trace("FSpec-TC-1320", "FSpec-FR-144-AC-31")]
+#[trace("FSpec-TC-1927", "FSpec-FR-144-AC-34")]
+#[test]
+fn index_reads_ordered_collection_elements_and_returns_no_element_out_of_range() {
+    let package = plain();
+    for (kind, values, good_index, expected, bad_indexes) in [
+        (CollectionKind::Sequence, vec![7, 8, 7], 2, 7, vec![-1, 3]),
+        (CollectionKind::OrderedSet, vec![7, 8], 1, 8, vec![2]),
+    ] {
+        let collection_type = integers(kind, 0, 3);
+        let good = run(
+            &package,
+            &[("c", collection_type.clone())],
+            &Expression::index(name("c"), literal(good_index)),
+            vec![collection(&collection_type, ints(&values))],
+            UNLIMITED,
+        );
+        assert_eq!(
+            format!("{:?}", completed(&good)),
+            format!("{:?}", int(expected))
+        );
+        assert_eq!((good.work, good.results), (2, 1));
+
+        for bad_index in bad_indexes {
+            let checked = check(
+                &package,
+                &[("c", collection_type.clone())],
+                &Expression::index(name("c"), literal(bad_index)),
+            )
+            .expect("Kernel checks leave the index obligation to evaluation");
+            let mut meter = Meter::new(UNLIMITED);
+            let evaluation = package
+                .evaluate(
+                    &checked,
+                    vec![collection(&collection_type, ints(&values))],
+                    &ObjectEnvironment::default(),
+                    &mut meter,
+                )
+                .unwrap();
+            assert!(matches!(
+                evaluation.outcome,
+                FamilyOutcome::Evaluated(Outcome::Undefined(Undefined::NoElement))
+            ));
+            assert_eq!(
+                evaluation.location.as_ref(),
+                Some(checked.root().location())
+            );
+            assert_eq!(meter.consumed(LimitKind::WorkUnits), 0);
+            assert_eq!(meter.consumed(LimitKind::ResultUnits), 0);
+        }
     }
 }
 
@@ -1148,6 +1201,7 @@ fn q13_sum_proves_every_prefix_inside_its_domain_for_every_order() {
                     lower: Some(Integer::from(-3_i64)),
                     upper: Some(Integer::from(6_i64)),
                 }),
+                operand: OperandText::default(),
             })
         );
     }
@@ -1531,6 +1585,7 @@ fn tc_441_an_unbounded_source_has_no_proved_size_maximum() {
                 lower: Some(Integer::from(0_i64)),
                 upper: None,
             }),
+            operand: OperandText::default(),
         })
     );
 }
@@ -2266,6 +2321,7 @@ fn unproved_count(required: (i64, i64), proved: (i64, Option<i64>)) -> CheckCaus
             lower: Some(Integer::from(proved.0)),
             upper: proved.1.map(Integer::from),
         }),
+        operand: OperandText::default(),
     })
 }
 

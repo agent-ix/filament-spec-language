@@ -400,7 +400,14 @@ pub(crate) fn protocol_package_with_provisions(
     internals: serde_json::Value,
 ) -> CheckedPackage {
     let text = unit_text_with(PROTOCOL_PROFILE, body);
-    package_with_provisions("package", &text, body, packages, Some(internals))
+    package_with_provisions(
+        "package",
+        &text,
+        body,
+        packages,
+        Some(internals),
+        CheckMode::Linked,
+    )
 }
 
 /// The header line selecting the protocol profile.
@@ -423,6 +430,23 @@ fn package_with_internals(
     body: &str,
     internals: Option<serde_json::Value>,
 ) -> CheckedPackage {
+    package_in_mode(name, profiles, body, internals, CheckMode::Linked)
+}
+
+/// The checked package of `body` with every function body checked under
+/// `CheckMode::Kernel` (FR-495, FR-952): a definedness obligation a body
+/// cannot prove is met at run time, where the evaluator finds it undefined.
+pub(crate) fn package_kernel(body: &str) -> CheckedPackage {
+    package_in_mode("package", "", body, None, CheckMode::Kernel)
+}
+
+fn package_in_mode(
+    name: &str,
+    profiles: &str,
+    body: &str,
+    internals: Option<serde_json::Value>,
+    mode: CheckMode,
+) -> CheckedPackage {
     let document = document();
     let protocol_profile = if body.contains("protocol ") && !profiles.contains("profile pp ") {
         PROTOCOL_PROFILE
@@ -431,7 +455,7 @@ fn package_with_internals(
     };
     let text = unit_text_with(&format!("{profiles}{protocol_profile}"), body);
     let packages = package_input([document.as_slice()]).unwrap();
-    package_with_provisions(name, &text, body, packages, internals)
+    package_with_provisions(name, &text, body, packages, internals, mode)
 }
 
 fn package_with_provisions(
@@ -440,6 +464,7 @@ fn package_with_provisions(
     body: &str,
     packages: fsl_semantics::model::intake::PackageInput,
     internals: Option<serde_json::Value>,
+    mode: CheckMode,
 ) -> CheckedPackage {
     let parsed = fsl_cst::parse(
         SourceIdentity::new("agent-ix", "litmus"),
@@ -477,7 +502,7 @@ fn package_with_provisions(
         None => declarations.with_unwritten_refinements(),
     };
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(mode, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -673,7 +698,7 @@ impl Documents {
             model: ModelSubject {
                 simulation: ModelSimulationRequest {
                     emit: fsl_package::EmitLimits::fixture(),
-                    package,
+                    input: fsl_eval::simulation::model::ModelCheckInput::source(package),
                     packages: &self.packages,
                     normalization: ModelNormalizationLimits::default(),
                     snapshots: &self.snapshots,
@@ -724,4 +749,25 @@ pub(crate) fn field(state: &ModelSimState, population: &str, object: &str, field
         Some(Value::Integer(value)) => value.to_string().parse().expect("a small value"),
         other => panic!("{object}.{field} is not an integer: {other:?}"),
     }
+}
+
+/// [`document`] with every operation returning a `Boolean`: a unit checked
+/// from a request binds each attempt's result, so the operation it names must
+/// return one (S3 refuses `attempt binder has type Boolean, operation result
+/// is None` otherwise).
+pub(crate) fn resulting_document() -> Vec<u8> {
+    let mut value: Json = serde_json::from_slice(&document()).expect("the litmus package is JSON");
+    for object in value["types"].as_array_mut().into_iter().flatten() {
+        for operation in object
+            .get_mut("operations")
+            .and_then(Json::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            if operation.get("returns").is_none() {
+                *operation = returning(operation.clone());
+            }
+        }
+    }
+    serde_json::to_vec(&value).expect("the litmus package serializes")
 }

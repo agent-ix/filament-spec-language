@@ -39,8 +39,8 @@ mod order;
 mod progress;
 pub use order::{ModelStepOrder, ModelStepOrderRefusal, ModelStepOrderRefusalCode};
 pub use progress::{
-    AdmittedPlanAuthority, PlanAuthorityRefusal, PlanAuthorityRefusalCode, PlanAuthoritySelection,
-    PlanAuthorityValidationCaps, ProgressSelectionRefusalCode,
+    admit_progress_view, AdmittedPlanAuthority, PlanAuthorityRefusal, PlanAuthorityRefusalCode,
+    PlanAuthoritySelection, PlanAuthorityValidationCaps, ProgressSelectionRefusalCode,
 };
 
 /// The authored unit and the selection the plan root is written for.

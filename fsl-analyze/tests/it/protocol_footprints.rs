@@ -670,7 +670,7 @@ pub(crate) fn assert_independent_steps_commute<M: MemoryModel>(
 
 /// [`assert_independent_steps_commute`]'s check, with the kinds of each
 /// independent pair it checked.
-fn commuting_pairs<M: MemoryModel>(
+pub(crate) fn commuting_pairs<M: MemoryModel>(
     system: &ProtocolSystem<'_, M>,
     reached: &[Reached<M>],
 ) -> Vec<(StepKind, StepKind)> {

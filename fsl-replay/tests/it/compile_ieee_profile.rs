@@ -1105,14 +1105,8 @@ fn set_arguments(node: &mut Value, arguments: Vec<Value>) {
 #[trace("TC-1091", "FR-397-AC-4", "FR-397-AC-15")]
 #[test]
 fn the_published_fma_vectors_get_their_published_decision_from_the_strict_reader() {
-    let Some(root) = std::env::var_os("FSPEC_DIR") else {
-        println!("skipped: FSPEC_DIR not set");
-        return;
-    };
-    let path = std::path::Path::new(&root)
-        .join("proposals/checked-package-v2/fma-application-vectors.json");
     let vectors: Value =
-        serde_json::from_slice(&std::fs::read(path).expect("the FM vectors")).unwrap();
+        crate::published_fspec::json("proposals/checked-package-v2/fma-application-vectors.json");
     let base = fma_base_wire();
     let nodes = base["semantic_graph"]["nodes"].as_array().unwrap();
     let find = |identity: &str| {

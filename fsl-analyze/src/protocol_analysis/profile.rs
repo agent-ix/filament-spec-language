@@ -3,9 +3,9 @@
 
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2, CheckedSemanticNodeV2};
 use fsl_package::protocol_view::{
-    ClauseActivation, ControlBody, ControlOperation, ParallelJoinPolicy, QueueCapacity,
-    ViewRefusal, clause_activation, control_body, control_operation, protocol_view, queue_capacity,
-    role_is_replicated,
+    clause_activation, control_body, control_operation, protocol_view, queue_capacity,
+    role_is_replicated, ClauseActivation, ControlBody, ControlOperation, ParallelJoinPolicy,
+    QueueCapacity, ViewRefusal,
 };
 use fsl_replay::protocol_analysis::{UnsupportedCause, UnsupportedSlug};
 

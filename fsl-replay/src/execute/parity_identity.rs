@@ -12,7 +12,7 @@
 use filament_exact::{IntegerInterval, NodeKey, Origin};
 use fsl_foundation::bound::ProofBound;
 
-use crate::identity::ObligationIdentity;
+use fsl_package::ObligationIdentity;
 use crate::scalar::OperandIdentity;
 
 /// Why an identity could not be minted. The claim refuses; no identity is

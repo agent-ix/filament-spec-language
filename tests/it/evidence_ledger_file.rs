@@ -123,7 +123,6 @@ fn expect_relation_refusal(output: &Output, cause: &str) {
 /// correction extends the list; reading and writing reproduces the bytes.
 #[trace("TC-2750", "FR-975-AC-1")]
 #[test]
-#[ignore = "QSL-2339: the whole-key filament.finite-window-evidence-ledger/1 form not implemented yet"]
 fn the_ledger_file_is_keyed_by_the_whole_obligation_instance() {
     let directory = tempfile::tempdir().unwrap();
     let first = result(&run_file(&write(
@@ -165,7 +164,6 @@ fn the_ledger_file_is_keyed_by_the_whole_obligation_instance() {
 /// obligation, so a correction across packages is `predecessor-unknown`.
 #[trace("TC-2750", "FR-975-AC-2")]
 #[test]
-#[ignore = "QSL-2339: ledger lookup by package, clause, occurrence and trigger not implemented yet (looked up by clause name only)"]
 fn a_clause_of_the_same_name_in_another_package_is_another_obligation() {
     let directory = tempfile::tempdir().unwrap();
     let first = result(&run_file(&write(
@@ -197,7 +195,6 @@ fn a_clause_of_the_same_name_in_another_package_is_another_obligation() {
 /// is accepted at lineage 2.
 #[trace("TC-2750", "FR-975-AC-3", "FR-526-AC-8")]
 #[test]
-#[ignore = "QSL-2339: whole-key ledger form with superseded identities not implemented yet"]
 fn a_superseded_predecessor_is_not_latest_and_an_unheld_one_is_unknown() {
     let directory = tempfile::tempdir().unwrap();
     let r1 = result(&run_file(&write(
@@ -241,7 +238,6 @@ fn a_superseded_predecessor_is_not_latest_and_an_unheld_one_is_unknown() {
 /// `evidence_ledger`; a missing path refuses naming the path.
 #[trace("TC-2751", "FR-975-AC-4")]
 #[test]
-#[ignore = "QSL-2339: the whole-key ledger form and its refusals not implemented yet"]
 fn a_malformed_ledger_file_refuses_naming_evidence_ledger() {
     let directory = tempfile::tempdir().unwrap();
     let r1 = result(&run_file(&write(

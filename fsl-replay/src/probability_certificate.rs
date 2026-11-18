@@ -17,7 +17,7 @@ use fsl_semantics::check::{
 };
 use serde_json::{json, Value};
 
-use crate::identity::ObligationIdentity;
+use fsl_package::ObligationIdentity;
 
 mod bounded;
 mod key_admission;
@@ -989,9 +989,8 @@ fn claim_workload<'a>(
     match &claim.scheduler {
         ProbScheduler::Every => Ok(None),
         ProbScheduler::Workload(name) => system
-            .package()
-            .graph()
-            .probabilistic_model()
+            .input()
+            .probabilistic
             .workload(name)
             .filter(|workload| workload.model() == claim.subject.alias)
             .map(Some)

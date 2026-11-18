@@ -297,6 +297,8 @@ fn encode_value_type(out: &mut DeclarationMeter, value_type: &ValueType) {
             ValueType::Integer => out.write_str("integer"),
             ValueType::Uuid => out.write_str("uuid"),
             ValueType::Timestamp => out.write_str("timestamp"),
+            ValueType::Bytes => out.write_str("bytes"),
+            ValueType::JsonObject => out.write_str("json_object"),
             ValueType::Int(interval) => {
                 out.write_str("int");
                 out.write_str(&interval.lower().to_string());
@@ -508,6 +510,11 @@ fn encode_expression(
             ExprNode::String(text) => {
                 out.write_str("string");
                 out.write_str(text.text());
+            }
+            ExprNode::ReferenceLiteral { type_name, key, .. } => {
+                out.write_str("reference_literal");
+                out.write_str(&type_name.name);
+                out.write_str(key.text());
             }
             ExprNode::Name(name) => {
                 out.write_str("name");
@@ -1081,6 +1088,7 @@ pub(crate) fn is_package_independent(value_type: &ValueType) -> bool {
             | ValueType::String
             | ValueType::Uuid
             | ValueType::Timestamp => return true,
+            ValueType::Bytes | ValueType::JsonObject => return true,
             ValueType::Option(payload) => current = payload,
             ValueType::Collection(collection) => current = collection.element(),
             ValueType::Map(map) => current = map.values(),
@@ -1388,6 +1396,7 @@ impl<'a> Application<'a> {
                 equality_producer: None,
                 ordering_part: false,
                 field_population: None,
+                equality_range_context: None,
             }),
             Self::Imported {
                 callee,
@@ -1405,6 +1414,7 @@ impl<'a> Application<'a> {
                 equality_producer: None,
                 ordering_part: false,
                 field_population: None,
+                equality_range_context: None,
             }),
             Self::Tuple { declaration, .. } => Ok(Node {
                 kind: NodeKind::Tuple {
@@ -1416,6 +1426,7 @@ impl<'a> Application<'a> {
                 equality_producer: None,
                 ordering_part: false,
                 field_population: None,
+                equality_range_context: None,
             }),
             Self::Ieee { intrinsic, .. } => {
                 // Every operand is a float of the first operand's type;
@@ -1467,6 +1478,7 @@ impl<'a> Application<'a> {
                     equality_producer: None,
                     ordering_part: false,
                     field_population: None,
+                    equality_range_context: None,
                 })
             }
         }

@@ -10,16 +10,22 @@ relationships:
 
 ## Description
 
-Verify non-safety policies, deterministic outcomes and exact decimal costs. Scope: FR-1012-AC-1 to AC-3.
+Verify non-safety policies, deterministic outcomes, exact decimal costs, timed and probabilistic plans and the pinned exploration counts. Scope: FR-1012-AC-1 to AC-6.
 
 ## Test Procedure
 
 1. Plan under `eventually holds(c.versionNumber = 3)`.
 2. Run one request twice.
 3. Minimize a decimal per-step cost.
+4. Plan over FSpec's `timed-tick` and `timed-go` fixtures, the latter with guard `x >= 2` and with `x > 2`, twice.
+5. Plan over `probabilistic-try` for `Reach.final.done` and for `maximize Reach.probability`.
+6. Plan over `counter` with `max_states` 2 and with `max_work` 1, each twice.
 
 ## Expected Results
 
 - Step 1: not refused; every plan visits version 3.
 - Step 2: byte-identical documents.
 - Step 3: the exact run value, `potential` certificate.
+- Step 4: `elapsed` `30 min`, delays 0; `optimal` delay `2/1` with an accepted `closure`; `feasible`, `bound` lower `2/1` unattained, delay `5/2`, byte-identical.
+- Step 5: `optimal` `retry`; `optimal` `try, try` at `3/4`.
+- Step 6: `explored` 2 states, 6 work and 1 state, 1 work, plan `null`, byte-identical.

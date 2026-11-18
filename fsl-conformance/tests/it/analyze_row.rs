@@ -231,3 +231,32 @@ fn analyze_wire_cells_return_each_kind() {
         serde_json::json!({"kind": "cancelled", "source": "requested"})
     );
 }
+
+/// FR-633-AC-1, FR-281-AC-23 (TC-1391's task-set cell): the `analyze` row's
+/// cell over a task set runs `schedulable CtlFp on Ctl under fixed_priority;`
+/// on EN-7, which `Engines::fsl()` registers, and settles it `proved` in
+/// closed form with its recomputation certified.
+#[trace("TC-1391")]
+#[trace("TC-1593", "FR-633-AC-1")]
+#[trace("TC-1580", "FR-281-AC-23")]
+#[test]
+fn analyze_cell_over_a_task_set_proves_on_en7() {
+    let case = fsl_conformance::task_set_case();
+    let outcome = fsl_conformance::run_case(&case).expect("the task-set case runs");
+    assert_eq!(outcome.exit_code(), case.expected_exit);
+    assert_eq!(backend_of(&outcome), "en-7");
+    let [record] = outcome.records() else {
+        panic!("one record: {:?}", outcome.records());
+    };
+    assert_eq!(
+        record.value(),
+        &fsl_replay::TerminalValue::Proved {
+            basis: fsl_replay::ProofBasis::ClosedForm {
+                analysis: fsl_replay::ClosedFormAnalysis::FixedPriorityRta,
+            },
+            certification: fsl_replay::Certification::Certified,
+        }
+    );
+    assert_eq!(written(&outcome)["items"][0]["result"], "proved");
+    assert_no_counterexample(&outcome);
+}

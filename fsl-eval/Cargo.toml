@@ -19,11 +19,15 @@ serde_json = "1.0.151"
 # ADR-012 section 9 / FR-064: the `#[string_edge]` marker attribute, exempt
 # from the layer table below (it is a zero-cost marker `xtask string-edge`
 # reads, not a semantic dependency).
-ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 fsl-foundation = { path = "../fsl-foundation" }
 fsl-package = { path = "../fsl-package" }
+fsl-forms = { path = "../fsl-forms" }
 fsl-semantics = { path = "../fsl-semantics" }
 filament-exact = { workspace = true }
+# ADR-011 X-8: the owner of the partial-value, completeness, activation and
+# repair rules (FR-861); the evaluator compares cover intervals through it.
+filament-observation = { git = "https://github.com/agent-ix/filament-observation", tag = "v0.1.1" }
 # ADR-011 §6.1 layer C: the checked terms the evaluator reads (FR-400).
 filament-checked = { workspace = true }
 # ADR-011 §6.1 layer SV: the shared no_std semantic-value leaf.
@@ -48,11 +52,11 @@ thiserror = "2.0.20"
 test-support = []
 
 [dev-dependencies]
+filament-specification = { workspace = true }
 # The evaluator's tests build `PackageDeclarations` from layer-2 parsed forms
 # (`Expression`, `FunctionDeclaration`, `TypeForm`): `check` takes forms as its
 # input and fsl-semantics exposes no builder of them. Layer 2 is below this
 # crate, so the edge closes no cycle; TC-390 admits it in this table only.
-fsl-forms = { path = "../fsl-forms" }
 # FR-091-AC-13: a function compiled from source text through S1 and S2 is
 # called here.
 fsl-cst = { path = "../fsl-cst" }

@@ -286,6 +286,13 @@ impl CallIncomplete {
         crate::limits::AccountingLimits::setting_of(self.record.limit_kind)
     }
 
+    /// The setting name, including `evaluation.live_occurrences`, which is
+    /// configured outside the ten scalar accounting settings.
+    #[must_use]
+    pub fn setting_name(&self) -> &'static str {
+        crate::limits::AccountingLimits::setting_name(self.record.limit_kind)
+    }
+
     /// The counter at the failed charge: what the counter would have
     /// reached had the charge been admitted.
     pub fn counter(&self) -> Integer {
@@ -663,6 +670,7 @@ pub fn run(
         call,
         objects,
         None,
+        None,
         cancel,
     )
 }
@@ -696,6 +704,43 @@ pub fn run_with_profile_catalog(
         call,
         objects,
         Some(profile_catalog),
+        None,
+        cancel,
+    )
+}
+
+/// Compile and run `bytes` with a caller-selected integer-division law and
+/// request-supplied extension definitions (FR-767).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "FR-100 run inputs plus the request-owned catalog and division selection"
+)]
+pub fn run_with_profile_catalog_and_integer_division(
+    source: SourceIdentity,
+    package_name: String,
+    path: &str,
+    bytes: &[u8],
+    packages: &fsl_semantics::model::intake::PackageInput,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    profile_catalog: ProfileCatalogInput<'_>,
+    integer_division: crate::AdmittedIntegerDivision,
+    cancel: &Cancel,
+) -> Result<CallOutcome, Box<RunRefusal>> {
+    run_with_optional_profile_catalog(
+        source,
+        package_name,
+        path,
+        bytes,
+        packages,
+        dependencies,
+        limits,
+        call,
+        objects,
+        Some(profile_catalog),
+        Some(integer_division),
         cancel,
     )
 }
@@ -715,9 +760,10 @@ fn run_with_optional_profile_catalog(
     call: &Call,
     objects: &ObjectEnvironment,
     profile_catalog: Option<ProfileCatalogInput<'_>>,
+    integer_division: Option<crate::AdmittedIntegerDivision>,
     cancel: &Cancel,
 ) -> Result<CallOutcome, Box<RunRefusal>> {
-    run_reading(
+    run_reading_with_integer_division(
         source,
         package_name,
         path,
@@ -730,6 +776,7 @@ fn run_with_optional_profile_catalog(
         &SuppliedBackends::default(),
         &PrepareLimits::default(),
         profile_catalog,
+        integer_division,
         cancel,
         |_, _, _| Ok(()),
     )
@@ -758,6 +805,46 @@ pub(crate) fn run_reading<T>(
     backends: &SuppliedBackends<'_>,
     prepare: &PrepareLimits,
     profile_catalog: Option<ProfileCatalogInput<'_>>,
+    cancel: &Cancel,
+    read: impl FnOnce(&CheckedUnit, &EmittedUnit, &AdmittedModels) -> Result<T, Box<RunRefusal>>,
+) -> Result<(CallOutcome, T), Box<RunRefusal>> {
+    run_reading_with_integer_division(
+        source,
+        package_name,
+        path,
+        bytes,
+        packages,
+        dependencies,
+        limits,
+        call,
+        objects,
+        backends,
+        prepare,
+        profile_catalog,
+        None,
+        cancel,
+        read,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "run's explicit source, package, evaluation, backend, catalog and law inputs"
+)]
+pub(crate) fn run_reading_with_integer_division<T>(
+    source: SourceIdentity,
+    package_name: String,
+    path: &str,
+    bytes: &[u8],
+    packages: &fsl_semantics::model::intake::PackageInput,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    backends: &SuppliedBackends<'_>,
+    prepare: &PrepareLimits,
+    profile_catalog: Option<ProfileCatalogInput<'_>>,
+    integer_division: Option<crate::AdmittedIntegerDivision>,
     cancel: &Cancel,
     read: impl FnOnce(&CheckedUnit, &EmittedUnit, &AdmittedModels) -> Result<T, Box<RunRefusal>>,
 ) -> Result<(CallOutcome, T), Box<RunRefusal>> {
@@ -790,16 +877,18 @@ pub(crate) fn run_reading<T>(
         .map_err(refusal)?
         .into_value();
     let check_selections = call.clocks.check_selections(&parsed);
-    let checked = front_end::check_with_refinement_internals(
+    let checked = front_end::check_with_refinement_internals_and_integer_division(
         &parsed,
         package_name,
         super::SourceInputs {
             refinement_internals: None,
             temporal_selections: &check_selections,
             clocks: Some(&call.clocks),
+            check_mode: None,
         },
         &models,
         dependencies,
+        integer_division,
         limits,
         cancel,
     )
@@ -950,12 +1039,12 @@ pub(crate) fn run_compiled(
                 Err(super::run_value::WriteStop::NoForm) => {
                     return Err(Box::new(RunRefusal::UnsupportedResult {
                         function: call.function.clone(),
-                    }))
+                    }));
                 }
                 Err(super::run_value::WriteStop::Fault(invariant)) => {
                     return Err(Box::new(RunRefusal::Fault(InternalFault::new(
                         "call", invariant,
-                    ))))
+                    ))));
                 }
             }
         }
@@ -1201,7 +1290,6 @@ pub(crate) fn admit_wire_arguments(
         let value = read.map_err(|stop| {
             Box::new(match stop {
                 ReadStop::Defect(defect) => RunRefusal::Argument { position, defect },
-                ReadStop::Unsupported => RunRefusal::UnsupportedParameter { position },
                 ReadStop::Fault(invariant) => {
                     RunRefusal::Fault(InternalFault::new("call", invariant))
                 }
@@ -1292,6 +1380,14 @@ pub(crate) fn argument_value(
             Value::String(value) => Ok(Value::String(value)),
             _ => Err(wrong()),
         },
+        ValueType::Bytes => match value {
+            Value::Bytes(value) => Ok(Value::Bytes(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::JsonObject => match value {
+            Value::JsonObject(value) => Ok(Value::JsonObject(value)),
+            _ => Err(wrong()),
+        },
         ValueType::Uuid => match value {
             Value::Uuid(value) => Ok(Value::Uuid(value)),
             _ => Err(wrong()),
@@ -1349,7 +1445,10 @@ pub(crate) fn argument_value(
                 _ => Err(wrong()),
             }
         }
-        ValueType::Map(_) => Err(wrong()),
+        ValueType::Map(_) => match value {
+            Value::Map(value) => Ok(Value::Map(value)),
+            _ => Err(wrong()),
+        },
     }
 }
 
@@ -1578,6 +1677,7 @@ pub(crate) fn kernel_undefined_reason(reason: Undefined) -> &'static str {
         Undefined::IeeeNotFinite => "ieee-not-finite",
         Undefined::EmptyReduction => "empty-reduction",
         Undefined::NoneValue => "none-value",
+        Undefined::NoElement => "no-element",
         Undefined::SumOutOfDomain => "sum-out-of-domain",
     }
 }

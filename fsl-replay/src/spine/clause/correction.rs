@@ -4,17 +4,22 @@
 //! refuse a relation that changes nothing (FR-966 "A refused correction
 //! through a run").
 //!
-//! The ledger holds, for each temporal clause, its latest result: the
-//! result's `result_identity`, `input_identity` and `lineage`, and the
-//! identities of the results it superseded, so a relation naming an earlier
-//! result of the clause is told apart from one naming no result at all.
+//! The ledger file (FR-975) holds, for each obligation instance (package,
+//! clause, occurrence and trigger), its latest result: the result's
+//! `result_identity`, `input_identity`, `correspondence` and `lineage`, and
+//! the identities of the results it superseded, so a relation naming an
+//! earlier result of the instance is told apart from one naming no result
+//! held at all.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::{ClauseRunReport, FiniteWindowReport};
 
-/// The format tag of the evidence ledger file a run writes (FR-526).
+/// The format tag of the evidence ledger file a run writes (FR-975).
 pub const EVIDENCE_LEDGER_FORMAT: &str = "filament.finite-window-evidence-ledger/1";
+
+/// The largest `lineage` the file form carries (FR-975).
+const LINEAGE_CEILING: u64 = 9_007_199_254_740_991;
 
 /// The relation of a run's result to an earlier one (FR-526).
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -56,7 +61,7 @@ impl RunRelation {
     }
 }
 
-/// The evidence ledger file a run writes and a correction reads.
+/// The evidence ledger file a run writes and a correction reads (FR-975).
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceLedgerFile {
@@ -64,15 +69,61 @@ pub struct EvidenceLedgerFile {
     results: Vec<LedgerResult>,
 }
 
-/// One clause's latest result in the ledger.
+/// The obligation instance an evidence ledger entry is of (FR-975 `key`).
+/// Its derived order is the file's entry order: package, clause, occurrence
+/// role and ordinal, then trigger with `null` first.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceKey {
+    package: String,
+    clause: String,
+    occurrence: KeyOccurrence,
+    #[serde(deserialize_with = "nullable")]
+    trigger: Option<String>,
+}
+
+impl EvidenceKey {
+    /// The key of `clause` (its declaration node key's canonical text) at
+    /// the occurrence `{ role, ordinal }` of `package`, assessing no trigger
+    /// instance.
+    pub fn new(package: String, clause: String, role: String, ordinal: u64) -> Self {
+        Self {
+            package,
+            clause,
+            occurrence: KeyOccurrence { role, ordinal },
+            trigger: None,
+        }
+    }
+}
+
+/// The selected clause occurrence (FR-516 `occurrence`).
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct KeyOccurrence {
+    role: String,
+    ordinal: u64,
+}
+
+/// One obligation instance's latest result in the ledger.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LedgerResult {
-    clause: String,
+    key: EvidenceKey,
     result_identity: String,
     input_identity: String,
+    #[serde(deserialize_with = "nullable")]
+    correspondence: Option<serde_json::Value>,
     lineage: u64,
     superseded: Vec<String>,
+}
+
+/// A member that must be present and may be `null`.
+fn nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
 }
 
 /// A malformed evidence ledger file.
@@ -83,21 +134,49 @@ pub struct EvidenceLedgerReadError {
     pub reason: String,
 }
 
+fn malformed(reason: impl Into<String>) -> EvidenceLedgerReadError {
+    EvidenceLedgerReadError {
+        reason: reason.into(),
+    }
+}
+
 /// Read the evidence ledger file a prior run wrote.
 ///
 /// # Errors
 ///
 /// [`EvidenceLedgerReadError`] for bytes that are not a closed ledger
-/// document of [`EVIDENCE_LEDGER_FORMAT`].
+/// document of [`EVIDENCE_LEDGER_FORMAT`]: not JSON, a duplicate, missing or
+/// unknown member, another `format`, entries out of key order or repeating a
+/// key, a `lineage` past the ceiling, or a `superseded` list whose length
+/// differs from its entry's `lineage`.
 pub fn read_evidence_ledger(bytes: &[u8]) -> Result<EvidenceLedgerFile, EvidenceLedgerReadError> {
+    // The canonical reader refuses duplicate members before serde sees them.
+    quire_canonical::read(bytes, u64::MAX).map_err(|error| malformed(error.to_string()))?;
     let ledger: EvidenceLedgerFile =
-        serde_json::from_slice(bytes).map_err(|error| EvidenceLedgerReadError {
-            reason: error.to_string(),
-        })?;
+        serde_json::from_slice(bytes).map_err(|error| malformed(error.to_string()))?;
     if ledger.format != EVIDENCE_LEDGER_FORMAT {
-        return Err(EvidenceLedgerReadError {
-            reason: format!("format {:?}", ledger.format),
-        });
+        return Err(malformed(format!("format {:?}", ledger.format)));
+    }
+    if ledger
+        .results
+        .windows(2)
+        .any(|pair| pair[0].key >= pair[1].key)
+    {
+        return Err(malformed(
+            "results are in ascending key order with no key repeated",
+        ));
+    }
+    for (index, entry) in ledger.results.iter().enumerate() {
+        if entry.lineage > LINEAGE_CEILING {
+            return Err(malformed(format!(
+                "results[{index}].lineage is at most {LINEAGE_CEILING}"
+            )));
+        }
+        if u64::try_from(entry.superseded.len()).ok() != Some(entry.lineage) {
+            return Err(malformed(format!(
+                "results[{index}].superseded holds as many identities as its lineage"
+            )));
+        }
     }
     Ok(ledger)
 }
@@ -141,11 +220,12 @@ impl CorrectionRefusal {
     }
 }
 
-/// Settle the relation of the finite-window result in `report` of the
-/// clause `clause` against `ledger`, and record the result's identities,
-/// lineage and updated ledger on it. A report with no finite-window result
-/// (the run refused before it evaluated) is left as it is. `admit_late` is
-/// whether the request named late observations to admit.
+/// Settle the relation of the finite-window result in `report` against
+/// `ledger`, looking its predecessor up by the result's whole obligation
+/// instance key, and record the result's identities, lineage and updated
+/// ledger on it. A report with no finite-window result (the run refused
+/// before it evaluated) is left as it is. `admit_late` is whether the
+/// request named late observations to admit.
 ///
 /// # Errors
 ///
@@ -156,7 +236,6 @@ impl CorrectionRefusal {
 /// `lineage` for a lineage past `u64`.
 pub fn settle_correction(
     report: &mut ClauseRunReport,
-    clause: &str,
     relation: RunRelation,
     ledger: Option<EvidenceLedgerFile>,
     admit_late: bool,
@@ -164,14 +243,13 @@ pub fn settle_correction(
     let Some(window) = report.finite_window.as_mut() else {
         return Ok(());
     };
-    let record = correction(window, clause, relation, ledger, admit_late)?;
+    let record = correction(window, relation, ledger, admit_late)?;
     window.correction = Some(record);
     Ok(())
 }
 
 fn correction(
     window: &FiniteWindowReport,
-    clause: &str,
     relation: RunRelation,
     ledger: Option<EvidenceLedgerFile>,
     admit_late: bool,
@@ -189,15 +267,13 @@ fn correction(
         });
     }
     let input = window.identity.clone();
+    let key = &window.key;
     let supplied = ledger.is_some();
     let mut ledger = ledger.unwrap_or_else(|| EvidenceLedgerFile {
         format: EVIDENCE_LEDGER_FORMAT.to_owned(),
         results: Vec::new(),
     });
-    let held = ledger
-        .results
-        .iter()
-        .position(|entry| entry.clause == clause);
+    let held = ledger.results.binary_search_by(|entry| entry.key.cmp(key));
     let (lineage, superseded) = match relation.predecessor() {
         None => (0, Vec::new()),
         Some(previous) => {
@@ -205,6 +281,7 @@ fn correction(
                 return Err(CorrectionRefusal::of("no-ledger", "relation"));
             }
             let entry = held
+                .ok()
                 .and_then(|index| ledger.results.get(index))
                 .ok_or_else(|| CorrectionRefusal::of("predecessor-unknown", "relation"))?;
             if entry.result_identity != previous {
@@ -218,9 +295,15 @@ fn correction(
             if entry.input_identity == input {
                 return Err(CorrectionRefusal::of("unchanged-input", "relation"));
             }
+            // A run result echoes no correspondence (FR-516), so a
+            // predecessor written under one is another correspondence.
+            if entry.correspondence.is_some() {
+                return Err(CorrectionRefusal::of("correspondence-changed", "relation"));
+            }
             let lineage = entry
                 .lineage
                 .checked_add(1)
+                .filter(|lineage| *lineage <= LINEAGE_CEILING)
                 .ok_or_else(|| CorrectionRefusal::of("lineage", "relation"))?;
             let mut superseded = entry.superseded.clone();
             superseded.push(entry.result_identity.clone());
@@ -232,19 +315,21 @@ fn correction(
             .map_err(|_| CorrectionRefusal::of("result-identity", "relation"))?
             .0;
     let entry = LedgerResult {
-        clause: clause.to_owned(),
+        key: key.clone(),
         result_identity: result_identity.clone(),
         input_identity: input.clone(),
+        correspondence: None,
         lineage,
         superseded,
     };
-    match held.and_then(|index| ledger.results.get_mut(index)) {
-        Some(held) => *held = entry,
-        None => ledger.results.push(entry),
+    match held {
+        Ok(index) => {
+            if let Some(held) = ledger.results.get_mut(index) {
+                *held = entry;
+            }
+        }
+        Err(index) => ledger.results.insert(index, entry),
     }
-    ledger
-        .results
-        .sort_by(|left, right| left.clause.cmp(&right.clause));
     let ledger = serde_json::to_value(&ledger)
         .map_err(|_| CorrectionRefusal::of("ledger-encodes", "relation"))?;
     Ok(CorrectionRecord {
@@ -293,8 +378,8 @@ pub(crate) fn run_correction(
     if let Some(record) = &window.correction {
         return Ok(Some(record.clone()));
     }
-    let (super::ClauseRunSelection::Temporal { name, trace, .. }
-    | super::ClauseRunSelection::SampledTemporal { name, trace, .. }) = selection
+    let (super::ClauseRunSelection::Temporal { trace, .. }
+    | super::ClauseRunSelection::SampledTemporal { trace, .. }) = selection
     else {
         return Ok(None);
     };
@@ -304,10 +389,65 @@ pub(crate) fn run_correction(
     let late = &input.late;
     correction(
         window,
-        name,
         late.relation.clone(),
         late.evidence_ledger.clone(),
         !late.admit_late.is_empty(),
     )
     .map(Some)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    fn entry(package: &str, lineage: u64) -> serde_json::Value {
+        let superseded: Vec<String> = (0..lineage).map(|at| format!("r{at}")).collect();
+        serde_json::json!({
+            "key": {"package": package, "clause": "Seen",
+                "occurrence": {"role": "declaration", "ordinal": 0}, "trigger": null},
+            "result_identity": "latest", "input_identity": "input",
+            "correspondence": null, "lineage": lineage, "superseded": superseded})
+    }
+
+    /// FR-975-AC-1: writing a read ledger the way a run writes its
+    /// `evidence_ledger` member reproduces its bytes.
+    #[trace("TC-2750", "FR-975-AC-1")]
+    #[test]
+    fn writing_a_read_ledger_reproduces_its_bytes() {
+        let document = serde_json::json!({"format": EVIDENCE_LEDGER_FORMAT,
+            "results": [entry("first", 0), entry("second", 2)]});
+        let bytes = serde_json::to_vec(&document).unwrap();
+        let read = read_evidence_ledger(&bytes).unwrap();
+        let written = serde_json::to_value(&read).unwrap();
+        assert_eq!(serde_json::to_vec(&written).unwrap(), bytes);
+    }
+
+    /// FR-975 "The file form": a missing `trigger` or `correspondence`, a
+    /// lineage past the ceiling and a repeated member are not the file form.
+    #[trace("TC-2751", "FR-975-AC-4")]
+    #[test]
+    fn a_missing_nullable_member_or_a_lineage_past_the_ceiling_is_refused() {
+        for member in ["trigger", "correspondence"] {
+            let mut entry = entry("first", 0);
+            match member {
+                "trigger" => entry["key"].as_object_mut().unwrap().remove(member),
+                _ => entry.as_object_mut().unwrap().remove(member),
+            };
+            let document =
+                serde_json::json!({"format": EVIDENCE_LEDGER_FORMAT, "results": [entry]});
+            let refused = read_evidence_ledger(&serde_json::to_vec(&document).unwrap());
+            assert!(refused.is_err(), "{member}");
+        }
+        let mut past = entry("first", 0);
+        past["lineage"] = serde_json::json!(LINEAGE_CEILING + 1);
+        let document = serde_json::json!({"format": EVIDENCE_LEDGER_FORMAT, "results": [past]});
+        let refused = read_evidence_ledger(&serde_json::to_vec(&document).unwrap())
+            .expect_err("a lineage past the ceiling");
+        assert!(refused.reason.contains("lineage"), "{}", refused.reason);
+        let repeated = format!(
+            "{{\"format\":\"{EVIDENCE_LEDGER_FORMAT}\",\"format\":\"{EVIDENCE_LEDGER_FORMAT}\",\"results\":[]}}"
+        );
+        assert!(read_evidence_ledger(repeated.as_bytes()).is_err());
+    }
 }

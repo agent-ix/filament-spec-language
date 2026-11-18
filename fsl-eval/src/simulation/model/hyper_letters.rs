@@ -20,17 +20,18 @@ use filament_eval::CallFailure;
 use filament_exact::{Meter, ObjectReference, Value};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckedHyperClause, FormulaNodeId};
+use fsl_semantics::check::{CheckedHyperClause, FormulaNode, FormulaNodeId};
 
-use super::contracts::{verdict, Verdict};
+use super::contracts::{Verdict, verdict};
 use super::letters::{LettersRefusal, Observed};
+use super::reference_bindings::{ReferenceBindings, ReferenceLiteralKey};
 use super::walk::{rows_of, stop};
-use super::{state_document, ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
+use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem, state_document};
 use crate::hyper::{HyperLetters, HyperSlot, ParameterBinding};
 use crate::model_subject::{AtomStop, ModelInstance};
 use crate::simulation::StateKey;
 use crate::temporal::AtomReading;
-use crate::value::CheckedPackageEvaluation;
+use crate::value::evaluate_hyper_holds_with_component_bindings;
 
 /// A component's observation of the state it was last read at.
 type Cached = Option<(StateKey, Rc<Observed>)>;
@@ -49,6 +50,9 @@ pub struct CheckedHyperLetters<'s, 'a> {
     clause: &'s CheckedHyperClause,
     /// One system per trace variable, in quantifier order.
     systems: Vec<&'s ModelSystem<'a>>,
+    /// Each component's base subject bindings extended with this separately
+    /// checked clause's reference literals.
+    reference_bindings: Vec<ReferenceBindings>,
     /// For each atom slot, the populations of its component's system that
     /// overlap the type of its object parameter.
     overlapping: Vec<BTreeSet<DeclarationKey>>,
@@ -75,6 +79,53 @@ impl<'s, 'a> CheckedHyperLetters<'s, 'a> {
         if systems.len() != clause.quantifiers().len() {
             return Err(LettersRefusal::ComponentsMismatch);
         }
+        let mut reference_bindings = Vec::with_capacity(systems.len());
+        for system in &systems {
+            let extended = ReferenceBindings::with_hyper_clause(
+                &system.reference_bindings,
+                package.graph(),
+                clause,
+                &system.model,
+                system.types,
+                &system.populations,
+                &system.universes,
+                &system.initial,
+            )
+            .map_err(LettersRefusal::ReferenceBindingsAdmission)?;
+            reference_bindings.push(extended);
+        }
+        let literals = reference_literals(package.graph(), clause);
+        for literal in &literals {
+            let mut first_declaring: Option<(usize, String)> = None;
+            for (component, (system, bindings)) in
+                systems.iter().zip(&reference_bindings).enumerate()
+            {
+                if system.model.type_key(literal.object_type.clone()).is_none() {
+                    continue;
+                }
+                let current = format!(
+                    "{:?}",
+                    bindings.get(&literal.object_type, &literal.identity)
+                );
+                if let Some((first_component, first_binding)) = &first_declaring {
+                    if *first_binding != current {
+                        let identity = literal
+                            .identity
+                            .iter()
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect::<String>();
+                        return Err(LettersRefusal::ReferenceBindingsDisagree {
+                            object_type: format!("{:?}", literal.object_type),
+                            identity,
+                            components: vec![*first_component, component],
+                            bindings: vec![first_binding.clone(), current],
+                        });
+                    }
+                } else {
+                    first_declaring = Some((component, current));
+                }
+            }
+        }
         let mut overlapping = Vec::new();
         for slot in clause.atom_slots() {
             let object = parameter_type(clause, slot.parameter)?;
@@ -99,6 +150,7 @@ impl<'s, 'a> CheckedHyperLetters<'s, 'a> {
             clause,
             observed: systems.iter().map(|_| RefCell::new(None)).collect(),
             systems,
+            reference_bindings,
             overlapping,
         })
     }
@@ -189,6 +241,25 @@ impl<'s, 'a> CheckedHyperLetters<'s, 'a> {
     }
 }
 
+/// The reference literals whose subject binding affects this hyper clause.
+fn reference_literals(
+    graph: &fsl_semantics::check::CheckedGraph,
+    clause: &CheckedHyperClause,
+) -> BTreeSet<ReferenceLiteralKey> {
+    let mut literals = BTreeSet::new();
+    for (index, formula) in clause.body().nodes().iter().enumerate() {
+        if !matches!(formula, FormulaNode::Holds { .. }) {
+            continue;
+        }
+        let atom = FormulaNodeId::from_arena_index(index);
+        let Some((condition, _)) = clause.condition(atom) else {
+            continue;
+        };
+        super::reference_bindings::collect_literals(graph, condition, &mut literals);
+    }
+    literals
+}
+
 /// The object type that the parameter `index` of `clause` declares.
 fn parameter_type(
     clause: &CheckedHyperClause,
@@ -250,13 +321,20 @@ impl HyperLetters for CheckedHyperLetters<'_, '_> {
             .iter()
             .map(|observed| &observed.observation.environment)
             .collect();
-        let evaluation = self
-            .package
-            .evaluate_hyper_holds(self.clause, atom, slots, &environments, meter)
-            .map_err(|failure| match failure {
-                CallFailure::Fault(internal) => AtomStop::Fault(internal),
-                _ => fault("the-evaluation-is-admitted"),
-            })?;
+        let reference_bindings: Vec<_> = self.reference_bindings.iter().collect();
+        let evaluation = evaluate_hyper_holds_with_component_bindings(
+            self.package,
+            self.clause,
+            atom,
+            slots,
+            &environments,
+            &reference_bindings,
+            meter,
+        )
+        .map_err(|failure| match failure {
+            CallFailure::Fault(internal) => AtomStop::Fault(internal),
+            _ => fault("the-evaluation-is-admitted"),
+        })?;
         match verdict(&evaluation.outcome) {
             Verdict::True => Ok(AtomReading::True),
             Verdict::False => Ok(AtomReading::False),

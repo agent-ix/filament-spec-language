@@ -103,7 +103,34 @@ pub trait TransitionSystem {
     ) -> Option<Result<Footprint, ExpansionStop>> {
         None
     }
+
+    /// FR-634 "Invariant findings": the findings `state` carries when it is
+    /// evaluated for them alone, with no successor computed or keyed; `None`
+    /// when the system offers no such evaluation, or declares nothing to
+    /// evaluate, so a caller runs nothing for it.
+    fn state_findings(
+        &self,
+        _state: &Self::State,
+    ) -> Option<Result<Vec<Self::Finding>, ExpansionStop>> {
+        None
+    }
+
+    /// FR-634 "Invariant findings": the findings `state` reports when its
+    /// evaluation for findings alone stopped with `stop` before deciding, a
+    /// broken evaluation or the run's cancellation: each invariant it
+    /// evaluates, undetermined with the stop as its typed cause. Empty for a
+    /// system that offers no such evaluation.
+    fn stopped_findings(&self, _state: &Self::State, _stop: ExpansionStop) -> Vec<Self::Finding> {
+        Vec::new()
+    }
 }
+
+/// The stop a cancelled evaluation of a state's findings carries:
+/// `cancelled`/`caller-cancelled`, the cause of a cancelled run (FR-101).
+pub const CANCELLED_STOP: ExpansionStop = ExpansionStop {
+    cause: CANCELLED_CAUSE,
+    limit: None,
+};
 
 /// What [`TransitionSystem::successors`] returns: an [`Expansion`] or an
 /// [`ExpansionStop`].

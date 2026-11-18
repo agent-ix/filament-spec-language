@@ -15,6 +15,7 @@
 //! probabilistic structure of a state's successors.
 
 mod application;
+mod behaviours;
 mod cells;
 mod constraint;
 mod contract;
@@ -23,10 +24,17 @@ mod domain;
 pub(crate) mod encode;
 mod footprints;
 mod frames;
+mod input;
+pub use input::{
+    ModelCheckInput, ModelEvaluator, PackageModelInput, PendingClauseForm, PendingPackageForm,
+    StateClauseEntry,
+};
 mod key_budget;
 mod letters;
+pub use behaviours::{model_behaviours, BehaviourState, BehavioursEnd};
 pub use key_budget::{ModelKeyBudget, ModelKeyError, ModelKeyExpansionError};
 pub(crate) mod probabilistic;
+mod reference_bindings;
 mod refine;
 mod state_predicate;
 mod symbolic;
@@ -39,7 +47,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
-    EffectiveId, Incomplete, NodeKey, ObjectReference, Refusal, ScalarLimits, Undefined, ValueType,
+    EffectiveId, Incomplete, Integer, IntegerInterval, NodeKey, ObjectReference, Refusal,
+    ScalarLimits, Undefined, ValueType,
 };
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::declaration::TypeEnvironment;
@@ -61,7 +70,7 @@ use fsl_semantics::model::state::{ModelState, StateField, StateModel};
 use quire_canonical::Limits as CanonicalLimits;
 
 use crate::model_subject::ModelInstance;
-use crate::simulation::expansion::{Expansion, ExpansionStop};
+use crate::simulation::expansion::{Expansion, ExpansionStop, StateFindings};
 use crate::simulation::explore::{explore_request, Exploration, Limits, TransitionSystem};
 use crate::simulation::footprint::{Footprint, Location};
 use crate::simulation::not_simulated::NotSimulated;
@@ -71,7 +80,7 @@ use crate::simulation::reduction::{
     ConstraintValue, OfferedReductions, Permutation, SymmetryGroup,
 };
 use crate::simulation::sample::{sample_request, sample_request_until, SampleRequest};
-use crate::simulation::trace::{replay, ReplayError, Trace};
+use crate::simulation::trace::{replay, ReplayError, SampleProvenance, Step, StopReason, Trace};
 use crate::value::QualifiedName;
 
 pub(crate) use application::{FirstApplication, Observed, ObservedIdentities, OperationRef};
@@ -90,6 +99,7 @@ pub use footprints::{FootprintError, FootprintViolation, WithinStop};
 pub use frames::judge::{
     operation_identity_text, AbstractApplication, Judged, Judgement, Rejection, ResolvedStep,
 };
+pub(crate) use reference_bindings::{ReferenceBinding, ReferenceBindings};
 mod hyper_letters;
 pub use hyper_letters::CheckedHyperLetters;
 pub use letters::{ClauseLetters, DecisiveObservation, LettersRefusal};
@@ -140,8 +150,8 @@ pub struct ExpansionLimits {
 /// Everything [`ModelSystem::new`] reads (FR-120 "Inputs").
 #[derive(Clone)]
 pub struct ModelSimulationRequest<'a> {
-    /// The S4 package.
-    pub package: &'a CheckedPackage,
+    /// What the check reads of the S4 package (FR-531, FR-940).
+    pub input: ModelCheckInput<'a>,
     /// FR-056's package input: domain package bytes by the identity each declares.
     pub packages: &'a fsl_semantics::model::intake::PackageInput,
     /// The normalization limits FR-106 admission takes.
@@ -161,6 +171,20 @@ pub struct ModelSimulationRequest<'a> {
     /// The ceiling on the canonical bytes of each package emission the
     /// subject's analysis makes (`emit.output_bytes`, FR-264 Behavior 5).
     pub emit: fsl_package::EmitLimits,
+}
+
+impl<'a> ModelSimulationRequest<'a> {
+    /// The source package the request is over, for an engine with no
+    /// package form yet; `None` on the package route.
+    pub fn source_package(&self) -> Option<&'a CheckedPackage> {
+        self.input.source_package()
+    }
+
+    /// The admitted package the request is over on the package route
+    /// (FR-940); `None` on the source route.
+    pub fn admitted_package(&self) -> Option<&'a fsl_package::CheckedPackageV2> {
+        self.input.admitted_package()
+    }
 }
 
 /// A model state with its anchor (FR-120 "State, state key and anchor"). The
@@ -249,6 +273,12 @@ pub enum ClauseOutcome {
     Incomplete(Incomplete),
     /// The clause completed a value that is no Boolean.
     NotBoolean,
+    /// The evaluation stopped before deciding, with this cause: a broken
+    /// evaluation call (`runtime_invariant`/`established-invariant-broken`)
+    /// or the run's cancellation (`cancelled`/`caller-cancelled`). Only a
+    /// state evaluated for its invariant findings alone reports it (FR-634
+    /// "Invariant findings"); an expansion stops instead.
+    Stopped(CatalogCode),
 }
 
 impl ClauseOutcome {
@@ -274,7 +304,8 @@ impl ClauseOutcome {
             Self::KernelRefused(_)
             | Self::FamilyRefused(_)
             | Self::Incomplete(_)
-            | Self::NotBoolean => None,
+            | Self::NotBoolean
+            | Self::Stopped(_) => None,
         }
     }
 }
@@ -405,6 +436,36 @@ pub struct ModelTrace {
     pub trace: Trace<ModelTransition, ModelFinding>,
     /// One effect per step, derived by replaying the trace.
     pub effects: Vec<StepEffect>,
+    /// Boundary partitions for finite integer domains, in declaration order.
+    pub boundary_partitions: Vec<ModelBoundaryPartition>,
+}
+
+/// Which edge of a finite integer domain a generated partition represents.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ModelBoundaryKind {
+    /// The representable value immediately below the inclusive lower bound.
+    LowerRefusal,
+    /// The inclusive lower bound.
+    LowerEndpoint,
+    /// The inclusive upper bound.
+    UpperEndpoint,
+    /// The representable value immediately above the inclusive upper bound.
+    UpperRefusal,
+}
+
+/// A generated endpoint or adjacent refusal value for one model input domain.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelBoundaryPartition {
+    /// The model declaration node that owns this domain.
+    pub node: NodeKey,
+    /// The path from the declaration node to this input domain.
+    pub path: Vec<u32>,
+    /// The declared inclusive integer domain.
+    pub domain: IntegerInterval,
+    /// The boundary represented by `value`.
+    pub kind: ModelBoundaryKind,
+    /// The generated endpoint or adjacent refusal value.
+    pub value: Integer,
 }
 
 /// Why [`sample_model`] returned no trace.
@@ -416,6 +477,20 @@ pub enum ModelSampleError {
     /// The sampled trace does not replay against the system that sampled it.
     #[error(transparent)]
     Replay(ReplayError<ModelTransition>),
+}
+
+/// Why [`shrink_model_trace`] could not retain a failing prefix.
+#[derive(Debug, Eq, PartialEq, thiserror::Error)]
+pub enum ModelShrinkError {
+    /// The supplied trace did not reproduce the caller's failure oracle.
+    #[error("the supplied trace does not reproduce the failure")]
+    NotCounterexample,
+    /// An accepted candidate did not replay against the model that generated it.
+    #[error(transparent)]
+    Replay(ReplayError<ModelTransition>),
+    /// The trace's identities could not be encoded during replay.
+    #[error(transparent)]
+    NotSimulated(NotSimulated),
 }
 
 /// One operation of an object type's effective view, with the texts and keys
@@ -451,13 +526,14 @@ pub struct ModelSystem<'a> {
     over: Option<String>,
     types: &'a TypeEnvironment,
     operations: &'a fsl_semantics::model::operation::OperationTable,
-    package: &'a CheckedPackage,
-    /// FR-411: the package's `terminal` declarations, read from its emitted
-    /// `temporal`/`terminal` nodes.
-    terminals: Vec<fsl_package::PackageTerminal<'a>>,
+    /// What the system reads of its package; its `terminal` declarations
+    /// (FR-411) resolved when the system was built.
+    input: ModelCheckInput<'a>,
     model: StateModel,
     universes: BTreeMap<DeclarationKey, Vec<String>>,
     initial: Vec<ModelSimState>,
+    /// FR-1000: subject-specific resolutions for checked reference literals.
+    reference_bindings: ReferenceBindings,
     clauses: Clauses,
     applications: BTreeMap<EffectiveId, Vec<Application>>,
     fields: BTreeMap<DeclarationKey, Vec<StateField>>,
@@ -522,10 +598,25 @@ fn fault(invariant: &'static str) -> AdmissionFailure {
 }
 
 impl<'a> ModelSystem<'a> {
-    /// The checked package this system is over: what a settlement joins a
-    /// run's verdict on, such as its terminal declarations (FR-411).
-    pub fn package(&self) -> &'a CheckedPackage {
-        self.package
+    /// What this system reads of its package (FR-531, FR-940).
+    pub fn input(&self) -> &ModelCheckInput<'a> {
+        &self.input
+    }
+
+    /// The source package this system is over, for an engine with no
+    /// package form yet; `None` on the package route.
+    pub fn source_package(&self) -> Option<&'a CheckedPackage> {
+        self.input.source_package()
+    }
+
+    /// The evaluator of the package's checked forms.
+    pub(crate) fn evaluator(&self) -> &'a dyn ModelEvaluator {
+        self.input.evaluator
+    }
+
+    /// The package's `terminal` declarations (FR-411).
+    pub(crate) fn terminals(&self) -> &[fsl_package::PackageTerminal<'a>] {
+        self.input.terminals.as_deref().unwrap_or_default()
     }
 
     /// Resolve a checked operation's declaring type without substituting the
@@ -605,8 +696,8 @@ impl<'a> ModelSystem<'a> {
     /// [`Self::typing`] for values alone, which hold no element-count
     /// member: it lives as long as the package.
     pub(crate) fn value_typing(&self) -> encode::Typing<'a> {
-        let scope = self.package.graph().scope();
-        encode::Typing::with_variants(self.types, scope.variant_types()).with_enums(scope.enums())
+        encode::Typing::with_variants(self.types, self.input.variant_types)
+            .with_enums(self.input.enums)
     }
 
     /// Check the universes, then admit each initial document in the given
@@ -616,7 +707,7 @@ impl<'a> ModelSystem<'a> {
     ///
     /// FR-106's [`AdmissionFailure`]: `Refused` or `Incomplete`, one record.
     pub fn new(request: ModelSimulationRequest<'a>) -> Result<Self, AdmissionFailure> {
-        let selections = request.package.graph().model_inputs();
+        let selections = request.input.model_inputs();
         Self::over(request, selections, None)
     }
 
@@ -630,7 +721,7 @@ impl<'a> ModelSystem<'a> {
         request: ModelSimulationRequest<'a>,
         cancel: &filament_exact::Cancel,
     ) -> Result<Self, AdmissionFailure> {
-        let selections = request.package.graph().model_inputs();
+        let selections = request.input.model_inputs();
         Self::over(request, selections, Some(cancel))
     }
 
@@ -655,9 +746,8 @@ impl<'a> ModelSystem<'a> {
         model: &str,
     ) -> Result<Self, AdmissionFailure> {
         let selected: Vec<_> = request
-            .package
-            .graph()
-            .model_selections()
+            .input
+            .model_selections
             .iter()
             .filter(|selection| selection.identity == model)
             .cloned()
@@ -669,7 +759,7 @@ impl<'a> ModelSystem<'a> {
                 &[("model", model.to_owned())],
             ));
         }
-        let sources = request.package.graph().source_packages();
+        let sources = request.input.source_packages;
         Self::over(
             request,
             fsl_semantics::model::observation::ModelSelections::new(&selected, sources),
@@ -682,8 +772,8 @@ impl<'a> ModelSystem<'a> {
         selections: fsl_semantics::model::observation::ModelSelections<'_>,
         cancel: Option<&filament_exact::Cancel>,
     ) -> Result<Self, AdmissionFailure> {
-        let graph = request.package.graph();
-        let types = graph.scope().types();
+        let input = request.input;
+        let types = input.types;
         let only = selections.selections();
         let model = StateModel::new(selections, types, request.packages, request.normalization)?;
         let populations = model.populations();
@@ -773,6 +863,19 @@ impl<'a> ModelSystem<'a> {
             });
         }
 
+        let reference_bindings = if let Some(package) = input.source_package() {
+            ReferenceBindings::bind(
+                package.graph(),
+                &model,
+                types,
+                &populations,
+                &universes,
+                &initial,
+            )?
+        } else {
+            ReferenceBindings::default()
+        };
+
         let mut fields = BTreeMap::new();
         let mut applications = BTreeMap::new();
         for declaration in types.object_types() {
@@ -786,7 +889,7 @@ impl<'a> ModelSystem<'a> {
             fields.insert(type_key, declared);
             applications.insert(
                 identity.clone(),
-                Self::applications_of(graph, &model, identity)?,
+                Self::applications_of(input.types, input.operations, &model, identity)?,
             );
         }
 
@@ -798,7 +901,7 @@ impl<'a> ModelSystem<'a> {
         // ranges over every count; with no declared maximum, the timed
         // subject ranges it up to `max_clocks` (`TimedSystem::initial`).
         let mut counts: Vec<ClockCount> = Vec::new();
-        for timed in graph.timed_models() {
+        for timed in input.timed_models {
             for clock in timed.clocks() {
                 let [fsl_semantics::check::PlaceStep::Field(name), fsl_semantics::check::PlaceStep::Slot(shape)] =
                     clock.path()
@@ -868,7 +971,7 @@ impl<'a> ModelSystem<'a> {
         // state, rooted and enumerated like a field; an initial state
         // ranges over absent and present.
         let mut bits: Vec<(DeclarationKey, StateField)> = Vec::new();
-        for timed in graph.timed_models() {
+        for timed in input.timed_models {
             for clock in timed.clocks() {
                 let (true, [fsl_semantics::check::PlaceStep::Field(name)]) =
                     (clock.presence_bit(), clock.path())
@@ -927,20 +1030,25 @@ impl<'a> ModelSystem<'a> {
                 .flatten()
                 .any(|field| field.key == bound.member)
         });
+        input
+            .terminals
+            .as_ref()
+            .map_err(|_| fault("terminal-nodes-resolve"))?;
+        let clauses = Self::clauses_of(&input.state_clauses)?;
+        let probabilistic = probabilistic::Tables::of(input.probabilistic)?;
         let system = Self {
             over: match only {
                 [only] => Some(only.identity.clone()),
                 _ => None,
             },
             types,
-            operations: graph.scope().operations(),
-            package: request.package,
-            terminals: fsl_package::resolve_terminals(request.package)
-                .map_err(|_| fault("terminal-nodes-resolve"))?,
-            clauses: Self::clauses_of(request.package)?,
+            operations: input.operations,
+            input,
+            clauses,
             model,
             universes,
             initial,
+            reference_bindings,
             applications,
             fields,
             populations,
@@ -951,7 +1059,7 @@ impl<'a> ModelSystem<'a> {
             applied: application::AppliedMemo::default(),
             key_names: encode::KeyNames::default(),
             canonical: encode::Canonicalizer::default(),
-            probabilistic: probabilistic::Tables::of(graph.probabilistic_model())?,
+            probabilistic,
             member_bounds,
             record_orders,
             clock_counts: counts,
@@ -1132,12 +1240,11 @@ impl<'a> ModelSystem<'a> {
 
     /// The operations in `identity`'s effective view (FR-103, FR-081), by name.
     fn applications_of(
-        graph: &fsl_semantics::check::CheckedGraph,
+        types: &TypeEnvironment,
+        operations: &fsl_semantics::model::operation::OperationTable,
         model: &StateModel,
         identity: EffectiveId,
     ) -> Result<Vec<Application>, AdmissionFailure> {
-        let operations = graph.scope().operations();
-        let types = graph.scope().types();
         let mut names = BTreeSet::new();
         for declaring in types.object_types() {
             if types.conforms(identity.clone(), declaring.key()) {
@@ -1175,23 +1282,18 @@ impl<'a> ModelSystem<'a> {
     }
 
     /// The package's state clauses by kind, each kind in ascending name order.
-    fn clauses_of(package: &CheckedPackage) -> Result<Clauses, AdmissionFailure> {
+    fn clauses_of(entries: &[StateClauseEntry]) -> Result<Clauses, AdmissionFailure> {
         let mut clauses = Clauses::default();
-        for clause in package.graph().state_clauses() {
+        for clause in entries {
             let info = ClauseInfo {
-                name: clause.name().to_owned(),
-                qualified: QualifiedName::unqualified(clause.name())
+                name: clause.name.clone(),
+                qualified: QualifiedName::unqualified(&clause.name)
                     .map_err(|_| fault("clause-name"))?,
-                identity: clause.identity(),
-                context: clause.context(),
-                operation: clause.operation().map(|operation| {
-                    (
-                        operation.declaring.clone(),
-                        operation.declaration.name().to_owned(),
-                    )
-                }),
+                identity: clause.identity.clone(),
+                context: clause.context.clone(),
+                operation: clause.operation.clone(),
             };
-            match clause.observation() {
+            match clause.observation {
                 Observation::Current => clauses.invariants.push(info),
                 Observation::Pre => clauses.preconditions.push(info),
                 Observation::Post => clauses.postconditions.push(info),
@@ -1216,6 +1318,36 @@ impl<'a> ModelSystem<'a> {
             .into_iter()
             .map(|(node, _, value_type)| (node, value_type))
             .collect()
+    }
+
+    /// Generate inclusive endpoints and adjacent refusal values for every
+    /// finite integer field and parameter domain, in declaration order.
+    pub fn boundary_partitions(&self) -> Vec<ModelBoundaryPartition> {
+        let mut partitions = Vec::new();
+        let one = Integer::one();
+        for (node, path, value_type) in self.rooted_domains() {
+            if path.first() == Some(&2) {
+                continue;
+            }
+            let ValueType::Int(domain) = &value_type else {
+                continue;
+            };
+            for (kind, value) in [
+                (ModelBoundaryKind::LowerRefusal, domain.lower().sub(&one)),
+                (ModelBoundaryKind::LowerEndpoint, domain.lower().clone()),
+                (ModelBoundaryKind::UpperEndpoint, domain.upper().clone()),
+                (ModelBoundaryKind::UpperRefusal, domain.upper().add(&one)),
+            ] {
+                partitions.push(ModelBoundaryPartition {
+                    node: node.clone(),
+                    path: path.clone(),
+                    domain: domain.clone(),
+                    kind,
+                    value,
+                });
+            }
+        }
+        partitions
     }
 
     /// [`Self::domains`], each with the child-index path below its node at
@@ -1322,7 +1454,7 @@ impl<'a> ModelSystem<'a> {
         // Each field's declaring type and ordinal among that type's own
         // fields, found through the effective attribute set of every type
         // (which lists a field in the same order as `self.fields`).
-        let graph = self.package.graph();
+        let evaluator = self.evaluator();
         let mut field_homes: BTreeMap<&DeclarationKey, (EffectiveId, u32)> = BTreeMap::new();
         for declaration in self.types.object_types() {
             let Some(type_key) = self.model.type_key(declaration.key()) else {
@@ -1346,7 +1478,7 @@ impl<'a> ModelSystem<'a> {
                     continue;
                 };
                 let owner = attribute.owner();
-                let Some(ordinal) = graph
+                let Some(ordinal) = evaluator
                     .own_field_ordinal(&owner, attribute.field().name())
                     .and_then(|ordinal| u32::try_from(ordinal).ok())
                 else {
@@ -1361,7 +1493,7 @@ impl<'a> ModelSystem<'a> {
         // owner's one name-ordered sequence of own fields.
         let mut clock_fields: BTreeMap<EffectiveId, BTreeMap<String, &DeclarationKey>> =
             BTreeMap::new();
-        for timed in self.package.graph().timed_models() {
+        for timed in self.input.timed_models {
             for clock in timed.clocks() {
                 let Some(fsl_semantics::check::PlaceStep::Field(name)) = clock.path().first()
                 else {
@@ -1378,7 +1510,7 @@ impl<'a> ModelSystem<'a> {
         }
         for (owner, named) in &clock_fields {
             for (name, key) in named {
-                if let Some(ordinal) = graph
+                if let Some(ordinal) = evaluator
                     .own_field_ordinal(owner, name)
                     .and_then(|ordinal| u32::try_from(ordinal).ok())
                 {
@@ -1646,6 +1778,23 @@ impl TransitionSystem for ModelSystem<'_> {
         Some(self.constraint_value(state, constraint))
     }
 
+    /// FR-634: the invariant findings of `state` alone, `None` for a package
+    /// declaring no invariant and no member bound.
+    fn state_findings(
+        &self,
+        state: &Self::State,
+    ) -> Option<Result<Vec<Self::Finding>, ExpansionStop>> {
+        (!self.clauses.invariants.is_empty() || !self.member_bounds.is_empty())
+            .then(|| self.invariant_findings_alone(state))
+    }
+
+    /// FR-634: every invariant of `state` undetermined with `stop`'s cause,
+    /// and its member-bound findings; empty when its objects cannot be
+    /// referenced, so no object can be named.
+    fn stopped_findings(&self, state: &Self::State, stop: ExpansionStop) -> Vec<Self::Finding> {
+        contracts::stopped_invariants(self, state, stop.cause).unwrap_or_default()
+    }
+
     /// FR-162: [`ModelSystem::footprint`], which reads the transition alone.
     fn footprint(
         &self,
@@ -1752,7 +1901,390 @@ pub fn sample_model(
     )?;
     replay(system, &trace, identity_limits()).map_err(ModelSampleError::Replay)?;
     let effects = effects_of(system, &trace)?;
-    Ok(ModelTrace { trace, effects })
+    let boundary_partitions = system.boundary_partitions();
+    Ok(ModelTrace {
+        trace,
+        effects,
+        boundary_partitions,
+    })
+}
+
+/// Shrink a model trace through single-invocation deletion and immediate
+/// decreases in canonical invocation order while preserving a caller's
+/// native failure oracle.
+///
+/// Each candidate is reconstructed from enabled model transitions and
+/// replayed against `system` before `fails` is called. Deletion strictly
+/// reduces the trace length; invocation decreases use canonical transition
+/// identity bytes as a deterministic finite order. The result is 1-minimal
+/// under those one-step reductions. The oracle should evaluate the same claim
+/// and disposition against the candidate trace using the native evaluator.
+///
+/// # Errors
+///
+/// [`ModelShrinkError::NotCounterexample`] when the supplied trace does not
+/// satisfy `fails`; replay and model-bound failures retain their typed cause.
+pub fn shrink_model_trace(
+    system: &ModelSystem<'_>,
+    trace: &ModelTrace,
+    mut fails: impl FnMut(&ModelTrace) -> bool,
+) -> Result<ModelTrace, ModelShrinkError> {
+    replay(system, &trace.trace, identity_limits()).map_err(|error| match error {
+        ReplayError::KeyEncoding(refusal) => {
+            ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+        }
+        other => ModelShrinkError::Replay(other),
+    })?;
+    if !fails(trace) {
+        return Err(ModelShrinkError::NotCounterexample);
+    }
+
+    let mut smallest = trace.clone();
+    loop {
+        let (replayed, states) = rebuild_model_trace(
+            system,
+            &smallest.trace.initial,
+            &smallest.trace.steps,
+            smallest.trace.provenance.as_ref(),
+        )?
+        .ok_or(ModelShrinkError::NotCounterexample)?;
+        let mut accepted = None;
+
+        // First try deleting each invocation, from left to right. Rebuilding
+        // the candidate recomputes state keys and findings at every position.
+        for index in 0..replayed.trace.steps.len() {
+            let mut steps = replayed.trace.steps.clone();
+            steps.remove(index);
+            let Some((candidate, _)) = rebuild_model_trace(
+                system,
+                &replayed.trace.initial,
+                &steps,
+                replayed.trace.provenance.as_ref(),
+            )?
+            else {
+                continue;
+            };
+            if fails(&candidate) {
+                accepted = Some(candidate);
+                break;
+            }
+        }
+        if let Some(candidate) = accepted {
+            smallest = candidate;
+            continue;
+        }
+
+        // Then try the immediate lower enabled invocation with the same
+        // operation and receiver at each position. Invocation order is the
+        // canonical transition-identity byte order used by simulation.
+        for (index, current) in replayed.trace.steps.iter().enumerate() {
+            let current_key = system
+                .transition_key(&current.transition)
+                .map_err(|refusal| {
+                    ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+                })?;
+            let expansion =
+                expand(system, &states[index], identity_limits()).map_err(|refusal| {
+                    ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+                })?;
+            let Expanded::Successors { successors, .. } = expansion else {
+                continue;
+            };
+            let mut predecessor: Option<(Vec<u8>, ModelTransition)> = None;
+            for successor in successors {
+                let transition = successor.transition;
+                if transition.operation() != current.transition.operation()
+                    || transition.receiver() != current.transition.receiver()
+                {
+                    continue;
+                }
+                let key = system.transition_key(&transition).map_err(|refusal| {
+                    ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+                })?;
+                let is_closer = match predecessor.as_ref() {
+                    Some((previous, _)) => key.as_slice() > previous.as_slice(),
+                    None => true,
+                };
+                if key.as_slice() < current_key.as_slice() && is_closer {
+                    predecessor = Some((key, transition));
+                }
+            }
+            let Some((_, transition)) = predecessor else {
+                continue;
+            };
+            let mut steps = replayed.trace.steps.clone();
+            steps[index] = Step {
+                transition,
+                ordinal: 0,
+                key: current.key.clone(),
+            };
+            let Some((candidate, _)) = rebuild_model_trace(
+                system,
+                &replayed.trace.initial,
+                &steps,
+                replayed.trace.provenance.as_ref(),
+            )?
+            else {
+                continue;
+            };
+            if fails(&candidate) {
+                accepted = Some(candidate);
+                break;
+            }
+        }
+        if let Some(candidate) = accepted {
+            smallest = candidate;
+        } else {
+            return Ok(replayed);
+        }
+    }
+}
+
+/// Rebuild a candidate from enabled transitions, recomputing canonical keys,
+/// findings, effects and its terminal reason. An unavailable transition makes
+/// the candidate invalid rather than an error in the shrink run.
+fn rebuild_model_trace(
+    system: &ModelSystem<'_>,
+    initial_key: &crate::simulation::StateKey,
+    requested: &[Step<ModelTransition>],
+    provenance: Option<&SampleProvenance>,
+) -> Result<Option<(ModelTrace, Vec<ModelSimState>)>, ModelShrinkError> {
+    let mut current = sorted_initial(system, identity_limits())
+        .map_err(|refusal| ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal)))?
+        .into_iter()
+        .find(|initial| initial.key == *initial_key)
+        .map(|initial| initial.state);
+    let Some(mut current) = current.take() else {
+        return Err(ModelShrinkError::Replay(ReplayError::UnknownInitial {
+            expected: initial_key.clone(),
+        }));
+    };
+
+    let mut steps = Vec::with_capacity(requested.len());
+    let mut findings = Vec::new();
+    let mut states = Vec::with_capacity(requested.len() + 1);
+    states.push(current.clone());
+    let mut stopped = None;
+
+    for index in 0..=requested.len() {
+        let (successors, at_state) = match expand(system, &current, identity_limits())
+            .map_err(|refusal| ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal)))?
+        {
+            Expanded::Successors {
+                successors,
+                findings,
+            } => (successors, findings),
+            Expanded::Stopped(stop) => {
+                if index < requested.len() {
+                    return Ok(None);
+                }
+                stopped = Some(StopReason::Stopped(stop.cause));
+                break;
+            }
+        };
+        if !at_state.is_empty() {
+            let (_, state_key) = system.state_key(&current).map_err(|refusal| {
+                ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+            })?;
+            findings.push(StateFindings {
+                state: state_key,
+                depth: index,
+                findings: at_state,
+            });
+        }
+        if index == requested.len() {
+            stopped = Some(if successors.is_empty() {
+                StopReason::NoSuccessors
+            } else {
+                StopReason::StepLimit
+            });
+            break;
+        }
+
+        let wanted = &requested[index];
+        let Some(chosen) = successors
+            .into_iter()
+            .filter(|successor| successor.transition == wanted.transition)
+            .nth(wanted.ordinal)
+        else {
+            return Ok(None);
+        };
+        steps.push(Step {
+            transition: wanted.transition.clone(),
+            ordinal: wanted.ordinal,
+            key: chosen.key,
+        });
+        current = chosen.state;
+        states.push(current.clone());
+    }
+
+    let mut provenance = provenance.cloned();
+    if let Some(provenance) = provenance.as_mut() {
+        provenance.stopped = stopped.unwrap_or(StopReason::StepLimit);
+    }
+    let trace = Trace {
+        initial: initial_key.clone(),
+        steps,
+        findings,
+        provenance,
+    };
+    replay(system, &trace, identity_limits()).map_err(|error| match error {
+        ReplayError::KeyEncoding(refusal) => {
+            ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+        }
+        other => ModelShrinkError::Replay(other),
+    })?;
+    let effects = effects_of(system, &trace).map_err(|error| match error {
+        ModelSampleError::NotSimulated(cause) => ModelShrinkError::NotSimulated(cause),
+        ModelSampleError::Replay(cause) => ModelShrinkError::Replay(cause),
+    })?;
+    let boundary_partitions = system.boundary_partitions();
+    Ok(Some((
+        ModelTrace {
+            trace,
+            effects,
+            boundary_partitions,
+        },
+        states,
+    )))
+}
+
+/// FSL FR-634's enumeration over `system`: [`enumerate_request`] over its
+/// [`ModelSystem::domains`] and the package's `TypeEnvironment`, keeping
+/// the discovery tree and charging `meter` for every expansion and every
+/// stored state and edge.
+///
+/// # Errors
+///
+/// [`NotSimulated`] as `explore_model` returns it.
+///
+/// [`enumerate_request`]: crate::simulation::enumerate_request
+pub fn enumerate_model(
+    system: &ModelSystem<'_>,
+    position_limit: u64,
+    bounds: crate::simulation::EnumerationBounds,
+    meter: &mut filament_exact::Meter,
+    poll: impl FnMut() -> bool,
+) -> Result<crate::simulation::Enumeration<ModelTransition, ModelFinding>, NotSimulated> {
+    let domains = system.rooted_domains();
+    let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
+        .iter()
+        .map(|(id, base, value_type)| (id.clone(), base.clone(), value_type))
+        .collect();
+    crate::simulation::enumerate_request(
+        system,
+        crate::simulation::EnumerationRequest {
+            domains: &roots,
+            types: system.types,
+            position_limit,
+            bounds,
+            identity: identity_limits(),
+        },
+        meter,
+        poll,
+    )
+}
+
+/// The sampled runs of one FSL FR-634 `sample` item: what to draw.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SampledRuns {
+    /// The run's seed.
+    pub seed: u64,
+    /// How many traces to draw, trace indices `0` to `samples - 1`.
+    pub samples: u64,
+    /// The most steps one trace takes.
+    pub max_steps: usize,
+}
+
+/// What [`sample_model_runs`] drew: the traces in trace-index order, the
+/// coverage they visited, and the FR-109 refusal that stopped the run, if
+/// the meter refused before every requested trace was drawn in full.
+pub struct SampledDraw {
+    /// The traces drawn, the last one cut short when `stopped` is set.
+    pub traces: Vec<Trace<ModelTransition, ModelFinding>>,
+    /// What the traces visited.
+    pub coverage: crate::simulation::Coverage,
+    /// The meter's refusal, when it stopped the run.
+    pub stopped: Option<filament_exact::Incomplete>,
+}
+
+/// FSL FR-634's sampled runs over `system`: `runs.samples` traces drawn by
+/// `sampler` (the `filament.simulation.sampler/v1` generator) under
+/// `runs.seed`, in trace-index order, with the coverage they visited.
+///
+/// Every state a trace reaches is charged to `meter` (`graph.edge`) before
+/// the sampler draws from it, and every finished trace's retained keys
+/// (`graph.result-retain`, their bytes), so the traces held never outgrow
+/// the request's accounting limits: a refused charge ends the trace there
+/// and the run, and [`SampledDraw::stopped`] names the counter. `poll` is
+/// called once per trace; returning `true` stops before that trace.
+///
+/// # Errors
+///
+/// [`NotSimulated`] as `sample_request` returns it.
+pub fn sample_model_runs(
+    system: &ModelSystem<'_>,
+    position_limit: u64,
+    sampler: &DefinitionRef,
+    runs: SampledRuns,
+    meter: &mut filament_exact::Meter,
+    mut poll: impl FnMut() -> bool,
+) -> Result<SampledDraw, NotSimulated> {
+    use filament_exact::{length_amount, Charge, ChargePoint};
+    let domains = system.rooted_domains();
+    let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
+        .iter()
+        .map(|(id, base, value_type)| (id.clone(), base.clone(), value_type))
+        .collect();
+    let mut traces = Vec::new();
+    let mut stopped = None;
+    for trace in 0..runs.samples {
+        if poll() {
+            break;
+        }
+        let drawn = sample_request_until(
+            system,
+            SampleRequest {
+                domains: &roots,
+                types: system.types,
+                position_limit,
+                sampler,
+                seed: runs.seed,
+                trace,
+                max_steps: runs.max_steps,
+                identity: identity_limits(),
+            },
+            |_| match meter.charge(Charge::new(ChargePoint::GraphEdge)) {
+                Ok(()) => false,
+                Err(incomplete) => {
+                    stopped = Some(incomplete);
+                    true
+                }
+            },
+        )?;
+        let retained = std::iter::once(&drawn.initial)
+            .chain(drawn.steps.iter().map(|step| &step.key))
+            .map(|key| length_amount(key.as_bytes().len()))
+            .fold(0u64, u64::saturating_add);
+        if stopped.is_none() {
+            if let Err(incomplete) =
+                meter.charge(Charge::new(ChargePoint::GraphResultRetain).results(retained))
+            {
+                stopped = Some(incomplete);
+            }
+        }
+        traces.push(drawn);
+        if stopped.is_some() {
+            break;
+        }
+    }
+    let coverage = crate::simulation::sampled_coverage(system, &traces, identity_limits())
+        .map_err(NotSimulated::from)?;
+    Ok(SampledDraw {
+        traces,
+        coverage,
+        stopped,
+    })
 }
 
 /// The expansions of one run's sampled walks, kept so that a state the walks

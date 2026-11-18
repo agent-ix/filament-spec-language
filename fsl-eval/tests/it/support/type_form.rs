@@ -101,9 +101,11 @@ pub fn type_form(value_type: &ValueType) -> TypeForm {
             .with_arguments(vec![type_form(payload)]),
         ValueType::Collection(collection) => collection_type_form(collection),
         ValueType::Population(maximum) => TypeForm::new(fsl_forms::TypeFormHead::Population, SPAN)
-            .with_bounds(vec![maximum
-                .expect("type_form: an unbounded population has no source spelling yet")
-                .to_string()]),
+            .with_bounds(vec![
+                maximum
+                    .expect("type_form: an unbounded population has no source spelling yet")
+                    .to_string(),
+            ]),
         ValueType::Composite(_) | ValueType::Enum(_) | ValueType::Reference(_) => {
             panic!(
                 "type_form: {value_type:?} carries a NodeKey with no recoverable name -- build \
@@ -117,12 +119,16 @@ pub fn type_form(value_type: &ValueType) -> TypeForm {
              `value::declaration::EqualityOperand`'s own `ValueType`-based API instead, not a \
              `TypeForm`"
         ),
-        ValueType::CarriedQuantity(_) | ValueType::BoundedQuantity(_) | ValueType::Map(_) => panic!(
-            "type_form: {value_type:?} has no declared-type syntax in this profile"
-        ),
-        ValueType::String | ValueType::Uuid | ValueType::Timestamp => panic!(
-            "type_form: {value_type:?} has no FSL source type spelling in this profile"
-        ),
+        ValueType::CarriedQuantity(_) | ValueType::BoundedQuantity(_) | ValueType::Map(_) => {
+            panic!("type_form: {value_type:?} has no declared-type syntax in this profile")
+        }
+        ValueType::String
+        | ValueType::Bytes
+        | ValueType::JsonObject
+        | ValueType::Uuid
+        | ValueType::Timestamp => {
+            panic!("type_form: {value_type:?} has no FSL source type spelling in this profile")
+        }
     }
 }
 

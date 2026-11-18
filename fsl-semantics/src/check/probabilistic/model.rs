@@ -43,6 +43,12 @@ use crate::family::CheckContext;
 use crate::model::operation::{OperationDeclaration, OperationLookup};
 use filament_checked::key::DeclarationKey;
 
+mod package;
+pub use package::{
+    PackageLiteral, PackageProbabilistic, PackageProbabilisticRefusal, PackageRandomParameter,
+    PackageSupport, PackageWeight, PackageWorkload,
+};
+
 /// An operation a random parameter, a reward or a workload weight names,
 /// resolved (FR-185).
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,10 +56,20 @@ pub struct ProbabilisticOperation {
     model: String,
     key: DeclarationKey,
     declaring: EffectiveId,
+    declaring_key: Option<DeclarationKey>,
     name: String,
 }
 
 impl ProbabilisticOperation {
+    /// The declaration key of the object type that declares the operation:
+    /// the identity of its `model` node. `None` when the declaring type is
+    /// no object type of the operation's own model (nothing then names a
+    /// node for it): lowering roots nothing and emission refuses the
+    /// declaration with its locus.
+    pub fn declaring_key(&self) -> Option<&DeclarationKey> {
+        self.declaring_key.as_ref()
+    }
+
     /// The `model` alias whose domain package declares the operation.
     pub fn model(&self) -> &str {
         &self.model
@@ -103,6 +119,12 @@ pub struct RandomParameter {
 }
 
 impl RandomParameter {
+    /// The location of the declaration, whose region is the declaration's
+    /// label span.
+    pub fn declaration_location(&self) -> Location {
+        site_location(self.declared, Site::Declaration)
+    }
+
     /// The operation the parameter belongs to.
     pub fn operation(&self) -> &ProbabilisticOperation {
         &self.operation
@@ -137,10 +159,17 @@ pub struct Workload {
     declared: usize,
     name: String,
     model: String,
+    model_key: Option<DeclarationKey>,
     weights: Vec<(ProbabilisticOperation, Rational)>,
 }
 
 impl Workload {
+    /// The location of the declaration, whose region is the declaration's
+    /// label span.
+    pub fn declaration_location(&self) -> Location {
+        site_location(self.declared, Site::Declaration)
+    }
+
     /// The workload's declared name.
     pub fn name(&self) -> &str {
         &self.name
@@ -149,6 +178,14 @@ impl Workload {
     /// The `model` alias the workload is declared on.
     pub fn model(&self) -> &str {
         &self.model
+    }
+
+    /// The object type of the model whose supertype lineage declares every
+    /// operation the workload weights: the identity of the workload's
+    /// `model` node in a package. `None` when the model's operations share
+    /// no such type.
+    pub fn model_key(&self) -> Option<&DeclarationKey> {
+        self.model_key.as_ref()
     }
 
     /// Each operation of the model with its weight, reduced, in declared
@@ -336,10 +373,9 @@ impl CheckedProbabilisticModel {
 
     /// The first checked declaration in source order that S4 has no node
     /// for, with its feature: what S4 names when it refuses the package
-    /// (FR-185 "Package emission"). A claim is emitted as its own node
-    /// (FR-498), so it is never named. A random parameter is named
-    /// `operation(parameter)`, a reward, a workload and a delay by their
-    /// declared names.
+    /// (FR-185 "Package emission"). A claim, a random parameter and a
+    /// workload are emitted as nodes (FR-498, FR-740), so they are never
+    /// named. A reward and a delay are named by their declared names.
     pub fn first_declaration(&self) -> Option<(ProbabilisticFeature, String)> {
         self.first_declaration_details()
             .map(|(_, feature, name)| (feature, name))
@@ -353,25 +389,11 @@ impl CheckedProbabilisticModel {
     }
 
     fn first_declaration_details(&self) -> Option<(usize, ProbabilisticFeature, String)> {
-        let random = self.random_parameters.iter().map(|random| {
-            (
-                random.declared,
-                ProbabilisticFeature::RandomParameter,
-                format!("{}({})", random.operation.name, random.parameter),
-            )
-        });
         let rewards = self.rewards.iter().map(|reward| {
             (
                 reward.declared,
                 ProbabilisticFeature::Reward,
                 reward.name.clone(),
-            )
-        });
-        let workloads = self.workloads.iter().map(|workload| {
-            (
-                workload.declared,
-                ProbabilisticFeature::Workload,
-                workload.name.clone(),
             )
         });
         let delays = self.delays.iter().map(|delay| {
@@ -381,12 +403,9 @@ impl CheckedProbabilisticModel {
                 delay.operation.name.clone(),
             )
         });
-        random
-            .chain(rewards)
-            .chain(workloads)
+        rewards
             .chain(delays)
             .min_by_key(|(declared, _, _)| *declared)
-            .map(|(declared, feature, name)| (declared, feature, name))
     }
 }
 
@@ -602,6 +621,21 @@ pub(crate) fn site_spans(
         })
 }
 
+/// The key of the model's own object type whose identity is `declaring`.
+/// `None` when the declaring type is none of the model's object types: no
+/// key then names its `model` node, so lowering roots nothing and emission
+/// refuses the declaration with its locus.
+fn declaring_key_of(
+    objects: &BTreeMap<Identifier, DeclarationKey>,
+    object_types: &BTreeMap<DeclarationKey, EffectiveId>,
+    declaring: &EffectiveId,
+) -> Option<DeclarationKey> {
+    objects
+        .values()
+        .find(|candidate| object_types.get(*candidate) == Some(declaring))
+        .cloned()
+}
+
 /// What the declarations are resolved and typed against.
 pub(crate) struct ProbabilisticInput<'a> {
     pub(crate) scope: &'a Scope,
@@ -670,6 +704,7 @@ impl<'a> ProbabilisticInput<'a> {
             [found] => found,
             _ => return Err(Unresolved::Ambiguous),
         };
+        let objects = self.model_objects.get(alias).ok_or(Unresolved::Missing)?;
         let context = self
             .object_types
             .get(key)
@@ -702,6 +737,7 @@ impl<'a> ProbabilisticInput<'a> {
             ProbabilisticOperation {
                 model: alias.clone(),
                 key: key.clone(),
+                declaring_key: declaring_key_of(objects, self.object_types, &declaring),
                 declaring,
                 name: declaration.name().to_owned(),
             },
@@ -729,6 +765,40 @@ impl<'a> ProbabilisticInput<'a> {
             }
         }
         operations
+    }
+
+    /// The object type of the model `alias` whose supertype lineage declares
+    /// every operation of the model: the one type a package's workload node
+    /// names as its model (FSpec FR-640). When several types qualify, the one
+    /// conforming to the fewest of the model's types, then the first in key
+    /// order. `None` when the model's operations share no such type.
+    fn workload_model(&self, alias: &str) -> Option<DeclarationKey> {
+        let objects = self.model_objects.get(alias)?;
+        let types = self.scope.types();
+        let declaring: Vec<EffectiveId> = self
+            .model_operations(alias)
+            .into_iter()
+            .map(|(declaring, _, _)| declaring)
+            .collect();
+        let identities: Vec<(&DeclarationKey, EffectiveId)> = objects
+            .values()
+            .filter_map(|key| Some((key, self.object_types.get(key)?.clone())))
+            .collect();
+        identities
+            .iter()
+            .filter(|(_, candidate)| {
+                declaring
+                    .iter()
+                    .all(|declaring| types.conforms(candidate.clone(), declaring.clone()))
+            })
+            .min_by_key(|(key, candidate)| {
+                let lineage = identities
+                    .iter()
+                    .filter(|(_, ancestor)| types.conforms(candidate.clone(), ancestor.clone()))
+                    .count();
+                (lineage, (*key).clone())
+            })
+            .map(|(key, _)| (*key).clone())
     }
 
     /// A typer over this input's scope, charging `nodes`.
@@ -1342,6 +1412,7 @@ impl Pass<'_, '_> {
             declared: index,
             name: workload.to_owned(),
             model: model.to_owned(),
+            model_key: self.input.workload_model(model),
             weights,
         });
     }
@@ -1374,4 +1445,41 @@ impl Pass<'_, '_> {
 /// The span of `expression`'s root, or `fallback`.
 fn expression_span(expression: &ExpressionForm, fallback: Span) -> Span {
     expression.spans.at(&[]).unwrap_or(fallback)
+}
+
+#[cfg(test)]
+mod declaring_key_tests {
+    use super::*;
+    use filament_exact::OriginalDeclarationKey;
+
+    fn id(node: &str) -> EffectiveId {
+        EffectiveId::new(None, OriginalDeclarationKey::new("fixture", node))
+    }
+
+    fn key(node: &str) -> DeclarationKey {
+        DeclarationKey {
+            package: "fixture".into(),
+            node: node.into(),
+        }
+    }
+
+    /// FR-185-AC-12: a declaring type that is none of the model's object
+    /// types has no key (never another package's key, never the
+    /// operation's), so S3 neither refuses nor roots it, and emission
+    /// refuses the declaration with its locus.
+    #[test]
+    fn a_declaring_type_outside_the_models_objects_has_no_key() {
+        let own = key("own");
+        let foreign = key("foreign");
+        let objects = BTreeMap::from([(Identifier::new("Own").unwrap(), own.clone())]);
+        let object_types = BTreeMap::from([(own.clone(), id("own")), (foreign, id("foreign"))]);
+        assert_eq!(
+            declaring_key_of(&objects, &object_types, &id("own")),
+            Some(own)
+        );
+        assert_eq!(
+            declaring_key_of(&objects, &object_types, &id("foreign")),
+            None
+        );
+    }
 }
