@@ -18,8 +18,8 @@ const INVENTORY_PATH: &str = "proposals/consumer-facades/consumer-facts.json";
 #[derive(Default)]
 struct PublicApi {
     paths: BTreeSet<String>,
-    members: BTreeSet<(String, String)>,
-    wildcard_reexports: Vec<(String, String)>,
+    members: BTreeSet<(String, String, String)>,
+    wildcard_reexports: Vec<(String, String, String)>,
 }
 
 /// Run the facade contract check over the committed bindings and pinned inventory.
@@ -423,17 +423,36 @@ fn public_api(crate_name: &str, root: &Path) -> PublicApi {
         &mut visited,
     );
     let reexports = api.wildcard_reexports.clone();
-    for (destination, source) in reexports {
-        let prefix = format!("{crate_name}::{source}::");
+    for (owner, destination, source) in reexports {
+        let source = resolve_use_path(crate_name, &owner, &source);
+        let prefix = format!("{source}::");
         let additions: Vec<_> = api
             .paths
             .iter()
             .filter_map(|path| {
                 path.strip_prefix(&prefix)
-                    .map(|tail| format!("{crate_name}::{destination}{tail}"))
+                    .map(|tail| format!("{destination}::{tail}"))
             })
             .collect();
         api.paths.extend(additions);
+        let member_additions: Vec<_> = api
+            .members
+            .iter()
+            .filter_map(|(module, type_name, member)| {
+                let tail = module.strip_prefix(&source)?;
+                if !tail.is_empty() && !tail.starts_with("::") {
+                    return None;
+                }
+                let suffix = tail.strip_prefix("::").unwrap_or(tail);
+                let module = if suffix.is_empty() {
+                    destination.clone()
+                } else {
+                    format!("{destination}::{suffix}")
+                };
+                Some((module, type_name.clone(), member.clone()))
+            })
+            .collect();
+        api.members.extend(member_additions);
     }
     api
 }
@@ -525,7 +544,7 @@ fn scan_item(crate_name: &str, module: &str, visible: bool, item: Item, api: &mu
         Item::Fn(item) if visible && is_public(&item.vis) => {
             add_path(api, module, &item.sig.ident.to_string())
         }
-        Item::Struct(item) if is_public(&item.vis) => {
+        Item::Struct(item) if visible && is_public(&item.vis) => {
             let name = item.ident.to_string();
             if visible {
                 add_path(api, module, &name);
@@ -533,7 +552,7 @@ fn scan_item(crate_name: &str, module: &str, visible: bool, item: Item, api: &mu
             for field in item.fields {
                 if is_public(&field.vis) {
                     if let Some(ident) = field.ident {
-                        api.members.insert((name.clone(), ident.to_string()));
+                        api.members.insert((module.to_owned(), name.clone(), ident.to_string()));
                     }
                 }
             }
@@ -558,15 +577,14 @@ fn scan_item(crate_name: &str, module: &str, visible: bool, item: Item, api: &mu
             flatten_use(&item.tree, String::new(), &mut exported);
             for (source, alias) in exported {
                 if source.ends_with("::*") {
-                    let source_module =
-                        source.trim_end_matches("::*").trim_start_matches("crate::");
+                    let source_module = source.trim_end_matches("::*");
                     let destination = if module == crate_name {
                         alias
                     } else {
                         format!("{module}::{alias}")
                     };
                     api.wildcard_reexports
-                        .push((destination, source_module.to_owned()));
+                        .push((module.to_owned(), destination, source_module.to_owned()));
                 } else {
                     let destination = if module == crate_name {
                         alias
@@ -595,9 +613,9 @@ fn scan_item(crate_name: &str, module: &str, visible: bool, item: Item, api: &mu
             };
             for member in item.items {
                 match member {
-                    syn::ImplItem::Fn(method) if is_public(&method.vis) => {
+                    syn::ImplItem::Fn(method) if visible && is_public(&method.vis) => {
                         api.members
-                            .insert((type_name.clone(), method.sig.ident.to_string()));
+                            .insert((module.to_owned(), type_name.clone(), method.sig.ident.to_string()));
                     }
                     _ => {}
                 }
@@ -690,8 +708,23 @@ fn accessor_resolves(api: &PublicApi, module: &str, accessor: &str) -> bool {
         api.paths.contains(&format!("{module}::{type_name}"))
             && api
                 .members
-                .contains(&(type_name.to_owned(), member.to_owned()))
+                .contains(&(module.to_owned(), type_name.to_owned(), member.to_owned()))
     } else {
         api.paths.contains(&format!("{module}::{accessor}"))
     }
+}
+
+fn resolve_use_path(crate_name: &str, owner: &str, source: &str) -> String {
+    let owner = owner.strip_prefix(&format!("{crate_name}::")).unwrap_or("");
+    let path = if let Some(path) = source.strip_prefix("crate::") {
+        path.to_owned()
+    } else if let Some(path) = source.strip_prefix("self::") {
+        if owner.is_empty() { path.to_owned() } else { format!("{owner}::{path}") }
+    } else if let Some(path) = source.strip_prefix("super::") {
+        let parent = owner.rsplit_once("::").map_or("", |(parent, _)| parent);
+        if parent.is_empty() { path.to_owned() } else { format!("{parent}::{path}") }
+    } else {
+        source.to_owned()
+    };
+    format!("{crate_name}::{path}")
 }
