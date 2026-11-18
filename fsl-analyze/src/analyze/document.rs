@@ -702,6 +702,14 @@ fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::No
             .iter()
             .map(|clause| (clause.clause().name().to_owned(), clause.identity())),
     );
+    // FR-625: an `invariant` state clause is a claim by its declared name.
+    names.extend(
+        graph
+            .state_clauses()
+            .iter()
+            .filter(|clause| clause.is_invariant())
+            .map(|clause| (clause.name().to_owned(), clause.identity())),
+    );
     names.extend(
         graph.state_graph_claims().iter().filter_map(|claim| {
             Some((claim.name().to_owned(), claim.occurrence()?.node().clone()))
@@ -760,6 +768,16 @@ fn claim_occurrence(
         .temporal_clauses()
         .iter()
         .find(|clause| clause.identity() == *node)
+    {
+        return Some(OccurrenceKey::new(
+            clause.identity(),
+            clause.claim().clone(),
+        ));
+    }
+    if let Some(clause) = graph
+        .state_clauses()
+        .iter()
+        .find(|clause| clause.is_invariant() && clause.identity() == *node)
     {
         return Some(OccurrenceKey::new(
             clause.identity(),

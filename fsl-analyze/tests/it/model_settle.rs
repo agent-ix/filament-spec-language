@@ -1004,3 +1004,107 @@ fn a_race_counterexample_over_a_model_subject_refuses_the_replay() {
     let (refused, _, _) = refusal(result);
     assert_eq!(refused, ModelTraceRefusal::RaceOverModel);
 }
+
+/// FR-951-AC-2 and AC-3 over the one-counter subject from 0: EN-1 refutes
+/// `invariant AtMostTwo` with a finite prefix to `value = 3` (kind
+/// `formula`, empty loop, no `over` binding, no fairness), which replays by
+/// the invariant rule to `Truth(false)` at its last position. Truncated to
+/// end at `value = 2` it settles `inconclusive` by `Verdicts`; with a loop,
+/// or with `kind` `deadlock`, it refuses `invalid_runtime_input`/
+/// `invalid-value` before any step replays.
+#[trace("TC-2661", "FR-951-AC-2", "FR-951-AC-3")]
+#[test]
+fn an_invariant_counterexample_replays_by_the_invariant_rule() {
+    let body = format!(
+        "{CONTRACT}invariant AtMostTwo using v on M::Counter at current {{ self.value <= 2 }}\n"
+    );
+    let case = case(&body, &[0]);
+    let clause = case
+        .checked
+        .graph()
+        .state_clauses()
+        .iter()
+        .find(|clause| clause.name() == "AtMostTwo")
+        .expect("the invariant is checked");
+    let outcome = check_model(
+        ModelCheckRequest {
+            temporal_clock_selections: &[],
+            subject: subject(
+                &case.checked,
+                &case.documents,
+                case.initial.clone(),
+                &["c"],
+                UNLIMITED,
+            ),
+            item: ModelCheckItem::Invariant { clause },
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+            reductions: Default::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("checked");
+    let ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("expected a violation, got {outcome:?}");
+    };
+    let payload = *counterexample;
+    assert_eq!(payload.kind, CounterexampleKind::Formula);
+    assert_eq!(payload.prefix.len(), 3, "0 -> 1 -> 2 -> 3");
+    assert!(payload.lasso.is_none());
+    assert!(payload.over_binding.is_none());
+    assert!(payload.fairness.is_empty());
+    let node = clause.identity();
+    let occurrence = OccurrenceKey::new(node.clone(), clause.claim().clone());
+    let run = |payload: TemporalCounterexample| {
+        replay_model_trace(
+            request(
+                &case.checked,
+                &[],
+                &case.documents.document,
+                case.documents.snapshot_bytes(),
+                &case.unit,
+            ),
+            &trace_subject(&case),
+            &envelope_at(payload, node.clone(), occurrence.clone()),
+            &NO_ATOMS,
+            ReplayLimits::default(),
+        )
+    };
+    let reproduced = run(payload.clone()).expect("the counterexample replays");
+    assert_eq!(
+        reproduced.settlement,
+        ModelTraceSettlement::Reproduced {
+            value: ModelTraceValue::Truth(false),
+            trace_position: Some(3),
+        }
+    );
+
+    let mut truncated = payload.clone();
+    truncated.prefix.pop();
+    let settlement = run(truncated).expect("replays").settlement;
+    assert!(
+        matches!(
+            settlement,
+            ModelTraceSettlement::Inconclusive(DisagreementCause::Verdicts { .. })
+        ),
+        "{settlement:?}"
+    );
+
+    let mut looped = payload.clone();
+    looped.lasso = Some(fsl_replay::Lasso {
+        entry: 0,
+        terminal_stutter: false,
+    });
+    let mut deadlock = payload;
+    deadlock.kind = CounterexampleKind::Deadlock;
+    for shaped in [looped, deadlock] {
+        match run(shaped) {
+            Err(ReplayRefusal::ModelTrace(refusal)) => {
+                assert_eq!(*refusal, ModelTraceRefusal::InvariantShape);
+                assert_eq!(refusal.code(), Code::InvalidRuntimeInput);
+                assert_eq!(refusal.cause(), "invalid-value");
+            }
+            other => panic!("expected an invalid-value refusal, got {other:?}"),
+        }
+    }
+}

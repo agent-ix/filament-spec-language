@@ -1332,3 +1332,101 @@ fn a_refused_key_rejects_the_certificate_at_the_least_refused_state() {
         rejected(CertificateRule::ShapeMismatch, least)
     );
 }
+
+const AT_MOST: &str = "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n\
+                       invariant AtMostTwo using v on M::Counter at current { self.value <= 2 }\n\
+                       constraint Low using v on M::Counter at current { self.value <= 3 }\n";
+
+/// The checked state clause `name` of `world`'s package.
+fn state_clause<'w>(world: &'w World, name: &str) -> &'w fsl_semantics::check::CheckedStateClause {
+    world
+        .package
+        .graph()
+        .state_clauses()
+        .iter()
+        .find(|clause| clause.name() == name)
+        .unwrap_or_else(|| panic!("{name} is checked"))
+}
+
+/// The invariant root's translation of `clause` (FR-338).
+fn invariant_translation(clause: &fsl_semantics::check::CheckedStateClause) -> SafetyTranslation {
+    SafetyTranslation::state_invariant(fsl_foundation::source::provenance::OccurrenceKey::new(
+        clause.identity(),
+        clause.claim().clone(),
+    ))
+    .expect("translates")
+}
+
+/// FR-951-AC-1 and AC-3 over the one-counter subject from 0 (values 0 to
+/// 3): `invariant AtMostThree`'s EN-1 proof carries a closure certificate of
+/// every reachable model state under the carried root of the invariant
+/// key-context root `["invariant", N, "claim", O]` with binding `[]`, and
+/// FR-338's checker accepts it. The same states under `AtMostTwo`'s root
+/// are rejected `BadState` at `value = 3`, where its letter is false, and a
+/// certificate request whose invariant names the `constraint` clause `Low`
+/// is refused as a foreign clause root.
+#[trace("TC-2661", "FR-951-AC-1", "FR-951-AC-3")]
+#[test]
+fn an_invariant_proof_is_certified_under_the_invariant_root() {
+    let body = format!("{CONTRACT}{AT_MOST}");
+    let world = world(&body, &[("c", 0)]);
+    let reachable = world.reachable();
+    assert_eq!(reachable.len(), 4);
+
+    let three = state_clause(&world, "AtMostThree");
+    let item = ModelCheckItem::Invariant { clause: three };
+    let certificate = certificate(&world.run_in(&world.package, item));
+    let translation = invariant_translation(three);
+    let mut expected = closure(&reachable, &translation).states;
+    expected.sort();
+    let mut states = certificate.states.clone();
+    states.sort();
+    assert_eq!(states, expected);
+    let key: serde_json::Value =
+        serde_json::from_slice(certificate.states[0].automaton_state.as_bytes()).expect("JSON");
+    let context = &key[1];
+    assert_eq!(context[0][0], "invariant", "{key}");
+    assert!(context[0][1].is_object(), "the root's node is a NodeId: {key}");
+    assert_eq!(context[0][2], "claim", "{key}");
+    assert_eq!(context[0][3], three.claim().ordinal().to_string(), "{key}");
+    assert_eq!(context[1], "filament.temporal.infinite-trace/v1", "{key}");
+    assert_eq!(context[2], "infinite", "{key}");
+    assert_eq!(context[3], serde_json::json!([]), "{key}");
+    assert_eq!(
+        check(&world.request(item, UNLIMITED), &certificate),
+        TemporalCertificateCheck::Accepted
+    );
+
+    let two = state_clause(&world, "AtMostTwo");
+    let bad = invariant_translation(two);
+    assert_eq!(
+        check(
+            &world.request(ModelCheckItem::Invariant { clause: two }, UNLIMITED),
+            &closure(&reachable, &bad)
+        ),
+        rejected(
+            CertificateRule::BadState,
+            ProductStateRef {
+                model_state: world.state_key(&[3]),
+                automaton_state: bad.key(SafetyState::Rejected).expect("encodes"),
+            }
+        )
+    );
+
+    let low = state_clause(&world, "Low");
+    let refused = check_closure(
+        &world.request(ModelCheckItem::Invariant { clause: low }, UNLIMITED),
+        &certificate,
+        &ModelCheckLimits::default(),
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(ClosureRefusal::Item(ItemRefusal::ClauseRoot(
+                ClauseRootRefusal::Undeclared { .. }
+            )))
+        ),
+        "{refused:?}"
+    );
+}
