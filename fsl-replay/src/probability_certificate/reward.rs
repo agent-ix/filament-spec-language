@@ -89,7 +89,7 @@ pub(super) fn objective(
     cancel: &Cancel,
     storage: &mut u64,
 ) -> Result<ProbabilityRewardObjective, ProbabilityDocumentError> {
-    let declarations = system.package().graph().probabilistic_model();
+    let declarations = system.input().probabilistic;
     let declared = declarations
         .rewards()
         .iter()
@@ -125,7 +125,8 @@ pub(super) fn objective(
         _ => return Err(ProbabilityDocumentError::Unsupported),
     };
     let model = system
-        .package()
+        .source_package()
+        .ok_or(ProbabilityDocumentError::Unsupported)?
         .graph()
         .model_roots()
         .find(|(selection, _)| **selection == claim.subject.package)

@@ -179,7 +179,7 @@ pub(super) fn run_model(
         return fault("admitted-universe-snapshot-reads");
     };
     let request = ModelSimulationRequest {
-        package: run.package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(run.package),
         packages: run.packages,
         normalization: run.model_limits,
         snapshots: run.provisions.snapshots,

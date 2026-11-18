@@ -516,7 +516,7 @@ fn cancellation_inside_qualified_reward_evaluation_stops_and_old_actions_still_w
         .collect();
     let limits = SpineLimits::default();
     let simulation = ModelSimulationRequest {
-        package: checked.package(),
+        input: fsl_eval::simulation::model::ModelCheckInput::source(checked.package()),
         packages: &packages,
         normalization: limits.model,
         snapshots: &snapshots,

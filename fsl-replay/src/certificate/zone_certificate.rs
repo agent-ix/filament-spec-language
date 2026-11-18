@@ -600,6 +600,9 @@ pub enum CheckerFault {
     Automaton,
     /// `check_initial` or `check_step` returned an internal fault.
     RefinementStep,
+    /// The request's subject carries no source checked forms, which the
+    /// check reads.
+    SourceForms,
 }
 
 /// Why [`check_zone_certificate`] checked nothing: the request, not the
@@ -774,13 +777,15 @@ pub fn check_zone_certificate<O: Clone + Eq>(
     if certificate.obligation != *item {
         return Err(mismatch());
     }
+    let source = request
+        .simulation
+        .source_package()
+        .ok_or(ZoneCertificateRefusal::Fault(CheckerFault::SourceForms))?;
     // The recompiled item's identity (FR-245): a clause's `claim`
     // occurrence in the package, or the derived item's kind.
     let named = ItemIdentity::from(item_of(&certificate.obligation));
     let recompiled = match request.item {
-        CertifiedItem::Clause { clause, .. } => request
-            .simulation
-            .package
+        CertifiedItem::Clause { clause, .. } => source
             .graph()
             .temporal_clauses()
             .iter()
@@ -839,7 +844,7 @@ pub fn check_zone_certificate<O: Clone + Eq>(
             };
             let listed = RefinementIdentity {
                 refinement_node: part.refinement_node.clone(),
-                abstract_package: emitted(request.simulation.package)?,
+                abstract_package: emitted(source)?,
             };
             if listed != recompiled {
                 return Err(ZoneCertificateRefusal::RefinementMismatch {

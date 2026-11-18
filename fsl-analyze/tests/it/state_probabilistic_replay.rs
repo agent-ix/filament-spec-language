@@ -72,7 +72,7 @@ fn replay(
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     replay_probabilistic_witness(
-        system.package(),
+        system.source_package().expect("a source-route system"),
         &system,
         &witness.item,
         witness,
@@ -496,7 +496,7 @@ fn actual_s3_over_parameter_and_single_admitted_instance_drive_replay() {
         );
         assert!(matches!(
             replay_probabilistic_witness(
-                system.package(),
+                system.source_package().expect("a source-route system"),
                 &system,
                 &witness.item,
                 witness,
@@ -508,7 +508,9 @@ fn actual_s3_over_parameter_and_single_admitted_instance_drive_replay() {
         let unrestricted = ModelSystem::new(world.subject().simulation).unwrap();
         assert!(matches!(
             replay_probabilistic_witness(
-                unrestricted.package(),
+                unrestricted
+                    .source_package()
+                    .expect("a source-route system"),
                 &unrestricted,
                 &witness.item,
                 witness,
@@ -574,7 +576,7 @@ fn cancellation_inside_qualified_expansion_step_and_predicate_returns_no_token()
                 let mut saw_entered = false;
                 let mut saw_returned = false;
                 let control = replay_probabilistic_witness_observing(
-                    system.package(),
+                    system.source_package().expect("a source-route system"),
                     &system,
                     &witness.item,
                     &witness,
@@ -607,7 +609,7 @@ fn cancellation_inside_qualified_expansion_step_and_predicate_returns_no_token()
                 slot.set(cancel.clone()).unwrap();
                 let mut completed = false;
                 let result = replay_probabilistic_witness_observing(
-                    system.package(),
+                    system.source_package().expect("a source-route system"),
                     &system,
                     &witness.item,
                     &witness,

@@ -1021,7 +1021,7 @@ fn an_attempt_outside_the_precondition_records_one_finding_per_candidate_post_st
     )]);
     let simulation = ModelSimulationRequest {
         emit: fsl_package::EmitLimits::fixture(),
-        package: &package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(&package),
         packages: &packages,
         normalization: fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
         snapshots: &snapshots,

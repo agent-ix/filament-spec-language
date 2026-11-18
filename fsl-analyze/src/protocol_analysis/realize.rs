@@ -502,8 +502,8 @@ fn admit<'a>(
         .subject
         .model
         .simulation
-        .package
-        .graph()
+        .input
+        .evaluator
         .protocol(&request.subject.protocol)
         .ok_or_else(|| {
             RealizabilityRefusal::Protocol(ProtocolRefusal::UnknownProtocol {

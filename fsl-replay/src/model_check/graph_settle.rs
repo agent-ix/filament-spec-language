@@ -133,9 +133,10 @@ pub fn settle_state_graph(
     // The claim is compared against the request package's own declaration
     // of it: the same name at the same occurrence. A claim of another
     // package can share the structural node key of a declaration here.
-    let held = subject
-        .simulation
-        .package
+    let Some(package) = subject.simulation.source_package() else {
+        return record_of(Row::failed(), instance, method, None, None);
+    };
+    let held = package
         .graph()
         .state_graph_claim(claim.name())
         .is_some_and(|own| own.occurrence() == claim.occurrence());
@@ -143,7 +144,7 @@ pub fn settle_state_graph(
         return record_of(Row::failed(), instance, method, None, None);
     }
     if let Err(refusal) = StateGraphIdentity::resolve(
-        subject.simulation.package,
+        package,
         subject.simulation.packages,
         claim,
         temporal_clock_selections,

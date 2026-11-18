@@ -202,7 +202,7 @@ pub fn check_probability_certificate_source(
     super::bind_claim(claims, request.item, cancel).map_err(ProbabilityDocumentError::from)?;
     let snapshots = request.provision.snapshots();
     let simulation = ModelSimulationRequest {
-        package: checked.package(),
+        input: fsl_eval::simulation::model::ModelCheckInput::source(checked.package()),
         packages: &packages,
         normalization: limits.spine.model,
         snapshots: &snapshots,

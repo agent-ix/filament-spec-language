@@ -123,13 +123,15 @@ impl ModelSystem<'_> {
         objects.sort();
         let mut holds = true;
         for object in objects {
-            let evaluation = self.evaluator().evaluate_terminal_predicate(
-                predicate,
-                &walk.observation.environment,
-                object,
-                &mut Meter::new(self.meter),
-            )
-            .map_err(|_| stop(BROKEN))?;
+            let evaluation = self
+                .evaluator()
+                .evaluate_terminal_predicate(
+                    predicate,
+                    &walk.observation.environment,
+                    object,
+                    &mut Meter::new(self.meter),
+                )
+                .map_err(|_| stop(BROKEN))?;
             match verdict(&evaluation.outcome) {
                 Verdict::True => {}
                 Verdict::False => holds = false,

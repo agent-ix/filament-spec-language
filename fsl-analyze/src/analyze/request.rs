@@ -453,7 +453,7 @@ pub(super) fn simulation<'a>(
     limits: &super::AnalyzeLimits,
 ) -> fsl_eval::simulation::model::ModelSimulationRequest<'a> {
     fsl_eval::simulation::model::ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,

@@ -119,7 +119,7 @@ fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
         form,
     } = *read;
     let simulation = ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,
@@ -246,7 +246,7 @@ fn certificate_simulation<'a>(
     form: &TemporalItem,
 ) -> ModelSimulationRequest<'a> {
     ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,

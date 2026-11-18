@@ -140,13 +140,15 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             }));
         };
         let observation = self.model.observation_of(observed)?;
-        let evaluation = self.evaluator.evaluate_protocol_slot(
-            body,
-            vec![Some(payload.clone())],
-            &observation.environment,
-            &mut Meter::new(self.model.meter()),
-        )
-        .map_err(|_| broken())?;
+        let evaluation = self
+            .evaluator
+            .evaluate_protocol_slot(
+                body,
+                vec![Some(payload.clone())],
+                &observation.environment,
+                &mut Meter::new(self.model.meter()),
+            )
+            .map_err(|_| broken())?;
         if let FamilyOutcome::Evaluated(Outcome::Completed(value)) = &evaluation.outcome {
             let enc = value_enc(value, self.model.typing());
             return Ok(Ok(QueueKey {

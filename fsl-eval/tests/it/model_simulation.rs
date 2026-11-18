@@ -555,7 +555,7 @@ fn request<'a>(
 ) -> ModelSimulationRequest<'a> {
     ModelSimulationRequest {
         emit: fsl_package::EmitLimits::fixture(),
-        package: &world.package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(&world.package),
         packages: &world.packages,
         normalization: ModelNormalizationLimits::default(),
         snapshots: &world.snapshots,
@@ -1618,7 +1618,7 @@ impl OrdersWorld {
     fn system(&self) -> ModelSystem<'_> {
         ModelSystem::new(ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
-            package: &self.package,
+            input: fsl_eval::simulation::model::ModelCheckInput::source(&self.package),
             packages: &self.packages,
             normalization: ModelNormalizationLimits::default(),
             snapshots: &self.snapshots,

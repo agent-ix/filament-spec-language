@@ -439,7 +439,7 @@ fn native_acyclicity_probe_uses_native_counts_and_working_storage_without_transp
         let snapshots = [(initial.clone(), SNAPSHOT.to_vec())].into_iter().collect();
         let spine = fsl_replay::spine::SpineLimits::default();
         let system = ModelSystem::new(ModelSimulationRequest {
-            package: checked.package(),
+            input: fsl_eval::simulation::model::ModelCheckInput::source(checked.package()),
             packages: &packages,
             normalization: spine.model,
             snapshots: &snapshots,

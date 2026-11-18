@@ -283,8 +283,8 @@ fn run_protocol_item(
                 .subject
                 .model
                 .simulation
-                .package
-                .graph()
+                .input
+                .evaluator
                 .protocol(&protocol)
                 .is_some_and(fsl_eval::simulation::protocol::activates_on_each);
             let max_live_instances =
@@ -535,6 +535,18 @@ pub enum DerivedItemMismatch {
     },
 }
 
+/// The source package a derived item's run or check is over: a
+/// package-route subject carries none to read `derived`'s anchor from.
+fn source<'p>(
+    package: Option<&'p CheckedPackage>,
+    derived: &RequestItem,
+) -> Result<&'p CheckedPackage, DerivedItemMismatch> {
+    package.ok_or_else(|| DerivedItemMismatch::OtherAnchor {
+        index: derived.index(),
+        occurrence: derived.occurrence().clone(),
+    })
+}
+
 /// FSpec FR-368 "Claim and anchor": every package a run or a certificate
 /// check of `derived` is over holds the `model_root` node `derived` is
 /// anchored at, with its `generated` occurrence 0 (FR-411
@@ -664,8 +676,11 @@ pub fn derived_model_item<'a>(
         });
     }
     let packages = [
-        item.request.subject.simulation.package,
-        item.certificate.subject.simulation.package,
+        source(item.request.subject.simulation.source_package(), derived)?,
+        source(
+            item.certificate.subject.simulation.source_package(),
+            derived,
+        )?,
     ];
     join_anchor(derived, packages)?;
     let expected = join_terminals(derived, packages)?;
@@ -673,7 +688,7 @@ pub fn derived_model_item<'a>(
     item.request.limits.limits = derived_graph_limits(limits);
     item.request.max_depth = None;
     let family = claim_family(
-        item.request.subject.simulation.package,
+        source(item.request.subject.simulation.source_package(), derived)?,
         ItemKind::DeadlockFreedom,
         derived.occurrence(),
     );
@@ -750,7 +765,10 @@ pub fn derived_protocol_item<'a, S>(
     item.certificate.max_messages = max_messages;
     item.certificate.max_live_instances = max_live_instances;
     let family = claim_family(
-        item.request.subject.model.simulation.package,
+        source(
+            item.request.subject.model.simulation.source_package(),
+            derived,
+        )?,
         kind,
         derived.occurrence(),
     );
@@ -803,8 +821,8 @@ pub fn derived_zone_item<'a, S: Clone + Eq + 'a>(
     // deadlock-freedom run settles `Proved{Reduced, Uncertified}` with no
     // certificate check (FR-160), so the run alone can decide the verdict.
     let packages = [
-        item.request.subject.system().package(),
-        item.certificate.simulation.package,
+        source(item.request.subject.system().source_package(), derived)?,
+        source(item.certificate.simulation.source_package(), derived)?,
     ];
     join_anchor(derived, packages)?;
     if kind == ItemKind::DeadlockFreedom {
@@ -838,7 +856,7 @@ pub fn derived_zone_item<'a, S: Clone + Eq + 'a>(
         defaults.max_symbolic_transitions,
     );
     let family = claim_family(
-        item.request.subject.system().package(),
+        source(item.request.subject.system().source_package(), derived)?,
         kind,
         derived.occurrence(),
     );

@@ -248,7 +248,9 @@ fn run(
     }
     let claim = request.claim;
     let simulation = request.subject.simulation.clone();
-    let package = simulation.package;
+    let Some(package) = simulation.source_package() else {
+        return not_yet();
+    };
     let limits = request.limits;
     let meter = simulation.meter;
     let subject = SubjectLimits {
@@ -1538,9 +1540,12 @@ fn replay_refutation(
     if let Some(tamper) = tamper {
         tamper(&mut witness);
     }
-    match replay_probabilistic_witness(system.package(), system, &item, &witness, limits, cancel) {
+    let Some(package) = system.source_package() else {
+        return not_yet();
+    };
+    match replay_probabilistic_witness(package, system, &item, &witness, limits, cancel) {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
-            let scope = system.package().graph().scope();
+            let scope = package.graph().scope();
             // FR-413: each entry is keyed by its product state key.
             let spelled: Vec<_> = witness
                 .scheduler

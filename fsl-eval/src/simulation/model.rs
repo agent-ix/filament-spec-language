@@ -168,6 +168,14 @@ pub struct ModelSimulationRequest<'a> {
     pub emit: fsl_package::EmitLimits,
 }
 
+impl<'a> ModelSimulationRequest<'a> {
+    /// The source package the request is over, for an engine with no
+    /// package form yet; `None` on the package route.
+    pub fn source_package(&self) -> Option<&'a CheckedPackage> {
+        self.input.source_package()
+    }
+}
+
 /// A model state with its anchor (FR-120 "State, state key and anchor"). The
 /// anchor, and the effect of the step that reached the state, are not part of
 /// its key.

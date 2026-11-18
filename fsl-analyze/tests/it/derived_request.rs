@@ -181,7 +181,12 @@ pub(crate) fn written(
 ) -> WrittenRequest<SubjectIdentity> {
     let context = SubjectContext::new(subject).expect("the package emits");
     let mut request = ModelRequest::new();
-    let clause = &subject.simulation.package.graph().temporal_clauses()[0];
+    let clause = &subject
+        .simulation
+        .source_package()
+        .expect("a source-route subject")
+        .graph()
+        .temporal_clauses()[0];
     let authored = context
         .author_clause(&mut request, clause)
         .expect("the clause has a record");
@@ -569,7 +574,14 @@ fn an_untimed_subjects_deadlock_item_settles_on_en1() {
         let obligation = written.obligation(derived.index()).expect("its obligation");
         assert_eq!(
             derived.occurrence(),
-            &root_claim(item.request.subject.simulation.package, "test/counter")
+            &root_claim(
+                item.request
+                    .subject
+                    .simulation
+                    .source_package()
+                    .expect("a source-route subject"),
+                "test/counter"
+            )
         );
         assert_eq!(
             ids(derived.candidates().expect("its candidates")),
@@ -693,16 +705,38 @@ fn a_deadlock_verdict_is_joined_on_the_terminal_declaration() {
         .expect("its obligation");
     assert_eq!(when_obligation, none_obligation, "one obligation identity");
 
-    let (model, when_key) = terminal_key(when.model_item().request.subject.simulation.package);
+    let (model, when_key) = terminal_key(
+        when.model_item()
+            .request
+            .subject
+            .simulation
+            .source_package()
+            .expect("a source-route subject"),
+    );
     assert!(when_key.is_some(), "the `when` package declares a terminal");
-    let (_, at_two_key) = terminal_key(at_two.model_item().request.subject.simulation.package);
+    let (_, at_two_key) = terminal_key(
+        at_two
+            .model_item()
+            .request
+            .subject
+            .simulation
+            .source_package()
+            .expect("a source-route subject"),
+    );
     assert!(
         at_two_key.is_some(),
         "the other `when` package declares one"
     );
     assert_ne!(at_two_key, when_key, "two `when` predicates, two keys");
     assert_eq!(
-        terminal_key(none.model_item().request.subject.simulation.package),
+        terminal_key(
+            none.model_item()
+                .request
+                .subject
+                .simulation
+                .source_package()
+                .expect("a source-route subject")
+        ),
         (model.clone(), None)
     );
     let refused = |requested: &Option<_>, recompiled: &Option<_>| {

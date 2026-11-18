@@ -303,13 +303,16 @@ impl ModelLetters for ClauseLetters<'_, '_> {
                 Vec::new(),
                 meter,
             ),
-            None => self.system.evaluator().evaluate_state_predicate_at_absent_key(
-                &condition,
-                &observed.observation.environment,
-                self.key_reference(instance)?,
-                instance.population.node.clone(),
-                meter,
-            ),
+            None => self
+                .system
+                .evaluator()
+                .evaluate_state_predicate_at_absent_key(
+                    &condition,
+                    &observed.observation.environment,
+                    self.key_reference(instance)?,
+                    instance.population.node.clone(),
+                    meter,
+                ),
         }
         .map_err(AtomStop::Fault)?;
         reading(&evaluation.outcome)
@@ -343,13 +346,16 @@ impl ModelLetters for ClauseLetters<'_, '_> {
                 bound,
                 meter,
             ),
-            None => self.system.evaluator().evaluate_activation_guard_at_absent_key(
-                &condition,
-                &observed.observation.environment,
-                self.key_reference(instance)?,
-                instance.population.node.clone(),
-                meter,
-            ),
+            None => self
+                .system
+                .evaluator()
+                .evaluate_activation_guard_at_absent_key(
+                    &condition,
+                    &observed.observation.environment,
+                    self.key_reference(instance)?,
+                    instance.population.node.clone(),
+                    meter,
+                ),
         }
         .map_err(AtomStop::Fault)?;
         reading(&evaluation.outcome)
@@ -393,14 +399,17 @@ impl ModelLetters for ClauseLetters<'_, '_> {
             let absent = bound
                 .is_none()
                 .then(|| ((0..binders).collect(), instance.population.node.clone()));
-            let evaluation = self.system.evaluator().evaluate_capture(
-                &capture,
-                &observed.observation.environment,
-                arguments,
-                absent,
-                meter,
-            )
-            .map_err(AtomStop::Fault)?;
+            let evaluation = self
+                .system
+                .evaluator()
+                .evaluate_capture(
+                    &capture,
+                    &observed.observation.environment,
+                    arguments,
+                    absent,
+                    meter,
+                )
+                .map_err(AtomStop::Fault)?;
             if let FamilyOutcome::Evaluated(Outcome::Completed(value)) = &evaluation.outcome {
                 values.push(value.clone());
                 continue;

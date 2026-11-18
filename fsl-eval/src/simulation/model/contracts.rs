@@ -183,12 +183,11 @@ pub(super) fn conjunction(
         .zip(&observations)
         .map(|(info, observations)| (info.qualified.clone(), observations))
         .collect();
-    let evaluation = walk.system.evaluator().evaluate_clause_set(
-        &set,
-        walk.system.meter,
-        walk.cancel.as_ref(),
-    )
-    .map_err(|_| stop(BROKEN))?;
+    let evaluation = walk
+        .system
+        .evaluator()
+        .evaluate_clause_set(&set, walk.system.meter, walk.cancel.as_ref())
+        .map_err(|_| stop(BROKEN))?;
     match evaluation.outcome {
         ClauseSetOutcome::Incomplete => {
             let counter = evaluation

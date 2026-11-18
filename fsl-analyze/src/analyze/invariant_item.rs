@@ -49,7 +49,7 @@ pub(super) fn invariant_item<'a>(
     let name =
         QualifiedName::new(vec![filament_exact::Identifier::new(clause.name()).ok()?]).ok()?;
     let simulation = move |binding: &SubjectBinding<'a>| ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,

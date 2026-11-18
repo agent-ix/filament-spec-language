@@ -95,13 +95,20 @@ impl<'s, 'a> SubjectContext<'s, 'a> {
         request: &mut ModelRequest<SubjectIdentity>,
         clause: &TemporalClauseNode,
     ) -> Result<RequestIndex, RequestRefusal> {
-        let package = self.subject.simulation.package.graph();
         let occurrence = node_occurrence(clause);
-        let record = package.requirements().get(&occurrence).ok_or_else(|| {
-            RequestRefusal::NoRequirementRecord {
-                occurrence: occurrence.clone(),
-            }
-        })?;
+        let no_record = || RequestRefusal::NoRequirementRecord {
+            occurrence: occurrence.clone(),
+        };
+        let package = self
+            .subject
+            .simulation
+            .source_package()
+            .ok_or_else(no_record)?
+            .graph();
+        let record = package
+            .requirements()
+            .get(&occurrence)
+            .ok_or_else(no_record)?;
         let item = ModelTemporalItem {
             occurrence: &occurrence,
             subject: &self.identity,
@@ -133,10 +140,15 @@ impl<'s, 'a> SubjectContext<'s, 'a> {
         abstract_library: fsl_semantics::library::LibraryName,
         abstract_initial: &[DocumentRef],
     ) -> Result<RequestIndex, RequestRefusal> {
-        let package = self.subject.simulation.package.graph();
         let missing = || RequestRefusal::NoRefinementRecord {
             name: refinement.name().to_owned(),
         };
+        let package = self
+            .subject
+            .simulation
+            .source_package()
+            .ok_or_else(missing)?
+            .graph();
         let record = refinement
             .requirement_occurrence()
             .and_then(|occurrence| package.requirements().get(occurrence))

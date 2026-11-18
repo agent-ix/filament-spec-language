@@ -493,7 +493,7 @@ impl World {
     pub(crate) fn request(&self) -> ModelSimulationRequest<'_> {
         ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
-            package: &self.package,
+            input: fsl_eval::simulation::model::ModelCheckInput::source(&self.package),
             packages: &self.packages,
             normalization: ModelNormalizationLimits::default(),
             snapshots: &self.snapshots,
@@ -705,7 +705,7 @@ impl Refining {
     pub(crate) fn concrete_request(&self) -> ModelSimulationRequest<'_> {
         ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
-            package: &self.package,
+            input: fsl_eval::simulation::model::ModelCheckInput::source(&self.package),
             packages: &self.packages,
             normalization: ModelNormalizationLimits::default(),
             snapshots: &self.snapshots,

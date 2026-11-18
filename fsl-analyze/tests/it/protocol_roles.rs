@@ -176,8 +176,13 @@ impl World {
         max_live_instances: Option<u64>,
     ) -> ModelCheckOutcome<ProtocolTransition> {
         let subject = self.subject();
-        let temporal_clock_selections =
-            crate::fill::tcb_01_event_position_selection(subject.model.simulation.package);
+        let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(
+            subject
+                .model
+                .simulation
+                .source_package()
+                .expect("a source-route subject"),
+        );
         check_protocol(
             ProtocolCheckRequest {
                 temporal_clock_selections: &temporal_clock_selections,

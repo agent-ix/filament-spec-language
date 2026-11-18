@@ -441,7 +441,7 @@ impl<'a> ModelSystem<'a> {
             .or_insert_with_key(|(_, _, types, selected)| {
                 let select = |clause| selected.as_ref().is_none_or(|set| set.contains(&clause));
                 match self.evaluator().selected_footprint(
-                                        &self.model,
+                    &self.model,
                     receiver.object_type().clone(),
                     application.declaring.clone(),
                     &application.declaration,
@@ -450,7 +450,7 @@ impl<'a> ModelSystem<'a> {
                 ) {
                     Err(FootprintRefusal::UnsupportedForm { .. }) => {
                         self.evaluator().attempt_footprint_fallback(
-                                                        &self.model,
+                            &self.model,
                             receiver.object_type().clone(),
                             application.declaring.clone(),
                             &application.declaration,
@@ -572,7 +572,7 @@ impl<'a> ModelSystem<'a> {
                     })
                     .collect();
                 self.evaluator().footprint(
-                                        &self.model,
+                    &self.model,
                     receiver_type.clone(),
                     application.declaring.clone(),
                     &application.declaration,
@@ -620,12 +620,9 @@ impl<'a> ModelSystem<'a> {
         parameters: &[(String, ValueType)],
         body: &fsl_semantics::check::CheckedBody,
     ) -> Result<BTreeSet<Location>, FootprintError> {
-        let symbolic = self.evaluator().slot_reads(
-                        &self.model,
-            name,
-            parameters,
-            body.root(),
-        )?;
+        let symbolic = self
+            .evaluator()
+            .slot_reads(&self.model, name, parameters, body.root())?;
         Ok(symbolic
             .iter()
             .filter_map(|location| lower(location, &|_| None))
@@ -663,12 +660,9 @@ impl<'a> ModelSystem<'a> {
         body: &fsl_semantics::check::CheckedBody,
         over: Option<&ObjectReference>,
     ) -> Result<Option<BTreeSet<Location>>, FootprintError> {
-        let symbolic = self.evaluator().node_reads(
-                        &self.model,
-            name,
-            parameters,
-            body.root(),
-        )?;
+        let symbolic = self
+            .evaluator()
+            .node_reads(&self.model, name, parameters, body.root())?;
         if over.is_none() && !symbolic.is_empty() {
             return Ok(None);
         }
@@ -730,7 +724,8 @@ impl<'a> ModelSystem<'a> {
         condition: CheckedNode<'_>,
         binders: &[(String, ValueType)],
     ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-        self.evaluator().guard_reads(&self.model, binders, condition)
+        self.evaluator()
+            .guard_reads(&self.model, binders, condition)
     }
 
     /// FR-156 "Atom footprints": the locations an atom reads for `instance`

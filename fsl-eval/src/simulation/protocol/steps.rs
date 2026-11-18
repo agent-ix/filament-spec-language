@@ -1282,12 +1282,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 .into_iter()
                 .map(|label| Value::Boolean(is_completed(label)))
                 .collect();
-            let evaluation = self.evaluator.evaluate_join_predicate(
-                function,
-                arguments,
-                &mut Meter::new(self.model.meter()),
-            )
-            .map_err(|_| ProtocolRefusal::fault("a-join-predicate-evaluates"))?;
+            let evaluation = self
+                .evaluator
+                .evaluate_join_predicate(function, arguments, &mut Meter::new(self.model.meter()))
+                .map_err(|_| ProtocolRefusal::fault("a-join-predicate-evaluates"))?;
             return match verdict(&evaluation.outcome) {
                 Verdict::True => Ok(true),
                 Verdict::False => Ok(false),

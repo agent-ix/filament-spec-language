@@ -929,7 +929,13 @@ fn a_cancellation_during_the_certificate_check_settles_cancelled() {
     let invariant = world.invariant("always holds(c.value <= 3)", |v| Some(v <= 3));
     let outcome = invariant.run(&world);
     let request = invariant.request(&world, UNLIMITED);
-    let clock_selections = tcb_01_event_position_selection(request.subject.simulation.package);
+    let clock_selections = tcb_01_event_position_selection(
+        request
+            .subject
+            .simulation
+            .source_package()
+            .expect("a source-route subject"),
+    );
     let settle = |cancel: &Cancel| {
         settle_model_check(
             &outcome,
@@ -949,7 +955,11 @@ fn a_cancellation_during_the_certificate_check_settles_cancelled() {
     };
     let emission = counted(&|cancel| {
         fsl_package::emit_checked_with_temporal_selections_and_cancel(
-            request.subject.simulation.package,
+            request
+                .subject
+                .simulation
+                .source_package()
+                .expect("a source-route subject"),
             &clock_selections,
             cancel,
             EmitLimits::fixture(),

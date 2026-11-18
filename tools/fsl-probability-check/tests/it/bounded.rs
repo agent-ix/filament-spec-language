@@ -114,7 +114,7 @@ pub(super) fn request_with(
         .into_iter()
         .collect();
     let simulation = ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: &packages,
         normalization: limits.model,
         snapshots: &snapshots,

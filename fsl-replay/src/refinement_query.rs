@@ -142,7 +142,7 @@ impl RefinementQuerySubject<'_> {
     fn model_subject<'p>(&'p self, package: &'p CheckedPackage) -> ModelSubject<'p> {
         ModelSubject {
             simulation: ModelSimulationRequest {
-                package,
+                input: fsl_eval::simulation::model::ModelCheckInput::source(package),
                 packages: self.packages,
                 normalization: self.normalization,
                 snapshots: self.snapshots,

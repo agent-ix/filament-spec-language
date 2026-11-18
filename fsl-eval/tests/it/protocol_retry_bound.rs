@@ -278,7 +278,7 @@ fn system<'a>(fixture: &'a Fixture) -> ProtocolSystem<'a, Sc> {
     };
     let request = ModelSimulationRequest {
         emit: fsl_package::EmitLimits::fixture(),
-        package: &fixture.package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(&fixture.package),
         packages: &fixture.packages,
         normalization: ModelNormalizationLimits::default(),
         snapshots: &fixture.snapshots,

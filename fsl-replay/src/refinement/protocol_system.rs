@@ -74,12 +74,22 @@ impl<'a> AbstractProtocolSystem<'a> {
         model: ModelSystem<'a>,
         subject: &ProtocolSubject<'a>,
     ) -> Result<Self, ProtocolRefusal> {
-        let package = subject.model.simulation.package;
-        let checked_protocol = package.graph().protocol(&subject.protocol).ok_or_else(|| {
+        let evaluator = subject.model.simulation.input.evaluator;
+        let checked_protocol = evaluator.protocol(&subject.protocol).ok_or_else(|| {
             ProtocolRefusal::UnknownProtocol {
                 protocol: subject.protocol.clone(),
             }
         })?;
+        let package = subject
+            .model
+            .simulation
+            .source_package()
+            .ok_or(ProtocolRefusal::Fault(
+                filament_semantic_value::catalog::InternalFault::new(
+                    "protocol-refinement",
+                    "the-refinement-reads-source-forms",
+                ),
+            ))?;
         let mut required_temporal_fairness = Vec::new();
         for requirement in &checked_protocol.requirements {
             let Some(clause) = package.graph().temporal_clauses().get(requirement.temporal) else {

@@ -140,14 +140,16 @@ impl ModelSystem<'_> {
             if let Some(cancel) = cancel {
                 meter = meter.with_cancel(cancel.clone());
             }
-            let evaluation = self.evaluator().evaluate_state_predicate(
-                *predicate,
-                &walk.observation.environment,
-                bound,
-                further.clone(),
-                &mut meter,
-            )
-            .map_err(|_| stop(BROKEN))?;
+            let evaluation = self
+                .evaluator()
+                .evaluate_state_predicate(
+                    *predicate,
+                    &walk.observation.environment,
+                    bound,
+                    further.clone(),
+                    &mut meter,
+                )
+                .map_err(|_| stop(BROKEN))?;
             readings.push(match verdict(&evaluation.outcome) {
                 Verdict::True => PredicateReading::True,
                 Verdict::False => PredicateReading::False,

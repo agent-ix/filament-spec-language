@@ -956,7 +956,7 @@ fn tso_flush_fairness_replays_against_an_unmet_inc_assumption() {
     package_provision.extend(documents.packages.clone());
     let concrete_request = fsl_eval::simulation::model::ModelSimulationRequest {
         emit: fsl_package::EmitLimits::fixture(),
-        package: &checked,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(&checked),
         packages: &package_provision,
         normalization: fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
         snapshots: &snapshots,

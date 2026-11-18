@@ -1714,7 +1714,7 @@ fn an_attempt_type_is_bound_at_its_own_templates_node() {
         protocol.obligations.compensations[0].attempt_type,
         protocol.obligations.compensations[1].attempt_type
     );
-    let domains = protocol_domains(protocol, checked.graph());
+    let domains = protocol_domains(protocol, &checked);
     for (node, template) in [(&zeta, 0), (&alpha, 1)] {
         let attempt_type = &protocol.obligations.compensations[template].attempt_type;
         assert!(

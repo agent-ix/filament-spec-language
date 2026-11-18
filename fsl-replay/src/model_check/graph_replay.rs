@@ -177,7 +177,7 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
 
     let documents = request.byte_provision().snapshots();
     let simulation = ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: &compiled.packages,
         normalization: caller.spine.model,
         snapshots: &documents,

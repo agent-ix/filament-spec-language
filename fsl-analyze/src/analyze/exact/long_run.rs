@@ -30,7 +30,9 @@ pub(super) fn run(
         return not_yet();
     }
     let simulation = request.subject.simulation.clone();
-    let package = simulation.package;
+    let Some(package) = simulation.source_package() else {
+        return not_yet();
+    };
     let limits = request.limits;
     let subject = SubjectLimits {
         expansion: simulation.expansion,

@@ -720,8 +720,8 @@ pub fn check_protocol(
     let protocol = subject
         .model
         .simulation
-        .package
-        .graph()
+        .input
+        .evaluator
         .protocol(&subject.protocol)
         .ok_or_else(|| {
             ModelCheckRefusal::Protocol(ProtocolRefusal::UnknownProtocol {
@@ -734,7 +734,7 @@ pub fn check_protocol(
         &model,
         protocol,
         &capacities,
-        subject.model.simulation.package.graph(),
+        subject.model.simulation.input.evaluator,
         BOUND_POSITIONS,
     )
     .map_err(not_simulated)?;
@@ -852,8 +852,8 @@ fn check_protocol_liveness(
     let protocol = subject
         .model
         .simulation
-        .package
-        .graph()
+        .input
+        .evaluator
         .protocol(&subject.protocol)
         .ok_or_else(|| {
             ModelCheckRefusal::Protocol(ProtocolRefusal::UnknownProtocol {
@@ -866,7 +866,7 @@ fn check_protocol_liveness(
         &model,
         protocol,
         &capacities,
-        subject.model.simulation.package.graph(),
+        subject.model.simulation.input.evaluator,
         BOUND_POSITIONS,
     )
     .map_err(not_simulated)?;

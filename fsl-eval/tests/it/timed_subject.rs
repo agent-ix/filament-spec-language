@@ -373,7 +373,7 @@ fn system_over<'w>(world: &'w World, keys: &[&str]) -> ModelSystem<'w> {
 fn system_limited<'w>(world: &'w World, keys: &[&str], max_candidates: u64) -> ModelSystem<'w> {
     ModelSystem::new(ModelSimulationRequest {
         emit: fsl_package::EmitLimits::fixture(),
-        package: &world.package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(&world.package),
         packages: &world.packages,
         normalization: ModelNormalizationLimits::default(),
         snapshots: &world.snapshots,

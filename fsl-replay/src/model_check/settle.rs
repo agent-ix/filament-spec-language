@@ -361,8 +361,8 @@ pub fn settle_protocol_check(
         .subject
         .model
         .simulation
-        .package
-        .graph()
+        .input
+        .evaluator
         .protocol(&certificate.subject.protocol)
         .is_some_and(activates_on_each);
     record.instance_bound = on_each.then(|| StatedInstanceBound {
@@ -391,8 +391,8 @@ fn load_buffering_warnings(
     let protocol = subject
         .model
         .simulation
-        .package
-        .graph()
+        .input
+        .evaluator
         .protocol(&subject.protocol)
         .ok_or(None)?;
     let model = ModelSystem::new(subject.model.simulation.clone()).map_err(|_| None)?;

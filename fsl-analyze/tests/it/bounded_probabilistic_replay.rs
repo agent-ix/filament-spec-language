@@ -80,7 +80,7 @@ fn replay(
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     replay_probabilistic_witness(
-        system.package(),
+        system.source_package().expect("a source-route system"),
         &system,
         &witness.item,
         witness,
@@ -636,7 +636,7 @@ fn one_admitted_over_binding_uses_the_actual_s3_parameter_node() {
         .evidence();
     assert!(matches!(
         replay_probabilistic_witness(
-            system.package(),
+            system.source_package().expect("a source-route system"),
             &system,
             &witness.item,
             witness,
@@ -682,7 +682,7 @@ fn one_admitted_over_binding_uses_the_actual_s3_parameter_node() {
         .unwrap();
         assert!(matches!(
             replay_probabilistic_witness(
-                system.package(),
+                system.source_package().expect("a source-route system"),
                 &system,
                 &counterfeit.item,
                 &counterfeit,

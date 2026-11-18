@@ -15,7 +15,9 @@
 use std::collections::BTreeSet;
 
 use filament_eval::{CallFailure, Evaluation};
-use filament_exact::{EffectiveId, Meter, NodeKey, ObjectReference, ScalarLimits, Value, ValueType};
+use filament_exact::{
+    EffectiveId, Meter, NodeKey, ObjectReference, ScalarLimits, Value, ValueType,
+};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::TypeEnvironment;
 use fsl_package::{
@@ -29,9 +31,9 @@ use fsl_semantics::check::footprint::{
 };
 use fsl_semantics::check::{
     CheckedBody, CheckedHyperClause, CheckedNode, CheckedProbabilisticModel, CheckedProtocol,
-    CheckedProtocolNodeKeys, CheckedRow, CheckedStateClause, CheckedTerminalPredicate,
-    EnumBinding, FormulaNodeId, ModelTimeSource, Reward, StatePredicate, TimedModel,
-    VariantTypeDeclaration, Written,
+    CheckedProtocolNodeKeys, CheckedRow, CheckedStateClause, CheckedTerminalPredicate, EnumBinding,
+    FormulaNodeId, ModelTimeSource, Reward, StatePredicate, TimedModel, VariantTypeDeclaration,
+    Written,
 };
 use fsl_semantics::model::clause_observation::Observation;
 use fsl_semantics::model::domain_package::{DomainPackage, DomainPackageRef};
@@ -146,7 +148,9 @@ impl<'a> ModelCheckInput<'a> {
 
     /// The timed model of the model alias `model`.
     pub fn timed_model(&self, model: &str) -> Option<&'a TimedModel> {
-        self.timed_models.iter().find(|timed| timed.model() == model)
+        self.timed_models
+            .iter()
+            .find(|timed| timed.model() == model)
     }
 
     /// The source package, for an engine that has no package form yet

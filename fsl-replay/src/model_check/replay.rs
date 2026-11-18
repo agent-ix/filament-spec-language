@@ -918,7 +918,7 @@ pub fn replay_protocol_trace_with_temporal_selections(
                 &model,
                 protocol,
                 &capacities,
-                package.0.graph(),
+                package.0,
                 BOUND_POSITIONS,
             )
             .map_err(|refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal))))?;
@@ -1116,7 +1116,7 @@ fn replay_on(
     let meter = request.accounting_limits();
     let package = compiled.checked.package();
     let simulation = |subject: &ModelTraceSubject| ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: &compiled.packages,
         normalization: limits.spine.model,
         snapshots: &documents,
