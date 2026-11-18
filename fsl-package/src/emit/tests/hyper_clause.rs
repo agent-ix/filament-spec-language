@@ -17,6 +17,8 @@ use crate::checked_v2::{
 
 const INFINITE: &str = "filament.temporal.infinite-trace/v1";
 const EVENT: &str = "filament.temporal.event-position.false-extension/v1";
+const FINITE_DET: &str = "hyper Det using inf over t in Obs bounded 3 forall trace a forall trace b \
+    { (a.inp = b.inp) implies (a.out = b.out) }";
 
 /// `a` and `b` read the same version number.
 const READ_A_B: &str = "always holds(c.versionNumber @ a = c.versionNumber @ b)";
@@ -84,19 +86,19 @@ fn compile(unit: &str) -> Compiled {
 #[trace("TC-2534", "FR-898-AC-1")]
 #[test]
 fn a_finite_trace_set_hyperproperty_emits_its_finite_domain() {
-    let text = format!(
+    let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          profile t = \"{EVENT}\";\n\
          record Obs {{ inp: Int[0, 3]; out: Int[0, 3]; }}\n\
-         {FINITE_DET}"
+        {FINITE_DET}"
     );
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("no selected model packages");
-    let graph = assemble_with_models(text.as_bytes(), &packages)
+    let graph = assemble_with_models(source.as_bytes(), &packages)
         .expect("the finite unit assembles")
         .check(CheckMode::Linked, CheckingLimits::default())
-        .unwrap_or_else(|refusals| panic!("the finite clause checks: {refusals:?}\n{text}"));
+        .unwrap_or_else(|refusals| panic!("the finite clause checks: {refusals:?}\n{source}"));
     assert_eq!(graph.finite_hyper_clauses().len(), 1);
     let package = CheckedPackage::link(graph);
     let emission = emit_checked(&package).expect("the finite clause emits");
