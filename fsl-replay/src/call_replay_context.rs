@@ -333,7 +333,7 @@ mod tests {
 
     /// `p`'s declaration occurrence and its parameter's node, read through
     /// a separate compile of `source`.
-    fn declaration(source: &str, function: &str) -> (OccurrenceKey, NodeKey) {
+    fn declaration(source: &str, function: &str) -> (OccurrenceKey, Vec<NodeKey>) {
         let identity = SourceIdentity::new("a", "u");
         let limits = CallerLimits::default().spine;
         let cancel = Cancel::new();
@@ -366,15 +366,14 @@ mod tests {
             .graph()
             .callable(function)
             .expect("declared");
-        let parameter = callable_parameter_keys(checked.package(), &callable)
-            .expect("a function node")[0]
-            .clone();
+        let parameters = callable_parameter_keys(checked.package(), &callable)
+            .expect("a function node");
         (
             OccurrenceKey::new(
                 callable.identity.clone(),
                 Origin::new(Role::new("declaration"), 0),
             ),
-            parameter,
+            parameters,
         )
     }
 
@@ -405,7 +404,8 @@ mod tests {
         ])
         .unwrap();
         let result = run(SOURCE, limits);
-        let (_, parameter) = declaration(SOURCE, "q");
+        let (_, parameters) = declaration(SOURCE, "q");
+        let parameter = parameters[0].clone();
         let member = result.requirements().members()[0].clone();
         let key = member.occurrence().clone();
         let context = result.into_parts().2;
@@ -450,33 +450,39 @@ mod tests {
     fn a_member_request_carries_the_process_provider_identity() {
         let source = SOURCE.replace(
             "function q",
-            "function r using v(x: Int[0, 9]): Integer pure { 10 mod x }\nfunction q",
+            "function r using v(a: Int[0, 9], b: Int[0, 9]): Int[0, 9] pure { a mod b }\nfunction q",
         );
         let call = Call {
             clocks: Default::default(),
             wire_arguments: Vec::new(),
             snapshot: None,
             function: "r".to_owned(),
-            arguments: vec![crate::CallArgument {
-                parameter: "x".to_owned(),
-                value: Value::Integer(Integer::from(0_i64)),
-            }],
+            arguments: vec![
+                crate::CallArgument {
+                    parameter: "a".to_owned(),
+                    value: Value::Integer(Integer::from(7_i64)),
+                },
+                crate::CallArgument {
+                    parameter: "b".to_owned(),
+                    value: Value::Integer(Integer::from(0_i64)),
+                },
+            ],
             accounting: default_accounting(1_000_000),
             supplied: filament_semantic_value::supplied_stop::SuppliedLimits::default(),
             backend: filament_eval::ExecutionBackendChoice::Interpreter,
         };
         let result = run_with_replay_context_kernel(&source, CallerLimits::default(), &call);
         assert!(matches!(result.outcome(), CallOutcome::Undefined { .. }));
-        let (_, parameter) = declaration(&source, "r");
+        let (_, parameters) = declaration(&source, "r");
         let member = result.requirements().members()[0].clone();
-        let bounds = [bound_at(parameter.clone())];
+        let bounds = parameters.iter().cloned().map(bound_at).collect::<Vec<_>>();
         let wire = result
             .context()
             .request(
                 member.request_index(),
                 &bounds,
                 &plugin(),
-                input(parameter, 0),
+                vec![input(parameters[0].clone(), 7), input(parameters[1].clone(), 0)],
             )
             .expect("an application item");
         let expected = crate::execute::process_provider_obligation(
