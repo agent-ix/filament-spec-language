@@ -168,6 +168,7 @@ fn reachable(source: &str) -> fsl_eval::simulation::protocol::Reachable<Sc> {
                 model: tc1070::model::PACKAGE.to_owned(),
             })
             .collect(),
+        capacities: Vec::new(),
         memory: fsl_eval::simulation::protocol::ResolvedMemory::resolve(checked, &[])
             .expect("sc memory selected"),
     };

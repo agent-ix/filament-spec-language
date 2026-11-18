@@ -1136,6 +1136,7 @@ mod tests {
                 premises: Vec::new(),
                 producer: "recording",
             },
+            facts: Vec::new(),
             global: super::super::recording::RecordingGlobalResult {
                 label: "refuted".to_owned(),
                 basis: "violation".to_owned(),

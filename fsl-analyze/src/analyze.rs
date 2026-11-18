@@ -2755,7 +2755,12 @@ mod tests {
         kinds.sort_by_key(|kind| kind.to_wire());
         assert_eq!(
             kinds,
-            [Capability::LocalProjection, Capability::Realizability]
+            [
+                Capability::FiniteReplay,
+                Capability::GlobalConformance,
+                Capability::LocalProjection,
+                Capability::Realizability,
+            ]
         );
     }
 
