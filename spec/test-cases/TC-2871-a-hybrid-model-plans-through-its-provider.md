@@ -15,7 +15,7 @@ Verify hybrid plan synthesis outcomes. Scope: FR-1021-AC-1 and AC-2.
 ## Test Procedure
 
 1. Through `run_with_providers` with the reference hybrid provider, plan the tank toward `Drain` and toward `h >= 12`; through `run`, which holds no hybrid provider, plan toward `Drain`; send a request without `dwell_grid`.
-2. Send `dwell_grid` `1` and the Rational `0/1`, and a `synthesis` member carrying `engines`.
+2. Send `dwell_grid` `1` and `{"type": "rational", "numerator": "0", "denominator": "1"}`, and a `synthesis` member carrying `engines`.
 
 ## Expected Results
 

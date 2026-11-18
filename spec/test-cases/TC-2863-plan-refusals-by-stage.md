@@ -16,7 +16,7 @@ Verify S3 plan refusals and request admission refusals. Scope: FR-1013-AC-1 and 
 
 1. Check a plan with `domain` `Int[-1, 3]`.
 2. Check a goal reading `Reach.elapsed` over the spine model.
-3. Send `synthesis` members naming a value-type `synthesis`, the policy `Nowhere`, a policy over `Braking`, and an initial snapshot above the version range.
+3. Send `synthesis` members naming a value-type `synthesis`, the policy `Nowhere`, a policy over `Braking`, and, under the population bound `bound HistoryBound on Config::config_history [1]`, the two-object healthy snapshot.
 
 ## Expected Results
 

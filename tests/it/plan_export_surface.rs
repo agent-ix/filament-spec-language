@@ -293,7 +293,7 @@ fn a_decimal_step_cost_is_exact_and_certified() {
     assert!(!outcome["objective"]["value"].is_f64(), "{value}");
     assert_eq!(
         outcome["objective"]["value"],
-        json!({"kind": "decimal", "coefficient": "30", "scale": "2"}),
+        json!({"type": "decimal", "coefficient": "30", "scale": "2"}),
         "{value}"
     );
     assert_eq!(outcome["certificate"]["type"], "potential", "{value}");
@@ -332,17 +332,19 @@ fn plan_declarations_refuse_at_check() {
 fn the_six_reference_planning_examples_plan_as_specified() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/planning");
     let decimal =
-        |coefficient: &str| json!({"kind": "decimal", "coefficient": coefficient, "scale": "2"});
+        |coefficient: &str| json!({"type": "decimal", "coefficient": coefficient, "scale": "2"});
     for (case, objective) in [
-        ("o1-rollout", json!({"integer": "15"})),
+        ("o1-rollout", json!({"type": "integer", "value": "15"})),
         ("o2-battery-dispatch", decimal("30")),
         (
             "o3-production-schedule",
-            json!({"kind": "quantity", "unit": "min",
-                "magnitude": {"kind": "rational", "numerator": "60", "denominator": "1"}}),
+            json!({"type": "rational", "numerator": "60", "denominator": "1", "unit": "min"}),
         ),
-        ("o4-staffing", json!({"integer": "20"})),
-        ("o5-robot-routing", json!({"integer": "10"})),
+        ("o4-staffing", json!({"type": "integer", "value": "20"})),
+        (
+            "o5-robot-routing",
+            json!({"type": "integer", "value": "10"}),
+        ),
         ("o6-autoscaling", decimal("80")),
     ] {
         // FR-1014: the example holds only its envelope; the unit, model,
@@ -670,7 +672,7 @@ fn run_with_providers(
 }
 
 fn rational(numerator: &str, denominator: &str) -> Value {
-    json!({"kind": "rational", "numerator": numerator, "denominator": denominator})
+    json!({"type": "rational", "numerator": numerator, "denominator": denominator})
 }
 
 fn tank_unit(goal: &str) -> String {
@@ -858,7 +860,7 @@ fn counter_goal(goal: &str) -> impl Fn(String) -> String + '_ {
 }
 
 const DOUBLE_COSTS_FIVE: &str =
-    "minimize Reach.steps.sum(s => if s.operation = M::Op::double then 5 else 1) satisfies";
+    "minimize sum<Cost>(s in Reach.steps : if s.operation = M::Op::double then 5 else 1) satisfies";
 
 fn operations(outcome: &Value) -> Vec<String> {
     outcome["plan"]["steps"]
@@ -870,7 +872,7 @@ fn operations(outcome: &Value) -> Vec<String> {
 }
 
 /// FR-755-AC-1, FSpec FR-650-AC-1/AC-2 and FR-805-AC-7: over the counter,
-/// `length` gives `inc, double, double` at `{"integer": "3"}` and the
+/// `length` gives `inc, double, double` at `{"type": "integer", "value": "3"}` and the
 /// `double`-costs-five sum gives `inc, inc, inc, double` at 8.
 #[test]
 #[trace("TC-2105", "FR-755-AC-1")]
@@ -885,7 +887,7 @@ fn the_counter_plans_by_length_and_by_step_cost() {
     assert_eq!(operations(outcome), ["inc", "double", "double"], "{value}");
     assert_eq!(
         outcome["objective"]["value"],
-        json!({"integer": "3"}),
+        json!({"type": "integer", "value": "3"}),
         "{value}"
     );
     assert_eq!(outcome["certificate"]["type"], "potential", "{value}");
@@ -910,7 +912,7 @@ fn the_counter_plans_by_length_and_by_step_cost() {
     );
     assert_eq!(
         outcome["objective"]["value"],
-        json!({"integer": "8"}),
+        json!({"type": "integer", "value": "8"}),
         "{value}"
     );
     assert_eq!(outcome["certification"], "certified", "{value}");
@@ -1020,7 +1022,8 @@ fn the_canonical_exploration_pins_stopped_counts() {
 fn timed_plans_carry_exact_delays() {
     let (_, value) = fixture("timed-tick", &|unit| unit, json!({}));
     let outcome = &value["synthesis"];
-    names(&outcome["objective"], "quantity");
+    names(&outcome["objective"]["value"], "\"unit\":\"min\"");
+    names(&outcome["objective"]["value"], "\"numerator\":\"30\"");
     for step in outcome["plan"]["steps"].as_array().expect("steps") {
         names(&step["delay"], "\"numerator\":\"0\"");
     }
@@ -1066,7 +1069,7 @@ fn probabilistic_plans_compute_exact_probabilities() {
     assert_eq!(operations(outcome), ["try", "try"], "{value}");
     assert_eq!(
         outcome["objective"]["value"],
-        json!({"kind": "rational", "numerator": "3", "denominator": "4"}),
+        json!({"type": "rational", "numerator": "3", "denominator": "4"}),
         "{value}"
     );
 }
@@ -1114,10 +1117,13 @@ fn plan_requests_refuse_at_admission() {
         assert!(value["synthesis"].get("status").is_none(), "{value}");
     }
     let directory = tempfile::tempdir().unwrap();
-    spine::write(directory.path(), Case::AboveRange).unwrap();
+    // FSpec FR-806-AC-4: the healthy snapshot holds `root` and `child`, two
+    // objects, which the population bound of one object refuses.
+    spine::write(directory.path(), Case::Healthy).unwrap();
     std::fs::write(
         directory.path().join("unit.native"),
-        plan_unit("Int[0, 3]", "", "Reach.length >= 1"),
+        plan_unit("Int[0, 3]", "", "Reach.length >= 1")
+            + "bound HistoryBound on Config::config_history [1]\n",
     )
     .unwrap();
     let (exit, value) = write_request(
@@ -1254,7 +1260,7 @@ fn transfer_run(members: &[(&str, Value)], supply_spec: bool) -> (u8, Value) {
             );
         }
     }
-    let zero = json!({"integer": "0"});
+    let zero = json!({"type": "integer", "value": "0"});
     let snapshots = [
         (
             "spec-0.json",

@@ -21,7 +21,7 @@ Verify plan search, policy pruning, native replay, the core certificate checker 
 
 ## Expected Results
 
-- Step 1: `optimal` `inc, double, double` with `objective.value` `{"integer": "3"}`, then `optimal` `inc, inc, inc, double` with `{"integer": "8"}`, each `potential` accepted, `certified`.
+- Step 1: `optimal` `inc, double, double` with `objective.value` `{"type": "integer", "value": "3"}`, then `optimal` `inc, inc, inc, double` with `{"type": "integer", "value": "8"}`, each `potential` accepted, `certified`.
 - Step 2: `infeasible` with an accepted closure certificate; the tampered `potential` rejected at `closure`, entry 0, result `feasible` `inc, double, double`, `uncertified`; the tampered closure rejected at `closure`, entry 0, result `incomplete` with `certificate-rejected`, plan `null`, exit 22.
 - Step 3: no plan state has value 4 and replay holds the policy at every state.
 - Step 4: a method failure, exit 30, naming step 4 `double`, no `synthesis` outcome; each member refuses `unknown-member` at its `/synthesis/...` pointer, exit 20.

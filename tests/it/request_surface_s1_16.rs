@@ -219,7 +219,7 @@ fn an_inductive_enclosure_certificate_is_checked_in_the_core() {
 
 /// FR-1010-AC-3 and FSpec FR-805-AC-6: minimizing length to reach
 /// `length >= 1` gives an `optimal` one-step plan whose objective value is
-/// `{"integer": "1"}`; plan lengths `Int[0, 0]` make the goal `infeasible`
+/// `{"type": "integer", "value": "1"}`; plan lengths `Int[0, 0]` make the goal `infeasible`
 /// with a closure certificate and every no-plan member present and `null`.
 #[test]
 #[trace("TC-2860", "FR-1010-AC-3")]
@@ -246,7 +246,7 @@ fn the_planner_returns_optimal_and_infeasible_with_certificates() {
     assert_eq!(result["status"], "optimal", "{value}");
     assert_eq!(
         result["objective"]["value"],
-        json!({"integer": "1"}),
+        json!({"type": "integer", "value": "1"}),
         "{value}"
     );
     assert_eq!(result["certificate"]["type"], "potential", "{value}");
@@ -833,7 +833,7 @@ fn the_planner_minimizes_a_per_step_cost_sum() {
     assert_eq!(value["synthesis"]["status"], "optimal", "{value}");
     assert_eq!(
         value["synthesis"]["objective"]["value"],
-        json!({"integer": "2"}),
+        json!({"type": "integer", "value": "2"}),
         "{value}"
     );
     assert_eq!(
@@ -1404,7 +1404,7 @@ fn snapshot_of(directory: &Path, keys: &[&str], complete: bool) -> Value {
         .map(|key| {
             let mut object = template.clone();
             object["key"] = json!(key);
-            object["fields"]["versionNumber"] = json!({"integer": "0"});
+            object["fields"]["versionNumber"] = json!({"type": "integer", "value": "0"});
             object["fields"]["parent"] = json!({"absent": {}});
             object
         })
