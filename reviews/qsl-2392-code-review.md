@@ -78,3 +78,10 @@ intra-doc link fix and a `#![cfg(feature = "std")]` on one integration test.
 | --- | --- | --- | --- |
 | FND-001 | low | The PR body says `a_non_object_over_is_written` was un-ignored and the NoOwnerModel tests were rewritten, but after merge bacfb87a5 HEAD carries main's versions. The test is still `#[ignore = "Blocked by QSL-2220..."]`, so FR-880-AC-7 / TC-2502 coverage stays ignored. The PR does not change that, and the description should not be used to close it. | fsl-package/src/emit/tests/protocol_graph.rs:2010-2014 |
 | FND-002 | low | 11 new `#[allow(clippy::too_many_arguments)]` (not six) are added with no reason comment, on every_behavior_result, evaluate_body_value, evaluate_body, assemble_with_mode, check_sources, event, read_pending_access, access, of_rows_with_source_rows, check_with_profile_catalog_and_inputs and compose_in_mode. The repo already has 111 such allows, so this follows convention. The suppressions are still undocumented. | fsl-command/src/command.rs:2291; fsl-analyze/src/protocol_analysis/conformance.rs:741 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1, head 43b7ff3c4. The PR body now says `a_non_object_over_is_written` stays `#[ignore]` (QSL-2220) and that the NoOwnerModel rewrite is not part of the diff. |
+| FND-002 | fixed | Round 1, head 43b7ff3c4. All 11 allows now carry `reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"`. |
