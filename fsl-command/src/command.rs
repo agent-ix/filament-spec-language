@@ -1657,14 +1657,14 @@ fn run_extracted_clause_bytes(
         return Ok(None);
     }
     let request = read_clause_run_request_bytes(directory, bytes, Some(dependent_bytes))?;
-    let extraction = extraction_record(&request, &value)?;
+    let (extraction, map) = extraction_record(&request, &value)?;
     let selection = request.selection.clone();
     let report =
         fsl_replay::spine::run_clause(request).map_err(|error| RunCause::ClauseRequest {
             member: "clause".to_owned(),
             reason: error.to_string(),
         })?;
-    output::clause_report_with_extraction(report, &selection, extraction).map(Some)
+    output::clause_report_with_extraction(report, &selection, extraction, &map).map(Some)
 }
 
 /// FR-661: handle the driver's in-process `version` invocation used by the
@@ -2075,7 +2075,7 @@ fn extraction_failure(error: Box<fsl_source::Error>) -> Result<RunCause> {
 fn extraction_record(
     request: &fsl_replay::spine::ClauseRunRequest,
     envelope: &serde_json::Value,
-) -> Result<serde_json::Value> {
+) -> Result<(serde_json::Value, fsl_foundation::source_map::SourceMap)> {
     let fsl_replay::spine::ClauseRunSource::Extracted(extracted) = &request.source else {
         return Err(RunCause::ClauseRequest {
             member: "program.extraction".to_owned(),
@@ -2166,7 +2166,7 @@ fn extraction_record(
             "segments": segments,
         }
     });
-    Ok(record)
+    Ok((record, map.clone()))
 }
 
 /// Compile a `1-draft` source-only job through the spine (FR-027).

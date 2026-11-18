@@ -422,20 +422,29 @@ pub(super) fn clause_report_with_extraction(
     mut report: fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
     extraction: serde_json::Value,
+    map: &fsl_foundation::source_map::SourceMap,
 ) -> super::Result<RunResult> {
-    clause_report_with_record(&mut report, selection, Some(extraction))
+    clause_report_with_record(&mut report, selection, Some((extraction, map)))
 }
 
 fn clause_report_with_record(
     report: &mut fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
-    extraction: Option<serde_json::Value>,
+    extraction: Option<(serde_json::Value, &fsl_foundation::source_map::SourceMap)>,
 ) -> super::Result<RunResult> {
     // FR-526: a timestamped run settles its correction relation before any
     // result document is written; a refused relation writes none.
     fsl_replay::spine::settle_run_correction(report, selection)
         .map_err(RunCause::TemporalCorrection)?;
     let report = &*report;
+    let extraction = extraction
+        .map(|(mut record, map)| {
+            if let Some(regions) = extraction_original_regions(report, selection, map)? {
+                record["original_regions"] = Value::Array(regions);
+            }
+            Ok(record)
+        })
+        .transpose()?;
     let bytes = fsl_replay::spine::write_clause_run_result_for_with_extraction(
         report,
         Some(selection),
@@ -452,6 +461,54 @@ fn clause_report_with_record(
         requirements: None,
         sources: crate::Sources::default(),
     })
+}
+
+#[cfg(feature = "quire-extraction")]
+fn extraction_original_regions(
+    report: &fsl_replay::spine::ClauseRunReport,
+    selection: &fsl_replay::spine::ClauseRunSelection,
+    map: &fsl_foundation::source_map::SourceMap,
+) -> super::Result<Option<Vec<Value>>> {
+    use fsl_replay::spine::RefusalLocusRead;
+
+    let bytes = fsl_replay::spine::write_clause_run_result_for(report, Some(selection))
+        .map_err(RunCause::ClauseOutput)?;
+    let document: Value = serde_json::from_slice(&bytes).map_err(RunCause::Output)?;
+    let Some(locus) = document.pointer("/disposition/refusal/locus").cloned() else {
+        return Ok(None);
+    };
+    let locus: RefusalLocusRead = serde_json::from_value(locus).map_err(RunCause::Output)?;
+    let body = map.body();
+    let span = match locus {
+        RefusalLocusRead::Region { source, start, end }
+            if source.authority == body.identity().authority
+                && source.identity == body.identity().identity =>
+        {
+            let (Ok(start), Ok(end)) = (usize::try_from(start), usize::try_from(end)) else {
+                return Ok(None);
+            };
+            fsl_foundation::Span { start, end }
+        }
+        RefusalLocusRead::Located { file, span } if file == body.path() => fsl_foundation::Span {
+            start: span.start.byte,
+            end: span.end.byte,
+        },
+        _ => return Ok(None),
+    };
+    let Some(regions) = map.map_regions(body, span) else {
+        return Ok(None);
+    };
+    let original = map.original();
+    let mapped = regions
+        .into_iter()
+        .map(|region| {
+            let start = usize::try_from(region.start()).ok()?;
+            let end = usize::try_from(region.end()).ok()?;
+            let span = original.locate(fsl_foundation::Span { start, end })?;
+            Some(serde_json::json!({"start": span.start, "end": span.end}))
+        })
+        .collect::<Option<Vec<_>>>();
+    Ok(mapped.filter(|regions| !regions.is_empty()))
 }
 
 /// FR-096/FR-100: `Evaluation.location`'s `origin`, rendered by kind.

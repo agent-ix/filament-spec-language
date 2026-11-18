@@ -438,8 +438,7 @@ fn the_run_command_preserves_an_unavailable_markdown_extraction() {
     assert_eq!(exit, 20, "{value}");
     assert_eq!(value["stage"], "quire", "{value}");
     assert_eq!(
-        value["details"]["original"]["identity"],
-        "ix://agent-ix/spec",
+        value["details"]["original"]["identity"], "ix://agent-ix/spec",
         "{value}"
     );
     assert_eq!(
@@ -496,6 +495,85 @@ fn the_run_command_writes_a_strictly_readable_markdown_extraction_record() {
         panic!("expected a clause result");
     };
     assert_eq!(record.extraction(), Some(extraction));
+}
+
+/// FR-031-AC-8 (TC-109): a compile refusal's body span is mapped into exact
+/// original-document coordinates in the command's extraction record.
+#[test]
+#[trace("TC-109", "FR-031-AC-8")]
+fn the_run_command_maps_a_compile_refusal_to_original_markdown_regions() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let markdown = "# Ω Doc\n\n## Invariants\n\n### compile_error\n```ix:native\nthis is not an FSL unit\n```\n";
+    std::fs::write(directory.path().join("spec.md"), markdown).unwrap();
+    let mut request = current_clause_request();
+    request["request"]["program"] = json!({
+        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "ix://agent-ix/spec",
+            "document": "Doc", "formal_revision": 1},
+        "extraction": {"body": {"authority": "agent-ix", "identity": "body",
+            "document": "Body"}},
+        "clauses": [{"clause": "compile_error", "package": spine::PACKAGE_IDENTITY}]
+    });
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+
+    let result = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+        .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
+    assert_eq!(result.exit_code, 20, "{}", result.value);
+    let document = result.value.as_value();
+    assert_eq!(document["disposition"]["stage"], "compile", "{document}");
+    let locus = &document["disposition"]["refusal"]["locus"];
+    let (body_start, body_end) = if locus["kind"] == "located" {
+        (
+            locus["span"]["start"]["byte"].as_u64().unwrap() as usize,
+            locus["span"]["end"]["byte"].as_u64().unwrap() as usize,
+        )
+    } else {
+        (
+            locus["start"].as_u64().unwrap() as usize,
+            locus["end"].as_u64().unwrap() as usize,
+        )
+    };
+    let extraction = &document["extraction"];
+    let source = fsl_foundation::Source::read(
+        SourceIdentity::new("agent-ix", "ix://agent-ix/spec"),
+        "spec.md",
+        markdown.as_bytes(),
+        markdown.len(),
+    )
+    .unwrap();
+    let expected: Vec<Value> = extraction["map"]["segments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|segment| {
+            let segment_body_start = segment["body_start"].as_u64()? as usize;
+            let segment_body_end = segment["body_end"].as_u64()? as usize;
+            let overlap_start = body_start.max(segment_body_start);
+            let overlap_end = body_end.min(segment_body_end);
+            (overlap_start < overlap_end).then(|| {
+                let segment_original_start = segment["original_start"].as_u64().unwrap() as usize;
+                let original_start = segment_original_start + overlap_start - segment_body_start;
+                let original_end = original_start + overlap_end - overlap_start;
+                let span = source
+                    .locate(fsl_foundation::Span {
+                        start: original_start,
+                        end: original_end,
+                    })
+                    .unwrap();
+                json!({"start": span.start, "end": span.end})
+            })
+        })
+        .collect();
+    assert!(
+        !expected.is_empty(),
+        "body refusal locus maps through the extraction record"
+    );
+    assert_eq!(
+        extraction["original_regions"],
+        json!(expected),
+        "{document}"
+    );
 }
 
 /// FR-663-AC-1 (TC-1745): a completed parse's outcome document carries the
