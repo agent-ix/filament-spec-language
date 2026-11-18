@@ -1582,7 +1582,7 @@ fn run_configured(
     if request_has_extraction(path, limits.request_bytes)? {
         let request = read_clause_run_request(path)?;
         let selection = request.selection.clone();
-        let report = fsl_replay::spine::run_clause(*request).map_err(|error| {
+        let report = fsl_replay::spine::run_clause(request).map_err(|error| {
             Box::new(RunError {
                 cause: RunCause::ClauseRequest {
                     member: "clause".to_owned(),
