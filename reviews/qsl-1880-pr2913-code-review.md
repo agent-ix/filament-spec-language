@@ -49,3 +49,14 @@ Confined runs in a fresh worktree at the exact head, cargo under `flock /tmp/car
 - `cargo test -p fsl-package --lib source_objects`: 15 passed, 8 ignored (all QSL-2347).
 - `cargo test -p fsl-package --test source_object_identity_rows_public`: 1 passed, 1 ignored (QSL-2347).
 - `cargo test -p filament-spec-language --features checked-handoff --test it source_object_emission`: 2 passed, 1 ignored (QSL-2347).
+
+## Dispositions
+
+Round 1, verified against fix commit `f1111b5cb` (head `f1111b5cb21f09f96098084de7eed7057fd25aa1`). Focused tests green: fsl-package `source_objects` 15 passed / 8 ignored (QSL-2347), public identity rows 1 passed / 1 ignored; clippy on fsl-package clean; touched files rustfmt-clean (remaining fmt diffs are on origin/main, outside this PR).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `source_object_identity_rows_roundtrip_through_qc30_intake` now forges absent, extra-member, missing-member and repeated `operations` and asserts `Malformed { member: SourceObjects }` for each. |
+| FND-002 | fixed | The effect-row filter now requires `effect["declaring"] == node` as well as `provenance.member == identity`. |
+| FND-003 | fixed | An unparsable own-operation key now returns `EmitRefusal::SourceMapInvariant` instead of being skipped. |
+| FND-004 | fixed | `serialized_identities` takes the expected object count and asserts `member_facts.len() == objects` and one fact per object. |

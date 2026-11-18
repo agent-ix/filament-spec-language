@@ -39,3 +39,13 @@ PASS with low findings. FR-569, FR-531 and TC-1408 agree on the member name, the
 | FR-569-AC-11 | context_only | S4 [...] does not refuse the unit for declaring an `object`. |
 
 - Compatibility: the identities/4 format string is unchanged while the row gains a required member, so pre-change /4 files read as `Malformed`. This is intentional (no-shims policy) and FR-531's "all members required, no empty fallback" wording covers it; not a finding.
+
+## Dispositions
+
+Round 1, verified against fix commit `f1111b5cb`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-569 now reads "the `source_identity` of its source-operation row (FR-390) where one exists". |
+| FND-002 | fixed | FR-569 now states the reader checks only the member set and types of `operations` and does not join entries to `operation_effects` or source-operation rows; the correspondence is the writer's obligation. |
+| FND-003 | fixed | TC-1408 scope now says the no-intake part of FR-569-AC-16 (emission entries, their `operation_effects` rows, the reader's malformed-member refusal) runs now. |

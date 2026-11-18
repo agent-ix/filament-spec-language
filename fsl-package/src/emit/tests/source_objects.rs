@@ -602,6 +602,46 @@ fn source_object_rows_carry_their_own_operations_and_query_flag() {
     );
 }
 
+/// FR-569-AC-16: fixture D, which selects the model-owned `Order` and declares
+/// no source object, emits no source-object row and so no operation entry.
+#[trace("FR-569-AC-16", "TC-1408")]
+#[test]
+fn fixture_d_emission_has_no_source_object_operations() {
+    let text = format!(
+        "{HEADER}model M = \"test/orders\";\nfunction f using P (x: Boolean): Boolean pure {{ x }}\n"
+    );
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:d"),
+        "program.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 admits the unit");
+    assert_eq!(parsed.diagnostics(), []);
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let selected = fsl_semantics::model::intake::SelectedModels::fixture(
+        "M",
+        fsl_foundation::Span { start: 0, end: 1 },
+        orders_model::model_package(false),
+        fsl_semantics::model::accounting::ModelNormalizationLimits::UNLIMITED,
+    )
+    .expect("the model admits");
+    let declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "pkg".to_owned(),
+        unit,
+        selected,
+        Vec::new(),
+    )
+    .expect("D assembles");
+    let graph = declarations
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("D checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("D emits");
+    assert!(emission.selected_source_object_rows().is_empty());
+    assert!(emission.source_object_operations().is_empty());
+}
+
 #[trace("FR-088-AC-13", "FR-569-AC-6", "TC-2360")]
 #[test]
 fn source_spelling_registry_changes_do_not_change_emitted_package_bytes() {

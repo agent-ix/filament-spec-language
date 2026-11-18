@@ -35,3 +35,13 @@ PASS with one medium gap. FR-569-AC-16 has a running tagged test for own-vs-inhe
 
 - Tagged tests for FR-569-AC-16: `source_object_rows_carry_their_own_operations_and_query_flag` (runs), `source_object_operations_roundtrip_through_qc30_intake` (ignored, QSL-2347), `public_source_object_rows_constructor_serializes_own_operations` (ignored, QSL-2347).
 - The reader-rejection clause of AC-16 is untested; recorded as FND-001 of the code-review artifact SR-2026111612172400000035, not duplicated here.
+
+## Dispositions
+
+Round 1, verified against fix commit `f1111b5cb`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | Fixture S part fixed: `source_object_rows_carry_their_own_operations_and_query_flag` now emits TC-1408 fixture S's object block verbatim and asserts Order size/count/scaled/bump, Sub size/scaled, Shape []. Still missing: AC-16's "D's emission has none" is asserted by no test (one emit of the `orders_model` fixture D with `source_object_operations().is_empty()` closes it). |
+
+The coder flagged that the file-level `S` constant in `source_objects.rs` names `measure`/`tally` where TC-1408 fixture S says `size`/`count`. Acceptable for this PR, not a finding against it: the new AC-16 test uses the TC text, and the drift comes from #2826 (fc5ada4e8, QSL-2340) on main, outside this diff. It is worth a separate ticket to realign the constant with TC-1408 or the reverse.
