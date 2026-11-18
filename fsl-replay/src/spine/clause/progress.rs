@@ -142,7 +142,7 @@ pub struct ProgressLimitReached {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProgressLedgerEntry {
     assertion: ProgressAssertion,
-    covered: eval::CoveredList,
+    covered: crate::spine_eval_api::SpineEvalCoveredList,
 }
 
 impl ProgressLedgerEntry {

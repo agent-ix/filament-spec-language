@@ -3150,7 +3150,10 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
 /// has no counterexample, or the refusal is an internal fault, which has no
 /// `temporal` member.
 pub fn temporal_disposition_json(
-    result: Result<&fsl_eval::temporal::TemporalOutcome, &fsl_eval::temporal::TemporalRefusal>,
+    result: Result<
+        &crate::spine_eval_api::SpineEvalTemporalOutcome,
+        &crate::spine_eval_api::SpineEvalTemporalRefusal,
+    >,
     counterexample: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, NativeRunResultError> {
     use super::{TemporalUndefinedCause, TemporalVerdict};
