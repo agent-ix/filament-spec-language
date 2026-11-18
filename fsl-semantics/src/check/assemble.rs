@@ -1316,6 +1316,10 @@ impl TypeNames for UnitNames<'_> {
         self.spellings.types(self.unit, name, &self.names.types)
     }
 
+    fn unbounded_rational(&self, name: &str) -> bool {
+        self.spellings.unbounded_rational(self.unit, name)
+    }
+
     fn object_type_named(&self, name: &str) -> Option<EffectiveId> {
         self.spellings.object_type(self.unit, name)
     }
@@ -3298,6 +3302,26 @@ fn check_names(
                 cause: AssemblyCause::TimedNotChecked(TimedConstruct::Clock),
                 span: form.span,
             }),
+            // FSpec FR-144-AC-33: the unbounded package `Rational` has no
+            // canonical-key row, so it is no map key; it is refused at the key
+            // type rather than as a name with no checked type.
+            TypeFormHead::Builtin(BuiltinType::Map) => {
+                for (index, argument) in form.arguments.iter().enumerate() {
+                    match &argument.head {
+                        TypeFormHead::Name(name)
+                            if index == 0 && spellings.unbounded_rational(source, &name.name) =>
+                        {
+                            errors.push(AssemblyError {
+                                cause: AssemblyCause::IllFormedBounds(
+                                    TypeFormFault::IneligibleMapKey,
+                                ),
+                                span: argument.span,
+                            });
+                        }
+                        _ => stack.push(argument),
+                    }
+                }
+            }
             TypeFormHead::Builtin(BuiltinType::Quantity) => {
                 if let Some(target) = form.arguments.first() {
                     let scope = names.in_unit(spellings, source);
@@ -3366,8 +3390,7 @@ fn check_names(
                 | BuiltinType::Rational
                 | BuiltinType::Decimal
                 | BuiltinType::Text
-                | BuiltinType::Option
-                | BuiltinType::Map,
+                | BuiltinType::Option,
             )
             | TypeFormHead::Collection(_)
             | TypeFormHead::Population
@@ -4654,6 +4677,26 @@ impl PackageDeclarations {
                         let member = name.strip_prefix(&prefix)?;
                         let id = graph_unit_ids.get(&imported_unit.key)?.clone();
                         Some((member.to_owned(), id))
+                    })
+                    .collect(),
+            );
+            let domain_package = model.view.domain_package();
+            model_spellings.set_unbounded_rationals(
+                package,
+                domain_package
+                    .records
+                    .iter()
+                    .filter_map(|record| match record {
+                        DomainPackageRecord::ScalarType(scalar)
+                            if matches!(
+                                scalar.domain,
+                                ScalarValueDomain::Rational { domain: None, .. }
+                            ) =>
+                        {
+                            type_identity_segment(&scalar.key.package, &scalar.key.node)
+                                .map(str::to_owned)
+                        }
+                        _ => None,
                     })
                     .collect(),
             );

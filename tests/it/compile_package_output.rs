@@ -254,7 +254,6 @@ fn check_modes(path: &Path) -> Vec<String> {
 /// a value other than `"linked"` or `"kernel"` refuses at stage `request`.
 #[test]
 #[trace("TC-2975", "FR-952-AC-5")]
-#[ignore = "QSL-2420: the compile request check_mode member not implemented yet"]
 fn a_compile_request_selects_kernel_checking() {
     let unit = |with_r: bool| {
         format!(
