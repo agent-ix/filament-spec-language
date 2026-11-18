@@ -275,7 +275,6 @@ mod tests {
         )
         .expect("selects")
         .into_value();
-        let function_modes = BTreeMap::from([("r".to_owned(), CheckMode::Kernel)]);
         let checked = spine::check_units_with_options(
             &admitted,
             "fixture".to_owned(),
@@ -283,7 +282,6 @@ mod tests {
             &dependencies,
             spine::UnitCheckOptions {
                 check_mode: Some(CheckMode::Kernel),
-                function_modes: Some(&function_modes),
                 ..spine::UnitCheckOptions::default()
             },
             limits.spine,
@@ -450,44 +448,34 @@ mod tests {
     #[test]
     fn a_member_request_carries_the_process_provider_identity() {
         let source = SOURCE.replace(
-            "function q",
-            "function r using v(a: Int[0, 9], b: Int[0, 9]): Int[0, 9] pure { a mod b }\nfunction q",
+            "function q using v(x: Int[0, 9]): Integer pure { x + 1 }",
+            "function q using v(x: Integer): Integer pure { 6 mod x }",
         );
         let call = Call {
             clocks: Default::default(),
             wire_arguments: Vec::new(),
             snapshot: None,
-            function: "r".to_owned(),
-            arguments: vec![
-                crate::CallArgument {
-                    parameter: "a".to_owned(),
-                    value: Value::Integer(Integer::from(7_i64)),
-                },
-                crate::CallArgument {
-                    parameter: "b".to_owned(),
-                    value: Value::Integer(Integer::from(0_i64)),
-                },
-            ],
+            function: "q".to_owned(),
+            arguments: vec![crate::CallArgument {
+                parameter: "x".to_owned(),
+                value: Value::Integer(Integer::from(0_i64)),
+            }],
             accounting: default_accounting(1_000_000),
             supplied: filament_semantic_value::supplied_stop::SuppliedLimits::default(),
             backend: filament_eval::ExecutionBackendChoice::Interpreter,
         };
         let result = run_with_replay_context_kernel(&source, CallerLimits::default(), &call);
         assert!(matches!(result.outcome(), CallOutcome::Undefined { .. }));
-        let (_, parameters) = declaration(&source, "r");
+        let (_, parameters) = declaration(&source, "q");
         let member = result.requirements().members()[0].clone();
-        let bounds = parameters.iter().cloned().map(bound_at).collect::<Vec<_>>();
-        let assignments = input(parameters[0].clone(), 7)
-            .into_iter()
-            .chain(input(parameters[1].clone(), 0))
-            .collect();
+        let bounds = [bound_at(parameters[0].clone())];
         let wire = result
             .context()
             .request(
                 member.request_index(),
                 &bounds,
                 &plugin(),
-                assignments,
+                input(parameters[0].clone(), 0),
             )
             .expect("an application item");
         let expected = crate::execute::process_provider_obligation(
