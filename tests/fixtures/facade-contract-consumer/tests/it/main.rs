@@ -936,7 +936,14 @@ mod runtime {
     fn cf_rt_01_01_emit_plan_root_exposes_plan_emission_and_checked_unit() {
         let source = fsl_replay::SourceIdentity::new("consumer", "plan-root");
         let package_name = fsl_replay::LibraryName::new("consumer").expect("library name");
-        let model = code_generation::model_with_touch();
+        let mut model: serde_json::Value =
+            serde_json::from_slice(include_bytes!("../../../spine-model.semantic-ir.json"))
+                .expect("model fixture JSON");
+        model["types"]
+            .as_array_mut()
+            .expect("model types")
+            .retain(|ty| ty["identity"] == "ix://acme/orders/Widget");
+        let model = serde_json::to_vec(&model).expect("single-object model serializes");
         let packages =
             fsl_semantics::model::intake::package_input([model.as_slice()]).expect("model intake");
         let unit = "language \"ix:native\" edition \"1-draft\";\n\
