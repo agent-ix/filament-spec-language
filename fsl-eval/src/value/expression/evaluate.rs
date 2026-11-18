@@ -859,6 +859,9 @@ pub(crate) struct Machine<'a, 'm, N> {
     /// FR-1000: this subject's fixed/created decision for pending reference
     /// literals; absent outside model-state evaluation.
     reference_bindings: Option<&'a ReferenceBindings>,
+    /// FR-1000/W38: the subject table for each hyper component. A created
+    /// literal selects the table indexed by its checked `@ trace` location.
+    component_reference_bindings: Option<&'a [&'a ReferenceBindings]>,
 }
 
 /// The component environments a hyper atom's condition reads (FR-487
@@ -1070,6 +1073,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             absent_parameters: Vec::new(),
             components: None,
             reference_bindings: None,
+            component_reference_bindings: None,
         }
     }
 
@@ -1077,6 +1081,16 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// model subject that owns the current state.
     pub(crate) fn with_reference_bindings(mut self, bindings: &'a ReferenceBindings) -> Self {
         self.reference_bindings = Some(bindings);
+        self
+    }
+
+    /// W38: bind hyper literal occurrences to the component table selected
+    /// by the checked innermost `@ trace` component.
+    pub(crate) fn with_component_reference_bindings(
+        mut self,
+        bindings: &'a [&'a ReferenceBindings],
+    ) -> Self {
+        self.component_reference_bindings = Some(bindings);
         self
     }
 
@@ -2271,9 +2285,30 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 object_type,
                 identity,
             } => {
-                let binding = self
-                    .reference_bindings
-                    .and_then(|bindings| bindings.get(object_type, identity))
+                let key = (object_type, identity);
+                let component_binding = self
+                    .components
+                    .and_then(|components| {
+                        node.location()
+                            .and_then(|location| components.reads.get(location))
+                    })
+                    .and_then(|component| {
+                        self.component_reference_bindings
+                            .and_then(|bindings| bindings.get(*component).copied())
+                    })
+                    .and_then(|bindings| bindings.get(key.0, key.1));
+                let binding = component_binding
+                    .or_else(|| {
+                        self.reference_bindings
+                            .and_then(|bindings| bindings.get(key.0, key.1))
+                    })
+                    .or_else(|| {
+                        self.component_reference_bindings.and_then(|bindings| {
+                            bindings
+                                .iter()
+                                .find_map(|bindings| bindings.get(key.0, key.1))
+                        })
+                    })
                     .ok_or_else(|| invariant("reference-literal-subject-binding-exists"))?;
                 match binding {
                     ReferenceBinding::Fixed(reference) => {

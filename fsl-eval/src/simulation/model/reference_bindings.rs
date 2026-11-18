@@ -121,6 +121,40 @@ impl ReferenceBindings {
                 }
             }
         }
+        // Hyper-atom literals carry a component only when S3 found an
+        // enclosing `@ trace`. W38 allows fixed values anywhere, but a
+        // created-object lookup without that component is barred.
+        for clause in graph.hyper_clauses() {
+            for (index, formula_node) in clause.body().nodes().iter().enumerate() {
+                if !matches!(formula_node, FormulaNode::Holds { .. }) {
+                    continue;
+                }
+                let atom = FormulaNodeId::from_arena_index(index);
+                let Some((condition, _)) = clause.condition(atom) else {
+                    continue;
+                };
+                collect_literals(graph, condition, &mut literals);
+                let Some(components) = clause.component_reads(atom) else {
+                    continue;
+                };
+                let mut pending = vec![condition];
+                while let Some(node) = pending.pop() {
+                    pending.extend(node.children());
+                    if let NodeKind::ReferenceLiteral {
+                        object_type,
+                        identity,
+                    } = node.kind()
+                    {
+                        if !components.contains_key(node.location()) {
+                            barred.insert(ReferenceLiteralKey {
+                                object_type: object_type.clone(),
+                                identity: identity.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
         for protocol in graph.protocols() {
             let slots = &protocol.slots;
             for body in &slots.bodies {

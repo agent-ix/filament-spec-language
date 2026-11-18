@@ -22,15 +22,15 @@ use filament_semantic_value::catalog::InternalFault;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckedHyperClause, FormulaNodeId};
 
-use super::contracts::{verdict, Verdict};
+use super::contracts::{Verdict, verdict};
 use super::letters::{LettersRefusal, Observed};
 use super::walk::{rows_of, stop};
-use super::{state_document, ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
+use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem, state_document};
 use crate::hyper::{HyperLetters, HyperSlot, ParameterBinding};
 use crate::model_subject::{AtomStop, ModelInstance};
 use crate::simulation::StateKey;
 use crate::temporal::AtomReading;
-use crate::value::CheckedPackageEvaluation;
+use crate::value::evaluate_hyper_holds_with_component_bindings;
 
 /// A component's observation of the state it was last read at.
 type Cached = Option<(StateKey, Rc<Observed>)>;
@@ -250,13 +250,24 @@ impl HyperLetters for CheckedHyperLetters<'_, '_> {
             .iter()
             .map(|observed| &observed.observation.environment)
             .collect();
-        let evaluation = self
-            .package
-            .evaluate_hyper_holds(self.clause, atom, slots, &environments, meter)
-            .map_err(|failure| match failure {
-                CallFailure::Fault(internal) => AtomStop::Fault(internal),
-                _ => fault("the-evaluation-is-admitted"),
-            })?;
+        let reference_bindings: Vec<_> = self
+            .systems
+            .iter()
+            .map(|system| &system.reference_bindings)
+            .collect();
+        let evaluation = evaluate_hyper_holds_with_component_bindings(
+            self.package,
+            self.clause,
+            atom,
+            slots,
+            &environments,
+            &reference_bindings,
+            meter,
+        )
+        .map_err(|failure| match failure {
+            CallFailure::Fault(internal) => AtomStop::Fault(internal),
+            _ => fault("the-evaluation-is-admitted"),
+        })?;
         match verdict(&evaluation.outcome) {
             Verdict::True => Ok(AtomReading::True),
             Verdict::False => Ok(AtomReading::False),
