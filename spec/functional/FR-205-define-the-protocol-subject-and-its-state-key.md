@@ -124,7 +124,15 @@ has already seen instead of a new one.
   and only if the thread rests at its retry point, its attempt count is below
   the template's `attempts n`, the template's retry relation reads its
   `earlier` binder, and no step of the template's commit node has occurred in
-  its instance (ADR-027 PS-8, ST-11).
+  its instance (ADR-027 PS-8, ST-11). That attempt record is the retry
+  relation's `earlier` input only. Separately, `control` SHALL hold, for each
+  compensation registration, its attempt history: one entry per dispatched
+  attempt (`cattempt`, `cfail` or `ctimeout`), in dispatch order, with the
+  attempt's record, its outcome and its `retry_of` (FR-893), kept from the
+  attempt's step until the instance finishes and removed with the
+  registration (ADR-027 PS-8, AE-3). Two states that differ in any dispatched
+  attempt's record, outcome or `retry_of` therefore have different keys,
+  whether or not the retry relation reads `earlier`.
 - Thread, instance, registration and nesting counts SHALL have no ceiling
   of their own; the run's method bounds and resource limits (FR-209, FR-215) are
   the only bounds.
