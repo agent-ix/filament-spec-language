@@ -711,7 +711,6 @@ fn a_required_clause_over_an_undefined_atom_is_refuted_as_undefined() {
 /// settles `proved` with kind `holds` and 3 replayed steps.
 #[trace("TC-2965", "FR-941-AC-4")]
 #[test]
-#[ignore = "QSL-2272: spec conflict - FR-941-AC-4 expects `holds` for `eventually holds(k.r1 = k.r1)` under the infinite-trace profile, but FR-328 (AC-1 and the 'every other case' rule, including a formula outside the safety fragment whose prefix already satisfies it) returns `Pending`; the evaluator follows FR-328. Question for the spec: does a prefix that already satisfies a liveness formula settle `holds` (amend FR-328) or `pending` (amend FR-941-AC-4)?"]
 fn an_eventually_clause_satisfied_by_the_replayed_prefix_holds_under_the_infinite_trace_profile() {
     let steps = order_steps(&[StepKind::Send, StepKind::Receive, StepKind::Finish]);
     let run = replay_item_over(

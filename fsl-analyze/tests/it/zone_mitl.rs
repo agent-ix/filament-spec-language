@@ -261,7 +261,6 @@ fn nested_until_operators_compose() {
 /// replays, and `until[4 ms, *]` is refuted by the server deadline.
 #[trace("TC-2969", "FR-1034-AC-3")]
 #[test]
-#[ignore = "QSL-2408: zone search for [q, *] (lower-bound-only clock) not implemented yet"]
 fn open_upper_intervals_are_decided_by_zone_search() {
     let world = |body: &str| {
         rpc_claim(
