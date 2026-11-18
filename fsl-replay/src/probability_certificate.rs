@@ -453,7 +453,7 @@ pub fn region_probability_product_key(
             json!([
                 identity,
                 (value / subdivisions).to_string(),
-                (cap / subdivisions).to_string(),
+                cap.div_ceil(subdivisions).to_string(),
                 fraction_rank(value, cap)
             ])
         })
@@ -1714,6 +1714,53 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[trace("FSpec-FR-752-AC-1")]
+    #[test]
+    fn region_key_separates_largest_constant_from_saturated_clock() {
+        let key_at_constant = region_probability_product_key(RegionProductKeyInput {
+            binding: None,
+            discrete: json!("model"),
+            unit: json!("unit"),
+            scale: 1,
+            subdivisions: 3,
+            clocks: vec![RegionClockKey {
+                identity: json!(["type", "clock", "receiver"]),
+                value: 6,
+                cap: 7,
+            }],
+            deadline: None,
+            tail: DigitalTail::Running,
+            monitor: None,
+            accumulator: None,
+            pending: None,
+            kind: RegionKeyKind::Region,
+            corner: None,
+        })
+        .expect("the exact largest constant encodes");
+        let key_saturated = region_probability_product_key(RegionProductKeyInput {
+            binding: None,
+            discrete: json!("model"),
+            unit: json!("unit"),
+            scale: 1,
+            subdivisions: 3,
+            clocks: vec![RegionClockKey {
+                identity: json!(["type", "clock", "receiver"]),
+                value: 7,
+                cap: 7,
+            }],
+            deadline: None,
+            tail: DigitalTail::Running,
+            monitor: None,
+            accumulator: None,
+            pending: None,
+            kind: RegionKeyKind::Region,
+            corner: None,
+        })
+        .expect("the saturated clock encodes");
+
+        assert_ne!(key_at_constant, key_saturated);
     }
 
     #[trace("TC-636")]
