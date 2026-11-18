@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use filament_exact::{Cancel, Meter, Value, ValueType};
+use filament_exact::{Cancel, Meter, Value};
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::location::ExpressionOwner;
 use fsl_analyze::model_check::{
@@ -42,7 +42,7 @@ use fsl_replay::{
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::model_request::ModelRequest;
-use fsl_semantics::check::{CheckCause, FormulaNodeId, ProtocolAnchorCause};
+use fsl_semantics::check::{CheckCause, FormulaNodeId};
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 use serde_json::Value as Json;
@@ -2412,61 +2412,37 @@ fn an_attempt_binder_is_bound() {
     }));
 }
 
-/// FR-882-AC-4: S3 refuses even an unused attempt result binder whose type
-/// differs from the operation result, or whose operation has no result.
+/// FR-882-AC-4 (TC-2506): an attempt binder is bound to the attempt's
+/// application record whatever its declared type, so the effect of an
+/// attempt over a void operation, and of one whose binder type differs from
+/// the operation's result type, enables and the run finishes (ADR-027 ST-1,
+/// ST-2).
 #[trace("TC-2506", "FR-882-AC-4")]
 #[test]
-fn attempt_result_binders_must_match_the_operation_result_at_s3() {
-    fn refusal_for(operation: &str, contracts: &str, binder_type: &str) -> (CheckCause, String) {
-        let run = format!(
-            "sequence Main {{ attempt T by w on M::Cell::{operation} contracts [{contracts}] \
-             as (t: {binder_type}) {{ true }}; }}"
+fn an_effect_enables_whatever_the_binder_type() {
+    for run in [
+        // A void operation under a Boolean binder.
+        "sequence Main { attempt T by w on M::Cell::bump contracts [BumpPost] \
+         as (t: Boolean) { true }; effect Fx of T as (e: Boolean) { true }; }",
+        // A Boolean-returning operation under an Integer binder.
+        "sequence Main { attempt T by w on M::Cell::flag contracts [FlagPre, FlagPost] \
+         as (t: Integer) { true }; effect Fx of T as (e: Boolean) { true }; }",
+    ] {
+        let world = World::new(&unit(ORIGIN, "", "", run), &["c"], &[0]);
+        let subject = world.subject();
+        let model =
+            ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
+        let system = ProtocolSystem::new(model, &subject, Sc)
+            .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
+        assert!(
+            reachable(&system).iter().any(|state| {
+                state.steps.iter().any(|(transition, _)| {
+                    transition.kind() == StepKind::Finish && transition.node() == Some("Done")
+                })
+            }),
+            "{run}: the effect enables and the run finishes"
         );
-        let refusals = check_refusals(&unit(ORIGIN, "", "", &run));
-        let [(refusal, Some(at))] = refusals.as_slice() else {
-            panic!("one S3 refusal at the binder: {refusals:?}");
-        };
-        assert_eq!(at, "t");
-        (refusal.cause.clone(), at.clone())
     }
-
-    let (integer_refusal, _) = refusal_for("flag", "FlagPre, FlagPost", "Integer");
-    assert_eq!(
-        (integer_refusal.code(), integer_refusal.cause()),
-        (Code::IllTyped, Some("type-mismatch")),
-    );
-    let CheckCause::ProtocolAnchor(cause) = integer_refusal else {
-        panic!("the refusal retains the attempt binder types: {integer_refusal:?}");
-    };
-    let ProtocolAnchorCause::AttemptBinderType {
-        expected_result,
-        actual_result,
-        ..
-    } = cause.as_ref()
-    else {
-        panic!("the refusal names an attempt result binder: {cause:?}");
-    };
-    assert_eq!(expected_result.as_deref(), Some(&ValueType::Boolean));
-    assert_eq!(actual_result.as_ref(), &ValueType::Integer);
-
-    let (void_refusal, _) = refusal_for("touch", "TouchPre", "Boolean");
-    assert_eq!(
-        (void_refusal.code(), void_refusal.cause()),
-        (Code::IllTyped, Some("type-mismatch")),
-    );
-    let CheckCause::ProtocolAnchor(cause) = void_refusal else {
-        panic!("the refusal retains the no-result mismatch: {void_refusal:?}");
-    };
-    let ProtocolAnchorCause::AttemptBinderType {
-        expected_result,
-        actual_result,
-        ..
-    } = cause.as_ref()
-    else {
-        panic!("the refusal names the attempt result binder: {cause:?}");
-    };
-    assert_eq!(expected_result, &None);
-    assert_eq!(actual_result.as_ref(), &ValueType::Boolean);
 }
 
 /// FR-882-AC-7 (TC-2505): every remaining `Unsupported` variant has an

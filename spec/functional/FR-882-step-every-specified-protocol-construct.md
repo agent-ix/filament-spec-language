@@ -62,12 +62,11 @@ this requirement does not change.
   `over` value of the request it was started for (FR-209). A type with no
   finite domain is refused by the step-binder pre-check (ADR-027 TS-5), as
   any unenumerable binder type is.
-- **Attempt binders.** S3 admits an attempt binder only when its type is the
-  operation's result type (FR-218, Attempts), and refuses any other binder
-  type with `ill_typed`/`type-mismatch` at the binder. The refusal retains
-  `expected`, the result type, and `actual`, the binder's type, or no result
-  for an operation that returns none. Every admitted attempt binder is
-  therefore bound by ST-1, and the stepper never meets an unbound one.
+- **Attempt binders.** S3 admits an attempt binder of any type: the binder
+  names the attempt's application record (ADR-027 ST-1, PS-5; FSpec FR-426 and
+  FR-432: the receiver, the arguments and the result), not the operation's
+  result. Every attempt step binds it to that record. Whether a read of the
+  binder is well typed is a separate check.
 - **Attempt footprints under a weak `parallel`.** An attempt's access is
   classified (FR-220) by its FR-155 footprint. When FR-155 derives no
   footprint for the application, for example for a body it cannot read
@@ -126,7 +125,7 @@ Each one names a limit that a request or a model sets, not a missing design:
 | FR-882-AC-1 | Over a protocol whose last step is `finish` and which holds a compensation template activated under `on each`, the reachable states hold `finish` steps and one compensation thread per activation (ADR-027 §7.1's `Pay` under `on each` with triggers 0 and 1), and no checked control has an unstepped class. | Test (TC-2505) |
 | FR-882-AC-2 | A `choice` guard that calls a Kernel-checked function whose body divides by a protocol capture equal to 0 at the first state (a capture `c` bound to `0`, the guard calling `q(c)` for `function q using v(x: Integer): Integer pure { 6 mod x }`) ends the deadlock-freedom check with `UndefinedEvaluation` at the `choice`, settled `refuted` with an empty-prefix counterexample under `origin` and an `activate`-only prefix under `each`, never `unsupported`. The division sits in the function body because a bare `6 mod (1 - 1)` in a capture is refused `Unproved(Nonzero)` at S3 under Linked before stepping (FR-495-AC-3), so the body is Kernel-checked (FR-952) and its function node records `check_mode: kernel` (FR-098-AC-34). | Test (TC-2505) |
 | FR-882-AC-3 | A protocol `over (n: Int[0, 3]) on origin` has four initial instances, one per value. A `check` that reads `n > 1` is passed by two of them and blocks two, so deadlock freedom is refuted with the instance `n = 0` as the first counterexample. A protocol over `Boolean` has two initial instances. | Test (TC-2506) |
-| FR-882-AC-4 | An attempt binder of type `Boolean` over an operation that returns `Integer`, and one over an operation that returns nothing, each refuse at S3 with `ill_typed`/`type-mismatch` at the binder, retaining `expected` and `actual`. The same binder over an operation that returns `Boolean` checks and is bound by each `attempt` step. | Test (TC-2506) |
+| FR-882-AC-4 | An attempt binder of type `Boolean` over an operation that returns `Integer`, one over an operation that returns nothing, and one over an operation that returns `Boolean` each check, and each `attempt` step binds the binder to its application record (ADR-027 ST-1). | Test (TC-2506) |
 | FR-882-AC-5 | Under a `tso` `parallel`, an attempt whose operation body defeats footprint derivation is classified over its frame and contract reads. The protocol explores, and the access class equals the one obtained from a hand-written footprint of the same locations. | Test (TC-2506) |
 | FR-882-AC-6 | A post-test `repeat` (FR-880-AC-8), a `terminal when` that reads `over` under `on each` (FR-880-AC-6) and a protocol over `Option<M::Order>` each explore to a settled deadlock-freedom result. The post-test `repeat`'s first body step is enabled at its entry with no guard read. | Test (TC-2506) |
 | FR-882-AC-7 | Over a corpus holding one minimal protocol for each construct FR-218 admits, every protocol explores to a result. The only stepper refusals in the corpus are `UnenumerableRecord`, for a unit whose binder type has a text field, and `WeakMemory`, for a unit whose resolved model the system does not implement. | Test (TC-2505) |
