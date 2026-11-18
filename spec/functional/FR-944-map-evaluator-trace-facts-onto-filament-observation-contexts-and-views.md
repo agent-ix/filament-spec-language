@@ -80,7 +80,7 @@ rule is added for it.
 
 Scaling and shifting run in `i128` over the trace input's stamps and
 uncertainties (`u64`) and a clause's bounds (64-bit integers). Every scaled
-endpoint, scaled bound and shifted endpoint is then below `2^67` in
+endpoint, scaled bound and shifted endpoint is then below `2^68` in
 magnitude, far inside `i128`, so the mapping cannot overflow: every admitted
 reading maps exactly, with no wrapping, saturation or refusal.
 
@@ -161,7 +161,7 @@ FR-526's reports, read from them.
   with each other and never written into an owner document.
 - Every bound `b` SHALL scale to `4b`. Every scaled endpoint, scaled bound and
   shifted endpoint SHALL be computed exactly in `i128` from the `u64` stamps
-  and uncertainties and the 64-bit bounds; bounded below `2^67` in
+  and uncertainties and the 64-bit bounds; bounded below `2^68` in
   magnitude, no such value overflows.
 - `definitely_before(a, b)` SHALL be `relation_to(a, b).definitely_before()`.
 - `within_bound(b, request, ack)` SHALL be read from `relation_to(ack,

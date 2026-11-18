@@ -291,8 +291,9 @@ checked package (FR-810).
 ### Compile request over a model unit
 
 - A `native-compile/1` request whose `program` source is a model unit SHALL
-  compile it and return the compiled document as the outcome's artifact,
-  format `semantic-ir/2.0.0`, with no wrapper or extra newline; its
+  compile it and return the compiled document, format `semantic-ir/2.0.0`,
+  with no wrapper or extra newline, as the outcome's package bytes;
+  `artifacts` stays `[]` (FR-286, FR-810); its
   `output` member and the driver's `--output` write those bytes (FR-810).
 - Such a request carrying `models`, `libraries`, `clocks`, `handoff`,
   `refinement_internals` or `integer_division` SHALL refuse
@@ -311,7 +312,7 @@ checked package (FR-810).
 | FR-710-AC-6 | `compile_model_unit` over the AC-1 model unit returns identity `example/shop` and bytes equal to the document AC-1 compiles; `package_input_from_sources` over that source labelled (`agent-ix`, `test:shop-model`) admits the document under `example/shop` with every `origin` naming that source, and over the model unit beside its own compiled document refuses `invalid_package`/`conflicting-definition` naming `example/shop`. | Test (TC-2998) |
 | FR-710-AC-7 | A `native-compile/1` request over a program with `model M = "example/shop";` and `invariant I using P on M::Order at current { self.total >= 0 }` whose `models` holds `{"format": "native-model-unit/1", "source": {"file": "shop.fsl", ...}}` naming the AC-1 model unit compiles with exit 0 to package bytes equal to the same request whose `models` entry is the compiled document in format `semantic-ir/2.0.0`, and a `native-run/1` request over the same members runs equally; the entry naming a model unit whose `relationship next: Ghost [0, 1];` is unresolved refuses at stage `I1` with `missing_declaration`/`missing-name` at `Ghost` in `shop.fsl`, no artifact; the entry naming the program source itself (no `domain`) refuses `invalid-request` naming `models`, index 0 and `native-model-unit/1`, exit 20; and a `semantic-ir/2.0.0` entry naming `shop.fsl` refuses `invalid_model_binding`/`malformed-declaration`. | Test (TC-2998) |
 | FR-710-AC-8 | `check_outcome` over AC-7's program with the model selection `("example/shop", shop.fsl)` returns category success at `last_stage` S4, equal in category, diagnostics and stage to the same check with the compiled document file; with the selection `("example/other", shop.fsl)` over a program selecting `example/other` it refuses `invalid_model_binding`/`wrong-model-selection`; `check_outcome` over `shop.fsl` itself returns category success at `last_stage` `I1`, and over the AC-4 unit with `Ghost` the `missing_declaration`/`missing-name` refusal at `Ghost`. | Test (TC-2998) |
-| FR-710-AC-9 | A `native-compile/1` request whose `program` is the AC-1 model unit returns as its artifact the bytes `compile_model_unit` gives, and with `output` `{"file": "shop.semantic-ir.json"}` writes exactly those bytes to that file; the same request carrying `models` `[]`, a `libraries` entry, or `clocks`, each refuses `invalid-request` naming that member, exit 20, with no artifact and no file written. | Test (TC-2998) |
+| FR-710-AC-9 | A `native-compile/1` request whose `program` is the AC-1 model unit returns the bytes `compile_model_unit` gives as the outcome's package bytes, `artifacts` staying `[]`, and with `output` `{"package": "shop.semantic-ir.json"}` writes exactly those bytes to that file; the same request carrying `models` `[]`, a `libraries` entry, or `clocks`, each refuses `invalid-request` naming that member, exit 20, with no package bytes and no file written. | Test (TC-2998) |
 
 ## Dependencies
 

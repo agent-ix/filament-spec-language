@@ -182,7 +182,7 @@ fn check_takes_a_model_unit_as_a_selection_and_as_its_source() {
 #[ignore = "QSL-1980: a compile request over a model unit writes the compiled document; not implemented yet"]
 fn a_compile_request_over_a_model_unit_writes_its_document() {
     let directory = tempfile::tempdir().unwrap();
-    let output = json!({"file": "shop.semantic-ir.json"});
+    let output = json!({"package": "shop.semantic-ir.json"});
     let path = compile_request(
         directory.path(),
         &[("shop.fsl", SHOP)],

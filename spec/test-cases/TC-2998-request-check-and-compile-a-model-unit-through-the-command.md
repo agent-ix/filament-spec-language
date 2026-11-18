@@ -30,4 +30,4 @@ Test: `fsl-command/tests/it/model_unit_request.rs`.
 - Step 1: identity `example/shop` and the AC-1 bytes; origins name the labelled source; `invalid_package`/`conflicting-definition` naming `example/shop`.
 - Step 2: equal package bytes and equal run outcomes; `missing_declaration`/`missing-name` at `Ghost` at stage `I1`; `invalid-request` naming `models`, index 0 and `native-model-unit/1`, exit 20; `invalid_model_binding`/`malformed-declaration`.
 - Step 3: success at S4 equal to the document route; `wrong-model-selection`; success at `I1`; the `Ghost` refusal.
-- Step 4: the artifact equals `compile_model_unit`'s bytes and the output file holds them; each extra member refuses `invalid-request` naming it, exit 20, no artifact and no file.
+- Step 4: the package bytes equal `compile_model_unit`'s bytes with `artifacts` `[]` and the output file holds them; each extra member refuses `invalid-request` naming it, exit 20, no package bytes and no file.
