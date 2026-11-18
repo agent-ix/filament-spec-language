@@ -217,6 +217,27 @@ impl ExportOutcome {
     pub fn into_value(self) -> Result<serde_json::Value, serde_json::Error> {
         serde_json::to_value(self)
     }
+
+    /// Apply the request's minimum fidelity after mapping records have been
+    /// computed. A refused result must not expose text or package metadata,
+    /// even when the mapper had enough information to assemble them.
+    pub fn enforce_fidelity_floor(&mut self, request: &ExportRequest) {
+        let failures = request.fidelity_floor_failures(&self.records);
+        if failures.is_empty() {
+            return;
+        }
+        self.status = ExportStatus::Refused;
+        self.module = None;
+        self.package = None;
+        self.target_text = None;
+        self.name_map = None;
+        self.observer = None;
+        self.cause = Some(serde_json::json!({
+            "kind": "below-fidelity-floor",
+            "minimum_fidelity": request.minimum_fidelity,
+            "records": failures,
+        }));
+    }
 }
 
 /// Top-level export outcome status.
@@ -391,9 +412,58 @@ mod tests {
             }))
             .unwrap()
         };
-        assert_eq!(request("conditional").fidelity_floor_failures(&records), vec![2]);
-        assert_eq!(request("preserved").fidelity_floor_failures(&records), vec![1, 2]);
+        assert_eq!(
+            request("conditional").fidelity_floor_failures(&records),
+            vec![2]
+        );
+        assert_eq!(
+            request("preserved").fidelity_floor_failures(&records),
+            vec![1, 2]
+        );
         assert!(request("any").fidelity_floor_failures(&records).is_empty());
+    }
+
+    #[test]
+    fn fidelity_floor_refusal_clears_assembled_artifacts() {
+        let request = ExportRequest::read(json!({
+            "profile": "filament.output.tla2/v1",
+            "obligations": ["Safety"],
+        }))
+        .unwrap();
+        let mut outcome = ExportOutcome::new(
+            request.profile.clone(),
+            "tla".to_owned(),
+            ExportStatus::Assembled,
+            vec![ExportRecord {
+                obligation: "Safety".to_owned(),
+                disposition: ExportDisposition::Unrepresented,
+                conditions: Vec::new(),
+                causes: Vec::new(),
+                regions: Vec::new(),
+            }],
+        );
+        outcome.module = Some("M_example".to_owned());
+        outcome.package = Some(super::ExportPackage {
+            source_package: "example".to_owned(),
+            generator: "fsl".to_owned(),
+        });
+        outcome.target_text = Some("target text".to_owned());
+        outcome.name_map = Some(vec![json!({"name": "Safety"})]);
+        outcome.observer = Some(json!({"status": "passed"}));
+
+        outcome.enforce_fidelity_floor(&request);
+
+        assert_eq!(outcome.status, ExportStatus::Refused);
+        assert!(outcome.module.is_none());
+        assert!(outcome.package.is_none());
+        assert!(outcome.target_text.is_none());
+        assert!(outcome.name_map.is_none());
+        assert!(outcome.observer.is_none());
+        assert_eq!(
+            outcome.cause.as_ref().unwrap()["kind"],
+            "below-fidelity-floor"
+        );
+        assert_eq!(outcome.cause.as_ref().unwrap()["records"], json!([0]));
     }
 
     #[test]
