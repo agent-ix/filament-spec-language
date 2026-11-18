@@ -420,6 +420,16 @@ fn run_with_providers(request: &Path, scenario: Scenario) -> Option<ProviderRun>
                 },
             },
         )],
+        Scenario::TotalBytesFailure => vec![recording_provider(
+            &seen,
+            ProviderVerdict::Failed {
+                limit: fsl_analyze::provider::ProviderLimit::MaxTotalBytes,
+                cause: fsl_replay::ToolFailure::TotalBytes {
+                    limit: 2_097_152,
+                    value: 2_097_153,
+                },
+            },
+        )],
         Scenario::Cancelled => {
             cancel.cancel(filament_exact::CancelCause::Requested);
             vec![recording_provider(&seen, ProviderVerdict::Proved)]
@@ -462,6 +472,8 @@ enum Scenario {
     UnreproducedRefutation,
     /// The provider reports an oversize transport frame.
     FrameFailure,
+    /// The provider reports an oversize transport run total.
+    TotalBytesFailure,
     /// The handle is cancelled before the run.
     Cancelled,
     /// The provider's manifest publishes the option `depth`.
@@ -721,6 +733,38 @@ fn run_with_providers_refuses_and_settles_the_negative_cases() {
         (0, 0),
         "a refused compile settles no item"
     );
+}
+
+/// FR-287-AC-12: a provider's over-limit run total settles as `failed` with
+/// the exact typed `total-bytes` transport cause.
+#[trace("TC-2701", "FR-291-AC-1")]
+#[test]
+fn provider_total_byte_limit_settles_failed_with_typed_cause() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = write(
+        directory.path(),
+        "Even",
+        json!([{"parameter": "n", "value": 4}]),
+        Some(json!({"backend": PROVIDER})),
+    );
+    let result = run_with_providers(&request, Scenario::TotalBytesFailure)
+        .expect("the provider-backed run returns a settled result");
+    let items = entries(&result.document);
+    assert!(!items.is_empty(), "the call has requirement items");
+    for item in items {
+        assert_eq!(item["record"]["result"], "failed", "{item}");
+        assert_eq!(
+            item["record"]["cause"],
+            json!({
+                "kind": "tool-failure",
+                "defect": "total-bytes",
+                "limit": 2_097_152,
+                "value": 2_097_153
+            }),
+            "{item}"
+        );
+    }
+    assert_eq!(result.settle_calls, 1);
 }
 
 /// FR-962-AC-4: with the recording provider (advertising `value-validity`)
