@@ -111,6 +111,42 @@ fn read<'d>(
             ));
         }
     }
+    // FR-634: a `simulation` item names no claim and carries its
+    // `simulation` member, and only it does; `seed` and `samples` belong to
+    // `sample` only.
+    for (position, item) in request.items.iter().flatten().enumerate() {
+        let simulation =
+            item.kind.as_deref() == Some(fsl_analyze::analyze::document::SIMULATION_KIND);
+        match (&item.simulation, simulation) {
+            (Some(_), false) => {
+                return Err(invalid(
+                    &format!("/items/{position}/simulation"),
+                    "simulation is only valid on a simulation item",
+                ))
+            }
+            (None, true) => {
+                return Err(invalid(
+                    &format!("/items/{position}/simulation"),
+                    "a simulation item carries its simulation member",
+                ))
+            }
+            (Some(settings), true) => {
+                if item.claim.is_some() {
+                    return Err(invalid(
+                        &format!("/items/{position}/claim"),
+                        "a simulation item settles no claim",
+                    ));
+                }
+                if let Some(member) = settings.misplaced_member() {
+                    return Err(invalid(
+                        &format!("/items/{position}/simulation/{member}"),
+                        format!("{member} belongs to a sample simulation only"),
+                    ));
+                }
+            }
+            (None, false) => {}
+        }
+    }
     if let Some(package) = &request.package {
         admit_package(directory, dependent_bytes, &request, package)?;
         // The engines analyze an in-process checked package that only a

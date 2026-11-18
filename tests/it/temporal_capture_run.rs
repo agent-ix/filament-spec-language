@@ -63,13 +63,15 @@ fn run_request(temporal: Value) -> Value {
         "clause": {"selection": {"temporal": temporal}, "observations": {}}}})
 }
 
-/// FR-860-AC-4's clauses whose capture divides by a divisor that may be
-/// zero: Linked checking refuses the unproved `mod` (FR-495-AC-3), so they
-/// are kept out of the shared unit.
-const DIVISION: &str = "temporal Div using e over (r: Reading) clock \"events\" on origin \
-     { capture m: Integer = 3 mod (2 - r.level); always[0,1] holds(m >= 0) }\n\
+/// FR-860-AC-4's clauses whose capture divides through the function `k`:
+/// Linked checking refuses `k`'s unproved `mod` (FR-495-AC-3), so they are
+/// kept out of the shared unit until the fixture is checked under
+/// `CheckMode::Kernel`.
+const DIVISION: &str = "function k using v(x: Integer): Integer pure { 3 mod x }\n\
+     temporal Div using e over (r: Reading) clock \"events\" on origin \
+     { capture m: Integer = k(2 - r.level); always[0,1] holds(m >= 0) }\n\
      temporal DivEach using e over (r: Reading) clock \"events\" on each (q: Reading) \
-     { capture m: Integer = 3 mod (2 - r.level); always[0,1] holds(m >= 0) }\n";
+     { capture m: Integer = k(2 - r.level); always[0,1] holds(m >= 0) }\n";
 
 fn write(directory: &Path, name: &str, request: &Value) -> PathBuf {
     write_with(directory, "", name, request)
@@ -214,7 +216,7 @@ fn each_activation_reads_its_own_capture_at_later_positions() {
 /// at its activation, never an internal failure.
 #[test]
 #[trace("TC-2440", "FR-860-AC-4")]
-#[ignore = "QSL-2001: FR-860-AC-4's division capture is refused unproved-nonzero under Linked checking (FR-495-AC-3) until the spec routes it through a Kernel-checked function"]
+#[ignore = "QSL-2001: the fixture must be checked under CheckMode::Kernel and selected as a package (FR-860-AC-4); a capture fault through `k` is reported as runtime_invariant (exit 30), not at the capture"]
 fn an_undefined_capture_is_reported_at_the_capture() {
     let directory = tempfile::tempdir().unwrap();
     let output = run_with(

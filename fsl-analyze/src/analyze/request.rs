@@ -214,6 +214,9 @@ pub struct TemporalItem {
     pub item_kind: ItemKind,
     /// The abstract subject selected by a refinement item.
     pub abstract_subject: Option<fsl_route::request::AbstractSubject>,
+    /// A refinement item's abstract initial snapshots (FR-630); the
+    /// concrete subject's when absent.
+    pub abstract_initial: Option<Vec<fsl_semantics::model::observation::DocumentRef>>,
     /// The resolved fairness constraints of the checked clause.
     pub fairness: Vec<filament_semantic_value::fairness::FairnessConstraint>,
     /// A requested stutter-closure premise, when supplied.
@@ -247,6 +250,7 @@ impl Default for TemporalItem {
             proof_bounds: Vec::new(),
             item_kind: ItemKind::Formula,
             abstract_subject: None,
+            abstract_initial: None,
             fairness: Vec::new(),
             stutter_closure: None,
             max_depth: None,
@@ -567,6 +571,22 @@ fn work<'a>(
                 binding,
                 *limits,
                 provision,
+                &item.claim,
+                item.request_index,
+                form,
+            )
+            .unwrap_or_else(absent)
+        }
+        Some(ItemForm::Temporal(form))
+            if item.kind == Capability::TemporalSatisfaction
+                && matches!(form.item_kind, ItemKind::Formula | ItemKind::Refinement)
+                && !super::document::timed(package)
+                && super::refinement_item::refinement_at(package, &item.claim).is_some() =>
+        {
+            super::refinement_item::refinement_item(
+                package,
+                binding,
+                *limits,
                 &item.claim,
                 item.request_index,
                 form,

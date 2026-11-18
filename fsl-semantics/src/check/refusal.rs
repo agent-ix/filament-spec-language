@@ -2948,6 +2948,14 @@ pub enum CheckCause {
     },
     /// `refused { code: ill_typed }` with its FR-272 cause.
     IllTyped(IllTypedCause),
+    /// An undeclared case of a declared variant type, still classified as
+    /// `ill_typed` / `type-mismatch` by FR-360-AC-5.
+    UndeclaredVariantCase {
+        /// The variant type whose cases were checked.
+        owner: String,
+        /// The case name as written.
+        case: String,
+    },
     /// A binary operator whose two typed operands have incompatible types.
     OperandTypeMismatch {
         /// The source operator.
@@ -3657,6 +3665,7 @@ impl CheckCause {
             Self::TypeAdmission { code, .. } => *code,
             Self::TypeCheckAllocation(_) | Self::TypeCheckCapacity(_) => Code::ResourceExhausted,
             Self::IllTyped(_)
+            | Self::UndeclaredVariantCase { .. }
             | Self::OperandTypeMismatch { .. }
             | Self::IdentityObservingForm(_)
             | Self::NonBooleanRoot
@@ -3741,6 +3750,7 @@ impl CheckCause {
             Self::TypeCheckAllocation(_) => Some("allocation-failed"),
             Self::TypeCheckCapacity(_) => Some("reservation-size-overflow"),
             Self::IllTyped(cause) => cause.tag(),
+            Self::UndeclaredVariantCase { .. } => Some("type-mismatch"),
             Self::OperandTypeMismatch { .. } => Some("type-mismatch"),
             Self::WrongSnapshot(cause) => Some(cause.as_str()),
             Self::NonBooleanRoot => Some("non-boolean-root"),

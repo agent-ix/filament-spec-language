@@ -174,6 +174,7 @@ fn the_plan_search_stops_at_its_named_limits() {
 /// pointer before any search.
 #[test]
 #[trace("FSpec-TC-2003", "FSpec-FR-801-AC-7")]
+#[trace("TC-2861", "FR-1011-AC-3")]
 #[ignore = "QSL-1978: plan_search limit defaults and their refusals are not implemented yet"]
 fn plan_search_limits_have_published_defaults_and_refuse_invalid_values() {
     let unit = plan_unit("Int[0, 3]", "", "Reach.length >= 1");

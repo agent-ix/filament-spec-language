@@ -43,8 +43,7 @@ use fsl_semantics::check::{
     AccessClass, AssemblyCause, AssemblyRefusal, CheckCause, CheckRefusal, ClockSelectionFault,
     ExtensionCause, Obligation, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause,
     ProvedInterval, RefinementCause, RowClass, ShadowedDeclaration, SourceObjectFault,
-    TemporalCause, TimeUnitCause,
-    TopologyRetained,
+    TemporalCause, TimeUnitCause, TopologyRetained,
 };
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -76,19 +75,20 @@ pub use lifecycle::{
     check_units_with_refinement_internals, check_with_execution_points,
     check_with_execution_points_and_refinement_internals,
     check_with_execution_points_and_source_inputs, check_with_integer_division,
-    check_with_profile_catalog, check_with_profile_catalog_and_inputs, check_with_refinement_internals,
-    check_with_refinement_internals_and_integer_division,
-    check_with_temporal_selections_and_execution_points, core_vocabulary, extension_forms, package,
-    package_with_temporal_selections, parse, parse_selecting_extensions, parse_with_extensions,
-    preflight_unit_list, refusal_or_fault, select, select_units, AdmittedModels, AdmittedUnitList,
-    CheckedUnit, EmittedUnit, FrontEndFailure, ObligationState, PackageLimits, ParseRequest,
+    check_with_profile_catalog, check_with_profile_catalog_and_inputs,
+    check_with_refinement_internals, check_with_refinement_internals_and_integer_division,
+    check_with_temporal_selections_and_execution_points, core_vocabulary, extension_forms,
+    package, package_with_temporal_selections, parse, parse_selecting_extensions,
+    parse_with_extensions, preflight_unit_list, refusal_or_fault, select, select_units,
+    AdmittedModels, AdmittedUnitList, CheckedUnit, EmittedUnit, FrontEndFailure,
+    FrontEndFailurePayload, ObligationState, PackageLimits, ParseReport, ParseRequest,
     ParsedUnitSource, PendingObligation, ProfileCatalogInput, ProfileCheckFailure,
-    ProtocolCheckSite, SourceInputs, TypeDeclaration, TypeReport, TypeRequirement,
-    FrontEndFailurePayload, ParseReport,
+    ProfileCheckInputs, ProtocolCheckSite, SourceInputs, TypeDeclaration, TypeReport,
+    TypeRequirement,
 };
 pub(crate) use lifecycle::{
-    check_for_continuation, check_units_with_options, parse_for_continuation, ContinuationInputs,
-    UnitCheckOptions,
+    check_for_continuation, check_units_with_options, parse_for_continuation,
+    ContinuationInputs, UnitCheckOptions,
 };
 pub use protocol_structure::{
     arena_names, replay_protocol_analysis, ProtocolReplayRefusal, StructureError,
@@ -206,7 +206,7 @@ pub struct ProfileUseResult {
 #[cfg(test)]
 pub(crate) use lifecycle::composed_declaration;
 #[cfg(test)]
-pub(crate) use lifecycle::{compose, compose_in_mode, ComposedUnit};
+pub(crate) use lifecycle::{compose, compose_in_mode, ComposeModes, ComposedUnit};
 
 mod bind;
 pub use bind::{
@@ -1328,6 +1328,9 @@ fn check_message_one(first: &CheckRefusal) -> String {
         }
         CheckCause::UnknownField { owner, field, .. } => {
             message = format!("{message}: `{owner}` has no field `{field}`");
+        }
+        CheckCause::UndeclaredVariantCase { owner, case } => {
+            message = format!("{message}: `{owner}` has no case `{case}`");
         }
         CheckCause::StateModel(refusal) => {
             if let CheckCause::UnknownField { owner, field, .. } = &refusal.cause {

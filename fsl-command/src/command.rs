@@ -120,11 +120,6 @@ pub enum LimitKind {
         /// The effective aggregate dependent byte ceiling.
         maximum: usize,
     },
-    /// One selected observation exceeded its document byte ceiling.
-    ObservationDocumentBytes {
-        /// Effective observation document byte ceiling.
-        maximum: usize,
-    },
     /// Total selected file count.
     SelectedFiles {
         /// Group that could not be charged.
@@ -145,7 +140,6 @@ impl LimitKind {
             Self::FileBytes => "file bytes",
             Self::RequestBytes { .. } | Self::FixedRequestBytes { .. } => "request_bytes",
             Self::DependentBytes { .. } | Self::FixedDependentBytes { .. } => "dependent_bytes",
-            Self::ObservationDocumentBytes { .. } => "observation.document_bytes",
             Self::SelectedFiles { .. } => "selected files",
         }
     }
@@ -741,6 +735,22 @@ pub enum RunCause {
     /// FR-031: an extracted program is a run input, not a source-only compile.
     #[error("an extracted program requires run")]
     ExtractionRequiresRun,
+    /// FR-031-AC-6: the request cannot select a package artifact and extracted source.
+    #[error("an extracted program cannot select a package artifact")]
+    ExtractionPackageConflict,
+    /// FR-031-AC-6: exactly one authored clause binding is required.
+    #[error("extracted program has {actual} clause bindings; expected exactly one")]
+    ExtractionClauseCount {
+        /// Number of bindings supplied in the request.
+        actual: usize,
+    },
+    /// FR-031-AC-7: Quire rejected the clause-only semantic context.
+    #[cfg(feature = "quire-extraction")]
+    #[error("Quire rejected the clause-only context")]
+    InvalidQuireContext {
+        /// Unchanged diagnostics returned by Quire's semantic-block validator.
+        diagnostics: Vec<fsl_source::SemanticFailure>,
+    },
     /// FR-027/FR-480: a source-unit list must not be empty.
     #[error("the compile program has no source units")]
     EmptyCompileProgram,
@@ -968,6 +978,10 @@ impl RunCause {
             | Self::CompleteRunSelection(_)
             | Self::EmptyCompileProgram => Code::InvalidRequest,
             Self::ExtractionRequiresRun => Code::ExtractionRequiresRun,
+            Self::ExtractionPackageConflict => Code::ExtractionPackageConflict,
+            Self::ExtractionClauseCount { .. } => Code::ExtractionClauseCount,
+            #[cfg(feature = "quire-extraction")]
+            Self::InvalidQuireContext { .. } => Code::InvalidQuireContext,
             Self::Spine(failure) => failure.refusal.code(),
             Self::ExtensionCatalog(_) => Code::InvalidPackage,
             Self::SpineRun(refusal) => refusal.code(),
@@ -1144,6 +1158,8 @@ impl RunError {
             | RunCause::Identifier { .. }
             | RunCause::CompleteSelection(_)
             | RunCause::ExtractionRequiresRun
+            | RunCause::ExtractionPackageConflict
+            | RunCause::ExtractionClauseCount { .. }
             | RunCause::EmptyCompileProgram
             | RunCause::Libraries(_)
             | RunCause::ExtensionCatalog(_)
@@ -1185,6 +1201,17 @@ impl RunError {
                     ),
                 ])
             }
+            #[cfg(feature = "quire-extraction")]
+            RunCause::InvalidQuireContext { .. } => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        None,
+                        self.cause.code().as_str(),
+                        None,
+                        self.outcome_message(),
+                    ),
+                ])
+            }
         }
     }
 
@@ -1201,11 +1228,6 @@ impl RunError {
             }
             RunCause::Limit(LimitKind::FixedDependentBytes { maximum }) => {
                 format!("dependent_bytes limit {maximum} exceeded")
-            }
-            RunCause::Limit(LimitKind::ObservationDocumentBytes { maximum }) => {
-                format!(
-                    "observation.document_bytes limit {maximum} exceeded; raise --limit observation.document_bytes"
-                )
             }
             RunCause::Limit(LimitKind::SelectedFiles {
                 category,
@@ -1274,42 +1296,6 @@ impl Intake<'_> {
             return Ok(bytes);
         }
         self.bounded_file(path, ceiling)
-    }
-
-    fn observation_file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
-        if let Some(bytes) = self.prefetched_observations.remove(path) {
-            if bytes.len() > ceiling {
-                return Err(RunCause::Limit(LimitKind::ObservationDocumentBytes {
-                    maximum: ceiling,
-                }));
-            }
-            return Ok(bytes);
-        }
-        let remaining = self.remaining;
-        let bytes =
-            read_file(&self.directory.join(path), ceiling.min(remaining)).map_err(|cause| {
-                match cause {
-                    RunCause::Limit(LimitKind::FileBytes) if ceiling <= remaining => {
-                        RunCause::Limit(LimitKind::ObservationDocumentBytes { maximum: ceiling })
-                    }
-                    RunCause::Limit(LimitKind::FileBytes) => match self.dependent_limit {
-                        Some(DependentLimit::CallerConfigured) => {
-                            RunCause::Limit(LimitKind::DependentBytes {
-                                maximum: self.maximum,
-                            })
-                        }
-                        Some(DependentLimit::Fixed) => {
-                            RunCause::Limit(LimitKind::FixedDependentBytes {
-                                maximum: self.maximum,
-                            })
-                        }
-                        None => RunCause::Limit(LimitKind::FileBytes),
-                    },
-                    cause => cause,
-                }
-            })?;
-        self.remaining -= bytes.len();
-        Ok(bytes)
     }
 
     fn bounded_file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
@@ -1811,6 +1797,16 @@ pub fn read_clause_run_request(
 ) -> std::result::Result<fsl_replay::spine::ClauseRunRequest, ClauseRunRequestRefusal> {
     with_request(path, |directory, bytes| {
         let request: wire::Request = request(bytes)?;
+        #[cfg(feature = "quire-extraction")]
+        if request.program.extraction.is_some() && request.package.is_some() {
+            return Err(RunCause::ExtractionPackageConflict);
+        }
+        #[cfg(feature = "quire-extraction")]
+        if request.program.extraction.is_some() && request.program.clauses.len() != 1 {
+            return Err(RunCause::ExtractionClauseCount {
+                actual: request.program.clauses.len(),
+            });
+        }
         let clause = request
             .clause
             .as_ref()
@@ -1839,6 +1835,21 @@ pub fn read_clause_run_request(
         )?;
         reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
         let source = intake.source(&request.program.source, "program.source")?;
+        #[cfg(feature = "quire-extraction")]
+        if let Some(extraction) = &request.program.extraction {
+            let _body_identity = (
+                &extraction.body.authority,
+                &extraction.body.identity,
+                &extraction.body.document,
+            );
+            let binding = &request.program.clauses[0];
+            let _clause_id = &binding.clause;
+            fsl_source::clause_context(&binding.package, source.source())
+                .map_err(|diagnostics| RunCause::InvalidQuireContext { diagnostics })?;
+        } else {
+            require_complete_edition(source.source())?;
+        }
+        #[cfg(not(feature = "quire-extraction"))]
         require_complete_edition(source.source())?;
         clause::read(&mut intake, &request, clause, source)
     })

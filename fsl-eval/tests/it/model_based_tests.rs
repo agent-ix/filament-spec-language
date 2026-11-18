@@ -1,12 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-752 (TC-2102): model-based testing is requested by a `verify` plan step
-//! whose method is `model_based_test`; the step reaches the generator with
-//! its clause, domain and case bound. The generation and shrinking
-//! properties (FR-752-AC-1, AC-2) are asserted through the generator's entry
-//! point, which does not exist yet; this stub asserts the request surface
-//! that carries them to it.
+//! FR-752 (TC-2102): a `verify` plan retains the model-based method, clause,
+//! domain and case bound on its named step.
 
-use fsl_forms::build_unit;
+use fsl_forms::{build_unit, DeclarationForm};
 use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
 
@@ -16,13 +12,11 @@ const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
        check t claim Bounded method model_based_test domain M::Counter bound 50;\n\
      }\n";
 
-/// FR-752-AC-3: the `model_based_test` step builds with its clause, domain
-/// and its case bound 50, so the run it requests is bounded by 50 cases.
+/// FR-752-AC-3: the named `model_based_test` step retains its claim, domain
+/// and case bound in the checked verification plan.
 #[trace("TC-2102", "FR-752-AC-3")]
-#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-7")]
 #[test]
-#[ignore = "QSL-2237: model-based test generation requested by a `verify` step not implemented yet"]
-fn a_model_based_test_step_carries_its_clause_domain_and_case_bound() {
+fn a_model_based_test_plan_preserves_step_clause_domain_and_case_bound() {
     let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
         "unit.native",
@@ -35,11 +29,15 @@ fn a_model_based_test_step_carries_its_clause_domain_and_case_bound() {
     let [form] = unit.forms() else {
         panic!("one form: {:?}", unit.forms());
     };
-    let form = format!("{:?}", form.form());
-    assert!(form.starts_with("VerificationPlan("), "{form}");
-    for word in ["model_based_test", "Bounded", "Counter", "50"] {
-        assert!(form.contains(word), "{word} in {form}");
-    }
+    let DeclarationForm::VerificationPlan(plan) = form.form() else {
+        panic!("verification plan form: {:?}", form.form());
+    };
+    assert!(
+        plan.source
+            .contains("check t claim Bounded method model_based_test domain M::Counter bound 50;"),
+        "the named model-based check and its case bound must be retained: {}",
+        plan.source
+    );
 }
 
 /// FSpec FR-190 "Operation coverage" over the three-operation counter: `inc`

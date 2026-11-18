@@ -237,7 +237,8 @@ pub(super) struct Request {
     pub models: Vec<Model>,
     #[serde(deserialize_with = "from_object")]
     pub program: Program,
-    /// FR-767: a precompiled package does not take a request-selected law.
+    /// FR-767/FR-100/FR-031: selected package artifact, mutually exclusive
+    /// with extraction; a precompiled package does not take a request-selected law.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub package: Option<FileSelection>,
     #[serde(default, deserialize_with = "from_object")]
@@ -407,6 +408,42 @@ pub(super) struct Model {
 pub(super) struct Program {
     #[serde(deserialize_with = "from_object")]
     pub source: SourceFile,
+    /// FR-031: extraction body identity selected from the original Markdown document.
+    #[cfg(feature = "quire-extraction")]
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub extraction: Option<Extraction>,
+    /// FR-031: authored clause bindings for the extraction.
+    #[cfg(feature = "quire-extraction")]
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub clauses: Vec<ClauseBinding>,
+}
+
+/// FR-031's extracted body identity.
+#[cfg(feature = "quire-extraction")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Extraction {
+    #[serde(deserialize_with = "from_object")]
+    pub body: ExtractedBody,
+}
+
+/// Native and formal identity of the body Quire extracts.
+#[cfg(feature = "quire-extraction")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ExtractedBody {
+    pub authority: String,
+    pub identity: String,
+    pub document: String,
+}
+
+/// One authored clause selection for an extraction.
+#[cfg(feature = "quire-extraction")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ClauseBinding {
+    pub clause: String,
+    pub package: String,
 }
 
 #[derive(Deserialize)]

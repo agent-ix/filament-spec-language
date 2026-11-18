@@ -108,6 +108,33 @@ The run result document's `tl_lowering` record, or a request refusal.
   that snapshot of 1 to `max_steps` steps, in FR-120's enumeration order. Both
   forms, neither form, or `max_steps` 0 SHALL refuse `invalid-request` at stage
   `request`, exit 20, naming the member.
+- In the `initial` form, the subject SHALL be the model subject built from
+  the one snapshot: its initial state is that snapshot, and its universes are
+  the complete populations the snapshot declares, each the set of object keys
+  it holds, as FR-620 builds the default subject's universes and FR-120
+  admits them. A population the snapshot marks incomplete SHALL refuse
+  `incomplete_population` at stage `request`, exit 20, naming it, because a
+  universe is a complete population. A snapshot the subject builder refuses
+  (FR-120's admission refusals) SHALL refuse at stage `request` with that
+  refusal, exit 20.
+- In the `initial` form, the clause SHALL be evaluated for every instance of
+  its `over` parameter: for a reference-typed parameter every object key of
+  the universe of a population that admits the parameter's type, in
+  ascending key order, as FR-125's instancing enumerates them; for a finite
+  non-reference type every value of its domain in canonical order. `over` is
+  not admitted beside `initial`, because the instances are the subject's.
+  An `over` population with no object SHALL give zero traces, and the record
+  SHALL report `traces` 0 and `positions` 0, exit 0, never a vacuous
+  agreement over an invented instance.
+- In the `initial` form, each behaviour of `j` steps, for each `j` from 1 to
+  `max_steps` and each path of FR-120's enumeration from the snapshot, SHALL
+  be read as a closed finite trace of `j + 1` states, positions 0 to `j`, the
+  snapshot at position 0, under the lowering's correspondence: a shorter
+  behaviour is its own trace, not a prefix of a longer one, and a state with
+  no successor ends every path through it. One trace is one (instance,
+  behaviour) pair, counted in `traces`, in instance order then FR-120's path
+  order, and the `trace` index of a `correspondence-loss` fault is that
+  position in that order.
 - Cross-evaluation SHALL run only on a supported lowering, and SHALL compare
   the native and `tl-mltl` verdicts at every activation position of every
   trace (FR-757). The record's `cross_evaluation` SHALL hold `traces` (the
@@ -136,6 +163,8 @@ The run result document's `tl_lowering` record, or a request refusal.
 | FR-931-AC-3 | `"correspondence": "mltl.closed-trace/v2"` refuses `unknown_profile`/`unsupported-selection` naming `tl_lowering.correspondence` and the value, exit 20; `"correspondence": 1`, `"correspondence": null`, a missing `clause`, an unknown member `formula`, `cross_evaluate` with both `trace` and `initial`, with neither, with `max_steps` 0 and with a `lasso` trace each refuse `invalid-request` at stage `request`, exit 20, naming the member; `"clause": "Nothing"` refuses `missing_declaration`/`missing-name` naming `tl_lowering.clause`. No refusal writes a result document. | Test (TC-2602) |
 | FR-931-AC-4 | `Low` with `cross_evaluate` `{"initial": "spine-snapshot.json", "max_steps": 4}` returns `cross_evaluation` with `traces` at least 1, `positions` at least `traces`, `agree` true and `faults` `[]`, exit 0; FR-757-AC-2's deliberately mis-mapped atom table (`p0` mapped to the negated leaf, supplied at the `fsl-command` library entry, never through the request) renders through the same record writer as one `correspondence-loss` fault naming `Low`, the trace index, the position and both verdicts, `agree` false, exit 30. | Test (TC-2603) |
 | FR-931-AC-5 | Only `fsl-command`'s manifest among the FSL workspace crates names `tl-syntax` or `tl-mltl` (ADR-011). | Inspection (TC-2603) |
+| FR-931-AC-6 | `Low` with `cross_evaluate` `{"initial": S, "max_steps": 2}`, `S` a snapshot holding config versions `a` and `b`, each with `versionNumber` 0, whose model steps `bump` (`versionNumber + 1`): the run evaluates both instances, `a` then `b`, and each behaviour of 1 and of 2 steps as its own closed trace of 2 and 3 states, so `traces` is the number of instances, 2, times the number of 1- and 2-step paths from `S` in FR-120's order, `positions` at least `traces`, and `agree` true, exit 0. | Test (TC-2962) |
+| FR-931-AC-7 | `cross_evaluate` with `initial` and `over` refuses `invalid-request` naming `tl_lowering.cross_evaluate.over`, exit 20; a snapshot whose `ConfigVersion` population is marked incomplete refuses `incomplete_population` naming it, exit 20; a snapshot whose population holds no object gives `traces` 0, `positions` 0, exit 0. | Test (TC-2962) |
 
 ## Dependencies
 

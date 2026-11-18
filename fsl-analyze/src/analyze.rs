@@ -39,8 +39,10 @@ mod exact;
 mod invariant_item;
 mod items;
 mod reduction_item;
+mod refinement_item;
 mod request;
 mod schedule_item;
+mod simulation_item;
 mod state_graph_item;
 mod timed_item;
 pub(crate) use request::analyze_bound;
@@ -87,6 +89,7 @@ pub use items::{
     protocol_item, statistical_item, timed_refinement_item, zone_item, DerivedItemMismatch,
     ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem, TimedRefinementItem,
 };
+pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
 
 use crate::provider::{ExternalProvider, NotUnbounded, ProviderOptions, ProviderReport};
 use crate::zone_check::ZoneCheckRecord;
@@ -1098,6 +1101,9 @@ pub(crate) enum EngineReport {
     /// EN-1's record over an authored clause, with the object the clause's
     /// `over` parameter is bound to in its counterexample.
     Clause(Box<ModelCheckRecord>, Option<ObjectReference>),
+    /// EN-1's record over a refinement (FR-630), with the counterexample's
+    /// per-position abstract images and FR-146 step records.
+    Refinement(Box<ModelCheckRecord>, Option<serde_json::Value>),
     /// EN-1's record over a protocol subject, settled by
     /// `settle_protocol_check`.
     Protocol(
@@ -1423,6 +1429,10 @@ pub struct AnalyzeRecord {
     /// The object an EN-1 clause counterexample's `over` parameter is bound
     /// to, which only the run's subject can name (FSpec FR-364).
     pub over_reference: Option<ObjectReference>,
+    /// A refinement counterexample's added members (FR-630 "Outputs"):
+    /// `steps`, the abstract image of each position, and `step_simulations`,
+    /// the FR-146 step records.
+    pub refinement_steps: Option<serde_json::Value>,
     /// The protocol subject an EN-1 protocol counterexample was found over
     /// (FSpec FR-433's `subject`).
     pub protocol_subject: Option<fsl_replay::ProtocolWire>,
@@ -1467,6 +1477,7 @@ impl AnalyzeRecord {
             exact_probabilistic: None,
             probabilistic_counterexample: None,
             over_reference: None,
+            refinement_steps: None,
             protocol_subject: None,
             replayed_steps: None,
             protocol_analysis: None,
@@ -1494,11 +1505,18 @@ impl AnalyzeRecord {
                     .and_then(|record| record.counterexample.as_ref())
             })
         {
-            return Some(fsl_replay::temporal_wire(
-                found,
-                self.over_reference.as_ref(),
-                claim,
-            ));
+            return Some(
+                fsl_replay::temporal_wire(found, self.over_reference.as_ref(), claim).map(
+                    |mut wire| {
+                        if let (Some(serde_json::Value::Object(steps)), Some(members)) =
+                            (&self.refinement_steps, wire.as_object_mut())
+                        {
+                            members.extend(steps.clone());
+                        }
+                        wire
+                    },
+                ),
+            );
         }
         if let Some(found) = self.protocol_counterexample() {
             return Some(match &self.protocol_subject {
@@ -2016,6 +2034,11 @@ fn settle(
         EngineReport::Clause(model, over) => {
             let mut settled = settle(index, kind, engine, EngineReport::Model(model));
             settled.over_reference = over;
+            settled
+        }
+        EngineReport::Refinement(model, steps) => {
+            let mut settled = settle(index, kind, engine, EngineReport::Model(model));
+            settled.refinement_steps = steps;
             settled
         }
         EngineReport::Value(report) => {

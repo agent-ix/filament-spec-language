@@ -7,13 +7,13 @@ use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
-use filament_exact::{ObjectId, ObjectReference, ScalarLimits, Value};
+use filament_exact::{IntegerInterval, ObjectId, ObjectReference, ScalarLimits, Value};
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::simulation::model::{
-    explore_model, sample_model, ClauseOutcome, ExpansionLimits, ModelFinding, ModelSampleError,
-    ModelSimulationRequest, ModelSystem, PopulationUniverse, StepEffect, UndecidedSuccessor,
-    Unsteppable,
+    explore_model, sample_model, ClauseOutcome, ExpansionLimits, ModelBoundaryKind, ModelFinding,
+    ModelSampleError, ModelSimulationRequest, ModelSystem, PopulationUniverse, StepEffect,
+    UndecidedSuccessor, Unsteppable,
 };
 use fsl_eval::simulation::{
     replay, sample_probabilistic, Exploration, Limits, NotSimulated, Outcome, ReplayError,
@@ -32,6 +32,11 @@ use fsl_semantics::model::observation::{
 use fsl_semantics::model::state::{ModelState, StateModel};
 use ix_trace_rs::trace;
 use serde_json::{json, Value as Json};
+
+#[path = "mbt_generate.rs"]
+mod mbt_generate;
+#[path = "mbt_shrink.rs"]
+mod mbt_shrink;
 
 pub(crate) const PACKAGE: &str = "test/counters";
 
@@ -249,6 +254,25 @@ struct World {
 /// The fixture package with `operations`, checked with `clauses` as its unit.
 fn world(operations: Vec<Json>, clauses: &str) -> World {
     try_world(operations, clauses).expect("the unit checks")
+}
+
+/// [`world`] with the counter's value domain extended to `upper`.
+fn world_with_level_bound(operations: Vec<Json>, clauses: &str, upper: u64) -> World {
+    let mut document: Json =
+        serde_json::from_slice(&counters_document(operations, false)).expect("fixture JSON");
+    let types = document["types"].as_array_mut().expect("types array");
+    let level = types
+        .iter_mut()
+        .find(|ty| ty["identity"] == ident("Level"))
+        .expect("Level declaration");
+    *level = bound_type("Level", upper);
+    build_world_document(
+        serde_json::to_vec(&document).expect("fixture serializes"),
+        clauses,
+        false,
+        false,
+    )
+    .expect("the unit checks")
 }
 
 /// [`world`] with `tag: Integer?` and `id: Integer` added to `Counter`: fields

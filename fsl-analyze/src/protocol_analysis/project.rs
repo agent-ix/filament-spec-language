@@ -364,7 +364,7 @@ impl Candidate {
                 owner,
                 cases: [self.a.case, self.b.case],
                 paths: [self.a.path, self.b.path],
-                actions: [self.a.action, self.b.action],
+                actions: Box::new([self.a.action, self.b.action]),
             },
             separating_witness,
         })
