@@ -10,8 +10,8 @@ use std::path::Path;
 
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::document::{
-    resolve_items, resolve_package_items, settle_package_items, settle_run, AnalyzeDocumentError,
-    AnalyzeRun, ItemSelection, Negotiate, SettledRun, SubjectSelection,
+    resolve_items, settle_package_run, settle_run, AnalyzeDocumentError, AnalyzeRun, ItemSelection,
+    Negotiate, PackageRun, PackageRunError, SettledRun, SubjectSelection,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
@@ -188,28 +188,55 @@ enum Readout<'d> {
 }
 
 /// A `package` request (FR-850): the package the strict reader admitted
-/// from the request's bytes, with the request's items.
+/// from the request's bytes, with the request's other members.
 struct PackageSelection {
     admitted: AdmittedHandoff,
+    members: Box<RunMembers>,
+    memory: Vec<fsl_eval::simulation::protocol::MemorySelection>,
     items: Option<Vec<ItemSelection>>,
+    deadline_ms: Option<u64>,
 }
 
 /// FR-850, FR-940: analyze a `package` request over the `BarePackage` of
 /// its admitted package, read through `AnalysisView`, never compiling
-/// source. Items whose engine family has no package form yet refuse the
-/// request whole, as not yet implemented, rather than settle `unsupported`.
+/// source, with the caller's `negotiate` under `cancel` and its deadline.
+/// An item whose engine family has no package form yet refuses the request
+/// whole, as not yet implemented and naming the family, rather than settle
+/// `unsupported`.
 fn run_package(
     selection: PackageSelection,
+    negotiate: &dyn Negotiate,
     providers: Vec<Engine>,
     options: &ProviderOptions,
+    cancel: &Cancel,
 ) -> Result<RunResult> {
     let engines = engines_with(providers, options)?;
+    let PackageSelection {
+        admitted,
+        members,
+        memory,
+        items,
+        deadline_ms,
+    } = selection;
     let AdmittedHandoff {
         package: admitted,
         identities,
         equality,
         mut budget,
-    } = selection.admitted;
+        supplied,
+        package_bytes,
+        identity_bytes,
+        equality_bytes,
+    } = admitted;
+    // FSL FR-1033: the package route binds no protocol subject yet, so no
+    // `memory` entry is read over it.
+    if !memory.is_empty() {
+        return Err(RunCause::AnalyzeNotYetImplemented {
+            member: "package",
+            detail: ": the memory member names a protocol subject, which has no package form yet"
+                .to_owned(),
+        });
+    }
     let package = fsl_package::BarePackage::new(&admitted)
         .with_supply(
             fsl_package::BareSupply {
@@ -231,23 +258,38 @@ fn run_package(
                 message: format!("stage_limit_exceeded: {setting}: {failure:?}"),
             }
         })?;
-    let items = resolve_package_items(&package, selection.items.as_deref()).map_err(|pending| {
-        RunCause::AnalyzeNotYetImplemented {
+    let RunMembers {
+        documents,
+        subject,
+        limits,
+    } = *members;
+    let binding = subject.binding(&supplied, &documents);
+    let run = PackageRun {
+        package: &package,
+        package_bytes: &package_bytes,
+        supply: fsl_replay::HandoffSupply {
+            identities: &identity_bytes,
+            equality: equality_bytes.as_deref(),
+        },
+        subject,
+        binding,
+        items: items.as_deref(),
+        engines: &engines,
+        limits,
+    };
+    let settled = with_deadline(cancel, deadline_ms, || {
+        settle_package_run(run, negotiate, cancel)
+    })
+    .map_err(|failure| match failure {
+        PackageRunError::Pending(pending) => RunCause::AnalyzeNotYetImplemented {
             member: "package",
-            detail: match pending.request_index {
-                Some(index) => format!(
-                    ": items[{}] names the {} family, which has no package form yet",
-                    index.get(),
-                    pending.family.name()
-                ),
-                None => format!(
-                    ": the {} rule has no package form yet",
-                    pending.family.name()
-                ),
-            },
+            detail: pending.detail(),
+        },
+        PackageRunError::Document(AnalyzeDocumentError::Refused(refusal)) => {
+            RunCause::AnalyzeRefused(Box::new(refusal))
         }
+        PackageRunError::Document(AnalyzeDocumentError::Fault) => RunCause::AnalyzeFault,
     })?;
-    let settled = settle_package_items(items, &engines).map_err(|_| RunCause::AnalyzeFault)?;
     Ok(RunResult {
         exit_code: settled.exit_code,
         value: NativeResult::analyze_document(settled.document),
@@ -266,10 +308,15 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
     })?;
     validate_items(request.items.as_deref())?;
     if let Some(package) = &request.package {
-        let admitted = admit_package(directory, dependent_bytes, &request, package)?;
+        let (admitted, mut intake) = admit_package(directory, dependent_bytes, &request, package)?;
+        let memory = read_memory(&request.memory)?;
+        let members = Box::new(read_run_members(&request, &mut intake)?);
         return Ok(Readout::Package(PackageSelection {
             admitted,
+            members,
+            memory,
             items: request.items,
+            deadline_ms: request.deadline_ms,
         }));
     }
     if request.integer_division.is_some() {
@@ -294,9 +341,11 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
     )?;
     let source = intake.source(&program.source, "program.source")?;
     require_complete_edition(source.source())?;
-    let documents = read_documents(&mut intake, &request.documents, request.items.as_deref())?;
-    let limits = analyze_limits(&request.limits, request.deadline_ms);
-    let mut subject = read_subject(request.subject, &documents)?;
+    let RunMembers {
+        documents,
+        mut subject,
+        limits,
+    } = read_run_members(&request, &mut intake)?;
     subject.memory.clone_from(&memory);
     let compile = wire::CompileRequest {
         models: request.models,
@@ -412,7 +461,7 @@ pub fn analyze_with_providers_and_limits(
         let (input, mut intake) = match read(directory, bytes, limits.dependent_bytes)? {
             Readout::Source(input, intake) => (input, intake),
             Readout::Package(selection) => {
-                return run_package(selection, providers, options);
+                return run_package(selection, negotiate, providers, options, cancel);
             }
         };
         let mut result = run_input(&mut intake, input, negotiate, providers, options, cancel)?;
@@ -615,12 +664,12 @@ fn with_deadline<T>(cancel: &Cancel, deadline_ms: Option<u64>, work: impl FnOnce
 /// before any item resolves when a compile member sits beside it, the reader
 /// refuses the bytes, a recorded domain package is not supplied, or a
 /// supplied one is not recorded.
-fn admit_package(
-    directory: &Path,
+fn admit_package<'d>(
+    directory: &'d Path,
     dependent_bytes: usize,
     request: &wire::AnalyzeRequest,
     package: &wire::HandoffSelection,
-) -> Result<AdmittedHandoff> {
+) -> Result<(AdmittedHandoff, super::Intake<'d>)> {
     if request.program.is_some() {
         return Err(invalid(
             "program",
@@ -738,23 +787,30 @@ fn admit_package(
         };
         witness_refusal(IDENTITIES_FILE, cause, &refusal.to_string())
     })?;
-    let equality = if directory.join(&handoff).join(EQUALITY_FILE).is_file() {
+    let (equality, equality_bytes) = if directory.join(&handoff).join(EQUALITY_FILE).is_file() {
         let equality_bytes =
             intake.file(&format!("{handoff}/{EQUALITY_FILE}"), intake.remaining)?;
-        Some(
+        let rows =
             fsl_package::ReadEqualityRows::read(&equality_bytes, &admitted).map_err(|refusal| {
                 witness_refusal(EQUALITY_FILE, "refused-file", &refusal.to_string())
-            })?,
-        )
+            })?;
+        (Some(rows), Some(equality_bytes))
     } else {
-        None
+        (None, None)
     };
-    Ok(AdmittedHandoff {
-        package: admitted,
-        identities,
-        equality,
-        budget,
-    })
+    Ok((
+        AdmittedHandoff {
+            package: admitted,
+            identities,
+            equality,
+            budget,
+            supplied,
+            package_bytes: bytes,
+            identity_bytes,
+            equality_bytes,
+        },
+        intake,
+    ))
 }
 
 /// The FR-517 files a `package` selection reads from its handoff directory.
@@ -769,6 +825,15 @@ struct AdmittedHandoff {
     identities: fsl_package::ReadIdentityRows,
     equality: Option<fsl_package::ReadEqualityRows>,
     budget: filament_contract_model::NativeJoinBudget,
+    /// The request's domain packages, bound to the package's model
+    /// selections.
+    supplied: fsl_semantics::model::intake::PackageInput,
+    /// The admitted package's bytes, which replay reads (FR-850).
+    package_bytes: Vec<u8>,
+    /// The handoff's identity file bytes, which replay reads.
+    identity_bytes: Vec<u8>,
+    /// The handoff's equality file bytes, when present.
+    equality_bytes: Option<Vec<u8>>,
 }
 
 /// The handoff directory a `package` selection names, beneath the request's
@@ -939,6 +1004,32 @@ fn check_memory(
         }
     }
     Ok(())
+}
+
+/// The members FR-620 reads beside the program or package selection: the
+/// supplied documents under their own identities, the request's default
+/// model subject and the limits every item of the run shares.
+struct RunMembers {
+    documents: DocumentProvision,
+    subject: SubjectSelection,
+    limits: AnalyzeLimits,
+}
+
+/// Read `request`'s [`RunMembers`] through `intake`, refusing a malformed
+/// or unprovisioned document, trace or recording and an incomplete
+/// universe as FR-620 states.
+fn read_run_members(
+    request: &wire::AnalyzeRequest,
+    intake: &mut super::Intake<'_>,
+) -> Result<RunMembers> {
+    let documents = read_documents(intake, &request.documents, request.items.as_deref())?;
+    let limits = analyze_limits(&request.limits, request.deadline_ms);
+    let subject = read_subject(request.subject.clone(), &documents)?;
+    Ok(RunMembers {
+        documents,
+        subject,
+        limits,
+    })
 }
 
 /// FR-620's item checks that need no compiled program: `recording` and

@@ -1048,6 +1048,7 @@ fn an_await_selects_protocol_and_temporal_profiles() {
 /// the one temporal profile its `using` alias names, though the header
 /// selects two.
 #[trace("FR-383-AC-7", "TC-1061")]
+#[ignore = "QSL-2391: Contract IR refuses await-linked temporal_bindings with TimedNodeReference; re-enable when QSL-2391 adds this node-reference support."]
 #[test]
 fn an_emitted_await_selects_exactly_one_temporal_profile() {
     let profiles = format!(
@@ -1752,13 +1753,12 @@ fn e_c_shared_constraint_has_occurrence_zero_at_tried_and_one_at_picked() {
     );
 }
 
-/// FR-880-AC-8 and AC-3: a post-test `repeat` (FSpec FR-729), a `repeat`
-/// that steps through a nested `repeat`, and a `protocol` reference in a
-/// `repeat` guard are written and read back.
+/// FR-880-AC-8: a post-test `repeat` (FSpec FR-729) with a body-binder guard
+/// is written and read back.
 #[test]
 #[trace("TC-2502", "FR-880-AC-8", "FSpec-FR-729-AC-1")]
-#[ignore = "QSL-2220: post-test repeat and repeat through repeat are refused at S4 instead of written"]
-fn every_checked_repeat_form_is_written() {
+#[ignore = "QSL-2424: the pinned contract reader has no repeat.test=post schema"]
+fn a_post_test_repeat_is_written() {
     let post_test = emitted(&deciding(
         "sequence Main { repeat Loop by Seller visible (got.ok) while { not got.ok } \
          sequence Body { send Placed via Ch as (placed: Ack) { true }; \
@@ -1769,6 +1769,13 @@ fn every_checked_repeat_form_is_written() {
         repeat.to_string().contains("\"post\""),
         "the repeat carries test post: {repeat}"
     );
+}
+
+/// FR-880-AC-8 and FR-464's nested-repeat progress rule: a repeat body that
+/// is itself a repeat still makes progress when the inner body has an action.
+#[test]
+#[trace("TC-2502", "FR-880-AC-8", "FR-464-AC-23", "TC-946")]
+fn a_nested_repeat_with_a_stepping_body_is_written() {
     emitted(&flow(
         "sequence Main { repeat Loop by Buyer visible () while { true } \
          repeat Inner by Buyer visible () while { true } \
@@ -1819,7 +1826,7 @@ fn a_self_referring_protocol_is_written_as_one_recursion_group() {
 /// FSpec FR-729 back-edge reads, and the package is admitted.
 #[test]
 #[trace("TC-2502", "FR-880-AC-9", "FSpec-FR-729-AC-5")]
-#[ignore = "QSL-2220: a pre-test decision that reads its body is refused at S4 as not-yet-implemented"]
+#[ignore = "QSL-2424: the pinned contract reader refuses repeat back-edge reads"]
 fn a_pre_test_decision_that_reads_its_body_is_written() {
     for run in [
         "sequence Main { repeat Loop by Seller visible (got.ok) while { true } \

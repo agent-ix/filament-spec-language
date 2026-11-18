@@ -68,6 +68,7 @@ mod navigation;
 mod one_occurrence;
 mod operation_bodies;
 mod operation_effects;
+mod option_nesting;
 mod option_value;
 mod output_limit;
 mod owner_model;
@@ -2021,9 +2022,6 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             }
             Err(EmitRefusal::PerTraceClockConfigurations { .. }) => {
                 panic!("the emitter never derives clock configurations")
-            }
-            Err(EmitRefusal::SourceObjectEmission { .. }) => {
-                panic!("the fixture set declares no source object type")
             }
             Err(EmitRefusal::ProtocolResultInvariant) => Seen::ProtocolResultInvariant,
             Err(EmitRefusal::ProtocolResultsRequired) => Seen::ProtocolResultsRequired,

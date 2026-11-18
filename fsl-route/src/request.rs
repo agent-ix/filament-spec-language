@@ -1074,6 +1074,29 @@ pub enum EvidenceSelection {
     Both,
 }
 
+/// The candidate outcome [`items_from_requirements`] gives an item whose
+/// record carries `requirements` and no evidence kind, for the backend
+/// `named`: for a package-route item (FR-850) whose record is rebuilt from
+/// the package form of its claim rather than read from a checked graph.
+pub fn requirement_candidates(
+    requirements: &Requirements,
+    registry: &Registry,
+    named: Option<&BackendId>,
+) -> CandidateOutcome {
+    crate::tie::exclude_en1(
+        reduced_candidates(
+            requirements,
+            None,
+            registry,
+            named,
+            &std::collections::BTreeSet::new(),
+        ),
+        requirements.kind(),
+        named,
+        requirements.invariant_clause(),
+    )
+}
+
 /// The requested items of a checked package's requirement `records`
 /// (`CheckedPackage::graph().requirements()`) for a request naming no
 /// evidence selection: [`items_with_evidence`] with

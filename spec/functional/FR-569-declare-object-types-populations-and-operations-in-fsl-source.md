@@ -562,7 +562,20 @@ type's effective identity field names: its own `identity` list, or the
 inherited one when it declares none), `members` (one entry per field of the
 effective view, in the node body's binding order, in the `source_records`
 member encoding of FR-531) and `populations` (one `{name, symmetric}` entry
-per population the type itself declares, in source order). The row's key is
+per population the type itself declares, in source order) and `operations`
+(one `{identity, query}` entry per operation the type itself declares, in
+source order: `identity` the operation's source identity `<type>::<operation>`
+(`Order::bump`), the `source_identity` of its source-operation row (FR-390) where one exists,
+and `query` a boolean, true exactly when the operation has a result and an
+empty effect frame, the rule "dispatch-eligible query" states; an operation
+the type only inherits has no entry, and a redefining operation has its own).
+Every entry of `operations` has exactly one `operation_effects` row whose
+`declaring` is the row's `structural_node` and whose `provenance.member` is
+the entry's `identity`, and no such row lacks an entry. The reader checks
+only the member set and types of `operations` (present once, a list of
+`{identity, query}` objects with a string and a boolean); it does not join the
+entries to the package's `operation_effects` or source-operation rows, so the
+correspondence above is the writer's obligation. The row's key is
 (`source_authority`, `source_identity`). The rows are written to and read
 from the `source_objects` member of `identities.json` (FR-531 "The identity
 file", FR-517); none is derived from package bytes, decoded nodes, display
@@ -650,6 +663,7 @@ A protocol that reaches a source-declared operation anchor gets the typed `Missi
 | FR-569-AC-13 | Source route. A field typed `Population<Order>[3]`, and a field typed by the name of a source function, are each refused at the type with the code and cause a source record field of the same type gets, and the unit yields no checked package. | Test (TC-1940) |
 | FR-569-AC-14 | Over fixture S, S4 emits a package that FSL's I2 reader admits, holding `Order` as a `model`/`object_type` node with `declaration` `["Order"]` and the unit's `SourceOwner`. With `Order`'s owner replaced by a `ModelOwner` naming fixture D's package and IR node of `Order`, the I2 reader refuses `malformed_wire` at the node's `owner`; with its `declaration` removed and its `SourceOwner` kept, it refuses `malformed_wire` at the node's `owner`. A member type of AC-12 emits a binding naming the type node a record field of that type is bound to. | Test (TC-1941) |
 | FR-569-AC-15 | Source route. After a source object unit is assembled, its view holds every member type as below. `f: Decimal[0, 100; 2, 2; exact]` holds `Resolved` of that decimal type. `s: Sequence<Set<Integer>[0, 2]>[0, 2]` holds multiplicity `0..2` (ordered) and `Resolved` of `Set<Integer>[0, 2]`, not a sequence nested inside a sequence. `r: Reference<Order>` holds `Package` of `Order`'s key, and `c: Clock` holds `Clock`, and `o: Option<Sequence<Integer>[0, 3]>` holds multiplicity one and `Resolved` of the whole option. Every member's `value_type` equals the checked type of the same form as a record field. Over `object Base { operation f(p: Int[0, 9]): Integer; }`, an override `f(p: Integer): Int[0, 9]` checks and an override `f(p: Int[0, 3]): Integer` is refused `ill_typed`/`variance-parameter`. With `M` selecting a model whose `Leaf` extends `Node`, an override narrowing an operation result from `Option<Reference<M::Node>>` to `Option<Reference<M::Leaf>>` checks, and, over a base whose result is `Option<Reference<M::Leaf>>`, an override widening it to `Option<Reference<M::Node>>` is refused `ill_typed`/`variance-result`. An override redefining a result `Reference<Order>` as `Option<Reference<Order>>` is refused `ill_typed`/`variance-result`. An override redefining a parameter `Decimal[0, 100; 2, 2; exact]` as `Decimal[0, 200; 2, 2; exact]` is refused `ill_typed`/`variance-parameter`. A member `w: W` of `object O`, where `record W { c: Clock; }`, in a unit that also declares `dimension Time;`, `unit ms : Time = rational(1, 1);` and `time O dense unit ms;`, passes the whole S3 check, timed-model step included, and records the clock place `w.c` that a record field of type `W` records; a `Sequence<W>[0, 2]` member and a member typed by a record holding `w: W` record the places their record fields record. | Test (TC-1940) |
+| FR-569-AC-16 | Over fixture S, the `operations` of the source-object rows are: `Order` `[{identity: "Order::size", query: true}, {identity: "Order::count", query: true}, {identity: "Order::scaled", query: true}, {identity: "Order::bump", query: false}]` in source order; `Sub` `[{identity: "Sub::size", query: true}, {identity: "Sub::scaled", query: true}]`, with no entry for an inherited operation; `Shape` `[]`. Each `identity` equals the `source_identity` of the source-operation row of that operation where one exists, and each entry has exactly one `operation_effects` row whose `declaring` is the row's node and whose `provenance.member` is the `identity`. The entries are written to and read back equal from `identities.json` `source_objects[].operations`, each as `{"identity", "query"}`; a row whose `operations` member is absent, repeated, or holds an entry with another member set is `Malformed` at `source_objects`. D's emission has none. | Test (TC-1408) |
 
 
 ## Dependencies

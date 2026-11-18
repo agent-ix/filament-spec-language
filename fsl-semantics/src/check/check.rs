@@ -416,9 +416,6 @@ pub struct PackageDeclarations {
     /// resolve to, ascending; the lock's `definition_selections` hold their
     /// `requires` closure.
     pub header_layers: Vec<crate::value::layer::HeaderLayer>,
-    /// The span of the unit's first source `object` declaration, which the
-    /// package emitter refuses until it can write source object types.
-    pub first_source_object: Option<(RawSourceRef, fsl_foundation::Span)>,
     /// Authored identity-field names for each checked source object type,
     /// keyed by the source model's declaration key.
     pub(crate) source_object_identity_fields:
@@ -819,7 +816,6 @@ impl PackageDeclarations {
             package_name: package_name.into(),
             protocol_profile: None,
             header_layers: Vec::new(),
-            first_source_object: None,
             source_object_identity_fields: BTreeMap::new(),
             types: TypeEnvironment::default(),
             model_records: ModelRecords::default(),

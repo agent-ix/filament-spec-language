@@ -1160,149 +1160,11 @@ pub fn resolve_items(
     }
 }
 
-/// An item of a `package` request (FR-850) whose claim names an item family
-/// the package route does not settle yet (FR-940 "Package forms of the
-/// source-checked evaluators"): the request is refused whole rather than
-/// settle that item `unsupported`.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PendingPackageFamily {
-    /// The request index of the first such item, `None` for the default
-    /// items of a request with no `items` member.
-    pub request_index: Option<RequestIndex>,
-    /// What the item names.
-    pub family: PendingFamily,
-}
+mod package_run;
 
-/// What a pending package-route item names.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PendingFamily {
-    /// The default items of a request with no `items` member.
-    DefaultItems,
-    /// A claimless `simulation` item (FR-634).
-    Simulation,
-    /// A derived item over a model (FSpec FR-368).
-    Derived,
-    /// A temporal clause, named by its `temporal_clause_names` row.
-    Temporal,
-    /// A named declaration.
-    Declaration,
-    /// A name the package carries no row for while it holds a claim whose
-    /// name it does not carry ([`fsl_package::AnalysisView::unnamed_claims`]):
-    /// the name may be that claim's, so it is not settled `unknown-claim`.
-    UnnamedClaim,
-}
-
-impl PendingFamily {
-    /// The family's name in a refusal message.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::DefaultItems => "default-items",
-            Self::Simulation => "simulation",
-            Self::Derived => "derived",
-            Self::Temporal => "temporal",
-            Self::Declaration => "declaration",
-            Self::UnnamedClaim => "unnamed-claim",
-        }
-    }
-}
-
-/// FR-850 "Building the analysis input": resolve a `package` request's items
-/// by name against the package, read only through `view` (FR-940). A
-/// temporal clause is named by its `temporal_clause_names` row and any other
-/// claim by the `declaration.qualified_name` of its node. A name neither
-/// carries settles `invalid-request` with `invalid_capability`/`unknown-claim`
-/// as the source route settles it, but only when the package holds no claim
-/// whose name it does not carry (an `invariant` state clause, a refinement,
-/// a state-graph claim): the name could be that claim's.
-///
-/// # Errors
-///
-/// [`PendingPackageFamily`] for the first item that names a claim, a
-/// derived item or a simulation, or a name that may be an unnamed claim's,
-/// and for the default items: the package route settles no engine family
-/// yet, and it never settles one `unsupported` for a fact the source route
-/// reads (FR-940).
-pub fn resolve_package_items(
-    view: &dyn fsl_package::AnalysisView,
-    selections: Option<&[ItemSelection]>,
-) -> Result<Vec<ResolvedItem>, PendingPackageFamily> {
-    let Some(selections) = selections else {
-        return Err(PendingPackageFamily {
-            request_index: None,
-            family: PendingFamily::DefaultItems,
-        });
-    };
-    let clauses = view.clause_names();
-    let declared = view.declared_names();
-    let unnamed = !view.unnamed_claims().is_empty();
-    selections
-        .iter()
-        .enumerate()
-        .map(|(position, selection)| {
-            let index = RequestIndex::new(position);
-            let pending = |family| PendingPackageFamily {
-                request_index: Some(index),
-                family,
-            };
-            let Some(name) = selection.claim.as_deref() else {
-                return Err(pending(PendingFamily::Simulation));
-            };
-            // A derived item names a model, not a claim (FSpec FR-368).
-            if selection
-                .temporal
-                .as_ref()
-                .is_some_and(|temporal| temporal.item_kind.is_some())
-            {
-                return Err(pending(PendingFamily::Derived));
-            }
-            if clauses.iter().any(|row| row.name.as_ref() == name) {
-                return Err(pending(PendingFamily::Temporal));
-            }
-            if declared.iter().any(|(declared, _)| declared == name) {
-                return Err(pending(PendingFamily::Declaration));
-            }
-            if unnamed {
-                return Err(pending(PendingFamily::UnnamedClaim));
-            }
-            Ok(unknown_claim(index, name))
-        })
-        .collect()
-}
-
-/// [`settle_run`] for the items of a `package` request (FR-850) that
-/// [`resolve_package_items`] settled: the same document, with the registry
-/// of `engines`, written by the one writer both routes share.
-///
-/// # Errors
-///
-/// [`AnalyzeDocumentError::Fault`] when an item is not settled.
-pub fn settle_package_items(
-    items: Vec<ResolvedItem>,
-    engines: &Engines,
-) -> Result<SettledRun, AnalyzeDocumentError> {
-    let mut settled = BTreeMap::new();
-    for item in items {
-        let ResolvedItem::Settled { claim_name, record } = item else {
-            return Err(AnalyzeDocumentError::Fault);
-        };
-        settled.insert(record.request_index(), (claim_name, *record));
-    }
-    write_run(
-        SettledParts {
-            records: Vec::new(),
-            counterexamples: Vec::new(),
-            details: Vec::new(),
-            protocol_conformance: BTreeMap::new(),
-        },
-        &settled,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
-        &BTreeMap::new(),
-        &[],
-        engines,
-    )
-}
+pub use package_run::{
+    settle_package_run, PackageRun, PackageRunError, PendingFamily, PendingPackageFamily,
+};
 
 /// One requirement item of a run call (FR-395 "Item of the call") with the
 /// backend and options the run names for it (FR-960).
@@ -1713,9 +1575,9 @@ fn resolve_one(
 /// FR-623: admit the item's pending `reductions` over what the unit declares,
 /// so the item runs under FSpec FR-382's wire form and its echo states it. A
 /// subject the binding refuses is left for the run to refuse.
-fn admit_reductions(
-    package: &CheckedPackage,
-    binding: &SubjectBinding<'_>,
+fn admit_reductions<'a>(
+    input: &fsl_eval::simulation::model::ModelCheckInput<'a>,
+    binding: &SubjectBinding<'a>,
     limits: &AnalyzeLimits,
     item: &mut ClaimItem,
 ) -> Result<(), super::reduction_item::ReductionIssue> {
@@ -1725,11 +1587,7 @@ fn admit_reductions(
     let Some(selection) = form.pending_reductions.take() else {
         return Ok(());
     };
-    let simulation = super::request::simulation(
-        &fsl_eval::simulation::model::ModelCheckInput::source(package),
-        binding,
-        limits,
-    );
+    let simulation = super::request::simulation(input, binding, limits);
     let Ok(system) = fsl_eval::simulation::model::ModelSystem::new(simulation) else {
         form.pending_reductions = Some(selection);
         return Ok(());
@@ -2063,6 +1921,24 @@ fn temporal_item(
     claim: &OccurrenceKey,
     selection: &TemporalSelection,
 ) -> TemporalItem {
+    let mut item = temporal_settings(selection);
+    if item.item_kind == ItemKind::Formula {
+        if let Some(clause) = package
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .find(|clause| clause.identity() == *claim.node())
+        {
+            item.fairness = clause.clause().fairness().to_vec();
+        }
+    }
+    item
+}
+
+/// The temporal form an item's `selection` sets: its item kind and each
+/// limit it sets over the published default, with no fairness, which the
+/// claim's clause resolves.
+fn temporal_settings(selection: &TemporalSelection) -> TemporalItem {
     let mut item = TemporalItem {
         item_kind: selection
             .item_kind
@@ -2083,16 +1959,6 @@ fn temporal_item(
         }),
         ..TemporalItem::default()
     };
-    if item.item_kind == ItemKind::Formula {
-        if let Some(clause) = package
-            .graph()
-            .temporal_clauses()
-            .iter()
-            .find(|clause| clause.identity() == *claim.node())
-        {
-            item.fairness = clause.clause().fairness().to_vec();
-        }
-    }
     if let Some(limits) = &selection.limits {
         let set = |value: Option<NonZeroU64>, slot: &mut u64| {
             if let Some(value) = value {
@@ -2703,6 +2569,103 @@ pub fn settle_run(
         engines,
         limits,
     } = run;
+    let source_input = fsl_eval::simulation::model::ModelCheckInput::source(package);
+    let Negotiation {
+        negotiated,
+        unrouted_items,
+        settled,
+        echoes,
+        simulations,
+    } = negotiate_items(
+        items,
+        negotiate,
+        &ItemReads {
+            admit: &|item| admit_reductions(&source_input, &binding, &limits, item),
+            owner: &|claim| owning_model(package, claim).map(str::to_owned),
+            family: &|kind, claim| crate::claim_family::claim_family(package, kind, claim),
+        },
+    )?;
+    let outcome = super::request::analyze_bound(
+        &super::RunInput::source(package),
+        &binding,
+        &provision,
+        &negotiated,
+        engines,
+        &limits,
+        cancel,
+    )
+    .map_err(|failure| match failure {
+        fsl_foundation::diagnostic::StageFailure::Refused(refusal) => {
+            AnalyzeDocumentError::Refused(refusal)
+        }
+        _ => AnalyzeDocumentError::Fault,
+    })?
+    .into_value();
+    let (targets, routes) = negotiated_routes(&negotiated, &unrouted_items, engines);
+    // FR-634: each simulation item's document at its request index; it
+    // settles no claim, so it is no aggregate gap, and its category ranks
+    // in the exit code.
+    let mut simulated = Vec::new();
+    for item in &simulations {
+        match super::simulation_item::simulate(package, &binding, &limits, item, cancel) {
+            Ok(written) => simulated.push(written),
+            Err(super::simulation_item::SimulationFault::Binding(failure)) => {
+                return Err(AnalyzeDocumentError::Refused(
+                    super::AnalyzeRefusal::Binding(failure),
+                ))
+            }
+            Err(super::simulation_item::SimulationFault::Fault) => {
+                return Err(AnalyzeDocumentError::Fault)
+            }
+        }
+    }
+    write_run(
+        SettledParts {
+            records: outcome.records,
+            counterexamples: outcome.counterexamples,
+            details: outcome.details,
+            protocol_conformance: outcome.protocol_conformance,
+        },
+        &settled,
+        &echoes,
+        &targets,
+        &routes,
+        &simulated,
+        engines,
+    )
+}
+
+/// What a run reads of its package while it negotiates its items: the
+/// source route reads its checked package, the package route (FR-850) the
+/// package forms of its items' claims.
+struct ItemReads<'r> {
+    /// FR-623's admission of an item's pending `reductions`.
+    admit: &'r dyn Fn(&mut ClaimItem) -> Result<(), super::reduction_item::ReductionIssue>,
+    /// The model package owning an item's claim, which its certificate
+    /// identity names.
+    owner: &'r dyn Fn(&OccurrenceKey) -> Option<String>,
+    /// The declaration family of an item's claim (FR-507).
+    family: &'r dyn Fn(ItemKind, &OccurrenceKey) -> Option<fsl_semantics::check::DeclarationFamily>,
+}
+
+/// The resolved items of a run, negotiated: the items to analyze, the
+/// items negotiation ran for that no route reads, the items settled
+/// without running, each claim item's echo and the simulation items.
+struct Negotiation {
+    negotiated: Vec<NegotiatedItem>,
+    unrouted_items: Vec<RequestIndex>,
+    settled: BTreeMap<RequestIndex, (Option<String>, TerminalRecord)>,
+    echoes: BTreeMap<RequestIndex, Echo>,
+    simulations: Vec<super::SimulationItem>,
+}
+
+/// Negotiate `items` with `negotiate`, reading the package through `reads`:
+/// the one negotiation both routes share.
+fn negotiate_items(
+    items: Vec<ResolvedItem>,
+    negotiate: &dyn Negotiate,
+    reads: &ItemReads<'_>,
+) -> Result<Negotiation, AnalyzeDocumentError> {
     let mut negotiated = Vec::new();
     // Items negotiation ran for but no route reads: settled by its
     // `unsupported` disposition.
@@ -2724,12 +2687,12 @@ pub fn settle_run(
                     subject,
                     unrouted,
                 } = *claim;
-                let admitted = admit_reductions(package, &binding, &limits, &mut item);
+                let admitted = (reads.admit)(&mut item);
                 let echo = item
                     .request_item_wire(&subject)
                     .map_err(|_| AnalyzeDocumentError::Fault)?;
-                let identity = owning_model(package, &item.claim)
-                    .map(|model| fsl_replay::certificate_identity_wire(&item.claim, model))
+                let identity = (reads.owner)(&item.claim)
+                    .map(|model| fsl_replay::certificate_identity_wire(&item.claim, &model))
                     .transpose()
                     .map_err(|_| AnalyzeDocumentError::Fault)?;
                 echoes.insert(
@@ -2775,9 +2738,8 @@ pub fn settle_run(
                     Some(ItemForm::Temporal(form)) => form.item_kind,
                     _ => ItemKind::Formula,
                 };
-                let inapplicable =
-                    crate::claim_family::claim_family(package, temporal_kind, &item.claim)
-                        .is_none_or(|family| !item.kind.applies_to_declaration(family));
+                let inapplicable = (reads.family)(temporal_kind, &item.claim)
+                    .is_none_or(|family| !item.kind.applies_to_declaration(family));
                 if unrouted
                     && !inapplicable
                     && !matches!(disposition, fsl_route::routing::Disposition::InvalidRequest)
@@ -2807,6 +2769,25 @@ pub fn settle_run(
             }
         }
     }
+    Ok(Negotiation {
+        negotiated,
+        unrouted_items,
+        settled,
+        echoes,
+        simulations,
+    })
+}
+
+/// FR-621: the backend each negotiated item was negotiated to, and each
+/// item's route, which the document's `last_stage` reads.
+fn negotiated_routes(
+    negotiated: &[NegotiatedItem],
+    unrouted_items: &[RequestIndex],
+    engines: &Engines,
+) -> (
+    BTreeMap<RequestIndex, BackendId>,
+    BTreeMap<RequestIndex, super::ItemRoute>,
+) {
     // FR-621 "The record's `backend` member": the backend each item was
     // negotiated to, which produced its record when no disposition did.
     let targets: BTreeMap<RequestIndex, BackendId> = negotiated
@@ -2817,22 +2798,6 @@ pub fn settle_run(
                 .map(|target| (item.item.request_index, target.id().clone()))
         })
         .collect();
-    let outcome = super::request::analyze_bound(
-        &super::RunInput::source(package),
-        &binding,
-        &provision,
-        &negotiated,
-        engines,
-        &limits,
-        cancel,
-    )
-    .map_err(|failure| match failure {
-        fsl_foundation::diagnostic::StageFailure::Refused(refusal) => {
-            AnalyzeDocumentError::Refused(refusal)
-        }
-        _ => AnalyzeDocumentError::Fault,
-    })?
-    .into_value();
     // FR-621 "Last stage": each negotiated item's route. An item negotiated
     // to an FSL engine settles at S6c, one negotiated to an outside provider
     // or settled by its negotiation's disposition at S6b.
@@ -2857,37 +2822,7 @@ pub fn settle_run(
             .iter()
             .map(|index| (*index, super::ItemRoute::Negotiated)),
     );
-    // FR-634: each simulation item's document at its request index; it
-    // settles no claim, so it is no aggregate gap, and its category ranks
-    // in the exit code.
-    let mut simulated = Vec::new();
-    for item in &simulations {
-        match super::simulation_item::simulate(package, &binding, &limits, item, cancel) {
-            Ok(written) => simulated.push(written),
-            Err(super::simulation_item::SimulationFault::Binding(failure)) => {
-                return Err(AnalyzeDocumentError::Refused(
-                    super::AnalyzeRefusal::Binding(failure),
-                ))
-            }
-            Err(super::simulation_item::SimulationFault::Fault) => {
-                return Err(AnalyzeDocumentError::Fault)
-            }
-        }
-    }
-    write_run(
-        SettledParts {
-            records: outcome.records,
-            counterexamples: outcome.counterexamples,
-            details: outcome.details,
-            protocol_conformance: outcome.protocol_conformance,
-        },
-        &settled,
-        &echoes,
-        &targets,
-        &routes,
-        &simulated,
-        engines,
-    )
+    (targets, routes)
 }
 
 /// What the engines settled for a run's negotiated items.

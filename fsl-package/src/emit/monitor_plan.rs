@@ -773,6 +773,7 @@ pub(super) struct RetainedRows {
     pub(super) selected_source_record_rows: Vec<super::SelectedSourceRecordRow>,
     pub(super) selected_source_object_rows: Vec<filament_contract_model::SelectedSourceObjectRow>,
     pub(super) source_object_member_facts: Vec<Vec<super::SourceObjectMemberFacts>>,
+    pub(super) source_object_operations: Vec<Vec<super::SourceObjectOperationFacts>>,
     pub(super) selected_source_operation_rows:
         Vec<filament_contract_model::SelectedSourceOperationRow>,
     pub(super) selected_source_tuple_rows: Vec<filament_contract_model::SelectedSourceTupleRow>,
@@ -1157,6 +1158,7 @@ pub(super) fn carry_rows(
         selected_source_record_rows: source_records,
         selected_source_object_rows: source_objects,
         source_object_member_facts: retained.source_object_member_facts.clone(),
+        source_object_operations: retained.source_object_operations.clone(),
         selected_source_operation_rows: source_operations,
         selected_source_tuple_rows: source_tuples,
         selected_model_enum_shape_rows: model_enum_shapes,
@@ -1382,6 +1384,7 @@ fn finish(
         selected_source_record_rows: rows.selected_source_record_rows,
         selected_source_object_rows: rows.selected_source_object_rows,
         source_object_member_facts: rows.source_object_member_facts,
+        source_object_operations: rows.source_object_operations,
         selected_source_operation_rows: rows.selected_source_operation_rows,
         selected_source_tuple_rows: rows.selected_source_tuple_rows,
         selected_model_enum_shape_rows: rows.selected_model_enum_shape_rows,

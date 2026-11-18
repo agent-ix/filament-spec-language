@@ -152,7 +152,7 @@ fn a_contract_entry_anchored_at_a_different_operation_refuses() {
 /// frame -- with an empty `contracts` list and no refusal, while the
 /// same protocol naming a `post` clause of that operation binds exactly
 /// that clause's identity.
-#[trace("TC-513", "FR-114-AC-2")]
+#[trace("TC-513", "FR-114-AC-2", "FR-884-AC-5")]
 #[test]
 fn an_empty_contracts_list_binds_with_no_refusal() {
     let empty = checks(&attempt_flow("Flow", ""));
