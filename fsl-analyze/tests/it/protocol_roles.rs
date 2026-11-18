@@ -2488,3 +2488,48 @@ fn no_required_construct_settles_unsupported() {
     let variants = [Unsupported::WeakMemory, Unsupported::UnenumerableRecord];
     assert!(variants.into_iter().all(has_non_refusing_case));
 }
+
+/// FR-218-AC-44 (TC-2972): an attempt binder of any declared type checks;
+/// a read gets the result when the binder type is the operation's result
+/// type, and otherwise each read is refused `ill_typed`/`type-mismatch` at
+/// the read, never at the binder declaration.
+#[trace("TC-2972", "FR-218-AC-44")]
+#[test]
+#[ignore = "QSL-2409: attempt binder reads checked against the application record (refused at each read) not implemented yet"]
+fn an_attempt_binder_read_is_checked_against_the_record() {
+    let flag = |binder: &str, gate: &str| {
+        format!(
+            "sequence Main {{ attempt T by w on M::Cell::flag contracts [FlagPre, FlagPost] \
+             as (t: {binder}) {{ true }};{gate} }}"
+        )
+    };
+    let touch = |gate: &str| {
+        format!(
+            "sequence Main {{ attempt T by w on M::Cell::touch contracts [TouchPre] \
+             as (t: Boolean) {{ true }};{gate} }}"
+        )
+    };
+    for run in [
+        flag("Boolean", " check Gate using v { t };"),
+        flag("Integer", ""),
+        touch(""),
+    ] {
+        let _ = World::new(&unit(ORIGIN, "", "", &run), &["c"], &[0]);
+    }
+    for (run, reads) in [
+        (flag("Integer", " check Gate using v { t = 1 };"), 1),
+        (touch(" check Gate using v { t };"), 1),
+        (flag("Integer", " check Gate using v { t = 1 and t = 2 };"), 2),
+    ] {
+        let refusals = check_refusals(&unit(ORIGIN, "", "", &run));
+        assert_eq!(refusals.len(), reads, "{run}: {refusals:?}");
+        for (refusal, at) in &refusals {
+            assert_eq!(
+                (refusal.cause.code(), refusal.cause.cause()),
+                (Code::IllTyped, Some("type-mismatch")),
+                "{run}"
+            );
+            assert_eq!(at.as_deref(), Some("t"), "{run}: at the read");
+        }
+    }
+}

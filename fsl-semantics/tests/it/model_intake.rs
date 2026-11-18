@@ -2587,3 +2587,75 @@ fn a_port_role_on_a_shared_alias_is_its_own_units_packages_port() {
         assert_eq!(role.model_selection.as_deref(), Some(package), "{protocol}");
     }
 }
+
+/// FSpec FR-144-AC-33's domain-package key case: `M::Ratio` with `scalar`
+/// `rational` and no `constraints` is the unbounded `Rational`, which has no
+/// canonical-key row, so `Map<M::Ratio, Integer>` is `ill_typed`/
+/// `operator-ineligible` at the key type; the bounded
+/// `Map<Rational[0, 1; 1, 12], Integer>` is admitted.
+#[trace("FSpec-TC-1321", "FSpec-FR-144-AC-33")]
+#[test]
+#[ignore = "QSL-2416: a source Map keyed by an unconstrained domain-package Rational refused at the key type not implemented yet"]
+fn a_map_keyed_by_an_unbounded_package_rational_is_refused() {
+    let mut document = rational_intake_document();
+    document["types"][0]["constraints"] = serde_json::json!([]);
+    let bytes = serde_json::to_vec(&document).expect("the fixture serializes");
+    let packages = fsl_semantics::model::intake::package_input([bytes.as_slice()]).unwrap();
+    let assemble = |declarations: &str| {
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             model M = \"test/rational-value-type\";\n\
+             {declarations}\n"
+        );
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "rational-map-key"),
+            "rational-map-key.native",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("S1 reads the unit");
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+        let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+        let selected = fsl_semantics::model::intake::admit_unit(
+            &unit.selections().models,
+            &packages,
+            ModelNormalizationLimits::default(),
+        )
+        .expect("I1 admits the unconstrained Ratio package");
+        fsl_semantics::check::PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            crate::TEST_PACKAGE_NAME.to_owned(),
+            unit,
+            selected,
+            Vec::new(),
+        )
+    };
+    let refused = |declarations: &str| -> bool {
+        match assemble(declarations) {
+            Err(refusal) => refusal.errors.iter().any(|error| {
+                error.cause.code() == Code::IllTyped
+                    && error.cause.catalog_code().to_string().contains("operator-ineligible")
+            }),
+            Ok(declarations) => declarations
+                .check(CheckMode::Linked, filament_semantic_value::checking::CheckingLimits::default())
+                .err()
+                .is_some_and(|refusals| {
+                    refusals.iter().any(|refusal| {
+                        refusal.cause.code() == Code::IllTyped
+                            && refusal.cause.cause() == Some("operator-ineligible")
+                    })
+                }),
+        }
+    };
+    assert!(refused(
+        "function f using v(m: Map<M::Ratio, Integer>): Boolean pure { true }"
+    ));
+    let bounded = assemble(
+        "function g using v(m: Map<Rational[0, 1; 1, 12], Integer>): Boolean pure { true }",
+    )
+    .unwrap_or_else(|refusal| panic!("a bounded Rational key assembles: {refusal:?}"));
+    assert!(bounded
+        .check(CheckMode::Linked, filament_semantic_value::checking::CheckingLimits::default())
+        .is_ok());
+}
