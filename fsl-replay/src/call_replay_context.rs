@@ -275,7 +275,6 @@ mod tests {
         )
         .expect("selects")
         .into_value();
-        let function_modes = BTreeMap::from([("q".to_owned(), CheckMode::Kernel)]);
         let checked = spine::check_units_with_options(
             &admitted,
             "fixture".to_owned(),
@@ -283,7 +282,6 @@ mod tests {
             &dependencies,
             spine::UnitCheckOptions {
                 check_mode: Some(CheckMode::Kernel),
-                function_modes: Some(&function_modes),
                 ..spine::UnitCheckOptions::default()
             },
             limits.spine,
@@ -451,13 +449,14 @@ mod tests {
     fn a_member_request_carries_the_process_provider_identity() {
         let source = "language \"ix:native\" edition \"1-draft\";\n\
             profile v = \"filament.value.complete/v1\";\n\
-            function q using v(x: Int[0, 9]): Integer pure { 10 mod x }\n"
+            profile Complete = \"filament.protocol.finite-global/v1\";\n\
+            function r using v(x: Int[0, 9]): Integer pure { 10 mod x }\n"
             .to_owned();
         let call = Call {
             clocks: Default::default(),
             wire_arguments: Vec::new(),
             snapshot: None,
-            function: "q".to_owned(),
+            function: "r".to_owned(),
             arguments: vec![crate::CallArgument {
                 parameter: "x".to_owned(),
                 value: Value::Integer(Integer::from(0_i64)),
@@ -468,7 +467,7 @@ mod tests {
         };
         let result = run_with_replay_context_kernel(&source, CallerLimits::default(), &call);
         assert!(matches!(result.outcome(), CallOutcome::Undefined { .. }));
-        let (_, parameters) = declaration(&source, "q");
+        let (_, parameters) = declaration(&source, "r");
         let member = result.requirements().members()[0].clone();
         let bounds = [bound_at(parameters[0].clone())];
         let wire = result
