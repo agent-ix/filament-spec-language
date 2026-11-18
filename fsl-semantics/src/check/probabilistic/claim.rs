@@ -1578,7 +1578,7 @@ impl Pass<'_, '_> {
                 | FormulaNode::Binary {
                     interval: Some(CheckedInterval::Timed(interval)),
                     ..
-                } => interval.upper().clone(),
+                } => interval.upper().unwrap_or(interval.lower()).clone(),
                 _ => Rational::from_integer(Integer::zero()),
             };
             let deepest = node

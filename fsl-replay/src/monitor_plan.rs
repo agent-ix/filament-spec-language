@@ -131,7 +131,7 @@ impl AtomId {
 pub struct TickInterval {
     lower: Rational,
     lower_closed: bool,
-    upper: Rational,
+    upper: Option<Rational>,
     upper_closed: bool,
 }
 
@@ -141,8 +141,17 @@ impl TickInterval {
         Self {
             lower,
             lower_closed,
-            upper,
+            upper: Some(upper),
             upper_closed,
+        }
+    }
+    /// The interval from `lower` with no upper endpoint (`[a, *]`, FR-943).
+    pub fn unbounded(lower: Rational, lower_closed: bool) -> Self {
+        Self {
+            lower,
+            lower_closed,
+            upper: None,
+            upper_closed: false,
         }
     }
     /// Lower endpoint.
@@ -153,9 +162,9 @@ impl TickInterval {
     pub fn lower_closed(&self) -> bool {
         self.lower_closed
     }
-    /// Upper endpoint.
-    pub fn upper(&self) -> &Rational {
-        &self.upper
+    /// Upper endpoint, or `None` for an interval with no upper end.
+    pub fn upper(&self) -> Option<&Rational> {
+        self.upper.as_ref()
     }
     /// Whether the upper endpoint is closed.
     pub fn upper_closed(&self) -> bool {
@@ -569,12 +578,6 @@ pub enum MonitorPlanRefusal {
     /// the target states other premises.
     #[error("a position counter has uncertainty 0, event rate 1 and reading gap 1")]
     PositionCounterPremise,
-    /// An open position interval `[a, *]` with `a > 0` has no tick bound.
-    #[error("open interval of operator {node} has a lower bound above 0")]
-    OpenIntervalLowerBound {
-        /// The formula arena index.
-        node: usize,
-    },
     /// The target unit is not a checked exact time unit.
     #[error("target unit is not a checked time unit: {unit}")]
     InvalidTimeUnit {
@@ -613,14 +616,6 @@ pub enum MonitorPlanRefusal {
     /// A premise the plan-root node carries would be refused by its reader.
     #[error("plan-root premise refused: {0}")]
     Premise(PremiseDefect),
-    /// An unbounded operator that looks backwards (`once`, `historically`,
-    /// `since`, `triggered` with no interval) has no program (FR-251 "Fault
-    /// boundary").
-    #[error("unbounded past operator {node} yields no complete program")]
-    UnboundedPast {
-        /// The formula arena index.
-        node: usize,
-    },
     /// An unbounded operator whose operands hold another unbounded operator
     /// has no program (FR-251 "Fault boundary").
     #[error("unbounded operator {node} over an unbounded operator yields no complete program")]

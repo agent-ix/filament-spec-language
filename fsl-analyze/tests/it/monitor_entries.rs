@@ -133,7 +133,7 @@ pub(crate) fn reference_spec<'p>(plan: &'p TimedMonitorPlan) -> TickMonitorSpec<
                     TickBound {
                         lower: interval.lower().clone(),
                         lower_closed: interval.lower_closed(),
-                        upper: interval.upper().clone(),
+                        upper: interval.upper().cloned(),
                         upper_closed: interval.upper_closed(),
                     },
                 )
@@ -1683,7 +1683,6 @@ fn the_emitted_program_holds_the_atom_bodies_the_entries_and_the_state_type() {
 /// entries; entry generation never refuses `UnboundedPast`.
 #[ix_trace_rs::trace("TC-2623", "FR-943-AC-4")]
 #[test]
-#[ignore = "QSL-2321: monitor entries refuse every unbounded past operator"]
 fn unbounded_past_operators_reach_generated_entries() {
     for formula in [
         "once holds(c.versionNumber = 2)",

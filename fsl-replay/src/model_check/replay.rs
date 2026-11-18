@@ -500,6 +500,7 @@ impl ModelTraceRefusal {
             | Self::Automaton(fsl_eval::automaton::AutomatonError::InvertedInterval { .. })
             | Self::Automaton(fsl_eval::automaton::AutomatonError::PastOverFuture)
             | Self::Automaton(fsl_eval::automaton::AutomatonError::RepeatedPunctualInterval)
+            | Self::Automaton(fsl_eval::automaton::AutomatonError::OpenTimedInterval)
             | Self::Automaton(fsl_eval::automaton::AutomatonError::ClockLimit { .. })
             | Self::Automaton(fsl_eval::automaton::AutomatonError::ProfileNotTranslated {
                 ..

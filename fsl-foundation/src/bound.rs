@@ -457,13 +457,16 @@ impl TemporalInterval {
 
 /// A validated timed interval (FSL FR-234, ADR-026 DF-2): exact rational
 /// bounds `0 <= lower <= upper` in the clock binding's time unit, each end
-/// closed or open, an open end only with `lower < upper`. [`Self::new`] is
-/// the only constructor.
+/// closed or open, an open end only with `lower < upper`; or a lower bound
+/// with no upper bound, `[q, *]` or `(q, *)` (FSL FR-943). [`Self::new`] and
+/// [`Self::unbounded`] are the only constructors.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TimedInterval {
     lower: Rational,
     lower_closed: bool,
-    upper: Rational,
+    /// The upper bound, or `None` for an interval with no upper bound.
+    upper: Option<Rational>,
+    /// Whether the upper end is closed; `false` when there is no upper bound.
     upper_closed: bool,
 }
 
@@ -505,8 +508,22 @@ impl TimedInterval {
         Ok(Self {
             lower,
             lower_closed,
-            upper,
+            upper: Some(upper),
             upper_closed,
+        })
+    }
+
+    /// The interval `[lower, *)` or `(lower, *)` with no upper bound (FSL
+    /// FR-943), refusing a negative lower bound.
+    pub fn unbounded(lower: Rational, lower_closed: bool) -> Result<Self, InvalidTimedInterval> {
+        if lower < Rational::from_integer(Integer::zero()) {
+            return Err(InvalidTimedInterval::NegativeLower);
+        }
+        Ok(Self {
+            lower,
+            lower_closed,
+            upper: None,
+            upper_closed: false,
         })
     }
 
@@ -520,20 +537,34 @@ impl TimedInterval {
         self.lower_closed
     }
 
-    /// The upper bound.
-    pub fn upper(&self) -> &Rational {
-        &self.upper
+    /// The upper bound, or `None` for an interval with no upper bound.
+    pub fn upper(&self) -> Option<&Rational> {
+        self.upper.as_ref()
     }
 
-    /// Whether the upper end is closed.
+    /// Whether the upper end is closed; `false` for an interval with no
+    /// upper bound.
     pub fn upper_closed(&self) -> bool {
         self.upper_closed
+    }
+
+    /// Whether the interval has an upper bound.
+    pub fn is_bounded(&self) -> bool {
+        self.upper.is_some()
+    }
+
+    /// Whether the interval is `[0, *)`, the whole non-negative half line,
+    /// which denotes the operator written with no interval.
+    pub fn is_whole(&self) -> bool {
+        self.upper.is_none()
+            && self.lower_closed
+            && self.lower == Rational::from_integer(Integer::zero())
     }
 
     /// Whether the interval is punctual: `lower = upper`, both ends closed
     /// (ADR-026 DF-2).
     pub fn is_punctual(&self) -> bool {
-        self.lower == self.upper
+        self.upper.as_ref() == Some(&self.lower)
     }
 
     /// Whether the time-stamp difference `offset` lies in the interval,
@@ -549,18 +580,24 @@ impl TimedInterval {
 
     /// Whether some offset of the interval is at least `offset`.
     pub fn reaches(&self, offset: &Rational) -> bool {
-        match self.upper.cmp(offset) {
-            core::cmp::Ordering::Greater => true,
-            core::cmp::Ordering::Equal => self.upper_closed,
-            core::cmp::Ordering::Less => false,
+        match &self.upper {
+            None => true,
+            Some(upper) => match upper.cmp(offset) {
+                core::cmp::Ordering::Greater => true,
+                core::cmp::Ordering::Equal => self.upper_closed,
+                core::cmp::Ordering::Less => false,
+            },
         }
     }
 
     fn admits_at_most(&self, offset: &Rational) -> bool {
-        match offset.cmp(&self.upper) {
-            core::cmp::Ordering::Less => true,
-            core::cmp::Ordering::Equal => self.upper_closed,
-            core::cmp::Ordering::Greater => false,
+        match &self.upper {
+            None => true,
+            Some(upper) => match offset.cmp(upper) {
+                core::cmp::Ordering::Less => true,
+                core::cmp::Ordering::Equal => self.upper_closed,
+                core::cmp::Ordering::Greater => false,
+            },
         }
     }
 

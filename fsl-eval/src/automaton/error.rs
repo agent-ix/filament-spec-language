@@ -68,6 +68,11 @@ pub enum AutomatonError {
     /// such an interval reaches this automaton only in a TT-2 window.
     #[error("a punctual interval is started or read at many positions")]
     RepeatedPunctualInterval,
+    /// A timed interval with a lower bound and no upper bound (`[q, *]`,
+    /// FR-943): the clock-zone automaton has no construction for a window
+    /// that never closes, and FSL names none.
+    #[error("a timed interval with no upper bound has no timed automaton")]
+    OpenTimedInterval,
     /// The construction needs more automaton clocks than it builds: each
     /// interval operator started at many positions takes two clocks per
     /// copy, and its copies grow with `a / (b - a)`.

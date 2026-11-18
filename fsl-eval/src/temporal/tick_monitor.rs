@@ -42,8 +42,8 @@ pub struct TickBound {
     pub lower: Rational,
     /// Whether the lower endpoint is included.
     pub lower_closed: bool,
-    /// Upper endpoint in ticks.
-    pub upper: Rational,
+    /// Upper endpoint in ticks, or `None` for `[a, *]` (FR-943).
+    pub upper: Option<Rational>,
     /// Whether the upper endpoint is included.
     pub upper_closed: bool,
 }
@@ -327,6 +327,11 @@ pub struct TickMonitorReference<'f> {
     hz: i128,
     baseline: Option<u64>,
     cells: BTreeMap<usize, Vec<Cell>>,
+    /// The summary cell of each unbounded past operator: the accumulator the
+    /// entries that aged out were folded into, in the operator's polarity
+    /// (FR-251 "Summary cell"). It starts `indeterminate`: the monitor does not
+    /// observe the system's origin (`HistoryCutoff`).
+    summary: BTreeMap<usize, Val>,
     elems: Vec<Elem>,
     /// Values of unbounded or root instances that finished or were refused.
     ufinal: BTreeMap<(usize, usize), Val>,
@@ -340,7 +345,16 @@ impl<'f> TickMonitorReference<'f> {
     /// A fresh evaluator for `spec` with the unwrapped time at 0.
     pub fn new(spec: TickMonitorSpec<'f>) -> Self {
         let shape = TickShape::of(spec.formula, &spec.bounds, &spec.uncertainty);
-        let cells = spec.bounds.keys().map(|node| (*node, Vec::new())).collect();
+        let cells = shape
+            .nodes()
+            .iter()
+            .filter(|(_, node)| node.buffered)
+            .map(|(index, _)| (*index, Vec::new()))
+            .collect();
+        let summary = Self::unbounded_past(&shape)
+            .into_iter()
+            .map(|node| (node, Val::UNKNOWN))
+            .collect();
         Self {
             spec,
             shape,
@@ -350,6 +364,7 @@ impl<'f> TickMonitorReference<'f> {
             hz: 0,
             baseline: None,
             cells,
+            summary,
             elems: Vec::new(),
             ufinal: BTreeMap::new(),
             history_start: None,
@@ -357,9 +372,28 @@ impl<'f> TickMonitorReference<'f> {
         }
     }
 
-    /// The formula nodes that keep a buffer: the interval operators.
+    /// The formula nodes that keep a buffer: the interval operators with an
+    /// upper bound and every past operator.
     pub fn buffered_nodes(spec: &TickMonitorSpec<'_>) -> Vec<usize> {
-        spec.bounds.keys().copied().collect()
+        TickShape::of(spec.formula, &spec.bounds, &spec.uncertainty)
+            .nodes()
+            .iter()
+            .filter(|(_, node)| node.buffered)
+            .map(|(index, _)| *index)
+            .collect()
+    }
+
+    /// The past operators with no upper bound (`once`, `historically`, `since`
+    /// and `triggered` with no interval or `[a, *]`).
+    fn unbounded_past(shape: &TickShape) -> Vec<usize> {
+        shape
+            .nodes()
+            .iter()
+            .filter(|(_, node)| {
+                !node.future && node.bound.as_ref().is_none_or(|bound| bound.upper.is_none())
+            })
+            .map(|(index, _)| *index)
+            .collect()
     }
 
     fn width(&self) -> &Rational {
@@ -377,7 +411,10 @@ impl<'f> TickMonitorReference<'f> {
         if same {
             let zero = q(0);
             let above = zero > bound.lower || (zero == bound.lower && bound.lower_closed);
-            let below = zero < bound.upper || (zero == bound.upper && bound.upper_closed);
+            let below = bound
+                .upper
+                .as_ref()
+                .is_none_or(|upper| zero < *upper || (zero == *upper && bound.upper_closed));
             return if above && below {
                 Membership::All
             } else {
@@ -386,9 +423,11 @@ impl<'f> TickMonitorReference<'f> {
         }
         let lo = q(dmin).sub(self.width());
         let hi = q(dmax).add(self.width());
-        if lo >= bound.lower && hi <= bound.upper {
+        let within = bound.upper.as_ref().is_none_or(|upper| hi <= *upper);
+        let beyond = bound.upper.as_ref().is_some_and(|upper| lo >= *upper);
+        if lo >= bound.lower && within {
             Membership::All
-        } else if hi <= bound.lower || lo >= bound.upper {
+        } else if hi <= bound.lower || beyond {
             Membership::No
         } else {
             Membership::Some
@@ -400,7 +439,8 @@ impl<'f> TickMonitorReference<'f> {
         self.spec
             .bounds
             .get(&node)
-            .is_some_and(|bound| q(self.hz).sub(&q(tick)).sub(self.width()) >= bound.upper)
+            .and_then(|bound| bound.upper.as_ref())
+            .is_some_and(|upper| q(self.hz).sub(&q(tick)).sub(self.width()) >= *upper)
     }
 
     fn member_val(member: Membership) -> Val {
@@ -486,7 +526,7 @@ impl<'f> TickMonitorReference<'f> {
             None => Val::TRUE,
         };
         let psi = |cell: &Cell| polar(self.operand(node, info.right, cell));
-        let mut acc = Val::FALSE;
+        let mut acc = self.summary.get(&node).copied().unwrap_or(Val::FALSE);
         if info.future {
             let mut prefix = Val::TRUE;
             for cell in cells.iter().filter(|cell| cell.first >= pos) {
@@ -512,7 +552,10 @@ impl<'f> TickMonitorReference<'f> {
                     .and(phi(cell))
                     .or(Self::member_val(member).and(psi(cell)));
             }
-            if let Some(start) = self.history_start {
+            if let Some(start) = self
+                .history_start
+                .filter(|_| !self.summary.contains_key(&node))
+            {
                 // History before the marker is gone: an event there could have
                 // been in the window, and nothing says whether it was.
                 let before = start - 1;
@@ -538,9 +581,9 @@ impl<'f> TickMonitorReference<'f> {
     fn fold_cell(
         &self,
         node: usize,
+        origin: (usize, i128),
         cell: &Cell,
-        acc: Val,
-        pfx: Val,
+        (acc, pfx): (Val, Val),
         carrier: usize,
     ) -> (Val, Val) {
         let Some(info) = self.shape.node(node) else {
@@ -559,7 +602,15 @@ impl<'f> TickMonitorReference<'f> {
                     .map_or(Val::TRUE, |left| polar(self.expr(left, cell.first))),
             )
         };
-        (acc.or(psi.and(pfx)), pfx.and(phi))
+        // A distance below the interval's lower bound holds no witness
+        // (`[a, *]`, FR-943).
+        let member = Self::member_val(self.member(
+            node,
+            cell.t_first - origin.1,
+            cell.t_last - origin.1,
+            cell.first == origin.0 && cell.last == origin.0,
+        ));
+        (acc.or(member.and(psi).and(pfx)), pfx.and(phi))
     }
 
     fn elem_val(&self, elem: &Elem) -> Val {
@@ -576,7 +627,13 @@ impl<'f> TickMonitorReference<'f> {
                 .flatten()
                 .filter(|cell| cell.last >= elem.pos)
             {
-                (acc, pfx) = self.fold_cell(elem.node, cell, acc, pfx, carrier);
+                (acc, pfx) = self.fold_cell(
+                    elem.node,
+                    (elem.pos, self.events[elem.pos].tick),
+                    cell,
+                    (acc, pfx),
+                    carrier,
+                );
             }
         }
         let open = Val {
@@ -749,6 +806,32 @@ impl<'f> TickMonitorReference<'f> {
         })
     }
 
+    /// Whether every operator the operands of `node` read has settled at
+    /// event `pos` (FR-251 "Settled operand").
+    fn operands_settled(&self, node: usize, pos: usize) -> bool {
+        let Some(info) = self.shape.node(node) else {
+            return true;
+        };
+        info.left
+            .into_iter()
+            .chain([info.right])
+            .all(|operand| self.leaves_settled(operand, pos))
+    }
+
+    /// `acc` with the entry `cell` folded in: the Kleene recursion of FR-092 at
+    /// a lower bound of 0, in the operator's polarity.
+    fn fold_summary(&self, node: usize, cell: &Cell, acc: Val) -> Val {
+        let Some(info) = self.shape.node(node) else {
+            return acc;
+        };
+        let polar = |value: Val| if info.dual { value.not() } else { value };
+        let psi = polar(self.expr(info.right, cell.first));
+        let phi = info
+            .left
+            .map_or(Val::TRUE, |left| polar(self.expr(left, cell.first)));
+        acc.and(phi).or(psi)
+    }
+
     /// Drop the entries nothing reads any more, folding each into the
     /// instances of unbounded operators that it carries. Every fold reads the
     /// buffers as they were before any entry is dropped.
@@ -761,12 +844,24 @@ impl<'f> TickMonitorReference<'f> {
             };
             let cells = self.cells.get(node).cloned().unwrap_or_default();
             let mut gone = Vec::new();
+            let summarised = self.summary.contains_key(node);
             for (index, cell) in cells.iter().enumerate() {
                 let reported = match (cell.set, cell.rep) {
                     (Some(value), Some(rep)) => self.outcome_of(value) == rep,
                     _ => false,
                 };
-                if reported && q(self.hz - cell.t_last) >= retention && !self.needed(*node, index) {
+                let aged = reported && q(self.hz - cell.t_last) >= retention;
+                if summarised {
+                    // An unbounded past operator folds the aged entries of a
+                    // prefix whose operands have settled into its summary cell
+                    // (FR-251 "Folding").
+                    if aged && !cell.lost && self.operands_settled(*node, cell.first) {
+                        gone.push(index);
+                        continue;
+                    }
+                    break;
+                }
+                if aged && !self.needed(*node, index) {
                     gone.push(index);
                 }
             }
@@ -784,11 +879,32 @@ impl<'f> TickMonitorReference<'f> {
                 }
             }
         }
+        let mut summarised = Vec::new();
+        for (node, gone) in &dropped {
+            if !self.summary.contains_key(node) {
+                continue;
+            }
+            let cells = self.cells.get(node).cloned().unwrap_or_default();
+            let mut acc = self.summary[node];
+            for index in gone {
+                acc = self.fold_summary(*node, &cells[*index], acc);
+            }
+            summarised.push((*node, acc));
+        }
         for (at, node, cell) in folded {
             let elem = self.elems[at];
-            let (acc, pfx) = self.fold_cell(elem.node, &cell, elem.acc, elem.pfx, node);
+            let (acc, pfx) = self.fold_cell(
+                elem.node,
+                (elem.pos, self.events[elem.pos].tick),
+                &cell,
+                (elem.acc, elem.pfx),
+                node,
+            );
             self.elems[at].acc = acc;
             self.elems[at].pfx = pfx;
+        }
+        for (node, acc) in summarised {
+            self.summary.insert(node, acc);
         }
         for (node, gone) in dropped {
             if let Some(buffer) = self.cells.get_mut(&node) {
@@ -872,6 +988,16 @@ impl<'f> TickMonitorReference<'f> {
                 origin: tick,
                 outcome: self.outcome_of(value),
             });
+            // The overflow of an unbounded past operator is sticky: the lost
+            // event's contribution is unknown from then on, so the buffer is
+            // emptied and the summary cell reset to `indeterminate` (FR-251
+            // "Overflow is sticky").
+            if let Some(summary) = self.summary.get_mut(&node) {
+                *summary = Val::UNKNOWN;
+                if let Some(cells) = self.cells.get_mut(&node) {
+                    cells.clear();
+                }
+            }
         }
         for result in &results {
             self.emitted
@@ -942,7 +1068,17 @@ impl<'f> TickMonitorReference<'f> {
             let phi = info
                 .left
                 .map_or(Val::TRUE, |left| polar(self.expr(left, position)));
-            folded.push((at, elem.acc.or(psi.and(elem.pfx)), elem.pfx.and(phi)));
+            let member = Self::member_val(self.member(
+                elem.node,
+                self.events[position].tick - self.events[elem.pos].tick,
+                self.events[position].tick - self.events[elem.pos].tick,
+                elem.pos == position,
+            ));
+            folded.push((
+                at,
+                elem.acc.or(member.and(psi).and(elem.pfx)),
+                elem.pfx.and(phi),
+            ));
         }
         for (at, acc, pfx) in folded {
             self.elems[at].acc = acc;
@@ -1069,6 +1205,9 @@ impl<'f> TickMonitorReference<'f> {
         }
         for cells in self.cells.values_mut() {
             cells.clear();
+        }
+        for summary in self.summary.values_mut() {
+            *summary = Val::UNKNOWN;
         }
         self.history_start = Some(self.now);
         results.sort_by_key(|r| (r.subformula, r.position));

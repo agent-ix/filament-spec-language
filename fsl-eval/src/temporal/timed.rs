@@ -687,7 +687,9 @@ fn unrolled(
         .filter_map(|node| match node {
             FormulaNode::Unary { interval, .. } | FormulaNode::Binary { interval, .. } => {
                 match interval {
-                    Some(CheckedInterval::Timed(interval)) => Some(interval.upper()),
+                    Some(CheckedInterval::Timed(interval)) => {
+                        Some(interval.upper().unwrap_or(interval.lower()))
+                    },
                     Some(CheckedInterval::Steps(_)) | None => None,
                 }
             }

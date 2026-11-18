@@ -110,6 +110,13 @@ pub struct NodeSpec {
     /// For an unbounded operator, the interval operator whose buffer carries
     /// its operands' events.
     pub carrier: Option<usize>,
+    /// Whether the operator is an unbounded past operator: its buffer holds a
+    /// summary cell as its first element (FR-251 "Summary cell").
+    pub summary: bool,
+    /// For an unbounded future operator with a lower bound (`[a, *]`), the
+    /// thresholds that decide whether an event is at a distance of at least
+    /// `a` from the instance's origin.
+    pub start: Option<Thresholds>,
 }
 
 /// How the clause activates its root.
@@ -173,13 +180,6 @@ pub struct EntrySpec {
 /// Why the entries cannot be generated for a clause.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum EntryRefusal {
-    /// An unbounded operator that looks backwards (`once`, `historically`,
-    /// `since`, `triggered` without an interval).
-    #[error("unbounded past operator {node} is not generated")]
-    UnboundedPast {
-        /// The formula arena index.
-        node: usize,
-    },
     /// An unbounded operator whose operands hold another unbounded operator.
     #[error("unbounded operator {node} has an unbounded operator in its operands")]
     UnboundedOverUnbounded {
@@ -203,7 +203,6 @@ pub enum EntryRefusal {
 impl From<EntryRefusal> for MonitorPlanRefusal {
     fn from(refusal: EntryRefusal) -> Self {
         match refusal {
-            EntryRefusal::UnboundedPast { node } => Self::UnboundedPast { node },
             EntryRefusal::UnboundedOverUnbounded { node } => Self::UnboundedOverUnbounded { node },
             EntryRefusal::TickRange { node } => Self::TickRange { node },
             EntryRefusal::MissingBuffer { node } => Self::MissingBuffer { node },
@@ -237,7 +236,7 @@ impl Thresholds {
     pub fn of(
         lower: &Rational,
         lower_closed: bool,
-        upper: &Rational,
+        upper: Option<&Rational>,
         upper_closed: bool,
         uncertainty: &Rational,
     ) -> Option<Self> {
@@ -245,12 +244,21 @@ impl Thresholds {
         let width = int(1).add(&int(2).mul(uncertainty));
         let zero = int(0);
         let above = zero > *lower || (zero == *lower && lower_closed);
-        let below = zero < *upper || (zero == *upper && upper_closed);
+        let below = upper.is_none_or(|upper| zero < *upper || (zero == *upper && upper_closed));
+        // An interval with no upper bound is never passed: its upper
+        // thresholds are beyond every tick the generated integers hold.
+        let (all_hi, none_hi) = match upper {
+            Some(upper) => (
+                floor_of(&upper.sub(&width))?,
+                ceil_of(&upper.add(&width))?,
+            ),
+            None => (NO_UPPER, NO_UPPER),
+        };
         Some(Self {
             all_lo: ceil_of(&lower.add(&width))?,
-            all_hi: floor_of(&upper.sub(&width))?,
+            all_hi,
             none_lo: floor_of(&lower.sub(&width))?,
-            none_hi: ceil_of(&upper.add(&width))?,
+            none_hi,
             zero_in: above && below,
         })
     }
@@ -285,7 +293,7 @@ pub fn spec_from_plan(plan: &TimedMonitorPlan) -> Result<EntrySpec, EntryRefusal
                 TickBound {
                     lower: interval.lower().clone(),
                     lower_closed: interval.lower_closed(),
-                    upper: interval.upper().clone(),
+                    upper: interval.upper().cloned(),
                     upper_closed: interval.upper_closed(),
                 },
             )
@@ -294,16 +302,32 @@ pub fn spec_from_plan(plan: &TimedMonitorPlan) -> Result<EntrySpec, EntryRefusal
     let shape = TickShape::of(formula, &bounds, plan.uncertainty());
     let mut nodes = Vec::new();
     for (index, info) in shape.nodes() {
-        let interval = match &info.bound {
-            Some(bound) => {
-                let thresholds = Thresholds::of(
+        // An unbounded past operator written with no interval is `[0, *]`.
+        let bound = match (&info.bound, info.future) {
+            (Some(bound), _) => Some(bound.clone()),
+            (None, false) => Some(TickBound {
+                lower: Rational::from_integer(ExactInteger::from(0_i64)),
+                lower_closed: true,
+                upper: None,
+                upper_closed: false,
+            }),
+            (None, true) => None,
+        };
+        let thresholds = match &bound {
+            Some(bound) => Some(
+                Thresholds::of(
                     &bound.lower,
                     bound.lower_closed,
-                    &bound.upper,
+                    bound.upper.as_ref(),
                     bound.upper_closed,
                     plan.uncertainty(),
                 )
-                .ok_or(EntryRefusal::TickRange { node: *index })?;
+                .ok_or(EntryRefusal::TickRange { node: *index })?,
+            ),
+            None => None,
+        };
+        let interval = match thresholds.filter(|_| info.buffered) {
+            Some(thresholds) => {
                 let capacity = plan
                     .buffers()
                     .iter()
@@ -323,12 +347,7 @@ pub fn spec_from_plan(plan: &TimedMonitorPlan) -> Result<EntrySpec, EntryRefusal
                     },
                 })
             }
-            None => {
-                if !info.future {
-                    return Err(EntryRefusal::UnboundedPast { node: *index });
-                }
-                None
-            }
+            None => None,
         };
         let leaves: Vec<usize> = info
             .left
@@ -337,7 +356,10 @@ pub fn spec_from_plan(plan: &TimedMonitorPlan) -> Result<EntrySpec, EntryRefusal
             .flat_map(|operand| temporal_leaves(formula, operand))
             .collect();
         let carrier = if interval.is_none() {
-            if leaves.iter().any(|leaf| !bounds.contains_key(leaf)) {
+            if leaves
+                .iter()
+                .any(|leaf| !shape.node(*leaf).is_some_and(|node| node.buffered))
+            {
                 return Err(EntryRefusal::UnboundedOverUnbounded { node: *index });
             }
             leaves.first().copied()
@@ -352,6 +374,8 @@ pub fn spec_from_plan(plan: &TimedMonitorPlan) -> Result<EntrySpec, EntryRefusal
             psi: expr_of(arena, info.right),
             interval,
             carrier,
+            summary: info.buffered && !info.future && bound.as_ref().is_none_or(|bound| bound.upper.is_none()),
+            start: if info.buffered { None } else { thresholds },
         });
     }
     let root_is_temporal = operator_parts(&arena[root]).is_some();
@@ -425,6 +449,9 @@ pub mod names {
     pub const ON_GAP: &str = "monitorOnGap";
 }
 
+/// The threshold of an interval with no upper bound: far above any tick.
+const NO_UPPER: i128 = i128::MAX / 4;
+
 /// The sentinel `lost` marker of a value that depends on an instance the
 /// activation capacity refused; a buffer overflow of operator `n` is `n + 1`.
 const ACTIVATION_LOST: i64 = 1_000_000;
@@ -496,6 +523,10 @@ impl<'a> Gen<'a> {
                 .map(|node| node.id)
                 .collect(),
         }
+    }
+
+    fn is_summary(&self, node: usize) -> bool {
+        self.node(node).is_some_and(|spec| spec.summary)
     }
 
     fn buffer_of(&self, node: usize) -> usize {
@@ -685,11 +716,12 @@ impl<'a> Gen<'a> {
         } else {
             (
                 "let r = fold<Acc>(a, x in cells: \
-                    if x.pl > ip then a \
+                    if x.pl < 0 then Acc { acc: x.fv, pfx: a.pfx } \
+                    else if x.pl > ip then a \
                     else Acc { acc: vOr(vAnd(a.acc, phi_@N@(s, x, hz)), vAnd(member_@N@(it - x.tl, it - x.tf, x.pf = ip and x.pl = ip), psi_@N@(s, x, hz))), \
                                pfx: a.pfx }, \
                     identity: Acc { acc: vFalse(), pfx: vTrue() }) in \
-                 let early = s.history_start >= 0 and memberKind_@N@(it - (s.history_start - 1), it - (s.history_start - 1), false) > 0 in \
+                 let early = not @SUMMARY@ and s.history_start >= 0 and memberKind_@N@(it - (s.history_start - 1), it - (s.history_start - 1), false) > 0 in \
                  @POL@(if early then vOr(r.acc, vUnknown()) else r.acc)",
                 "z.pf > x.pf and memberKind_@N@(z.tf - x.tl, z.tf - x.tf, false) > 0",
                 "let f = findCell(sa.buffer_@B@, pos) in \
@@ -710,6 +742,8 @@ impl<'a> Gen<'a> {
             ("NONE_HI", sig(t.none_hi)),
             ("RETAIN", sig(interval.retention)),
             ("CAP", self.cap(node).to_string()),
+            ("CAPB", (self.cap(node) + u64::from(node.summary)).to_string()),
+            ("SUMMARY", node.summary.to_string()),
             ("ELAPSED", elapsed),
             ("PSI", psi),
             (
@@ -721,6 +755,11 @@ impl<'a> Gen<'a> {
                 },
             ),
         ];
+        let mut pairs = pairs;
+        let (gone, kept, extra) = self.drop_functions(node, binary);
+        pairs.push(("GONE", gone));
+        pairs.push(("KEPT", kept));
+        pairs.push(("EXTRA", extra));
         let expand = |text: &str| tpl(text, &pairs);
         let mut pairs = pairs.clone();
         pairs.push(("INSTANCE", expand(instance)));
@@ -760,13 +799,12 @@ impl<'a> Gen<'a> {
                     identity: Flag { b: false }).b }\n\
              function droppable_@N@ using v(s: State, cells: Cells, x: Cell, hz: Integer): Boolean pure { \
                 x.hasSet and x.rep = codeOf(x.fv) and hz - x.tl >= @RETAIN@ and not needed_@N@(s, cells, x, hz) }\n\
-             function gone_@N@ using v(s: State, hz: Integer): Cells pure { \
-                filter(x in s.buffer_@B@: droppable_@N@(s, s.buffer_@B@, x, hz)) }\n\
-             function kept_@N@ using v(s: State, hz: Integer): Cells pure { \
-                filter(x in s.buffer_@B@: not droppable_@N@(s, s.buffer_@B@, x, hz)) }\n\
+             function gone_@N@ using v(s: State, hz: Integer): Cells pure { @GONE@ }\n\
+             function kept_@N@ using v(s: State, hz: Integer): Cells pure { @KEPT@ }\n\
+             @EXTRA@\
              function report_@N@ using v(s: State, wm: Boolean, hz: Integer): StepR pure { \
                 let r = fold<RepAcc>(a, x in s.buffer_@B@: \
-                    if x.lost then RepAcc { cells: push(a.cells, x), results: a.results } \
+                    if x.lost or x.pl < 0 then RepAcc { cells: push(a.cells, x), results: a.results } \
                     else let v = if x.hasSet then x.fv else inst_@N@(s, s.buffer_@B@, x.pf, x.tf, hz) in \
                          let c = codeOf(v) in \
                          let rep = if c = 3 then wm else c != x.rep in \
@@ -776,7 +814,7 @@ impl<'a> Gen<'a> {
                 mk(with_buffer_@B@(s, r.cells), r.results) }\n\
              function merge_@N@ using v(s: State, now2: Integer, pos: Integer, atoms: Atoms): State pure { \
                 let buf = s.buffer_@B@ in \
-                with_buffer_@B@(s, (if size(buf) < @CAP@ \
+                with_buffer_@B@(s, (if size(buf) < @CAPB@ \
                     then push(buf, Cell { pf: pos, pl: pos, tf: now2, tl: now2, lost: false, hasSet: false, fv: vUnknown(), rep: 0, inputs: atoms, uv: noUv() }) \
                     else let last = lastOf(buf) in \
                          push(dropLast(buf), Cell { pf: last.pf, pl: pos, tf: last.tf, tl: now2, lost: true, hasSet: true, fv: vLostBy(@N@ + 1), rep: codeOf(vLostBy(@N@ + 1)), inputs: zeroAtoms(), uv: noUv() }))) }\n\
@@ -785,6 +823,84 @@ impl<'a> Gen<'a> {
                 let f = findCell(s.buffer_@B@, p) in not f.found or f.c.lost or f.c.hasSet }\n",
             &pairs,
         )
+    }
+
+    /// The bodies of `gone_n` and `kept_n` and any extra declarations of an
+    /// interval operator. A bounded operator drops the entries nothing reads
+    /// any more; an unbounded past one folds the aged entries of a prefix whose
+    /// operands have settled into its summary cell (FR-251 "Folding").
+    fn drop_functions(&self, node: &NodeSpec, binary: bool) -> (String, String, String) {
+        let id = node.id;
+        let b = self.buffer_of(id);
+        if !node.summary {
+            return (
+                format!("filter(x in s.buffer_{b}: droppable_{id}(s, s.buffer_{b}, x, hz))"),
+                format!("filter(x in s.buffer_{b}: not droppable_{id}(s, s.buffer_{b}, x, hz))"),
+                String::new(),
+            );
+        }
+        let retain = node.interval.map_or(0, |interval| interval.retention);
+        let mut leaves = Vec::new();
+        if let Some(phi) = &node.phi {
+            Self::collect_leaves(phi, &mut leaves);
+        }
+        Self::collect_leaves(&node.psi, &mut leaves);
+        leaves.sort_unstable();
+        leaves.dedup();
+        let settled: Vec<String> = leaves
+            .iter()
+            .map(|leaf| match self.node(*leaf) {
+                Some(spec) if spec.interval.is_some() => format!("leafSettled_{leaf}(s, x.pf)"),
+                _ => format!("not findAct(s.activations, {leaf}, x.pf).found"),
+            })
+            .collect();
+        let settled = if settled.is_empty() {
+            "true".to_owned()
+        } else {
+            settled.join(" and ")
+        };
+        let pol_phi = if binary {
+            format!("phi_{id}(s, x, hz)")
+        } else {
+            "vTrue()".to_owned()
+        };
+        let extra = format!(
+            "function foldable_{id} using v(s: State, x: Cell, hz: Integer): Boolean pure {{ \
+                x.pl >= 0 and not x.lost and x.hasSet and x.rep = codeOf(x.fv) and hz - x.tl >= {retain} and {settled} }}\n\
+             function foldInto_{id} using v(s: State, m: Cell, x: Cell, hz: Integer): Cell pure {{ \
+                summaryCell(vOr(vAnd(m.fv, {pol_phi}), psi_{id}(s, x, hz)), m.tf) }}\n\
+             function sticky_{id} using v(s: State, now2: Integer, pos: Integer): State pure {{ \
+                let f = findCell(s.buffer_{b}, pos) in \
+                if f.found and f.c.lost then with_buffer_{b}(s, oneCell(summaryCell(vUnknown(), now2))) else s }}\n"
+        );
+        let gone = format!(
+            "fold<GoneAcc>(a, x in s.buffer_{b}: \
+                if x.pl < 0 then a \
+                else if not a.stop and foldable_{id}(s, x, hz) then GoneAcc {{ gone: push(a.gone, x), stop: false }} \
+                else GoneAcc {{ gone: a.gone, stop: true }}, \
+                identity: GoneAcc {{ gone: noCells(), stop: false }}).gone"
+        );
+        let kept = format!(
+            "let r = fold<SumAcc>(a, x in s.buffer_{b}: \
+                if x.pl < 0 then SumAcc {{ sm: x, kept: a.kept, stop: a.stop }} \
+                else if not a.stop and foldable_{id}(s, x, hz) then SumAcc {{ sm: foldInto_{id}(s, a.sm, x, hz), kept: a.kept, stop: false }} \
+                else SumAcc {{ sm: a.sm, kept: push(a.kept, x), stop: true }}, \
+                identity: SumAcc {{ sm: zeroCell(), kept: noCells(), stop: false }}) in \
+             flatten(pairCells(oneCell(r.sm), r.kept))"
+        );
+        (gone, kept, extra)
+    }
+
+    fn collect_leaves(expr: &Expr, out: &mut Vec<usize>) {
+        match expr {
+            Expr::Leaf(node) => out.push(*node),
+            Expr::Not(a) => Self::collect_leaves(a, out),
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Implies(a, b) => {
+                Self::collect_leaves(a, out);
+                Self::collect_leaves(b, out);
+            }
+            Expr::Const(_) | Expr::Unknown | Expr::Atom(_) => {}
+        }
     }
 
     fn unbounded_functions(&self, node: &NodeSpec, binary: bool) -> String {
@@ -797,6 +913,35 @@ impl<'a> Gen<'a> {
         };
         let mut out = String::new();
         let acc0 = "Acc { acc: e.status.acc, pfx: e.status.pfx }";
+        // An unbounded future operator with a lower bound (`[a, *]`) reads an
+        // event as a witness only at a distance of at least `a` from its
+        // origin (FR-943).
+        let (member_fns, mem_cell, mem_event) = match node.start {
+            Some(t) => (
+                tpl(
+                    "function memberKind_@N@ using v(dmin: Integer, dmax: Integer, same: Boolean): Integer pure { \
+                        if same then (if @ZERO@ then 2 else 0) \
+                        else if dmin >= @ALL_LO@ and dmax <= @ALL_HI@ then 2 \
+                        else if dmax <= @NONE_LO@ or dmin >= @NONE_HI@ then 0 \
+                        else 1 }\n\
+                     function member_@N@ using v(dmin: Integer, dmax: Integer, same: Boolean): V pure { \
+                        let k = memberKind_@N@(dmin, dmax, same) in \
+                        if k = 2 then vTrue() else if k = 0 then vFalse() else vUnknown() }\n",
+                    &[
+                        ("N", id.to_string()),
+                        ("ZERO", t.zero_in.to_string()),
+                        ("ALL_LO", sig(t.all_lo)),
+                        ("ALL_HI", sig(t.all_hi)),
+                        ("NONE_LO", sig(t.none_lo)),
+                        ("NONE_HI", sig(t.none_hi)),
+                    ],
+                ),
+                format!("vAnd(member_{id}(x.tf - e.origin_tick, x.tl - e.origin_tick, x.pf = e.status.position and x.pl = e.status.position), psi)"),
+                format!("vAnd(member_{id}(hz - e.origin_tick, hz - e.origin_tick, e.status.position = pos), psi)"),
+            ),
+            None => (String::new(), "psi".to_owned(), "psi".to_owned()),
+        };
+        out.push_str(&member_fns);
         match node.carrier {
             Some(carrier) => {
                 let cb = self.buffer_of(carrier);
@@ -806,15 +951,15 @@ impl<'a> Gen<'a> {
                     "vTrue()".to_owned()
                 };
                 out.push_str(&tpl(
-                    "function foldStep_@N@ using v(s: State, a: Acc, x: Cell, hz: Integer): Acc pure { \
+                    "function foldStep_@N@ using v(s: State, e: Activation, a: Acc, x: Cell, hz: Integer): Acc pure { \
                         let psi = if x.lost then vLostBy(@C@ + 1) else @POL@(psiX_@N@(s, x.inputs, x.pf, x.uv, hz)) in \
                         let phi = if x.lost then vLostBy(@C@ + 1) else @PHI@ in \
-                        Acc { acc: vOr(a.acc, vAnd(psi, a.pfx)), pfx: vAnd(a.pfx, phi) } }\n\
+                        Acc { acc: vOr(a.acc, vAnd(@MEMPSI@, a.pfx)), pfx: vAnd(a.pfx, phi) } }\n\
                      function foldCellAct_@N@ using v(s: State, e: Activation, x: Cell, hz: Integer): Activation pure { \
-                        let r = foldStep_@N@(s, @ACC0@, x, hz) in actAcc(e, r.acc, r.pfx) }\n\
+                        let r = foldStep_@N@(s, e, @ACC0@, x, hz) in actAcc(e, r.acc, r.pfx) }\n\
                      function elemVal_@N@ using v(s: State, e: Activation, hz: Integer): V pure { \
                         let r = fold<Acc>(a, x in s.buffer_@CB@: \
-                            if x.pl < e.status.position then a else foldStep_@N@(s, a, x, hz), \
+                            if x.pl < e.status.position then a else foldStep_@N@(s, e, a, x, hz), \
                             identity: @ACC0@) in \
                         @POL@(vOr(r.acc, vAnd(vFuture(), r.pfx))) }\n",
                     &[
@@ -824,6 +969,7 @@ impl<'a> Gen<'a> {
                         ("POL", pol.to_owned()),
                         ("PHI", phi_cell),
                         ("ACC0", acc0.to_owned()),
+                        ("MEMPSI", mem_cell),
                     ],
                 ));
             }
@@ -832,13 +978,14 @@ impl<'a> Gen<'a> {
                     "function foldEvt_@N@ using v(s: State, e: Activation, atoms: Atoms, pos: Integer, hz: Integer): Activation pure { \
                         let psi = @POL@(psiX_@N@(s, atoms, pos, noUv(), hz)) in \
                         let phi = @PHI@ in \
-                        actAcc(e, vOr(e.status.acc, vAnd(psi, e.status.pfx)), vAnd(e.status.pfx, phi)) }\n\
+                        actAcc(e, vOr(e.status.acc, vAnd(@MEMPSI@, e.status.pfx)), vAnd(e.status.pfx, phi)) }\n\
                      function elemVal_@N@ using v(s: State, e: Activation, hz: Integer): V pure { \
                         @POL@(vOr(e.status.acc, vAnd(vFuture(), e.status.pfx))) }\n",
                     &[
                         ("N", id.to_string()),
                         ("POL", pol.to_owned()),
                         ("PHI", phi_event),
+                        ("MEMPSI", mem_event),
                     ],
                 ));
             }
@@ -1043,6 +1190,19 @@ impl<'a> Gen<'a> {
             out,
             "function pushAll using v(s0: State, now2: Integer, pos: Integer, atoms: Atoms, hz: Integer): State pure {{ {push_all} }}"
         );
+        let sticky_all = self.sequential(
+            &asc
+                .iter()
+                .copied()
+                .filter(|id| self.is_summary(*id))
+                .collect::<Vec<_>>(),
+            |id, prev, _| format!("sticky_{id}({prev}, now2, pos)"),
+            "@LAST@",
+        );
+        let _ = writeln!(
+            out,
+            "function stickyAll using v(s0: State, now2: Integer, pos: Integer): State pure {{ {sticky_all} }}"
+        );
         let lost_all = {
             let mut text = String::from("let r0 = noResults() in ");
             let mut prev = "r0".to_owned();
@@ -1166,7 +1326,11 @@ impl<'a> Gen<'a> {
         let zero_buffers = |s: &str| {
             let mut text = s.to_owned();
             for n in 0..self.buffers.len() {
-                text = format!("with_buffer_{n}({text}, noCells())");
+                text = if self.is_summary(self.buffers[n]) {
+                    format!("with_buffer_{n}({text}, oneCell(summaryCell(vUnknown(), now2)))")
+                } else {
+                    format!("with_buffer_{n}({text}, noCells())")
+                };
             }
             text
         };
@@ -1187,7 +1351,13 @@ impl<'a> Gen<'a> {
             text
         };
         let init_buffers = (0..self.buffers.len())
-            .map(|n| format!("buffer_{n}: noCells()"))
+            .map(|n| {
+                if self.is_summary(self.buffers[n]) {
+                    format!("buffer_{n}: oneCell(summaryCell(vUnknown(), 0 - 1))")
+                } else {
+                    format!("buffer_{n}: noCells()")
+                }
+            })
             .collect::<Vec<_>>()
             .join(", ");
         let init_buffers = if init_buffers.is_empty() {
@@ -1214,7 +1384,8 @@ impl<'a> Gen<'a> {
                 let sA = dropAll(settleAll(s, hz), hz) in \
                 let sB = pushAll(sA, now2, pos, atoms, hz) in \
                 let lost = lostAll(sA, sB, now2, pos, hz) in \
-                let sC = settleAll(sB, hz) in \
+                let sB2 = stickyAll(sB, now2, pos) in \
+                let sC = settleAll(sB2, hz) in \
                 let st = startAll(sC, now2, pos, atoms, active) in \
                 let sD = with_activations(st.state, map(e in st.state.activations: foldEvtOne(st.state, e, atoms, pos, hz))) in \
                 let rp = reportAll(sD, false, hz) in \
@@ -1297,6 +1468,8 @@ pub fn render(spec: &EntrySpec) -> String {
          record Acc {{ acc: V; pfx: V; }}\n\
          record Flag {{ b: Boolean; }}\n\
          record CellsAcc {{ cells: Cells; }}\n\
+         record GoneAcc {{ gone: Cells; stop: Boolean; }}\n\
+         record SumAcc {{ sm: Cell; kept: Cells; stop: Boolean; }}\n\
          record RepAcc {{ cells: Cells; results: Results; }}\n\
          record ActsAcc {{ acts: Sequence<Activation>; }}\n\
          record Fin {{ u: Integer; p: Integer; w: V; }}\n\
@@ -1436,6 +1609,8 @@ pub fn render(spec: &EntrySpec) -> String {
          function oneResult using v(r: {result}): Results pure {{ sequence[r] }}\n\
          function zeroAtoms using v(): {atoms} pure {{ {zero_atoms} }}\n\
          function zeroCell using v(): Cell pure {{ Cell {{ pf: 0, pl: 0, tf: 0, tl: 0, lost: false, hasSet: false, fv: vUnknown(), rep: 0, inputs: zeroAtoms(), uv: noUv() }} }}\n\
+         function summaryCell using v(acc: V, hs: Integer): Cell pure {{ \
+            Cell {{ pf: 0 - 1, pl: 0 - 1, tf: hs, tl: hs, lost: false, hasSet: true, fv: acc, rep: 0, inputs: zeroAtoms(), uv: noUv() }} }}\n\
          function zeroAct using v(): Activation pure {{ Activation {{ subformula: 0, origin_tick: 0, status: {zero_status} }} }}\n\
          function push using v(s: Cells, c: Cell): Cells pure {{ flatten(pairCells(s, oneCell(c))) }}\n\
          function push2 using v(s: Results, r: {result}): Results pure {{ flatten(pairResults(s, oneResult(r))) }}\n\

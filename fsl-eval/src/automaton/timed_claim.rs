@@ -524,7 +524,7 @@ impl Lowering<'_> {
     ) -> Result<usize, AutomatonError> {
         let shape = match &window {
             Some(window) if deep && !from_zero(window) => {
-                if window.lower() == window.upper() {
+                if window.is_punctual() {
                     return Err(AutomatonError::RepeatedPunctualInterval);
                 }
                 Shape::Blocks(spread(window)? + 1)
@@ -547,11 +547,21 @@ impl Lowering<'_> {
 fn window(interval: Option<&CheckedInterval>) -> Result<Option<TimedInterval>, AutomatonError> {
     match interval {
         None => Ok(None),
-        Some(CheckedInterval::Timed(interval)) => Ok(Some(interval.clone())),
+        Some(CheckedInterval::Timed(interval)) if interval.is_bounded() => Ok(Some(interval.clone())),
+        Some(CheckedInterval::Timed(_)) => Err(AutomatonError::OpenTimedInterval),
         Some(CheckedInterval::Steps(_)) => Err(AutomatonError::Invariant {
             invariant: "timed-claim-reads-timed-intervals",
         }),
     }
+}
+
+/// The upper end of `window`. [`window`] admits only bounded windows, so the
+/// lower end it falls back to is never read.
+fn upper(window: &TimedInterval) -> Rational {
+    window
+        .upper()
+        .unwrap_or_else(|| window.lower())
+        .clone()
 }
 
 /// Whether `window` starts at a closed 0.
@@ -568,7 +578,7 @@ fn future_shape(
 ) -> Result<Shape, AutomatonError> {
     match window {
         Some(window) if many && !from_zero(window) => {
-            if window.lower() == window.upper() {
+            if window.is_punctual() {
                 return Err(AutomatonError::RepeatedPunctualInterval);
             }
             let spread = spread(window)?;
@@ -595,7 +605,7 @@ const MAX_CLOCKS: usize = 64;
 /// of `until` blocks), so this bounds the copies by the interval's
 /// variability.
 fn spread(window: &TimedInterval) -> Result<usize, AutomatonError> {
-    let width = window.upper().sub(window.lower());
+    let width = upper(window).sub(window.lower());
     let ratio = window
         .lower()
         .div(&width)
@@ -630,7 +640,7 @@ fn spread(window: &TimedInterval) -> Result<usize, AutomatonError> {
 
 /// `b - a` of `window`.
 fn width(window: &TimedInterval) -> Rational {
-    window.upper().sub(window.lower())
+    upper(window).sub(window.lower())
 }
 
 /// `clock` has reached `window`'s lower end; empty for a closed 0.
@@ -670,7 +680,7 @@ fn upper_ok(window: &TimedInterval, clock: usize) -> Vec<PlaceConstraint> {
     } else {
         ClockOp::Less
     };
-    vec![PlaceConstraint::new(clock, op, window.upper().clone())]
+    vec![PlaceConstraint::new(clock, op, upper(window))]
 }
 
 /// `clock` has passed `window`'s upper end.
@@ -680,7 +690,7 @@ fn upper_fail(window: &TimedInterval, clock: usize) -> Vec<PlaceConstraint> {
     } else {
         ClockOp::GreaterOrEqual
     };
-    vec![PlaceConstraint::new(clock, op, window.upper().clone())]
+    vec![PlaceConstraint::new(clock, op, upper(window))]
 }
 
 /// A block whose first start is `clock` ago can still be discharged at one
@@ -728,7 +738,7 @@ enum Region {
 /// the region is empty.
 fn region(window: &TimedInterval, clock: usize, region: Region) -> Option<Vec<PlaceConstraint>> {
     let lower = window.lower().clone();
-    let upper = window.upper().clone();
+    let upper = upper(window);
     match region {
         Region::Before => {
             if lower == zero() && window.lower_closed() {
@@ -962,7 +972,7 @@ impl TimedClaim {
             };
             for clock in first..first + count {
                 if let Some(constant) = constants.get_mut(clock) {
-                    *constant = window.upper().clone();
+                    *constant = upper(window);
                 }
             }
         };
@@ -1011,7 +1021,7 @@ impl TimedClaim {
             );
         for window in windows {
             all.push(window.lower().clone());
-            all.push(window.upper().clone());
+            all.push(upper(window));
             // Blocks join and meet by the width.
             all.push(width(window));
         }

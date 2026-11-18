@@ -256,7 +256,7 @@ fn timed_intervals_keep_their_openness_and_refuse_empty_or_inverted_bounds() {
     );
     assert_eq!(
         (left_open.lower(), left_open.upper()),
-        (&whole(1), &whole(3))
+        (&whole(1), Some(&whole(3)))
     );
     assert_ne!(right_open_key, closed_key);
     assert_ne!(left_open_key, closed_key);
@@ -264,7 +264,7 @@ fn timed_intervals_keep_their_openness_and_refuse_empty_or_inverted_bounds() {
     assert_eq!(seconds, closed);
     assert_eq!(seconds_key, closed_key);
     let (_, half) = checked("eventually[0 ms, rational(1, 2) ms] holds(c.healthy)");
-    assert_eq!(only_interval(&half).upper(), &ratio(1, 2));
+    assert_eq!(only_interval(&half).upper(), Some(&ratio(1, 2)));
 
     for (body, interval, reason) in [
         (

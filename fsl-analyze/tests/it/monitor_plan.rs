@@ -177,7 +177,7 @@ fn producer_keeps_checked_formula_atoms_and_converts_intervals_to_ticks() {
     assert_eq!(plan.program().atoms().len(), 2);
     assert_eq!(plan.intervals().len(), 1);
     assert_eq!(plan.intervals()[0].1.lower(), &ratio(0, 1));
-    assert_eq!(plan.intervals()[0].1.upper(), &ratio(3, 1));
+    assert_eq!(plan.intervals()[0].1.upper(), Some(&ratio(3, 1)));
     assert_eq!(plan.buffers(), &[(plan.intervals()[0].0, 9)]);
     assert!(matches!(
         obligations[0],
@@ -693,10 +693,7 @@ fn production_and_admission_refuse_a_clause_with_no_complete_program() {
     use fsl_analyze::monitor_plan::{admit, PlanAdmissionRefusal};
     let library = || fsl_semantics::library::LibraryName::new("fixture").expect("a library name");
     let target = base_target();
-    for (shape, past) in [
-        ("once holds(c.versionNumber = 2)", true),
-        ("always eventually holds(c.versionNumber = 2)", false),
-    ] {
+    for shape in ["always eventually holds(c.versionNumber = 2)"] {
         let (package, _) = checked_clause(shape);
         let clause = package.graph().temporal_clauses()[0].clause();
         let produced = produce(
@@ -720,17 +717,10 @@ fn production_and_admission_refuse_a_clause_with_no_complete_program() {
             Err(PlanAdmissionRefusal::Underivable(produced.clone())),
             "{shape}"
         );
-        if past {
-            assert!(
-                matches!(produced, MonitorPlanRefusal::UnboundedPast { .. }),
-                "{produced:?}"
-            );
-        } else {
-            assert!(
-                matches!(produced, MonitorPlanRefusal::UnboundedOverUnbounded { .. }),
-                "{produced:?}"
-            );
-        }
+        assert!(
+            matches!(produced, MonitorPlanRefusal::UnboundedOverUnbounded { .. }),
+            "{produced:?}"
+        );
     }
 }
 
@@ -1000,7 +990,7 @@ fn a_non_timed_clause_is_planned_with_a_position_counter() {
     ));
     assert_eq!(plan.intervals().len(), 1);
     assert_eq!(plan.intervals()[0].1.lower(), &ratio(0, 1));
-    assert_eq!(plan.intervals()[0].1.upper(), &ratio(3, 1));
+    assert_eq!(plan.intervals()[0].1.upper(), Some(&ratio(3, 1)));
     assert_eq!(plan.buffers(), &[(plan.intervals()[0].0, 5)]);
 }
 
@@ -1013,7 +1003,7 @@ fn fixed_sample_and_infinite_trace_clauses_are_planned() {
         "filament.temporal.fixed-sample.false-extension/v1",
         STEP_DEADLINE,
     ));
-    assert_eq!(fixed.intervals()[0].1.upper(), &ratio(3, 1));
+    assert_eq!(fixed.intervals()[0].1.upper(), Some(&ratio(3, 1)));
     assert_eq!(fixed.buffers(), &[(fixed.intervals()[0].0, 5)]);
     let _ = plan_of(&position_counted(
         "filament.temporal.infinite-trace/v1",
@@ -1026,7 +1016,6 @@ fn fixed_sample_and_infinite_trace_clauses_are_planned() {
 /// refused at check (`OpenInterval`) or at planning.
 #[trace("TC-2623", "FR-943-AC-2")]
 #[test]
-#[ignore = "QSL-2321: a timed interval [q, *] is refused at check and in the monitor plan"]
 fn a_timed_open_past_interval_is_planned() {
     let target = MonitorTarget {
         unit: "us".to_owned(),
@@ -1042,7 +1031,6 @@ fn a_timed_open_past_interval_is_planned() {
 /// `OpenIntervalLowerBound`; the future `eventually[2,*]` is planned too.
 #[trace("TC-2623", "FR-943-AC-3")]
 #[test]
-#[ignore = "QSL-2321: the position-counted monitor plan refuses [a, *] with a > 0 (OpenIntervalLowerBound)"]
 fn a_step_open_interval_is_planned_on_the_position_counter() {
     let past = position_counted(
         "filament.temporal.infinite-trace/v1",

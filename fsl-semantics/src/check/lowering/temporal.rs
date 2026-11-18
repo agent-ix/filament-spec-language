@@ -832,7 +832,7 @@ fn timed_member(interval: &fsl_foundation::bound::TimedInterval) -> Member {
     Member::TimedInterval(Box::new(TimedMember {
         lower: interval.lower().clone(),
         lower_closed: interval.lower_closed(),
-        upper: Some(interval.upper().clone()),
+        upper: interval.upper().cloned(),
         upper_closed: interval.upper_closed(),
     }))
 }

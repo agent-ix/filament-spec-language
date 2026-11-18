@@ -48,8 +48,16 @@ pub struct NodeShape {
     /// Ticks after an instance's tick at which its value is settled, or
     /// `None` when it never settles by time (an unbounded operator below).
     pub lookahead: Option<Rational>,
-    /// For an interval operator, the ticks an entry is retained for.
+    /// For a buffered operator, the ticks an entry is retained for. For an
+    /// unbounded past operator this is also the age at which an entry is
+    /// folded into the operator's summary cell (FR-251 "Folding").
     pub retention: Rational,
+    /// Whether the operator keeps a buffer: an interval operator with an
+    /// upper bound, or any past operator (FR-251 "Unbounded past operators").
+    pub buffered: bool,
+    /// The settling delay `S(n)` of the operator's operands: the largest sum
+    /// of the upper bounds of the future operators on a path through them.
+    pub settling: Rational,
 }
 
 /// The timing shape of a whole formula.
@@ -142,9 +150,14 @@ impl TickShape {
                 };
             }
             let value = match bounds.get(&index) {
-                Some(bound) if future => below.map(|b| bound.upper.add(&width).add(&b)),
+                Some(bound) if future => match (&bound.upper, below) {
+                    (Some(upper), Some(b)) => Some(upper.add(&width).add(&b)),
+                    _ => None,
+                },
                 Some(_) => below,
-                None => None,
+                None if future => None,
+                // An unbounded past operator settles with its operands.
+                None => below,
             };
             lookahead.insert(index, value);
         }
@@ -155,6 +168,22 @@ impl TickShape {
                 .flatten()
                 .unwrap_or_else(|| int(0))
         };
+        // The delay `S` of every operator: the sum of the upper bounds of the
+        // future operators on the longest path from it down (an unbounded
+        // future operator adds none, its instance settles by activation).
+        let mut delays: BTreeMap<usize, Rational> = BTreeMap::new();
+        for &index in temporal.iter().rev() {
+            let (future, ..) = operator_parts(&arena[index]).unwrap_or((false, false, None, 0));
+            let own = match bounds.get(&index).and_then(|bound| bound.upper.clone()) {
+                Some(upper) if future => upper,
+                _ => int(0),
+            };
+            let below = operands(index)
+                .into_iter()
+                .fold(int(0), |acc, leaf| larger(acc, delays.get(&leaf).cloned().unwrap_or_else(|| int(0))));
+            delays.insert(index, own.add(&below));
+        }
+        let delay = |index: usize| delays.get(&index).cloned().unwrap_or_else(|| int(0));
         // The evaluation reach `E` of every operator, parents first.
         let root = formula.root().index();
         let mut reach: BTreeMap<usize, Rational> = BTreeMap::new();
@@ -179,20 +208,23 @@ impl TickShape {
                 if !operands(parent).contains(&index) {
                     continue;
                 }
-                let Some(bound) = bounds.get(&parent) else {
+                let (future, ..) =
+                    operator_parts(&arena[parent]).unwrap_or((false, false, None, 0));
+                let upper = bounds.get(&parent).and_then(|bound| bound.upper.clone());
+                if future && upper.is_none() {
                     // An unbounded consumer: its instances fold an entry when
                     // it is dropped, so the operands of one context are kept
                     // for the context's longest lookahead.
                     is_rooted = true;
                     candidates.push(join(&operands(parent)));
                     continue;
-                };
-                let (future, ..) =
-                    operator_parts(&arena[parent]).unwrap_or((false, false, None, 0));
+                }
+                // An enclosing unbounded past operator adds 0 to `L` for its
+                // operand and one tick cover to `d` (FR-251).
                 let offset = if future {
                     int(0)
                 } else {
-                    bound.upper.add(&width)
+                    upper.unwrap_or_else(|| int(0)).add(&width)
                 };
                 let parent_reach = reach.get(&parent).cloned().unwrap_or_else(|| int(0));
                 candidates.push(offset.add(&parent_reach));
@@ -206,16 +238,25 @@ impl TickShape {
                 continue;
             };
             let bound = bounds.get(&index).cloned();
-            let own = bound.as_ref().map_or_else(
-                || int(0),
-                |bound| {
-                    if future {
-                        int(0)
-                    } else {
-                        bound.upper.add(&width)
-                    }
-                },
-            );
+            let settling = operands(index)
+                .into_iter()
+                .fold(int(0), |acc, leaf| larger(acc, delay(leaf)));
+            // The span an entry of the operator is kept for on its own:
+            // `b + w` for a bounded past operator, `T(n) + w` with
+            // `T(n) = a + S(n)` for an unbounded past one (FR-251).
+            let own = if future {
+                int(0)
+            } else {
+                match bound.as_ref().and_then(|bound| bound.upper.clone()) {
+                    Some(upper) => upper.add(&width),
+                    None => bound
+                        .as_ref()
+                        .map_or_else(|| int(0), |bound| bound.lower.clone())
+                        .add(&settling)
+                        .add(&width),
+                }
+            };
+            let buffered = !future || bound.as_ref().is_some_and(|bound| bound.upper.is_some());
             let e = reach.get(&index).cloned().unwrap_or_else(|| int(0));
             let retention = if rooted.get(&index).copied().unwrap_or(false) {
                 larger(own, e)
@@ -232,6 +273,8 @@ impl TickShape {
                     bound,
                     lookahead: lookahead.get(&index).cloned().flatten(),
                     retention,
+                    buffered,
+                    settling,
                 },
             );
         }

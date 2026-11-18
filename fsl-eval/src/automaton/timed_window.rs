@@ -233,7 +233,13 @@ impl WindowClaim {
             .iter()
             .filter_map(|obligation| match obligation {
                 Obligation::Until { interval, .. } => {
-                    Some([interval.lower().clone(), interval.upper().clone()])
+                    Some(
+                        [Some(interval.lower()), interval.upper()]
+                            .into_iter()
+                            .flatten()
+                            .cloned()
+                            .collect::<Vec<_>>(),
+                    )
                 }
                 Obligation::Origin(_) => None,
             })
@@ -771,7 +777,7 @@ fn state(formula: &CheckedFormula, node: FormulaNodeId) -> Result<Expr, WindowRe
 
 fn timed(interval: Option<&CheckedInterval>) -> Result<TimedInterval, WindowRefusal> {
     match interval {
-        Some(CheckedInterval::Timed(interval)) => Ok(interval.clone()),
+        Some(CheckedInterval::Timed(interval)) if interval.is_bounded() => Ok(interval.clone()),
         _ => Err(WindowRefusal::UnsupportedForm),
     }
 }

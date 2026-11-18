@@ -1100,7 +1100,8 @@ pub(crate) fn checked_operators(
                         if interval.is_punctual() {
                             punctual.push(written.span);
                         }
-                        Some(CheckedInterval::Timed(interval))
+                        // `[0, *]` denotes the operator written with no interval.
+                        (!interval.is_whole()).then_some(CheckedInterval::Timed(interval))
                     }
                     Err(timed::IntervalFailure::Cause(cause)) => {
                         refusals.push(cause);
@@ -1127,7 +1128,7 @@ pub(crate) fn checked_operators(
                         if interval.is_punctual() {
                             punctual.push(written.span);
                         }
-                        Some(CheckedInterval::Timed(interval))
+                        (!interval.is_whole()).then_some(CheckedInterval::Timed(interval))
                     }
                     Err(cause) => {
                         refusals.push(cause);
@@ -1138,11 +1139,18 @@ pub(crate) fn checked_operators(
             (
                 Some(OperatorInterval::Steps(written)),
                 true,
-                IntervalReading::Timed(_) | IntervalReading::TimedUnread,
+                IntervalReading::Timed(_),
             ) => {
-                // ADR-014 TR-3 refuses `[a, *]` where every interval needs a
-                // finite upper bound; a closed step interval's bounds have no
-                // unit (FR-233 "Intervals").
+                // A closed step interval's bounds have no unit (FR-233
+                // "Intervals"); `[a, *]` is no exception (FR-943-AC-1).
+                refusals.push(TemporalCause::UnitlessTimedBound { span: written.span });
+                None
+            }
+            (
+                Some(OperatorInterval::Steps(written)),
+                true,
+                IntervalReading::TimedUnread,
+            ) => {
                 refusals.push(match written.upper {
                     IntervalUpper::Open => TemporalCause::OpenInterval { span: written.span },
                     IntervalUpper::Finite(_) => {

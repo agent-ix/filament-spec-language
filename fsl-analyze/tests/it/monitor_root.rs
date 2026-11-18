@@ -288,19 +288,15 @@ fn a_user_declaration_of_a_generated_name_is_refused() {
 #[test]
 fn a_clause_without_a_complete_program_derives_no_plan() {
     use fsl_replay::MonitorPlanRefusal as Refusal;
+    // An unbounded past operator has a complete program (FR-251 "Unbounded
+    // past operators").
     for shape in [
         "once holds(c.versionNumber = 3)",
         "historically holds(c.versionNumber = 3)",
         "holds(c.versionNumber = 2) since holds(c.versionNumber = 3)",
     ] {
-        let refusal = root_of(&authored(shape), "C", &target()).unwrap_err();
-        assert!(
-            matches!(
-                refusal,
-                PlanRootRefusal::Plan(Refusal::UnboundedPast { .. })
-            ),
-            "{shape}: {refusal:?}"
-        );
+        let planned = root_of(&authored(shape), "C", &target());
+        assert!(planned.is_ok(), "{shape}: {:?}", planned.err());
     }
     for shape in [
         "always eventually holds(c.versionNumber = 3)",
