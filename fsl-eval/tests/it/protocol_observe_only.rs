@@ -18,10 +18,10 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
 use fsl_semantics::model::observation::{
-    document_reference, DocumentProvision, DocumentRef, ObservationLimits,
+    DocumentProvision, DocumentRef, ObservationLimits, document_reference,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[path = "../../../fsl-semantics/tests/support/tc1070.rs"]
 #[allow(dead_code, clippy::duplicate_mod)]
@@ -187,7 +187,6 @@ fn model_state(key: &fsl_eval::simulation::StateKey) -> Value {
 
 #[test]
 #[trace("TC-2990", "FR-206-AC-13", "FSpec-TC-2019", "FSpec-FR-822-AC-5")]
-#[ignore = "QSL-2211: observe-only steps and recommend are not implemented yet"]
 fn an_observe_only_step_leaves_state_unchanged() {
     let graph = reachable(SOURCE);
     let mut recommends = 0_usize;
@@ -203,6 +202,11 @@ fn an_observe_only_step_leaves_state_unchanged() {
             observed += 1;
             if node.ends_with("Advise") {
                 assert_eq!(format!("{:?}", transition.kind()), "Recommend", "{node}");
+                let recommendation = transition.recommendation().expect("typed recommendation");
+                assert_eq!(recommendation.node, "Main/Advise");
+                assert_eq!(recommendation.role, "Auditor");
+                assert_eq!(recommendation.operation, "step");
+                assert!(recommendation.arguments.is_empty());
                 recommends += 1;
             }
             assert_eq!(

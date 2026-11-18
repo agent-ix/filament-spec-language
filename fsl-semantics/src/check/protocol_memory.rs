@@ -334,6 +334,9 @@ pub(crate) fn classify(
     let mut refusals: Vec<(Span, CheckRefusal)> = Vec::new();
     let mut accesses = Vec::new();
     for form in &protocol.attempts {
+        if form.recommendation {
+            continue;
+        }
         let node = ProtocolNodeId(form.declaration);
         let Some(name) = protocol
             .declarations

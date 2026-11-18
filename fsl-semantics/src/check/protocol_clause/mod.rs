@@ -56,8 +56,8 @@ pub use types::{
     BoundAttempt, CausalEdge, CheckedAttempt, CheckedAwait, CheckedControl, CheckedControlTree,
     CheckedJoinPolicy, CheckedOperationNodes, CheckedOutstanding, CheckedOwner, CheckedParallel,
     CheckedProtocol, CheckedProtocolBinderKey, CheckedProtocolExpressionBindings,
-    CheckedProtocolNodeKeys, CheckedRole, CheckedVia, CheckedRecommendation, ControlStep,
-    EdgeKind, Port, PortRef, ProtocolNodeId,
+    CheckedProtocolNodeKeys, CheckedRecommendation, CheckedRole, CheckedVia, ControlStep, EdgeKind,
+    Port, PortRef, ProtocolNodeId,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -70,7 +70,7 @@ use super::protocol_requirement::UnitDeclarations;
 use super::refusal::{AliasKind, CheckCause, CheckRefusal, ProtocolAnchorCause};
 use super::state_clause::{AttemptDeclaration, StateClauseDeclaration};
 use super::{Scope, Signatures};
-use anchors::{check_kind, resolve, scope_key, ScopeKey};
+use anchors::{ScopeKey, check_kind, resolve, scope_key};
 use attempts::bind_attempts;
 use binders::shadow_refusals;
 use filament_semantic_value::location::ExpressionOwner as Origin;
@@ -206,7 +206,7 @@ pub fn check(
     };
 
     if let Some(compiled) = &compiled {
-        refusals.extend(observe_only_refusals(protocol, &compiled.tree));
+        refusals.extend(observe_only_refusals(protocol, &resolved, &compiled.tree));
     }
 
     let Some(compiled) = compiled.filter(|_| refusals.is_empty()) else {
@@ -345,6 +345,7 @@ pub fn check(
 /// or performed by an observe-only role, at the action's full declaration.
 fn observe_only_refusals(
     protocol: &ProtocolDeclarationForm,
+    resolved: &[ProtocolNodeId],
     controls: &CheckedControlTree,
 ) -> Vec<(Span, CheckRefusal)> {
     use fsl_forms::{AnchorSite, ProtocolNodeKind as K};
@@ -366,14 +367,46 @@ fn observe_only_refusals(
 
     for (index, declaration) in protocol.declarations.iter().enumerate() {
         let action = match declaration.kind {
-            K::Attempt => Some(("attempt", declaration.role.as_ref().map(|role| role.name.as_str()))),
-            K::Effect => Some(("effect", None)),
-            K::Send => Some(("send", declaration.channel.as_ref().and_then(|channel| channel_from(&channel.name)))),
-            K::Commit => Some(("commit", declaration.role.as_ref().map(|role| role.name.as_str()))),
+            K::Attempt => Some((
+                "attempt",
+                declaration.role.as_ref().map(|role| role.name.as_str()),
+            )),
+            K::Effect => {
+                let role = protocol
+                    .scoped_anchors
+                    .iter()
+                    .enumerate()
+                    .find(|(_, anchor)| {
+                        anchor.owner == index && anchor.site == AnchorSite::EffectOf
+                    })
+                    .and_then(|(anchor_index, _)| resolved.get(anchor_index))
+                    .and_then(|target| protocol.declarations.get(target.0))
+                    .and_then(|target| target.role.as_ref())
+                    .map(|role| role.name.as_str());
+                Some(("effect", role))
+            }
+            K::Send => Some((
+                "send",
+                declaration
+                    .channel
+                    .as_ref()
+                    .and_then(|channel| channel_from(&channel.name)),
+            )),
+            K::Commit => Some((
+                "commit",
+                declaration.role.as_ref().map(|role| role.name.as_str()),
+            )),
             K::Event
-                if protocol.scoped_anchors.iter().any(|anchor| {
-                    anchor.owner == index && anchor.site == AnchorSite::EventFor
-                }) => Some(("event-for", declaration.role.as_ref().map(|role| role.name.as_str()))),
+                if protocol
+                    .scoped_anchors
+                    .iter()
+                    .any(|anchor| anchor.owner == index && anchor.site == AnchorSite::EventFor) =>
+            {
+                Some((
+                    "event-for",
+                    declaration.role.as_ref().map(|role| role.name.as_str()),
+                ))
+            }
             K::CompensateTemplate => protocol
                 .compensations
                 .iter()
@@ -404,14 +437,16 @@ fn observe_only_refusals(
             })
             .max_by_key(|control| control.path.len())
             .map(|control| control.name.clone());
-        let boundary = control_boundary.or_else(|| {
-            declaration
-                .observe_only
-                .then(|| declaration.name.name.clone())
-        }).or_else(|| {
-            role.filter(|role| observed_roles.contains(role))
-                .map(str::to_owned)
-        });
+        let boundary = control_boundary
+            .or_else(|| {
+                declaration
+                    .observe_only
+                    .then(|| declaration.name.name.clone())
+            })
+            .or_else(|| {
+                role.filter(|role| observed_roles.contains(role))
+                    .map(str::to_owned)
+            });
         let Some(boundary) = boundary else {
             continue;
         };
