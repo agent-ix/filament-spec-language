@@ -238,6 +238,33 @@ impl ExportOutcome {
             "records": failures,
         }));
     }
+
+    /// Apply the caller's target-byte ceiling after canonical text generation.
+    pub fn enforce_output_byte_limit(&mut self, request: &ExportRequest) {
+        let Some(maximum) = request.limits.output_bytes else {
+            return;
+        };
+        let actual = self
+            .target_text
+            .as_ref()
+            .map_or(0, |text| text.len() as u64);
+        if actual <= maximum {
+            return;
+        }
+        self.status = ExportStatus::Incomplete;
+        self.module = None;
+        self.package = None;
+        self.target_text = None;
+        self.name_map = None;
+        self.observer = None;
+        self.cause = Some(serde_json::json!({
+            "kind": "limit-reached",
+            "limit": "output_bytes",
+            "value": maximum,
+            "actual": actual,
+            "setting": "export.output_bytes",
+        }));
+    }
 }
 
 /// Top-level export outcome status.
@@ -464,6 +491,34 @@ mod tests {
             "below-fidelity-floor"
         );
         assert_eq!(outcome.cause.as_ref().unwrap()["records"], json!([0]));
+    }
+
+    #[test]
+    fn output_byte_limit_stops_before_returning_target_text() {
+        let request = ExportRequest::read(json!({
+            "profile": "filament.output.tla2/v1",
+            "obligations": ["Low"],
+            "limits": {"output_bytes": 1}
+        }))
+        .unwrap();
+        let mut outcome = ExportOutcome::new(
+            request.profile.clone(),
+            "tla".to_owned(),
+            ExportStatus::Assembled,
+            Vec::new(),
+        );
+        outcome.module = Some("M_example".to_owned());
+        outcome.target_text = Some("---- MODULE M_example ----".to_owned());
+
+        outcome.enforce_output_byte_limit(&request);
+
+        assert_eq!(outcome.status, ExportStatus::Incomplete);
+        assert!(outcome.target_text.is_none());
+        assert_eq!(
+            outcome.cause.as_ref().unwrap()["setting"],
+            "export.output_bytes"
+        );
+        assert_eq!(outcome.cause.as_ref().unwrap()["value"], 1);
     }
 
     #[test]
