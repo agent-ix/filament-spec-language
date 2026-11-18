@@ -43,9 +43,9 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{analyze, Analysis, EdgeLabel, FairnessError, Graph, Identity, Vertex};
-use fsl_eval::model_subject::{ModelInstance, ModelSubject};
+use fsl_eval::model_subject::{CapacityBinding, ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
-use fsl_eval::simulation::protocol::ProtocolTarget;
+use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTarget};
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop, TransitionSystem};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
@@ -76,8 +76,9 @@ pub struct RefinementCheckRequest<'a> {
     /// The abstract subject's FR-106 initial snapshots.
     pub abstract_initial: Vec<DocumentRef>,
     /// Bindings for an abstract protocol subject. The clause and static
-    /// roles remain owned by `abstract_package`; the request supplies only
-    /// the model instance bound to its `over` parameter.
+    /// roles remain owned by `abstract_package`; the request supplies the
+    /// model instance bound to its `over` parameter and the capacity binding
+    /// of its symbolic capacities.
     pub abstract_protocol_binding: Option<AbstractProtocolBinding>,
     /// The search horizon `k`; `None` sets none.
     pub max_depth: Option<usize>,
@@ -90,6 +91,8 @@ pub struct RefinementCheckRequest<'a> {
 pub struct AbstractProtocolBinding {
     /// The object bound to the protocol's checked `over` input.
     pub over: ModelInstance,
+    /// The binding of the clause's symbolic capacities (FSpec FR-785).
+    pub capacities: Vec<CapacityBinding>,
 }
 
 /// A product state's key: the concrete state's key bytes, its history
@@ -213,6 +216,7 @@ fn check_with(
                 request.abstract_package,
                 request.abstract_initial.clone(),
                 binding.over,
+                &binding.capacities,
             )
         }
         (fsl_semantics::check::AbstractSide::Protocol { .. }, None) => {
@@ -226,6 +230,10 @@ fn check_with(
             fault("the-subjects-of-a-refinement-open")
         }
         SubjectRefusal::ProtocolAbstractSide => ModelCheckRefusal::ProtocolAbstractSide,
+        SubjectRefusal::Capacity(refusal) => {
+            ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal))
+        }
+        SubjectRefusal::UnboundCapacity(names) => ModelCheckRefusal::UnboundCapacity(names),
     })?;
     let protocol_system = systems.abstract_protocol.as_ref();
     let RefinementSystems {

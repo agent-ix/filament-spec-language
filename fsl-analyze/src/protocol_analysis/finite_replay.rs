@@ -11,7 +11,7 @@ use base64::Engine as _;
 use fsl_eval::model_subject::{ModelInstance, ModelSubject, ProtocolSubject, RoleBinding};
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
 use fsl_eval::simulation::protocol::{
-    MemoryModel, ProtocolRefusal, ProtocolSystem, ResolvedMemory, SubjectMemory,
+    Capacities, MemoryModel, ProtocolRefusal, ProtocolSystem, ResolvedMemory, SubjectMemory,
     live_instance_bound, send_record_json, transition_json,
 };
 use fsl_eval::simulation::{StateKey, TransitionSystem};
@@ -276,6 +276,9 @@ pub(crate) enum ReplayFault {
     Stopped(fsl_eval::simulation::ExpansionStop),
     /// An invariant of the system broke.
     Broken,
+    /// The protocol has a symbolic capacity, and a supplied trace's subject
+    /// binds no capacity: requires-bound (FSpec FR-785).
+    UnboundCapacity,
 }
 
 /// The state-key spelling of the counterexample wire.
@@ -395,7 +398,8 @@ impl<'a> ReplaySubject<'a, '_> {
             protocol: self.protocol.name.clone(),
             over,
             roles: self.roles(),
-            // A supplied trace's replay states no capacity binding.
+            // An analyze request's subject states no capacity binding;
+            // `replay` returns requires-bound for a symbolic capacity first.
             capacities: Vec::new(),
             memory,
         })
@@ -454,6 +458,12 @@ impl<'a> ReplaySubject<'a, '_> {
     /// bound to. The trace replays when any binding replays it; otherwise
     /// the verdict is the stale step that came furthest.
     pub(crate) fn replay(&self, trace: &SuppliedTrace) -> Result<ReplayVerdict, ReplayFault> {
+        // FSpec FR-785: an analyze request's subject carries no capacity
+        // binding, so a symbolic capacity is an unbounded root here.
+        let capacities = Capacities::admit(self.protocol, &[]).map_err(|_| ReplayFault::Broken)?;
+        if !capacities.unbound().is_empty() {
+            return Err(ReplayFault::UnboundCapacity);
+        }
         let mut furthest: Option<ReplayVerdict> = None;
         for instance in self.instances()? {
             match self.replay_over(instance, trace)? {
@@ -559,6 +569,7 @@ pub(crate) fn finite_replay_item<'a>(
                 Err(ReplayFault::Stopped(stop)) => {
                     EngineReport::Refused(Refusal::Failed(stop.cause))
                 }
+                Err(ReplayFault::UnboundCapacity) => EngineReport::Refused(Refusal::RequiresBound),
                 Err(ReplayFault::Protocol | ReplayFault::Broken) => fault(),
             }
         },

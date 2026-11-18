@@ -9,9 +9,13 @@
 //! each abstract population's universe is the concrete universe of its
 //! source population (ADR-020 RM-2).
 
-use fsl_eval::model_subject::{ModelInstance, ModelSubject, ProtocolSubject, RoleBinding};
+use fsl_eval::model_subject::{
+    CapacityBinding, ModelInstance, ModelSubject, ProtocolSubject, RoleBinding,
+};
 use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem, PopulationUniverse};
-use fsl_eval::simulation::protocol::ResolvedMemory;
+use fsl_eval::simulation::protocol::{
+    Capacities, CapacityRefusal, ResolvedMemory, UnboundCapacity,
+};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{AbstractSide, CheckedRefinement};
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef};
@@ -35,6 +39,12 @@ pub enum SubjectRefusal {
     /// The abstract subject is a protocol clause, whose steps FR-148 decides
     /// and no model system does.
     ProtocolAbstractSide,
+    /// The request's capacity binding of the abstract protocol is refused
+    /// (FSpec FR-785 "Admission").
+    Capacity(CapacityRefusal),
+    /// The request's capacity binding leaves these capacity names of the
+    /// abstract protocol unbound: requires-bound (FSpec FR-785).
+    UnboundCapacity(Vec<UnboundCapacity>),
 }
 
 /// The concrete and abstract systems of `refinement`.
@@ -76,14 +86,22 @@ pub fn open_systems<'a>(
 }
 
 /// Build model mapping systems and the abstract protocol system selected by
-/// the admitted refinement. The request supplies its `over` binding; the
+/// the admitted refinement. The request supplies its `over` binding and the
+/// capacity binding of the clause's symbolic capacities (FSpec FR-785); the
 /// clause, roles and resolved default memory come from the checked package.
+///
+/// # Errors
+///
+/// [`SubjectRefusal`] as [`open_systems`]; [`SubjectRefusal::Capacity`] for
+/// a refused capacity binding, and [`SubjectRefusal::UnboundCapacity`] for a
+/// capacity name it leaves unbound, before the protocol system is built.
 pub fn open_protocol_systems<'a>(
     refinement: &CheckedRefinement,
     concrete: &ModelSimulationRequest<'a>,
     abstract_package: &'a CheckedPackage,
     abstract_initial: Vec<DocumentRef>,
     over: ModelInstance,
+    capacities: &[CapacityBinding],
 ) -> Result<RefinementSystems<'a>, SubjectRefusal> {
     let mut systems = open_systems_inner(
         refinement,
@@ -118,6 +136,10 @@ pub fn open_protocol_systems<'a>(
                 .ok_or(SubjectRefusal::ProtocolAbstractSide)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let admitted = Capacities::admit(protocol, capacities).map_err(SubjectRefusal::Capacity)?;
+    if !admitted.unbound().is_empty() {
+        return Err(SubjectRefusal::UnboundCapacity(admitted.unbound().to_vec()));
+    }
     let memory =
         ResolvedMemory::resolve(protocol, &[]).map_err(|_| SubjectRefusal::ProtocolAbstractSide)?;
     let subject = ProtocolSubject {
@@ -128,7 +150,7 @@ pub fn open_protocol_systems<'a>(
         protocol: clause.clone(),
         over,
         roles,
-        capacities: Vec::new(),
+        capacities: capacities.to_vec(),
         memory,
     };
     let model = ModelSystem::over_model(systems.abstract_request.clone(), &systems.abstract_model)

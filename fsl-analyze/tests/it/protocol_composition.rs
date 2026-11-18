@@ -347,3 +347,38 @@ fn a_stale_first_step_is_declined_at_position_zero() {
         "{item}"
     );
 }
+
+/// FSpec FR-785 over a supplied trace: an analyze request's subject carries
+/// no capacity binding, so a protocol with a symbolic capacity is an
+/// unbounded root of the replay. The item takes `analyze`'s requires-bound
+/// row (`unbounded-extent`), never the broken-invariant fault it settled
+/// before.
+#[trace("FSpec-TC-1911")]
+#[test]
+fn a_supplied_trace_over_a_symbolic_capacity_requires_a_bound() {
+    let ws = Workspace::new("protocol-trace-symbolic");
+    let path = litmus_request(
+        &ws,
+        &order_protocol(true).replace("capacity 4", "capacity symbolic(Bound)"),
+        json!({"items": [{"claim": "Flow", "kind": "finite-replay",
+            "trace": {"authority": "test", "identity": "symbolic"}}]}),
+    );
+    ws.write(
+        "trace.json",
+        trace_document("symbolic", &[]).to_string().as_bytes(),
+    );
+    let mut document: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("json");
+    document["request"]["documents"]
+        .as_array_mut()
+        .expect("documents")
+        .push(json!({"file": "trace.json"}));
+    ws.write("analyze.json", document.to_string().as_bytes());
+    let item = analyze(&path).item(0);
+    let diagnostic = &item["record"]["diagnostic"];
+    assert_eq!(
+        (diagnostic["code"].as_str(), diagnostic["cause"].as_str()),
+        (Some("unsupported_projection"), Some("unbounded-extent")),
+        "{item}"
+    );
+}
