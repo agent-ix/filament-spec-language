@@ -142,7 +142,7 @@ fn checked_graph(unit: &str) -> Result<fsl_semantics::check::CheckedGraph, Vec<C
 /// awaited event and a required temporal clause to clock configurations.
 #[trace("TC-2525", "FR-892-AC-1")]
 #[test]
-#[ignore = "Blocked by QSL-1964: Contract IR refuses await temporal bindings with InvalidPackage/TimedNodeReference."]
+#[ignore = "Blocked by QSL-2391: Contract IR must admit await-keyed temporal bindings."]
 fn a_compensation_and_a_timed_await_emit_together() {
     let temporal =
         "temporal Due using t over (c: M::Ledger) clock \"model-steps\" on origin { always[0,120] true }\n";
