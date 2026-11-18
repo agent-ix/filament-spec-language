@@ -661,7 +661,7 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
         let seller = id_named(package, view.roles(), "Seller");
         assert_eq!(view.channels().len(), 1);
         let channel_id = id_named(package, view.channels(), "Ch");
-        assert!(view.queues().is_empty());
+        assert_eq!(view.queues().len(), 1);
         assert_eq!(view.compensations().len(), 1);
         let compensation_id = id_named(package, view.compensations(), "Full");
         let run = control_named(
@@ -956,7 +956,7 @@ temporal T using t over (r: Reading) clock \"positions\" on origin { eventually[
         .expect("nonzero denominator");
         let target = fsl_replay::MonitorTarget {
             counter: "counter".into(),
-            unit: "position".into(),
+            unit: "event".into(),
             width_bits: 8,
             uncertainty: zero,
             max_event_rate: Some(one),
