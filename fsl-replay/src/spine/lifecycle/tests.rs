@@ -1031,7 +1031,7 @@ fn profile_aware_spine_check_retains_closure_and_distinct_wrong_kind() {
     else {
         panic!("closure completes but protocol use-site kind refuses: {result:?}");
     };
-    let refusal = refusal_or_fault(failure).expect("typed use-site refusal");
+    let refusal = refusal_or_fault(*failure).expect("typed use-site refusal");
     assert!(
         matches!(
             refusal.as_ref(),

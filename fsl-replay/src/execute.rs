@@ -1616,7 +1616,9 @@ pub(crate) fn run_spine_with_temporal_selections_and_execution_points(
     execution_points: &spine::StateClauseExecutionPoints,
     temporal_selections: &[fsl_package::TemporalClockSelection],
     integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
-    function_modes: Option<&std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>>,
+    function_modes: Option<
+        &std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
+    >,
     limits: SpineLimits,
 ) -> Result<Recompiled, ReplayRefusal> {
     let SpineUnit {
@@ -1829,17 +1831,17 @@ pub(crate) fn recompile_with_temporal_selections(
     } else {
         RecompileClocks::Explicit(temporal_selections)
     };
-    let (compiled, evidence) = run_spine_units(
-        &units,
-        &package_name,
-        &packages,
-        &dependencies,
+    let (compiled, evidence) = run_spine_units(SpineUnitRun {
+        units: &units,
+        package: &package_name,
+        packages: &packages,
+        dependencies: &dependencies,
         clocks,
-        limits.spine,
-        request.refinement_internals(),
-        request.package().check_mode(),
-        &request.package().function_modes(),
-    )
+        limits: limits.spine,
+        refinement_internals: request.refinement_internals(),
+        check_mode: request.package().check_mode(),
+        function_modes: &request.package().function_modes(),
+    })
     .map_err(|failure| locate_refinement_internals(request, failure))?;
     // Rule 6: every entry names a selection of the recompiled closure.
     let selections = compiled.checked.package().dependency_selections();
@@ -1852,7 +1854,10 @@ pub(crate) fn recompile_with_temporal_selections(
             ));
         }
     }
-    check_recorded_modes(request.package().bytes(), compiled.emitted.package().bytes())?;
+    check_recorded_modes(
+        request.package().bytes(),
+        compiled.emitted.package().bytes(),
+    )?;
     request
         .package()
         .admit(&evidence, limits.spine.imports.for_ir())?;
@@ -2035,17 +2040,33 @@ enum RecompileClocks<'a> {
     ByName(&'a spine::RequestClocks),
 }
 
-fn run_spine_units(
-    units: &[(SourceIdentity, String, &[u8])],
-    package: &LibraryName,
-    packages: &fsl_semantics::model::intake::PackageInput,
-    dependencies: &DependencyInput,
-    clocks: RecompileClocks<'_>,
+struct SpineUnitRun<'a> {
+    units: &'a [(SourceIdentity, String, &'a [u8])],
+    package: &'a LibraryName,
+    packages: &'a fsl_semantics::model::intake::PackageInput,
+    dependencies: &'a DependencyInput,
+    clocks: RecompileClocks<'a>,
     limits: SpineLimits,
-    refinement_internals: Option<&[filament_contract_model::CheckedRefinementInternal]>,
+    refinement_internals: Option<&'a [filament_contract_model::CheckedRefinementInternal]>,
     check_mode: filament_semantic_value::checking::CheckMode,
-    function_modes: &std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
+    function_modes:
+        &'a std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
+}
+
+fn run_spine_units(
+    input: SpineUnitRun<'_>,
 ) -> Result<(Recompiled, filament_contract_model::CheckedPackageEvidence), ReplayRefusal> {
+    let SpineUnitRun {
+        units,
+        package,
+        packages,
+        dependencies,
+        clocks,
+        limits,
+        refinement_internals,
+        check_mode,
+        function_modes,
+    } = input;
     #[cfg(test)]
     SPINE_RUNS.with(|runs| runs.set(runs.get() + 1));
     let cancel = Cancel::new();
@@ -2710,6 +2731,31 @@ fn charges(consumed: impl IntoIterator<Item = (LimitKind, u64)>) -> ScalarLimits
     charges
 }
 
+/// FR-098-AC-34: every function the proving package records is rechecked
+/// under exactly the mode it records; a function whose recompile records
+/// another mode, or none, is refused at its node.
+fn check_recorded_modes(recorded: &[u8], recompiled: &[u8]) -> Result<(), ReplayRefusal> {
+    let recompiled_modes: std::collections::BTreeMap<String, Option<String>> =
+        crate::ReplayPackage::function_records(recompiled)
+            .into_iter()
+            .map(|record| (record.node_id, record.mode))
+            .collect();
+    for record in crate::ReplayPackage::function_records(recorded) {
+        if recompiled_modes.get(&record.node_id) != Some(&record.mode) {
+            return Err(ReplayRefusal::Request(
+                crate::ReplayRequestRefusal::PackageMember {
+                    pointer: format!(
+                        "/package/semantic_graph/nodes/{}/check_mode",
+                        record.position
+                    ),
+                    cause: crate::PackageMemberCause::CheckModeMismatch,
+                },
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) mod tests;
 
@@ -2754,29 +2800,4 @@ mod carried_quantity_tests {
             }))
         ));
     }
-}
-
-/// FR-098-AC-34: every function the proving package records is rechecked
-/// under exactly the mode it records; a function whose recompile records
-/// another mode, or none, is refused at its node.
-fn check_recorded_modes(recorded: &[u8], recompiled: &[u8]) -> Result<(), ReplayRefusal> {
-    let recompiled_modes: std::collections::BTreeMap<String, Option<String>> =
-        crate::ReplayPackage::function_records(recompiled)
-            .into_iter()
-            .map(|record| (record.node_id, record.mode))
-            .collect();
-    for record in crate::ReplayPackage::function_records(recorded) {
-        if recompiled_modes.get(&record.node_id) != Some(&record.mode) {
-            return Err(ReplayRefusal::Request(
-                crate::ReplayRequestRefusal::PackageMember {
-                    pointer: format!(
-                        "/package/semantic_graph/nodes/{}/check_mode",
-                        record.position
-                    ),
-                    cause: crate::PackageMemberCause::CheckModeMismatch,
-                },
-            ));
-        }
-    }
-    Ok(())
 }

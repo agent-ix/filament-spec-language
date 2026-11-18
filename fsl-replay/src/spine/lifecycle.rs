@@ -127,7 +127,7 @@ pub struct FrontEndFailurePayload {
     /// Independent protocol results reached before the refusing stage ended.
     pub protocol_results: Vec<super::ProtocolResult>,
     /// Parse report retained when S1 and S2 completed before an S2 refusal.
-    pub parsed: Option<ParseReport>,
+    pub parsed: Option<Box<ParseReport>>,
 }
 
 /// FR-663's report of a completed S1 parse, including a later S2 refusal.
@@ -176,7 +176,7 @@ pub enum ProfileCheckFailure {
     /// Profile closures completed, but the ordinary spine check refused.
     Check {
         /// The original typed spine failure.
-        failure: FrontEndFailure,
+        failure: Box<FrontEndFailure>,
         /// Every completed profile use, including wrong-kind site outcomes.
         profile_uses: Vec<super::ProfileUseResult>,
     },
@@ -185,7 +185,7 @@ pub enum ProfileCheckFailure {
 struct StageError {
     refusal: Box<CompileRefusal>,
     protocol_results: Option<Vec<super::ProtocolResult>>,
-    parsed: Option<ParseReport>,
+    parsed: Option<Box<ParseReport>>,
 }
 
 #[derive(Clone, Debug)]
@@ -276,7 +276,7 @@ impl StageError {
     }
 
     fn with_parsed_report(mut self, parsed: ParseReport) -> Self {
-        self.parsed = Some(parsed);
+        self.parsed = Some(Box::new(parsed));
         self
     }
 }
@@ -1060,6 +1060,24 @@ pub struct ProfileCatalogInput<'a> {
     pub limits: fsl_semantics::library::bundle::PackageLimits,
 }
 
+/// The source, model, dependency, profile and stage inputs for a
+/// profile-aware check.
+#[derive(Clone, Debug)]
+pub struct ProfileCheckInputs<'a> {
+    /// The package identity assigned to the checked unit.
+    pub package_name: String,
+    /// Per-source refinement and clock inputs.
+    pub source: SourceInputs<'a>,
+    /// The selected domain models.
+    pub models: &'a AdmittedModels,
+    /// The selected library dependencies.
+    pub dependencies: &'a DependencyInput,
+    /// The registered profile definitions and their resource limits.
+    pub profile_catalog: ProfileCatalogInput<'a>,
+    /// The stage limits for this check.
+    pub limits: SpineLimits,
+}
+
 /// Type evidence retained by S3 for one source unit.
 #[derive(Clone, Debug, Default)]
 pub struct TypeReport {
@@ -1790,12 +1808,14 @@ pub fn check_with_profile_catalog(
 ) -> Result<Staged<CheckedUnit>, ProfileCheckFailure> {
     check_with_profile_catalog_and_inputs(
         parsed,
-        package_name,
-        SourceInputs::default(),
-        models,
-        dependencies,
-        profile_catalog,
-        limits,
+        ProfileCheckInputs {
+            package_name,
+            source: SourceInputs::default(),
+            models,
+            dependencies,
+            profile_catalog,
+            limits,
+        },
         cancel,
     )
 }
@@ -1804,14 +1824,17 @@ pub fn check_with_profile_catalog(
 /// per-source refinement and clock inputs.
 pub fn check_with_profile_catalog_and_inputs(
     parsed: &ParsedUnitSource,
-    package_name: String,
-    inputs: SourceInputs<'_>,
-    models: &AdmittedModels,
-    dependencies: &DependencyInput,
-    profile_catalog: ProfileCatalogInput<'_>,
-    limits: SpineLimits,
+    inputs: ProfileCheckInputs<'_>,
     cancel: &Cancel,
 ) -> Result<Staged<CheckedUnit>, ProfileCheckFailure> {
+    let ProfileCheckInputs {
+        package_name,
+        source,
+        models,
+        dependencies,
+        profile_catalog,
+        limits,
+    } = inputs;
     let profile_uses = resolve_protocol_profile_uses(parsed, profile_catalog);
     if profile_uses.iter().any(|profile_use| {
         !matches!(
@@ -1826,9 +1849,9 @@ pub fn check_with_profile_catalog_and_inputs(
         parsed,
         package_name,
         &BTreeMap::new(),
-        inputs.refinement_internals,
-        inputs.temporal_selections,
-        inputs.clocks,
+        source.refinement_internals,
+        source.temporal_selections,
+        source.clocks,
         None,
         Some(profile_catalog),
         None,
@@ -1846,7 +1869,7 @@ pub fn check_with_profile_catalog_and_inputs(
             Ok(Staged::new(checked).with_work(work))
         }
         Err(failure) => Err(ProfileCheckFailure::Check {
-            failure,
+            failure: Box::new(failure),
             profile_uses,
         }),
     }
@@ -3599,9 +3622,18 @@ pub(crate) fn compose(
         packages,
         dependencies,
         limits,
-        None,
-        &BTreeMap::new(),
+        ComposeModes {
+            check_mode: None,
+            function_modes: &BTreeMap::new(),
+        },
     )
+}
+
+/// Function-body checking modes for a composed test unit.
+#[cfg(test)]
+pub(crate) struct ComposeModes<'a> {
+    pub check_mode: Option<CheckMode>,
+    pub function_modes: &'a BTreeMap<String, CheckMode>,
 }
 
 /// [`compose`] with every function body checked under `check_mode` (`None`
@@ -3614,9 +3646,12 @@ pub(crate) fn compose_in_mode(
     packages: &fsl_semantics::model::intake::PackageInput,
     dependencies: &DependencyInput,
     limits: SpineLimits,
-    check_mode: Option<CheckMode>,
-    function_modes: &BTreeMap<String, CheckMode>,
+    modes: ComposeModes<'_>,
 ) -> Result<ComposedUnit, Box<CompileRefusal>> {
+    let ComposeModes {
+        check_mode,
+        function_modes,
+    } = modes;
     let cancel = Cancel::new();
     let refusal = |failure| match refusal_or_fault(failure) {
         Ok(refusal) => refusal,

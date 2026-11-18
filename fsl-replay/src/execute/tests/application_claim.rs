@@ -697,8 +697,10 @@ fn kernel_spine(
         &BTreeMap::new(),
         &crate::spine::DependencyInput::default(),
         SpineLimits::default(),
-        Some(filament_semantic_value::checking::CheckMode::Kernel),
-        modes,
+        crate::spine::ComposeModes {
+            check_mode: Some(filament_semantic_value::checking::CheckMode::Kernel),
+            function_modes: modes,
+        },
     )
     .expect("the unit compiles under Kernel")
 }

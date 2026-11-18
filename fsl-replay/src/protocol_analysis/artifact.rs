@@ -10,8 +10,8 @@ use filament_exact::ObjectReference;
 use fsl_package::protocol_view::PortRef;
 
 use super::{
-    Action, BranchMerge, ChoiceBasis, GlobalStructure, MissingMember, ProtocolAnalysisKey,
-    node_text,
+    node_text, Action, BranchMerge, ChoiceBasis, GlobalStructure, MissingMember,
+    ProtocolAnalysisKey,
 };
 use crate::identity::TracePosition;
 use crate::result::{DecidingElement, SeparatingWitnessRecord};
@@ -180,7 +180,7 @@ pub enum ProjectionDecision {
         /// Paths from the choice to the divergent actions.
         paths: [Vec<PortRef>; 2],
         /// The divergent actions, or `None` for branch end.
-        actions: [Option<Action>; 2],
+        actions: Box<[Option<Action>; 2]>,
     },
     /// A replicated role instance is scheduled to act before receiving a
     /// message that pins this event to that instance.
@@ -449,15 +449,13 @@ pub fn replay_projection_counterexample(
             maximum,
         } => {
             if *maximum < 2
-                || structure
-                    .depth(event)
-                    .map_or(true, |depth| depth > max_depth)
+                || structure.depth(event).is_none_or(|depth| depth > max_depth)
                 || structure.role_maximum(&ce.role) != Some(*maximum)
                 || instances.iter().any(|instance| *instance >= *maximum)
                 || instances[0] == instances[1]
                 || structure
                     .action_of(event, &ce.role)
-                    .map_or(true, |action| action.direction != super::Direction::Send)
+                    .is_none_or(|action| action.direction != super::Direction::Send)
             {
                 return Err(WalkDisagreement::ActionMismatch);
             }
