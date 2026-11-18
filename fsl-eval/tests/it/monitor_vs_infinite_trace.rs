@@ -231,9 +231,8 @@ fn the_tick_monitor_agrees_with_a_good_prefix_and_a_pending_always() {
         });
     assert_eq!(monitor, Some(TickOutcome::True));
     assert_eq!(batch, TemporalOutcome::Holds);
-    let (monitor, batch) = monitor_and_batch("always holds(c.level <= 5)", &levels, |_, level| {
-        level <= 5
-    });
+    let (monitor, batch) =
+        monitor_and_batch("always holds(c.level <= 5)", &levels, |_, level| level <= 5);
     assert_eq!(monitor, Some(TickOutcome::Pending));
     assert_eq!(batch, TemporalOutcome::Pending);
 }

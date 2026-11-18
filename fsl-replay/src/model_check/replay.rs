@@ -1999,7 +1999,6 @@ pub fn evaluate_model_trace(
     })))
 }
 
-
 /// FR-941: the evaluator's reading of one required clause over a replayed
 /// protocol behaviour.
 #[derive(Debug)]

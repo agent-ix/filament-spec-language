@@ -1471,7 +1471,8 @@ impl<'a> ClauseState<'a> {
             TemporalProfile::InfiniteTrace => matches!(
                 report.disposition,
                 ClauseDisposition::Temporal(
-                    TemporalVerdict::Violated { .. } | TemporalVerdict::Undefined { .. }
+                    TemporalVerdict::Violated { .. }
+                        | TemporalVerdict::Undefined { .. }
                         | TemporalVerdict::Holds
                 )
             )

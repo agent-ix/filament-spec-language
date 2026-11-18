@@ -1050,9 +1050,7 @@ impl<'a> Evaluator<'a> {
             if guarded {
                 let represented = match self.geometry.site(self.geometry.canon(position))? {
                     Site::Real(represented) => represented,
-                    Site::Sentinel => {
-                        return Err(fault("activation-position-represented").into())
-                    }
+                    Site::Sentinel => return Err(fault("activation-position-represented").into()),
                 };
                 match whens.get(&represented) {
                     Some(true) => {}
@@ -1063,14 +1061,13 @@ impl<'a> Evaluator<'a> {
                     None => return Err(fault("activation-condition-read").into()),
                 }
             }
-            let represented_position =
-                match self.geometry.site(self.geometry.canon(position))? {
-                    Site::Real(represented) => represented,
-                    Site::Sentinel => {
-                        position += 1;
-                        continue;
-                    }
-                };
+            let represented_position = match self.geometry.site(self.geometry.canon(position))? {
+                Site::Real(represented) => represented,
+                Site::Sentinel => {
+                    position += 1;
+                    continue;
+                }
+            };
             if self.insufficient_positions.contains(&represented_position) {
                 every_activation_true = false;
                 position += 1;
@@ -1151,7 +1148,8 @@ impl<'a> Evaluator<'a> {
             // prefix are unknown, so only a single activation settles.
             Mode::Prefix
                 if every_activation_true
-                    && (matches!(goal, Goal::At(_)) || matches!(activation, Activation::Origin)) =>
+                    && (matches!(goal, Goal::At(_))
+                        || matches!(activation, Activation::Origin)) =>
             {
                 Ok(TemporalOutcome::Holds)
             }

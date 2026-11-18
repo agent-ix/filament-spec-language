@@ -859,10 +859,7 @@ fn a_prefix_never_settles_tested_and_pending_is_inconclusive() {
         "always (holds(c.level = 2) implies eventually[0,1] holds(c.level = 3))",
         "always (holds(c.level = 0) implies once[1,1] holds(c.level = 9))",
     ];
-    let categories: Vec<Category> = clauses
-        .iter()
-        .map(|body| prefix(body).category())
-        .collect();
+    let categories: Vec<Category> = clauses.iter().map(|body| prefix(body).category()).collect();
     assert_eq!(
         categories,
         [
