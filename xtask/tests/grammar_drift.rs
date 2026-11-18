@@ -287,7 +287,8 @@ fn read_shared_grammar(fspec_dir: Option<&Path>) -> Result<String, String> {
 fn grammar_productions(text: &str) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     let mut in_ebnf = false;
-    for line in text.lines() {
+    let lines: Vec<&str> = text.lines().collect();
+    for (index, line) in lines.iter().enumerate() {
         if line.trim_start().starts_with("```") {
             in_ebnf = line.trim() == "```ebnf";
             continue;
@@ -295,10 +296,16 @@ fn grammar_productions(text: &str) -> BTreeSet<String> {
         if !in_ebnf {
             continue;
         }
-        let Some((name, _)) = line.split_once('=') else {
-            continue;
+        let name = match line.split_once('=') {
+            Some((name, _)) => name.trim(),
+            None if lines
+                .get(index + 1)
+                .is_some_and(|next| next.trim_start().starts_with('=')) =>
+            {
+                line.trim()
+            }
+            None => continue,
         };
-        let name = name.trim();
         if !line.starts_with(' ')
             && !name.is_empty()
             && name
