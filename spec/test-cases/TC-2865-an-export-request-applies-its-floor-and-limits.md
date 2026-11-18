@@ -15,9 +15,9 @@ Verify the fidelity floor and the export output limit. Scope: FR-1015-AC-1 and A
 ## Test Procedure
 
 1. Export `SlowEnough` under the default floor, then under `any`.
-2. Export with `limits.output_bytes` 1.
+2. Export with `limits` `{"export.output_bytes": 1}`, then with `limits` `{"output_bytes": 1}`.
 
 ## Expected Results
 
 - Step 1: `refused` with `below-fidelity-floor`, exit 21; then `assembled`.
-- Step 2: `incomplete` naming `export.output_bytes`, exit 22.
+- Step 2: `incomplete` naming `export.output_bytes`, exit 22; then `invalid-request` naming `output_bytes`, exit 20.

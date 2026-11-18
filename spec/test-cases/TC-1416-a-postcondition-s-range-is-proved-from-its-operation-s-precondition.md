@@ -22,7 +22,7 @@ unreachable facts), each form that yields or transfers no fact, the
 redefinition-family and context exclusions, and evaluation outside the
 precondition.
 
-Scope: FR-577-AC-1 to FR-577-AC-33; FR-121-AC-37.
+Scope: FR-577-AC-1 to FR-577-AC-33 and FR-577-AC-36; FR-121-AC-37.
 
 ## Test Procedure
 
@@ -64,7 +64,9 @@ function's selection (`g`, `f`).
 14. Build a protocol over step 1's package whose attempt of `withdraw` lists
     `contracts [Debited]` only, and explore it from a state with
     `balance = 3` and `limit = 0`, applying the attempt with `amount = 5`
-    (AC-33).
+. Check a bank unit declaring `Credit` on `deposit` before a 200-conjunct
+    `pre` clause `Big`, with `s3.nodes` at 160 (AC-36,
+    `the_cumulative_node_meter_trips_at_the_earlier_postcondition`).
 
 Tag each test `#[trace("TC-1416", "FR-577-AC-n")]` for the criterion it
 checks, and step 2's region assertion also
@@ -99,6 +101,8 @@ checks, and step 2's region assertion also
 - Step 14: one `ModelFinding::ContractUndetermined` for `Debited` per
   candidate post-state of the frame, 101 in all (one per `balance` value in
   `[0, 100]`), and no successor for that application.
+- Step 15: `stage_limit_exceeded` naming `s3.nodes`, located inside `Credit`,
+  before `Big`.
 
 Every refusal above is `undefined_expression`/`unproved-range` unless the
 step names another.

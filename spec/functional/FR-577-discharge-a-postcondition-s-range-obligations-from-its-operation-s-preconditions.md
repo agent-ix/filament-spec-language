@@ -187,6 +187,23 @@ transferred fact matches a read under `pre(e)` in `Q` and never one of `Q`'s
 
 FR-121 carries the region on `CallSiteRefusal::Compile`.
 
+### Node-meter order
+
+- The `s3.nodes` meter SHALL be cumulative over the check unit: the checker
+  SHALL charge the unit's `pre` clauses first, whose facts every `post` walk
+  begins with, and then the `post` clauses in declaration order, each adding
+  its nodes to the running count.
+- When a charge exceeds the `s3.nodes` limit, the checker SHALL refuse
+  `stage_limit_exceeded` naming `s3.nodes` (FR-255) located in the first
+  `post` clause, in declaration order, whose charge makes the running count
+  exceed the limit, even when a `pre` clause declared after it consumed most
+  of the budget.
+
+The order follows the facts: a `post` walk cannot start before the `pre`
+facts it begins with are built, so the preconditions are metered first. The
+refusal then names a postcondition that a caller can find in source order,
+and equal units under an equal limit always trip at the same clause.
+
 ## Acceptance Criteria
 
 The bank fixture: domain package `test/bank` with model `Bank`, object type
@@ -234,6 +251,7 @@ the refusal located at the node `D`.
 | FR-577-AC-31 | `function f using v(a: Int[0, 100], b: Int[0, 100], r: Int[0, 100]): Boolean pure { a <= b implies r = b - a }` checks. | Test (TC-1416) |
 | FR-577-AC-32 | `fsl_replay::replay_state_clause` over a `Debited` envelope (FR-122) of the bank unit's package whose invocation has pre `balance = 3`, `amount = 5` and post `balance = 0` refuses `IntegerOutOfDomain` at `pre(self.balance) - amount` and settles `inconclusive` with cause `NoValue`, not a reproduced violation. | Test (TC-1416) |
 | FR-577-AC-33 | A protocol over the bank package whose attempt of `withdraw` lists `contracts` `[Debited]` only, applied at a state with `balance = 3` and `limit = 0` and the argument `amount = 5`, records one `ModelFinding::ContractUndetermined` for `Debited` per candidate post-state of the frame, 101 findings (one per `balance` value in `[0, 100]`), and gives that application no successor. | Test (TC-1416) |
+| FR-577-AC-36 | A bank unit declaring the postcondition `Credit` on `deposit` before a `pre` clause `Big` of 200 conjuncts, checked with `s3.nodes` at 160, refuses `stage_limit_exceeded` naming `s3.nodes` with a region inside `Credit`, before `Big`'s source start (`the_cumulative_node_meter_trips_at_the_earlier_postcondition`). | Test (TC-1416) |
 
 ## Dependencies
 

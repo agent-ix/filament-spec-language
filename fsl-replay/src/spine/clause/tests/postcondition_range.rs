@@ -1166,7 +1166,7 @@ fn a_bound_refines_neither_a_sum_nor_a_difference_written_backwards() {
 /// uses the ceiling up and the earlier, small `Credit` is the first clause to
 /// trip it. Source-order checking would trip only at `Big`; the difference is
 /// accepted.
-#[trace("TC-1416", "FR-577")]
+#[trace("TC-1416", "FR-577-AC-36")]
 #[test]
 fn the_cumulative_node_meter_trips_at_the_earlier_postcondition() {
     let credit = "post Credit using v on Bank::Account::deposit \
