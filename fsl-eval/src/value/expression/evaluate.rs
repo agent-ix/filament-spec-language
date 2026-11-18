@@ -2521,9 +2521,6 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 // field projection. It adds no charge of its own.
                 value.clone()
             }
-            NodeKind::ReferenceLiteral { .. } => {
-                return Err(unsupported_construct("reference_literal"));
-            }
             // FSpec FR-144 "Indexing": a map entry is located by its key's
             // canonical key; selection charges one `collection.element` and
             // retains the value; an absent key has no element.
