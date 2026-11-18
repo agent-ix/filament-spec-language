@@ -1661,8 +1661,33 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             )]),
         ));
     }
+    // FR-501 "Late-data cutoff": the samples are the evaluated positions',
+    // in their canonical order, so an excluded late observation is not one.
+    let kept_listed;
+    let sampled_from = match (listed, screened.as_ref().map(|screened| &screened.trace)) {
+        (
+            TraceInput::Timestamped { observations, .. },
+            Some(TraceInput::Timestamped {
+                progress, window, ..
+            }),
+        ) => {
+            let kept = screened
+                .as_ref()
+                .map_or(&[][..], |screened| &screened.kept[..]);
+            kept_listed = TraceInput::Timestamped {
+                observations: kept
+                    .iter()
+                    .filter_map(|position| observations.get(*position).cloned())
+                    .collect(),
+                progress: *progress,
+                window: window.clone(),
+            };
+            &kept_listed
+        }
+        _ => listed,
+    };
     if let (true, ValueType::Composite(record), None) = (sampled, over_type, tape) {
-        for (index, document) in listed.documents().enumerate() {
+        for (index, document) in sampled_from.documents().enumerate() {
             match fsl_semantics::model::observation::admit_record_sample(
                 graph.scope().types(),
                 record,
