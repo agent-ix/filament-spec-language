@@ -16,16 +16,16 @@ use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, Identifier, Meter, ScalarLimits, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
+use fsl_foundation::SourceIdentity;
 use fsl_foundation::source::Source;
 use fsl_foundation::source_map::NativeLanguage;
-use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{CheckedGraph, CheckedStateClause};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::{
-    admit_current_snapshot, admit_frame_invocation, admit_observations, population_universe_for,
     AdmissionFailure, AdmissionRecord, AdmittedInvocation, AdmittedObservations, ClauseFacts,
     ClauseSelection, ClauseSelectionInput, DocumentRef, FrameFacts, FrameWitness,
-    ObservationLimits, OperationFacts, Provisions,
+    ObservationLimits, OperationFacts, Provisions, admit_current_snapshot, admit_frame_invocation,
+    admit_observations, population_universe_for,
 };
 
 mod clause_state;
@@ -39,19 +39,19 @@ mod temporal;
 mod trace_refusal;
 mod trace_subject;
 pub use clause_state::{
-    assertion_json, assertion_of, incomplete_json, incomplete_of, pending_report, AdmittedPosition,
-    AdmittedValue, Advance, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal, ClauseState,
-    ClauseTraceKind, CLAUSE_STATE_FORMAT,
+    AdmittedPosition, AdmittedValue, Advance, CLAUSE_STATE_FORMAT, ClauseLimits, ClauseMark,
+    ClauseOpen, ClauseRefusal, ClauseState, ClauseTraceKind, assertion_json, assertion_of,
+    incomplete_json, incomplete_of, pending_report,
 };
 pub(crate) use correction::run_correction;
 pub use correction::{
-    read_evidence_ledger, settle_correction, settle_run_correction, CorrectionRecord,
-    CorrectionRefusal, EvidenceLedgerFile, EvidenceLedgerReadError, RunRelation,
-    EVIDENCE_LEDGER_FORMAT,
+    CorrectionRecord, CorrectionRefusal, EVIDENCE_LEDGER_FORMAT, EvidenceLedgerFile,
+    EvidenceLedgerReadError, RunRelation, read_evidence_ledger, settle_correction,
+    settle_run_correction,
 };
-pub use ledger_wire::{read_ledger, write_ledger, LedgerReadError};
+pub use ledger_wire::{LedgerReadError, read_ledger, write_ledger};
 pub use package_authentication::{
-    authenticate_emission, AuthenticationFailure, PackageAuthentication, PackagesStage,
+    AuthenticationFailure, PackageAuthentication, PackagesStage, authenticate_emission,
 };
 pub use progress::{
     ContradictedDimension, LedgerBinding, ObservedPosition, ProgressAssertion, ProgressClosure,
@@ -60,24 +60,24 @@ pub use progress::{
 };
 use temporal::TemporalRun;
 pub use temporal::{
-    admit_progress, authenticate_package_trace, clause_trace_binding, name_clause_atom,
-    run_package_temporal, run_package_temporal_bounded, sample_position, AdmittedLate,
-    FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport,
-    LateEntry, LateInputs, OverObject, PackageTemporalRequest, ProgressRefusal,
-    TemporalAuthentication, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
-    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, DEFAULT_MODEL_MAX_CANDIDATES,
+    AdmittedLate, DEFAULT_MODEL_MAX_CANDIDATES, FiniteWindowAssessment, FiniteWindowPremises,
+    FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs, OverObject,
+    PackageTemporalRequest, ProgressRefusal, TemporalAuthentication, TimestampedCover,
+    TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey, TimestampedWindow,
+    TraceBinding, TraceInput, admit_progress, authenticate_package_trace, clause_trace_binding,
+    name_clause_atom, run_package_temporal, run_package_temporal_bounded, sample_position,
 };
-pub(crate) use temporal::{trace_refusal, verdict, SAMPLE_AUTHORITY};
-pub use trace_refusal::{TraceRefusal, REASONS as TRACE_REFUSAL_REASONS};
+pub(crate) use temporal::{SAMPLE_AUTHORITY, trace_refusal, verdict};
+pub use trace_refusal::{REASONS as TRACE_REFUSAL_REASONS, TraceRefusal};
 pub use trace_subject::{
-    run_package_trace_subject, run_trace_subject_clause, PackageTraceSubjectRequest,
-    TraceSubjectClauseRequest,
+    PackageTraceSubjectRequest, TraceSubjectClauseRequest, run_package_trace_subject,
+    run_trace_subject_clause,
 };
 
-use super::call::{
-    convert_call_failure, convert_outcome, run_compiled as run_call_compiled, select, CallSources,
-};
 pub use super::call::{CallOutcome, CallValue, RunRefusal};
+use super::call::{
+    CallSources, convert_call_failure, convert_outcome, run_compiled as run_call_compiled, select,
+};
 use super::lifecycle as front_end;
 use super::{CompileRefusal, DependencyInput, RequestClocks, SpineLimits};
 use crate::proof_result::SettlementBasis;
@@ -1561,7 +1561,7 @@ fn run_clause_reading(
                         "FR-050",
                         "checked-package-admission-evidence-is-retained",
                     ),
-                )))
+                )));
             }
         };
         match filament_contract_model::CheckedPackageV2::read(
@@ -1576,7 +1576,7 @@ fn run_clause_reading(
                         "FR-050",
                         "emitted-checked-package-strict-read-admits",
                     ),
-                )))
+                )));
             }
         }
     } else {
@@ -2155,7 +2155,7 @@ fn compile_program_parts(
                         "FR-050",
                         "checked-package-admission-evidence-is-retained",
                     ),
-                ))))
+                ))));
             }
         };
         match filament_contract_model::CheckedPackageV2::read(
@@ -2170,7 +2170,7 @@ fn compile_program_parts(
                         "FR-050",
                         "emitted-checked-package-strict-read-admits",
                     ),
-                ))))
+                ))));
             }
         }
     } else {
@@ -2446,7 +2446,7 @@ fn derive_consequent_source_events(
                     None => {
                         return ConsequentSourceEvents::Refused(
                             ConsequentEventRefusal::DecisionNotRecorded,
-                        )
+                        );
                     }
                 }
             };
@@ -2537,7 +2537,7 @@ pub(crate) fn check_clause_admitted(
                 documents: vec![clause_input_document(&selection.input).clone()],
                 observations: None,
                 meter: Meter::new(run.accounting),
-            }
+            };
         }
     };
     let documents = admitted_documents(&selection.input, &observations);
@@ -2560,7 +2560,7 @@ pub(crate) fn check_clause_admitted(
     {
         Ok(evaluation) => {
             consequent_source_events = derive_consequent_source_events(graph, clause, &evaluation);
-            match derive_separating_witness(clause, &evaluation) {
+            match derive_separating_witness(graph, clause, &evaluation) {
                 Err(fault) => ClauseDisposition::EvaluateFault(fault),
                 Ok(witness) => {
                     derived = witness;
@@ -2773,7 +2773,7 @@ pub(crate) fn check_frame<'a>(
                 documents: vec![invocation.clone()],
                 admitted: None,
                 meter: None,
-            }
+            };
         }
     };
     let documents = vec![
@@ -2995,7 +2995,7 @@ fn run_function(
                     })
                 }
                 other => report(ClauseDisposition::ArgumentRefusal(Box::new(other))),
-            })
+            });
         }
     };
     if let Some(callable) = package.graph().callable(name) {
@@ -3027,7 +3027,7 @@ fn run_function(
                 failure,
                 document: snapshot.clone(),
                 path: snapshot_path.map(str::to_owned),
-            }))
+            }));
         }
     };
 
@@ -3127,19 +3127,19 @@ fn run_function(
                     Err(super::run_value::ReadStop::Defect(defect)) => {
                         return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(
                             RunRefusal::Argument { position, defect },
-                        ))))
+                        ))));
                     }
                     Err(_) => {
                         return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(
                             RunRefusal::UnsupportedParameter { position },
-                        ))))
+                        ))));
                     }
                 }
             }
             _ => {
                 return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(
                     RunRefusal::WrongValueKind { position },
-                ))))
+                ))));
             }
         };
         bound.push(converted);

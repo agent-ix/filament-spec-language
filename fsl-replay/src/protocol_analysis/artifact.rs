@@ -10,8 +10,8 @@ use filament_exact::ObjectReference;
 use fsl_package::protocol_view::PortRef;
 
 use super::{
-    node_text, Action, BranchMerge, ChoiceBasis, GlobalStructure, MissingMember,
-    ProtocolAnalysisKey,
+    Action, BranchMerge, ChoiceBasis, GlobalStructure, MissingMember, ProtocolAnalysisKey,
+    node_text,
 };
 use crate::identity::TracePosition;
 use crate::result::{DecidingElement, SeparatingWitnessRecord};
@@ -311,6 +311,9 @@ impl AssessedRoot {
         let text = node_text(deciding).map_err(|_| MissingMember::new("deciding_element"))?;
         Ok(SeparatingWitnessRecord {
             quantifier: None,
+            deciding_comparison: None,
+            operands: None,
+            decision_path: None,
             deciding_element: DecidingElement::Protocol(text),
             index: None,
             value_path: RuntimeValuePath {
