@@ -758,7 +758,11 @@ pub(crate) fn role_form(cst: &LosslessCst, role: &CstNode) -> Result<RoleForm, F
     let replicated = if has_token(&role_items, b"each") {
         // `role R each M::T from p max n lifetime l;`: the role's name and
         // the population are its only direct identifier tokens.
-        let [_, population] = tokens_of(&role_items, TokenKind::Identifier)[..] else {
+        let identifiers: Vec<_> = tokens_of(&role_items, TokenKind::Identifier)
+            .into_iter()
+            .filter(|token| token.spelling() != b"observe")
+            .collect();
+        let [_, population] = identifiers.as_slice() else {
             return Err(unexpected(role));
         };
         let [max] = tokens_of(&role_items, TokenKind::Integer)[..] else {
@@ -786,7 +790,13 @@ pub(crate) fn role_form(cst: &LosslessCst, role: &CstNode) -> Result<RoleForm, F
         None
     };
     Ok(RoleForm {
-        name: declared_name(&role_items, role)?,
+        name: {
+            let token = tokens_of(&role_items, TokenKind::Identifier)
+                .into_iter()
+                .find(|token| token.spelling() != b"observe")
+                .ok_or_else(|| unexpected(role))?;
+            declared(token, role)?
+        },
         context,
         replicated,
         observe_only: has_token(&role_items, b"observe"),

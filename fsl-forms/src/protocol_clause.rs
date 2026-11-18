@@ -1165,7 +1165,10 @@ fn event_node_anchors(
         Some(Item::Token(_) | Item::Node(_)) | None => return Err(unexpected(node)),
     };
     let identifiers = tokens_of(&event_items, TokenKind::Identifier);
-    let name_token = identifiers.first().ok_or_else(|| unexpected(node))?;
+    let name_token = identifiers
+        .iter()
+        .find(|token| token.spelling() != b"recommend")
+        .ok_or_else(|| unexpected(node))?;
     let name = DeclaredName {
         name: text(name_token, node)?,
         span: name_token.span(),

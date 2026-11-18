@@ -11,6 +11,9 @@ const CLOCK: &str = "Clock";
 pub(super) enum Terminal {
     Exact(&'static str),
     Literal(&'static str),
+    /// A contextual word recognized only at the grammar position that uses
+    /// it; unlike `Exact`, it remains available as an ordinary identifier.
+    ContextualWord(&'static str),
     Identifier,
     /// A function or predicate name, or its `using` profile alias: an
     /// identifier, or the one explicitly allowed reserved spelling, that the
@@ -109,6 +112,9 @@ fn selection_rule(production: P) -> Rule {
 
 fn x(value: &'static str) -> Rule {
     Rule::Terminal(Terminal::Exact(value))
+}
+fn contextual(value: &'static str) -> Rule {
+    Rule::Terminal(Terminal::ContextualWord(value))
 }
 fn literal(value: &'static str) -> Rule {
     Rule::Terminal(Terminal::Literal(value))
@@ -1948,7 +1954,7 @@ fn protocol(g: &mut Grammar) {
         P::Role,
         c(vec![
             s(vec![
-                opt(x("observe")),
+                opt(contextual("observe")),
                 x("role"),
                 ident(),
                 x("on"),
@@ -1956,7 +1962,7 @@ fn protocol(g: &mut Grammar) {
                 x(";"),
             ]),
             s(vec![
-                opt(x("observe")),
+                opt(contextual("observe")),
                 x("role"),
                 ident(),
                 x("each"),
@@ -2275,7 +2281,7 @@ fn protocol(g: &mut Grammar) {
         P::EventNode,
         c(vec![
             s(vec![
-                x("recommend"),
+                contextual("recommend"),
                 ident(),
                 x("by"),
                 ident(),
@@ -2359,15 +2365,15 @@ fn protocol(g: &mut Grammar) {
     g.insert(
         P::Control,
         c(vec![
-            s(vec![opt(x("observe")), r(P::Sequence)]),
-            s(vec![opt(x("observe")), r(P::Choice)]),
-            s(vec![opt(x("observe")), r(P::Parallel)]),
-            s(vec![opt(x("observe")), r(P::Repetition)]),
-            s(vec![opt(x("observe")), r(P::AwaitControl)]),
-            s(vec![opt(x("observe")), r(P::EventNode)]),
-            s(vec![opt(x("observe")), r(P::Check)]),
-            s(vec![opt(x("observe")), r(P::Commit)]),
-            s(vec![opt(x("observe")), r(P::Fence)]),
+            s(vec![opt(contextual("observe")), r(P::Sequence)]),
+            s(vec![opt(contextual("observe")), r(P::Choice)]),
+            s(vec![opt(contextual("observe")), r(P::Parallel)]),
+            s(vec![opt(contextual("observe")), r(P::Repetition)]),
+            s(vec![opt(contextual("observe")), r(P::AwaitControl)]),
+            s(vec![opt(contextual("observe")), r(P::EventNode)]),
+            s(vec![opt(contextual("observe")), r(P::Check)]),
+            s(vec![opt(contextual("observe")), r(P::Commit)]),
+            s(vec![opt(contextual("observe")), r(P::Fence)]),
         ]),
     );
     g.insert(

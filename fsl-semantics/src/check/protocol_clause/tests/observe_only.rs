@@ -18,7 +18,6 @@ const ADVISE: &str =
 /// read (`check`) and recommend both check, and a capture named `observe`
 /// keeps its meaning.
 #[trace("TC-2989", "FR-218-AC-45", "FSpec-TC-2016", "FSpec-FR-822-AC-1")]
-#[ignore = "QSL-2211: observe-only roles, controls and recommend are not implemented yet"]
 #[test]
 fn an_observe_only_step_checks() {
     let gate = "check Gate using v { true };";
@@ -51,7 +50,6 @@ fn an_observe_only_step_checks() {
 /// region is exactly the attempt's declaration; the same attempt outside the
 /// boundary checks.
 #[trace("TC-2989", "FR-218-AC-46", "FSpec-TC-2016", "FSpec-FR-822-AC-2")]
-#[ignore = "QSL-2211: the observe-only side-effect refusal is not implemented yet"]
 #[test]
 fn a_side_effect_under_observe_only_refuses() {
     super::checks(&protocol(

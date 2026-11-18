@@ -90,14 +90,7 @@ fn argument_names(node: &Value) -> Vec<&str> {
 /// the last argument `boundary` `observe-only`; `Advise` is a `recommend`
 /// control with FSpec FR-466's layout; the unmarked clause has the same node
 /// ids and no `boundary` argument.
-#[trace(
-    "TC-2991",
-    "FR-383-AC-69",
-    "FSpec-TC-2018",
-    "FSpec-FR-822-AC-4",
-    "FSpec-FR-322-AC-462"
-)]
-#[ignore = "QSL-2211: S4 emission of observe-only boundaries and recommend is not implemented yet"]
+#[trace("TC-2991", "FR-383-AC-69", "FSpec-TC-2018", "FSpec-FR-822-AC-4", "FSpec-FR-322-AC-462")]
 #[test]
 fn the_package_records_the_observe_boundary() {
     let marked = admitted(&flow("observe "));

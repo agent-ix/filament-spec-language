@@ -343,14 +343,20 @@ impl ProtocolInput<'_> {
         })
     }
 
-    /// Whether the `run` tree holds an `attempt`, whose node names the
-    /// state clauses and operation anchors written after the functions.
+    /// Whether the `run` tree holds an `attempt` or `recommend`, whose node
+    /// names state clauses and operation anchors written after functions.
     fn has_attempt(&self) -> bool {
         self.checked
             .controls
             .controls
             .iter()
-            .any(|control| control.kind == ProtocolNodeKind::Attempt)
+            .any(|control| {
+                control.kind == ProtocolNodeKind::Attempt
+                    || (control.kind == ProtocolNodeKind::Event
+                        && self.form.attempts.iter().any(|attempt| {
+                            attempt.declaration == control.node.0 && attempt.recommendation
+                        }))
+            })
     }
 
     /// The checked `finish` constraint and its slot names.

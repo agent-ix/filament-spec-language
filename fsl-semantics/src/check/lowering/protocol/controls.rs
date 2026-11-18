@@ -437,24 +437,30 @@ impl Lowering<'_> {
                     attempt.declaration == node.0 && attempt.recommendation
                 }) =>
             {
-                let recommendation = checked
-                    .recommendations
+                let form = form
+                    .attempts
                     .iter()
-                    .find(|recommendation| recommendation.declaration == node.0)
+                    .find(|attempt| attempt.declaration == node.0 && attempt.recommendation)
+                    .ok_or_else(unchecked)?;
+                let nodes = controls
+                    .inputs
+                    .attempts
+                    .iter()
+                    .find(|nodes| nodes.declaration == node.0)
                     .ok_or_else(unchecked)?;
                 let constraint = self.control_body(controls, node, entry, true, location)?;
                 (
                     "recommend",
                     vec![
-                        role(Some(&recommendation.role))?,
+                        role(Some(&form.role.name))?,
                         MemberTerm::bound(
                             "operation",
-                            LeafTerm::reference(recommendation.anchor.clone()),
+                            LeafTerm::reference(nodes.anchor.clone()),
                         ),
                         MemberTerm::binding(
                             "contracts",
                             BindingValue::Group(GroupTerm::references(sorted(
-                                recommendation.contracts.iter().cloned(),
+                                nodes.contracts.iter().cloned(),
                             ))),
                         ),
                         binder()?,
