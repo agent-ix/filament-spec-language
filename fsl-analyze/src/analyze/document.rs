@@ -1608,6 +1608,7 @@ fn resolve_one(
             }
             match kinds.as_slice() {
                 [kind] => *kind,
+                [] if selection.probabilistic.is_some() => Capability::ProbabilisticSatisfaction,
                 [] if state_graph.is_some() => Capability::TemporalSatisfaction,
                 _ => return invalid_kind(index, Some(name), "absent-kind"),
             }
