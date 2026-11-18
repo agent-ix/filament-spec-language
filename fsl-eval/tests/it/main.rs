@@ -67,6 +67,7 @@ mod package_aggregate_route;
 mod property_automata;
 mod protocol_delivery_interval;
 mod protocol_duplicate_effect;
+mod protocol_observe_only;
 mod protocol_reference;
 mod protocol_retry_bound;
 mod protocol_slots;

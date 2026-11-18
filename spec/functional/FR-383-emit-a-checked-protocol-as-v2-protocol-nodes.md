@@ -41,6 +41,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-466
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-822
+    type: depends_on
 ---
 # FR-383: Emit a checked protocol as v2 protocol nodes
 
@@ -415,6 +417,12 @@ emissions.
 
 ### Nodes and keys
 
+- S4 SHALL emit each observe-only role and control S3 records (FR-218
+  "Observe-only boundaries") with the last body argument `boundary`, the text
+  `observe-only`, and SHALL emit no `boundary` argument on any other node, so
+  an unmarked clause keeps the bodies it has without the construct (FSpec
+  FR-465, FR-466, FR-822). S4 SHALL emit each `recommend` as a `control` node
+  of operator `recommend` with FSpec FR-466's layout.
 - `check` SHALL mint the key of every protocol node by FR-092 rule 2
   (`filament.application-node/v1`: tag, form, semantic type, declaration,
   `recursion` `null` for acyclic nodes or the FR-322 group coordinate for a
@@ -678,6 +686,7 @@ refusal changes no other protocol's result (see "Per-protocol results").
 | FR-383-AC-66 | A compile of the two-record variant that writes its second `related by` clause twice emits the same nodes, the same `identityRef(view)` occurrences, the same source-map rows and the same `protocol_locations` rows as the compile without the repeat. | Test (TC-1063) |
 | FR-383-AC-67 | Passes now: over TC-1407 fixture E-S, whose `Refunds` is `over (view: Node)` with `Node` source-declared, S3 checks the protocol and the source route evaluates its slots, and S4 emits the package per FR-995 and FR-996, refusing only a case they name. The E-S clause carries `owner_model` the source-declared `Node` node, in its preimage and exact `dependencies`; in TC-1408 variant S-M the role `Seller on Order` writes the source-declared `Order` node as its `model`; IR's reader admits both | Test (TC-1407, TC-1408) |
 | FR-383-AC-68 | Compiling ADR-027 §7's `Fill` with `role w on M` through S4 gives no refusal and writes a package whose `role` node for `w` carries the text `identity` of the package `M` selects as its `model` argument, an empty `replication` Group and no `model` dependency, and FSL's I2 reader admits it; the same unit with `role w each M from cells max 2 lifetime workflow` writes no package and S3 refuses `invalid_model_binding`/`malformed-declaration` at `M`. | Test (TC-2020) |
+| FR-383-AC-69 | Over the ConfigVersion model, a clause with `observe role Auditor on Config::ConfigVersion;`, `run observe sequence Review { check Gate using v { true }; recommend Advise by Auditor on Config::ConfigVersion::attemptUpdate contracts [] as (r: Boolean) { true }; }` emits a package IR's strict reader admits, in which the `Auditor` role node and the `Review` control node each carry the last argument `boundary` with text `observe-only`, no other role or control node carries `boundary`, and `Advise` is a `control` node of operator `recommend` with arguments `role`, `operation`, `contracts`, `binder`, `related`, `constraint`; the same clause without `observe` emits the same node ids, no `boundary` argument, and node bodies that differ only at those two nodes. | Test (TC-2991) |
 ## Dependencies
 
 - FR-383-AC-15 rests on FSpec FR-322 "Operand index segments" (QSL-1695): inside a node every operand is an operand slot `{"operand": k}` into the document's required `semantic_graph.operand_rows`, numbered by first occurrence in the node's serialization, and only ids outside nodes keep `{"node": i}`. A node's bytes therefore hold no graph index of its own graph, so adding a node ahead of an operand a protocol reaches changes no protocol node's bytes, only `operand_rows`; node equality across documents is equality of resolved structural keys (each operand slot replaced by the key of the node it names). The path-stability gate (STD-653) is closed by that wire form.
