@@ -5,12 +5,12 @@ use std::path::Path;
 
 use filament_exact::Cancel;
 use fsl_command::command::{self, PreparedRun, RunLimits};
-use fsl_foundation::source::Source;
 use fsl_foundation::SourceIdentity;
+use fsl_foundation::source::Source;
 use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
 use fsl_replay::{Operation, OutcomeDocument};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const PROGRAM: &[u8] = include_bytes!("../../../tests/fixtures/spine-run.native");
 const DOMAIN: &[u8] = include_bytes!("../../../examples/config-version/model.semantic-ir.json");
@@ -513,6 +513,52 @@ fn clause_preparation_failure_retains_all_admitted_sources() {
     assert!(paths.contains(&"program.native"), "{paths:?}");
     assert!(paths.contains(&"model.semantic-ir.json"), "{paths:?}");
     assert!(paths.contains(&"library.native"), "{paths:?}");
+}
+
+#[test]
+#[trace("TC-2982", "FR-312-AC-10")]
+fn observation_override_conflict_refuses_before_observation_read() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("program.native"), PROGRAM).unwrap();
+    std::fs::write(directory.path().join("model.semantic-ir.json"), DOMAIN).unwrap();
+    let request = json!({
+        "format": "native-run/1",
+        "request": {
+            "models": [{"format": "semantic-ir/2.0.0", "source": {
+                "file": "model.semantic-ir.json", "authority": "tests",
+                "identity": "test:prepared-model", "document": "PreparedModel",
+                "formal_revision": 1
+            }}],
+            "program": {"source": source()},
+            "clause": {
+                "selection": {"temporal": {"name": "Reaches",
+                    "trace": {"lasso": {"prefix": [], "loop": []}}}},
+                "observations": {"missing": "missing-observation.json"},
+                "observation_limits": {"document_bytes": 100}
+            }
+        }
+    });
+    let path = write_request(directory.path(), "clause.json", request);
+    let limits = fsl_semantics::model::observation::ObservationLimits::default();
+    let error = command::prepare_run_with_overrides(
+        &path,
+        RunLimits::default(),
+        &command::RequestOverrides {
+            observation: Some(&limits),
+            ..Default::default()
+        },
+    )
+    .err()
+    .expect("the duplicate setting refuses before reading the missing observation");
+    let envelope = error.value().expect("refusal envelope");
+    assert_eq!(envelope["stage"], "request", "{envelope}");
+    assert_eq!(envelope["code"], "invalid-request", "{envelope}");
+    assert!(
+        envelope["message"]
+            .as_str()
+            .unwrap()
+            .contains("observation_limits")
+    );
 }
 
 #[test]
