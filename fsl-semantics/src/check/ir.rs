@@ -1181,6 +1181,7 @@ pub(crate) fn node_children(kind: &NodeKind<NodeId>) -> Vec<NodeId> {
         | NodeKind::OptionSome(operand)
         | NodeKind::ConvertCollection { operand, .. }
         | NodeKind::ConvertScalar(_, operand)
+        | NodeKind::ConvertText(_, operand)
         | NodeKind::IeeeToRational(operand, _)
         | NodeKind::RationalNegate(operand, _)
         | NodeKind::DecimalNegate(operand, _)
@@ -1209,6 +1210,9 @@ pub(crate) fn node_children(kind: &NodeKind<NodeId>) -> Vec<NodeId> {
         | NodeKind::Decimal { left, right, .. }
         | NodeKind::Ieee(_, _, left, right)
         | NodeKind::Quantity(_, left, right)
+        | NodeKind::QuantityScale { quantity: left, factor: right }
+        | NodeKind::QuantityScaleDiv { quantity: left, factor: right }
+        | NodeKind::Index { collection: left, index: right, .. }
         | NodeKind::QuantityPower(left, right)
         | NodeKind::Order(_, _, left, right)
         | NodeKind::Equality(_, _, left, right)
@@ -1228,6 +1232,7 @@ pub(crate) fn node_children(kind: &NodeKind<NodeId>) -> Vec<NodeId> {
             target: right,
             ..
         } => vec![*left, *right],
+        NodeKind::TupleProject { operand, .. } => vec![*operand],
         NodeKind::IeeeSquareRoot(_, operand) => vec![*operand],
         NodeKind::IeeeFloat32Fma(_, first, second, third)
         | NodeKind::IeeeFloat64Fma(_, first, second, third) => vec![*first, *second, *third],

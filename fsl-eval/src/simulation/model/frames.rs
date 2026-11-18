@@ -20,20 +20,20 @@ use fsl_semantics::model::domain_package::OperationEffect;
 use fsl_semantics::model::observation::{
     AdmissionUsage, AdmittedObservations, Observation, SelfKind,
 };
-use fsl_semantics::model::population::{decide_frame, FrameDecision, FrameObject, FrameStop};
+use fsl_semantics::model::population::{FrameDecision, FrameObject, FrameStop, decide_frame};
 use fsl_semantics::model::state::{ModelState, StateField, StateObject};
 use quire_canonical::Limits as CanonicalLimits;
 
 pub(super) mod judge;
 
-use super::contracts::{conjunction, Conjunction};
+use super::contracts::{Conjunction, conjunction};
 use super::domain::{Domain, Odometer};
-use super::encode::{self, value_enc, values_equal, Typing};
+use super::encode::{self, Typing, value_enc, values_equal};
 use super::footprints::ReadCheck;
-use super::walk::{stop, Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk};
+use super::walk::{Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk, stop};
 use super::{
-    handler_anchor, identity_limits, state_document, Application, ClauseInfo, ClauseOutcome,
-    FieldChange, ModelFinding, ModelSimState, StepEffect, WrittenSlots, BROKEN, EXHAUSTED,
+    Application, BROKEN, ClauseInfo, ClauseOutcome, EXHAUSTED, FieldChange, ModelFinding,
+    ModelSimState, StepEffect, WrittenSlots, handler_anchor, identity_limits, state_document,
 };
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::Footprint;
@@ -849,7 +849,7 @@ impl Run<'_, '_, '_> {
             budget.charge()?;
             let candidate =
                 self.build(deleted, &members, plan.slots, created, &dimensions, &digits)?;
-            if !is_closed(&candidate, &post_references) {
+            if !is_closed(&candidate, &post_references)? {
                 continue;
             }
             let Ok(delta) = self.decide_touched(&candidate, Some(&touched))? else {
@@ -1611,36 +1611,50 @@ fn frame_objects(objects: &BTreeMap<String, StateObject>) -> Vec<FrameObject<'_,
 }
 
 /// Whether every reference of `candidate` names one of `references`.
-fn is_closed(candidate: &ModelState, references: &[ObjectReference]) -> bool {
+fn is_closed(
+    candidate: &ModelState,
+    references: &[ObjectReference],
+) -> Result<bool, ExpansionStop> {
     let mut named = Vec::new();
     for object in candidate.populations.values().flat_map(BTreeMap::values) {
         for value in object.fields.values() {
-            collect_references(value, &mut named);
+            collect_references(value, &mut named)?;
         }
     }
     // Most candidates name no object: the set of present references is built
     // only when one does.
     if named.is_empty() {
-        return true;
+        return Ok(true);
     }
     let present: BTreeSet<&ObjectReference> = references.iter().collect();
-    named
+    Ok(named
         .into_iter()
-        .all(|reference| present.contains(reference))
+        .all(|reference| present.contains(reference)))
 }
 
 /// Every object reference `value` holds.
-fn collect_references<'v>(value: &'v Value, out: &mut Vec<&'v ObjectReference>) {
+fn collect_references<'v>(
+    value: &'v Value,
+    out: &mut Vec<&'v ObjectReference>,
+) -> Result<(), ExpansionStop> {
     match value {
         Value::Reference(reference) => out.push(reference),
         Value::Option(option) => {
             if let Some(payload) = option.payload() {
-                collect_references(payload, out);
+                collect_references(payload, out)?;
             }
         }
         Value::Collection(collection) => {
             for element in collection.elements() {
-                collect_references(element, out);
+                collect_references(element, out)?;
+            }
+        }
+        Value::Map(map) => {
+            let Some(entries) = crate::value::ordered_map_entries(map) else {
+                return Err(stop(BROKEN));
+            };
+            for (_, value) in entries {
+                collect_references(value, out)?;
             }
         }
         Value::Boolean(_)
@@ -1651,6 +1665,8 @@ fn collect_references<'v>(value: &'v Value, out: &mut Vec<&'v ObjectReference>) 
         | Value::Quantity(_)
         | Value::Text(_)
         | Value::String(_)
+        | Value::Bytes(_)
+        | Value::JsonObject(_)
         | Value::Uuid(_)
         | Value::Timestamp(_)
         | Value::Enum(_)
@@ -1658,6 +1674,7 @@ fn collect_references<'v>(value: &'v Value, out: &mut Vec<&'v ObjectReference>) 
         | Value::Composite(_)
         | Value::Union(_) => {}
     }
+    Ok(())
 }
 
 /// A collection write that cannot be computed from the pre-state (FR-230

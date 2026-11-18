@@ -22,8 +22,8 @@ use fsl_foundation::bound::{DomainKey, FiniteBound, FiniteBoundKind, ProofBound}
 use fsl_foundation::diagnostic::Code;
 use fsl_package::CheckedPackage;
 
-use super::argument::{declaration_of, enum_declarations};
 use super::ReplayRefusal;
+use super::argument::{declaration_of, enum_declarations};
 use crate::identity::DeclaredDomain;
 
 /// What a request, a claim or a derivation got wrong about a claim's
@@ -89,7 +89,9 @@ pub enum ParityBoundRefusal {
     },
     /// A `Variants` harness bound names a variant the declared enum does not
     /// admit.
-    #[error("the harness bound at {key} names variant {variant:?}, which the declared enum does not admit")]
+    #[error(
+        "the harness bound at {key} names variant {variant:?}, which the declared enum does not admit"
+    )]
     HarnessUnknownVariant {
         /// The harness bound's key.
         key: DomainKey,
@@ -363,7 +365,9 @@ pub(super) fn derive(
             | ValueType::Reference(_)
             | ValueType::Population(_)
             | ValueType::Uuid
-            | ValueType::Timestamp => {
+            | ValueType::Timestamp
+            | ValueType::Bytes
+            | ValueType::JsonObject => {
                 found.insert(key(), Authored::Whole);
             }
         }

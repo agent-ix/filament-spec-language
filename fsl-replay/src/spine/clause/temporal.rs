@@ -1982,8 +1982,9 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         );
         let (disposition, counterexample, decisive) = match objects {
             Some((environments, reference)) => {
+                let mut captures = Vec::new();
                 let seeking = violated.then(|| {
-                    progressed_search(evaluate_observed_decisive(
+                    let mut observed = evaluate_observed_decisive(
                         run.package,
                         node,
                         environments,
@@ -1991,7 +1992,9 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
                         reference,
                         silent_from,
                         &mut meter,
-                    ))
+                    );
+                    captures = std::mem::take(&mut observed.captures);
+                    progressed_search(observed)
                 });
                 with_decisive(
                     &DecisiveRun {
@@ -2001,6 +2004,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
                         environments,
                         over: reference,
                         silent_from,
+                        captures: &captures,
                     },
                     seeking,
                     disposition,
@@ -2134,6 +2138,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
                     environments,
                     over: reference,
                     silent_from: None,
+                    captures: &observed.captures,
                 },
                 observed.decisive,
                 disposition,
@@ -2589,6 +2594,8 @@ struct DecisiveRun<'a> {
     over: &'a filament_exact::ObjectReference,
     /// The first silent sample of a progressed trace: it has no observation.
     silent_from: Option<u64>,
+    /// The captures the violating activation fixed (FR-860).
+    captures: &'a [filament_exact::Value],
 }
 
 /// FR-330 Outputs, FR-283 `decisive`: the report of a temporal violation with
@@ -2672,6 +2679,7 @@ fn decisive_record(
         environments,
         over,
         silent_from,
+        captures,
     } = *source;
     let fault = |invariant: &'static str| {
         Box::new(ClauseDisposition::EvaluateFault(
@@ -2704,6 +2712,7 @@ fn decisive_record(
         node,
         atom,
         over,
+        captures,
         objects,
         fsl_eval::value::ObservationIdentity {
             authority: document.authority.clone(),
@@ -2722,6 +2731,7 @@ pub(super) fn decisive_over(
     node: &fsl_semantics::check::TemporalClauseNode,
     atom: DecisiveAtom,
     over: &filament_exact::ObjectReference,
+    captures: &[filament_exact::Value],
     objects: &ObjectEnvironment,
     observation: fsl_eval::value::ObservationIdentity,
     meter: &mut Meter,
@@ -2737,7 +2747,14 @@ pub(super) fn decisive_over(
     let position = atom.position.index();
     let evaluation = run
         .package
-        .evaluate_holds_traced(node, atom.atom, over, objects, observation, meter)
+        .evaluate_holds_traced(
+            node,
+            atom.atom,
+            fsl_eval::value::HoldsBinders { over, captures },
+            objects,
+            observation,
+            meter,
+        )
         .map_err(|failure| {
             let refusal = *convert_call_failure(failure);
             Box::new(if let RunRefusal::Fault(internal) = refusal {

@@ -132,6 +132,8 @@ fn literal_json(value: &LiteralValue) -> (&'static str, Json) {
         LiteralValue::String(text) => ("string", json!(text)),
         LiteralValue::Uuid(value) => ("uuid", json!(value.to_string())),
         LiteralValue::Timestamp(value) => ("timestamp", json!(value.to_string())),
+        LiteralValue::Bytes(value) => ("bytes", json!(value)),
+        LiteralValue::JsonObject(value) => ("json_object", json!(value)),
         LiteralValue::None => ("none", Json::Null),
         LiteralValue::Enum(case) => ("enum", json!(case)),
     }

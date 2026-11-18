@@ -398,6 +398,7 @@ impl ClauseStream {
                 atoms: &self.plan.atoms,
                 guarded,
                 captured: clause.capture_site(),
+                deferred: &[],
             };
             reader.read(source, at, TemporalPosition::new(index), meter)?
         } else {
@@ -999,6 +1000,7 @@ impl ClauseStream {
             atoms: &self.plan.atoms,
             guarded: matches!(self.activation, Activation::Each { guarded: true }),
             captured: clause.capture_site(),
+            deferred: &[],
         };
         if let Ok(letter) = reader.read(source, at, TemporalPosition::new(index), meter) {
             match letter.stop {

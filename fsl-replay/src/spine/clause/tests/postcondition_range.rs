@@ -12,7 +12,7 @@ use super::frame_replay::unit_for;
 use super::state_clause_replay;
 use super::*;
 use crate::spine::{CallOutcome, CallRefusal, OperationName};
-use crate::{call_site, CallSite, CallSiteRefusal, OperationSite, QualifiedName};
+use crate::{CallSite, CallSiteRefusal, OperationSite, QualifiedName, call_site};
 use filament_exact::{Integer, ValueType};
 
 const BANK: &str = "test/bank";
@@ -983,11 +983,11 @@ const FIVE: &str = r#"{"type":"integer","value":"5"}"#;
 #[test]
 fn an_attempt_outside_the_precondition_records_one_finding_per_candidate_post_state() {
     use fsl_eval::model_subject::{ModelInstance, ModelSubject, ProtocolSubject, RoleBinding};
+    use fsl_eval::simulation::TransitionSystem;
     use fsl_eval::simulation::model::{
         ExpansionLimits, ModelFinding, ModelSimulationRequest, ModelSystem, PopulationUniverse,
     };
     use fsl_eval::simulation::protocol::{ProtocolSystem, ResolvedMemory, Sc};
-    use fsl_eval::simulation::TransitionSystem;
 
     let compiled = unit_for(bank_protocol_unit(), PLAIN.document()).compiled;
     let package = compiled.package;

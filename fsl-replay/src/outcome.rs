@@ -25,8 +25,8 @@
 
 mod counterexample;
 pub use counterexample::{
-    assignments_wire, graph_evidence_wire, probabilistic_wire, protocol_temporal_wire,
-    temporal_wire, CounterexampleWireError, ProtocolWire,
+    CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
+    probabilistic_wire, protocol_temporal_wire, temporal_wire,
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
@@ -42,6 +42,7 @@ use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::ReplayRefusal;
 use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::model_check::state_graph::WitnessSource;
 use crate::proof_result::{
@@ -52,12 +53,11 @@ use crate::proof_result::{
 use crate::result::ReplayResult;
 use crate::spine::kernel_undefined_reason;
 use crate::spine::{
-    classify_clause_run, item_record, CallIncomplete, CallOutcome, CallRefusal, CheckedUnit,
-    ClauseDisposition, ClauseRunReport, CompileRefusal, EmittedUnit, FrontEndFailure,
-    ParsedUnitSource, ReasonWire, RunRefusal, SpineStage, TemporalUndefinedCause, TemporalVerdict,
+    CallIncomplete, CallOutcome, CallRefusal, CheckedUnit, ClauseDisposition, ClauseRunReport,
+    CompileRefusal, EmittedUnit, FrontEndFailure, ParsedUnitSource, ReasonWire, RunRefusal,
+    SpineStage, TemporalUndefinedCause, TemporalVerdict, classify_clause_run, item_record,
 };
 use crate::statistical::{self, Decision, StatisticalVerdict};
-use crate::ReplayRefusal;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::temporal::UndefinedCause;
 
@@ -1667,7 +1667,7 @@ fn accounting_limit_cause(
     } else {
         incomplete.next_charge.clone()
     };
-    let setting = crate::limits::AccountingLimits::setting_of(incomplete.limit_kind).name();
+    let setting = crate::limits::AccountingLimits::setting_name(incomplete.limit_kind);
     ItemCause {
         code: code.map(str::to_owned),
         limit: Some(CauseLimit::Name(incomplete.limit_kind.as_str())),
@@ -2105,7 +2105,7 @@ impl From<&CallIncomplete> for ResultLimit {
             bound: incomplete.record.limit.to_string(),
             counter: incomplete.counter().to_string(),
             field: incomplete.limits_field(),
-            setting: incomplete.setting().name(),
+            setting: incomplete.setting_name(),
         }
     }
 }
@@ -2798,10 +2798,10 @@ mod tests {
 
     use filament_exact::{Cancel, CancelCause, Identifier, ScalarLimits};
     use filament_semantic_value::catalog::{CatalogCode, InternalFault};
-    use fsl_foundation::diagnostic::LimitExceeded;
     use fsl_foundation::Setting;
+    use fsl_foundation::diagnostic::LimitExceeded;
     use fsl_semantics::model::object_environment::ObjectEnvironment;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::*;
     use crate::identity::QualifiedName;
@@ -2943,8 +2943,8 @@ mod tests {
     use crate::proof_result::{IncompleteCause, ProofRefusalCause, UnavailabilityCause};
     use crate::result::{DisagreementCause, EvaluatedValue, InputArmResult, Verdict, WitnessCheck};
     use crate::spine::{
-        check, default_accounting, package, parse, run, select, Call, CallLocus, DependencyInput,
-        PackageLimits, ParseRequest, SpineLimits,
+        Call, CallLocus, DependencyInput, PackageLimits, ParseRequest, SpineLimits, check,
+        default_accounting, package, parse, run, select,
     };
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/spine-compile.native");

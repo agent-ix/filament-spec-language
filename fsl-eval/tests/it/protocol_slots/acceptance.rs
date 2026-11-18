@@ -26,7 +26,7 @@ mod state_compensation;
 
 #[path = "../../../../fsl-semantics/tests/support/tc1070.rs"]
 mod tc1070;
-use tc1070::{document, document_ep, model, SOURCE};
+use tc1070::{SOURCE, document, document_ep, model};
 
 #[test]
 fn ep_extension_is_admitted_by_the_shared_tc1070_fixture() {
@@ -1282,6 +1282,7 @@ fn set_limit(limits: &mut ScalarLimits, kind: LimitKind, bound: u64) {
         LimitKind::ValueOccurrences => limits.value_occurrences = bound,
         LimitKind::WorkUnits => limits.work_units = bound,
         LimitKind::ResultUnits => limits.result_units = bound,
+        LimitKind::LiveOccurrences => {}
     }
 }
 
@@ -1425,7 +1426,14 @@ fn retry_and_observation_capture_obey_every_measured_counter_boundary() {
         LimitKind::WorkUnits,
         LimitKind::ResultUnits,
     ];
-    assert_eq!(LimitKind::ALL.into_iter().filter(|counter| measured.consumed(*counter) > 0).collect::<Vec<_>>(), expected_counters, "T's charged counters are independently required by its arithmetic, comparisons and completed result");
+    assert_eq!(
+        LimitKind::ALL
+            .into_iter()
+            .filter(|counter| measured.consumed(*counter) > 0)
+            .collect::<Vec<_>>(),
+        expected_counters,
+        "T's charged counters are independently required by its arithmetic, comparisons and completed result"
+    );
     let mut repeated = Meter::new(UNLIMITED);
     assert_value_eq!(
         completed(
@@ -1581,7 +1589,11 @@ fn an_explicit_dereference_capture_obeys_the_observation_charge_boundaries() {
             filament_exact::ChargePoint::ModelDeref | filament_exact::ChargePoint::ModelNavigate
         )
     }) {
-        assert_eq!(charge.value_occurrences, Some(1), "the normative model read vector belongs to each charge, including the explicit dereference");
+        assert_eq!(
+            charge.value_occurrences,
+            Some(1),
+            "the normative model read vector belongs to each charge, including the explicit dereference"
+        );
     }
 }
 
@@ -3191,7 +3203,9 @@ fn assert_selection_refusals_match_across_the_checked_and_reader_views() {
             Err(CallFailure::Admission(reader_failure)),
         ) = (&checked, &reader)
         else {
-            panic!("{case:?} must be a typed admission refusal on both views: {checked:?} / {reader:?}");
+            panic!(
+                "{case:?} must be a typed admission refusal on both views: {checked:?} / {reader:?}"
+            );
         };
         assert_eq!(
             checked_failure, reader_failure,

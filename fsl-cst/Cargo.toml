@@ -15,7 +15,7 @@ description = "ADR-011 §6.1 layer 1: the complete-V1 recovering concrete syntax
 test-support = []
 
 [dependencies]
-ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 fsl-foundation = { path = "../fsl-foundation" }
 filament-exact = { workspace = true }
 logos = "0.16.1"

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Public API tests for the unreduced graph core and the model checker.
 
+mod analysis_view;
 mod analyze;
 mod analyze_cli;
 mod analyze_cli_support;

@@ -13,8 +13,8 @@ use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::RawSourceRef;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{
-    admit_object_environment, AdmissionFailure, BundleKey, DocumentRef, ObservationOrigin,
-    ObservationRole, ResolveBundle,
+    AdmissionFailure, BundleKey, DocumentRef, ObservationOrigin, ObservationRole, ResolveBundle,
+    admit_object_environment,
 };
 
 use super::{Declaring, Recompiled, ReplayRefusal};
@@ -152,6 +152,8 @@ pub(super) fn holds_reference(types: &TypeEnvironment, declared: &[ValueType]) -
             | ValueType::CarriedQuantity(_)
             | ValueType::String
             | ValueType::Text(_)
+            | ValueType::Bytes
+            | ValueType::JsonObject
             | ValueType::Enum(_)
             | ValueType::Population(_)
             | ValueType::Uuid

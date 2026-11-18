@@ -20,7 +20,6 @@ fn unit() -> String {
          profile i = \"{INFINITE}\";\n\
          type Zero = Int[0, 0];\n\
          function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure {{ xs }}\n\
-         function k using v(x: Integer): Integer pure {{ 3 mod x }}\n\
          record Reading {{ level: Int[0, 9]; stopped: Boolean; }}\n\
          temporal Fast using e over (r: Reading) clock \"events\" on origin \
          {{ capture startFast: Boolean = r.level > 3; eventually[0,3] holds(r.stopped or not startFast) }}\n\
@@ -32,10 +31,10 @@ fn unit() -> String {
          {{ eventually[0,3] holds(r.stopped or not (r.level > 3)) }}\n\
          temporal Each using e over (r: Reading) clock \"events\" on each (q: Reading) \
          {{ capture start: Int[0, 9] = q.level; always[0,0] holds(r.level = start) }}\n\
-         temporal Div using e over (r: Reading) clock \"events\" on origin \
-         {{ capture m: Integer = k(2 - r.level); always[0,1] holds(m >= 0) }}\n\
-         temporal DivEach using e over (r: Reading) clock \"events\" on each (q: Reading) \
-         {{ capture m: Integer = k(2 - r.level); always[0,1] holds(m >= 0) }}\n\
+         temporal EachLater using e over (r: Reading) clock \"events\" on each (q: Reading) \
+         {{ capture start: Int[0, 9] = q.level; eventually[0,2] holds(r.level > start) }}\n\
+         temporal EachLoop using i over (r: Reading) clock \"steps\" on each (q: Reading) \
+         {{ capture start: Int[0, 9] = q.level; eventually[0,1] holds(r.level > start) }}\n\
          temporal Refused using e over (r: Reading) clock \"events\" on origin \
          {{ capture z: Zero = count<Zero>(m in ints(sequence[r.level]): m > 0); always[0,1] holds(z = 0) }}\n"
     )
@@ -64,17 +63,38 @@ fn run_request(temporal: Value) -> Value {
         "clause": {"selection": {"temporal": temporal}, "observations": {}}}})
 }
 
+/// FR-860-AC-4's clauses whose capture divides through the function `k`:
+/// Linked checking refuses `k`'s unproved `mod` (FR-495-AC-3), so they are
+/// kept out of the shared unit until the fixture is checked under
+/// `CheckMode::Kernel`.
+const DIVISION: &str = "function k using v(x: Integer): Integer pure { 3 mod x }\n\
+     temporal Div using e over (r: Reading) clock \"events\" on origin \
+     { capture m: Integer = k(2 - r.level); always[0,1] holds(m >= 0) }\n\
+     temporal DivEach using e over (r: Reading) clock \"events\" on each (q: Reading) \
+     { capture m: Integer = k(2 - r.level); always[0,1] holds(m >= 0) }\n";
+
 fn write(directory: &Path, name: &str, request: &Value) -> PathBuf {
-    std::fs::write(directory.join("unit.native"), unit()).unwrap();
+    write_with(directory, "", name, request)
+}
+
+/// [`write`] with `extra` declarations appended to the unit.
+fn write_with(directory: &Path, extra: &str, name: &str, request: &Value) -> PathBuf {
+    std::fs::write(directory.join("unit.native"), unit() + extra).unwrap();
     let path = directory.join(name);
     std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
     path
 }
 
 fn run(directory: &Path, name: &str, trace: Value) -> Output {
+    run_with(directory, "", name, trace)
+}
+
+/// [`run`] over the unit with `extra` declarations appended.
+fn run_with(directory: &Path, extra: &str, name: &str, trace: Value) -> Output {
     let file = format!("{name}-{}.json", trace.to_string().len());
-    run_file(&write(
+    run_file(&write_with(
         directory,
+        extra,
         &file,
         &run_request(json!({"name": name, "trace": trace})),
     ))
@@ -105,7 +125,6 @@ fn temporal(document: &Value) -> &Value {
 /// is violated where the capture-free formula holds.
 #[test]
 #[trace("TC-2440", "FR-860-AC-1")]
-#[ignore = "QSL-2001: a holds condition that reads a capture is not evaluated over a trace yet"]
 fn a_capture_keeps_the_value_it_took_at_the_activation() {
     let directory = tempfile::tempdir().unwrap();
     let fast = result(&run(
@@ -133,7 +152,6 @@ fn a_capture_keeps_the_value_it_took_at_the_activation() {
 /// its one origin activation at every loop repetition.
 #[test]
 #[trace("TC-2440", "FR-860-AC-2")]
-#[ignore = "QSL-2001: a holds condition that reads a capture is not evaluated over a trace yet"]
 fn an_infinite_trace_capture_is_fixed_over_a_lasso() {
     let directory = tempfile::tempdir().unwrap();
     let falling = json!({"lasso": {"prefix": [], "loop": [sample(5, false), sample(1, false)]}});
@@ -150,7 +168,6 @@ fn an_infinite_trace_capture_is_fixed_over_a_lasso() {
 /// FR-860-AC-3: each `on each` activation reads its own capture.
 #[test]
 #[trace("TC-2440", "FR-860-AC-3")]
-#[ignore = "QSL-2001: a holds condition that reads a capture is not evaluated over a trace yet"]
 fn each_activation_reads_its_own_capture() {
     let directory = tempfile::tempdir().unwrap();
     let each = result(&run(
@@ -161,15 +178,53 @@ fn each_activation_reads_its_own_capture() {
     assert_eq!(temporal(&each)["kind"], "holds", "{each}");
 }
 
+/// FR-860-AC-3, FR-860 "Fixing the captures": an `on each` activation reads
+/// its own capture at the later positions its window visits, not the capture
+/// another activation fixed there. Over levels 0, 1, 0 the activation at 0
+/// (`start` 0) is discharged by level 1 and the one at 1 (`start` 1) finds no
+/// greater level, so the violation is at 1; a reading of each position's
+/// atom with that position's own capture would report it at 0. The same
+/// holds over an infinite-trace lasso.
+#[test]
+#[trace("TC-2440", "FR-860-AC-3")]
+fn each_activation_reads_its_own_capture_at_later_positions() {
+    let directory = tempfile::tempdir().unwrap();
+    let later = result(&run(
+        directory.path(),
+        "EachLater",
+        json!({"finite": moving(&[0, 1, 0])}),
+    ));
+    assert_eq!(temporal(&later)["kind"], "violated", "{later}");
+    assert_eq!(temporal(&later)["position"], 1, "{later}");
+    let rising = result(&run(
+        directory.path(),
+        "EachLater",
+        json!({"finite": moving(&[0, 1, 2, 3])}),
+    ));
+    assert_eq!(temporal(&rising)["kind"], "violated", "{rising}");
+    assert_eq!(temporal(&rising)["position"], 3, "{rising}");
+    let looped = result(&run(
+        directory.path(),
+        "EachLoop",
+        json!({"lasso": {"prefix": [], "loop": [sample(0, false), sample(1, false)]}}),
+    ));
+    assert_eq!(temporal(&looped)["kind"], "violated", "{looped}");
+    assert_eq!(temporal(&looped)["position"], 1, "{looped}");
+}
+
 /// FR-860-AC-4 (negative): an undefined capture is an `undefined` violation
-/// at its activation, a refused capture a stage `evaluate` refusal, neither
-/// an internal failure.
+/// at its activation, never an internal failure.
 #[test]
 #[trace("TC-2440", "FR-860-AC-4")]
 #[ignore = "QSL-2001: the fixture must be checked under CheckMode::Kernel and selected as a package (FR-860-AC-4); a capture fault through `k` is reported as runtime_invariant (exit 30), not at the capture"]
-fn a_capture_fault_is_reported_at_the_capture() {
+fn an_undefined_capture_is_reported_at_the_capture() {
     let directory = tempfile::tempdir().unwrap();
-    let output = run(directory.path(), "Div", json!({"finite": moving(&[2, 0])}));
+    let output = run_with(
+        directory.path(),
+        DIVISION,
+        "Div",
+        json!({"finite": moving(&[2, 0])}),
+    );
     assert_eq!(output.status.code(), Some(10));
     let undefined = result(&output);
     assert_eq!(temporal(&undefined)["kind"], "undefined", "{undefined}");
@@ -182,20 +237,29 @@ fn a_capture_fault_is_reported_at_the_capture() {
         undefined.to_string().contains("division-by-zero"),
         "{undefined}"
     );
-    let defined = result(&run(
+    let defined = result(&run_with(
         directory.path(),
+        DIVISION,
         "Div",
         json!({"finite": moving(&[0, 2])}),
     ));
     assert_eq!(temporal(&defined)["kind"], "holds", "{defined}");
-    let each = result(&run(
+    let each = result(&run_with(
         directory.path(),
+        DIVISION,
         "DivEach",
         json!({"finite": moving(&[0, 2])}),
     ));
     assert_eq!(temporal(&each)["kind"], "undefined", "{each}");
     assert_eq!(temporal(&each)["position"], 1, "{each}");
+}
 
+/// FR-860-AC-4 (negative): a refused capture is a stage `evaluate` refusal
+/// located at the capture, never an internal failure.
+#[test]
+#[trace("TC-2440", "FR-860-AC-4")]
+fn a_refused_capture_is_reported_at_the_capture() {
+    let directory = tempfile::tempdir().unwrap();
     let refused = run(directory.path(), "Refused", json!({"finite": moving(&[1])}));
     assert_eq!(refused.status.code(), Some(20));
     let text = format!(
@@ -211,7 +275,6 @@ fn a_capture_fault_is_reported_at_the_capture() {
 /// the batch run of each prefix, and settles `Fast` at record 3.
 #[test]
 #[trace("TC-2441", "FR-860-AC-5")]
-#[ignore = "QSL-2001: a holds condition that reads a capture is not evaluated over a trace yet"]
 fn the_monitor_keeps_the_capture_of_its_activation() {
     let directory = tempfile::tempdir().unwrap();
     let levels = [5, 1, 1, 1];
@@ -250,4 +313,55 @@ fn the_monitor_keeps_the_capture_of_its_activation() {
         );
     }
     assert_eq!(status["temporal"]["kind"], "violated", "{status}");
+}
+
+/// FR-860 "Every trace kind and entry" (FR-860-AC-5's monitor over an `on
+/// each` clause and an infinite-trace one): after each record the monitor's
+/// disposition equals the batch run over the records so far, each
+/// activation reading its own capture; `EachLater` ends violated at 1.
+#[test]
+#[trace("TC-2441", "FR-860-AC-5")]
+fn the_monitor_reads_each_activations_own_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let origin = monitored(directory.path(), "Origin", &[5, 1, 1, 1]);
+    assert_ne!(origin["category"], Value::Null, "{origin}");
+    let each = monitored(directory.path(), "EachLater", &[0, 1, 0]);
+    assert_eq!(each["temporal"]["kind"], "violated", "{each}");
+    assert_eq!(each["temporal"]["position"], 1, "{each}");
+}
+
+/// The last disposition of the `native-monitor/1` run of `name` over records
+/// of `levels`, each record's disposition equal in category to the batch run
+/// over the records so far.
+fn monitored(directory: &Path, name: &str, levels: &[i64]) -> Value {
+    let mut records: Vec<String> = levels
+        .iter()
+        .map(|level| json!({"observation": sample(*level, false)}).to_string())
+        .collect();
+    records.push(json!({"end": true}).to_string());
+    std::fs::write(directory.join("records.jsonl"), records.join("\n")).unwrap();
+    let request = json!({"format": "native-monitor/1", "request": {
+        "models": [], "program": program(), "clocks": clocks(),
+        "clauses": [{"name": name}], "trace": {"kind": "finite"},
+        "records": "records.jsonl"}});
+    let monitored = run_file(&write(directory, &format!("monitor-{name}.json"), &request));
+    assert_ne!(monitored.status.code(), Some(30));
+    let document: Value = serde_json::from_slice(&monitored.stdout).expect("a monitor run");
+    let events = document["events"].as_array().expect("events");
+    let mut status = Value::Null;
+    for record in 0..levels.len() {
+        if let Some(event) = events.iter().find(|event| event["record"] == record) {
+            status = event["disposition"].clone();
+        }
+        let batch = result(&run(
+            directory,
+            name,
+            json!({"finite": moving(&levels[..=record])}),
+        ));
+        assert_eq!(
+            status["category"], batch["disposition"]["category"],
+            "{name} at record {record}: {status} vs {batch}"
+        );
+    }
+    status
 }

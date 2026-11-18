@@ -598,8 +598,8 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 if attempt.binds.is_some() {
                     built.write(self.binder(node, path)?);
                     self.folded(&mut built, instance, path, node)?;
-                } else if self.program.effected(node) {
-                    // The record its effects read (ST-2).
+                } else if self.program.binder_of.contains_key(&node) {
+                    // The record its binder holds (ST-1) and its effects read (ST-2).
                     built.write(self.binder(node, path)?);
                 }
             }

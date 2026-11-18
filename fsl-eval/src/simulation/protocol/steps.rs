@@ -1651,7 +1651,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             // result of the binder's type, the record is kept only for the
             // attempt's effects, whose ST-2 enabledness reads it.
             let bound = bound.or_else(|| {
-                self.program.effected(node).then(|| Bound {
+                self.program.binder_of.contains_key(&node).then(|| Bound {
                     value: None,
                     enc: Enc::tagged(
                         "attempt-record",

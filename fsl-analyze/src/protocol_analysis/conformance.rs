@@ -43,6 +43,7 @@ fn recording_result(
     subject: Option<&fsl_eval::model_subject::ProtocolSubject<'_>>,
     recording_identity: Option<&fsl_semantics::model::observation::DocumentRef>,
     recording: &[u8],
+    population: Option<serde_json::Value>,
     cancel: &Cancel,
 ) -> crate::analyze::EngineReport {
     use base64::Engine as _;
@@ -70,7 +71,32 @@ fn recording_result(
             );
         }
     };
-    let assessment = match super::recording::assess_recording(package, &recording) {
+    let population = match population {
+        Some(population) => match serde_json::from_value::<
+            Vec<crate::analyze::document::ActivatedRolePopulation>,
+        >(population)
+        {
+            Ok(population) => Some(population),
+            Err(error) => {
+                return crate::analyze::EngineReport::Refused(
+                    crate::analyze::Refusal::DeclinedWithDetail(
+                        fsl_replay::ProofRefusalCause::InvalidInput,
+                        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                        CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                        [("detail".to_owned(), serde_json::json!(error.to_string()))]
+                            .into_iter()
+                            .collect(),
+                    ),
+                );
+            }
+        },
+        None => None,
+    };
+    let assessment = match super::recording::assess_recording_with_population(
+        package,
+        &recording,
+        population.as_deref(),
+    ) {
         Ok(assessment) => assessment,
         Err(refusal) => {
             let detail = [("detail".to_owned(), serde_json::json!(refusal.to_string()))]
@@ -96,9 +122,12 @@ fn recording_result(
             fsl_replay::ProofRefusalCause::InvalidInput,
             fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
             CatalogCode::new("invalid_runtime_input", "missing-member"),
-            [("detail".to_owned(), serde_json::json!("recording has no provisioned identity"))]
-                .into_iter()
-                .collect(),
+            [(
+                "detail".to_owned(),
+                serde_json::json!("recording has no provisioned identity"),
+            )]
+            .into_iter()
+            .collect(),
         ));
     };
     let replayed = if assessment.global.label == "refuted" {
@@ -190,6 +219,7 @@ pub(crate) fn global_recording_item<'a>(
     subject: Option<fsl_eval::model_subject::ProtocolSubject<'a>>,
     recording_identity: Option<fsl_semantics::model::observation::DocumentRef>,
     recording: Option<&'a [u8]>,
+    population: Option<serde_json::Value>,
 ) -> crate::analyze::AnalyzeItem<'a> {
     crate::analyze::AnalyzeItem::new(
         index,
@@ -204,6 +234,7 @@ pub(crate) fn global_recording_item<'a>(
                 subject.as_ref(),
                 recording_identity.as_ref(),
                 recording,
+                population,
                 cancel,
             ),
             None => crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Declined(
@@ -514,8 +545,14 @@ fn behavior_report(
         output: ProtocolConformanceOutput {
             obligations,
             closure: ConformanceClosureOutput {
-                state: if closed { "closed" } else if incomplete { "incomplete" } else { "open" }
-                    .to_owned(),
+                state: if closed {
+                    "closed"
+                } else if incomplete {
+                    "incomplete"
+                } else {
+                    "open"
+                }
+                .to_owned(),
                 premises: std::iter::once(serde_json::json!({
                     "kind": "execution",
                     "node": protocol
@@ -530,12 +567,18 @@ fn behavior_report(
                         .controls
                         .iter()
                         .filter(|control| {
-                            matches!(control.kind, fsl_forms::ProtocolNodeKind::Case | fsl_forms::ProtocolNodeKind::Branch)
+                            matches!(
+                                control.kind,
+                                fsl_forms::ProtocolNodeKind::Case
+                                    | fsl_forms::ProtocolNodeKind::Branch
+                            )
                         })
-                        .map(|control| serde_json::json!({
-                            "kind": "branch",
-                            "node": format!("{}::{}", protocol.name, control.path.join("::")),
-                        })),
+                        .map(|control| {
+                            serde_json::json!({
+                                "kind": "branch",
+                                "node": format!("{}::{}", protocol.name, control.path.join("::")),
+                            })
+                        }),
                 )
                 .collect(),
                 producer: "engine".to_owned(),
@@ -1065,34 +1108,38 @@ mod tests {
     #[trace("TC-2805", "FR-990-AC-1")]
     #[test]
     fn recording_assessment_maps_to_the_shared_conformance_output() {
-        let output = recording_output(super::super::recording::RecordingAssessment {
-            obligations: vec![super::super::recording::RecordingObligation {
-                obligation: super::super::recording::RecordingObligationId {
-                    kind: "enabledness".to_owned(),
-                    node: Some("Flow::Main::Ship".to_owned()),
-                    instance: Some("w-1".to_owned()),
+        let output = recording_output(
+            super::super::recording::RecordingAssessment {
+                obligations: vec![super::super::recording::RecordingObligation {
+                    obligation: super::super::recording::RecordingObligationId {
+                        kind: "enabledness".to_owned(),
+                        node: Some("Flow::Main::Ship".to_owned()),
+                        instance: Some("w-1".to_owned()),
+                        role_instance: None,
+                    },
+                    verdict: super::super::recording::RecordingVerdict::Violated,
+                    cause: Some(super::super::recording::RecordingCause::Unexpected),
+                    witness: vec![3],
+                }],
+                closure: super::super::recording::RecordingClosure {
+                    state: "open".to_owned(),
+                    premises: Vec::new(),
+                    producer: "recording",
                 },
-                verdict: super::super::recording::RecordingVerdict::Violated,
-                cause: Some(super::super::recording::RecordingCause::Unexpected),
-                witness: vec![3],
-            }],
-            closure: super::super::recording::RecordingClosure {
-                state: "open".to_owned(),
-                premises: Vec::new(),
-                producer: "recording",
+                facts: Vec::new(),
+                global: super::super::recording::RecordingGlobalResult {
+                    label: "refuted".to_owned(),
+                    basis: "violation".to_owned(),
+                    complete: false,
+                    cause: Some("violation".to_owned()),
+                },
+                trace_position: Some(3),
             },
-            facts: Vec::new(),
-            global: super::super::recording::RecordingGlobalResult {
-                label: "refuted".to_owned(),
-                basis: "violation".to_owned(),
-                complete: false,
-                cause: Some("violation".to_owned()),
+            &fsl_semantics::model::observation::DocumentRef {
+                authority: "test".to_owned(),
+                identity: "recording".to_owned(),
             },
-            trace_position: Some(3),
-        }, &fsl_semantics::model::observation::DocumentRef {
-            authority: "test".to_owned(),
-            identity: "recording".to_owned(),
-        });
+        );
 
         assert_eq!(output.obligations[0].verdict, "violated");
         assert_eq!(output.obligations[0].cause.as_deref(), Some("unexpected"));
@@ -1102,7 +1149,13 @@ mod tests {
         assert_eq!(output.global.label, "refuted");
         assert!(!output.global.complete);
         assert!(output.projections.is_none());
-        assert_eq!(output.recording.as_ref().map(|identity| identity.identity.as_str()), Some("recording"));
+        assert_eq!(
+            output
+                .recording
+                .as_ref()
+                .map(|identity| identity.identity.as_str()),
+            Some("recording")
+        );
         assert!(output.replay.is_none());
     }
 }

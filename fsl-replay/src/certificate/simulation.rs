@@ -46,7 +46,6 @@ use fsl_eval::simulation::{TransitionSystem, BOUND_POSITIONS};
 use fsl_eval::temporal::UndefinedCause;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::CheckedRefinement;
-use fsl_semantics::model::observation::DocumentRef;
 use serde::{Serialize, Serializer};
 
 use crate::certificate::check::{
@@ -370,8 +369,9 @@ pub struct SimulationCertificateRequest<'a> {
     pub concrete: ModelSimulationRequest<'a>,
     /// The package that holds the abstract model.
     pub abstract_package: &'a CheckedPackage,
-    /// The abstract subject's FR-106 initial snapshots.
-    pub abstract_initial: Vec<DocumentRef>,
+    /// The abstract subject's initial states: its FR-106 snapshots, or the
+    /// mapping's image of the concrete initial states.
+    pub abstract_initial: crate::refinement::AbstractInitial,
 }
 
 /// Why [`check_simulation_certificate`] checked nothing: the request, not
@@ -431,6 +431,9 @@ pub fn check_simulation_certificate(
             Checker::Simulation.fault("the-subjects-of-a-refinement-open")
         }
         SubjectRefusal::ProtocolAbstractSide => ClosureRefusal::ProtocolAbstractSide,
+        SubjectRefusal::Stopped(_) => {
+            Checker::Simulation.fault("the-abstract-initial-states-build-within-the-check-budget")
+        }
     })?;
     for system in [&concrete, &abstract_system] {
         check_model_bounds(system, BOUND_POSITIONS)

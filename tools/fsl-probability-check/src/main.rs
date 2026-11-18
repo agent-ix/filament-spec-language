@@ -214,10 +214,15 @@ fn source_failure(error: ProbabilitySourceError) -> Result<Value, String> {
         {
             "unsupported"
         }
-        ProbabilitySourceError::Compile(
-            fsl_foundation::diagnostic::StageFailure::Refused(_)
-            | fsl_foundation::diagnostic::StageFailure::RefusedWithPayload(_, _),
-        ) => "refused",
+        ProbabilitySourceError::Compile(compile)
+            if matches!(
+                compile.as_ref(),
+                fsl_foundation::diagnostic::StageFailure::Refused(_)
+                    | fsl_foundation::diagnostic::StageFailure::RefusedWithPayload(_, _)
+            ) =>
+        {
+            "refused"
+        }
         ProbabilitySourceError::Document(
             Document::Unsupported
             | Document::MixedInfiniteCoverage
@@ -260,17 +265,18 @@ fn source_failure(error: ProbabilitySourceError) -> Result<Value, String> {
         )) => Some(
             json!({"setting":limit.setting().name(),"bound":limit.configured_bound(),"actual":limit.actual().to_string()}),
         ),
-        ProbabilitySourceError::Compile(
+        ProbabilitySourceError::Compile(compile) => match compile.as_ref() {
             fsl_foundation::diagnostic::StageFailure::Limit(limit)
-            | fsl_foundation::diagnostic::StageFailure::LimitWithPayload(limit, _),
-        ) => {
-            let actual = serde_json::Number::from_u128(limit.actual())
-                .map(Value::Number)
-                .unwrap_or_else(|| Value::String(limit.actual().to_string()));
-            Some(
-                json!({"setting":limit.setting().name(), "bound":limit.configured_bound(), "actual":actual}),
-            )
-        }
+            | fsl_foundation::diagnostic::StageFailure::LimitWithPayload(limit, _) => {
+                let actual = serde_json::Number::from_u128(limit.actual())
+                    .map(Value::Number)
+                    .unwrap_or_else(|| Value::String(limit.actual().to_string()));
+                Some(
+                    json!({"setting":limit.setting().name(), "bound":limit.configured_bound(), "actual":actual}),
+                )
+            }
+            _ => None,
+        },
         ProbabilitySourceError::Document(Document::Limit {
             limit,
             bound,

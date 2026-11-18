@@ -4,6 +4,7 @@
 //! safety half settles as a terminal record from the outcome and the replay.
 
 use filament_exact::Cancel;
+use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::catalog::InternalFault;
 use fsl_analyze::model_check::{check_refinement, RefinementCheckRequest};
 use fsl_eval::model_subject::ModelSubject;
@@ -89,7 +90,7 @@ fn outcome(subject: &Subject<'_>) -> RefinementOutcome {
                 proof_bounds: Vec::new(),
             },
             abstract_package: subject.package,
-            abstract_initial: vec![subject.abstract_initial.clone()],
+            abstract_initial: vec![subject.abstract_initial.clone()].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -135,7 +136,7 @@ fn certified<'w>(subject: &Subject<'w>) -> SimulationCertificateRequest<'w> {
         refinement: subject.refinement,
         concrete: subject.concrete.clone(),
         abstract_package: subject.package,
-        abstract_initial: vec![subject.abstract_initial.clone()],
+        abstract_initial: vec![subject.abstract_initial.clone()].into(),
     }
 }
 
@@ -342,7 +343,7 @@ fn an_undefined_step_row_argument_settles_refuted_once_it_replays() {
         "function g using v(i: Int[0, 1]): Int[0, 1] pure {{ if 1 mod i = 0 then 0 else 1 }}\n{}",
         ring_is_queue(items).replace("enq(self.ring, x)", "enq(self.ring, g(self.index))")
     );
-    let world = RingWorld::with(RingVariant::default(), &refinement);
+    let world = RingWorld::with_mode(CheckMode::Kernel, RingVariant::default(), &refinement);
     let subject = ring(&world);
     let outcome = check(&subject);
     let record = settle(&subject, &outcome);

@@ -6,7 +6,7 @@
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{analyze, label, litmus_request, Workspace};
+use crate::analyze_cli_support::{analyze, label, litmus_request, request_over, Workspace};
 use crate::litmus::{sb_run, sb_unit};
 
 fn binding() -> Value {
@@ -149,6 +149,21 @@ fn bad_protocol_bindings_decline_or_refuse() {
     assert_eq!(run.exit, 20, "{}", run.document());
 }
 
+/// A request over the litmus domain with the three cells `x`, `y` and `z`.
+fn three_cell_request(ws: &Workspace, body: &str, extra: Value) -> std::path::PathBuf {
+    let snapshots: Vec<Vec<u8>> = crate::litmus::Documents::with_cells(&["x", "y", "z"])
+        .snapshots
+        .into_values()
+        .collect();
+    request_over(
+        ws,
+        &crate::litmus::unit_text(body),
+        &crate::litmus::resulting_document(),
+        &snapshots,
+        extra,
+    )
+}
+
 /// FR-1033-AC-6 and FR-225-AC-4: FR-225-AC-2's three unfenced stores under
 /// `tso` with `max_store_buffer` 2 and the state constraint `Zero` settle
 /// `ConstraintReached` with no counterexample, stating the store-buffer
@@ -162,11 +177,11 @@ fn a_constrained_store_buffer_run_settles_constraint_reached() {
         "parallel Both {{ branch left sequence L {{ {} {} {} }} \
          branch right sequence R {{ {} {} {} }} }} join all [left, right];",
         attempt("Sx", "w", "Cell::set", "release", "IsX, StoreOne"),
-        attempt("Sy", "w", "Cell::setw", "release", "IsXw, FlagOne"),
-        attempt("Sz", "w", "Cell::set", "release", "IsY, StoreOne"),
+        attempt("Sy", "w", "Cell::set", "release", "IsY, StoreOne"),
+        attempt("Sz", "w", "Cell::set", "release", "IsZ, StoreOne"),
         attempt("Lx", "c", "Core::read1", "acquire", "ReadsX1, Read1"),
-        attempt("Ly", "c", "Core::read2", "acquire", "ReadsX2, ReadFlag2"),
-        attempt("Lz", "c", "Core::read3", "acquire", "ReadsY3, Read3"),
+        attempt("Ly", "c", "Core::read1", "acquire", "ReadsY1, Read1"),
+        attempt("Lz", "c", "Core::read1", "acquire", "ReadsZ1, Read1"),
     );
     let body = format!(
         "{}constraint Zero using v on M::Cell at current {{ self.v <= 0 }}\n\
@@ -183,7 +198,7 @@ fn a_constrained_store_buffer_run_settles_constraint_reached() {
         item
     };
     let ws = Workspace::new("protocol-constraint-reached");
-    let run_with = analyze(&litmus_request(
+    let run_with = analyze(&three_cell_request(
         &ws,
         &body,
         json!({"subject": sb_subject(), "memory": memory, "items": [item(true)]}),
@@ -206,16 +221,15 @@ fn a_constrained_store_buffer_run_settles_constraint_reached() {
         json!({"bound": "max_store_buffer", "value": 2, "reached": true}),
         "{record}"
     );
-    assert!(
-        run_with.item(0)["exploration"]["states"]
-            .as_str()
-            .is_some_and(|states| states.parse::<u64>().is_ok_and(|n| n > 0)),
+    assert_eq!(
+        run_with.item(0)["exploration"]["states"],
+        json!("20"),
         "{}",
         run_with.document()
     );
     assert_eq!(record["cause"]["boundary_states"], 8, "{record}");
     let ws = Workspace::new("protocol-memory-bound-reached");
-    let run_without = analyze(&litmus_request(
+    let run_without = analyze(&three_cell_request(
         &ws,
         &body,
         json!({"subject": sb_subject(), "memory": memory, "items": [item(false)]}),

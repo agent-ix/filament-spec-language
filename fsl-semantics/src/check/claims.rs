@@ -478,9 +478,12 @@ fn is_scalar_application(node: CheckedNode<'_>) -> bool {
         | NodeKind::IeeeFloat32Fma(..)
         | NodeKind::IeeeFloat64Fma(..)
         | NodeKind::Quantity(..)
+        | NodeKind::QuantityScale { .. }
+        | NodeKind::QuantityScaleDiv { .. }
         | NodeKind::QuantityNegate(..)
         | NodeKind::QuantityPower(..)
         | NodeKind::ConvertDecimal(..)
+        | NodeKind::ConvertText(..)
         | NodeKind::Order(..)
         | NodeKind::IeeeToRational(..) => true,
         NodeKind::ConvertScalar(target, operand) => {
@@ -534,6 +537,7 @@ fn is_scalar_application(node: CheckedNode<'_>) -> bool {
         | NodeKind::NamedPopulation { .. }
         | NodeKind::Seq { .. }
         | NodeKind::Case { .. } => false,
+        NodeKind::TupleProject { .. } | NodeKind::Index { .. } => false,
         #[cfg(seam_probe)]
         NodeKind::__SeamProbe => unreachable!("never constructed outside the probe build"),
     }
@@ -568,7 +572,9 @@ fn scalar_equality(compared: &ValueType) -> bool {
         // equality carries no bound to prove.
         | ValueType::String
         | ValueType::Uuid
-        | ValueType::Timestamp => false,
+        | ValueType::Timestamp
+        | ValueType::Bytes
+        | ValueType::JsonObject => false,
     }
 }
 
