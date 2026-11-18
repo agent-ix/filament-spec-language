@@ -9,7 +9,9 @@ use std::process::{Command, Stdio};
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
+use fsl_analyze::analyze::document::Negotiate;
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+use fsl_analyze::analyze::{ClaimItem, Diagnostic};
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{
@@ -30,6 +32,31 @@ const DOMAIN: &[u8] = include_bytes!("../fixtures/link.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 const SOURCE: &str = include_str!("../fixtures/link.native");
 const CLAIM: &str = "\nprobabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin { probability >= 0.95 [ eventually holds(m.delivered) ] }\n";
+
+/// The same FR-290 one-candidate settlement used by the driver for this
+/// source-only test. This fixture has one linked EN-5 candidate.
+struct SupportedCandidate;
+
+impl Negotiate for SupportedCandidate {
+    fn negotiate(
+        &self,
+        _item: &ClaimItem,
+        candidates: &fsl_route::CandidateOutcome,
+    ) -> (fsl_route::routing::Disposition, Option<Diagnostic>) {
+        match candidates {
+            fsl_route::CandidateOutcome::Candidates(set) => match set.candidates() {
+                [candidate] => (
+                    fsl_route::routing::Disposition::Supported(candidate.clone()),
+                    None,
+                ),
+                _ => (fsl_route::routing::Disposition::Unsupported, None),
+            },
+            fsl_route::CandidateOutcome::UnknownBackend(_) => {
+                (fsl_route::routing::Disposition::Unsupported, None)
+            }
+        }
+    }
+}
 
 fn proof_request(claim: &str) -> Value {
     proof_request_with(claim, |_, _, _, _, _| {})
@@ -562,7 +589,7 @@ fn certificate_checks_independently() {
     std::fs::write(&analyze_path, analyze_request.to_string()).unwrap();
     let analyzed = fsl_command::command::analyze(
         Path::new(&analyze_path),
-        &Engines::fsl().expect("the linked engines register"),
+        &SupportedCandidate,
         &Cancel::new(),
     )
     .expect("fsl analyze runs from source");
