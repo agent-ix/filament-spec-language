@@ -678,10 +678,12 @@ fn category(
 }
 
 /// FR-643-AC-6 (TC-2321): `Never` settles `violation` at step 3 and then
-/// reports `B(3)`; `Reaches` stays `Pending` and reports `B(k)`.
+/// reports `B(3)`. `Reaches` reports `B(k)` while pending and settles
+/// `success` at step 3, its good prefix (FR-328-AC-7, FR-643's amended
+/// infinite-trace rule), then reports `B(3)`.
 #[test]
 #[trace("TC-2321", "FR-643-AC-6")]
-fn never_settles_at_the_bad_prefix_and_reaches_stays_pending() {
+fn never_settles_at_the_bad_prefix_and_reaches_at_its_good_prefix() {
     let world = world();
     let names = ["Reaches", "Never"];
     let levels = [0, 1, 2, 1];
@@ -698,14 +700,14 @@ fn never_settles_at_the_bad_prefix_and_reaches_stays_pending() {
     for (index, level) in levels.iter().enumerate() {
         let observed = text(*level);
         let step = session.step(sample(&observed), &cancel).expect("steps");
-        let batch = world.batch(&names, &levels[..=index]);
-        assert!(
-            !step.statuses[0].1.is_settled(),
-            "Reaches pending at {index}"
+        assert_eq!(
+            step.statuses[0].1.is_settled(),
+            index >= 2,
+            "Reaches at {index}"
         );
         assert_eq!(
             format!("{:?}", step.statuses[0].1.record().report().disposition),
-            batch[0]
+            world.batch(&names, &levels[..=index.min(2)])[0]
         );
         let never = &step.statuses[1].1;
         assert_eq!(never.is_settled(), index >= 2, "Never at {index}");
@@ -733,9 +735,9 @@ fn never_settles_at_the_bad_prefix_and_reaches_stays_pending() {
     let outcome = session.finish(&cancel).expect("ends");
     assert_eq!(
         format!("{:?}", outcome.records[0].report().disposition),
-        world.batch(&["Reaches"], &levels)[0]
+        world.batch(&["Reaches"], &levels[..3])[0]
     );
-    assert_eq!(settled_before_end(&outcome), vec![false, true]);
+    assert_eq!(settled_before_end(&outcome), vec![true, true]);
 }
 
 /// FR-643-AC-7 (TC-2321): the event-position `E` stays `Pending` over levels
