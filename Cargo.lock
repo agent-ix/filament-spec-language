@@ -889,6 +889,7 @@ dependencies = [
  "filament-checked",
  "filament-eval",
  "filament-exact",
+ "filament-observation",
  "filament-semantic-value",
  "fsl-cst",
  "fsl-forms",

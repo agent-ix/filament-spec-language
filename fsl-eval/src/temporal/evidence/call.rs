@@ -1436,6 +1436,8 @@ fn admit_trace(
     TimestampedTrace::admit(
         clause_facts.name(),
         WindowClock {
+            name: request.binding.clock_name.to_string(),
+            profile: request.binding.profile.to_string(),
             unit,
             cover: request.cover,
         },
