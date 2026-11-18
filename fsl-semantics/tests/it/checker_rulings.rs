@@ -357,9 +357,7 @@ fn reaches_admits_every_destination_multiplicity() {
 /// FR-391-AC-10: a state clause body may use `seq` and the population forms,
 /// and each lowers: checking (which lowers) refuses none of them.
 #[trace("TC-1904", "FR-391-AC-10", "FR-139-AC-2")]
-#[trace("FSpec-TC-1401", "FSpec-FR-376-AC-8", "FSpec-FR-376-AC-9")]
 #[test]
-#[ignore = "QSL-2179: seq and population-form lowering in a state clause not implemented yet"]
 fn population_forms_and_seq_in_a_state_clause_check_and_lower() {
     for clause in [
         "invariant S using v on M::Counter at current { size(seq(i in 0 .. 2: i)) = 3 }",
