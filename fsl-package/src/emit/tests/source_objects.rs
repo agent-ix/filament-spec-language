@@ -1405,3 +1405,203 @@ fn a_forged_source_operation_body_row_refuses() {
         );
     }
 }
+
+/// The emitted wire, the strictly read package and the `identities.json` bytes
+/// S4 writes for `unit`.
+fn admitted_identity_file(unit: &str) -> (Value, CheckedPackageV2, Vec<u8>) {
+    let text = format!("{HEADER}{unit}");
+    let packages =
+        fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
+    let declarations = assemble_with_models(text.as_bytes(), &packages).expect("the unit assembles");
+    let graph = declarations
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("S4 emits the unit");
+    let wire = wire(&emission);
+    let package = strict_read(emission.package().bytes(), &wire);
+    let rows = emission
+        .identity_rows(
+            &package,
+            &mut filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
+        )
+        .expect("source identity rows join");
+    let bytes = rows.to_bytes(&package).expect("identity rows encode");
+    (wire, package, bytes)
+}
+
+/// The strict read of `bytes`, which must admit them with no identity row.
+fn strict_read(bytes: &[u8], wire: &Value) -> CheckedPackageV2 {
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    let read = CheckedPackageV2::read(bytes, CheckedPackageReadLimits::bounded(), &evidence);
+    let CheckedPackageV2ReadResult::Admitted(package) = read else {
+        panic!("the strict read admits the package with no identity row: {read:?}");
+    };
+    *package
+}
+
+/// The identity-file read of `file` over `package`.
+fn read_identity_file(
+    file: &Value,
+    package: &CheckedPackageV2,
+) -> Result<crate::ReadIdentityRows, crate::IdentityFileRefusal> {
+    let mut text = serde_json::to_vec_pretty(file).expect("identity JSON writes");
+    text.push(b'\n');
+    crate::ReadIdentityRows::read(
+        &text,
+        package,
+        &mut crate::V2ReadLimits::fixture().native_join_budget(),
+    )
+}
+
+/// The identity row named `name` in the `member` list of `file`.
+fn identity_row<'a>(file: &'a Value, member: &str, name: &str) -> &'a Value {
+    file[member]
+        .as_array()
+        .unwrap_or_else(|| panic!("{member} rows"))
+        .iter()
+        .find(|row| row["source_identity"] == name)
+        .unwrap_or_else(|| panic!("{member} row {name}"))
+}
+
+/// FR-230-AC-65's timed unit with a clock-parameter operation added.
+const TIMED_ARM: &str = "\
+profile T = \"filament.temporal.complete/v1\";\n\
+dimension Time;
+unit ms : Time = rational(1, 1);
+record W { c: Clock; }
+object O { w: W; d: Clock; operation arm(x: Clock, k: Integer) modifies self.d; }
+time O dense unit ms;
+";
+
+#[trace("FR-569-AC-17", "TC-1408")]
+#[test]
+#[ignore = "QSL-2347: identity rows list clock fields as clock entries and operations with clock_parameters; not implemented yet"]
+fn source_identity_rows_list_clock_members_and_clock_parameters() {
+    let (_, package, bytes) = admitted_identity_file(TIMED_ARM);
+    let file: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");
+    let o = identity_row(&file, "source_objects", "O");
+    let members = o["members"].as_array().expect("O's members");
+    assert_eq!(members.len(), 2, "{o}");
+    assert_eq!(members[0]["admitted_name"], "w");
+    assert!(members[0]["type_node"].is_string());
+    assert_eq!(members[0]["member_type"], Value::Null);
+    assert_eq!(members[1]["admitted_name"], "d");
+    assert_eq!(members[1]["type_node"], Value::Null);
+    assert_eq!(members[1]["value_type"], Value::Null);
+    assert_eq!(members[1]["member_type"], "ix://filament/native/Clock");
+    assert_eq!(members[1]["collections"], json!([]));
+    assert_eq!(
+        o["operations"],
+        json!([{"identity": "O::arm", "query": false, "clock_parameters": ["x"]}])
+    );
+    let w = identity_row(&file, "source_records", "W");
+    assert_eq!(w["members"][0]["admitted_name"], "c");
+    assert_eq!(w["members"][0]["member_type"], "ix://filament/native/Clock");
+    assert!(read_identity_file(&file, &package).is_ok(), "the file reads back");
+}
+
+/// FR-531-AC-34's unit.
+const CLOCK_ENTRIES: &str = "\
+profile T = \"filament.temporal.complete/v1\";\n\
+dimension Time;
+unit ms : Time = rational(1, 1);
+record W { c: Clock; n: Integer; }
+tuple P (Clock, Integer);
+union U { armed(Clock), idle }
+object O { w: W; d: Clock; q: Sequence<Clock>[0, 3]; p: P; u: U; operation arm(x: Clock, k: Integer) modifies self.d; }
+time O dense unit ms;
+";
+
+#[trace("FR-531-AC-34", "TC-1331")]
+#[test]
+#[ignore = "QSL-2347: identities/5 member entries, source_tuples and clock_payload; not implemented yet"]
+fn the_identity_file_carries_data_and_clock_member_entries() {
+    let (_, package, bytes) = admitted_identity_file(CLOCK_ENTRIES);
+    let file: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");
+    assert_eq!(file["format"], "filament.checked-handoff.identities/5");
+    let o = identity_row(&file, "source_objects", "O");
+    let kinds: Vec<(&str, bool)> = o["members"]
+        .as_array()
+        .expect("members")
+        .iter()
+        .map(|entry| {
+            (
+                entry["admitted_name"].as_str().unwrap_or_default(),
+                entry["member_type"].is_null(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [("w", true), ("d", false), ("q", false), ("p", true), ("u", true)]
+    );
+    let q = &o["members"][2];
+    assert_eq!(q["member_type"], "Sequence<ix://filament/native/Clock>");
+    assert_eq!(
+        q["collections"],
+        json!([{"kind": "sequence", "minimum": "0", "maximum": "3"}])
+    );
+    let p = identity_row(&file, "source_tuples", "P");
+    assert_eq!(p["positions"][0]["member_type"], "ix://filament/native/Clock");
+    assert!(p["positions"][1]["type_node"].is_string());
+    let u = identity_row(&file, "source_unions", "U");
+    let armed = &u["members"][0];
+    assert_eq!(armed["payload_nodes"], json!([]));
+    assert_eq!(armed["clock_payload"][0]["member_type"], "ix://filament/native/Clock");
+    assert!(read_identity_file(&file, &package).is_ok(), "the file reads back");
+    let mut old = file.clone();
+    old["format"] = json!("filament.checked-handoff.identities/4");
+    let mut both = file.clone();
+    both["source_objects"][0]["members"][1]["type_node"] = o["members"][0]["type_node"].clone();
+    let mut no_tuples = file.clone();
+    no_tuples.as_object_mut().unwrap().remove("source_tuples");
+    let mut no_parameters = file.clone();
+    for row in no_parameters["source_objects"].as_array_mut().unwrap() {
+        for entry in row["operations"].as_array_mut().unwrap() {
+            entry.as_object_mut().unwrap().remove("clock_parameters");
+        }
+    }
+    for (name, edited) in [
+        ("/4", old),
+        ("both", both),
+        ("no tuples", no_tuples),
+        ("no clock_parameters", no_parameters),
+    ] {
+        assert!(read_identity_file(&edited, &package).is_err(), "{name} refuses");
+    }
+}
+
+#[trace("FR-996-AC-3", "TC-2999", "FSpec-FR-789-AC-3", "FSpec-TC-2023")]
+#[test]
+#[ignore = "QSL-2347: the identity-row join checks source clock members; not implemented yet"]
+fn a_source_clock_member_row_refuses_at_the_identity_row_join() {
+    let (wire, package, bytes) = admitted_identity_file(TIMED);
+    let mut file: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");
+    assert!(read_identity_file(&file, &package).is_ok(), "both places join");
+    let index = file["source_objects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|row| row["source_identity"] == "O")
+        .expect("O's row");
+    let members = file["source_objects"][index]["members"].as_array_mut().unwrap();
+    let d = members
+        .iter()
+        .position(|entry| entry["admitted_name"] == "d")
+        .expect("the clock entry d");
+    members.remove(d);
+    let place = places(&wire)
+        .into_iter()
+        .find(|&place| place_rows(&wire, place).len() == 1)
+        .expect("d's place");
+    let refusal = read_identity_file(&file, &package).expect_err("the join refuses d's place");
+    let text = format!("{refusal:?}");
+    assert!(text.contains("MalformedClockPlace"), "{text}");
+    assert!(
+        text.contains(&format!("/semantic_graph/nodes/{place}/body/members/2/value/members/0")),
+        "{text}"
+    );
+}

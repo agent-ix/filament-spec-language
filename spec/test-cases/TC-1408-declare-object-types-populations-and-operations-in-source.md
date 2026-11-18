@@ -23,7 +23,7 @@ supertypes, populations and operations; that they resolve, refuse
 collisions, check and evaluate on the source route as a domain package's
 object types do; that S4 emits such a unit per FR-995 and FR-996 (the target emission: source-owned `model`/`object_type` nodes,
 clause functions, effects, dispatch tables and identity rows, source declaration keys, the clock-place join and source operation_bodies rows). Scope:
-FR-569-AC-1 to FR-569-AC-11, FR-569-AC-16, FR-105-AC-18, FR-218-AC-39, FR-383-AC-67 and the
+FR-569-AC-1 to FR-569-AC-11, FR-569-AC-16, FR-569-AC-17, FR-105-AC-18, FR-218-AC-39, FR-383-AC-67 and the
 fixture-S parts of FR-390-AC-70 and FR-390-AC-72. Steps 1 to 4 and 7 to 9 run
 and pass now; steps 5 and 6 wait on QC-30, except the part of FR-569-AC-16 that
 needs no intake (the emission's `operations` entries, their `operation_effects`
@@ -119,6 +119,10 @@ Variants, each one change to S (or D):
    in the post snapshot (a frame violation). (FR-569-AC-10)
 9. Run S4 over S, S-R, S-P, S-M and D. (FR-569-AC-11, FR-105-AC-18,
    FR-383-AC-67, FR-390-AC-70)
+10. Emit FR-230-AC-65's timed unit with `arm` added; read the `source_objects`
+   row of `O` and the `source_records` row of `W` from the emission and from
+   `identities.json`, and run the supplier whose `O` row omits `d`.
+   (FR-569-AC-17)
 
 Tag each test with the criteria it asserts and `TC-1408`, for example
 `#[trace("FR-569-AC-8", "TC-1408")]`.
