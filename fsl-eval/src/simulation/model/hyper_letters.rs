@@ -96,7 +96,7 @@ impl<'s, 'a> CheckedHyperLetters<'s, 'a> {
         }
         let literals = reference_literals(package.graph(), clause);
         for literal in &literals {
-            let mut first_declaring = None;
+            let mut first_declaring: Option<(usize, String)> = None;
             for (component, (system, bindings)) in
                 systems.iter().zip(&reference_bindings).enumerate()
             {

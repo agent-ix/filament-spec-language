@@ -141,7 +141,7 @@ impl ReferenceBindings {
                 let mut pending = vec![(condition, false)];
                 while let Some((node, indexed)) = pending.pop() {
                     let indexed = indexed || components.contains_key(node.location());
-                    pending.extend(node.children().map(|child| (child, indexed)));
+                    pending.extend(node.children().into_iter().map(|child| (child, indexed)));
                     if let NodeKind::Call { function, .. } = node.kind() {
                         if visited_functions.insert(*function) {
                             if let Some(function) = graph.function_state(*function) {
@@ -251,7 +251,7 @@ impl ReferenceBindings {
             while let Some((node, indexed)) = pending.pop() {
                 let indexed =
                     indexed || components.is_some_and(|reads| reads.contains_key(node.location()));
-                pending.extend(node.children().map(|child| (child, indexed)));
+                pending.extend(node.children().into_iter().map(|child| (child, indexed)));
                 if let NodeKind::Call { function, .. } = node.kind() {
                     if visited_functions.insert(*function) {
                         if let Some(function) = graph.function_state(*function) {
