@@ -38,6 +38,18 @@ pub(crate) fn package_and_relation(
     Vec<u8>,
 ) {
     let document = hyper_world::document(false, false);
+    package_and_relation_with_document(document, vault, text)
+}
+
+fn package_and_relation_with_document(
+    document: Vec<u8>,
+    vault: Vault,
+    text: &str,
+) -> (
+    CheckedPackage,
+    fsl_semantics::check::CheckedModelRelation,
+    Vec<u8>,
+) {
     let documents = [document.as_slice()];
     let unit = hyper_world::unit_text(None, vault, false, text);
     let graph = hyper_world::declarations(&documents, &unit)
@@ -97,6 +109,17 @@ fn initial_world(
         hyper_world::snapshot(&mut snapshots, "one", &[("v", (1, 0))], None, None),
     ];
     (packages, snapshots, initial)
+}
+
+fn step_with_result_document() -> Vec<u8> {
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&hyper_world::document(false, false)).expect("fixture JSON");
+    document["types"][1]["operations"][0]["returns"] = serde_json::json!({
+        "typeRef": hyper_world::ident("Bit"),
+        "nullable": false,
+        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+    });
+    serde_json::to_vec(&document).expect("the result-bearing fixture serializes")
 }
 
 /// FR-179: the explicit checker exhausts the reachable transition product and
@@ -247,6 +270,73 @@ fn a_violated_relation_returns_a_replayable_step_tuple() {
         &counterexample,
     )
     .expect("the step tuple replays");
+    assert!(matches!(
+        replay,
+        ModelTraceSettlement::Reproduced {
+            value: ModelTraceValue::Truth(false),
+            ..
+        }
+    ));
+}
+
+/// FR-179 binds result values even when distinct results reach the same state.
+#[trace("TC-604", "FR-179-AC-2")]
+#[test]
+fn relation_tuple_witness_preserves_coalesced_operation_results() {
+    let relation_text = "relation EqualResult using v over \
+        (x: V::Vault::step, y: V::Vault::step) { x.result = y.result }";
+    let (package, relation, document) = package_and_relation_with_document(
+        step_with_result_document(),
+        Vault::Secure,
+        relation_text,
+    );
+    let (packages, snapshots, initial) = initial_world(&document);
+    let outcome = check_model_relation(
+        ModelRelationCheckRequest {
+            relation: &relation,
+            package: &package,
+            subjects: subjects(&package, &packages, &snapshots, &initial),
+            limits: ModelCheckLimits::default(),
+            max_depth: None,
+            meter: UNLIMITED,
+        },
+        &Cancel::new(),
+    )
+    .expect("the relation check is admitted");
+    let ModelRelationOutcome::Refuted {
+        counterexample,
+        stats,
+    } = outcome
+    else {
+        panic!("different result pairs refute equality: {outcome:?}");
+    };
+    assert_eq!(stats.transitions, 16);
+    assert_eq!(
+        counterexample.traces[0].results.last().cloned().flatten(),
+        Some(r#"{"type":"integer","value":"0"}"#.to_owned())
+    );
+    assert_eq!(
+        counterexample.traces[1].results.last().cloned().flatten(),
+        Some(r#"{"type":"integer","value":"1"}"#.to_owned())
+    );
+
+    let subject_values = subjects(&package, &packages, &snapshots, &initial);
+    let subject = subject_values.first().expect("one alias subject");
+    let systems = vec![
+        ModelSystem::new(subject.simulation.clone()).expect("a model system"),
+        ModelSystem::new(subject.simulation.clone()).expect("a model system"),
+    ];
+    let replay = replay_model_relation_tuple(
+        &ModelRelationReplay {
+            relation: &relation,
+            package: &package,
+            systems: systems.iter().collect(),
+            meter: UNLIMITED,
+            cancel: &Cancel::new(),
+        },
+        &counterexample,
+    )
+    .expect("the result-specific transition tuple replays");
     assert!(matches!(
         replay,
         ModelTraceSettlement::Reproduced {

@@ -7,21 +7,87 @@ use filament_exact::{Cancel, Meter, ScalarLimits};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::{check_model_bounds, ModelSimState, ModelSystem};
-use fsl_eval::simulation::{EncodingRefusal, Outcome, StateKey};
+use fsl_eval::simulation::model::{
+    check_model_bounds, ModelFinding, ModelKey, ModelSimState, ModelSystem,
+};
+use fsl_eval::simulation::{
+    EncodingRefusal, Expansion, ExpansionStop, Outcome, StateKey, TransitionSystem,
+};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
     HyperCounterexample, HyperCounterexampleKind, HyperLocus, HyperStep, HyperTrace,
     HyperUndefined, ModelCheckLimit, ModelStep, ReachedLimit,
 };
 use fsl_semantics::check::CheckedModelRelation;
+use quire_canonical::{Encode, Sink, Writer};
 use std::collections::BTreeMap;
 
 use super::check::{not_simulated, ModelCheckRefusal, BOUND_POSITIONS};
 use super::graph::{retain, RetainedEdge, RetainedGraph};
 
-type RelationGraph =
-    RetainedGraph<ModelSimState, ModelTransition, fsl_eval::simulation::model::ModelFinding>;
+type RelationGraph = RetainedGraph<ModelSimState, RelationTransition, ModelFinding>;
+
+/// A relation edge identity includes the operation result, which is part of
+/// an execution binding even when several results reach one state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RelationTransition {
+    transition: ModelTransition,
+    result: Option<String>,
+}
+
+impl Encode for RelationTransition {
+    fn encode_into<S: Sink + ?Sized>(
+        &self,
+        writer: &mut Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.begin_array()?;
+        self.transition.encode_into(writer)?;
+        writer.boolean(self.result.is_some())?;
+        if let Some(result) = &self.result {
+            writer.string(result)?;
+        }
+        writer.end_array()
+    }
+}
+
+/// Model expansion with result-aware transition identities for relation checks.
+struct RelationSystem<'s, 'a> {
+    system: &'s ModelSystem<'a>,
+}
+
+impl TransitionSystem for RelationSystem<'_, '_> {
+    type State = ModelSimState;
+    type TransitionId = RelationTransition;
+    type Key = ModelKey;
+    type Finding = ModelFinding;
+
+    fn initial(&self) -> Vec<Self::State> {
+        self.system.initial_states().to_vec()
+    }
+
+    fn key(&self, state: &Self::State) -> Self::Key {
+        self.system.key(state)
+    }
+
+    fn successors(
+        &self,
+        state: &Self::State,
+    ) -> Result<Expansion<Self::TransitionId, Self::State, Self::Finding>, ExpansionStop> {
+        let expanded = self.system.successors(state)?;
+        let successors = expanded
+            .successors
+            .into_iter()
+            .map(|(transition, state)| {
+                let result = state.reached_by().and_then(|effect| effect.result.clone());
+                (RelationTransition { transition, result }, state)
+            })
+            .collect();
+        Ok(Expansion {
+            successors,
+            findings: expanded.findings,
+        })
+    }
+}
 
 /// Inputs to EN-1's explicit-state model-relation checker (FR-179).
 pub struct ModelRelationCheckRequest<'a> {
@@ -174,8 +240,9 @@ pub fn check_model_relation(
         }
         check_model_bounds(&system, BOUND_POSITIONS)
             .map_err(|refusal| ModelRelationRefusal::Model(not_simulated(refusal)))?;
+        let relation_system = RelationSystem { system: &system };
         let graph = retain(
-            &system,
+            &relation_system,
             request.limits.limits,
             fsl_foundation::IdentityLimits::default(),
             request.max_depth,
@@ -262,7 +329,7 @@ pub fn check_model_relation(
                 .iter()
                 .enumerate()
                 .filter_map(|(index, edge)| {
-                    (edge.transition.operation() == operation.as_str()).then_some(index)
+                    (edge.transition.transition.operation() == operation.as_str()).then_some(index)
                 })
                 .collect()
         })
@@ -288,7 +355,7 @@ pub fn check_model_relation(
                 stats,
             });
         }
-        let chosen: Vec<&RetainedEdge<ModelTransition>> = edges
+        let chosen: Vec<&RetainedEdge<RelationTransition>> = edges
             .iter()
             .zip(&positions)
             .enumerate()
@@ -336,18 +403,13 @@ pub fn check_model_relation(
             .iter()
             .map(|observation| observation.environment())
             .collect();
-        let transitions: Vec<&ModelTransition> =
-            chosen.iter().map(|edge| &edge.transition).collect();
+        let transitions: Vec<&ModelTransition> = chosen
+            .iter()
+            .map(|edge| &edge.transition.transition)
+            .collect();
         let results: Vec<Option<&str>> = chosen
             .iter()
-            .enumerate()
-            .map(|(index, edge)| {
-                let subject_index = execution_subjects[index];
-                graphs[subject_index]
-                    .state(edge.target)
-                    .and_then(|state| state.state.reached_by())
-                    .and_then(|effect| effect.result.as_deref())
-            })
+            .map(|edge| edge.transition.result.as_deref())
             .collect();
         stats.relation_tuples = stats.relation_tuples.saturating_add(1);
         let evaluation = fsl_eval::value::evaluate_model_relation_transitions(
@@ -454,7 +516,7 @@ fn advance_tuple(positions: &mut [usize], choices: &[Vec<usize>]) -> bool {
 fn relation_traces(
     graphs: &[RelationGraph],
     execution_subjects: &[usize],
-    chosen: &[&RetainedEdge<ModelTransition>],
+    chosen: &[&RetainedEdge<RelationTransition>],
     executions: &[(String, fsl_semantics::check::OperationKey)],
     aliases: &[String],
 ) -> Result<Vec<HyperTrace>, InternalFault> {
@@ -474,7 +536,7 @@ fn relation_traces(
 
 fn trace_to_edge(
     graph: &RelationGraph,
-    last: &RetainedEdge<ModelTransition>,
+    last: &RetainedEdge<RelationTransition>,
     variable: &str,
     alias: &str,
 ) -> Result<HyperTrace, InternalFault> {
@@ -491,14 +553,16 @@ fn trace_to_edge(
                 .map_err(|_| InternalFault::new("S6a", "relation-initial-index-fits"))?;
             path.reverse();
             path.push(last.clone());
+            let mut results = Vec::with_capacity(path.len());
             let steps = path
                 .into_iter()
                 .map(|edge| {
+                    results.push(edge.transition.result.clone());
                     graph
                         .state(edge.target)
                         .map(|target| {
                             HyperStep::Model(ModelStep {
-                                transition: edge.transition,
+                                transition: edge.transition.transition,
                                 post_state: StateKey::from_canonical_bytes(target.key.clone()),
                                 delay: None,
                             })
@@ -511,6 +575,7 @@ fn trace_to_edge(
                 alias: alias.to_owned(),
                 initial,
                 steps,
+                results,
                 marks: Vec::new(),
             });
         }

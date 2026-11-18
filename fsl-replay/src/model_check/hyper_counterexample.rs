@@ -53,6 +53,10 @@ pub struct HyperTrace {
     pub initial: u32,
     /// Its steps, in order.
     pub steps: Vec<HyperStep>,
+    /// Canonical operation results aligned with `steps`, when a relation
+    /// witness must distinguish result-bearing edges that share a post-state.
+    /// Empty for counterexamples whose meaning does not read operation results.
+    pub results: Vec<Option<String>>,
     /// For a `Projected` counterexample, the mark of each step, in step
     /// order; empty for every other kind.
     pub marks: Vec<StepMark>,
@@ -182,6 +186,20 @@ impl MatchWitness {
                         .len()
                         .saturating_mul(std::mem::size_of::<StepMark>()),
                 )
+                .saturating_add(
+                    trace
+                        .results
+                        .len()
+                        .saturating_mul(std::mem::size_of::<Option<String>>()),
+                )
+                .saturating_add(
+                    trace
+                        .results
+                        .iter()
+                        .filter_map(Option::as_ref)
+                        .map(String::len)
+                        .sum::<usize>(),
+                )
         });
         let instance_bytes = self
             .instance
@@ -227,6 +245,20 @@ impl FamilyPayload for HyperCounterexample {
                             .marks
                             .len()
                             .saturating_mul(std::mem::size_of::<StepMark>()),
+                    )
+                    .saturating_add(
+                        trace
+                            .results
+                            .len()
+                            .saturating_mul(std::mem::size_of::<Option<String>>()),
+                    )
+                    .saturating_add(
+                        trace
+                            .results
+                            .iter()
+                            .filter_map(Option::as_ref)
+                            .map(String::len)
+                            .sum::<usize>(),
                     )
             })
             .sum();

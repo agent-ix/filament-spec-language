@@ -172,6 +172,7 @@ pub fn replay_model_relation_tuple(
             || system.model() != Some(expected_package)
             || !trace.marks.is_empty()
             || trace.steps.is_empty()
+            || trace.results.len() != trace.steps.len()
             || trace
                 .steps
                 .iter()
@@ -206,12 +207,14 @@ pub fn replay_model_relation_tuple(
                 .map_err(|_| fault("relation-post-state-observes"))?,
         );
         post_state_keys.push(post.state_key.clone());
-        let effect = post
-            .state
-            .reached_by()
-            .ok_or_else(|| fault("relation-final-step-has-an-effect"))?;
         transitions.push(&last.transition);
-        result_values.push(effect.result.clone());
+        result_values.push(
+            trace
+                .results
+                .last()
+                .cloned()
+                .ok_or_else(|| fault("relation-final-step-has-a-result-slot"))?,
+        );
     }
     let pre: Vec<_> = pre_observations
         .iter()
@@ -521,6 +524,9 @@ fn reexecute(
     system: &ModelSystem<'_>,
     trace: &HyperTrace,
 ) -> Result<Option<Vec<Position>>, ReplayRefusal> {
+    if !trace.results.is_empty() && trace.results.len() != trace.steps.len() {
+        return Err(shape_error("has one result slot per transition"));
+    }
     let initial = system.initial();
     let count = initial.len();
     let index = usize::try_from(trace.initial).unwrap_or(usize::MAX);
@@ -556,8 +562,15 @@ fn reexecute(
                 let mut enabled = false;
                 let mut reached = None;
                 let mut state_keys = Vec::new();
+                let expected_result = trace.results.get(index);
                 for (transition, next) in expansion.successors {
                     if transition != step.transition {
+                        continue;
+                    }
+                    if expected_result.is_some_and(|expected| {
+                        next.reached_by().and_then(|effect| effect.result.as_ref())
+                            != expected.as_ref()
+                    }) {
                         continue;
                     }
                     enabled = true;
