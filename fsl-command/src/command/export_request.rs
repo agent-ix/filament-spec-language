@@ -97,6 +97,27 @@ impl ExportRequest {
         }
         Ok(request)
     }
+
+    /// Indices of records that fail the requested fidelity floor, preserving
+    /// the caller's obligation order (FSpec FR-811).
+    pub fn fidelity_floor_failures(&self, records: &[ExportRecord]) -> Vec<usize> {
+        records
+            .iter()
+            .enumerate()
+            .filter_map(|(index, record)| {
+                let fails = match self.minimum_fidelity.as_str() {
+                    "any" => false,
+                    "conditional" => matches!(
+                        record.disposition,
+                        ExportDisposition::Unrepresented | ExportDisposition::Refused
+                    ),
+                    "preserved" => record.disposition != ExportDisposition::Preserved,
+                    _ => true,
+                };
+                fails.then_some(index)
+            })
+            .collect()
+    }
 }
 
 /// One obligation's checked-package representation record.
@@ -335,6 +356,44 @@ mod tests {
             .member(),
             "limits"
         );
+    }
+
+    #[test]
+    fn applies_the_fidelity_floor_in_obligation_order() {
+        let records = vec![
+            ExportRecord {
+                obligation: "first".to_owned(),
+                disposition: ExportDisposition::Preserved,
+                conditions: Vec::new(),
+                causes: Vec::new(),
+                regions: Vec::new(),
+            },
+            ExportRecord {
+                obligation: "second".to_owned(),
+                disposition: ExportDisposition::Conditional,
+                conditions: vec!["assumption".to_owned()],
+                causes: Vec::new(),
+                regions: vec![serde_json::json!([0, 1])],
+            },
+            ExportRecord {
+                obligation: "third".to_owned(),
+                disposition: ExportDisposition::Unrepresented,
+                conditions: Vec::new(),
+                causes: vec![serde_json::json!({"code": "target-unrepresentable"})],
+                regions: Vec::new(),
+            },
+        ];
+        let request = |minimum_fidelity| {
+            ExportRequest::read(json!({
+                "profile": "filament.output.tla2/v1",
+                "obligations": ["first", "second", "third"],
+                "minimum_fidelity": minimum_fidelity
+            }))
+            .unwrap()
+        };
+        assert_eq!(request("conditional").fidelity_floor_failures(&records), vec![2]);
+        assert_eq!(request("preserved").fidelity_floor_failures(&records), vec![1, 2]);
+        assert!(request("any").fidelity_floor_failures(&records).is_empty());
     }
 
     #[test]
