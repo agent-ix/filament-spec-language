@@ -222,6 +222,14 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 serde_json::json!(diagnostics),
             )])),
         ),
+        #[cfg(feature = "quire-extraction")]
+        RunCause::ExtractionFailure { stage, details, .. } => (
+            match stage {
+                super::ExtractionFailureStage::Quire => types::Stage::Quire,
+                super::ExtractionFailureStage::Selection => types::Stage::ExtractionSelection,
+            },
+            types::Details::Object(details.clone()),
+        ),
         RunCause::ClauseOutput(_) => (types::Stage::Output, types::Details::None),
         RunCause::Identifier { diagnostic, .. } => (
             types::Stage::Request,

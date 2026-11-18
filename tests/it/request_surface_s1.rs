@@ -347,6 +347,68 @@ fn the_run_command_reaches_markdown_extraction_by_default() {
     assert_eq!(value["details"], json!({"actual": 2}), "{value}");
 }
 
+/// FR-031-AC-6 (TC-109): an extracted program cannot use the run command's
+/// function-call mode and refuses before trying to open the Markdown source.
+#[test]
+#[trace("TC-109", "FR-031-AC-6")]
+fn an_extracted_program_with_call_refuses_before_reading_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut request = current_clause_request();
+    request["request"]["program"] = json!({
+        "source": {"file": "missing.md", "authority": "agent-ix", "identity": "doc",
+            "document": "Doc", "formal_revision": 1},
+        "extraction": {"body": {"authority": "agent-ix", "identity": "body",
+            "document": "Body"}},
+        "clauses": [{"clause": "ParentOrder", "package": "doc"}]
+    });
+    request["request"].as_object_mut().unwrap().remove("clause");
+    request["request"]["call"] = json!({"function": "seven", "arguments": []});
+
+    let (exit, value) = run_refusal(directory.path(), &request);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "extraction-requires-run", "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+}
+
+/// FR-662-AC-3 / TC-1744 step 2: the command preserves FR-030's missing
+/// clause selection error with the original identity and authored binding.
+#[test]
+#[trace("TC-1744", "FR-662-AC-3")]
+fn the_run_command_preserves_a_missing_markdown_clause_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("spec.md"),
+        "# Doc\n\n## Rules\n\n### Present\n```ix:native\nopaque body\n```\n",
+    )
+    .unwrap();
+    let mut request = current_clause_request();
+    request["request"]["program"] = json!({
+        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "doc",
+            "document": "Doc", "formal_revision": 1},
+        "extraction": {"body": {"authority": "agent-ix", "identity": "body",
+            "document": "Body"}},
+        "clauses": [{"clause": "Absent", "package": "doc"}]
+    });
+
+    let (exit, value) = run_refusal(directory.path(), &request);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["stage"], "extraction-selection", "{value}");
+    assert_eq!(
+        value["details"]["original"],
+        json!({
+            "authority": "agent-ix", "identity": "doc"
+        }),
+        "{value}"
+    );
+    assert_eq!(
+        value["details"]["binding"],
+        json!({
+            "clause": "Absent", "package": "doc"
+        }),
+        "{value}"
+    );
+}
+
 /// FR-663-AC-1 (TC-1745): a completed parse's outcome document carries the
 /// `parsed` report of the labels, path, byte count and S1 usage.
 #[test]
