@@ -483,7 +483,6 @@ fn is_scalar_application(node: CheckedNode<'_>) -> bool {
         | NodeKind::QuantityNegate(..)
         | NodeKind::QuantityPower(..)
         | NodeKind::ConvertDecimal(..)
-        | NodeKind::ConvertText(..)
         | NodeKind::Order(..)
         | NodeKind::IeeeToRational(..) => true,
         NodeKind::ConvertScalar(target, operand) => {
@@ -521,6 +520,7 @@ fn is_scalar_application(node: CheckedNode<'_>) -> bool {
         | NodeKind::Record { .. }
         | NodeKind::Collection { .. }
         | NodeKind::ConvertCollection { .. }
+        | NodeKind::ConvertText(..)
         | NodeKind::Query { .. }
         | NodeKind::Flatten(_)
         | NodeKind::Fold { .. }
