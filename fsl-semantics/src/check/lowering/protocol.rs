@@ -468,6 +468,8 @@ fn bounded_carries(carries: &ValueType) -> bool {
         | ValueType::String
         | ValueType::Uuid
         | ValueType::Timestamp
+        | ValueType::Bytes
+        | ValueType::JsonObject
         | ValueType::Reference(_)
         | ValueType::Composite(_)
         | ValueType::Option(_)

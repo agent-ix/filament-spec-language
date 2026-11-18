@@ -7,29 +7,29 @@ use filament_exact::{Cancel, LimitKind, Meter, ScalarLimits};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::fairness::FairnessGranularity;
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_eval::fairness::{analyze, Constraint, EdgeLabel, Graph, Identity, Strength, Vertex};
+use fsl_eval::fairness::{Constraint, EdgeLabel, Graph, Identity, Strength, Vertex, analyze};
 use fsl_eval::hyper::{
     BodySense, CheckedHyperLetters, ComponentStep, HyperFinding, HyperInputs, HyperLetters,
     HyperProduct, HyperState, HyperTransition, ParameterBinding, Property,
 };
 use fsl_eval::model_subject::AtomStop;
-use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::StateKey;
+use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::{ExpansionLimit, TransitionSystem};
 use fsl_eval::temporal::{
-    evaluate_tuple, AtomReading, ComponentPosition, ComponentTrace, LetterStop, TemporalOutcome,
-    TemporalPosition, TupleLetters,
+    AtomReading, ComponentPosition, ComponentTrace, LetterStop, TemporalOutcome, TemporalPosition,
+    TupleLetters, evaluate_tuple,
 };
 use fsl_semantics::check::{CheckedHyperClause, FormulaNode, HyperForm, PredicateRole};
 
 use crate::execute::ReplayRefusal;
 use crate::model_check::counterexample::Lasso;
-use crate::model_check::graph_replay::{inconclusive, replay_path, result, Position};
+use crate::model_check::graph_replay::{Position, inconclusive, replay_path, result};
 use crate::model_check::graph_settle::{GraphReplayResult, GraphReplaySettlement};
 use crate::model_check::limits::{ModelCheckLimit, ReachedLimit};
 use crate::model_check::replay::{
-    close_loop, fault, refused, unfair_constraint, LoopState, ModelTraceRefusal,
-    Position as ReplayPosition,
+    LoopState, ModelTraceRefusal, Position as ReplayPosition, close_loop, fault, refused,
+    unfair_constraint,
 };
 use crate::model_check::state_graph::{
     GraphEvidence, ModelLasso, ModelPath, TrapClosure, WitnessPath,
@@ -808,6 +808,8 @@ fn accounting_value(limits: ScalarLimits, counter: LimitKind) -> u64 {
         LimitKind::ValueOccurrences => limits.value_occurrences,
         LimitKind::WorkUnits => limits.work_units,
         LimitKind::ResultUnits => limits.result_units,
+        // The live-occurrence cap is session-level and is not in ScalarLimits.
+        LimitKind::LiveOccurrences => 1_048_576,
     }
 }
 

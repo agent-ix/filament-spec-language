@@ -8,8 +8,8 @@
 //! make no charge.
 
 use filament_checked::node::{
-    Arithmetic, AuthoredBound, Connective, ConnectiveOrigin, EndSide, IntegerDivisionOperator,
-    NodeKind, OrderedKind, Visit,
+    Arithmetic, AuthoredBound, Connective, ConnectiveOrigin, EndSide, IndexedKind,
+    IntegerDivisionOperator, NodeKind, OrderedKind, Visit,
 };
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, VecDeque};
@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use super::causes::{
     HistoryUnresolved, ModelQueryRefusal, NamedPopulationIncomplete, NavigationRefusal,
-    ObjectFieldIllTyped, ProtocolClauseSnapshot,
+    ObjectFieldIllTyped, ProtocolClauseSnapshot, UnsupportedConstruct,
 };
 use super::protocol_slot::charges::{BinderCharges, ChargeRouting, Owner, Owners};
 use super::s6a::separation::{
@@ -304,6 +304,9 @@ fn bounded_result_interval(bounded: &BoundedQuantityType) -> Result<QuantityResu
 fn size_of(operand: Value) -> Result<Integer, Halt> {
     match operand {
         Value::Text(text) => Ok(Integer::from(text.length())),
+        Value::Map(map) => Ok(Integer::from(map.entries().len())),
+        Value::Bytes(_) => Err(unsupported_construct("bytes")),
+        Value::JsonObject(_) => Err(unsupported_construct("json_object")),
         Value::Boolean(_)
         | Value::Integer(_)
         | Value::Rational(_)
@@ -321,6 +324,14 @@ fn size_of(operand: Value) -> Result<Integer, Halt> {
         | Value::Collection(_)
         | Value::Reference(_) => Err(invariant("collection-value-expected")),
     }
+}
+
+/// A checked construct whose evaluation is not implemented in this evaluator
+/// returns its typed unsupported outcome, naming the construct (FR-091).
+fn unsupported_construct(what: &'static str) -> Halt {
+    Halt::Family(FamilyResult::Refused(Box::new(UnsupportedConstruct {
+        what,
+    })))
 }
 
 /// An FSL-owned invariant at its detecting producer (FR-090).
@@ -450,6 +461,7 @@ pub(super) fn refused_evaluation(refusal: Refusal) -> Evaluation {
         outcome: FamilyOutcome::Evaluated(Outcome::Refused(refusal)),
         location: None,
         losses: Vec::new(),
+        frame_depth: 0,
     }
 }
 
@@ -1345,10 +1357,11 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         outcome: FamilyOutcome::FamilyEvaluated(result),
                         location: reported_location.cloned(),
                         losses: Vec::new(),
+                        frame_depth: self.frame_depth(),
                     }),
-                    Halt::Stop(stop) => Self::stopped(stop, reported_location),
+                    Halt::Stop(stop) => self.stopped(stop, reported_location),
                     // An imported call site still locates at that call.
-                    Halt::Located(at) => Self::stopped(
+                    Halt::Located(at) => self.stopped(
                         at.stop,
                         match self.imported.first() {
                             Some(call) => call.location(),
@@ -1380,13 +1393,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     outcome: FamilyOutcome::FamilyEvaluated(result),
                     location: root.location().cloned(),
                     losses: Vec::new(),
+                    frame_depth: self.frame_depth(),
                 });
             }
-            Err(Halt::Stop(stop)) => {
-                return Self::stopped(stop, root.location());
-            }
+            Err(Halt::Stop(stop)) => return self.stopped(stop, root.location()),
             Err(Halt::Located(at)) => {
-                return Self::stopped(at.stop, at.location.as_ref());
+                return self.stopped(at.stop, at.location.as_ref());
             }
         };
         if !self.values.is_empty() || !self.value_guard_provenance.is_empty() {
@@ -1396,6 +1408,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             outcome: FamilyOutcome::Evaluated(Outcome::Completed(value)),
             location: None,
             losses: std::mem::take(&mut self.losses),
+            frame_depth: 0,
         })
     }
 
@@ -1461,7 +1474,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 Visit::Forall => !holds,
                 Visit::Exists => holds,
                 Visit::Map | Visit::Filter | Visit::Count | Visit::Sum | Visit::Only => {
-                    return Err(fault())
+                    return Err(fault());
                 }
             },
             Ok(_) => return Err(fault()),
@@ -1493,7 +1506,19 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// S6a invariant break, an `InternalFault` and never a refusal record
     /// (FR-096-AC-19, observed through
     /// [`fsl_semantics::check::ValueFunctionFamily::evaluate`]).
-    fn stopped(stop: Stop, location: Option<&Location>) -> Result<Evaluation, InternalFault> {
+    fn stopped(
+        &self,
+        stop: Stop,
+        location: Option<&Location>,
+    ) -> Result<Evaluation, InternalFault> {
+        Self::stopped_at_depth(stop, location, self.frame_depth())
+    }
+
+    fn stopped_at_depth(
+        stop: Stop,
+        location: Option<&Location>,
+        frame_depth: u32,
+    ) -> Result<Evaluation, InternalFault> {
         if let Stop::Refused(Refusal::CheckedInvariant { cause }) = stop {
             return Err(InternalFault::from_kernel(
                 "S6a",
@@ -1505,7 +1530,13 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             outcome: FamilyOutcome::Evaluated(outcome_from_stop(Err(stop))),
             location: location.cloned(),
             losses: Vec::new(),
+            frame_depth,
         })
+    }
+
+    /// The call frames above the selected call's own frame (FR-100).
+    fn frame_depth(&self) -> u32 {
+        u32::try_from(self.frames.len().saturating_sub(1)).unwrap_or(u32::MAX)
     }
 
     fn pop(&mut self) -> Result<Value, Halt> {
@@ -2310,6 +2341,33 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             // FR-322: `eval` queues a `case` through `Task::Select`, never
             // `Task::Apply`.
             NodeKind::Case { .. } => return Err(invariant("evaluation-apply-node-invalid")),
+            // Quantity scaling is applied below with the source unit kept on
+            // the result (FR-142 quantity scaling).
+            NodeKind::QuantityScaleDiv { .. } => {
+                return Err(unsupported_construct("quantity_scale"));
+            }
+            NodeKind::TupleProject { .. } => {
+                return Err(unsupported_construct("tuple_project"));
+            }
+            // FSpec FR-144 "Indexing": a map entry is located by its key's
+            // canonical key; selection charges one `collection.element` and
+            // retains the value; an absent key has no element.
+            NodeKind::Index {
+                kind: IndexedKind::Map,
+                ..
+            } => {
+                let key = self.pop()?;
+                let Value::Map(map) = self.pop()? else {
+                    return Err(invariant("map-value-expected"));
+                };
+                let value = crate::value::map_entry(&map, &key)
+                    .cloned()
+                    .ok_or(Stop::Undefined(Undefined::NoElement))?;
+                collections::charge_element(self.meter)?;
+                collections::retain_accumulator(value, self.meter)?
+            }
+            NodeKind::Index { .. } => return Err(unsupported_construct("index")),
+            NodeKind::ConvertText(_, _) => return Err(unsupported_construct("text_conversion")),
             // FR-322: the payload arguments are evaluated and on the stack in
             // position order; the first stopped one never reaches here. Type
             // checking proved each payload against its position (FR-317), so
@@ -2388,7 +2446,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             NodeKind::ProtocolReference { .. } => {
                 return Err(Halt::Family(FamilyResult::Refused(Box::new(
                     ProtocolReferenceUnsupported,
-                ))))
+                ))));
             }
             // FR-063: no arm for the probe variant under `--cfg seam_probe`
             // alone (`E0004`, this seam's evidence). The arm below exists
@@ -2436,7 +2494,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             IntegerDivisionOperator::Div => DivisionMember::Quotient,
                             IntegerDivisionOperator::Rem => DivisionMember::Remainder,
                             IntegerDivisionOperator::Mod => {
-                                return Err(invariant("integer-division-member-mismatch"))
+                                return Err(invariant("integer-division-member-mismatch"));
                             }
                         };
                         integer_divide(
@@ -2486,6 +2544,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 | ValueType::CarriedQuantity(_)
                 | ValueType::Text(_)
                 | ValueType::String
+                | ValueType::Bytes
+                | ValueType::JsonObject
                 | ValueType::Uuid
                 | ValueType::Timestamp
                 | ValueType::Enum(_)
@@ -2667,6 +2727,35 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 // scope keeps one entry per distinct unit.
                 self.units.form(unit);
                 Value::Quantity(quantity)
+            }
+            NodeKind::QuantityScale { .. } => {
+                let factor = match self.pop()? {
+                    Value::Integer(value) => Rational::from_integer(value),
+                    Value::Rational(value) => value,
+                    Value::Decimal(value) => value.normalized().to_rational(),
+                    _ => return Err(invariant("quantity-scale-factor-expected")),
+                };
+                let Value::Quantity(quantity) = self.pop()? else {
+                    return Err(invariant("quantity-scale-operand-expected"));
+                };
+                if self.units.resolve(&quantity).is_none() {
+                    return Err(unresolved_unit());
+                }
+                let operation = RationalArithmetic::Multiply(quantity.magnitude(), &factor);
+                self.meter.charge(
+                    Charge::new(ChargePoint::UnitIdentityRead)
+                        .size(LimitKind::ValueOccurrences, 1)
+                        .size(LimitKind::IntegerBits, quantity.magnitude().max_part_bits()),
+                )?;
+                self.meter
+                    .charge(Charge::new(ChargePoint::UnitRationalArithmetic).exact_size(
+                        LimitKind::IntegerBits,
+                        filament_exact::rational_arithmetic_bits(operation),
+                    ))?;
+                let magnitude = quantity.magnitude().mul(&factor);
+                self.meter
+                    .charge(Charge::new(ChargePoint::UnitResultRetain).results(1))?;
+                Value::Quantity(Quantity::new(magnitude, quantity.unit().clone()))
             }
             NodeKind::QuantityNegate(_) => {
                 let Value::Quantity(operand) = self.pop()? else {
@@ -3213,8 +3302,18 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             }
             NodeKind::Contains(_, _) => {
                 let item = self.pop()?;
-                let collection = self.pop_collection()?;
-                collections::contains(&item, &collection, self.meter)?
+                match self.pop()? {
+                    Value::Collection(collection) => {
+                        collections::contains(&item, &collection, self.meter)?
+                    }
+                    // FSpec FR-144 "Map values": `contains(m, k)` tests keys
+                    // only.
+                    Value::Map(map) => {
+                        let found = crate::value::map_entry(&map, &item).is_some();
+                        collections::retain_scalar(Value::Boolean(found), self.meter)?
+                    }
+                    _ => return Err(invariant("collection-value-expected")),
+                }
             }
             NodeKind::Navigate {
                 relationship,
@@ -3223,7 +3322,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 ..
             } => self.navigate(node, relationship, *near, *unique)?,
             NodeKind::NamedPopulation { .. } => {
-                return Err(invariant("named-population-is-read-by-its-parent"))
+                return Err(invariant("named-population-is-read-by-its-parent"));
             }
             NodeKind::AllInstances { population }
                 if let NodeKind::NamedPopulation {

@@ -32,9 +32,9 @@ use filament_semantic_value::location::ExpressionLocation as Location;
 use filament_semantic_value::supplied_stop::{
     SuppliedCause, SuppliedFailure, SuppliedRun, SuppliedStop, UnsupportedHelperStop,
 };
-use fsl_eval::temporal::{evaluate_observed, TemporalPosition, TemporalRefusal, TemporalTrace};
+use fsl_eval::temporal::{TemporalPosition, TemporalRefusal, TemporalTrace, evaluate_observed};
 use fsl_eval::value::{
-    input_refusal_code, supplied_stop_cause, supplied_stop_code, CheckedPackageEvaluation,
+    CheckedPackageEvaluation, input_refusal_code, supplied_stop_cause, supplied_stop_code,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{Code, SourceIdentity};
@@ -69,7 +69,7 @@ use filament_semantic_value::catalog::Category;
 use fsl_forms::StateClauseKind;
 use fsl_foundation::Setting;
 use fsl_semantics::model::observation::{
-    admit_trace_snapshot, population_universe_for, AdmissionFailure, DocumentRef, ObservationForm,
+    AdmissionFailure, DocumentRef, ObservationForm, admit_trace_snapshot, population_universe_for,
 };
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -78,7 +78,7 @@ mod argument;
 mod object_environment;
 pub use object_environment::{ObjectEnvironmentFailure, Unresolved};
 pub(crate) mod frame;
-pub use frame::{replay_frame, FrameIdentityMismatch, FrameReplayResult};
+pub use frame::{FrameIdentityMismatch, FrameReplayResult, replay_frame};
 
 mod composite_domain;
 mod composite_parity;
@@ -87,21 +87,21 @@ mod operator_parity;
 mod parity_identity;
 pub(crate) use parity_identity::process_provider_obligation;
 pub use parity_identity::{
-    parity_obligation, value_parity_obligation, BoundEntries, Domain, IdentityEncodeError,
-    ParityArgument, ParityPreimage, ValueParityArgument, ValueParityPreimage,
+    BoundEntries, Domain, IdentityEncodeError, ParityArgument, ParityPreimage, ValueParityArgument,
+    ValueParityPreimage, parity_obligation, value_parity_obligation,
 };
 pub(crate) mod scalar_site;
 pub use composite_domain::ParityBoundRefusal;
 pub use composite_parity::{replay_composite_parity, settle_verified_shadow};
-pub use operator_parity::{replay_operator_parity, ScalarIdentityMismatch};
+pub use operator_parity::{ScalarIdentityMismatch, replay_operator_parity};
 
 mod value_parity;
-pub use value_parity::{replay_value_parity, ValueParityReport, ValueParityResult};
+pub use value_parity::{ValueParityReport, ValueParityResult, replay_value_parity};
 
 mod state_clause;
-pub use state_clause::{replay_state_clause, ClauseIdentityMismatch, StateClauseReplayResult};
+pub use state_clause::{ClauseIdentityMismatch, StateClauseReplayResult, replay_state_clause};
 #[cfg(test)]
-pub(crate) use state_clause::{separate, settle_separation, stopped_reason, SeparationOutcome};
+pub(crate) use state_clause::{SeparationOutcome, separate, settle_separation, stopped_reason};
 
 /// The S1 limit a request names that is above this executor's reader
 /// limit (ADR-013 O-26: "a limit above the reader limit").
@@ -215,9 +215,7 @@ pub enum ReplayRefusal {
     #[error("the package reference's dependencies are no dependency input: {0}")]
     DependencyInput(DependencyInputRefusal),
     /// The selection names no function node of the recompiled package.
-    #[error(
-        "missing_declaration/missing-name: package {package} declares no function {selection}"
-    )]
+    #[error("missing_declaration/missing-name: package {package} declares no function {selection}")]
     UnknownFunction {
         /// The request's selection.
         selection: QualifiedName,
@@ -227,7 +225,9 @@ pub enum ReplayRefusal {
     /// FR-098, FR-121: a `function` request names an owner the unit does not
     /// import directly, so the dependency input holds no package for it
     /// (`missing_import`/`missing-selection` at `/replay/function_owner`).
-    #[error("missing_import/missing-selection at /replay/function_owner: package {package} imports no library {owner}")]
+    #[error(
+        "missing_import/missing-selection at /replay/function_owner: package {package} imports no library {owner}"
+    )]
     UnknownOwner {
         /// The request's `function_owner`.
         owner: LibraryName,
@@ -236,7 +236,9 @@ pub enum ReplayRefusal {
     },
     /// FR-098, FR-121: the owner's function has a package-dependent
     /// signature (ADR-015 D-5), so no importing package may call it.
-    #[error("ill_typed/operator-ineligible: package {package} function {selection} has a package-dependent signature")]
+    #[error(
+        "ill_typed/operator-ineligible: package {package} function {selection} has a package-dependent signature"
+    )]
     NotImportable {
         /// The request's selection.
         selection: QualifiedName,
@@ -245,7 +247,9 @@ pub enum ReplayRefusal {
     },
     /// FR-098: this entry replays the unit's own function and reads no
     /// `function_owner`.
-    #[error("invalid_runtime_input/unknown-member at /replay/function_owner: the request's target is {target}, but `{entry}` replays only the unit's own functions")]
+    #[error(
+        "invalid_runtime_input/unknown-member at /replay/function_owner: the request's target is {target}, but `{entry}` replays only the unit's own functions"
+    )]
     ImportedFunctionTarget {
         /// The request's replay target.
         target: Box<ReplayTarget>,
@@ -259,7 +263,9 @@ pub enum ReplayRefusal {
     /// package does not hold, another function's declaration, an occurrence
     /// holding no record, a record of another kind or owner). Refused before
     /// any call, with no charge.
-    #[error("missing_declaration/missing-name: the occurrence {key} selects no claim of the function {function}")]
+    #[error(
+        "missing_declaration/missing-name: the occurrence {key} selects no claim of the function {function}"
+    )]
     ClaimOccurrence {
         /// The request's occurrence key.
         key: OccurrenceKey,
@@ -301,7 +307,9 @@ pub enum ReplayRefusal {
     /// with the kernel's class beneath it (`refusal.cause`): noncanonical
     /// UUID text, noncanonical Timestamp text, or a canonical Timestamp
     /// outside the signed 128-bit domain. No value is built.
-    #[error("invalid_runtime_input (invalid-value): the argument at position {parameter} is refused: {refusal}")]
+    #[error(
+        "invalid_runtime_input (invalid-value): the argument at position {parameter} is refused: {refusal}"
+    )]
     NativePayload {
         /// The parameter's zero-based declared position.
         parameter: usize,
@@ -338,7 +346,9 @@ pub enum ReplayRefusal {
     /// The selected function's declared result is not `Boolean`, so it
     /// states no property a counterexample refutes. Refused before the
     /// call, from the declaration alone.
-    #[error("the selected function {selection} of package {package} is not a predicate: its declared result is not Boolean")]
+    #[error(
+        "the selected function {selection} of package {package} is not a predicate: its declared result is not Boolean"
+    )]
     NotAPredicate {
         /// The request's selection.
         selection: QualifiedName,
@@ -348,7 +358,9 @@ pub enum ReplayRefusal {
     /// FR-357: the selected function's declared result is `Boolean`, so its
     /// claim is a predicate's, replayed by [`replay`], not a value-parity
     /// claim. Refused before the call, from the declaration alone.
-    #[error("the selected function {selection} of package {package} is a predicate: its declared result is Boolean, so it has no value-parity replay")]
+    #[error(
+        "the selected function {selection} of package {package} is a predicate: its declared result is Boolean, so it has no value-parity replay"
+    )]
     NotAValueFunction {
         /// The request's selection.
         selection: QualifiedName,
@@ -381,34 +393,48 @@ pub enum ReplayRefusal {
     /// FR-331: a temporal counterexample arm requires a `state_clause`
     /// target and reports the observed-counterexample member as the one
     /// this entry cannot read.
-    #[error("invalid_runtime_input/unknown-member at /replay/observed_counterexample: replay target {target} is not a state clause")]
+    #[error(
+        "invalid_runtime_input/unknown-member at /replay/observed_counterexample: replay target {target} is not a state clause"
+    )]
     WrongObservedTemporalTarget {
         /// The request's replay target.
         target: Box<ReplayTarget>,
     },
     /// FR-331: observed temporal replay requires a witness source.
-    #[error("invalid_runtime_input/invalid-value at /replay/source: observed temporal replay requires a Witness source")]
+    #[error(
+        "invalid_runtime_input/invalid-value at /replay/source: observed temporal replay requires a Witness source"
+    )]
     WrongObservedTemporalSource,
     /// FR-170 replay requires its explicit subject argument.
-    #[error("invalid_runtime_input/invalid-value: model-graph replay requires replay_model_graph and its subject")]
+    #[error(
+        "invalid_runtime_input/invalid-value: model-graph replay requires replay_model_graph and its subject"
+    )]
     WrongModelGraphEntry,
     /// FR-170: model-graph envelope metadata differs from the request or
     /// the recompiled claim.
-    #[error("stale_dependency/content-mismatch: model-graph {member} differs from the replay request or recompiled claim")]
+    #[error(
+        "stale_dependency/content-mismatch: model-graph {member} differs from the replay request or recompiled claim"
+    )]
     ModelGraphMismatch {
         /// The mismatching envelope member.
         member: &'static str,
     },
     /// FR-170: the explicit state-graph replay entry received another arm.
-    #[error("invalid_runtime_input/invalid-value at /replay/source: state-graph replay requires a ModelGraph source")]
+    #[error(
+        "invalid_runtime_input/invalid-value at /replay/source: state-graph replay requires a ModelGraph source"
+    )]
     WrongModelGraphSource,
     /// ADR-036 PA-20: a protocol analysis source replays through
     /// `spine::replay_protocol_analysis` and its checked package alone.
-    #[error("invalid_runtime_input/invalid-value at /replay/source: a ProtocolAnalysis source replays through replay_protocol_analysis and its checked package")]
+    #[error(
+        "invalid_runtime_input/invalid-value at /replay/source: a ProtocolAnalysis source replays through replay_protocol_analysis and its checked package"
+    )]
     WrongProtocolAnalysisEntry,
     /// FR-116, FR-122: the envelope's replay target differs from the
     /// request's (`stale_dependency`/`content-mismatch`), naming both.
-    #[error("stale_dependency/content-mismatch: the request's target is {request} but the envelope's is {envelope}")]
+    #[error(
+        "stale_dependency/content-mismatch: the request's target is {request} but the envelope's is {envelope}"
+    )]
     TargetMismatch {
         /// The request's replay target.
         request: Box<ReplayTarget>,
@@ -429,7 +455,9 @@ pub enum ReplayRefusal {
     /// FR-116: the request's `frame_operation` names an object that cannot
     /// be its operation's declaring object (`invalid_model_binding`/
     /// `malformed-declaration`).
-    #[error("invalid_model_binding/malformed-declaration: package {package} cannot select operation {operation}: {reason}")]
+    #[error(
+        "invalid_model_binding/malformed-declaration: package {package} cannot select operation {operation}: {reason}"
+    )]
     MalformedOperationTarget {
         /// The request's operation.
         operation: FrameOperation,
@@ -441,7 +469,9 @@ pub enum ReplayRefusal {
     /// FR-116: two supertypes of the request's `frame_operation` object
     /// expose the operation's name (`ambiguous_declaration`/
     /// `ambiguous-name`).
-    #[error("ambiguous_declaration/ambiguous-name: package {package} exposes operation {operation} through two supertypes")]
+    #[error(
+        "ambiguous_declaration/ambiguous-name: package {package} exposes operation {operation} through two supertypes"
+    )]
     AmbiguousOperation {
         /// The request's operation.
         operation: FrameOperation,
@@ -467,14 +497,18 @@ pub enum ReplayRefusal {
     },
     /// FR-331: an observed trace carries no enabledness with which to check
     /// this fairness constraint, so the formula is not evaluated.
-    #[error("unsupported_projection/missing-fairness-premise: observed trace cannot check {constraint:?}")]
+    #[error(
+        "unsupported_projection/missing-fairness-premise: observed trace cannot check {constraint:?}"
+    )]
     MissingFairnessPremise {
         /// The first member of the checked clause's fairness set.
         constraint: filament_semantic_value::fairness::FairnessConstraint,
     },
     /// FR-331: a profile, interval or checked temporal identity in the
     /// packet differs from the recompiled clause.
-    #[error("stale_dependency/content-mismatch: observed temporal {member} differs from the recompiled clause")]
+    #[error(
+        "stale_dependency/content-mismatch: observed temporal {member} differs from the recompiled clause"
+    )]
     ObservedTemporalMismatch {
         /// The member that differs.
         member: &'static str,
@@ -512,14 +546,18 @@ pub enum ReplayRefusal {
     /// parameter of the selected function holds a `Reference`
     /// (`invalid_runtime_input`/`unknown-member`, naming
     /// `object_environment`).
-    #[error("invalid_runtime_input/unknown-member: `object_environment` is supplied for a function with no Reference parameter")]
+    #[error(
+        "invalid_runtime_input/unknown-member: `object_environment` is supplied for a function with no Reference parameter"
+    )]
     UnusedObjectEnvironment,
     /// FR-484: a function-value parity request carries `profile_selections`.
     /// A value-parity claim has no proving run, so the list is fixed empty
     /// and lock rows bind through the package alone
     /// (`invalid_runtime_input`/`unknown-member`). Refused before the
     /// recompile, with no call and no charge.
-    #[error("invalid_runtime_input/unknown-member: `profile_selections` is supplied for a function-value parity claim, which has no proving run")]
+    #[error(
+        "invalid_runtime_input/unknown-member: `profile_selections` is supplied for a function-value parity claim, which has no proving run"
+    )]
     UnusedProfileSelections {
         /// The request's selections, in request order.
         selections: Vec<ProfileSelection>,
@@ -527,7 +565,9 @@ pub enum ReplayRefusal {
     /// FR-098 step 2, FR-100: a reference argument's universe is not the
     /// universe of its declared `Reference<T>`'s object type
     /// (`foreign_reference`/`foreign-universe`).
-    #[error("foreign_reference/foreign-universe: the reference at position {position} is in universe {supplied:?}, not {required:?}")]
+    #[error(
+        "foreign_reference/foreign-universe: the reference at position {position} is in universe {supplied:?}, not {required:?}"
+    )]
     ForeignReference {
         /// The parameter's zero-based declared position.
         position: usize,
@@ -1060,7 +1100,7 @@ fn replay_observed_temporal(
             return Err(ReplayRefusal::ObservedTemporalInput {
                 pointer: "/replay/observed_counterexample/loop",
                 reason: "an observed lasso must have a non-empty loop",
-            })
+            });
         }
         None => TemporalTrace::Finite { len },
     };
@@ -2635,19 +2675,19 @@ fn arguments(
             return Err(ReplayRefusal::Fault(InternalFault::new(
                 "replay",
                 "observed-temporal-source-dispatched-by-replay-facade",
-            )))
+            )));
         }
         ReplaySource::ModelGraph(_) => {
             return Err(ReplayRefusal::Fault(InternalFault::new(
                 "replay",
                 "state-graph-source-dispatched-by-replay-facade",
-            )))
+            )));
         }
         ReplaySource::ProtocolAnalysis(_) => {
             return Err(ReplayRefusal::Fault(InternalFault::new(
                 "replay",
                 "protocol-analysis-source-dispatched-by-protocol-replay",
-            )))
+            )));
         }
     };
     Ok(values)
@@ -2678,6 +2718,8 @@ fn witness_type(
         | ValueType::Composite(_)
         | ValueType::Collection(_)
         | ValueType::Reference(_)
+        | ValueType::Bytes
+        | ValueType::JsonObject
         | ValueType::Uuid
         | ValueType::Timestamp => Ok(WitnessValueType::Canonical),
         ValueType::Map(_)
@@ -2725,6 +2767,9 @@ fn charges(consumed: impl IntoIterator<Item = (LimitKind, u64)>) -> ScalarLimits
             LimitKind::ValueOccurrences => &mut charges.value_occurrences,
             LimitKind::WorkUnits => &mut charges.work_units,
             LimitKind::ResultUnits => &mut charges.result_units,
+            // Evaluation-session high-water state is not an FR-255 scalar
+            // accounting counter and has no replay charge field.
+            LimitKind::LiveOccurrences => continue,
         };
         *counter = amount;
     }
@@ -2761,7 +2806,7 @@ pub(crate) mod tests;
 
 #[cfg(test)]
 mod carried_quantity_tests {
-    use super::{witness_type, InputRefusal, ReplayRefusal};
+    use super::{InputRefusal, ReplayRefusal, witness_type};
     use ix_trace_rs::trace;
 
     fn carried() -> filament_exact::ValueType {

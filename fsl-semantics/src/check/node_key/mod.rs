@@ -1638,6 +1638,10 @@ pub enum LiteralValue {
     /// `timestamp`: the canonical decimal string of the signed 128-bit
     /// nanosecond count.
     Timestamp(Timestamp),
+    /// `bytes`: canonical lowercase hexadecimal octets.
+    Bytes(String),
+    /// `json_object`: canonical RFC 8785 JSON text.
+    JsonObject(String),
     /// `none`: `null`.
     None,
     /// `enum`: the member's case identifier, the body of an enum member's

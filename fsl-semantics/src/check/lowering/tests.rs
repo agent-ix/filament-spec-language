@@ -24,6 +24,7 @@ use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
     CompositeDeclaration, FieldDeclaration, TypeEnvironment,
 };
+use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::RawSourceRef;
 use fsl_foundation::SourceIdentity;
 
@@ -2196,4 +2197,21 @@ fn a_mutually_recursive_pair_keys_alike_in_either_order() {
     let ping_first = keys(vec![recursive("ping", "pong"), recursive("pong", "ping")]);
     let pong_first = keys(vec![recursive("pong", "ping"), recursive("ping", "pong")]);
     assert_eq!(ping_first, pong_first);
+}
+
+/// QSL-2341: a Map in a literal position has a typed unsupported-construct
+/// refusal until the checked literal form is specified.
+#[test]
+fn map_literal_refusal_names_the_unbuilt_map_form() {
+    let location = filament_semantic_value::location::ExpressionLocation::root(
+        filament_semantic_value::location::ExpressionOwner::Expression,
+    );
+    let refusal = Lowering::unbuilt_map_literal(&location);
+
+    assert_eq!(refusal.cause.code(), Code::UnsupportedConstruct);
+    assert_eq!(refusal.cause.cause(), Some("not-yet-implemented"));
+    assert!(matches!(
+        &refusal.cause,
+        super::CheckCause::PopulationFormNotChecked { what: "map" }
+    ));
 }

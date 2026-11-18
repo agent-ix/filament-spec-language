@@ -39,7 +39,7 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use filament_semantic_value::object_closure::ObjectClosure;
-use fsl_eval::value::{undefined_contract_code, CheckedPackageEvaluation, QualifiedName};
+use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName, undefined_contract_code};
 use fsl_forms::{BinaryOperator, Expression, FunctionDeclaration, TypeForm};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
@@ -52,12 +52,12 @@ use fsl_semantics::model::domain_package::{
     ObjectTypeRecord, OperationEffect, PopulationRecord, ValueTypeRef,
 };
 use fsl_semantics::model::key::EffectiveId;
-use fsl_semantics::model::normalize::{normalize, EffectiveView, NormalizeOutcome};
+use fsl_semantics::model::normalize::{EffectiveView, NormalizeOutcome, normalize};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::population::{
-    admit_binding, admit_invocation, AdmissionMeter, AdmissionOutcome, InvocationContext,
-    InvocationDelta, PopulationAdmissionLimits, PopulationBinding, PopulationDocument,
-    PopulationMember,
+    AdmissionMeter, AdmissionOutcome, InvocationContext, InvocationDelta,
+    PopulationAdmissionLimits, PopulationBinding, PopulationDocument, PopulationMember,
+    admit_binding, admit_invocation,
 };
 use ix_trace_rs::trace;
 
@@ -2576,10 +2576,13 @@ fn pre_refuses_a_let_bound_population_alias_capture_drift() {
     let expression = Expression::let_in(
         "q".to_owned(),
         population_name(),
-        pre(Expression::size(Expression::all_instances(
-            reference_type_form(&target),
-            Expression::name("q".to_owned()),
-        ), None)),
+        pre(Expression::size(
+            Expression::all_instances(
+                reference_type_form(&target),
+                Expression::name("q".to_owned()),
+            ),
+            None,
+        )),
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
     assert_eq!(
@@ -2620,10 +2623,13 @@ fn pre_refuses_a_let_bound_alias_of_a_let_bound_population_alias() {
         pre(Expression::let_in(
             "r".to_owned(),
             Expression::name("q".to_owned()),
-            Expression::size(Expression::all_instances(
-                reference_type_form(&target),
-                Expression::name("r".to_owned()),
-            ), None),
+            Expression::size(
+                Expression::all_instances(
+                    reference_type_form(&target),
+                    Expression::name("r".to_owned()),
+                ),
+                None,
+            ),
         )),
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
@@ -2665,14 +2671,17 @@ fn pre_refuses_a_let_expression_used_directly_as_the_all_instances_operand() {
     let expression = Expression::let_in(
         "q".to_owned(),
         population_name(),
-        pre(Expression::size(Expression::all_instances(
-            reference_type_form(&target),
-            Expression::let_in(
-                "s".to_owned(),
-                Expression::name("q".to_owned()),
-                Expression::name("s".to_owned()),
+        pre(Expression::size(
+            Expression::all_instances(
+                reference_type_form(&target),
+                Expression::let_in(
+                    "s".to_owned(),
+                    Expression::name("q".to_owned()),
+                    Expression::name("s".to_owned()),
+                ),
             ),
-        ), None)),
+            None,
+        )),
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
     assert_eq!(
@@ -2707,14 +2716,17 @@ fn pre_refuses_an_if_expression_used_directly_as_the_all_instances_operand() {
     let expression = Expression::let_in(
         "q".to_owned(),
         population_name(),
-        pre(Expression::size(Expression::all_instances(
-            reference_type_form(&target),
-            Expression::if_then_else(
-                Expression::boolean(true),
-                Expression::name("q".to_owned()),
-                Expression::name("q".to_owned()),
+        pre(Expression::size(
+            Expression::all_instances(
+                reference_type_form(&target),
+                Expression::if_then_else(
+                    Expression::boolean(true),
+                    Expression::name("q".to_owned()),
+                    Expression::name("q".to_owned()),
+                ),
             ),
-        ), None)),
+            None,
+        )),
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
     assert_eq!(
@@ -2760,10 +2772,13 @@ fn pre_refuses_a_let_bound_if_expression_alias_of_a_population_alias() {
                 Expression::name("q".to_owned()),
                 Expression::name("q".to_owned()),
             ),
-            Expression::size(Expression::all_instances(
-                reference_type_form(&target),
-                Expression::name("r".to_owned()),
-            ), None),
+            Expression::size(
+                Expression::all_instances(
+                    reference_type_form(&target),
+                    Expression::name("r".to_owned()),
+                ),
+                None,
+            ),
         )),
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
@@ -2811,10 +2826,13 @@ fn pre_refuses_a_let_bound_nested_let_alias_of_a_population_alias() {
                 Expression::name("q".to_owned()),
                 Expression::name("s".to_owned()),
             ),
-            Expression::size(Expression::all_instances(
-                reference_type_form(&target),
-                Expression::name("r".to_owned()),
-            ), None),
+            Expression::size(
+                Expression::all_instances(
+                    reference_type_form(&target),
+                    Expression::name("r".to_owned()),
+                ),
+                None,
+            ),
         )),
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
@@ -3860,9 +3878,9 @@ fn tc_441_population_maximum_absence_must_match_at_admission() {
 fn a_refused_lookup_builds_a_record_at_the_lookup_expression() {
     use filament_semantic_value::catalog::Category;
     use fsl_forms::{DeclarationSpans, ExpressionSpans};
+    use fsl_foundation::Span;
     use fsl_foundation::diagnostic::Locus;
     use fsl_foundation::source::provenance::SourceRegion;
-    use fsl_foundation::Span;
 
     let scenario = scenario();
     let source = fsl_semantics::check::fixture_source();
@@ -4041,6 +4059,7 @@ fn a_kernel_refusal_builds_a_record_only_where_the_catalog_has_a_code() {
         outcome: FamilyOutcome::Evaluated(Outcome::Refused(refusal)),
         location: None,
         losses: Vec::new(),
+        frame_depth: 0,
     };
     let cardinality = evaluation(Refusal::CardinalityOutOfBound {
         violation: BoundViolation::AboveMaximum,
@@ -4094,6 +4113,7 @@ fn a_kernel_foreign_reference_builds_a_record_with_both_universes() {
         })),
         location: None,
         losses: Vec::new(),
+        frame_depth: 0,
     };
     let record =
         fsl_eval::value::refusal_record(&evaluation, |location| package.graph().region(location))
@@ -4177,14 +4197,16 @@ fn empty_admitted_member_faults_through_public_call_and_evaluate_with_exact_pref
                     .with_bounds(vec!["1".to_owned()]),
                 )],
                 TypeForm::collection(CollectionKind::Set, crate::support::type_form::SPAN)
-                    .with_arguments(vec![TypeForm::builtin(
-                        fsl_forms::BuiltinType::Reference,
-                        crate::support::type_form::SPAN,
-                    )
-                    .with_arguments(vec![TypeForm::name(
-                        "M::A",
-                        crate::support::type_form::SPAN,
-                    )])])
+                    .with_arguments(vec![
+                        TypeForm::builtin(
+                            fsl_forms::BuiltinType::Reference,
+                            crate::support::type_form::SPAN,
+                        )
+                        .with_arguments(vec![TypeForm::name(
+                            "M::A",
+                            crate::support::type_form::SPAN,
+                        )]),
+                    ])
                     .with_bounds(vec!["0".to_owned(), "1".to_owned()]),
                 None,
                 query.clone(),
@@ -4370,7 +4392,7 @@ fn empty_admitted_member_faults_through_public_call_and_evaluate_with_exact_pref
 #[trace("TC-916", "FR-090-AC-14", "FR-090-AC-16")]
 fn model_query_shapes_fault_at_the_real_producers_without_added_query_charges() {
     use fsl_semantics::value::model_query::{
-        evaluate_all_instances, evaluate_lookup, ModelQueryHalt,
+        ModelQueryHalt, evaluate_all_instances, evaluate_lookup,
     };
     let scenario = scenario();
     let mut meter = Meter::new(SCALAR_UNLIMITED);

@@ -22,13 +22,13 @@ use fsl_forms::{
     FunctionDeclaration, TypeForm,
 };
 use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef, SourceRegion};
-use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::CheckRefusal;
 use fsl_semantics::check::PackageDeclarations;
+use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::library::LibraryName;
-use fsl_semantics::value::{always_roles, native_diagnostics_catalog, DefinitionRole};
+use fsl_semantics::value::{DefinitionRole, always_roles, native_diagnostics_catalog};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::*;
 
@@ -36,7 +36,7 @@ use super::*;
 fn node_id(key: impl std::borrow::Borrow<NodeKey>) -> CheckedNodeId {
     fsl_semantics::check::wire_id::structural_id(key.borrow())
 }
-use crate::checked_v2::{read_v2, Read, V2ReadLimits};
+use crate::checked_v2::{Read, V2ReadLimits, read_v2};
 
 mod abstraction;
 mod admission_corpus;
@@ -395,10 +395,12 @@ fn operand_slot_numbering_visits_only_identity_paths_in_canonical_order() {
         authored["semantic_graph"]["operand_rows"],
         serde_json::to_value(expected_rows).unwrap()
     );
-    assert!(!authored["semantic_graph"]["operand_rows"][0]
-        .as_array()
-        .unwrap()
-        .contains(&json!(99)));
+    assert!(
+        !authored["semantic_graph"]["operand_rows"][0]
+            .as_array()
+            .unwrap()
+            .contains(&json!(99))
+    );
     fsl_semantics::check::wire_id::resolve_operand_slots(&mut authored).unwrap();
     assert_eq!(authored, original);
 }
@@ -990,10 +992,12 @@ fn a_law_names_its_definition_by_authority_and_identity() {
         assert_eq!(law["role"], json!("ieee_profile"));
         assert_eq!(law["definition"], ieee);
     }
-    assert!(wire["lock"]["definition_selections"]
-        .as_array()
-        .unwrap()
-        .contains(&ieee));
+    assert!(
+        wire["lock"]["definition_selections"]
+            .as_array()
+            .unwrap()
+            .contains(&ieee)
+    );
 }
 
 /// FR-517-AC-20: `sum<F>` over `Float64[nearest-even]` with the IEEE profile
@@ -1601,9 +1605,11 @@ fn a_declaration_without_its_occurrence_is_omitted() {
             cause: OmissionCause::DeclarationOccurrenceMismatch,
         }]
     );
-    assert!(!omitted
-        .iter()
-        .any(|omission| omission.node == node_id(tuple.key())));
+    assert!(
+        !omitted
+            .iter()
+            .any(|omission| omission.node == node_id(tuple.key()))
+    );
 }
 
 /// A type declared by hand carries no span of its name (only the FR-091
@@ -1834,10 +1840,12 @@ fn enum_declaration_and_member_nodes_are_written() {
         ready_node["body"]["members"][1]["value"]["target"], ready_member["node_id"],
         "ready's body is the Ready member node"
     );
-    assert!(ready_member["occurrences"]
-        .as_array()
-        .unwrap()
-        .contains(&json!({"role": "expression", "ordinal": 0})));
+    assert!(
+        ready_member["occurrences"]
+            .as_array()
+            .unwrap()
+            .contains(&json!({"role": "expression", "ordinal": 0}))
+    );
     for member in members {
         assert_eq!(member["semantic_type"], declaration["node_id"]);
         assert_eq!(member["dependencies"], json!([declaration["node_id"]]));
@@ -1975,6 +1983,7 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
         ProtocolResultInvariant,
         ProtocolResultsRequired,
         FloatEqualityScheduleNotEmitted,
+        NativeLiteralNotEmitted(&'static str),
     }
     fn classify(result: Result<Emission, EmitRefusal>) -> Seen {
         match result {
@@ -2028,6 +2037,9 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             Err(EmitRefusal::ProtocolResultsRequired) => Seen::ProtocolResultsRequired,
             Err(EmitRefusal::FloatEqualityScheduleNotEmitted) => {
                 Seen::FloatEqualityScheduleNotEmitted
+            }
+            Err(EmitRefusal::NativeLiteralNotEmitted { construct }) => {
+                Seen::NativeLiteralNotEmitted(construct)
             }
             Err(EmitRefusal::OutputLimit(_)) => {
                 panic!("the fixture set emits under a ceiling no fixture reaches")
@@ -2610,7 +2622,7 @@ pub(super) fn source_metre_units() -> (
 /// admitted under their recomputed keys, and the `metre` key.
 fn metre_units_owned_by(owner: Value) -> (filament_semantic_value::quantity::UnitTable, NodeKey) {
     use fsl_semantics::value::{
-        admit_unit_graph, DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage,
+        DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage, admit_unit_graph,
     };
     let length = DimensionPreimage::from_json(json!({
         "version": "filament.dimension-node/v1",
@@ -3608,13 +3620,14 @@ fn the_lock_records_direct_imports_and_derives_the_closure() {
         written["lock"]["dependency_selections"][0]["identity"],
         "test/b"
     );
-    assert!(written["lock"]["dependency_selections"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(
-            |selection| selection["identity"] != "test/c" && selection["identity"] != "test/units"
-        ));
+    assert!(
+        written["lock"]["dependency_selections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|selection| selection["identity"] != "test/c"
+                && selection["identity"] != "test/units")
+    );
 }
 
 #[trace("FSpec-FR-307-AC-7", "FSpec-TC-227")]
@@ -3865,7 +3878,7 @@ fn config_version_model(with_sub: bool) -> fsl_semantics::model::intake::Selecte
         DomainPackage, DomainPackageRecord, DomainPackageRef, FieldMemberRecord, Multiplicity,
         NativeValueType, ObjectTypeRecord, OperationEffect, OperationMemberRecord, ValueTypeRef,
     };
-    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
+    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
 
     let key = |name: &str| DeclarationKey {
         package: "example/config-version".to_owned(),

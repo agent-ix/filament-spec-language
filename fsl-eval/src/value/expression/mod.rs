@@ -55,9 +55,8 @@ pub use closure::{PackageClosure, PackageTask};
 pub use evaluate::refusal_record;
 pub use family::{InvalidQualifiedName, QualifiedName};
 pub use protocol_slot::{
-    BinderCharges, ChargeAmounts, ProtocolReferenceOccurrence, ProtocolSlot,
-    ProtocolSlotEvaluation, ProtocolSuppliedValue, ProtocolSupply, SuppliedValue,
-    BINDER_ACCOUNTING_VERSION,
+    BINDER_ACCOUNTING_VERSION, BinderCharges, ChargeAmounts, ProtocolReferenceOccurrence,
+    ProtocolSlot, ProtocolSlotEvaluation, ProtocolSuppliedValue, ProtocolSupply, SuppliedValue,
 };
 pub use s6a::separation::{
     ClauseEvaluation, ClauseRead, InvocationBinding, ObservationIdentity, RuntimeValuePath,
@@ -89,7 +88,7 @@ fn protocol_reference_failure(
         fsl_semantics::model::observation::AdmissionFailure::Refused(record) => (*record, false),
         fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) => (*record, true),
         fsl_semantics::model::observation::AdmissionFailure::Fault(fault) => {
-            return CallFailure::Fault(fault)
+            return CallFailure::Fault(fault);
         }
     };
     let locus = match record.fields.get("population") {
@@ -100,7 +99,7 @@ fn protocol_reference_failure(
                     return CallFailure::Fault(InternalFault::new(
                         "FR-390",
                         "admitted-population-record-has-checked-node",
-                    ))
+                    ));
                 }
             }
         }
@@ -112,6 +111,23 @@ fn protocol_reference_failure(
     } else {
         CallAdmissionFailure::Refused(failure)
     }))
+}
+
+pub(crate) fn unsupported_construct_failure(
+    what: &'static str,
+    locus: CallAdmissionLocus,
+) -> CallFailure {
+    CallFailure::Admission(Box::new(CallAdmissionFailure::Refused(
+        filament_eval::CallAdmissionRecord {
+            record: AdmissionRecord {
+                catalog: CatalogCode::new("unsupported_construct", "not-yet-implemented"),
+                fields: std::collections::BTreeMap::from([("what", what.to_owned())]),
+                path: Vec::new(),
+                kernel: None,
+            },
+            locus,
+        },
+    )))
 }
 
 fn occurrence_record(
@@ -788,6 +804,15 @@ fn admit_argument_values(
                     }));
                 }
                 Value::Collection(collection) => pending.extend(collection.elements()),
+                Value::Map(map) => {
+                    let Some(entries) = crate::value::ordered_map_entries(map) else {
+                        return Err(CallFailure::Fault(InternalFault::new(
+                            "FR-650",
+                            "admitted-map-key-has-canonical-order",
+                        )));
+                    };
+                    pending.extend(entries.into_iter().rev().map(|(_, value)| value));
+                }
                 Value::Union(union) => pending.extend(union.payload()),
                 Value::Boolean(_)
                 | Value::Integer(_)
@@ -797,6 +822,8 @@ fn admit_argument_values(
                 | Value::Quantity(_)
                 | Value::String(_)
                 | Value::Text(_)
+                | Value::Bytes(_)
+                | Value::JsonObject(_)
                 | Value::Enum(_)
                 | Value::Population(_)
                 | Value::Uuid(_)
@@ -887,6 +914,7 @@ fn evaluate_declaration(
         outcome,
         location,
         losses,
+        frame_depth: 0,
     })
 }
 
@@ -1684,6 +1712,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
                     outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
                     location: None,
                     losses: Vec::new(),
+                    frame_depth: 0,
                 });
             }
             capture.drain(meter, Some(state.body.location()));
@@ -1701,6 +1730,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
                     )),
                     location: Some(state.body.location().clone()),
                     losses: Vec::new(),
+                    frame_depth: 0,
                 });
             }
             function_evaluations = 1;

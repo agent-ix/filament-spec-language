@@ -132,7 +132,7 @@ fn admitted_owner_fixture(
     use fsl_semantics::model::domain_package::{
         DomainPackage, DomainPackageRecord, DomainPackageRef, ObjectTypeRecord,
     };
-    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
+    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
 
     let owner_key = DeclarationKey::fixture("model.A");
     let domain = DomainPackage::new(
@@ -738,14 +738,16 @@ fn quantity_operation_and_ordering_rejections_reach_the_real_typed_operators() {
         graph.dispatch_tables(),
     );
     machine.units = UnitScope::new(&units);
-    assert!(!machine
-        .order(
-            OrderingOperator::Less,
-            OrderedKind::Quantities,
-            &left,
-            &left
-        )
-        .unwrap_or_else(|_| panic!("same-unit comparison")));
+    assert!(
+        !machine
+            .order(
+                OrderingOperator::Less,
+                OrderedKind::Quantities,
+                &left,
+                &left
+            )
+            .unwrap_or_else(|_| panic!("same-unit comparison"))
+    );
     set_values(&mut machine, vec![left.clone(), left.clone()]);
     machine
         .apply(node.root())
@@ -1359,10 +1361,11 @@ fn edge_traversal_shape_probes_reach_all_seven_detecting_sites() {
             &mut meter,
             graph.dispatch_tables(),
         );
-        assert!(m
-            .edge_targets(literal.root(), &reference(), &field)
-            .unwrap_or_else(|_| panic!("optional empty edge"))
-            .is_empty());
+        assert!(
+            m.edge_targets(literal.root(), &reference(), &field)
+                .unwrap_or_else(|_| panic!("optional empty edge"))
+                .is_empty()
+        );
         assert!(meter.admitted_charges().is_empty());
     }
 }
@@ -1727,7 +1730,7 @@ fn native_integer_capacity_breach_becomes_a_typed_internal_fault() {
     assert!(fsl_semantics::check::received_kernel_causes().contains(&cause));
     let refusal = Refusal::CheckedInvariant { cause };
     assert_eq!(kernel_refusal_record(&refusal, None), None);
-    let fault = CheckedMachine::stopped(Stop::Refused(refusal), None).unwrap_err();
+    let fault = CheckedMachine::stopped_at_depth(Stop::Refused(refusal), None, 0).unwrap_err();
     assert_eq!(fault.stage(), "S6a");
     assert_eq!(fault.invariant(), "checked-program-invariant");
     assert_eq!(fault.kernel_cause(), Some(cause));
@@ -1748,7 +1751,8 @@ fn every_received_kernel_payload_survives_stop_and_public_fault_conversion() {
         let before = meter.admitted_charges().to_vec();
         for location in [None, Some(&location)] {
             let fault =
-                CheckedMachine::stopped(Stop::Refused(refusal.clone()), location).unwrap_err();
+                CheckedMachine::stopped_at_depth(Stop::Refused(refusal.clone()), location, 0)
+                    .unwrap_err();
             assert_eq!(fault.stage(), "S6a");
             assert_eq!(fault.invariant(), "checked-program-invariant");
             assert_eq!(fault.kernel_cause(), Some(cause));
@@ -1768,7 +1772,8 @@ fn every_received_kernel_payload_survives_stop_and_public_fault_conversion() {
         }
     }
     let evaluation =
-        CheckedMachine::stopped(Stop::Undefined(Undefined::NoneValue), Some(&location)).unwrap();
+        CheckedMachine::stopped_at_depth(Stop::Undefined(Undefined::NoneValue), Some(&location), 0)
+            .unwrap();
     assert!(matches!(
         evaluation.outcome,
         FamilyOutcome::Evaluated(Outcome::Undefined(Undefined::NoneValue))
@@ -1899,9 +1904,11 @@ fn admitted_stack_values_bound_locals_and_branch_keep_the_uncharged_valid_prefix
         matches!(values.as_slice(), [Value::Integer(value), Value::Boolean(true)] if value == &Integer::one())
     );
     assert!(matches!(machine.values.as_slice(), [Value::Boolean(false)]));
-    assert!(!machine
-        .pop_boolean()
-        .unwrap_or_else(|_| panic!("Boolean extraction")));
+    assert!(
+        !machine
+            .pop_boolean()
+            .unwrap_or_else(|_| panic!("Boolean extraction"))
+    );
     machine.push_value(Value::Integer(Integer::one()), false);
     assert_eq!(
         machine

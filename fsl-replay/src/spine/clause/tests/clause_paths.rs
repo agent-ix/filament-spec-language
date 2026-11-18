@@ -285,6 +285,7 @@ fn sum_out_of_domain_report() -> ClauseRunReport {
             )),
             location: None,
             losses: Vec::new(),
+            frame_depth: 0,
         },
         compiled.package.graph(),
         std::slice::from_ref(&compiled.source),
