@@ -7,7 +7,6 @@
 //! selected reduction.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 
 use fsl_analyze::model_check::manifest as en1;
 use fsl_analyze::zone_check::manifest as en6;
