@@ -596,9 +596,9 @@ mod tests {
     /// The FSpec checked-package V2 proposal directory; the conformance
     /// tests fail explicitly without an FSpec checkout.
     fn proposals() -> std::path::PathBuf {
-        let directory = std::env::var_os("FSPEC_DIR")
-            .expect("FSPEC_DIR must point to an available FSpec checkout");
-        std::path::Path::new(&directory).join("proposals/checked-package-v2")
+        crate::checked_v2::tests::fspec_directory()
+            .expect("pinned FSpec fixtures are available")
+            .join("proposals/checked-package-v2")
     }
 
     fn read(path: &std::path::Path) -> Value {

@@ -2711,26 +2711,11 @@ mod tests {
         // Keep this sample map complete against the live FR-331 schema. A
         // newly admitted wire value must get a representative value and an
         // expected O-16 category here before this test can pass.
-        let fspec_dir = std::env::var_os("FSPEC_DIR")
-            .map(std::path::PathBuf::from)
-            .or_else(|| {
-                let sibling = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../filament-specification");
-                sibling.is_dir().then_some(sibling)
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "FR-331 schema unavailable; set FSPEC_DIR to a filament-specification checkout"
-                )
-            });
-        let schema_path = fspec_dir.join("proposals/backend-provider-v1/schema.json");
-        let schema_source = std::fs::read_to_string(&schema_path).unwrap_or_else(|error| {
-            panic!(
-                "read FR-331 schema at {schema_path:?} (set FSPEC_DIR to a filament-specification checkout): {error}"
-            )
-        });
-        let schema: serde_json::Value = serde_json::from_str(&schema_source)
-            .unwrap_or_else(|error| panic!("parse FR-331 schema at {schema_path:?}: {error}"));
+        let schema: serde_json::Value = serde_json::from_slice(
+            filament_specification::published_file("proposals/backend-provider-v1/schema.json")
+                .expect("pinned FSpec publishes FR-331 schema"),
+        )
+        .expect("FR-331 schema is JSON");
         let schema_values: BTreeSet<&str> = schema["$defs"]["ResultValue"]["enum"]
             .as_array()
             .expect("FR-331 ResultValue is an enum")

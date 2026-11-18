@@ -17,7 +17,7 @@ use fsl_semantics::check::{
 };
 use serde_json::{json, Value};
 
-use crate::identity::ObligationIdentity;
+use fsl_package::ObligationIdentity;
 
 mod bounded;
 mod key_admission;

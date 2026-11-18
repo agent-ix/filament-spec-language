@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration tests that reach `fsl-replay` through its public facade only.
 
+#[path = "../../../tests/support/published_fspec.rs"]
+pub(crate) mod published_fspec;
+
 mod admitted_record_chain;
 mod aggregate_dispatch;
 mod category_facade;

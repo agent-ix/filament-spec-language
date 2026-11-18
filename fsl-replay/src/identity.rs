@@ -12,108 +12,16 @@
 //! - O-07's occurrence key and O-12's source region have their canonical
 //!   home in `fsl_foundation::source::provenance` (#213 S-4);
 //!   this crate carries them from there.
-//! - [`ObligationIdentity`] (O-09) is canonical here (ADR-013 OQ-H): CG
-//!   names this type directly; IR names no FSL type. It is the structural
-//!   triple of FR-479 and carries no digest.
+//! - [`ObligationIdentity`] (O-09) is canonical in `fsl-package`; this
+//!   module owns only replay-specific source, name and evidence types.
 //!
 //! [`QualifiedName`] moves to its ADR-013-assigned home once that ticket
 //! lands; until then it exists here, once, so the four envelope types have a
 //! typed (never string-keyed, never bare-`&str`) vocabulary to carry.
-use filament_exact::NodeKey;
 use std::fmt;
 
 use filament_exact::Identifier;
 use fsl_foundation::bound::{DomainKey, FiniteBound, ProofBound};
-
-/// The identity of the model that owns an obligation: the domain package
-/// identity text of its selection (`DomainPackageRef::identity`), compared as
-/// text.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ModelIdentity(String);
-
-impl ModelIdentity {
-    /// The model identity `identity`.
-    pub fn new(identity: impl Into<String>) -> Self {
-        Self(identity.into())
-    }
-
-    /// The identity text.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<&fsl_semantics::model::domain_package::DomainPackageRef> for ModelIdentity {
-    fn from(selection: &fsl_semantics::model::domain_package::DomainPackageRef) -> Self {
-        Self(selection.identity.clone())
-    }
-}
-
-/// FR-479 / FR-201: the structural identity of one obligation: the claim or
-/// obligation node, the identity of the model that owns it (`None` for a
-/// claim no model owns), and the occurrence ordinal. It is compared, ordered
-/// and hashed componentwise; it is not hashed into a digest and carries no
-/// domain. CG's clause, application and function-contract obligations arrive
-/// carried unchanged; FSL itself mints the identity of a parity claim, a
-/// process-provider item and a function-value parity claim
-/// ([`crate::value_parity_obligation`]).
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ObligationIdentity(Box<ObligationParts>);
-
-/// The components of an [`ObligationIdentity`], held behind one allocation so
-/// the identity stays pointer-sized inside the refusals and claims that carry
-/// it by value.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-struct ObligationParts {
-    node: NodeKey,
-    model: Option<ModelIdentity>,
-    ordinal: u32,
-}
-
-impl ObligationIdentity {
-    /// The request-item identity of a checked claim occurrence. The subject
-    /// carries its model; the identity retains the actual occurrence ordinal.
-    pub(crate) fn from_claim_occurrence(
-        claim: &fsl_foundation::source::provenance::OccurrenceKey,
-    ) -> Self {
-        let ordinal = u32::try_from(claim.origin().ordinal()).unwrap_or(u32::MAX);
-        Self::new(claim.node().clone(), None, ordinal)
-    }
-
-    /// The obligation of `node` owned by `model` at occurrence `ordinal`.
-    pub fn new(node: NodeKey, model: Option<ModelIdentity>, ordinal: u32) -> Self {
-        Self(Box::new(ObligationParts {
-            node,
-            model,
-            ordinal,
-        }))
-    }
-
-    /// The claim or obligation node.
-    pub fn node(&self) -> &NodeKey {
-        &self.0.node
-    }
-
-    /// The owning model, if any.
-    pub fn model(&self) -> Option<&ModelIdentity> {
-        self.0.model.as_ref()
-    }
-
-    /// The occurrence ordinal.
-    pub fn ordinal(&self) -> u32 {
-        self.0.ordinal
-    }
-}
-
-impl fmt::Display for ObligationIdentity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0.node)?;
-        if let Some(model) = &self.0.model {
-            write!(f, "@{}", model.as_str())?;
-        }
-        write!(f, "#{}", self.0.ordinal)
-    }
-}
 
 /// ADR-013 O-11: a qualified name -- a non-empty sequence of identifiers --
 /// naming the function a replay selects (OQ-5 ruling). Deliberately carries
@@ -333,29 +241,4 @@ mod tests {
         assert_eq!(name.segments().len(), 2);
     }
 
-    #[test]
-    fn obligation_identity_equality_is_componentwise() {
-        let node = |n: u8| crate::fixture_node(n);
-        let a = ObligationIdentity::new(node(7), None, 0);
-        assert_eq!(a, ObligationIdentity::new(node(7), None, 0));
-        assert_ne!(a, ObligationIdentity::new(node(8), None, 0));
-        assert_ne!(a, ObligationIdentity::new(node(7), None, 1));
-        assert_ne!(
-            a,
-            ObligationIdentity::new(node(7), Some(ModelIdentity::new("m")), 0)
-        );
-    }
-
-    #[ix_trace_rs::trace("TC-637", "FR-202-AC-10")]
-    #[test]
-    fn claim_identity_retains_the_checked_occurrence_ordinal() {
-        use filament_exact::{Origin, Role};
-        use fsl_foundation::source::provenance::OccurrenceKey;
-        let node = crate::fixture_node(7);
-        let occurrence = OccurrenceKey::new(node.clone(), Origin::new(Role::new("claim"), 17));
-        assert_eq!(
-            ObligationIdentity::from_claim_occurrence(&occurrence),
-            ObligationIdentity::new(node, None, 17)
-        );
-    }
 }

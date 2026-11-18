@@ -7,6 +7,7 @@
 //! which depends on these types and not the reverse.
 
 pub mod outcome;
+pub mod check;
 pub mod recompute;
 pub mod settle;
 pub mod task_set;

@@ -8,9 +8,10 @@ use fsl_analyze::analyze::{
 };
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_foundation::RequestIndex;
+use fsl_package::ObligationIdentity;
 use fsl_replay::{
     check_claim_exact_reachability, claim_binding, ExactProbabilityCertificate,
-    ExactProbabilityGraphError, ModelCheckLimits, ObligationIdentity,
+    ExactProbabilityGraphError, ModelCheckLimits,
 };
 use ix_trace_rs::trace;
 

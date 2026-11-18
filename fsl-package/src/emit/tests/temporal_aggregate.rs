@@ -5,7 +5,7 @@
 //! "Window aggregate atom" aggregate of bindings. FSL's locked Contract IR
 //! reader admits no such operation yet, so these tests read the emitted wire
 //! and compare it with the accepted arguments of FSpec's
-//! `temporal-aggregate-vectors.json`, read in place from `$FSPEC_DIR`.
+//! `temporal-aggregate-vectors.json`, read in place from `$pinned FSpec fixture view`.
 
 use super::temporal_clause::{
     check_graph, clause_node, compile, document, formula_root, node_key, parameter_named, reaches,
@@ -116,12 +116,13 @@ fn shape(argument: &Value) -> Vec<(String, String)> {
 
 /// The accepted argument of FSpec's window aggregate vector `id`.
 fn vector(id: &str) -> Value {
-    let path = std::path::Path::new(
-        &std::env::var_os("FSPEC_DIR").expect("FSPEC_DIR names a filament-specification checkout"),
+    let vectors: Value = serde_json::from_slice(
+        filament_specification::published_file(
+            "proposals/checked-package-v2/temporal-aggregate-vectors.json",
+        )
+        .expect("pinned FSpec publishes temporal-aggregate vectors"),
     )
-    .join("proposals/checked-package-v2/temporal-aggregate-vectors.json");
-    let vectors: Value =
-        serde_json::from_slice(&std::fs::read(&path).expect("the vectors read")).unwrap();
+    .unwrap();
     vectors["positive"]
         .as_array()
         .expect("positive vectors")
