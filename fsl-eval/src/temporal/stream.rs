@@ -181,9 +181,10 @@ enum Ended {
 pub struct ClauseStream {
     plan: Plan,
     reading: Reading,
-    /// Whether activations are evaluated: a prefix decides only a safety
-    /// formula (FR-328).
-    evaluates: bool,
+    /// Whether a false activation is a violation: a prefix refutes only a
+    /// safety formula, and a bad prefix of any other formula is pending
+    /// (FR-328).
+    refutes: bool,
     activation: Activation,
     /// The positions an `on origin` bounded clause reads.
     read: Option<u64>,
@@ -236,7 +237,7 @@ impl ClauseStream {
             TemporalProfile::Timed => return Err(TemporalRefusal::ProfileNotEvaluated { profile }),
         };
         let plan = Plan::new(clause.formula()).map_err(TemporalRefusal::Fault)?;
-        let evaluates =
+        let refutes =
             reading == Reading::Closed || plan.is_safety().map_err(TemporalRefusal::Fault)?;
         let reach = plan.past_reach(1, None).map_err(TemporalRefusal::Fault)?;
         let tail =
@@ -285,7 +286,7 @@ impl ClauseStream {
             cells: vec![Res::Tri(Tri::False); plan.nodes.len()],
             plan,
             reading,
-            evaluates,
+            refutes,
             activation: clause.activation(),
             read,
             fairness,
@@ -435,8 +436,7 @@ impl ClauseStream {
             meter,
         )?;
         self.settle_opens()?;
-        let activates = self.evaluates
-            && self.stopped.is_none()
+        let activates = self.stopped.is_none()
             && self.violated.is_none()
             && match self.activation {
                 Activation::Origin => index == 0,
@@ -462,10 +462,10 @@ impl ClauseStream {
         for open in opens {
             match open.res {
                 Res::Tri(Tri::True) => {}
-                Res::Tri(Tri::False) => {
+                Res::Tri(Tri::False) if self.refutes => {
                     self.violated = Some(self.violated.map_or(open.first, |at| at.min(open.first)));
                 }
-                Res::Tri(Tri::Unknown) => self.unknown = true,
+                Res::Tri(Tri::False | Tri::Unknown) => self.unknown = true,
                 res => {
                     if !self.opens.iter().any(|kept| kept.res == res) {
                         self.opens.push(Open {
@@ -785,7 +785,7 @@ impl ClauseStream {
         }
         let mut violated = self.violated;
         let mut every_true = !self.unknown;
-        if self.evaluates && !self.opens.is_empty() {
+        if !self.opens.is_empty() {
             let sentinel = match self.reading {
                 Reading::Closed => Tri::False,
                 Reading::Prefix => Tri::Unknown,
@@ -799,10 +799,10 @@ impl ClauseStream {
             for open in &tail.opens {
                 match evaluate(&open.res, &tail.plan, &values)? {
                     Tri::True => {}
-                    Tri::False => {
+                    Tri::False if self.refutes => {
                         violated = Some(violated.map_or(open.first, |at| at.min(open.first)));
                     }
-                    Tri::Unknown => every_true = false,
+                    Tri::False | Tri::Unknown => every_true = false,
                 }
             }
         }
@@ -821,6 +821,12 @@ impl ClauseStream {
             return Ok(Ok(TemporalOutcome::InsufficientData(insufficient.clone())));
         }
         Ok(match self.reading {
+            // A good prefix: the one activation is true whatever the unknown
+            // positions hold. An `on each` clause activates again at every
+            // unknown position, so it settles no holds from a prefix.
+            Reading::Prefix if every_true && matches!(self.activation, Activation::Origin) => {
+                Ok(TemporalOutcome::Holds)
+            }
             Reading::Prefix => Ok(TemporalOutcome::Pending),
             Reading::Closed if every_true => Ok(TemporalOutcome::Holds),
             Reading::Closed => Err(TemporalRefusal::Fault(fault("definite-trace-read-unknown"))),

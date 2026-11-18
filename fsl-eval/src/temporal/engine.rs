@@ -1006,10 +1006,10 @@ impl<'a> Evaluator<'a> {
             .or(refused)
             .map(TemporalPosition::index);
         self.unknown_from = stopped_at;
-        let safety = self.plan.is_safety()?;
         // A prefix decides a violation only for a safety formula whose bad
-        // prefix falsifies it; every other prefix is pending (FR-328).
-        let evaluates = self.mode != Mode::Prefix || safety;
+        // prefix falsifies it, and a holds for a good prefix in any fragment;
+        // every other prefix is pending (FR-328).
+        let refutes_prefix = self.mode != Mode::Prefix || self.plan.is_safety()?;
 
         let (first, limit) = match goal {
             Goal::At(position) => {
@@ -1036,99 +1036,95 @@ impl<'a> Evaluator<'a> {
         let mut every_activation_true = true;
         // The first undefined capture atom any activation read (FR-860).
         let mut earliest: Option<UndefinedEvaluation> = None;
-        if evaluates {
-            let mut position = first;
-            while position < limit {
-                if earliest
-                    .as_ref()
-                    .is_some_and(|first| position >= i128::from(first.at.index()))
-                {
-                    break;
-                }
-                if !self.represents(position) {
-                    self.charge()?;
-                }
-                if guarded {
-                    let represented = match self.geometry.site(self.geometry.canon(position))? {
-                        Site::Real(represented) => represented,
-                        Site::Sentinel => {
-                            return Err(fault("activation-position-represented").into())
-                        }
-                    };
-                    match whens.get(&represented) {
-                        Some(true) => {}
-                        Some(false) => {
-                            position += 1;
-                            continue;
-                        }
-                        None => return Err(fault("activation-condition-read").into()),
+        let mut position = first;
+        while position < limit {
+            if earliest
+                .as_ref()
+                .is_some_and(|first| position >= i128::from(first.at.index()))
+            {
+                break;
+            }
+            if !self.represents(position) {
+                self.charge()?;
+            }
+            if guarded {
+                let represented = match self.geometry.site(self.geometry.canon(position))? {
+                    Site::Real(represented) => represented,
+                    Site::Sentinel => return Err(fault("activation-position-represented").into()),
+                };
+                match whens.get(&represented) {
+                    Some(true) => {}
+                    Some(false) => {
+                        position += 1;
+                        continue;
                     }
+                    None => return Err(fault("activation-condition-read").into()),
                 }
-                let represented_position =
-                    match self.geometry.site(self.geometry.canon(position))? {
-                        Site::Real(represented) => represented,
-                        Site::Sentinel => {
-                            position += 1;
-                            continue;
-                        }
-                    };
-                if self.insufficient_positions.contains(&represented_position) {
+            }
+            let represented_position = match self.geometry.site(self.geometry.canon(position))? {
+                Site::Real(represented) => represented,
+                Site::Sentinel => {
+                    position += 1;
+                    continue;
+                }
+            };
+            if self.insufficient_positions.contains(&represented_position) {
+                every_activation_true = false;
+                position += 1;
+                continue;
+            }
+            let activation_undefined = if deferred.is_empty() {
+                None
+            } else {
+                let own = self.read_activation(
+                    source,
+                    represented_position,
+                    stopped_at.unwrap_or(read),
+                    &deferred,
+                )?;
+                if insufficient.is_none() {
+                    insufficient = own.insufficient;
+                }
+                // An activation short of data has no truth value
+                // (FR-327 "Undefined evaluation").
+                if own.short && own.undefined.is_none() {
                     every_activation_true = false;
                     position += 1;
                     continue;
                 }
-                let activation_undefined = if deferred.is_empty() {
-                    None
-                } else {
-                    let own = self.read_activation(
-                        source,
-                        represented_position,
-                        stopped_at.unwrap_or(read),
-                        &deferred,
-                    )?;
-                    if insufficient.is_none() {
-                        insufficient = own.insufficient;
-                    }
-                    // An activation short of data has no truth value
-                    // (FR-327 "Undefined evaluation").
-                    if own.short && own.undefined.is_none() {
-                        every_activation_true = false;
-                        position += 1;
-                        continue;
-                    }
-                    own.undefined
-                };
-                let value = self.solve(self.plan.root, position)?;
-                // An activation's own undefined atom makes the positions from
-                // it on unknown for that activation; the clause's result is
-                // the first undefined position over every activation, unless
-                // an activation before it is false (FR-327 "Undefined
-                // evaluation"), so later activations are still read.
-                if let Some(undefined) = activation_undefined {
-                    if earliest.as_ref().is_none_or(|first: &UndefinedEvaluation| {
-                        undefined.at.index() < first.at.index()
-                    }) {
-                        earliest = Some(undefined);
-                    }
+                own.undefined
+            };
+            let value = self.solve(self.plan.root, position)?;
+            // An activation's own undefined atom makes the positions from
+            // it on unknown for that activation; the clause's result is
+            // the first undefined position over every activation, unless
+            // an activation before it is false (FR-327 "Undefined
+            // evaluation"), so later activations are still read.
+            if let Some(undefined) = activation_undefined {
+                if earliest.as_ref().is_none_or(|first: &UndefinedEvaluation| {
+                    undefined.at.index() < first.at.index()
+                }) {
+                    earliest = Some(undefined);
                 }
-                let refutes = earliest
+            }
+            let refutes = refutes_prefix
+                && earliest
                     .as_ref()
                     .is_none_or(|first| position < i128::from(first.at.index()));
-                match value {
-                    Tri::True => {}
-                    Tri::False if refutes => {
-                        let at = u64::try_from(position).map_err(|_| fault("position-in-u64"))?;
-                        if self.seek {
-                            self.decisive = Some(self.descend(position));
-                        }
-                        return Ok(TemporalOutcome::Violated {
-                            at: TemporalPosition::new(at),
-                        });
+            match value {
+                Tri::True => {}
+                Tri::False if refutes => {
+                    let at = u64::try_from(position).map_err(|_| fault("position-in-u64"))?;
+                    if self.seek {
+                        self.decisive = Some(self.descend(position));
                     }
-                    Tri::False | Tri::Unknown => every_activation_true = false,
+                    return Ok(TemporalOutcome::Violated {
+                        at: TemporalPosition::new(at),
+                    });
                 }
-                position += 1;
+                Tri::False | Tri::Unknown => every_activation_true = false,
             }
+            position += 1;
         }
         let undefined = match (undefined, earliest) {
             (Some(clause), Some(activation)) if activation.at.index() < clause.at.index() => {
@@ -1147,6 +1143,16 @@ impl<'a> Evaluator<'a> {
             return Ok(TemporalOutcome::InsufficientData(insufficient));
         }
         match self.mode {
+            // A good prefix: every activation is true whatever the unknown
+            // positions hold. Activations of an `on each` clause after the
+            // prefix are unknown, so only a single activation settles.
+            Mode::Prefix
+                if every_activation_true
+                    && (matches!(goal, Goal::At(_))
+                        || matches!(activation, Activation::Origin)) =>
+            {
+                Ok(TemporalOutcome::Holds)
+            }
             Mode::Prefix => Ok(TemporalOutcome::Pending),
             Mode::Closed | Mode::Lasso if every_activation_true => Ok(TemporalOutcome::Holds),
             Mode::Closed | Mode::Lasso => Err(fault("definite-trace-read-unknown").into()),

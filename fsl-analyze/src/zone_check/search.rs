@@ -694,7 +694,6 @@ fn judge_plan<'r, S>(
                     .map_err(|error| match error {
                         AutomatonError::ProfileNotTranslated { .. }
                         | AutomatonError::RepeatedPunctualInterval
-                        | AutomatonError::OpenTimedInterval
                         | AutomatonError::ClockLimit { .. } => ZoneCheckRefusal::UnsupportedForm,
                         other => ZoneCheckRefusal::Automaton(other),
                     })?;
