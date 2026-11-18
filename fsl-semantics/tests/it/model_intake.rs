@@ -2995,7 +2995,6 @@ mod float_members {
 
     #[trace("TC-3004", "TC-405", "FR-056-AC-20")]
     #[test]
-    #[ignore = "QSL-2176: a domain-package Float64 field admitted as strict exact Float64 not implemented yet"]
     fn a_domain_package_float64_field_is_admitted() {
         let document = gauge_document(FLOAT64, 1, 1);
         let declarations =
@@ -3017,7 +3016,6 @@ mod float_members {
 
     #[trace("TC-3004", "FR-056-AC-53")]
     #[test]
-    #[ignore = "QSL-2176: a domain-package Float32 field admitted as strict exact Float32 not implemented yet"]
     fn a_domain_package_float32_field_is_admitted() {
         let document = gauge_document(FLOAT32, 1, 1);
         let declarations =
@@ -3030,7 +3028,6 @@ mod float_members {
 
     #[trace("TC-3004", "FR-056-AC-54")]
     #[test]
-    #[ignore = "QSL-2176: a Float64 operation parameter and result admitted as strict exact Float64 not implemented yet"]
     fn a_domain_package_float_operation_parameter_is_admitted() {
         let document = config_document(
             operation(
@@ -3060,7 +3057,6 @@ mod float_members {
 
     #[trace("TC-3004", "FR-056-AC-55")]
     #[test]
-    #[ignore = "QSL-2176: a Float64 tuple position admitted as strict exact Float64 not implemented yet"]
     fn a_domain_package_float_tuple_position_is_admitted() {
         let pair = wire_type(
             &identity("Pair"),
@@ -3094,7 +3090,6 @@ mod float_members {
 
     #[trace("TC-3004", "FR-056-AC-56")]
     #[test]
-    #[ignore = "QSL-2176: a Float32 union payload admitted as strict exact Float32 not implemented yet"]
     fn a_domain_package_float_union_payload_is_admitted() {
         let sample = wire_type(
             &identity("Sample"),

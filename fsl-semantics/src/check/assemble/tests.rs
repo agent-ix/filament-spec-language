@@ -6,8 +6,8 @@ use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use filament_exact::{
-    CardinalityBound, CollectionKind, CollectionType, EffectiveId, IeeeWidth, Integer,
-    IntegerInterval, Presence, Rational, RoundingMode, ValueType,
+    CardinalityBound, CollectionKind, CollectionType, EffectiveId, Integer, IntegerInterval,
+    Presence, Rational, ValueType,
 };
 use fsl_forms::build_unit;
 use fsl_foundation::diagnostic::Code;
@@ -794,10 +794,9 @@ fn each_assembler_cause_has_its_catalog_code() {
             "ill_typed/type-mismatch",
         ),
         (
-            AssemblyCause::FloatingType {
-                width: IeeeWidth::Binary32,
-                rounding: RoundingMode::Exact,
-                profile: None,
+            AssemblyCause::UnsupportedModelMember {
+                alias: "M".into(),
+                node: "ix://test/model/member".into(),
             },
             "unknown_required_feature/unsupported-feature",
         ),
@@ -5693,8 +5692,5 @@ fn a_package_map_type_assembles_with_its_declared_key_and_bound() {
         project("model.ByInt").expect("an Integer key assembles"),
         expected(ValueType::Integer, None)
     );
-    assert!(matches!(
-        project("model.ByFloat"),
-        Err(Unmapped::Float(IeeeWidth::Binary32))
-    ));
+    assert!(matches!(project("model.ByFloat"), Err(Unmapped::Unsupported)));
 }

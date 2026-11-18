@@ -32,8 +32,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{
     Cancel, CardinalityBound, CarriedQuantityType, CollectionKind, CollectionType, EffectiveId,
-    EnumShape, Identifier, IeeeWidth, Integer, IntegerInterval, InvalidNodeKey, NodeKey, Presence,
-    QuantityCarrier, RoundingMode, ValueType,
+    EnumShape, FloatType, Identifier, IeeeWidth, Integer, IntegerInterval, InvalidNodeKey, NodeKey,
+    Presence, QuantityCarrier, RoundingMode, ValueType,
 };
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_forms::{
@@ -344,19 +344,6 @@ pub enum AssemblyCause {
     /// A built-in constructor's declared bounds are rejected by its value
     /// type, with that value type's own cause.
     IllFormedBounds(TypeFormFault),
-    /// A domain package's native `Float32`/`Float64` model field. FR-056-AC-20
-    /// requires the typed unsupported-feature refusal until the W54 spec
-    /// change lands. Function parameter, result and body floating types are
-    /// admitted (FR-091-OQ-4).
-    FloatingType {
-        /// The width.
-        width: IeeeWidth,
-        /// The rounding mode, `exact` when none is written.
-        rounding: RoundingMode,
-        /// The profile selection the declaration's `using` alias names,
-        /// when the type is in a function's signature.
-        profile: Option<String>,
-    },
     /// An alias's resolution reaches that alias again.
     AliasCycle {
         /// The cycle's dependency edges, `(alias, alias it names)`.
@@ -703,9 +690,7 @@ impl AssemblyCause {
             Self::IllFormedBounds(_)
             | Self::ImportedTypeName { .. }
             | Self::OverNotObjectType { .. } => Code::IllTyped,
-            Self::FloatingType { .. } | Self::UnsupportedModelMember { .. } => {
-                Code::UnknownRequiredFeature
-            }
+            Self::UnsupportedModelMember { .. } => Code::UnknownRequiredFeature,
             Self::AliasCycle { .. } => Code::InvalidPackage,
             Self::InvalidTypeDeclaration(invalid) => match &invalid.cause {
                 DeclarationCause::DuplicateMember(_) => Code::AmbiguousDeclaration,
@@ -820,9 +805,7 @@ impl AssemblyCause {
             ) => "operator-ineligible",
             Self::IllFormedBounds(_) | Self::OverNotObjectType { .. } => "type-mismatch",
             Self::ImportedTypeName { .. } => "operator-ineligible",
-            Self::FloatingType { .. } | Self::UnsupportedModelMember { .. } => {
-                "unsupported-feature"
-            }
+            Self::UnsupportedModelMember { .. } => "unsupported-feature",
             Self::AliasCycle { .. } => "definition-cycle",
             Self::UndeclaredAlias { .. }
             | Self::UnadmittedModel { .. }
@@ -1897,13 +1880,6 @@ fn model_object_types(
                     }
                     Err(Unmapped::Unsupported) => errors.push(unsupported(&field.key.node)),
                     Err(Unmapped::Broken) => errors.push(broken(&field.key.node)),
-                    Err(Unmapped::Float(width)) => {
-                        errors.push(error(AssemblyCause::FloatingType {
-                            width,
-                            rounding: RoundingMode::Exact,
-                            profile: None,
-                        }))
-                    }
                     Err(Unmapped::QuantityType {
                         name,
                         member_identity,
@@ -1953,13 +1929,6 @@ fn model_object_types(
                         errors.push(unsupported(&operation.key.node))
                     }
                     Err(Unmapped::Broken) => errors.push(broken(&operation.key.node)),
-                    Err(Unmapped::Float(width)) => {
-                        errors.push(error(AssemblyCause::FloatingType {
-                            width,
-                            rounding: RoundingMode::Exact,
-                            profile: None,
-                        }))
-                    }
                     Err(Unmapped::QuantityType {
                         name,
                         member_identity,
@@ -1984,12 +1953,13 @@ fn model_object_types(
             // entry, but their owners/members are part of the source model
             // that this assembly arm must accept.
             DomainPackageRecord::Clause(_) | DomainPackageRecord::Namespace(_) => {}
-            // These declarations are retained by the selected model view for
-            // typed model-reference binding, but are not value types and do
-            // not contribute a TypeEnvironment declaration.
-            DomainPackageRecord::Component(_)
-            | DomainPackageRecord::Endpoint(_)
-            | DomainPackageRecord::Allocation(_) => {}
+            // FR-103 still requires a typed refusal for systems parts, ports
+            // and allocations until the kernel represents those declarations.
+            DomainPackageRecord::Component(part) => errors.push(unsupported(&part.key.node)),
+            DomainPackageRecord::Endpoint(port) => errors.push(unsupported(&port.key.node)),
+            DomainPackageRecord::Allocation(allocation) => {
+                errors.push(unsupported(&allocation.key.node))
+            }
             // Record and event declarations are emitted as composites below;
             // their effective fields are collected from the normalized view.
             // A variant type and its cases are collected from the normalized
@@ -2175,11 +2145,6 @@ fn model_object_types(
                     errors.push(unsupported(&field.key.node))
                 }
                 Err(Unmapped::Broken) => errors.push(broken(&field.key.node)),
-                Err(Unmapped::Float(width)) => errors.push(error(AssemblyCause::FloatingType {
-                    width,
-                    rounding: RoundingMode::Exact,
-                    profile: None,
-                })),
                 Err(Unmapped::QuantityType {
                     name,
                     member_identity,
@@ -2264,11 +2229,6 @@ fn model_object_types(
                     errors.push(unsupported(&position.key.node))
                 }
                 Err(Unmapped::Broken) => errors.push(broken(&position.key.node)),
-                Err(Unmapped::Float(width)) => errors.push(error(AssemblyCause::FloatingType {
-                    width,
-                    rounding: RoundingMode::Exact,
-                    profile: None,
-                })),
                 Err(Unmapped::QuantityType {
                     name,
                     member_identity,
@@ -2336,13 +2296,6 @@ fn model_object_types(
                         errors.push(unsupported(&case.key.node))
                     }
                     Err(Unmapped::Broken) => errors.push(broken(&case.key.node)),
-                    Err(Unmapped::Float(width)) => {
-                        errors.push(error(AssemblyCause::FloatingType {
-                            width,
-                            rounding: RoundingMode::Exact,
-                            profile: None,
-                        }))
-                    }
                     Err(Unmapped::QuantityType {
                         name,
                         member_identity,
@@ -2576,8 +2529,6 @@ fn record_renames(
 enum Unmapped {
     /// No kernel type or presence represents it.
     Unsupported,
-    /// A floating type, refused as the assembler refuses every float.
-    Float(IeeeWidth),
     /// A `ix://filament/unit/<name>` reference has no unit in the compiling unit.
     QuantityName(String),
     /// An unresolved unit in a model typeRef with its source contract path.
@@ -2669,8 +2620,12 @@ fn model_value_type(
             NativeValueType::Timestamp => ValueType::Timestamp,
             NativeValueType::Bytes => ValueType::Bytes,
             NativeValueType::JsonObject => ValueType::JsonObject,
-            NativeValueType::Float32 => return Err(Unmapped::Float(IeeeWidth::Binary32)),
-            NativeValueType::Float64 => return Err(Unmapped::Float(IeeeWidth::Binary64)),
+            NativeValueType::Float32 => {
+                ValueType::Float(FloatType::new(IeeeWidth::Binary32, RoundingMode::Exact))
+            }
+            NativeValueType::Float64 => {
+                ValueType::Float(FloatType::new(IeeeWidth::Binary64, RoundingMode::Exact))
+            }
             // FR-056 admits these native names at the domain-package boundary,
             // but the current checked-model value algebra has no corresponding
             // element types. Preserve them in intake; do not coerce either to
@@ -2782,9 +2737,8 @@ fn model_value_type(
                 // A native `Text` key (no bounds, no profile) is keyed by its
                 // exact Unicode scalar sequence as a `String` key is (FSpec
                 // FR-154 "Map types", FR-144): it is the key type only, a
-                // member typed bare `Text` still has no type. A `Float32` or
-                // `Float64` key draws the typed refusal a floating member
-                // does.
+                // member typed bare `Text` still has no type. Float keys are
+                // still rejected by `MapType`'s canonical key rules.
                 let mut named = &map.keys;
                 for _ in 0..=records.len() {
                     match named {
