@@ -29,7 +29,8 @@ footprint omits population membership.
 ## Expected Results
 
 - Step 1: decided; then `missing_declaration`/`missing-name` at the literal
-  naming `Counter` and `7a7a`, with no state explored.
+  naming `Counter` and `7a7a`, reported as the request's binding refusal
+  at subject admission, with no item run and no state explored.
 - Step 2: `ill_typed`/`operator-ineligible` at the literal; then admitted.
 - Step 3: the `b` clause is undefined, reason `absent-key`, with
   `counters` membership in its footprint; the `a` clause is decided with no
