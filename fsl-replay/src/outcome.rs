@@ -432,6 +432,12 @@ pub struct ItemCause {
     defect: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<u64>,
+    /// An `insufficient-data` cause's window count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    count: Option<u64>,
+    /// An `insufficient-data` cause's `min_count`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_count: Option<u64>,
     /// An accounting limit's attempted counter value, as a decimal string.
     #[serde(skip_serializing_if = "Option::is_none")]
     counter: Option<String>,
@@ -666,6 +672,8 @@ impl ItemCause {
             limit: None,
             defect: None,
             value: None,
+            count: None,
+            min_count: None,
             counter: None,
             lower: None,
             upper: None,
@@ -714,6 +722,13 @@ impl ItemCause {
                 item.rule = Some(*rule);
                 item.certificate_at = Some(at.clone());
             }
+            ReportedInconclusiveCause::Cause(InconclusiveCause::InsufficientData {
+                count,
+                min_count,
+            }) => {
+                item.count = Some(*count);
+                item.min_count = Some(*min_count);
+            }
             ReportedInconclusiveCause::Cause(InconclusiveCause::HypothesesNotEstablished {
                 hypothesis,
                 result,
@@ -741,6 +756,8 @@ impl ItemCause {
                 | InconclusiveCause::OpenHistory
                 | InconclusiveCause::NoInitialState
                 | InconclusiveCause::NoInstance
+                | InconclusiveCause::TemporalPending
+                | InconclusiveCause::TemporalIndeterminate
                 | InconclusiveCause::KaniVacuousProof
                 | InconclusiveCause::RefutedIgnoringConstraints
                 | InconclusiveCause::MatchUndetermined

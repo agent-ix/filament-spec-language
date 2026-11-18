@@ -273,6 +273,7 @@ pub use native_result::{
     ProtocolRecordError, ProtocolSettlementEntry, RefusalLocusRead, SourceRefRead, SpanRead,
     TemporalRecord, UndefinedLocusRead, UnsupportedDiagnostic, read_native_run_result,
     read_native_run_result_bounded, write_clause_run_result, write_clause_run_result_for,
+    temporal_disposition_json,
 };
 pub(crate) use native_result::{ReasonWire, item_record};
 pub use protocol_proof::{

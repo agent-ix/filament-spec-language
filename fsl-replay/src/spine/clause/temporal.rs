@@ -3309,7 +3309,7 @@ pub struct FiniteWindowReport {
 
 /// The spine's own form of the evaluator's outcome (FR-100-AC-8).
 /// The spine's own form of the evaluator's outcome (FR-100-AC-8).
-fn verdict(outcome: TemporalOutcome) -> TemporalVerdict {
+pub(crate) fn verdict(outcome: TemporalOutcome) -> TemporalVerdict {
     match outcome {
         TemporalOutcome::Holds => TemporalVerdict::Holds,
         TemporalOutcome::Violated { at } => TemporalVerdict::Violated { at: at.index() },
@@ -3351,7 +3351,7 @@ fn verdict(outcome: TemporalOutcome) -> TemporalVerdict {
 }
 
 /// The spine's own form of the evaluator's trace refusal (FR-100-AC-8).
-fn trace_refusal(refusal: TemporalRefusal) -> TemporalTraceRefusal {
+pub(crate) fn trace_refusal(refusal: TemporalRefusal) -> TemporalTraceRefusal {
     match refusal {
         TemporalRefusal::EmptyTrace => TemporalTraceRefusal::EmptyTrace,
         TemporalRefusal::TupleArity { expected, found } => {

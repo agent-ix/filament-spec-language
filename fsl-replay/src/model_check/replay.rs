@@ -1999,6 +1999,67 @@ pub fn evaluate_model_trace(
     })))
 }
 
+
+/// FR-941: the evaluator's reading of one required clause over a replayed
+/// protocol behaviour.
+#[derive(Debug)]
+pub struct ProtocolTraceRun {
+    /// What the FR-327 evaluator (FR-328 for a finite prefix) returned.
+    pub outcome: Result<TemporalOutcome, fsl_eval::temporal::TemporalRefusal>,
+    /// The position and locus of the first undefined letter the evaluator
+    /// read, when it read one.
+    pub undefined: Option<(u64, UndefinedLocus)>,
+    /// The number of replayed positions.
+    pub positions: usize,
+}
+
+/// How [`evaluate_protocol_trace`] ended.
+#[derive(Debug)]
+pub enum ProtocolTraceEnd {
+    /// The behaviour was re-executed and the clause evaluated.
+    Evaluated(Box<ProtocolTraceRun>),
+    /// An expansion stopped before the behaviour was replayed.
+    Stopped(ExpansionStop),
+}
+
+/// FR-941 "Formula claims": re-execute the finite behaviour `payload` names
+/// over the protocol `system`, one position per state, and evaluate `clause`
+/// over those positions with FR-125's letters on the one evaluator a replayed
+/// counterexample uses, counting only the steps FSpec FR-431 counts. A
+/// bounded profile reads the behaviour as a closed trace (FR-327) and the
+/// infinite-trace profile as a finite prefix (FR-328).
+///
+/// # Errors
+///
+/// [`ReplayRefusal`] as [`replay_protocol_trace`] refuses a step that is not
+/// enabled or reaches another post-state, and a payload with a loop.
+pub fn evaluate_protocol_trace<M: MemoryModel>(
+    system: &ProtocolSystem<'_, M>,
+    payload: &TemporalCounterexample<ProtocolTransition>,
+    clause: &CheckedTemporalClause,
+    letters: &dyn ModelLetters,
+    limits: ScalarLimits,
+) -> Result<ProtocolTraceEnd, ReplayRefusal> {
+    if payload.lasso.is_some() {
+        return Err(fault("a-finite-behaviour-has-no-loop"));
+    }
+    let positions = match replay_prefix_stopped(system, payload, &PROTOCOL_STEPS)? {
+        Ok((positions, _)) => positions,
+        Err(stop) => return Ok(ProtocolTraceEnd::Stopped(stop)),
+    };
+    let trace = TemporalTrace::Finite {
+        len: position_of(positions.len()),
+    };
+    let mut replayed = replayed_letters(system, payload, &positions, letters)?;
+    let mut meter = Meter::new(limits);
+    let outcome = evaluate_with_enabledness(clause, trace, &mut replayed, &mut meter);
+    Ok(ProtocolTraceEnd::Evaluated(Box::new(ProtocolTraceRun {
+        outcome,
+        undefined: replayed.undefined.take(),
+        positions: positions.len(),
+    })))
+}
+
 /// The letters of a counterexample's replayed positions, for the instance
 /// its `over` binding names.
 fn replayed_letters<'a, S: SubjectSystem>(

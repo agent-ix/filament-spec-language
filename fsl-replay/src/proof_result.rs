@@ -886,6 +886,21 @@ pub enum InconclusiveCause {
     RefutedIgnoringConstraints,
     /// The item has zero instances (FR-125).
     NoInstance,
+    /// FR-941: a required temporal clause is neither violated nor satisfied by
+    /// the finite behaviour a supplied trace replays (FSpec FR-352 `pending`,
+    /// `pending-window`, `pending-next-event`): the category is `pending`.
+    TemporalPending,
+    /// FR-941: the finite behaviour does not determine a required clause
+    /// (FSpec FR-352 `indeterminate`): the category is `indeterminate`.
+    TemporalIndeterminate,
+    /// FR-941: a window of a required clause held `count` values, fewer than
+    /// its `min_count` (FSpec FR-352 `insufficient-data`).
+    InsufficientData {
+        /// The values the window held.
+        count: u64,
+        /// The window minimum.
+        min_count: u64,
+    },
     /// `match-undetermined` (ADR-023 HV-4): a hyper item's `match` block was
     /// refused or incomplete at a reachable joint step.
     MatchUndetermined,
@@ -1160,6 +1175,9 @@ impl InconclusiveCause {
             Self::NoInitialState => "no-initial-state",
             Self::RefutedIgnoringConstraints => "refuted-ignoring-constraints",
             Self::NoInstance => "no-instance",
+            Self::TemporalPending => "pending",
+            Self::TemporalIndeterminate => "indeterminate",
+            Self::InsufficientData { .. } => "insufficient-data",
             Self::MatchUndetermined => "match-undetermined",
             Self::VacuousMatch => "vacuous-match",
             Self::MappingUndetermined => "mapping-undetermined",
@@ -1201,6 +1219,9 @@ impl InconclusiveCause {
             | Self::NoInitialState
             | Self::RefutedIgnoringConstraints
             | Self::NoInstance
+            | Self::TemporalPending
+            | Self::TemporalIndeterminate
+            | Self::InsufficientData { .. }
             | Self::MatchUndetermined
             | Self::VacuousMatch
             | Self::MappingUndetermined
@@ -1340,6 +1361,8 @@ impl TerminalValue {
     /// Behavior: "one exhaustive function with no `_` fallback arm").
     pub fn category(&self) -> Category {
         match self {
+            Self::Inconclusive(InconclusiveCause::TemporalPending) => Category::Pending,
+            Self::Inconclusive(InconclusiveCause::TemporalIndeterminate) => Category::Indeterminate,
             Self::Proved {
                 basis: ProofBasis::Checks { success_checks: 0 },
                 ..

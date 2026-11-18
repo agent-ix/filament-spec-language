@@ -3035,6 +3035,95 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
     })
 }
 
+
+/// FSpec FR-352's `disposition` object for the temporal evaluator's `result`
+/// over a behaviour that is not a set of observed documents (FR-941): the
+/// row's `category`, `truth`, `basis` and `outcome`, and `temporal` with its
+/// `kind`. A violated or undefined row carries `counterexample`, already
+/// spelled by the caller, whose `trace_position` is the row's `position`.
+///
+/// # Errors
+///
+/// [`NativeRunResultError::Counterexample`] when a violated or undefined row
+/// has no counterexample, or the refusal is an internal fault, which has no
+/// `temporal` member.
+pub fn temporal_disposition_json(
+    result: Result<&fsl_eval::temporal::TemporalOutcome, &fsl_eval::temporal::TemporalRefusal>,
+    counterexample: Option<serde_json::Value>,
+) -> Result<serde_json::Value, NativeRunResultError> {
+    use super::{TemporalUndefinedCause, TemporalVerdict};
+    let (category, basis, truth, outcome, temporal) = match result {
+        Ok(evaluated) => {
+            let verdict = super::clause::verdict(evaluated.clone());
+            let category = ClauseDisposition::Temporal(verdict.clone()).category_label();
+            let basis = verdict.basis().as_str();
+            match &verdict {
+                TemporalVerdict::Violated { at } => {
+                    let found = counterexample.ok_or(NativeRunResultError::Counterexample)?;
+                    (
+                        category,
+                        basis,
+                        Some(false),
+                        None,
+                        serde_json::json!({
+                            "kind": "violated", "position": at, "counterexample": found,
+                        }),
+                    )
+                }
+                TemporalVerdict::Undefined { at, cause }
+                    if !matches!(cause, TemporalUndefinedCause::InsufficientData { .. }) =>
+                {
+                    let found = counterexample.ok_or(NativeRunResultError::Counterexample)?;
+                    (
+                        category,
+                        basis,
+                        Some(false),
+                        Some(Outcome::Undefined {
+                            reason: cause.reason(),
+                        }),
+                        serde_json::json!({
+                            "kind": "undefined", "position": at, "counterexample": found,
+                        }),
+                    )
+                }
+                _ => {
+                    let (wire, outcome) = temporal::verdict_wire(&verdict, None)?;
+                    (
+                        category,
+                        basis,
+                        matches!(verdict, TemporalVerdict::Holds).then_some(true),
+                        outcome,
+                        serde_json::to_value(wire)?,
+                    )
+                }
+            }
+        }
+        Err(refused) => {
+            let refusal = super::clause::trace_refusal(refused.clone());
+            let category = ClauseDisposition::TemporalRefusal(refusal.clone()).category_label();
+            let (wire, outcome) =
+                temporal::refusal_wire(&refusal).ok_or(NativeRunResultError::Counterexample)?;
+            (
+                category,
+                "unavailable",
+                None,
+                Some(outcome),
+                serde_json::to_value(wire)?,
+            )
+        }
+    };
+    let mut disposition = serde_json::json!({
+        "stage": "evaluate", "category": category, "basis": basis, "temporal": temporal,
+    });
+    if let Some(truth) = truth {
+        disposition["truth"] = serde_json::json!(truth);
+    }
+    if let Some(outcome) = outcome {
+        disposition["outcome"] = serde_json::to_value(outcome)?;
+    }
+    Ok(disposition)
+}
+
 /// Serialize one FR-109 report as RFC 8785 `native-run-result/2` bytes.
 pub fn write_clause_run_result(report: &ClauseRunReport) -> Result<Vec<u8>, NativeRunResultError> {
     write_clause_run_result_for(report, None)
