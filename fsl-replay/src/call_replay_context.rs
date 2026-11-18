@@ -265,29 +265,33 @@ mod tests {
         )
         .expect("parses")
         .into_value();
-        let models = spine::select(
-            &parsed,
+        let admitted = spine::admit_parsed_unit_list(vec![parsed], &dependencies).expect("admits");
+        let models = spine::select_units(
+            &admitted,
             &packages,
             limits.spine.model,
+            limits.spine.source,
             &cancel,
         )
         .expect("selects")
         .into_value();
-        let checked = spine::check_with_execution_points_and_source_inputs(
-            &parsed,
+        let checked = spine::check_units_with_options(
+            &admitted,
             "fixture".to_owned(),
-            &BTreeMap::new(),
-            spine::SourceInputs {
-                check_mode: Some(CheckMode::Kernel),
-                ..spine::SourceInputs::default()
-            },
             &models,
             &dependencies,
+            spine::UnitCheckOptions {
+                check_mode: Some(CheckMode::Kernel),
+                ..spine::UnitCheckOptions::default()
+            },
             limits.spine,
             &cancel,
         )
         .expect("checks under Kernel")
-        .into_value();
+        .into_value()
+        .into_iter()
+        .next()
+        .expect("one admitted unit checks to one unit");
         let emitted = spine::package(&checked, spine::PackageLimits::default(), &cancel)
             .expect("packages")
             .into_value();
