@@ -2645,8 +2645,7 @@ struct ItemReads<'r> {
     /// identity names.
     owner: &'r dyn Fn(&OccurrenceKey) -> Option<String>,
     /// The declaration family of an item's claim (FR-507).
-    family:
-        &'r dyn Fn(ItemKind, &OccurrenceKey) -> Option<fsl_semantics::check::DeclarationFamily>,
+    family: &'r dyn Fn(ItemKind, &OccurrenceKey) -> Option<fsl_semantics::check::DeclarationFamily>,
 }
 
 /// The resolved items of a run, negotiated: the items to analyze, the
@@ -2739,9 +2738,8 @@ fn negotiate_items(
                     Some(ItemForm::Temporal(form)) => form.item_kind,
                     _ => ItemKind::Formula,
                 };
-                let inapplicable =
-                    (reads.family)(temporal_kind, &item.claim)
-                        .is_none_or(|family| !item.kind.applies_to_declaration(family));
+                let inapplicable = (reads.family)(temporal_kind, &item.claim)
+                    .is_none_or(|family| !item.kind.applies_to_declaration(family));
                 if unrouted
                     && !inapplicable
                     && !matches!(disposition, fsl_route::routing::Disposition::InvalidRequest)

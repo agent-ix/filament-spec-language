@@ -584,7 +584,10 @@ impl<'p> BarePackage<'p> {
     ///
     /// [`BareClauseRefusal::Selection`] when the package holds no temporal
     /// clause at the key.
-    pub fn temporal_clause_node(&self, clause: &NodeKey) -> Result<&'p CheckedNodeId, BareClauseRefusal> {
+    pub fn temporal_clause_node(
+        &self,
+        clause: &NodeKey,
+    ) -> Result<&'p CheckedNodeId, BareClauseRefusal> {
         self.temporal_clause_semantic_node(clause)
             .map(|node| &node.node_id)
     }

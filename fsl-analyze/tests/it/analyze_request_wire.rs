@@ -618,7 +618,7 @@ fn a_pending_clause_run_reports_its_pending_disposition() {
 #[trace("TC-1580", "FR-620-AC-1")]
 #[trace("TC-2410", "FR-850-AC-1")]
 #[test]
-#[ignore = "QSL-2271: the in-process checked-package builder from package bytes conflicts with FR-087-AC-2"]
+#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn a_package_selection_analyzes_as_its_source() {
     let items = json!([{"claim": "Bounded"}, {"claim": "BelowThree"}]);
     let body = format!("{}{}", bounded(), below_three());

@@ -214,7 +214,9 @@ impl PendingClauseForm {
     /// capture.
     pub fn pending_fact(&self) -> Option<(&'static str, &fsl_package::CheckedNodeId)> {
         match self {
-            Self::Read(fsl_package::BareClauseRefusal::Pending { fact, node }) => Some((fact, node)),
+            Self::Read(fsl_package::BareClauseRefusal::Pending { fact, node }) => {
+                Some((fact, node))
+            }
             Self::Read(fsl_package::BareClauseRefusal::Selection(_)) | Self::Build(_) => None,
         }
     }

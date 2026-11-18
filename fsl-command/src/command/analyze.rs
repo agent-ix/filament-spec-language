@@ -190,7 +190,7 @@ enum Readout<'d> {
 /// from the request's bytes, with the request's other members.
 struct PackageSelection {
     admitted: AdmittedHandoff,
-    members: RunMembers,
+    members: Box<RunMembers>,
     memory: Vec<fsl_eval::simulation::protocol::MemorySelection>,
     items: Option<Vec<ItemSelection>>,
     deadline_ms: Option<u64>,
@@ -261,7 +261,7 @@ fn run_package(
         documents,
         subject,
         limits,
-    } = members;
+    } = *members;
     let binding = subject.binding(&supplied, &documents);
     let run = PackageRun {
         package: &package,
@@ -379,7 +379,7 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
     if let Some(package) = &request.package {
         let (admitted, mut intake) = admit_package(directory, dependent_bytes, &request, package)?;
         let memory = read_memory(&request.memory)?;
-        let members = read_run_members(&request, &mut intake)?;
+        let members = Box::new(read_run_members(&request, &mut intake)?);
         return Ok(Readout::Package(PackageSelection {
             admitted,
             members,

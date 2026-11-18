@@ -261,7 +261,10 @@ pub fn settle_package_run(
                 Resolution::Settled(settled) => resolved.push(settled),
                 Resolution::Claim(claim, subject) => {
                     let occurrence = subject.occurrence().clone();
-                    owners.insert(occurrence.clone(), owner_of_clause(package, subject.clause()));
+                    owners.insert(
+                        occurrence.clone(),
+                        owner_of_clause(package, subject.clause()),
+                    );
                     clause_claims.push(occurrence);
                     routes.insert(index, Route::Clause(subject));
                     resolved.push(ResolvedItem::Claim(claim));
@@ -438,13 +441,11 @@ fn resolve_names<'s>(
                 if derived {
                     return Err(pending(PendingFamily::Derived));
                 }
-                let key = fsl_package::checked_views::temporal_subject(
-                    view.package(),
-                    &row.declaration,
-                )
-                .ok()
-                .and_then(|subject| subject.declaration_key())
-                .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
+                let key =
+                    fsl_package::checked_views::temporal_subject(view.package(), &row.declaration)
+                        .ok()
+                        .and_then(|subject| subject.declaration_key())
+                        .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
                 return Ok(Named::Clause {
                     index,
                     name,
@@ -504,7 +505,10 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             .temporal
             .as_ref()
             .and_then(|temporal| temporal.subject.clone())
-            .map_or_else(|| self.subject.clone(), |own| own.completed_by(self.subject));
+            .map_or_else(
+                || self.subject.clone(),
+                |own| own.completed_by(self.subject),
+            );
         if own.protocol.is_some() {
             return Err(PackageRunError::Pending(PendingPackageFamily {
                 request_index: Some(index),
