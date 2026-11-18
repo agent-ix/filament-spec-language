@@ -1006,6 +1006,7 @@ dependencies = [
  "fsl-analyze",
  "fsl-eval",
  "fsl-foundation",
+ "fsl-package",
  "fsl-replay",
  "fsl-semantics",
  "ix-trace-rs",
