@@ -2261,14 +2261,14 @@ fn run_compiled_clause_selection(
             snapshot,
             snapshot_path.as_deref(),
         )
-            .unwrap_or_else(|_| {
-                report(ClauseDisposition::EvaluateFault(
-                    filament_semantic_value::catalog::InternalFault::new(
-                        "FR-050",
-                        "compiled-function-selection-runs",
-                    ),
-                ))
-            }),
+        .unwrap_or_else(|_| {
+            report(ClauseDisposition::EvaluateFault(
+                filament_semantic_value::catalog::InternalFault::new(
+                    "FR-050",
+                    "compiled-function-selection-runs",
+                ),
+            ))
+        }),
         ClauseRunSelection::Frame {
             operation,
             invocation,
@@ -3072,29 +3072,16 @@ fn run_function(
             ))));
         }
     }
-    let mut environment = environment;
-    for (position, ((_, value_type), value)) in selected.parameters.iter().zip(&slots).enumerate() {
-        let (ValueType::Population(maximum), Some(ClauseArgumentValue::Form(form))) =
-            (value_type, value)
-        else {
-            continue;
-        };
-        let Some(population) = form.get("population").and_then(serde_json::Value::as_str) else {
-            continue;
-        };
-        environment = match super::call::bind_snapshot_population(
-            &environment,
-            models,
-            population,
-            *maximum,
-            position,
-        ) {
-            Ok(environment) => environment,
-            Err(refusal) => {
-                return Ok(report(ClauseDisposition::ArgumentRefusal(refusal)));
-            }
-        };
+    for (position, (parameter, _)) in selected.parameters.iter().enumerate() {
+        if slots[position].is_none() {
+            return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(
+                RunRefusal::UnboundParameter {
+                    parameter: parameter.clone(),
+                },
+            ))));
+        }
     }
+    let mut environment = environment;
     let mut bound = Vec::with_capacity(selected.parameters.len());
     for (position, (parameter, value_type)) in selected.parameters.iter().enumerate() {
         let Some(value) = slots[position] else {
@@ -3104,6 +3091,24 @@ fn run_function(
                 },
             ))));
         };
+        if let (ValueType::Population(maximum), ClauseArgumentValue::Form(form)) =
+            (value_type, value)
+        {
+            if let Some(population) = form.get("population").and_then(serde_json::Value::as_str) {
+                environment = match super::call::bind_snapshot_population(
+                    environment,
+                    models,
+                    population,
+                    *maximum,
+                    position,
+                ) {
+                    Ok(environment) => environment,
+                    Err(refusal) => {
+                        return Ok(report(ClauseDisposition::ArgumentRefusal(refusal)));
+                    }
+                };
+            }
+        }
         let converted = match (value, value_type) {
             (ClauseArgumentValue::Integer(0), ValueType::Boolean) => Value::Boolean(false),
             (ClauseArgumentValue::Integer(1), ValueType::Boolean) => Value::Boolean(true),

@@ -9,7 +9,9 @@ use crate::support::config_version_spine::{cases::CASES, spine, Case};
 use filament_semantic_value::catalog::Category;
 use fsl_command::command::RunLimits;
 use fsl_foundation::diagnostic::Code;
-use fsl_replay::spine::{run_clause, CallOutcome, ClauseDisposition, ClauseRunRequest, ClauseRunStage};
+use fsl_replay::spine::{
+    run_clause, CallOutcome, ClauseDisposition, ClauseRunRequest, ClauseRunStage,
+};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, path::Path, process::Command};
@@ -842,9 +844,9 @@ fn clause_run_command_routes_function_and_frame() {
     );
 }
 
-/// QSL-2462 / FR-867-AC-3: a function claim maps its Population and Reference
+/// FR-650-AC-7: a function claim maps its Population and Reference
 /// arguments into the selected snapshot before evaluating the function.
-#[trace("FR-867-AC-3")]
+#[trace("FR-650-AC-7")]
 #[test]
 fn function_claim_maps_population_and_reference_arguments_by_role() {
     let directory = tempfile::tempdir().unwrap();
@@ -881,6 +883,65 @@ fn function_claim_maps_population_and_reference_arguments_by_role() {
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(document["disposition"]["stage"], "evaluate", "{document}");
     assert_eq!(document["disposition"]["truth"], true, "{document}");
+}
+
+/// FR-100-AC-4 / FR-650-AC-7: an unbound earlier parameter is reported
+/// before later population arguments are admitted.
+#[trace("FR-100-AC-4", "FR-650-AC-7")]
+#[test]
+fn function_claim_reports_missing_parameter_before_later_population_conflict() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("unbound-before-population-claim");
+    spine::write(&path, Case::Healthy).unwrap();
+
+    let mut program = std::fs::read_to_string(path.join("spine-unit.native")).unwrap();
+    program.push_str(
+        "\nfunction needsFlag using v(flag: Boolean, \
+         p: Population<Config::ConfigVersion>[4], \
+         q: Population<Config::ConfigVersion>[1]): Boolean pure { true }\n",
+    );
+    std::fs::write(path.join("spine-unit.native"), program).unwrap();
+
+    let mut request = spine::request(&path, Case::Healthy).unwrap();
+    let snapshot = match &request.selection {
+        fsl_replay::spine::ClauseRunSelection::Clause(clause) => match &clause.input {
+            fsl_semantics::model::observation::ClauseSelectionInput::Current {
+                snapshot, ..
+            } => snapshot.clone(),
+            _ => panic!("healthy spine selection carries its current snapshot"),
+        },
+        _ => panic!("healthy spine selection is a clause"),
+    };
+    let population = format!("ix://{}/config_history", spine::PACKAGE_IDENTITY);
+    request.selection = fsl_replay::spine::ClauseRunSelection::Function {
+        name: "needsFlag".to_owned(),
+        arguments: vec![
+            fsl_replay::spine::ClauseArgument {
+                parameter: "p".to_owned(),
+                value: fsl_replay::spine::ClauseArgumentValue::Form(
+                    json!({"population": population}),
+                ),
+            },
+            fsl_replay::spine::ClauseArgument {
+                parameter: "q".to_owned(),
+                value: fsl_replay::spine::ClauseArgumentValue::Form(
+                    json!({"population": population}),
+                ),
+            },
+        ],
+        snapshot,
+        snapshot_path: None,
+    };
+
+    let report = run_clause(request).unwrap();
+    let refusal = match report.disposition {
+        ClauseDisposition::ArgumentRefusal(refusal) => refusal,
+        other => panic!("expected a missing-parameter refusal, got {other:?}"),
+    };
+    assert!(
+        matches!(*refusal, fsl_replay::spine::RunRefusal::UnboundParameter { ref parameter } if parameter == "flag"),
+        "{refusal:?}"
+    );
 }
 
 /// FR-312-AC-5: the named document role chooses the FR-106 input variant;

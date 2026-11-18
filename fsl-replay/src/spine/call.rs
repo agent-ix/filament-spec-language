@@ -1077,7 +1077,7 @@ fn bind_snapshot_populations(
         else {
             continue;
         };
-        environment = bind_snapshot_population(&environment, models, named, *maximum, position)?;
+        environment = bind_snapshot_population(environment, models, named, *maximum, position)?;
     }
     Ok(environment)
 }
@@ -1085,7 +1085,7 @@ fn bind_snapshot_populations(
 /// Binds one named population from an already admitted snapshot, preserving
 /// the declared maximum of its parameter.
 pub(super) fn bind_snapshot_population(
-    objects: &ObjectEnvironment,
+    objects: ObjectEnvironment,
     models: &[fsl_semantics::model::intake::SelectedModel],
     named: &str,
     maximum: Option<u64>,
@@ -1099,7 +1099,7 @@ pub(super) fn bind_snapshot_population(
     };
 
     let Some(members) = objects.population_members(named) else {
-        return Ok(objects.clone());
+        return Ok(objects);
     };
     let wrong = || Box::new(RunRefusal::WrongValueKind { position });
     let Some((model, key)) = models.iter().find_map(|model| {
@@ -1115,7 +1115,7 @@ pub(super) fn bind_snapshot_population(
                 _ => None,
             })
     }) else {
-        return Ok(objects.clone());
+        return Ok(objects);
     };
     let documents = members
         .iter()
@@ -1148,10 +1148,7 @@ pub(super) fn bind_snapshot_population(
     ) else {
         return Err(wrong());
     };
-    objects
-        .clone()
-        .with_population(binding)
-        .map_err(|_| wrong())
+    objects.with_population(binding).map_err(|_| wrong())
 }
 
 /// FR-650 "Arguments": the object world of the call's snapshot, admitted
