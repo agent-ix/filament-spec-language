@@ -66,8 +66,7 @@ fn a_check_refusal_names_the_supplied_file() {
         SpineLimits::default().source,
         &Cancel::new(),
     )
-    .err()
-    .expect("the malformed source does not parse");
+    .expect_err("the malformed source does not parse");
     let library = OutcomeDocument::from_check(&Err(failure));
     assert_eq!(
         outcome.document().to_bytes().unwrap(),
