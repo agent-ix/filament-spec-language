@@ -9,14 +9,17 @@ use fsl_foundation::bound::{DomainKey, DomainKind, FiniteBound, ProofBound};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, Code, RequestIndex, SourceIdentity};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::*;
 use crate::bounds::ReplayLimits;
-use crate::execute::{process_provider_obligation, BoundEntries};
+use crate::execute::{BoundEntries, process_provider_obligation};
 use crate::limits::CallerLimits;
 use crate::result::ReplayResult;
-use crate::spine::{check, package, parse, select, DependencyInput, PackageLimits, ParseRequest};
+use crate::spine::{
+    DependencyInput, PackageLimits, ParseRequest, UnitCheckOptions, admit_parsed_unit_list, check,
+    check_units_with_options, package, parse, select, select_units,
+};
 use crate::witness::{CanonicalAssignment, WitnessValue};
 
 fn wrong(pointer: &str) -> PluginResultRefusal {
@@ -787,6 +790,65 @@ fn fixture_of(
     }
 }
 
+fn kernel_fixture_of(
+    source: &str,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    dependencies: &DependencyInput,
+) -> Fixture {
+    use filament_semantic_value::checking::CheckMode;
+
+    let identity = SourceIdentity::new("agent-ix", "test:plugin");
+    let limits = CallerLimits::default();
+    let cancel = Cancel::new();
+    let parsed = parse(
+        &ParseRequest {
+            source: &identity,
+            path: "unit.native",
+            bytes: source.as_bytes(),
+        },
+        limits.spine.source,
+        &cancel,
+    )
+    .unwrap_or_else(|failure| panic!("parse: {failure:?}"))
+    .into_value();
+    let admitted = admit_parsed_unit_list(vec![parsed], dependencies)
+        .unwrap_or_else(|failure| panic!("admit: {failure:?}"));
+    let models = select_units(
+        &admitted,
+        packages,
+        limits.spine.model,
+        limits.spine.source,
+        &cancel,
+    )
+    .unwrap_or_else(|failure| panic!("select: {failure:?}"))
+    .into_value();
+    let checked = check_units_with_options(
+        &admitted,
+        "fixture".to_owned(),
+        &models,
+        dependencies,
+        UnitCheckOptions {
+            check_mode: Some(CheckMode::Kernel),
+            ..UnitCheckOptions::default()
+        },
+        limits.spine,
+        &cancel,
+    )
+    .unwrap_or_else(|failure| panic!("check: {failure:?}"))
+    .into_value()
+    .into_iter()
+    .next()
+    .expect("one admitted unit checks to one unit");
+    let emitted = package(&checked, PackageLimits::default(), &cancel)
+        .unwrap_or_else(|failure| panic!("package: {failure:?}"))
+        .into_value();
+    Fixture {
+        checked,
+        emitted,
+        models,
+    }
+}
+
 fn context(fixture: &Fixture, limits: CallerLimits) -> PluginReplayContext {
     PluginReplayContext::new(&fixture.checked, &fixture.emitted, &fixture.models, limits)
 }
@@ -1041,7 +1103,7 @@ fn tc_774_function_contract_and_application_items_replay() {
 #[test]
 fn tc_774_an_undefined_application_item_is_refuted() {
     let source = format!("{SOURCE}function m using v(x: Int[0, 9]): Integer pure {{ 10 mod x }}\n");
-    let fixture = fixture_of(&source, &BTreeMap::new(), &DependencyInput::default());
+    let fixture = kernel_fixture_of(&source, &BTreeMap::new(), &DependencyInput::default());
     let context = context(&fixture, CallerLimits::default());
     let (_, x) = declaration(&fixture, "m");
     let application = fixture
@@ -1206,8 +1268,7 @@ fn tc_774_a_state_clause_record_is_not_replayable() {
 #[trace("TC-774", "FR-290-AC-12")]
 #[test]
 fn tc_774_a_transitive_dependency_replays() {
-    let header =
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
+    let header = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
     let c = format!("{header}function big using v(x: Int[0, 9]): Boolean pure {{ x > 3 }}\n");
     let b = format!(
         "{header}import \"test/c\" as c;\nfunction big using v(x: Int[0, 9]): Boolean pure {{ c::big(x) }}\n"
@@ -1260,8 +1321,7 @@ fn tc_774_a_transitive_dependency_replays() {
 #[trace("TC-774", "FR-290-AC-12")]
 #[test]
 fn plugin_replay_retains_every_source_of_each_selected_library() {
-    let header =
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
+    let header = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
     let first =
         format!("{header}function big using v(x: Int[0, 9]): Boolean pure {{ helper(x) }}\n");
     let second =
@@ -1313,14 +1373,15 @@ fn plugin_replay_retains_every_source_of_each_selected_library() {
         [("other".to_owned(), "c1".to_owned())]
     );
     for library in [&first, &second, &sibling] {
-        assert!(wire
-            .byte_provision
-            .iter()
-            .any(|(authority, identity, bytes)| {
-                authority == &library.source.authority
-                    && identity == &library.source.identity
-                    && bytes == &library.bytes
-            }));
+        assert!(
+            wire.byte_provision
+                .iter()
+                .any(|(authority, identity, bytes)| {
+                    authority == &library.source.authority
+                        && identity == &library.source.identity
+                        && bytes == &library.bytes
+                })
+        );
     }
     let ReplayResult::Input(result) = crate::replay(wire, ReplayLimits::default()).unwrap() else {
         panic!("the genuine multi-source function replays");

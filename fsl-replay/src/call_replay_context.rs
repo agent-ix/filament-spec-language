@@ -14,11 +14,11 @@ use fsl_foundation::{BackendId, RequestIndex, SourceIdentity};
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
-use crate::call_requirements::{associate, package_name_of, CallRequirement, CallRequirements};
+use crate::call_requirements::{CallRequirement, CallRequirements, associate, package_name_of};
 use crate::limits::CallerLimits;
 use crate::proof_result::{PluginReplayContext, PluginReplayRefusal};
 use crate::request::ReplayRequestWire;
-use crate::spine::{run_reading, Call, CallOutcome, DependencyInput, RunRefusal};
+use crate::spine::{Call, CallOutcome, DependencyInput, RunRefusal, run_reading};
 use crate::witness::CanonicalAssignment;
 
 /// The plugin replay context of one run (FR-404): it builds a replay request
@@ -197,10 +197,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::execute::callable_parameter_keys;
-    use crate::spine::{self, default_accounting, ParseRequest};
-    use crate::witness::WitnessValue;
     use crate::ReplayLimits;
+    use crate::execute::callable_parameter_keys;
+    use crate::spine::{self, ParseRequest, default_accounting};
+    use crate::witness::WitnessValue;
     use crate::{TerminalRecord, TerminalValue};
     use fsl_foundation::SettingLimits;
     use ix_trace_rs::trace;
@@ -241,6 +241,93 @@ mod tests {
             &Cancel::new(),
         )
         .expect("the call runs")
+    }
+
+    fn run_with_replay_context_kernel(
+        source: &str,
+        limits: CallerLimits,
+        call: &Call,
+    ) -> RunWithReplayContext {
+        use filament_semantic_value::checking::CheckMode;
+
+        let identity = SourceIdentity::new("a", "u");
+        let packages = BTreeMap::new();
+        let dependencies = DependencyInput::default();
+        let cancel = Cancel::new();
+        let parsed = spine::parse(
+            &ParseRequest {
+                source: &identity,
+                path: "unit.native",
+                bytes: source.as_bytes(),
+            },
+            limits.spine.source,
+            &cancel,
+        )
+        .expect("parses")
+        .into_value();
+        let admitted = spine::admit_parsed_unit_list(vec![parsed], &dependencies).expect("admits");
+        let models = spine::select_units(
+            &admitted,
+            &packages,
+            limits.spine.model,
+            limits.spine.source,
+            &cancel,
+        )
+        .expect("selects")
+        .into_value();
+        let checked = spine::check_units_with_options(
+            &admitted,
+            "fixture".to_owned(),
+            &models,
+            &dependencies,
+            spine::UnitCheckOptions {
+                check_mode: Some(CheckMode::Kernel),
+                ..spine::UnitCheckOptions::default()
+            },
+            limits.spine,
+            &cancel,
+        )
+        .expect("checks under Kernel")
+        .into_value()
+        .into_iter()
+        .next()
+        .expect("one admitted unit checks to one unit");
+        let emitted = spine::package(&checked, spine::PackageLimits::default(), &cancel)
+            .expect("packages")
+            .into_value();
+        let outcome = spine::run_compiled(
+            &checked,
+            &models,
+            spine::CallSources {
+                package_name: "fixture",
+                packages: &packages,
+                model_limits: limits.spine.model,
+            },
+            call,
+            &ObjectEnvironment::default(),
+            &fsl_eval::execution::SuppliedBackends::default(),
+            &fsl_eval::execution::PrepareLimits::default(),
+            &cancel,
+        )
+        .expect("the call runs");
+        let library_name = package_name_of("fixture").expect("library name");
+        let members = crate::call_requirements::associate(
+            checked.package().graph().requirements(),
+            checked.package().graph(),
+            &call.function,
+        )
+        .expect("requirements associate with the call");
+        let context = PluginReplayContext::new(&checked, &emitted, &models, limits);
+        RunWithReplayContext {
+            package_name: library_name.clone(),
+            outcome,
+            requirements: CallRequirements::new(call, members.clone()),
+            context: CallReplayContext {
+                package_name: library_name,
+                context,
+                members,
+            },
+        }
     }
 
     /// `p`'s declaration occurrence and its parameter's node, read through
@@ -377,19 +464,7 @@ mod tests {
             supplied: filament_semantic_value::supplied_stop::SuppliedLimits::default(),
             backend: filament_eval::ExecutionBackendChoice::Interpreter,
         };
-        let result = run_with_replay_context(
-            SourceIdentity::new("a", "u"),
-            "fixture".to_owned(),
-            "unit.native",
-            source.as_bytes(),
-            &BTreeMap::new(),
-            &DependencyInput::default(),
-            CallerLimits::default(),
-            &call,
-            &ObjectEnvironment::default(),
-            &Cancel::new(),
-        )
-        .expect("the call runs");
+        let result = run_with_replay_context_kernel(&source, CallerLimits::default(), &call);
         assert!(matches!(result.outcome(), CallOutcome::Undefined { .. }));
         let (_, parameter) = declaration(&source, "r");
         let member = result.requirements().members()[0].clone();
