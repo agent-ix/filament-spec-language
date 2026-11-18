@@ -198,6 +198,7 @@ pub(crate) mod state_clause;
 mod state_graph_claim;
 mod state_model;
 mod step_simulation;
+mod synthesis;
 mod sum_case;
 mod task_set;
 mod temporal_clause;

@@ -1,0 +1,182 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! S3 finite-domain analysis for FR-754 synthesis declarations.
+
+use filament_exact::ValueType;
+use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
+
+/// Return the first component of `value_type` whose value set is unbounded.
+/// Composite traversal follows declared field/member order, and recursive
+/// composites are refused at the first back edge.
+pub(crate) fn first_unbounded_component(
+    types: &TypeEnvironment,
+    value_type: &ValueType,
+) -> Option<String> {
+    fn visit(
+        types: &TypeEnvironment,
+        value_type: &ValueType,
+        path: &str,
+        composites: &mut Vec<filament_exact::NodeKey>,
+    ) -> Option<String> {
+        match value_type {
+            ValueType::Boolean
+            | ValueType::Int(_)
+            | ValueType::Decimal(_)
+            | ValueType::Float(_)
+            | ValueType::Text(_)
+            | ValueType::Uuid
+            | ValueType::Timestamp
+            | ValueType::Enum(_) => None,
+            ValueType::Integer => Some(component(path, "Integer")),
+            ValueType::Rational(_) => Some(component(path, "Rational")),
+            ValueType::Quantity(_) | ValueType::CarriedQuantity(_) => {
+                Some(component(path, "Quantity"))
+            }
+            ValueType::BoundedQuantity(_) => Some(component(path, "Quantity")),
+            ValueType::String => Some(component(path, "String")),
+            ValueType::Bytes => Some(component(path, "Bytes")),
+            ValueType::JsonObject => Some(component(path, "JsonObject")),
+            ValueType::Reference(_) | ValueType::Population(None) => {
+                Some(component(path, "unbounded population"))
+            }
+            ValueType::Population(Some(_)) => None,
+            ValueType::Option(inner) => visit(types, inner, &component(path, "some"), composites),
+            ValueType::Collection(collection) => {
+                if collection.bound().is_none() {
+                    return Some(component(path, "unbounded collection"));
+                }
+                visit(
+                    types,
+                    collection.element(),
+                    &component(path, "element"),
+                    composites,
+                )
+            }
+            ValueType::Map(map) => {
+                if map.bound().is_none() {
+                    return Some(component(path, "unbounded map"));
+                }
+                visit(types, map.key(), &component(path, "key"), composites)
+                    .or_else(|| visit(types, map.values(), &component(path, "value"), composites))
+            }
+            ValueType::Composite(key) => {
+                if composites.contains(key) {
+                    return Some(component(path, "recursive composite"));
+                }
+                let Some(declaration) = types.composite(key.clone()) else {
+                    return Some(component(path, "unknown composite"));
+                };
+                composites.push(key.clone());
+                let result = match declaration.shape() {
+                    CompositeShape::Record(fields) => fields.iter().find_map(|field| {
+                        visit(
+                            types,
+                            field.value_type(),
+                            &component(path, field.name()),
+                            composites,
+                        )
+                    }),
+                    CompositeShape::Tuple(items) => {
+                        items.iter().enumerate().find_map(|(index, ty)| {
+                            visit(types, ty, &component(path, &format!("{index}")), composites)
+                        })
+                    }
+                    CompositeShape::Union(members) => members.iter().find_map(|member| {
+                        member
+                            .positions()
+                            .iter()
+                            .enumerate()
+                            .find_map(|(index, ty)| {
+                                visit(
+                                    types,
+                                    ty,
+                                    &component(path, &format!("{}[{index}]", member.identifier())),
+                                    composites,
+                                )
+                            })
+                    }),
+                };
+                composites.pop();
+                result
+            }
+        }
+    }
+
+    visit(types, value_type, "domain", &mut Vec::new())
+}
+
+fn component(parent: &str, name: &str) -> String {
+    if parent.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{parent}.{name}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_unbounded_component;
+    use filament_exact::{Identifier, NodeKey, PathSegment, Presence, ValueType};
+    use filament_semantic_value::declaration::TypeEnvironment;
+    use filament_semantic_value::declaration::{
+        CompositeDeclaration, CompositeShape, FieldDeclaration, UnionMemberDeclaration,
+    };
+
+    #[test]
+    fn bounded_scalar_domains_are_finite_and_integer_is_not() {
+        let types = TypeEnvironment::default();
+        assert_eq!(first_unbounded_component(&types, &ValueType::Boolean), None);
+        assert_eq!(
+            first_unbounded_component(&types, &ValueType::Integer),
+            Some("domain.Integer".to_owned())
+        );
+    }
+
+    #[test]
+    fn reports_unbounded_record_component_and_recursive_union() {
+        let record_key = key("Record");
+        let recursive_key = key("Recursive");
+        let types = TypeEnvironment::new(
+            [
+                CompositeDeclaration::new(
+                    record_key.clone(),
+                    "Record",
+                    CompositeShape::Record(vec![FieldDeclaration::new(
+                        "payload",
+                        ValueType::String,
+                        Presence::Required,
+                    )]),
+                ),
+                CompositeDeclaration::new(
+                    recursive_key.clone(),
+                    "Recursive",
+                    CompositeShape::Union(vec![UnionMemberDeclaration::resolved(
+                        Identifier::new("Next").expect("a member identifier"),
+                        vec![ValueType::option(ValueType::Composite(
+                            recursive_key.clone(),
+                        ))],
+                    )]),
+                ),
+            ],
+            [],
+        )
+        .expect("the fixture composites are valid");
+
+        assert_eq!(
+            first_unbounded_component(&types, &ValueType::Composite(record_key)),
+            Some("domain.payload.String".to_owned())
+        );
+        assert_eq!(
+            first_unbounded_component(&types, &ValueType::Composite(recursive_key)),
+            Some("domain.Next[0].some.recursive composite".to_owned())
+        );
+    }
+
+    fn key(name: &str) -> NodeKey {
+        NodeKey::new(
+            "synthesis-tests",
+            vec![PathSegment::Text(name.to_owned())],
+            0,
+        )
+        .expect("a fixture key is valid")
+    }
+}
