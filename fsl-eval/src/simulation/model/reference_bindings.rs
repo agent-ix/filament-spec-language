@@ -143,7 +143,7 @@ impl ReferenceBindings {
                     let indexed = indexed || components.contains_key(node.location());
                     pending.extend(node.children().into_iter().map(|child| (child, indexed)));
                     if let NodeKind::Call { function, .. } = node.kind() {
-                        if visited_functions.insert(*function) {
+                        if visited_functions.insert((*function, indexed)) {
                             if let Some(function) = graph.function_state(*function) {
                                 pending.push((function.body, indexed));
                             }
@@ -259,7 +259,7 @@ impl ReferenceBindings {
                     indexed || components.is_some_and(|reads| reads.contains_key(node.location()));
                 pending.extend(node.children().into_iter().map(|child| (child, indexed)));
                 if let NodeKind::Call { function, .. } = node.kind() {
-                    if visited_functions.insert(*function) {
+                    if visited_functions.insert((*function, indexed)) {
                         if let Some(function) = graph.function_state(*function) {
                             pending.push((function.body, indexed));
                         }

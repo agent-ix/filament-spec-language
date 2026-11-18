@@ -203,6 +203,25 @@ fn a_created_object_literal_outside_every_indexed_read_refuses() {
     }
 }
 
+/// FR-1000-AC-10: one called literal used both under `@ a` and outside every
+/// indexed read stays barred, regardless of which use the graph visits first.
+#[trace("TC-2957", "FR-1000-AC-10")]
+#[test]
+fn a_called_literal_is_barred_when_another_use_is_unindexed() {
+    let body = format!(
+        "function reference_b using v(): Reference<M::Counter> pure {{ M::Counter#\"b\" }}\n{}",
+        hyper(
+            "CalledUse",
+            "always holds(c = reference_b() or (c = reference_b()) @ a)",
+        ),
+    );
+    let refused = over_wide_universe("reflit-called-unindexed", &body, "CalledUse");
+    let text = refused.document().to_string();
+    assert_eq!(refused.exit, 20, "{text}");
+    assert!(text.contains("operator-ineligible"), "{text}");
+    assert!(text.contains("Counter") && text.contains("62"), "{text}");
+}
+
 /// FR-1000-AC-11: hyper letters over components whose binding tables
 /// disagree on a literal refuse before any state is observed.
 #[trace("TC-2957", "FR-1000-AC-11")]
