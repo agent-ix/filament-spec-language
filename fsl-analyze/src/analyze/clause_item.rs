@@ -22,15 +22,13 @@ use fsl_eval::simulation::Limits;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
 };
-use fsl_foundation::RequestIndex;
-use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_package::CheckedPackage;
+use fsl_foundation::{source::provenance::OccurrenceKey, RequestIndex};
+use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
-    CertificateRequest, EnvelopeSource, ModelCheckItem, ModelCheckLimits, ModelTraceReplayResult,
-    ModelTraceSubject, ObligationIdentity, QualifiedName, ReplayLimits, ReplayPackage,
+    replay_model_trace, CertificateRequest, EnvelopeSource, ModelCheckItem, ModelCheckLimits,
+    ModelTraceReplayResult, ModelTraceSubject, QualifiedName, ReplayLimits, ReplayPackage,
     ReplayRefusal, ReplayRequestWire, ReplaySource, ReplayTargetMembers, RequestTargetWire,
     StateEnvironment, TemporalCounterexample, Witness, WitnessEnvelope, WitnessPacket,
-    replay_model_trace,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, TemporalClauseNode};
