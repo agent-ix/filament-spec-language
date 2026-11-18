@@ -49,9 +49,15 @@ pub enum FinitePopulationError {
     /// A trace identity is empty.
     EmptyTraceIdentity,
     /// A trace has no states.
-    EmptyTrace { identity: String },
+    EmptyTrace {
+        /// The trace with no states.
+        identity: String,
+    },
     /// One identity occurs more than once in the population document.
-    DuplicateTraceIdentity { identity: String },
+    DuplicateTraceIdentity {
+        /// The repeated trace identity.
+        identity: String,
+    },
 }
 
 impl<T: Eq> FiniteTracePopulation<T> {
@@ -106,11 +112,19 @@ pub enum FiniteHyperOutcome {
     /// The prefix holds over a closed population and every tuple is decided.
     Proved,
     /// A decisive false prefix, with its falsifying tuple or completions.
-    Refuted { false_tuples: Vec<FiniteFalseTuple> },
+    Refuted {
+        /// The falsifying tuples and their first false positions.
+        false_tuples: Vec<FiniteFalseTuple>,
+    },
     /// The population is open or a required tuple is incomplete.
     Inconclusive,
     /// The population exceeds the declaration's trace bound.
-    RequiresBound { bound: u64, found: usize },
+    RequiresBound {
+        /// The declared maximum trace count.
+        bound: u64,
+        /// The admitted population's trace count.
+        found: usize,
+    },
 }
 
 /// The truth of the clause body on one selected trace tuple.
@@ -119,7 +133,10 @@ pub enum FiniteTupleOutcome {
     /// The temporal body is decided true on this tuple.
     True,
     /// The temporal body is decided false at this joint position.
-    False { position: u64 },
+    False {
+        /// The first joint position where the body is false.
+        position: u64,
+    },
     /// An aligned read or the temporal body is incomplete on this tuple.
     Incomplete,
 }
