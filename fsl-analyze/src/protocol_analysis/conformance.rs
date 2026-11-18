@@ -743,7 +743,10 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
     None
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+)]
 fn every_behavior_result(
     index: fsl_foundation::RequestIndex,
     protocol: &fsl_semantics::check::CheckedProtocol,

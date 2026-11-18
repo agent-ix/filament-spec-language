@@ -2288,7 +2288,10 @@ fn handoff_clock_selections(
 /// The pipeline of [`complete_sources`] through S4: the checked unit is
 /// handed to `finish` with the admitted domain packages, the library
 /// sources and the map from a spine failure to its located cause.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+)]
 fn check_sources<T>(
     request: &wire::CompileRequest,
     intake: &mut Intake<'_>,

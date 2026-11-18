@@ -1371,20 +1371,17 @@ fn a_bounded_quantity_has_no_type_node() {
     );
 }
 
-/// A map has no equality (FSpec FR-149 states none): `OperatorIneligible`.
-/// A bounded quantity is compared as `Quantity<u>` (filament-semantic-value
-/// FR-127 item 6), so it lowers to the same equality as the quantity.
+/// A map compares structurally (FR-680-AC-3: `=` over two `Map` operands is
+/// admitted), so it lowers to an equality. A bounded quantity is compared as
+/// `Quantity<u>` (filament-semantic-value FR-127 item 6), so it lowers to the
+/// same equality as the quantity.
 #[test]
-fn equality_refuses_a_map_and_reads_a_bounded_quantity_as_its_quantity() {
+fn equality_admits_a_map_and_reads_a_bounded_quantity_as_its_quantity() {
     with_lowering(|lowering| {
         let location = generated_location();
-        let refusal = lowering
+        lowering
             .equality(&map_of(ValueType::Boolean), "eq", &location)
-            .expect_err("a map has no equality");
-        assert!(matches!(
-            refusal.cause,
-            CheckCause::IllTyped(filament_exact::IllTypedCause::OperatorIneligible)
-        ));
+            .expect("a map compares structurally (FR-680-AC-3)");
         let bounded = lowering
             .equality(&bounded_metre(), "eq", &location)
             .expect("a bounded quantity compares as its quantity");

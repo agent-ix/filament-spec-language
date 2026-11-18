@@ -2978,7 +2978,10 @@ fn recording_meter() -> Meter {
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+)]
 fn evaluate_body_value(
     package: &CheckedPackage,
     protocol: &CheckedProtocol,
@@ -3064,7 +3067,10 @@ fn evaluate_body_value(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+)]
 fn evaluate_body(
     package: &CheckedPackage,
     protocol: &CheckedProtocol,

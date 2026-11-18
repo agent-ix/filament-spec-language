@@ -1822,7 +1822,10 @@ pub fn check_with_profile_catalog(
 
 /// S3 and S4 with the caller's exact profile-definition registry and
 /// per-source refinement and clock inputs.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+)]
 pub fn check_with_profile_catalog_and_inputs(
     parsed: &ParsedUnitSource,
     inputs: ProfileCheckInputs<'_>,
@@ -3640,7 +3643,10 @@ pub(crate) struct ComposeModes<'a> {
 /// [`compose`] with every function body checked under `check_mode` (`None`
 /// is `Linked`), the way a `Kernel` package is produced.
 #[cfg(test)]
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+)]
 pub(crate) fn compose_in_mode(
     source: SourceIdentity,
     path: &str,

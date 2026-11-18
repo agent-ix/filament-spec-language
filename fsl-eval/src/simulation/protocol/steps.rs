@@ -826,7 +826,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
     /// ST-2: for a domain `event` or `commit` node, one step per record of
     /// its type that satisfies its constraint; the binder is bound and the
     /// model state is unchanged.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+    )]
     fn event(
         &self,
         state: &ProtocolState<M>,
@@ -1804,7 +1807,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
 
     /// Take the next per-location load of a multi-location application and
     /// retain its value in the thread state until the apply step (FR-902).
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+    )]
     fn read_pending_access(
         &self,
         state: &ProtocolState<M>,
@@ -2487,7 +2493,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
     /// EN-1 classified it; local for an attempt outside every weak
     /// `parallel`. A read-modify-write whose post-state leaves its location
     /// at the value `observed` gives it applies as a load (ADR-025 MA-5).
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+    )]
     fn access<'s>(
         &'s self,
         state: &ProtocolState<M>,
