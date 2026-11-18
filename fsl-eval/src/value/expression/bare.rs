@@ -294,6 +294,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
                     outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
                     location: None,
                     losses: Vec::new(),
+                    frame_depth: 0,
                 });
             }
             capture.drain(meter, projection.location(selected.body));
@@ -311,6 +312,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
                     )),
                     location: projection.location(selected.body).cloned(),
                     losses: Vec::new(),
+                    frame_depth: 0,
                 });
             }
             function_evaluations = 1;
@@ -370,6 +372,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
                 outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
                 location: None,
                 losses: Vec::new(),
+                frame_depth: 0,
             });
         }
         Machine::from_bare_package(&world, objects, meter)
