@@ -311,12 +311,14 @@ impl ModelSystem<'_> {
     ///
     /// An [`ExpansionStop`] when a slot names no object or field of this
     /// system, a field's type is not enumerable, the assignments exceed
-    /// `max_candidates`, or an evaluation stops.
+    /// the remaining `budget` of assignments (the caller's `max_candidates`,
+    /// shared by every call of one opening), or an evaluation stops.
     pub fn complete_open_fields(
         &self,
         visible: &ModelState,
         anchor: &fsl_semantics::model::observation::SelectedAnchor,
         slots: &[(DeclarationKey, String, DeclarationKey)],
+        budget: &mut u128,
     ) -> Result<Vec<ModelState>, ExpansionStop> {
         let mut references = Vec::new();
         for objects in visible.populations.values() {
@@ -345,7 +347,7 @@ impl ModelSystem<'_> {
                 self.types,
                 &self.record_orders,
             )
-            .ok_or_else(|| stop(BROKEN))?;
+            .ok_or_else(|| exhausted(ExpansionLimit::MaxCandidates))?;
             domains.push((domain, declared.optional));
         }
         let radices: Vec<u128> = domains
@@ -355,8 +357,9 @@ impl ModelSystem<'_> {
         let total = radices
             .iter()
             .try_fold(1u128, |total, radix| total.checked_mul(*radix));
-        if total.is_none_or(|total| total > u128::from(self.limits.max_candidates)) {
-            return Err(exhausted(ExpansionLimit::MaxCandidates));
+        match total {
+            Some(total) if total <= *budget => *budget -= total,
+            _ => return Err(exhausted(ExpansionLimit::MaxCandidates)),
         }
         let mut completed = Vec::new();
         let mut assignments = Odometer::new(radices);

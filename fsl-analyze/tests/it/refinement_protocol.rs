@@ -2332,3 +2332,56 @@ fn an_abstract_protocol_side_takes_its_capacity_binding_from_the_request() {
     ));
     assert!(check(binding(&[("K", 1)])).is_ok());
 }
+
+/// FR-630 "Request item", FR-147: with no abstract subject a protocol
+/// abstract side starts from the model states the mapping gives the concrete
+/// initial states (its open fields ranging over the abstract constraint),
+/// beside the protocol's own initial control, so the refusal case of
+/// FR-148-AC-11 reaches the same verdict as with the abstract snapshot named.
+#[trace("TC-1590", "FR-630")]
+#[test]
+fn an_absent_abstract_subject_starts_a_protocol_abstract_side_at_the_mapped_states() {
+    let source = cas_twice(false, false).replace(
+        "run sequence Main {\n\
+         attempt a1 by w on Spec::Counter::inc contracts [] as (r1: Spec::Counter) { true };\n\
+         attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Spec::Counter) { true };\n\
+         }\n\
+         finish Done as (d: Boolean) { true };",
+        "run sequence Main {\n\
+         event Seed by w as (f: Boolean) { true };\n\
+         choice Pick by w visible (f) { case offers when { f } sequence Offers { event ack by w as (worked: Boolean) { true }; } case refuses when { not f } sequence Refuses { } }\n\
+         }\n\
+         finish Done as (d: Boolean) { false };",
+    );
+    let world = World::with_internals(
+        Variant {
+            concrete_value: 0,
+            disable_begin: true,
+            peek: false,
+            ..Variant::CAS
+        },
+        &source,
+        serde_json::json!([{"refinement":"CasTwice","internal":["Spec::Twice::Seed", "Spec::Twice::Done"]}]),
+    );
+    let outcome = check_refinement(
+        RefinementCheckRequest {
+            refinement: world.refinement(),
+            concrete: ModelSubject {
+                simulation: world.concrete_request(UNLIMITED),
+                proof_bounds: Vec::new(),
+            },
+            abstract_package: world.package(),
+            abstract_initial: fsl_replay::AbstractInitial::Mapped,
+            abstract_protocol_binding: Some(protocol_binding()),
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("the abstract protocol subject is admitted");
+    assert!(
+        matches!(outcome.safety, SafetyOutcome::HoldsUncertified { .. }),
+        "the mapped initial states give the explicit-snapshot verdict: {:?}",
+        outcome.safety
+    );
+}

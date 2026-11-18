@@ -16,13 +16,11 @@ use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem, Populatio
 use fsl_eval::simulation::protocol::{
     Capacities, CapacityRefusal, ResolvedMemory, UnboundCapacity,
 };
+use fsl_eval::simulation::ExpansionStop;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{AbstractSide, CheckedRefinement};
-use std::collections::BTreeMap;
 
-use fsl_semantics::model::observation::{
-    AdmissionFailure, AdmissionRecord, DocumentRef, SelectedAnchor,
-};
+use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef, SelectedAnchor};
 use fsl_semantics::model::state::ModelState;
 
 use crate::refinement::history::initial_history;
@@ -67,6 +65,9 @@ pub enum SubjectRefusal {
     /// The abstract subject is a protocol clause, whose steps FR-148 decides
     /// and no model system does.
     ProtocolAbstractSide,
+    /// Building the abstract initial states from the mapping stopped on a
+    /// budget (FSL FR-630 "Request item"): the run is incomplete, naming it.
+    Stopped(ExpansionStop),
 }
 
 /// Why [`open_protocol_systems`] built no systems: a subject refusal, or a
@@ -146,11 +147,13 @@ pub fn open_protocol_systems<'a>(
     over: ModelInstance,
     capacities: &[CapacityBinding],
 ) -> Result<RefinementSystems<'a>, ProtocolSystemsRefusal> {
+    let abstract_initial = abstract_initial.into();
+    let mapped = matches!(abstract_initial, AbstractInitial::Mapped);
     let mut systems = open_systems_inner(
         refinement,
         concrete,
         abstract_package,
-        abstract_initial.into(),
+        abstract_initial,
         true,
     )?;
     let AbstractSide::Protocol { clause, .. } = refinement.abstract_side() else {
@@ -201,6 +204,17 @@ pub fn open_protocol_systems<'a>(
     };
     let model = ModelSystem::over_model(systems.abstract_request.clone(), &systems.abstract_model)
         .map_err(|failure| SubjectRefusal::Admission(Box::new(failure)))?;
+    let model = if mapped {
+        model.with_initial_states(
+            systems
+                .abstract_system
+                .initial_states()
+                .iter()
+                .map(|state| (state.state().clone(), state.anchor().clone())),
+        )
+    } else {
+        model
+    };
     let protocol_system = super::protocol_system::AbstractProtocolSystem::new(model, &subject)
         .map_err(|_| SubjectRefusal::ProtocolAbstractSide)?;
     systems.abstract_protocol = Some(protocol_system);
@@ -240,9 +254,6 @@ fn open_systems_inner<'a>(
     let admit = |failure| SubjectRefusal::Admission(Box::new(failure));
     let (snapshots, mapped) = match abstract_initial {
         AbstractInitial::Snapshots(snapshots) => (snapshots, false),
-        AbstractInitial::Mapped if allow_protocol => {
-            return Err(SubjectRefusal::ProtocolAbstractSide)
-        }
         AbstractInitial::Mapped => (Vec::new(), true),
     };
     let abstract_request = ModelSimulationRequest {
@@ -287,6 +298,8 @@ fn mapped_initial(
     abstract_system: &ModelSystem<'_>,
 ) -> Result<Vec<(ModelState, SelectedAnchor)>, SubjectRefusal> {
     let mut images = Vec::new();
+    // One budget for every concrete initial state: the total of assignments.
+    let mut budget = u128::from(abstract_system.max_candidates());
     for initial in concrete.initial_states() {
         let history = initial_history(refinement, concrete, initial.state());
         let Ok(mapped) = map_state(
@@ -310,17 +323,8 @@ fn mapped_initial(
             })
             .collect();
         let states = abstract_system
-            .complete_open_fields(&mapped.visible, initial.anchor(), &slots)
-            .map_err(|stop| {
-                SubjectRefusal::Admission(Box::new(AdmissionFailure::Refused(Box::new(
-                    AdmissionRecord {
-                        catalog: stop.cause,
-                        fields: BTreeMap::new(),
-                        path: Vec::new(),
-                        kernel: None,
-                    },
-                ))))
-            })?;
+            .complete_open_fields(&mapped.visible, initial.anchor(), &slots, &mut budget)
+            .map_err(SubjectRefusal::Stopped)?;
         images.extend(
             states
                 .into_iter()

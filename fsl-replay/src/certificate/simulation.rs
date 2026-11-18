@@ -431,6 +431,9 @@ pub fn check_simulation_certificate(
             Checker::Simulation.fault("the-subjects-of-a-refinement-open")
         }
         SubjectRefusal::ProtocolAbstractSide => ClosureRefusal::ProtocolAbstractSide,
+        SubjectRefusal::Stopped(_) => {
+            Checker::Simulation.fault("the-abstract-initial-states-build-within-the-check-budget")
+        }
     })?;
     for system in [&concrete, &abstract_system] {
         check_model_bounds(system, BOUND_POSITIONS)
