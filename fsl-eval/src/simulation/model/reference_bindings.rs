@@ -9,7 +9,7 @@ use filament_exact::{EffectiveId, ObjectReference};
 use filament_semantic_value::declaration::TypeEnvironment;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    CheckedGraph, CheckedLifetime, CheckedNode, FormulaNode, FormulaNodeId,
+    CheckedGraph, CheckedLifetime, CheckedNode, FormulaNode, FormulaNodeId, TemporalClauseNode,
 };
 use fsl_semantics::model::state::{StateModel, StatePopulation};
 
@@ -258,6 +258,63 @@ impl ReferenceBindings {
         extended.extend(resolve_literals(
             literals,
             &barred,
+            model,
+            types,
+            populations,
+            universes,
+            initial,
+        )?);
+        Ok(Self(extended))
+    }
+
+    /// Add the literals from a separately checked temporal clause. Analyze
+    /// claims are checked apart from the package's base graph, so resolve the
+    /// clause's own checked expressions against this subject at admission.
+    pub(super) fn with_temporal_clause(
+        &self,
+        graph: &CheckedGraph,
+        clause: &TemporalClauseNode,
+        model: &StateModel,
+        types: &TypeEnvironment,
+        populations: &[StatePopulation],
+        universes: &BTreeMap<filament_checked::key::DeclarationKey, Vec<String>>,
+        initial: &[ModelSimState],
+    ) -> Result<Self, fsl_semantics::model::observation::AdmissionFailure> {
+        let mut literals = BTreeSet::new();
+        for (index, formula_node) in clause.clause().formula().nodes().iter().enumerate() {
+            let atom = FormulaNodeId::from_arena_index(index);
+            if matches!(formula_node, FormulaNode::Holds { .. }) {
+                if let Some((condition, _)) = clause.condition(atom) {
+                    collect_literals(graph, condition, &mut literals);
+                }
+            }
+            if matches!(formula_node, FormulaNode::Aggregate { .. }) {
+                if let Some(aggregate) = clause.aggregate_conditions(atom) {
+                    if let Some((value, _)) = aggregate.value {
+                        collect_literals(graph, value, &mut literals);
+                    }
+                    if let Some((filter, _)) = aggregate.filter {
+                        collect_literals(graph, filter, &mut literals);
+                    }
+                    if let Some((predicate, _)) = aggregate.predicate {
+                        collect_literals(graph, predicate, &mut literals);
+                    }
+                    collect_literals(graph, aggregate.threshold.0, &mut literals);
+                }
+            }
+        }
+        if let Some((guard, _)) = clause.guard() {
+            collect_literals(graph, guard, &mut literals);
+        }
+        for index in 0..clause.clause().captures().len() {
+            if let Some((capture, _)) = clause.capture(index) {
+                collect_literals(graph, capture, &mut literals);
+            }
+        }
+        let mut extended = self.0.clone();
+        extended.extend(resolve_literals(
+            literals,
+            &BTreeSet::new(),
             model,
             types,
             populations,

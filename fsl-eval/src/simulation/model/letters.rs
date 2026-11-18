@@ -92,6 +92,9 @@ pub enum LettersRefusal {
 pub struct ClauseLetters<'s, 'a> {
     system: &'s ModelSystem<'a>,
     node: ClauseSource<'s>,
+    /// Base package bindings extended with literals from this separately
+    /// checked temporal clause.
+    reference_bindings: super::reference_bindings::ReferenceBindings,
     parameter: EffectiveId,
     /// The declaration key of the parameter's object type.
     type_key: DeclarationKey,
@@ -187,9 +190,26 @@ impl<'a> ModelSystem<'a> {
             .type_key(parameter.clone())
             .cloned()
             .ok_or(LettersRefusal::OverTypeUndeclared)?;
+        let reference_bindings = match (node, self.source_package()) {
+            (ClauseSource::Source(source_node), Some(package)) => {
+                super::reference_bindings::ReferenceBindings::with_temporal_clause(
+                    &self.reference_bindings,
+                    package.graph(),
+                    source_node,
+                    &self.model,
+                    self.types,
+                    &self.populations,
+                    &self.universes,
+                    &self.initial,
+                )
+                .map_err(LettersRefusal::ReferenceBindingsAdmission)?
+            }
+            _ => self.reference_bindings.clone(),
+        };
         Ok(ClauseLetters {
             system: self,
             node,
+            reference_bindings,
             parameter: parameter.clone(),
             type_key,
             overlapping: self
@@ -415,7 +435,7 @@ impl ModelLetters for ClauseLetters<'_, '_> {
                     &observed.observation.environment,
                     Some(bound),
                     Vec::new(),
-                    Some(&self.system.reference_bindings),
+                    Some(&self.reference_bindings),
                     meter,
                 ),
                 None => evaluate_state_predicate_at_absent_key_with_reference_bindings(
@@ -424,7 +444,7 @@ impl ModelLetters for ClauseLetters<'_, '_> {
                     &observed.observation.environment,
                     self.key_reference(instance)?,
                     instance.population.node.clone(),
-                    Some(&self.system.reference_bindings),
+                    Some(&self.reference_bindings),
                     meter,
                 ),
             }
