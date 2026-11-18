@@ -225,6 +225,7 @@ impl<'a> UnionMember<'a> {
             equality_producer: None,
             ordering_part: false,
             field_population: None,
+            equality_range_context: None,
         }
     }
 }

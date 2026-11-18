@@ -243,8 +243,7 @@ fn an_unproved_or_ineligible_scaling_is_refused() {
 
 #[trace("TC-1825", "FR-680-AC-6", "FSpec-FR-149-AC-29")]
 #[test]
-#[ignore = "QSL-1986: the unproved-range refusal does not name the interval, bound and operand yet"]
-fn an_equality_sum_refusal_names_its_bound_and_the_join_is_explicit() {
+fn an_equality_sum_refusal_names_its_proved_range_expected_type_and_peer() {
     let refusal = assert_refused(
         "function f using v(a: Int[0, 10], b: Int[0, 10], c: Int[0, 10]): Boolean pure { c = a + b }",
         Code::UndefinedExpression,
@@ -253,6 +252,11 @@ fn an_equality_sum_refusal_names_its_bound_and_the_join_is_explicit() {
     let rendered = format!("{refusal:?}");
     assert!(rendered.contains("[0, 20]"), "{rendered}");
     assert!(rendered.contains("Int[0, 10]"), "{rendered}");
+    assert!(rendered.contains("peer operand c"), "{rendered}");
+    assert_checks(
+        "function guarded using v(a: Int[0, 10], b: Int[0, 10], c: Int[0, 10]): Boolean pure \
+         { if a <= 1 and b <= 2 then c = a + b else true }",
+    );
     assert_checks(
         "function g using v(a: Int[0, 10], b: Int[0, 10], c: Int[0, 10]): Boolean pure \
          { convert<Integer>(c) = a + b }",

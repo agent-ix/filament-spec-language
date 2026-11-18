@@ -251,6 +251,7 @@ impl FamilyContract for StateModelFamily {
                 equality_producer: None,
                 ordering_part: false,
                 field_population: None,
+                equality_range_context: None,
             }))
         };
         let checked = (|| -> Result<Checked, CheckRefusal> {

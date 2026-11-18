@@ -28,7 +28,7 @@ use super::check::{holds_float, DispatchOperation};
 use super::ir::{CheckedNode, DispatchTable, Slot};
 use super::observation::Observations;
 use super::refusal::{
-    CheckCause, CheckRefusal, InvalidDispatchDeclaration, Obligation, ProvedInterval,
+    CheckCause, CheckRefusal, InvalidDispatchDeclaration, Obligation, OperandText, ProvedInterval,
 };
 use crate::model::clause_observation::Observation;
 use filament_exact::{ArithmeticOperator, OrderingOperator};
@@ -334,6 +334,19 @@ pub(super) fn rational_result_of(
         return left.result_of(operator, right);
     };
     RationalDomain::new(numerator, denominator).unwrap_or_else(|_| left.result_of(operator, right))
+}
+
+fn interval_text(interval: &Interval) -> String {
+    let end_text = |end: &End| match end {
+        End::Finite(value) => value.to_string(),
+        End::NegativeInfinity => "-∞".to_owned(),
+        End::PositiveInfinity => "∞".to_owned(),
+    };
+    format!(
+        "[{}, {}]",
+        end_text(&interval.lower),
+        end_text(&interval.upper)
+    )
 }
 
 fn declared(value_type: &ValueType) -> Interval {
@@ -1384,14 +1397,26 @@ impl<'a> Definedness<'a> {
                 if proved.within(&required) {
                     Ok(())
                 } else {
-                    Err(Self::refuse(
-                        node,
-                        Obligation::Range {
+                    let operand = node.equality_range_context().map_or_else(
+                        OperandText::default,
+                        |context| {
+                            let diagnostic = format!(
+                                "proved {}, expected {}, peer operand {}",
+                                interval_text(&proved),
+                                context.expected,
+                                context.operand,
+                            );
+                            OperandText::new(&diagnostic)
+                        },
+                    );
+                    Err(CheckRefusal {
+                        location: node.location().clone(),
+                        cause: CheckCause::Unproved(Obligation::Range {
                             required: Box::new(required.proved()),
                             proved: Box::new(proved.proved()),
-                            operand: Default::default(),
-                        },
-                    ))
+                            operand,
+                        }),
+                    })
                 }
             }
             NodeKind::IntegerDivision { right, .. } => {

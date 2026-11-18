@@ -858,14 +858,19 @@ fn name_operand(
     ) else {
         return;
     };
-    if let Some(text) = sources
+    let Some(source_text) = sources
         .iter()
         .map(ParsedUnitSource::source)
         .find(|source| source.render(region).is_some())
         .and_then(|source| source.slice(fsl_foundation::Span { start, end }))
-    {
-        *operand = OperandText::new(text);
-    }
+    else {
+        return;
+    };
+    let text = operand.text().map_or_else(
+        || source_text.to_owned(),
+        |diagnostic| format!("{source_text} ({diagnostic})"),
+    );
+    *operand = OperandText::new(&text);
 }
 
 /// The source that owns an assembler error whose cause names its declaration.
@@ -3598,8 +3603,7 @@ pub(crate) fn compose_in_mode(
         .map_err(refusal)?
         .into_value();
     let checked = if let Some(check_mode) = check_mode {
-        let admitted = admit_parsed_unit_list(vec![parsed], dependencies)
-            ?;
+        let admitted = admit_parsed_unit_list(vec![parsed], dependencies)?;
         let models = select_units(&admitted, packages, limits.model, limits.source, &cancel)
             .map_err(refusal)?
             .into_value();

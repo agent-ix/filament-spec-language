@@ -2568,18 +2568,18 @@ pub struct ProvedInterval {
     pub upper: Option<Integer>,
 }
 
-/// Source text of an expression whose obligation failed, used for diagnostics
+/// Diagnostic text associated with an operand whose obligation failed,
 /// without changing refusal identity.
 #[derive(Clone, Debug, Default)]
 pub struct OperandText(Option<Box<str>>);
 
 impl OperandText {
-    /// Store the expression's source text.
-    pub fn new(source: &str) -> Self {
-        Self(Some(source.into()))
+    /// Store diagnostic text.
+    pub fn new(text: &str) -> Self {
+        Self(Some(text.into()))
     }
 
-    /// The text supplied by a source-owning stage.
+    /// The stored diagnostic text, whether authored or synthesized.
     pub fn text(&self) -> Option<&str> {
         self.0.as_deref()
     }
@@ -2611,8 +2611,7 @@ pub enum Obligation {
         required: Box<ProvedInterval>,
         /// The interval the accepted proof forms establish.
         proved: Box<ProvedInterval>,
-        /// Source spelling for the expression, filled when source spans are
-        /// available at the compile boundary.
+        /// Diagnostic context for the operand, where available.
         operand: OperandText,
     },
     /// A rational quotient may lie outside its `Rational[..]` domain:

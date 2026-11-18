@@ -2838,7 +2838,7 @@ impl<'a> Typer<'a> {
                     &location,
                     false,
                 )
-                    .map(Step::Typed)
+                .map(Step::Typed)
             }
             Frame::Field(field, member_span, location) => self
                 .field(typed, field, member_span, &location)
@@ -3482,8 +3482,9 @@ impl<'a> Typer<'a> {
                         Ok(Step::Descend(goal))
                     }
                     Pair::Second(first) => {
-                        let (left, right) = ordered(right_first, first, typed);
-                        let (left, right) = self.admit_sum_into_peer(left, right)?;
+                        let (mut left, mut right) = ordered(right_first, first, typed);
+                        (left, right) = self.admit_sum_into_peer(left, right)?;
+                        self.annotate_equality_range_context(&mut left, &mut right);
                         self.equality(operator, left, right, &location)
                             .map(Step::Typed)
                     }
@@ -3525,6 +3526,37 @@ impl<'a> Typer<'a> {
             return Ok((left, right));
         }
         Ok((left, right))
+    }
+
+    fn annotate_equality_range_context(&self, left: &mut TypedOperand, right: &mut TypedOperand) {
+        if let Some(context) = self.equality_range_context(left, right) {
+            left.node.equality_range_context = Some(context);
+        } else if let Some(context) = self.equality_range_context(right, left) {
+            right.node.equality_range_context = Some(context);
+        }
+    }
+
+    fn equality_range_context(
+        &self,
+        arithmetic: &TypedOperand,
+        peer: &TypedOperand,
+    ) -> Option<super::super::ir::EqualityRangeContext> {
+        let NodeKind::Coerce(operand, _) = &arithmetic.node.kind else {
+            return None;
+        };
+        let NodeKind::Arithmetic(..) = &self.body.get(*operand)?.kind else {
+            return None;
+        };
+        let NodeKind::Local(slot) = &peer.node.kind else {
+            return None;
+        };
+        let ValueType::Int(interval) = &peer.node.value_type else {
+            return None;
+        };
+        Some(super::super::ir::EqualityRangeContext {
+            expected: format!("Int[{}, {}]", interval.lower(), interval.upper()),
+            operand: self.slot_names.get(*slot)?.clone(),
+        })
     }
 
     fn accept_unary(&mut self, frame: UnaryFrame<'_>, operand: Node) -> Result<Node, CheckRefusal> {
