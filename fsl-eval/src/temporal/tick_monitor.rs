@@ -405,8 +405,17 @@ impl<'f> TickMonitorReference<'f> {
     }
 
     fn member(&self, node: usize, dmin: i128, dmax: i128, same: bool) -> Membership {
-        let Some(bound) = self.spec.bounds.get(&node) else {
-            return Membership::All;
+        // An unbounded past operator written with no interval reads `[0, *]`.
+        let whole = TickBound {
+            lower: q(0),
+            lower_closed: true,
+            upper: None,
+            upper_closed: false,
+        };
+        let bound = match self.spec.bounds.get(&node) {
+            Some(bound) => bound,
+            None if self.summary.contains_key(&node) => &whole,
+            None => return Membership::All,
         };
         if same {
             let zero = q(0);

@@ -98,6 +98,13 @@ const UNLIMITED: ScalarLimits = ScalarLimits {
     result_units: u64::MAX,
 };
 
+/// The `holds` atoms of `plan`'s formula, by formula index.
+pub(crate) fn atoms_of(plan: &TimedMonitorPlan) -> Vec<usize> {
+    spec_from_plan(plan)
+        .expect("the plan is in the generated fragment")
+        .atoms
+}
+
 /// One input of a trace.
 #[derive(Clone, Debug)]
 pub(crate) enum Input {
