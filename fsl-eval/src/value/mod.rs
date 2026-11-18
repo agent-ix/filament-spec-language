@@ -19,6 +19,7 @@ pub(crate) use expression::evaluate_clause_set_with_cancel;
 // over the foreign-to-`value` `CheckedPackage` typestate, since an inherent
 // impl here is E0116: `CheckedPackage` is `fsl-package`'s own type (X-7).
 pub use expression::bare_evaluate_selected_protocol_slot;
+pub use expression::{bare_evaluate_frame, PackageOperations};
 pub use expression::collection_write::{Provenance, WrittenCollection};
 pub(crate) use expression::evaluate_over_admitted_environment;
 pub use expression::object_environment_refusal;

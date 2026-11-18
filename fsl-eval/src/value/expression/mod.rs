@@ -34,6 +34,7 @@ use slot_supply::SourceView;
 mod value_invariants;
 
 pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol_slot;
+pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations};
 use evaluate::Machine;
 use filament_eval::Registry;
 use filament_exact::{FieldValue, Meter, NodeKey, Outcome, Value, ValueType};

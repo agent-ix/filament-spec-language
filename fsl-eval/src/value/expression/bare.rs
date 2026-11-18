@@ -276,8 +276,82 @@ fn clause_arguments(
         })
         .collect()
 }
+
+/// The operation table a package-route model-check input carries (FR-940;
+/// the seam QSL-2404's input struct implements): the declared frame effect of
+/// an operation by its declaring object type's effective identity and its
+/// name. The source route reads the effect from its checked frame; the
+/// package's frame node carries its grants in canonical order but not the
+/// declared order a frame witness lists, so the package form reads the
+/// declared effect from the input's operation table.
+pub trait PackageOperations {
+    /// The declared effect of `operation` declared by `declaring`; `None`
+    /// when the type declares no such operation.
+    fn declared_effect(
+        &self,
+        declaring: &filament_exact::EffectiveId,
+        operation: &str,
+    ) -> Option<&fsl_semantics::model::domain_package::OperationEffect>;
+}
+
+impl PackageOperations for fsl_semantics::model::operation::OperationTable {
+    fn declared_effect(
+        &self,
+        declaring: &filament_exact::EffectiveId,
+        operation: &str,
+    ) -> Option<&fsl_semantics::model::domain_package::OperationEffect> {
+        self.declared_by(declaring.clone())
+            .iter()
+            .find(|declared| declared.name() == operation)
+            .map(fsl_semantics::model::operation::OperationDeclaration::effect)
+    }
+}
+
+/// FR-940 package form of [`CheckedPackageEvaluation::evaluate_frame`]: check
+/// `invocation` against the operation frame whose frame node key is `frame`,
+/// the operation read from the package's anchor node and its declared effect
+/// from `operations`. Returns the source form's value: the same verdict,
+/// witness and (empty) location and losses, charging nothing.
+///
+/// # Errors
+///
+/// `InputRefusal::ObservationsMismatch` when `invocation` was admitted for
+/// another frame, a selection refusal at its locus for a frame the package
+/// does not bind, and a fault for an operation `operations` does not declare.
+pub fn evaluate_frame(
+    package: &BarePackage<'_>,
+    operations: &impl PackageOperations,
+    frame: &NodeKey,
+    invocation: &fsl_semantics::model::observation::AdmittedInvocation<'_>,
+) -> Result<FrameEvaluation, CallFailure> {
+    if invocation.frame != *frame {
+        return Err(InputRefusal::ObservationsMismatch.into());
+    }
+    let bound = package
+        .frame_operation(frame)
+        .map_err(|failure| refusal(package, failure))?;
+    let effect = operations
+        .declared_effect(&bound.declaring, &bound.operation)
+        .ok_or_else(|| {
+            CallFailure::Fault(InternalFault::new(
+                "S6a",
+                "checked-identity-not-resolved-by-package",
+            ))
+        })?;
+    let (outcome, witness) = super::s6a::protocol_clause::frame_outcome(invocation, effect)
+        .map_err(CallFailure::Fault)?;
+    Ok(FrameEvaluation {
+        evaluation: Evaluation {
+            outcome: outcome.into(),
+            location: None,
+            losses: Vec::new(),
+        },
+        witness,
+    })
+}
 const SOURCE_DECLARATION: &str = "needs-source-declaration";
 const SOURCE_CHECKED_FORM: &str = "needs-source-checked-form";
+const OPERATION_TABLE: &str = "needs-operation-table";
 
 impl CheckedPackageEvaluation for BarePackage<'_> {
     fn call(
@@ -633,7 +707,10 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         _invocation: &fsl_semantics::model::observation::AdmittedInvocation<'_>,
         _meter: &mut Meter,
     ) -> Result<FrameEvaluation, CallFailure> {
-        Err(unmet(self, SOURCE_CHECKED_FORM))
+        // The frame's declared effect is the model-check input's operation
+        // table, which this call does not take: the package form is
+        // [`evaluate_frame`] over that table.
+        Err(unmet(self, OPERATION_TABLE))
     }
 
     fn evaluate_collection_write(

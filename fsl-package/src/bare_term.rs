@@ -249,3 +249,94 @@ impl<'p> BarePackage<'p> {
         }))
     }
 }
+
+/// The operation an operation frame node is the frame of: the effective
+/// identity of the declaring object type and the operation's name, read from
+/// the `state`/`operation_anchor` node that binds the frame (FR-342), its
+/// `context` resolved through the identity rows (FR-531).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BareFrameOperation {
+    /// The declaring object type's effective identity.
+    pub declaring: filament_exact::EffectiveId,
+    /// The operation's declared name.
+    pub operation: String,
+}
+
+impl<'p> BarePackage<'p> {
+    /// The operation whose frame node key is `frame` (FR-940 "Package forms
+    /// of the source-checked evaluators": the frame body read from the
+    /// admitted checked nodes). Charges nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`BareSelectionFailure`]: a witness refusal, `MissingNode` for a key
+    /// no `state`/`frame` node of the package has, `MalformedNode` for a
+    /// frame no anchor binds or an anchor whose context has no object
+    /// identity row.
+    #[ix_trace_rs::string_edge]
+    pub fn frame_operation(
+        &self,
+        frame: &NodeKey,
+    ) -> Result<BareFrameOperation, BareSelectionFailure> {
+        let package = self.package();
+        let (_supply, identities) = self.witness()?;
+        let graph = wire_graph(package).map_err(|_| fault("bare-package-has-structural-keys"))?;
+        let nodes = &package.resolved_graph().nodes;
+        let mut frame_id = None;
+        for node in nodes {
+            if node.semantic_form.as_ref() != "frame" {
+                continue;
+            }
+            let key = graph
+                .key(&node.node_id)
+                .map_err(|_| fault("bare-package-has-structural-keys"))?;
+            if key == *frame {
+                frame_id = Some(&node.node_id);
+                break;
+            }
+        }
+        let frame_id = frame_id.ok_or_else(|| SlotSelectionFailure::MissingNode(frame.clone()))?;
+        let malformed =
+            || BareSelectionFailure::from(SlotSelectionFailure::MalformedNode(frame.clone()));
+        let anchor = nodes
+            .iter()
+            .filter(|node| node.semantic_form.as_ref() == "operation_anchor")
+            .find(|node| {
+                anchor_member(&node.body, "frame").and_then(crate::protocol_view::reference)
+                    == Some(frame_id)
+            })
+            .ok_or_else(malformed)?;
+        let context = anchor_member(&anchor.body, "context")
+            .and_then(crate::protocol_view::reference)
+            .ok_or_else(malformed)?;
+        let operation = anchor_member(&anchor.body, "operation")
+            .and_then(text)
+            .ok_or_else(malformed)?;
+        let declaring = identities
+            .declaration_rows()
+            .find(|row| row.structural_node == *context)
+            .and_then(|row| match &row.exact_identity {
+                filament_contract_model::SelectedExactIdentity::Object(identity) => {
+                    Some(identity.clone())
+                }
+                _ => None,
+            })
+            .ok_or_else(malformed)?;
+        Ok(BareFrameOperation {
+            declaring,
+            operation: operation.to_owned(),
+        })
+    }
+}
+
+/// The binding `name` of a `state`/`operation_anchor` node's body (FR-342):
+/// its `context`, `operation` and `frame` members, in wire order.
+fn anchor_member<'t>(term: &'t CheckedTerm, name: &str) -> Option<&'t CheckedTerm> {
+    let CheckedTerm::OperationAnchorBody(body) = term else {
+        return None;
+    };
+    body.members.iter().find_map(|member| match member {
+        CheckedTerm::Binding { name: bound, value } if &**bound == name => Some(&**value),
+        _ => None,
+    })
+}

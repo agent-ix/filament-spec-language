@@ -74,7 +74,7 @@ pub use bare::{
 #[cfg(feature = "std")]
 pub use bare_slot::{BareSelectionFailure, BareSlot, BareSource};
 #[cfg(feature = "std")]
-pub use bare_term::{BareClauseTerm, ClauseBinder};
+pub use bare_term::{BareClauseTerm, BareFrameOperation, ClauseBinder};
 #[cfg(feature = "std")]
 pub use bare_world::BareWorld;
 pub use checked::{CheckedPackage, ResolvedDependency};

@@ -314,3 +314,144 @@ fn package_guard_and_traced_holds_equal_their_source_forms() {
         assert_eq!(from_package.receiver_path(), from_source.receiver_path());
     }
 }
+
+/// A Counter snapshot `label` at `observation` holding `objects`.
+fn snapshot(label: &str, observation: &str, objects: &[(&str, i64)]) -> Vec<u8> {
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&counter_snapshot(objects)).expect("the snapshot is JSON");
+    document["identity"]["identity"] = serde_json::json!(label);
+    document["observation"] = serde_json::json!(observation);
+    if observation != "current" {
+        document
+            .as_object_mut()
+            .expect("a snapshot object")
+            .remove("anchor");
+    }
+    serde_json::to_vec(&document).expect("the snapshot serializes")
+}
+
+fn document_ref(label: &str) -> DocumentRef {
+    DocumentRef {
+        authority: "test".to_owned(),
+        identity: label.to_owned(),
+    }
+}
+
+/// FR-940-AC-6 (the forms' part): the package form of `evaluate_frame` over
+/// the handoff's frame node of `M::Counter::inc` returns the source form's
+/// verdict, witness and location for an invocation inside the frame and one
+/// that creates an object the frame does not grant.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn package_frame_equals_source_frame() {
+    use filament_exact::Identifier;
+    use fsl_semantics::model::observation::{
+        admit_frame_invocation, FrameFacts, OperationFacts, Provisions,
+    };
+
+    let (_ws, handoff, mut budget) = handoff("package-forms-frame");
+    let bare = BarePackage::new(&handoff.admitted)
+        .with_supply(
+            BareSupply {
+                identities: &handoff.identities,
+                equality: handoff.equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .expect("the handoff's supply joins the package");
+    let source = handoff.compiled.checked();
+    let graph = source.graph();
+    let name = |text: &str| Identifier::new(text).expect("an identifier");
+    let selection = graph
+        .resolve_operation(&name("M"), &name("Counter"), &name("inc"))
+        .expect("inc resolves");
+    let (context, operation_frame) = graph.operation_frame(&selection).expect("the frame node");
+    let frame = operation_frame.frame();
+    let facts = FrameFacts {
+        context,
+        frame: frame.clone(),
+        operation: OperationFacts {
+            declaring: operation_frame.operation().declaring.clone(),
+            declaration: operation_frame.operation().declaration.clone(),
+        },
+    };
+    let pre = document_ref("pre");
+    let mut snapshots = BTreeMap::from([(pre.clone(), snapshot("pre", "pre", &[("a", 0)]))]);
+    let mut invocations = BTreeMap::new();
+    let mut verdicts = Vec::new();
+    for (label, post, created) in [
+        ("inside", vec![("a", 1)], serde_json::json!([])),
+        (
+            "creates",
+            vec![("a", 1), ("c", 0)],
+            serde_json::json!([{"population": "ix://test/counter/counters", "key": "c"}]),
+        ),
+    ] {
+        let post_ref = document_ref(&format!("post-{label}"));
+        snapshots.insert(
+            post_ref.clone(),
+            snapshot(&format!("post-{label}"), "post", &post),
+        );
+        let invocation = document_ref(label);
+        invocations.insert(
+            invocation.clone(),
+            serde_json::to_vec(&serde_json::json!({
+                "format": "filament.state.invocation/v1",
+                "identity": {"authority": "test", "identity": label},
+                "model": {"identity": "test/counter"},
+                "context": "ix://test/counter/Counter",
+                "operation": "inc",
+                "self": {"population": "ix://test/counter/counters", "key": "a"},
+                "pre": {"identity": {"authority": "test", "identity": "pre"}},
+                "post": {"identity": {"authority": "test", "identity": format!("post-{label}")}},
+                "parameters": {},
+                "result": null,
+                "created": created,
+                "deleted": [],
+            }))
+            .expect("the invocation serializes"),
+        );
+        let admitted = admit_frame_invocation(
+            graph.model_inputs(),
+            graph.scope().types(),
+            &facts,
+            handoff.compiled.packages(),
+            ModelNormalizationLimits::default(),
+            &Provisions {
+                snapshots: &snapshots,
+                invocations: &invocations,
+            },
+            &invocation,
+            ObservationLimits::default(),
+        )
+        .unwrap_or_else(|failure| panic!("{label}: the invocation admits: {failure:?}"));
+        let mut meter = Meter::new(UNLIMITED);
+        let from_source = source
+            .evaluate_frame(frame.clone(), &admitted, &mut meter)
+            .expect("the source frame evaluates");
+        // The package route's operation table is the model-check input's
+        // (QSL-2404); the package's own model operations stand for it here.
+        let from_package =
+            fsl_eval::bare::evaluate_frame(&bare, graph.scope().operations(), &frame, &admitted)
+                .expect("the package frame evaluates");
+        assert_eq!(
+            outcome(&from_package.evaluation),
+            outcome(&from_source.evaluation),
+            "{label}"
+        );
+        assert_eq!(
+            from_package.evaluation.location, from_source.evaluation.location,
+            "{label}"
+        );
+        assert_eq!(
+            format!("{:?}", from_package.witness),
+            format!("{:?}", from_source.witness),
+            "{label}"
+        );
+        verdicts.push((
+            boolean(&from_package.evaluation),
+            from_package.witness.is_some(),
+        ));
+    }
+    assert_eq!(verdicts, [(true, false), (false, true)]);
+}
