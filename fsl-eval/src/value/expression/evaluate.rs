@@ -2478,8 +2478,38 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             NodeKind::QuantityScaleDiv { .. } => {
                 return Err(unsupported_construct("quantity_scale"));
             }
-            NodeKind::TupleProject { .. } => {
-                return Err(unsupported_construct("tuple_project"));
+            NodeKind::TupleProject {
+                operand,
+                declaration,
+                position,
+            } => {
+                if node.at(*operand).value_type() != &ValueType::Composite(declaration.clone()) {
+                    return Err(invariant("tuple-project-operand-type-mismatch"));
+                }
+                let Value::Composite(tuple) = self.pop()? else {
+                    return Err(invariant("tuple-project-composite-value-expected"));
+                };
+                if tuple.declaration() != declaration {
+                    return Err(invariant("tuple-project-declaration-mismatch"));
+                }
+                let positions = match self
+                    .world
+                    .types()
+                    .composite(declaration.clone())
+                    .map(|declaration| declaration.shape())
+                {
+                    Some(CompositeShape::Tuple(positions)) => positions,
+                    _ => return Err(invariant("tuple-project-declaration-unresolved")),
+                };
+                if positions.get(*position) != Some(node.value_type()) {
+                    return Err(invariant("tuple-project-position-type-mismatch"));
+                }
+                let Some(FieldValue::Present(value)) = tuple.slots().get(*position) else {
+                    return Err(invariant("tuple-project-position-unavailable"));
+                };
+                // FR-143: a tuple position read retains exactly like a record
+                // field projection. It adds no charge of its own.
+                value.clone()
             }
             // FSpec FR-144 "Indexing": a map entry is located by its key's
             // canonical key; selection charges one `collection.element` and

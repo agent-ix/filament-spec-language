@@ -3,11 +3,26 @@
 //! constructor, quantity scaling and the equality-sum refusal (FSpec FR-142,
 //! FR-143, FR-144, FR-146, FR-149).
 
+#[cfg(feature = "test-support")]
+use filament_checked::key::DeclarationKey;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
+#[cfg(feature = "test-support")]
+use fsl_foundation::Span;
 use fsl_foundation::{Code, SourceIdentity};
-use fsl_semantics::check::{AssemblyRefusal, CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{
+    ApplicationTerm, AssemblyRefusal, BodyTerm, CheckRefusal, CheckedGraph, LeafTerm, MemberTerm,
+    PackageDeclarations,
+};
+#[cfg(feature = "test-support")]
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+#[cfg(feature = "test-support")]
+use fsl_semantics::model::domain_package::{
+    DomainPackage, DomainPackageRecord, DomainPackageRef, NativeValueType, TuplePositionRecord,
+    TupleValueTypeRecord, ValueTypeRef,
+};
 use fsl_semantics::model::intake::SelectedModels;
+use fsl_semantics::value::Member;
 use ix_trace_rs::trace;
 
 const UNITS: &str =
@@ -47,6 +62,32 @@ fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
     assemble(declarations)
         .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
         .check(CheckMode::Linked, CheckingLimits::default())
+}
+
+#[cfg(feature = "test-support")]
+fn check_selected(
+    declarations: &str,
+    selected: SelectedModels,
+) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+    let text = unit_text(declarations);
+    let parsed = fsl_cst::parse(
+        SourceIdentity::new("test", "type-decisions"),
+        "type-decisions.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = build_unit(&parsed).expect("S2 builds the unit");
+    PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        crate::TEST_PACKAGE_NAME.to_owned(),
+        unit,
+        selected,
+        Vec::new(),
+    )
+    .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
+    .check(CheckMode::Linked, CheckingLimits::default())
 }
 
 fn assert_checks(declarations: &str) {
@@ -121,7 +162,6 @@ fn an_unproved_or_ineligible_index_is_refused() {
 
 #[trace("TC-1821", "FR-680-AC-2", "FSpec-FR-143-AC-22")]
 #[test]
-#[ignore = "QSL-2171: tuple position read p[n] not implemented yet"]
 fn a_tuple_position_is_read_with_a_literal_index() {
     assert_checks(
         "tuple Pair(Boolean, Integer);\n\
@@ -362,25 +402,96 @@ fn a_map_key_and_value_are_checked_against_the_map_type() {
 /// never by a domain-package `{package, node}` declaration key.
 #[trace("TC-2973", "FR-680-AC-7")]
 #[test]
-#[ignore = "QSL-2171: the checked TupleProject keyed by the tuple type's node key not implemented yet"]
 fn a_tuple_position_read_names_its_tuple_by_node_key() {
     let graph = check(
         "tuple Pair(Boolean, Integer);\n\
          function g using v(p: Pair): Integer pure { p[1] }",
     )
     .unwrap_or_else(|refusals| panic!("the read checks: {refusals:?}"));
-    let text = format!("{graph:?}");
-    let at = text
-        .find("TupleProject")
-        .expect("a checked TupleProject node");
-    let node = &text[at..];
-    let node = &node[..node.find("position").expect("its position")];
-    assert!(
-        !node.contains("DeclarationKey") && !node.contains("package:"),
-        "the tuple is named by its node key: {node}"
+    assert_tuple_projection_names_operand_type(&graph);
+}
+
+/// The emitted package member and the operand's checked `Composite(key)`
+/// name exactly the same tuple type node.
+fn assert_tuple_projection_names_operand_type(graph: &CheckedGraph) {
+    let projections: Vec<&ApplicationTerm> = graph
+        .semantic_graph()
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.tuple.project" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    let [projection] = projections.as_slice() else {
+        panic!("one tuple projection application: {projections:?}");
+    };
+    let Some(Member::Position {
+        declaration,
+        position,
+    }) = projection.operation.member()
+    else {
+        panic!("tuple projection emits its position package member: {projection:?}");
+    };
+    assert_eq!(*position, 1);
+    let [MemberTerm::Leaf(LeafTerm::Reference { target })] = projection.arguments.as_slice() else {
+        panic!("tuple projection has one operand reference: {projection:?}");
+    };
+    let operand = graph
+        .semantic_graph()
+        .node(
+            target
+                .admitted()
+                .expect("the operand reference is admitted")
+                .clone(),
+        )
+        .expect("the operand node is in the semantic graph");
+    assert_eq!(
+        operand.semantic_type().as_ref(),
+        Some(declaration),
+        "the emitted tuple-position member names the operand's Composite(key)"
     );
-    assert!(
-        node.contains("NodeKey"),
-        "the tuple is named by its node key: {node}"
+}
+
+#[trace("TC-2973", "FR-680-AC-7")]
+#[test]
+#[cfg(feature = "test-support")]
+fn a_selected_model_tuple_position_read_names_its_tuple_node_key() {
+    let tuple = DeclarationKey::fixture("ix://test/orders/Pair");
+    let package = DomainPackage::new(
+        DomainPackageRef::fixture("selected tuple"),
+        vec![
+            DomainPackageRecord::TupleValueType(TupleValueTypeRecord { key: tuple.clone() }),
+            DomainPackageRecord::TuplePosition(TuplePositionRecord {
+                key: DeclarationKey::fixture("ix://test/orders/Pair/p0"),
+                owner: tuple.clone(),
+                ordinal: 0,
+                value_type: ValueTypeRef::Native(NativeValueType::Boolean),
+            }),
+            DomainPackageRecord::TuplePosition(TuplePositionRecord {
+                key: DeclarationKey::fixture("ix://test/orders/Pair/p1"),
+                owner: tuple,
+                ordinal: 1,
+                value_type: ValueTypeRef::Native(NativeValueType::Integer),
+            }),
+        ],
     );
+    let selected = SelectedModels::fixture(
+        "M",
+        Span { start: 0, end: 1 },
+        package,
+        ModelNormalizationLimits::UNLIMITED,
+    )
+    .expect("the selected tuple model admits");
+    let graph = check_selected(
+        "model M = \"test/orders\";\n\
+         function g using v(p: M::Pair): Integer pure { p[1] }",
+        selected,
+    )
+    .unwrap_or_else(|refusals| panic!("the selected model tuple read checks: {refusals:?}"));
+
+    assert_tuple_projection_names_operand_type(&graph);
 }

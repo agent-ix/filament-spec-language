@@ -32,7 +32,7 @@ use filament_semantic_value::object_closure::{
     ObjectClosure, ObjectClosureCause, ObjectClosureRefusal,
 };
 use fsl_eval::value::QualifiedName;
-use fsl_semantics::library::{resolve_libraries, ImportDeclaration, LibraryName, LibraryPackage};
+use fsl_semantics::library::{ImportDeclaration, LibraryName, LibraryPackage, resolve_libraries};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
 
@@ -406,9 +406,11 @@ fn r07_absence_null_and_malformed_constructions_refuse_at_their_origin() {
         field_refusal("o", ConstructionCause::NullForRequiredField)
     );
     let none = OptionValue::none(ValueType::Integer);
-    assert!(options
-        .record(key("Holder"), vec![("o", FieldValue::Present(none))])
-        .is_ok());
+    assert!(
+        options
+            .record(key("Holder"), vec![("o", FieldValue::Present(none))])
+            .is_ok()
+    );
 }
 
 fn node_environment() -> TypeEnvironment {
@@ -759,7 +761,7 @@ mod checked {
     use filament_exact::{BoundViolation, Outcome, Refusal};
     use filament_semantic_value::call::InputRefusal;
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-    use fsl_eval::value::{input_refusal_code, CheckedPackageEvaluation};
+    use fsl_eval::value::{CheckedPackageEvaluation, input_refusal_code};
     use fsl_forms::{BinaryOperator, Expression, FunctionDeclaration, TypeForm};
     use fsl_package::CheckedPackage;
     use fsl_semantics::check::{
@@ -907,6 +909,36 @@ mod checked {
             format!("{outcome:?}"),
             format!("{:?}", Outcome::Completed(expected))
         );
+    }
+
+    #[trace("TC-1821", "FR-680-AC-2")]
+    #[test]
+    fn a_tuple_position_read_returns_the_stored_value() {
+        let types = TypeEnvironment::new(
+            [CompositeDeclaration::new(
+                key("P"),
+                "P",
+                CompositeShape::Tuple(vec![ValueType::Boolean, ValueType::Integer]),
+            )],
+            [],
+        )
+        .unwrap();
+        let package = package(types.clone(), Vec::new(), Vec::new()).unwrap();
+        let checked = check(
+            &package,
+            &[("p", composite("P"))],
+            &Expression::index(name("p"), literal(1)),
+            CheckMode::Kernel,
+        )
+        .unwrap();
+        let tuple = types
+            .tuple(key("P"), vec![Value::Boolean(true), int(23)])
+            .unwrap();
+
+        let (outcome, meter) = evaluate(&package, &checked, vec![tuple], UNLIMITED);
+
+        assert_completed(&outcome, int(23));
+        assert!(meter.admitted_charges().is_empty());
     }
 
     #[trace("FSpec-TC-188", "FSpec-FR-143-AC-2")]
@@ -1424,12 +1456,13 @@ fn float_leaf_composites_compare_their_leaves_by_numeric_equality() {
     );
 
     // The union type is admitted as an `=` operand.
-    assert!(env
-        .check_equality(
+    assert!(
+        env.check_equality(
             EqualityOperator::Equal,
             EqualityOperand::typed(composite("U")),
             EqualityOperand::typed(composite("U")),
             &EnumMemberIndex::default(),
         )
-        .is_ok());
+        .is_ok()
+    );
 }
