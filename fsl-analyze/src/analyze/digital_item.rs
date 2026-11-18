@@ -8,15 +8,15 @@
 //! is declined `invalid-input` before any search, naming the strict
 //! constraint or interval.
 
+use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ModelSystem, TimedSystem, DEFAULT_MAX_CLOCKS};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    settle_model_check, CertificateRequest, DeclineCode, ModelCheckItem,
-    ProofRefusalCause, ReplayTargetMembers, RequestTargetWire, TimedReplay,
+    settle_model_check, CertificateRequest, DeclineCode, ModelCheckItem, ProofRefusalCause,
+    ReplayTargetMembers, RequestTargetWire, TimedReplay,
 };
-use filament_semantic_value::catalog::CatalogCode;
 use fsl_route::Mode;
 use fsl_semantics::check::Capability;
 use serde_json::{json, Map};
@@ -28,7 +28,9 @@ use super::{
     AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SourceProvision, SubjectBinding,
     TemporalItem,
 };
-use crate::model_check::digital::{check_digital, DigitalLimits, DigitalRefusal, DigitalRequest, Strict};
+use crate::model_check::digital::{
+    check_digital, DigitalLimits, DigitalRefusal, DigitalRequest, Strict,
+};
 use crate::model_check::manifest as en1;
 
 /// FR-243's digital-clock item for the authored clause at `key` over the
@@ -125,12 +127,8 @@ pub(super) fn digital_clause_item<'a>(
                     },
                     smt_encoding: form.smt_encoding.unwrap_or_default(),
                 };
-                let record = settle_model_check(
-                    &outcome,
-                    &form.limits,
-                    &certificate,
-                    cancel,
-                    |payload| {
+                let record =
+                    settle_model_check(&outcome, &form.limits, &certificate, cancel, |payload| {
                         replay_over(
                             &inputs,
                             ReplayShape {
@@ -146,8 +144,7 @@ pub(super) fn digital_clause_item<'a>(
                             payload,
                             &letters,
                         )
-                    },
-                );
+                    });
                 let over = record
                     .counterexample
                     .as_ref()

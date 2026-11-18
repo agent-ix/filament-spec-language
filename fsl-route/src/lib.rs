@@ -1898,10 +1898,11 @@ impl Registry {
         let CandidateOutcome::Candidates(mut set) = outcome else {
             return outcome;
         };
-        let (kept, dropped): (Vec<Candidate>, Vec<Candidate>) =
-            set.candidates.iter().cloned().partition(|candidate| {
-                self.held.get(&candidate.id).is_some_and(&keep)
-            });
+        let (kept, dropped): (Vec<Candidate>, Vec<Candidate>) = set
+            .candidates
+            .iter()
+            .cloned()
+            .partition(|candidate| self.held.get(&candidate.id).is_some_and(&keep));
         for candidate in dropped {
             if let Some(kinds) = set.fairness.remove(&candidate) {
                 set.set_aside.insert(candidate, kinds);
@@ -2009,6 +2010,61 @@ mod tests {
 
     fn candidate(id: &str) -> Candidate {
         Candidate::new(BackendId::new(id))
+    }
+
+    /// FSL FR-243-AC-4: `method` is negotiated by its published values. A
+    /// timed item with no method reaches the zone engine; `digital-clocks`
+    /// readmits the engine the timing restriction set aside and drops the zone
+    /// engine; a value no engine publishes leaves no candidate.
+    #[test]
+    #[trace("TC-2290", "FR-243-AC-4")]
+    fn the_method_option_selects_a_timed_route_by_its_value() {
+        let temporal = [(Capability::TemporalSatisfaction, Mode::Bounded)];
+        let mut registry = Registry::new();
+        registry
+            .register(
+                descriptor("en-1", temporal)
+                    .with_option_values("method", ["digital-clocks".to_owned()]),
+            )
+            .expect("en-1 registers");
+        registry
+            .register(
+                descriptor("en-6", temporal)
+                    .with_timed()
+                    .with_option_values("method", ["zones".to_owned()]),
+            )
+            .expect("en-6 registers");
+        let timed = || {
+            registry.restrict_to_timed(
+                registry.candidates(Capability::TemporalSatisfaction, None),
+                true,
+            )
+        };
+        let ids = |outcome: CandidateOutcome| match outcome {
+            CandidateOutcome::Candidates(set) => set
+                .candidates()
+                .iter()
+                .map(|candidate| candidate.id().as_str().to_owned())
+                .collect::<Vec<_>>(),
+            CandidateOutcome::UnknownBackend(_) => vec!["unknown".to_owned()],
+        };
+        let method = |value: &str| BTreeMap::from([("method".to_owned(), value.to_owned())]);
+        assert_eq!(
+            ids(registry.restrict_to_options_and_timing(timed(), &BTreeMap::new(), true)),
+            ["en-6"]
+        );
+        assert_eq!(
+            ids(registry.restrict_to_options_and_timing(timed(), &method("zones"), true)),
+            ["en-6"]
+        );
+        assert_eq!(
+            ids(registry.restrict_to_options_and_timing(timed(), &method("digital-clocks"), true)),
+            ["en-1"]
+        );
+        assert!(
+            ids(registry.restrict_to_options_and_timing(timed(), &method("regions"), true))
+                .is_empty()
+        );
     }
 
     fn descriptor(

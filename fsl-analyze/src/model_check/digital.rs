@@ -290,10 +290,11 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         cancel: &'q Cancel,
     ) -> Result<Self, DigitalRefusal> {
         let timed = request.subject;
-        let mut model_constants: Vec<Rational> = crate::exact_probabilistic::model_constraints(timed)
-            .into_iter()
-            .map(|constraint| constraint.bound().clone())
-            .collect();
+        let mut model_constants: Vec<Rational> =
+            crate::exact_probabilistic::model_constraints(timed)
+                .into_iter()
+                .map(|constraint| constraint.bound().clone())
+                .collect();
         for resets in timed.model().resets() {
             for reset in resets.resets() {
                 model_constants.push(reset.value().clone());
@@ -384,7 +385,13 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             values
                 .values()
                 .iter()
-                .map(|value| if value > cap { cap.clone() } else { value.clone() })
+                .map(|value| {
+                    if value > cap {
+                        cap.clone()
+                    } else {
+                        value.clone()
+                    }
+                })
                 .collect(),
         )
     }
@@ -755,8 +762,13 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         at: usize,
     ) -> Result<Vec<usize>, Halt> {
         let vertex = product.vertices[at].clone();
-        let Reading::Defined(letter) =
-            self.reading(instance, automaton, universal, vertex.state.discrete(), false)?
+        let Reading::Defined(letter) = self.reading(
+            instance,
+            automaton,
+            universal,
+            vertex.state.discrete(),
+            false,
+        )?
         else {
             return Err(DigitalRefusal::Fault("idle-letter").into());
         };
@@ -869,12 +881,13 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         model: &FairModel,
     ) -> Result<Option<(usize, Vec<usize>)>, Halt> {
         let all: BTreeSet<Vertex> = model.graph.vertices().collect();
-        let analyses = analyze(&model.graph, &all, &model.constraints, self.cancel).map_err(
-            |error| match error {
-                FairnessError::Cancelled => self.cancelled(),
-                _ => DigitalRefusal::Fault("fairness-analysis").into(),
-            },
-        )?;
+        let analyses =
+            analyze(&model.graph, &all, &model.constraints, self.cancel).map_err(|error| {
+                match error {
+                    FairnessError::Cancelled => self.cancelled(),
+                    _ => DigitalRefusal::Fault("fairness-analysis").into(),
+                }
+            })?;
         let Some(component) = Analysis::fair_in(&analyses).next() else {
             return Ok(None);
         };
@@ -928,10 +941,9 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         }
         // FR-240 "Vacuity": a proof under fairness needs a fair
         // time-divergent behaviour or a quiescent state.
-        if let (false, Some(instance)) = (
-            self.request.clause.fairness().is_empty(),
-            instances.first(),
-        ) {
+        if let (false, Some(instance)) =
+            (self.request.clause.fairness().is_empty(), instances.first())
+        {
             let mut product = Product::default();
             self.build(&mut product, automaton, true, instance)?;
             let tail = product.vertices.iter().any(|vertex| vertex.tail);
@@ -1223,11 +1235,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
 /// The product edges out of vertex `from`, in the order the fairness graph
 /// holds them: an undefined position's closing edge is never added.
 fn graph_edges(product: &Product, from: usize) -> Vec<usize> {
-    product
-        .out
-        .get(from)
-        .cloned()
-        .unwrap_or_default()
+    product.out.get(from).cloned().unwrap_or_default()
 }
 
 /// The initial state's index of the path `path` to `at`.

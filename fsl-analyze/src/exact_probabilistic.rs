@@ -37,12 +37,12 @@ mod unbounded;
 mod witness;
 
 pub use build::build_product;
-pub(crate) use digital::model_constraints;
 #[cfg(not(feature = "test-support"))]
 pub(crate) use build::BudgetedProductError;
 #[cfg(feature = "test-support")]
 pub use build::{build_product_with_key_budget, BudgetedProductError};
 pub(crate) use build::{build_retaining_monitor, build_retaining_monitor_with_budget};
+pub(crate) use digital::model_constraints;
 pub use fair::{
     decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,
     decide_fair_reachability, maximal_fair_end_components, ActionChoice, FairBoundedResult,

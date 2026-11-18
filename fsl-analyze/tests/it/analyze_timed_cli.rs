@@ -346,7 +346,11 @@ fn digital_clocks_settle_mitl_claims_as_zones_do() {
     );
     assert_eq!(label(&items[0]), "proved", "{}", items[0]);
     assert_eq!(items[0]["record"]["backend"], "en-1", "{}", items[0]);
-    assert_eq!(items[0]["record"]["basis"]["type"], "exhaustive", "{}", items[0]);
+    assert_eq!(
+        items[0]["record"]["basis"]["type"], "exhaustive",
+        "{}",
+        items[0]
+    );
     assert_eq!(label(&items[1]), "refuted", "{}", items[1]);
     assert_eq!(items[1]["record"]["backend"], "en-1", "{}", items[1]);
     assert_eq!(items[1]["replay"]["reproduced"], true, "{}", items[1]);
@@ -390,7 +394,11 @@ fn a_digital_clock_state_budget_is_incomplete() {
             "temporal": {"limits": {"max_states": 2}}}]),
     );
     assert_eq!(label(&items[0]), "incomplete", "{}", items[0]);
-    assert_eq!(items[0]["record"]["cause"]["limit"], "max_states", "{}", items[0]);
+    assert_eq!(
+        items[0]["record"]["cause"]["limit"], "max_states",
+        "{}",
+        items[0]
+    );
     assert_eq!(items[0]["record"]["backend"], "en-1", "{}", items[0]);
     assert_eq!(run.exit, 22);
 }

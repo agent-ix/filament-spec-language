@@ -86,7 +86,10 @@ fn digital_clocks_refuse_strict_constraints_and_intervals() {
     let zoned = run.item(0);
     assert_eq!(label(&zoned), "proved", "{zoned}");
     assert_eq!(zoned["record"]["backend"], "en-6", "{zoned}");
-    assert_eq!(zoned["record"]["basis"]["type"], "zone-certified", "{zoned}");
+    assert_eq!(
+        zoned["record"]["basis"]["type"], "zone-certified",
+        "{zoned}"
+    );
 
     let ws = Workspace::new("rulings-digital-interval");
     let run = analyze(&crate::analyze_family_cli::rpc_request(
