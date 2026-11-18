@@ -5590,15 +5590,16 @@ impl<'a> Lowering<'a> {
                 }
             },
             NodeKind::Contains(collection, item) => {
-                let leaves = if let ValueType::Collection(collection_type) =
-                    node.at(*collection).value_type()
-                {
-                    self.leaves(
+                let leaves = match node.at(*collection).value_type() {
+                    ValueType::Collection(collection_type) => self.leaves(
                         LeafSource::Compared(collection_type.element()),
                         node.location(),
-                    )?
-                } else {
-                    Vec::new()
+                    )?,
+                    // A map is probed by its key type (FSpec FR-144 "Map values").
+                    ValueType::Map(map_type) => {
+                        self.leaves(LeafSource::Compared(map_type.key()), node.location())?
+                    }
+                    _ => Vec::new(),
                 };
                 (
                     Keyed::Application(
@@ -6914,9 +6915,9 @@ impl<'a> Lowering<'a> {
             ValueType::Enum(_) => "enum",
             ValueType::Quantity(_) | ValueType::BoundedQuantity(_) => "quantity",
             ValueType::Reference(_) => "reference",
-            // FSpec FR-149 states no map equality relation. FR-497-AC-2: the
-            // checker refuses a carried quantity `=` operand before lowering.
-            ValueType::Map(_) | ValueType::CarriedQuantity(_) => {
+            // FR-497-AC-2: the checker refuses a carried quantity `=` operand
+            // before lowering.
+            ValueType::CarriedQuantity(_) => {
                 return Err(refuse(
                     location,
                     CheckCause::IllTyped(filament_exact::IllTypedCause::OperatorIneligible),
@@ -6929,7 +6930,10 @@ impl<'a> Lowering<'a> {
             ValueType::Timestamp => "timestamp",
             ValueType::Bytes => "bytes",
             ValueType::JsonObject => "json_object",
-            ValueType::Option(_) | ValueType::Composite(_) | ValueType::Collection(_) => {
+            ValueType::Option(_)
+            | ValueType::Composite(_)
+            | ValueType::Collection(_)
+            | ValueType::Map(_) => {
                 let leaves = self.leaves(LeafSource::Compared(compared), location)?;
                 return Ok(Operation {
                     leaves,

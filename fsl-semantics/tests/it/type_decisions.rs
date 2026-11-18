@@ -6,7 +6,7 @@
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::{Code, SourceIdentity};
-use fsl_semantics::check::{CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{AssemblyRefusal, CheckRefusal, CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;
 
@@ -21,8 +21,8 @@ fn unit_text(declarations: &str) -> String {
     )
 }
 
-/// S1 to S3 under `CheckMode::Linked`; S1 and S2 must accept the unit.
-fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+/// S1 and S2 must accept the unit; S3 assembly may refuse it.
+fn assemble(declarations: &str) -> Result<PackageDeclarations, AssemblyRefusal> {
     let text = unit_text(declarations);
     let parsed = fsl_cst::parse(
         SourceIdentity::new("test", "type-decisions"),
@@ -40,14 +40,33 @@ fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
         SelectedModels::default(),
         Vec::new(),
     )
-    .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
-    .check(CheckMode::Linked, CheckingLimits::default())
+}
+
+/// S1 to S3 under `CheckMode::Linked`; S1 and S2 must accept the unit.
+fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+    assemble(declarations)
+        .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
+        .check(CheckMode::Linked, CheckingLimits::default())
 }
 
 fn assert_checks(declarations: &str) {
     if let Err(refusals) = check(declarations) {
         panic!("{declarations} checks: {refusals:?}");
     }
+}
+
+/// The one assembly error of `declarations`, with its code and cause: a type
+/// written in a signature is refused when the assembler resolves it.
+fn assert_assembly_refused(declarations: &str, code: Code, cause: &str) {
+    let Err(refusal) = assemble(declarations) else {
+        panic!("{declarations} assembles but should be refused");
+    };
+    let [error] = refusal.errors.as_slice() else {
+        panic!("one typed assembly error: {refusal:?}");
+    };
+    assert_eq!(error.cause.code(), code, "{error:?}");
+    let catalog = error.cause.catalog_code().to_string();
+    assert!(catalog.contains(cause), "{catalog} names {cause}");
 }
 
 /// The one refusal of `declarations`, with its code and cause.
@@ -176,7 +195,7 @@ fn a_source_map_type_checks_with_its_guarded_read() {
         Code::UndefinedExpression,
         "unproved-presence",
     );
-    assert_refused(
+    assert_assembly_refused(
         "record Cfg { a: Boolean; }\n\
          function f using v(m: Map<Cfg, Integer>): Boolean pure { true }",
         Code::IllTyped,

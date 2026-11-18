@@ -6,11 +6,11 @@
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::{Code, SourceIdentity};
-use fsl_semantics::check::{CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{AssemblyRefusal, CheckRefusal, CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;
 
-fn check(name: &str, bytes: &[u8]) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn assemble(name: &str, bytes: &[u8]) -> Result<PackageDeclarations, AssemblyRefusal> {
     let parsed = fsl_cst::parse(
         SourceIdentity::new("fsl-conformance", name),
         name,
@@ -27,8 +27,12 @@ fn check(name: &str, bytes: &[u8]) -> Result<CheckedGraph, Vec<CheckRefusal>> {
         SelectedModels::default(),
         Vec::new(),
     )
-    .unwrap_or_else(|refusal| panic!("{name}: assembly succeeds: {refusal:?}"))
-    .check(CheckMode::Linked, CheckingLimits::default())
+}
+
+fn check(name: &str, bytes: &[u8]) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+    assemble(name, bytes)
+        .unwrap_or_else(|refusal| panic!("{name}: assembly succeeds: {refusal:?}"))
+        .check(CheckMode::Linked, CheckingLimits::default())
 }
 
 /// The accepting case checks and the ill-typed case gives one refusal with
@@ -37,7 +41,22 @@ fn assert_pair(accepted: (&str, &[u8]), refused: (&str, &[u8]), code: Code, caus
     if let Err(refusals) = check(accepted.0, accepted.1) {
         panic!("{} checks: {refusals:?}", accepted.0);
     }
-    let refusals = check(refused.0, refused.1).expect_err("the ill-typed case is refused");
+    // A type written in a signature is refused when the assembler resolves it.
+    let assembled = match assemble(refused.0, refused.1) {
+        Err(refusal) => {
+            let [error] = refusal.errors.as_slice() else {
+                panic!("{}: one typed assembly error: {refusal:?}", refused.0);
+            };
+            assert_eq!(error.cause.code(), code, "{error:?}");
+            let catalog = error.cause.catalog_code().to_string();
+            assert!(catalog.contains(cause), "{catalog} names {cause}");
+            return;
+        }
+        Ok(assembled) => assembled,
+    };
+    let refusals = assembled
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect_err("the ill-typed case is refused");
     let [refusal] = refusals.as_slice() else {
         panic!("{}: one typed refusal: {refusals:?}", refused.0);
     };
