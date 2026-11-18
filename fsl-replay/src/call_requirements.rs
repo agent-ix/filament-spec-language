@@ -9,7 +9,7 @@
 //! reaches [`run_with_requirements`] and its result types through the
 //! `fsl_replay` root and never names [`crate::spine`] (FR-060 T12-A).
 
-use filament_exact::{Cancel, Meter, Outcome, Value, planned_equality};
+use filament_exact::{planned_equality, Cancel, Meter, Outcome, Value};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{RequestIndex, SourceIdentity};
@@ -18,8 +18,8 @@ use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use crate::spine::{
-    Call, CallArgument, CallOutcome, DependencyInput, ProfileCatalogInput, RunRefusal, SpineLimits,
-    default_accounting,
+    default_accounting, Call, CallArgument, CallOutcome, DependencyInput, ProfileCatalogInput,
+    RunRefusal, SpineLimits,
 };
 
 /// One requirement item of the selected call: the record's occurrence key and

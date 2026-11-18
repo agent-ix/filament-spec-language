@@ -900,10 +900,7 @@ fn subject_graph_with_identity(
     control: &super::reward::RewardControl<'_>,
 ) -> Result<SubjectGraph, ProbabilityDocumentError> {
     use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
-    if !std::ptr::eq(
-        system.input().probabilistic.claims(),
-        claims,
-    ) {
+    if !std::ptr::eq(system.input().probabilistic.claims(), claims) {
         return Err(ProbabilityDocumentError::IdentityMismatch);
     }
     let claim = bind_claim(claims, item, cancel)?;

@@ -81,7 +81,9 @@ use fsl_semantics::model::observation::{
 pub use crate::contract_check::contract_item;
 pub use crate::value_check::value_item;
 pub(crate) use clause_item::{replay_protocol_over, ProtocolReplayInputs, ReplayShape};
-pub use clause_item::{ClauseItemRefusal, ClauseLimits, ClauseSubject, CLAUSE_TRANSCRIPT};
+pub use clause_item::{
+    ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject, CLAUSE_TRANSCRIPT,
+};
 pub(crate) use derived_item::{derived_target, NoLetters};
 pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
 #[cfg(feature = "test-support")]

@@ -491,3 +491,86 @@ fn a_tampered_counterexample_or_another_unit_is_refused_by_the_replay() {
     .expect("construction does not compare the bytes");
     assert!(wrong.replay_counterexample(&counterexample).is_err());
 }
+
+/// FR-850-AC-2, FR-940-AC-5 (QSL-2406 bytes-only replay): over the package
+/// a Counter unit with domain operations is written to, the package route's
+/// clause item refutes the clause with the source route's record, and its
+/// counterexample replays from the package bytes and the handoff's identity
+/// and equality files alone: the replay request carries no source entry.
+#[trace("TC-2410", "FR-850-AC-2")]
+#[trace("TC-2958", "FR-940-AC-5")]
+#[test]
+fn a_package_route_refutation_replays_from_the_handoff_as_the_source_refutation() {
+    use fsl_package::{BarePackage, BareSupply, V2ReadLimits};
+    let world = World::new(
+        model_world::counter(),
+        "",
+        INFINITE,
+        &[Clause {
+            activation: "on each (q: M::Counter)",
+            formula: "always holds(c.value <= 1)",
+        }],
+        &[("c", json!({"value": {"integer": "0"}}))],
+    );
+    let source = run(&world, ClauseLimits::default());
+    assert_eq!(
+        source.terminal().expect("a terminal record").value(),
+        &TerminalValue::Refuted
+    );
+    let binding = world.binding(&["c"]);
+    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .expect("the package emits");
+    let bytes = emission.package().bytes().to_vec();
+    let admitted =
+        fsl_package::admit_checked_package(&bytes, binding.packages, V2ReadLimits::fixture())
+            .expect("the strict reader admits the bytes");
+    let mut budget = V2ReadLimits::fixture().native_join_budget();
+    let identities = emission
+        .identity_rows(&admitted, &mut budget)
+        .expect("the identity rows");
+    let equality = emission
+        .equality_witness(&admitted, &mut budget)
+        .expect("the equality rows");
+    let identity_bytes = identities.to_bytes(&admitted).expect("identities.json");
+    let equality_bytes = equality.to_bytes(&admitted).expect("equality.json");
+    let bare = BarePackage::new(&admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut budget,
+        )
+        .expect("the supply joins");
+    let input = fsl_eval::simulation::model::PackageModelInput::of(
+        &bare,
+        binding.packages,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .expect("the package route reads every form");
+    let key = world.package.graph().temporal_clauses()[0].identity();
+    let subject = fsl_analyze::analyze::PackageClauseSubject::new(
+        &input,
+        &bytes,
+        fsl_replay::HandoffSupply {
+            identities: &identity_bytes,
+            equality: Some(&equality_bytes),
+        },
+        world.binding(&["c"]),
+        AnalyzeLimits::unbounded(),
+        &key,
+        ClauseLimits::default(),
+    )
+    .expect("the package holds the clause");
+    let mut engines = Engines::default();
+    engines
+        .with(Engine::model_check().expect("EN-1's own manifest is admitted"))
+        .expect("one engine");
+    let mut records = analyze_items(
+        &engines,
+        vec![subject.item(RequestIndex::new(0))],
+        &Cancel::new(),
+    );
+    let package = records.remove(0);
+    assert_eq!(format!("{package:?}"), format!("{source:?}"));
+}
