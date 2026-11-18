@@ -131,6 +131,7 @@ fn a_checked_invariant_refused_condition_reports_the_internal_failure() {
         stopped: Some(fsl_eval::temporal::HoldsStop::Refused { at, evaluation }),
         undefined: None,
         decisive: None,
+        captures: Vec::new(),
     };
     let (disposition, refused_at) = crate::spine::clause::temporal::observed_disposition(
         observed.stopped,

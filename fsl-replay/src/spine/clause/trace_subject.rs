@@ -297,6 +297,8 @@ pub(crate) fn read_subject_letter(
         atom_values: BTreeMap::new(),
         undefined_atom: None,
         first_undefined: None,
+        refused: None,
+        fixed: BTreeMap::new(),
     };
     let at = TemporalPosition::new(position);
     let clause = node.clause();
@@ -434,6 +436,8 @@ pub(super) fn run_subject_observing(
         atom_values: BTreeMap::new(),
         undefined_atom: None,
         first_undefined: None,
+        refused: None,
+        fixed: BTreeMap::new(),
     };
     let result = fsl_eval::temporal::evaluate(
         node.clause(),
@@ -442,12 +446,31 @@ pub(super) fn run_subject_observing(
         &mut meter,
     );
     *first_undefined = letters.first_undefined.take();
+    let usage = ClauseRunUsage::from_meter(&meter, Default::default());
+    // FR-327 "Refused condition": a stop at a refused condition reports the
+    // refusal's own record, at stage `evaluate`.
+    if let (Some(evaluation), Err(fsl_eval::temporal::TemporalRefusal::ConditionRefused { at })) =
+        (letters.refused.take(), &result)
+    {
+        let mut report = subject_report(
+            node,
+            Ok(TemporalOutcome::Pending),
+            None,
+            &BTreeMap::new(),
+            usage,
+        );
+        report.disposition =
+            super::temporal::refused_disposition(evaluation, package.graph(), run.sources);
+        report.basis = super::undecided_basis(&report.disposition);
+        report.refused_at = Some(at.index());
+        return report;
+    }
     subject_report(
         node,
         result,
         letters.undefined_atom,
         &letters.atom_values,
-        ClauseRunUsage::from_meter(&meter, Default::default()),
+        usage,
     )
 }
 
@@ -554,6 +577,8 @@ fn carried_letters<'a>(
         atom_values: BTreeMap::new(),
         undefined_atom: None,
         first_undefined: None,
+        refused: None,
+        fixed: BTreeMap::new(),
     }
 }
 
@@ -968,6 +993,11 @@ struct TraceSubjectLetters<'a> {
     undefined_atom: Option<usize>,
     /// The first undefined reading of an atom that is not a data shortfall.
     first_undefined: Option<FirstUndefined>,
+    /// The S6a evaluation of the first condition whose evaluation was
+    /// refused, kept whole for the report (FR-327 "Refused condition").
+    refused: Option<filament_eval::Evaluation>,
+    /// The captures each activation fixed, by its position (FR-860).
+    fixed: BTreeMap<u64, Vec<Value>>,
 }
 
 impl TraceSubjectLetters<'_> {
@@ -996,6 +1026,14 @@ impl TraceSubjectLetters<'_> {
             meter,
         )
         .map_err(|_error| fault("record-expression-evaluation"))?;
+        if matches!(
+            evaluation.outcome,
+            FamilyOutcome::Evaluated(Outcome::Refused(_))
+                | FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(_))
+        ) {
+            self.refused.get_or_insert(evaluation);
+            return Err(LetterStop::Refused);
+        }
         match evaluation.outcome {
             FamilyOutcome::Evaluated(Outcome::Completed(value)) => {
                 Ok(ExpressionReading::Defined(value))
@@ -1189,6 +1227,7 @@ impl TemporalLetters for TraceSubjectLetters<'_> {
             // state carries their values (FR-860).
             return if letter.captures() {
                 self.captures = self.samples.fixed_captures().to_vec();
+                self.fixed.insert(position.index(), self.captures.clone());
                 Ok(CaptureReading::Fixed)
             } else {
                 Err(fault("tape-letter-reads-the-captures"))
@@ -1217,11 +1256,34 @@ impl TemporalLetters for TraceSubjectLetters<'_> {
                         .nth(index)
                         .map(|(name, _)| name.to_owned())
                         .ok_or_else(|| fault("capture-name-retained"))?;
+                    // FR-860 "Capture faults": the undefined activation is
+                    // located at the capture's initializer.
+                    if self.first_undefined.is_none() {
+                        self.first_undefined = Some(FirstUndefined {
+                            locus: ObservedLocus::Capture(capture.clone()),
+                            position,
+                            cause: cause.clone(),
+                        });
+                    }
                     return Ok(CaptureReading::Undefined { capture, cause });
                 }
             }
         }
+        self.fixed.insert(position.index(), self.captures.clone());
         Ok(CaptureReading::Fixed)
+    }
+
+    fn reads_captures(&self, atom: FormulaNodeId) -> bool {
+        self.node.atom_reads_captures(atom)
+    }
+
+    fn select_activation(&mut self, activation: TemporalPosition) -> Result<(), LetterStop> {
+        let fixed = self
+            .fixed
+            .get(&activation.index())
+            .ok_or_else(|| fault("selected-activation-fixed-its-captures"))?;
+        self.captures.clone_from(fixed);
+        Ok(())
     }
 }
 
