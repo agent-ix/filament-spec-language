@@ -3230,6 +3230,8 @@ mod float_members {
             );
         }
     }
+}
+
 /// FR-056-AC-10 and FSpec FR-322's model-owned-member rule: an unbounded
 /// collection with a positive lower bound has no kernel type and is refused
 /// at the selected model with the typed unsupported-feature cause.
