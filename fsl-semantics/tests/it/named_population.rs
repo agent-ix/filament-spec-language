@@ -509,7 +509,8 @@ fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
                 "case no when {{ true }} sequence No {{ }} }} }}\n",
                 "finish Done as (d: Boolean) {{ true }};\n",
                 "}}"
-            )
+            ),
+            literal = literal
         )
     };
     checked(false, &protocol("M::Counter#\"a\""));
