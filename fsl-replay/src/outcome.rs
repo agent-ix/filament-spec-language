@@ -1552,6 +1552,10 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
             TemporalVerdict::Incomplete(incomplete) => {
                 Some(accounting_limit_cause(incomplete, "limit-reached", None))
             }
+            TemporalVerdict::Cancelled(source) => Some(ItemCause {
+                source: Some(*source),
+                ..ItemCause::kind("cancelled")
+            }),
             TemporalVerdict::ActivationIncomplete { at, .. } => Some(ItemCause {
                 at: Some(format!("position {at}")),
                 ..ItemCause::kind("activation-incomplete")

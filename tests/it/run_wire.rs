@@ -725,7 +725,9 @@ fn a_timed_clause_over_untimed_samples_refuses_with_profile_and_kinds() {
 /// FR-644-AC-5, FR-643-AC-1 (TC-1668, TC-1666): a `native-monitor/1`
 /// request over a record file gives, after each observation, the status a
 /// clause run over the samples received so far gives, and a summary equal
-/// to the run over all of them.
+/// to the run over all of them. Both clauses settle at record 2: `Never`
+/// `violation` and `Reaches` `success` at its witness (FR-643-AC-6,
+/// FR-330-AC-2; FR-644-AC-5's "stays pending" is stale, amended by W45).
 #[test]
 #[trace(
     "TC-1668",
@@ -773,18 +775,26 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
             {
                 status = event["disposition"].clone();
                 decided = record;
-                // Only `Never` settles, at record 2 (FR-644-AC-5).
+                // Both clauses settle at record 2 (FR-643-AC-6).
                 assert_eq!(
                     event["settled"],
-                    clause == "Never" && record >= 2,
+                    record >= 2,
                     "{clause} settled at record {record}"
                 );
                 // `settlement` is present exactly when `settled` is true.
-                if clause == "Never" && record >= 2 {
+                if record >= 2 {
+                    // `Never` fails at its activation, position 0; the
+                    // infinite-trace `Reaches` success has no FR-501 decision
+                    // support, so its position is `null` (FR-643 "Settlement").
+                    let position = if clause == "Never" {
+                        json!("0")
+                    } else {
+                        Value::Null
+                    };
                     assert_eq!(
                         event["settlement"],
                         json!({"step": "3", "trigger": "decided",
-                            "basis": batch_of(2)["basis"], "horizon": "2", "position": "0"}),
+                            "basis": batch_of(2)["basis"], "horizon": "2", "position": position}),
                         "{event}"
                     );
                 } else {
@@ -810,21 +820,9 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
             .and_then(|clauses| clauses.iter().find(|entry| entry["clause"] == clause))
             .expect("a summary entry");
         assert_eq!(summary["disposition"], status, "{clause} summary");
-        assert_eq!(
-            summary["settled"],
-            clause == "Never",
-            "{clause} settled in the summary"
-        );
-        if clause == "Never" {
-            assert_eq!(summary["settlement"]["step"], "3", "{summary}");
-            assert_eq!(summary["settlement"]["trigger"], "decided", "{summary}");
-        } else {
-            assert_eq!(
-                summary["settlement"],
-                json!({"step": "4", "trigger": "finish"}),
-                "{summary}"
-            );
-        }
+        assert_eq!(summary["settled"], true, "{clause} settled in the summary");
+        assert_eq!(summary["settlement"]["step"], "3", "{summary}");
+        assert_eq!(summary["settlement"]["trigger"], "decided", "{summary}");
         assert!(
             run["summary"]["ledger"].is_null(),
             "a finite summary has no ledger: {run}"
@@ -1583,25 +1581,48 @@ fn cancelled_monitor(
     Vec<fsl_command::command::MonitorEvent>,
     fsl_command::command::MonitorSummary,
 ) {
+    let (seen, summary, _) = monitor_records(clauses, observations(levels), cause, cancel);
+    (
+        seen,
+        summary.expect("a cancelled stream returns its summary"),
+    )
+}
+
+/// Run `command::monitor` over `records` of `clauses`, tripping `cancel` with
+/// `cause` when the stream asks for the record after the last one; the
+/// iterator then ends. Also returns the number of records the stream pulled.
+fn monitor_records(
+    clauses: Value,
+    records: Vec<Value>,
+    cause: Option<filament_exact::CancelCause>,
+    cancel: &filament_exact::Cancel,
+) -> (
+    Vec<fsl_command::command::MonitorEvent>,
+    Result<fsl_command::command::MonitorSummary, Box<fsl_command::command::RunError>>,
+    usize,
+) {
     use fsl_command::command::{monitor, RunLimits};
 
     let directory = tempfile::tempdir().unwrap();
     let request = monitor_request(clauses, json!({"kind": "finite"}));
     let path = write_trace(directory.path(), "cancelled.json", &request);
-    let lines: Vec<String> = observations(levels).iter().map(Value::to_string).collect();
-    let total = lines.len();
-    let records = lines.into_iter().enumerate().map(move |(index, line)| {
-        if index + 1 == total {
+    let pulled = std::cell::Cell::new(0_usize);
+    let lines = records
+        .iter()
+        .map(|record| {
+            pulled.set(pulled.get() + 1);
+            Ok(record.to_string().into_bytes())
+        })
+        .chain(std::iter::from_fn(|| {
             if let Some(cause) = cause {
                 cancel.cancel(cause);
             }
-        }
-        Ok(line.into_bytes())
-    });
+            None
+        }));
     let mut seen = Vec::new();
     let summary = monitor(
         &path,
-        records,
+        lines,
         &mut |event| seen.push(event.clone()),
         fsl_command::command::MonitorProviders {
             negotiate: &crate::negotiation::Fr290,
@@ -1610,9 +1631,8 @@ fn cancelled_monitor(
         },
         RunLimits::default(),
         cancel,
-    )
-    .expect("a cancelled stream returns its summary");
-    (seen, summary)
+    );
+    (seen, summary, pulled.get())
 }
 
 /// FR-853-AC-1 (TC-2413): a stream cancelled with `Requested` after two
@@ -1620,7 +1640,6 @@ fn cancelled_monitor(
 /// settlement, makes no `finish`, and exits 22.
 #[test]
 #[trace("TC-2413", "FR-853-AC-1")]
-#[ignore = "QSL-2284: a cancelled monitor stream returns a refusal, not a summary of cancelled clauses"]
 fn a_cancelled_stream_reports_its_open_clauses_incomplete() {
     let cancel = filament_exact::Cancel::new();
     let (_, summary) = cancelled_monitor(
@@ -1639,17 +1658,39 @@ fn a_cancelled_stream_reports_its_open_clauses_incomplete() {
             json!({"step": "2", "trigger": "cancelled", "cause": "requested"}),
             "{value}"
         );
+        assert_eq!(clause["basis"], "unsettled", "{value}");
+        assert_eq!(
+            clause["disposition"]["temporal"]["kind"], "incomplete",
+            "{value}"
+        );
     }
     assert_eq!(value["cancelled"], "requested", "{value}");
     assert_eq!(value["records"], 2, "{value}");
     assert_eq!(summary.exit_code, 22);
+
+    let mut ended = observations(&[0, 1]);
+    ended.push(json!({"end": true}));
+    let (_, finished, _) = monitor_records(
+        json!([{"name": "Reaches"}, {"name": "Never"}]),
+        ended,
+        None,
+        &filament_exact::Cancel::new(),
+    );
+    let finished = finished.expect("an ended stream returns its summary");
+    let value = finished.as_value();
+    for index in 0..2 {
+        assert_eq!(
+            value["clauses"][index]["settlement"]["trigger"], "finish",
+            "{value}"
+        );
+    }
+    assert!(value.get("cancelled").is_none(), "{value}");
 }
 
 /// FR-853-AC-2 (TC-2413): clauses settled before a `Deadline` cancellation
 /// keep their settlements; an open one is cancelled with cause `deadline`.
 #[test]
 #[trace("TC-2413", "FR-853-AC-2")]
-#[ignore = "QSL-2284: a cancelled monitor stream returns a refusal, not a summary of cancelled clauses"]
 fn a_deadline_cancellation_keeps_settled_clauses() {
     let cancel = filament_exact::Cancel::new();
     let (_, settled) = cancelled_monitor(
@@ -1687,16 +1728,40 @@ fn a_deadline_cancellation_keeps_settled_clauses() {
 /// hands the sink no event; every clause is cancelled at step 0.
 #[test]
 #[trace("TC-2413", "FR-853-AC-3")]
-#[ignore = "QSL-2284: a cancelled monitor stream returns a refusal, not a summary of cancelled clauses"]
 fn an_already_cancelled_stream_reads_no_record() {
     let cancel = filament_exact::Cancel::new();
     cancel.cancel(filament_exact::CancelCause::Requested);
-    let (seen, summary) = cancelled_monitor(json!([{"name": "Reaches"}]), &[0, 1], None, &cancel);
+    let (seen, summary, pulled) = monitor_records(
+        json!([{"name": "Reaches"}]),
+        observations(&[0, 1]),
+        None,
+        &cancel,
+    );
+    let summary = summary.expect("a cancelled stream returns its summary");
     let value = summary.as_value();
+    assert_eq!(pulled, 0, "{value}");
     assert!(seen.is_empty(), "{seen:?}");
     assert_eq!(value["records"], 0, "{value}");
-    assert_eq!(value["clauses"][0]["settlement"]["step"], "0", "{value}");
+    assert_eq!(
+        value["clauses"][0]["settlement"],
+        json!({"step": "0", "trigger": "cancelled", "cause": "requested"}),
+        "{value}"
+    );
+    assert_eq!(value["cancelled"], "requested", "{value}");
     assert_eq!(summary.exit_code, 22);
+
+    // FR-644-AC-4's refusal still wins over the tripped handle.
+    let (seen, refused, pulled) = monitor_records(
+        json!([{"name": "Absent"}]),
+        observations(&[0, 1]),
+        None,
+        &cancel,
+    );
+    let error = refused.expect_err("an unknown clause refuses");
+    assert_eq!(error.category().exit_code(), 20);
+    let envelope = error.value().expect("a refusal envelope");
+    assert!(envelope.to_string().contains("Absent"), "{envelope}");
+    assert_eq!((seen.len(), pulled), (0, 0));
 }
 
 /// FR-644-AC-6 (TC-2324), refusal half: `{"end": "closed"}`, `{"end": "open"}`
@@ -2414,7 +2479,6 @@ fn command_monitor_settles_unknown_backends_and_unknown_answers() {
 /// provider request.
 #[test]
 #[trace("TC-2984", "FR-644-AC-11")]
-#[ignore = "QSL-2437: an already-cancelled monitor returns MonitorCancelled, not its summary (FR-853-AC-3)"]
 fn a_cancelled_monitor_settles_its_items_incomplete() {
     let cancel = filament_exact::Cancel::new();
     cancel.cancel(filament_exact::CancelCause::Requested);
