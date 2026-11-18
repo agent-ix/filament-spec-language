@@ -19,6 +19,10 @@ relationships:
     type: implements
   - target: ix://agent-ix/filament-specification/FR-402
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-322
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-640
+    type: depends_on
 ---
 # FR-898: Check and decide a hyperproperty over a declared finite trace set
 
@@ -48,7 +52,17 @@ field `f` of trace `a`'s record at the current joint position, with
 
 **S4** SHALL write the clause as FSpec FR-402's hyperproperty node, with its
 finite domain: the population's record type, the bound `N` and the
-quantifier prefix in source order.
+quantifier prefix in source order. Because each trace has its own positions,
+S4 SHALL write one `temporal_bindings` row per quantifier, in quantifier
+order, keyed by the `hyperproperty` node, its `claim` occurrence and the
+quantifier's variable as `trace` (FSpec FR-322 "Hyper clause rows"). The
+clause has no wrapper and no profile law of its own, so its profile is the
+lock's `temporal_profile` selection; its clock role is the domain binder
+`t`, the one role of its traces (FSpec FR-191), and every row of one
+occurrence carries `clock_name` `t` and the configuration the request's
+`clocks` member binds to `t` (FR-640). A missing, unused or
+profile-mismatched selection for `t` refuses the compile as for any
+trace-subject role.
 
 **Request.** A `hyper` item (FR-631) over the clause SHALL carry `traces`:
 an FSpec FR-739 trace population document. That document holds the
@@ -100,6 +114,7 @@ stays incomplete, because FSpec FR-191 forbids comparing unrelated positions.
 | FR-898-AC-4 | `forall trace a exists trace b { a.out = b.in }` and `exists trace b forall trace a { a.out = b.in }` over one population give different results, as FSpec FR-191-AC-2 requires. A population of four traces under `bounded 3` settles `requires-bound` naming 3. An open population settles `inconclusive`. | Test (TC-2535) |
 | FR-898-AC-5 | A body that reads `a` at position 2 when trace `a` has two records leaves that tuple incomplete: the clause settles `inconclusive`, unless another tuple refutes it. | Test (TC-2535) |
 | FR-898-AC-6 | `fsl-replay` reproduces AC-3's refutation from the population and the counterexample. The counterexample with one trace identity swapped, or the joint position changed, does not reproduce. | Test (TC-2535) |
+| FR-898-AC-7 | `Det` of AC-1 under event-position, compiled with `clocks` `{"t": {"kind": "event_position", "sequence_authority": "obs"}}`, emits two `temporal_bindings` rows at its `hyperproperty` node and `claim` occurrence, `trace` `a` then `b`, each with `clock_name` `t` and that configuration, and the package is admitted; the same compile with no `clocks` member, with an extra unused role, or with a `fixed_sample` configuration for `t` refuses with no package. | Test (TC-3001) |
 
 ## Dependencies
 

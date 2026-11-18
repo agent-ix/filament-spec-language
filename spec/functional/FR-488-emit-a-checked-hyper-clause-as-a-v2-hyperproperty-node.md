@@ -411,9 +411,12 @@ and checking work (NFR-011), the conditions as FR-487 states.
 
 ### Clause names and clock bindings
 
-A hyper clause is named and clocked by its body wrapper, the node a consumer
-resolves as the clause's claim, not by the `hyperproperty` node, so the rows
-of FSpec FR-322-AC-342 to FR-322-AC-370 key on the wrapper.
+A hyper clause is named by its body wrapper, the node a consumer resolves as
+the clause's claim, so its `temporal_clause_names` rows (FSpec FR-322-AC-342
+to FR-322-AC-370) key on the wrapper. It is clocked by its `hyperproperty`
+node: the node's identity holds the quantifier prefix and the wrapper's does
+not, so two clauses with equal bodies and different prefixes share one
+wrapper and keep their own per-trace rows (FSpec FR-322 "Hyper clause rows").
 
 - The emitter SHALL write one `temporal_clause_names` row
   `{declaration, occurrence, name}` for every hyper clause, whatever its
@@ -422,14 +425,18 @@ of FSpec FR-322-AC-342 to FR-322-AC-370 key on the wrapper.
   occurrence of AC-14) and `name` is the declared clause name. Two
   structurally equal hyper clauses share a wrapper and carry two rows at their
   own ordinals; the name enters no key (AC-12).
-- The emitter SHALL write one `temporal_bindings` row
-  `{declaration, occurrence, clock_name, clock}` at the same key for a hyper
-  clause whose profile is clock-configured. `clock_name` is the text of the
-  wrapper's clock argument and `clock` is the declaration's own
-  `ClockConfiguration`; the emitter refuses a missing, unused or
-  profile-mismatched clock selection as FR-337 states, and a clause under an
-  unclocked profile writes a name row and no binding.
-- These rows share the arrays, the (NodeId, occurrence) order and the
+- The emitter SHALL write, for a hyper clause whose profile is
+  clock-configured, one `temporal_bindings` row
+  `{declaration, occurrence, trace, clock_name, clock}` per quantifier, in
+  quantifier order: `declaration` is the `hyperproperty` node's NodeId,
+  `occurrence` the ordinal of the clause's `claim` occurrence of that node
+  (AC-14), `trace` the quantifier's variable, `clock_name` the text of the
+  wrapper's clock argument (`model-steps`) and `clock` the configuration
+  FR-640 derives for that trace from its alias's model. The emitter writes no
+  `temporal_bindings` row for the wrapper. A clause under an unclocked
+  profile writes a name row and no binding.
+- These rows share the arrays, the (NodeId, occurrence) order, with binding
+  rows of one occurrence then in quantifier order, and the
   omission rule of FR-337 "Clause names and clock bindings per occurrence"
   with the temporal clauses of the same unit.
 
@@ -465,7 +472,8 @@ in FR-487. "Admitted" means FSL's I2 admission of the emitted package
 | FR-488-AC-20 | A bounded-profile clause with `fair weak V::Vault::step` on `a`, which S3 admits, is refused `unsupported_construct`/`not-yet-implemented` at the constraint. | Test (TC-1266) |
 | FR-488-AC-21 | The nodes this requirement mints count toward the package node ceiling: with a ceiling one node below `NonInterference`'s emission, compiling is refused with the ceiling's existing refusal, and at the ceiling it compiles. | Test (TC-1266) |
 | FR-488-AC-24 | `NonInterference` emits one `temporal_clause_names` row keyed by its body wrapper's NodeId, at the ordinal of its assembled `claim` occurrence, with the name `NonInterference`; the `hyperproperty` node has no row; two structurally equal hyper clauses with different names share one wrapper and carry two rows at distinct ordinals; renaming one changes no NodeId; and the rows sort with the unit's temporal-clause rows by (NodeId, occurrence). | Test (TC-1327) |
-| FR-488-AC-25 | Under event-position false-extension with a declared clock, the clause emits one `temporal_bindings` row at the wrapper's NodeId and the same occurrence, whose `clock_name` is the wrapper's clock text and whose `clock` is the declared configuration; an absent, unused or profile-mismatched clock selection refuses the compile with no package; under infinite-trace the clause has a name row and no binding. | Test (TC-1327) |
+| FR-488-AC-25 | Under event-position false-extension, `NonInterference` emits two `temporal_bindings` rows at the `hyperproperty` node's NodeId and the ordinal of its `claim` occurrence, `trace` `a` then `b`, each with `clock_name` `model-steps` (the wrapper's clock text) and the configuration FR-640 derives from `V`; no `temporal_bindings` row names the body wrapper; under infinite-trace the clause has a name row and no binding. | Test (TC-1327) |
+| FR-488-AC-26 | Two hyper clauses with equal bodies, `Fwd` over `forall trace a of V forall trace b of V` and `Rev` over `forall trace b of V forall trace a of V`, emit two `hyperproperty` nodes whose `body` references one wrapper, and binding rows `a`, `b` at `Fwd`'s node and `b`, `a` at `Rev`'s node, none at the wrapper; the package is admitted. | Test (TC-3000) |
 
 ## Open FSpec questions
 
