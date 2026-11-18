@@ -40,9 +40,9 @@ use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
 use crate::check::DispatchOperation;
 use filament_exact::Cancel;
 use filament_exact::{
-    ArithmeticOperator, CollectionKind, CollectionType, FloatType, IeeeValue, IeeeWidth,
-    IllTypedCause, Integer, IntegerInterval, NodeKey, OrderingOperator, RoundingMode, Value,
-    ValueType,
+    ArithmeticOperator, CollectionKind, CollectionType, DecimalType, FloatType, IeeeValue,
+    IeeeWidth, IllTypedCause, Integer, IntegerInterval, NodeKey, OrderingOperator, Rational,
+    RationalDomain, RoundingMode, Value, ValueType,
 };
 use filament_semantic_value::absence::AbsenceMode;
 use filament_semantic_value::call::WrongSnapshotCause;
@@ -861,6 +861,44 @@ fn ordered<T>(right_first: bool, first: T, second: T) -> (T, T) {
     } else {
         (first, second)
     }
+}
+
+/// A decimal literal used as a quantity scale factor has no peer decimal
+/// type to supply its contextual domain. Give it the exact singleton domain
+/// of its written coefficient and scale; FR-142 scaling consumes only its
+/// exact value, not a widened carrier range.
+fn exact_decimal_literal_type(expression: ExprRef<'_>) -> Option<ValueType> {
+    let ExprNode::DecimalValue {
+        coefficient, scale, ..
+    } = expression.node()
+    else {
+        return None;
+    };
+    let domain = DecimalType::new(
+        coefficient.clone(),
+        coefficient.clone(),
+        u64::from(*scale),
+        u64::from(*scale),
+        RoundingMode::Exact,
+    )
+    .ok()?;
+    Some(ValueType::Decimal(domain))
+}
+
+/// A rational literal used as a quantity scale factor has no peer rational
+/// type to supply its contextual range. Give it the singleton range of its
+/// reduced exact value; FR-142 scaling consumes only that value.
+fn exact_rational_literal_type(expression: ExprRef<'_>) -> Option<ValueType> {
+    let ExprNode::Rational(numerator, denominator) = expression.node() else {
+        return None;
+    };
+    let value = Rational::new(numerator.clone(), denominator.clone()).ok()?;
+    let numerator = value.numerator().clone();
+    let denominator = value.denominator().clone();
+    let numerator = IntegerInterval::new(numerator.clone(), numerator).ok()?;
+    let denominator = IntegerInterval::new(denominator.clone(), denominator).ok()?;
+    let domain = RationalDomain::new(numerator, denominator).ok()?;
+    Some(ValueType::Rational(domain))
 }
 
 impl<'a> Typer<'a> {
@@ -3422,6 +3460,16 @@ impl<'a> Typer<'a> {
             } => match pair {
                 Pair::First(second, second_location) => {
                     let peer = typed.value_type.clone();
+                    let second_hint = if operator == ArithmeticOperator::Multiply
+                        && matches!(&peer, ValueType::Quantity(_))
+                    {
+                        exact_rational_literal_type(second)
+                            .or_else(|| exact_decimal_literal_type(second))
+                            .map(Cow::Owned)
+                            .unwrap_or_else(|| Cow::Owned(peer))
+                    } else {
+                        Cow::Owned(peer)
+                    };
                     frames.push(Frame::Peer(Box::new(PeerFrame {
                         form: PeerForm::Arithmetic {
                             operator,
@@ -3433,7 +3481,7 @@ impl<'a> Typer<'a> {
                     })));
                     Ok(Step::Descend(Goal::Infer(
                         second,
-                        Some(Cow::Owned(peer)),
+                        Some(second_hint),
                         second_location,
                     )))
                 }
