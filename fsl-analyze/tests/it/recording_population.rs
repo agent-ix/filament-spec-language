@@ -44,18 +44,21 @@ fn premise(node: &str, identity: &str) -> Value {
 /// A recording of the members `observed`, with closure `state` stating the
 /// branch premises of `premised`.
 fn recording(observed: &[&str], premised: &[&str], state: &str) -> Value {
-    let observations: Vec<Value> = observed
+    let mut observations: Vec<Value> = observed
         .iter()
         .flat_map(|identity| [work(LEFT, identity), work(RIGHT, identity)])
         .collect();
-    let order: Vec<usize> = (0..observations.len()).collect();
+    let finish_position = observations.len();
+    observations.push(json!({"kind": "finish", "node": "R::Done", "role": "w",
+                             "keys": {}, "record": true}));
+    let order: Vec<usize> = (0..finish_position).collect();
     let mut premises = vec![json!({"kind": "execution", "node": "R::Done"})];
     for node in [LEFT, RIGHT] {
         premises.extend(premised.iter().map(|identity| premise(node, identity)));
     }
     json!({
         "format": "filament.protocol-recording/1", "protocol": "R",
-        "observations": observations, "local_order": {"r": order}, "correlations": [],
+        "observations": observations, "local_order": {"r": order, "w": [finish_position]}, "correlations": [],
         "closure": {"state": state, "premises": premises}
     })
 }

@@ -645,6 +645,30 @@ fn validate_population(
             ));
         }
     }
+    let required_roles = protocol
+        .controls
+        .controls
+        .iter()
+        .filter(|control| control.kind == fsl_forms::ProtocolNodeKind::Branch)
+        .flat_map(|control| {
+            let node = format!("{}::{}", protocol.name, control.path.join("::"));
+            protocol.owners.iter().filter_map(move |owner| {
+                let role = protocol.roles.get(owner.role)?;
+                (role.replicated
+                    && protocol_node_name(protocol, owner.node.0).starts_with(&format!("{node}::")))
+                .then_some(role.name.as_str())
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    for role in required_roles {
+        if !population.iter().any(|group| group.role == role) {
+            return Err(RecordingRefusal::new(
+                "missing-member",
+                format!("activated population has no entry for fan-out role `{role}`"),
+                None,
+            ));
+        }
+    }
     Ok(())
 }
 
