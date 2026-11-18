@@ -144,7 +144,8 @@ fn a_handoff_without_its_identity_rows_refuses_invalid_package() {
     ws.write(&handoff_file("equality.json"), &equality_rows);
     let run = analyze_members(&ws, "analyze-restored.json", &members);
     assert_eq!(
-        run.item(0)["record"]["diagnostic"]["cause"], "unknown-claim",
+        run.item(0)["record"]["diagnostic"]["cause"],
+        "unknown-claim",
         "{}",
         run.document()
     );
@@ -267,8 +268,7 @@ fn not_above_three() -> &'static str {
 #[test]
 fn source_analysis_decides_every_family_over_its_checked_graph() {
     let body = format!("{}{}{}", bounded(), at_most_two(), not_above_three());
-    let items =
-        json!([{"claim": "Bounded"}, {"claim": "AtMostTwo"}, {"claim": "NotAboveThree"}]);
+    let items = json!([{"claim": "Bounded"}, {"claim": "AtMostTwo"}, {"claim": "NotAboveThree"}]);
     let ws = Workspace::new("source-route-families");
     let run = analyze(&counter_request(&ws, &body, items));
     assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
@@ -298,9 +298,22 @@ fn the_package_route_reaches_the_source_checked_evaluators() {
     let source = analyze(&counter_request(&ws, &body, items.clone()));
     let (members, _) = package_request(&ws, &body, items);
     let run = analyze_members(&ws, "analyze-evaluators.json", &members);
-    assert_eq!(run.item(0)["record"], source.item(0)["record"], "{}", run.document());
-    assert_eq!(run.item(1)["record"], source.item(1)["record"], "{}", run.document());
-    assert_eq!(run.item(1)["counterexample"], source.item(1)["counterexample"]);
+    assert_eq!(
+        run.item(0)["record"],
+        source.item(0)["record"],
+        "{}",
+        run.document()
+    );
+    assert_eq!(
+        run.item(1)["record"],
+        source.item(1)["record"],
+        "{}",
+        run.document()
+    );
+    assert_eq!(
+        run.item(1)["counterexample"],
+        source.item(1)["counterexample"]
+    );
     assert_eq!(run.item(1)["replay"], source.item(1)["replay"]);
     assert_eq!(run.item(1)["replay"]["reproduced"], true);
 }
@@ -320,7 +333,12 @@ fn a_refused_package_never_falls_back_to_source() {
     let package = analyze_members(&ws, "analyze-families.json", &members);
     assert_eq!(package.document()["items"], source.document()["items"]);
     for index in 0..3 {
-        assert_ne!(label(&package.item(index)), "unsupported", "{}", package.document());
+        assert_ne!(
+            label(&package.item(index)),
+            "unsupported",
+            "{}",
+            package.document()
+        );
     }
     let body = format!("{}{}", bounded(), not_above_three());
     let items = json!([{"claim": "NotAboveThree"}]);
@@ -330,12 +348,24 @@ fn a_refused_package_never_falls_back_to_source() {
     let run = analyze_members(&ws, "analyze-refused.json", &members);
     assert_eq!(run.exit, 20, "{}", run.document());
     assert!(
-        run.document()["items"].as_array().is_some_and(Vec::is_empty),
+        run.document()["items"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
         "{}",
         run.document()
     );
-    assert_eq!(run.document()["last_stage"], Value::Null, "{}", run.document());
-    assert_eq!(first_diagnostic(&run)["code"], "invalid_package", "{}", run.document());
+    assert_eq!(
+        run.document()["last_stage"],
+        Value::Null,
+        "{}",
+        run.document()
+    );
+    assert_eq!(
+        first_diagnostic(&run)["code"],
+        "invalid_package",
+        "{}",
+        run.document()
+    );
 }
 
 /// FR-850-AC-6 (the cases the admission tests above leave): an identity file
@@ -352,7 +382,10 @@ fn a_foreign_identity_format_refuses_and_an_absent_equality_file_is_admitted() {
 
     let mut foreign: Value = serde_json::from_slice(&rows).expect("identities JSON");
     foreign["format"] = json!("filament.checked-handoff.identities/0");
-    ws.write(&handoff_file("identities.json"), foreign.to_string().as_bytes());
+    ws.write(
+        &handoff_file("identities.json"),
+        foreign.to_string().as_bytes(),
+    );
     let run = analyze_members(&ws, "analyze-foreign-identities.json", &members);
     let diagnostic = first_diagnostic(&run);
     assert_eq!(diagnostic["code"], "invalid_package", "{diagnostic}");
@@ -397,7 +430,13 @@ fn reach_three() -> &'static str {
 /// resolves them through it with the source route's records, an absent name
 /// is `unknown-claim`, and an uncovered or duplicate name table refuses the
 /// request before any engine runs.
-#[trace("TC-2967", "FSpec-TC-2011", "FR-850-AC-7", "FR-940-AC-7", "FSpec-FR-322-AC-457")]
+#[trace(
+    "TC-2967",
+    "FSpec-TC-2011",
+    "FR-850-AC-7",
+    "FR-940-AC-7",
+    "FSpec-FR-322-AC-457"
+)]
 #[test]
 #[ignore = "QSL-2402: the checked package's claim_names table and package-route claim resolution through it not implemented yet"]
 fn package_claims_resolve_through_the_claim_name_table() {
@@ -416,10 +455,15 @@ fn package_claims_resolve_through_the_claim_name_table() {
 
     let run = analyze_members(&ws, "analyze-claim-names.json", &members);
     for index in 0..2 {
-        assert_eq!(run.item(index)["record"], source.item(index)["record"], "{index}");
+        assert_eq!(
+            run.item(index)["record"],
+            source.item(index)["record"],
+            "{index}"
+        );
     }
     assert_eq!(
-        run.item(2)["record"]["diagnostic"]["cause"], "unknown-claim",
+        run.item(2)["record"]["diagnostic"]["cause"],
+        "unknown-claim",
         "{}",
         run.item(2)
     );
@@ -494,7 +538,10 @@ fn an_absent_handoff_or_package_file_refuses_missing_file() {
     for (name, request) in [("no-directory", &elsewhere), ("no-package", &members)] {
         let run = analyze_members(&ws, &format!("analyze-{name}.json"), request);
         let diagnostic = first_diagnostic(&run);
-        assert_eq!(diagnostic["code"], "invalid_package", "{name}: {diagnostic}");
+        assert_eq!(
+            diagnostic["code"], "invalid_package",
+            "{name}: {diagnostic}"
+        );
         assert_eq!(diagnostic["cause"], "missing-file", "{name}: {diagnostic}");
         assert_eq!(run.document()["items"], json!([]), "{name}");
         assert_eq!(run.exit, 20, "{name}");

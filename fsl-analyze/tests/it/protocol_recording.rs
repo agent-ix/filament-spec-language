@@ -1079,12 +1079,10 @@ fn an_unregistered_compensation_is_not_required_when_its_effect_was_not_observed
     closed["closure"]["premises"] = json!([{"kind":"execution", "node":"Pay::Done"}]);
     let assessed =
         assess_recording(&package, closed.to_string().as_bytes()).expect("readable paid recording");
-    assert!(
-        !assessed
-            .obligations
-            .iter()
-            .any(|entry| entry.obligation.kind == "compensation")
-    );
+    assert!(!assessed
+        .obligations
+        .iter()
+        .any(|entry| entry.obligation.kind == "compensation"));
 }
 
 /// Trace: FR-895-AC-2.

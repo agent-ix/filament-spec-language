@@ -548,6 +548,8 @@ pub(super) struct HandoffSelection {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct FileSelection {
+    /// Deserialized so the selection's shape is validated; no consumer reads it yet.
+    #[allow(dead_code)]
     pub file: String,
 }
 

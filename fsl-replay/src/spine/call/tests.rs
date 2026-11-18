@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
-use crate::spine::{DependencyInput, compose};
+use crate::spine::{compose, DependencyInput};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
     BoundViolation, CardinalityBound, CollectionKind, Incomplete, Integer, Value,
@@ -114,8 +114,8 @@ pub(in crate::spine) fn lookup_driver_context(
     use filament_semantic_value::object_closure::ObjectClosure;
     use fsl_semantics::model::dispatch::GeneralizationClosure;
     use fsl_semantics::model::population::{
-        AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, PopulationDocument,
-        PopulationMember, admit_binding,
+        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
+        PopulationDocument, PopulationMember,
     };
 
     let cancel = Cancel::new();
@@ -596,7 +596,7 @@ fn synthetic_model(
         DomainPackage, DomainPackageRecord, DomainPackageRef, Extent, ObjectTypeRecord,
         PopulationRecord,
     };
-    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
+    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
 
     let object = DeclarationKey::fixture(format!("{placeholder}/A"));
     let population = DeclarationKey::fixture(format!("{placeholder}/P"));
@@ -641,7 +641,7 @@ fn synthetic_reference_hierarchy(
     use fsl_semantics::model::domain_package::{
         DomainPackage, DomainPackageRecord, DomainPackageRef, ObjectTypeRecord,
     };
-    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
+    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
 
     let root = DeclarationKey::fixture(format!("{placeholder}/Root"));
     let target = DeclarationKey::fixture(format!("{placeholder}/T"));
@@ -695,8 +695,8 @@ fn tc_792_population_and_foreign_model_admission_keep_typed_causes() {
     use fsl_semantics::model::intake::SelectedModel;
     use fsl_semantics::model::object_environment::ObjectEnvironment;
     use fsl_semantics::model::population::{
-        AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, PopulationDocument,
-        PopulationMember, admit_binding,
+        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
+        PopulationDocument, PopulationMember,
     };
 
     let types = TypeEnvironment::new([], []).unwrap();
@@ -1008,8 +1008,8 @@ fn tc_792_lookup_present_absent_malformed_and_accounting_vectors_preserve_owners
     use filament_semantic_value::absence::AbsenceMode;
     use fsl_semantics::model::dispatch::GeneralizationClosure;
     use fsl_semantics::model::population::{
-        AdmissionMeter, AdmissionOutcome, LookupKey, LookupOutcome, PopulationAdmissionLimits,
-        PopulationDocument, PopulationMember, admit_binding, lookup,
+        admit_binding, lookup, AdmissionMeter, AdmissionOutcome, LookupKey, LookupOutcome,
+        PopulationAdmissionLimits, PopulationDocument, PopulationMember,
     };
 
     let (view, object_type, population_key) = synthetic_model("tc-792-lookup");
@@ -1359,8 +1359,8 @@ fn an_execute_accounting_limit_carries_its_kind_bound_counter_and_field() {
 fn a_stage_limit_refusal_of_run_is_incomplete_and_exits_22() {
     use crate::spine::CheckingLimits;
     use filament_semantic_value::catalog::Category;
-    use fsl_foundation::Setting;
     use fsl_foundation::diagnostic::LimitKind;
+    use fsl_foundation::Setting;
     let mut source_limit = SpineLimits::default();
     source_limit.source.source_bytes = 1;
     let checking_limit = SpineLimits {
@@ -1457,15 +1457,13 @@ fn tc_452_step_4_outcome_mapping_covers_every_category() {
     )
     .unwrap();
     let graph = compiled.package.graph();
-    let sources = vec![
-        Source::read(
-            source(),
-            "tc-452-f.native",
-            FIXTURE_F.as_bytes(),
-            fsl_foundation::source::MAX_SOURCE_BYTES,
-        )
-        .unwrap(),
-    ];
+    let sources = vec![Source::read(
+        source(),
+        "tc-452-f.native",
+        FIXTURE_F.as_bytes(),
+        fsl_foundation::source::MAX_SOURCE_BYTES,
+    )
+    .unwrap()];
 
     let convert =
         |outcome: FamilyOutcome<Value>| convert_outcome(evaluation(outcome), graph, &sources);

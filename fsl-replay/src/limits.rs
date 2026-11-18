@@ -10,8 +10,8 @@
 
 use filament_exact::{LimitKind as Counter, ScalarLimits};
 use fsl_eval::execution::PrepareLimits;
-use fsl_eval::simulation::Limits as ExploreLimits;
 use fsl_eval::simulation::model::ExpansionLimits;
+use fsl_eval::simulation::Limits as ExploreLimits;
 use fsl_eval::temporal::evidence::TemporalEvidenceLimits;
 use fsl_foundation::{AccountingSetting, Setting, SettingLimits, SettingName, UsageRefusal};
 use fsl_semantics::library::bundle::PackageLimits as LibraryLimits;
@@ -20,7 +20,7 @@ use fsl_semantics::model::population::PopulationAdmissionLimits;
 
 use crate::bounds::ReplayLimits;
 use crate::model_check::limits::ModelCheckLimits;
-use crate::spine::{DEFAULT_WORK_UNITS, SpineLimits, default_accounting};
+use crate::spine::{default_accounting, SpineLimits, DEFAULT_WORK_UNITS};
 
 /// The call's accounting limits (`filament.value.accounting/v1`): each of the
 /// ten counters is an [`AccountingSetting`] named `accounting.<counter>` (FR-255's

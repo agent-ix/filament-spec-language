@@ -1283,8 +1283,8 @@ mod map_source {
         assert_eq!(whole(call(&linked, "look", vec![held(), integer(1)])), 10);
         assert_eq!(whole(call(&linked, "look", vec![held(), integer(2)])), 20);
         assert_eq!(whole(call(&linked, "look", vec![held(), integer(3)])), 0);
-        assert_eq!(truth(call(&linked, "has", vec![held(), integer(1)])), true);
-        assert_eq!(truth(call(&linked, "has", vec![held(), integer(0)])), false);
+        assert!(truth(call(&linked, "has", vec![held(), integer(1)])));
+        assert!(!truth(call(&linked, "has", vec![held(), integer(0)])));
         assert_eq!(whole(call(&linked, "entries", vec![held()])), 2);
         assert_eq!(whole(call(&linked, "entries", vec![map(&[])])), 0);
     }

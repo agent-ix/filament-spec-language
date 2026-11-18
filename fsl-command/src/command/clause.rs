@@ -17,11 +17,7 @@ fn invalid(member: impl Into<String>, reason: impl Into<String>) -> RunCause {
     }
 }
 
-fn observation(
-    intake: &mut Intake<'_>,
-    key: &str,
-    file: &str,
-) -> Result<SuppliedObservation> {
+fn observation(intake: &mut Intake<'_>, key: &str, file: &str) -> Result<SuppliedObservation> {
     let remaining = intake.remaining;
     let bytes = intake.file(file, remaining)?;
     let mut observation = SuppliedObservation::from_document(key, bytes)

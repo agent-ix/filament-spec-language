@@ -55,8 +55,9 @@ pub use closure::{PackageClosure, PackageTask};
 pub use evaluate::refusal_record;
 pub use family::{InvalidQualifiedName, QualifiedName};
 pub use protocol_slot::{
-    BINDER_ACCOUNTING_VERSION, BinderCharges, ChargeAmounts, ProtocolReferenceOccurrence,
-    ProtocolSlot, ProtocolSlotEvaluation, ProtocolSuppliedValue, ProtocolSupply, SuppliedValue,
+    BinderCharges, ChargeAmounts, ProtocolReferenceOccurrence, ProtocolSlot,
+    ProtocolSlotEvaluation, ProtocolSuppliedValue, ProtocolSupply, SuppliedValue,
+    BINDER_ACCOUNTING_VERSION,
 };
 pub use s6a::separation::{
     ClauseEvaluation, ClauseRead, InvocationBinding, ObservationIdentity, RuntimeValuePath,

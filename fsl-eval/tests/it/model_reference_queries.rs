@@ -39,7 +39,7 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use filament_semantic_value::object_closure::ObjectClosure;
-use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName, undefined_contract_code};
+use fsl_eval::value::{undefined_contract_code, CheckedPackageEvaluation, QualifiedName};
 use fsl_forms::{BinaryOperator, Expression, FunctionDeclaration, TypeForm};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
@@ -52,12 +52,12 @@ use fsl_semantics::model::domain_package::{
     ObjectTypeRecord, OperationEffect, PopulationRecord, ValueTypeRef,
 };
 use fsl_semantics::model::key::EffectiveId;
-use fsl_semantics::model::normalize::{EffectiveView, NormalizeOutcome, normalize};
+use fsl_semantics::model::normalize::{normalize, EffectiveView, NormalizeOutcome};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::population::{
-    AdmissionMeter, AdmissionOutcome, InvocationContext, InvocationDelta,
-    PopulationAdmissionLimits, PopulationBinding, PopulationDocument, PopulationMember,
-    admit_binding, admit_invocation,
+    admit_binding, admit_invocation, AdmissionMeter, AdmissionOutcome, InvocationContext,
+    InvocationDelta, PopulationAdmissionLimits, PopulationBinding, PopulationDocument,
+    PopulationMember,
 };
 use ix_trace_rs::trace;
 
@@ -3878,9 +3878,9 @@ fn tc_441_population_maximum_absence_must_match_at_admission() {
 fn a_refused_lookup_builds_a_record_at_the_lookup_expression() {
     use filament_semantic_value::catalog::Category;
     use fsl_forms::{DeclarationSpans, ExpressionSpans};
-    use fsl_foundation::Span;
     use fsl_foundation::diagnostic::Locus;
     use fsl_foundation::source::provenance::SourceRegion;
+    use fsl_foundation::Span;
 
     let scenario = scenario();
     let source = fsl_semantics::check::fixture_source();
@@ -4197,16 +4197,14 @@ fn empty_admitted_member_faults_through_public_call_and_evaluate_with_exact_pref
                     .with_bounds(vec!["1".to_owned()]),
                 )],
                 TypeForm::collection(CollectionKind::Set, crate::support::type_form::SPAN)
-                    .with_arguments(vec![
-                        TypeForm::builtin(
-                            fsl_forms::BuiltinType::Reference,
-                            crate::support::type_form::SPAN,
-                        )
-                        .with_arguments(vec![TypeForm::name(
-                            "M::A",
-                            crate::support::type_form::SPAN,
-                        )]),
-                    ])
+                    .with_arguments(vec![TypeForm::builtin(
+                        fsl_forms::BuiltinType::Reference,
+                        crate::support::type_form::SPAN,
+                    )
+                    .with_arguments(vec![TypeForm::name(
+                        "M::A",
+                        crate::support::type_form::SPAN,
+                    )])])
                     .with_bounds(vec!["0".to_owned(), "1".to_owned()]),
                 None,
                 query.clone(),
@@ -4392,7 +4390,7 @@ fn empty_admitted_member_faults_through_public_call_and_evaluate_with_exact_pref
 #[trace("TC-916", "FR-090-AC-14", "FR-090-AC-16")]
 fn model_query_shapes_fault_at_the_real_producers_without_added_query_charges() {
     use fsl_semantics::value::model_query::{
-        ModelQueryHalt, evaluate_all_instances, evaluate_lookup,
+        evaluate_all_instances, evaluate_lookup, ModelQueryHalt,
     };
     let scenario = scenario();
     let mut meter = Meter::new(SCALAR_UNLIMITED);

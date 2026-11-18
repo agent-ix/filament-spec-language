@@ -2791,8 +2791,7 @@ mod tests {
                 "en-7"
             ]
         );
-        let [en1, en4, en5, _en6, value, contract, protocol, en7] = registrations.as_slice()
-        else {
+        let [en1, en4, en5, _en6, value, contract, protocol, en7] = registrations.as_slice() else {
             panic!(
                 "the linked engine set contains EN-1, EN-4, EN-5, EN-6, the two check arms, \
                  the protocol analysis engine and EN-7"

@@ -119,8 +119,11 @@ pub trait AnalysisView: sealed::Sealed {
     /// source but carry no name row in the package (FR-850 claim lookup).
     fn unnamed_claims(&self) -> Vec<&CheckedNodeId> {
         use filament_contract_model::{CheckedNodePathSegment, CheckedOccurrenceRole};
-        let named: Vec<&CheckedNodeId> =
-            self.clause_names().iter().map(|row| &row.declaration).collect();
+        let named: Vec<&CheckedNodeId> = self
+            .clause_names()
+            .iter()
+            .map(|row| &row.declaration)
+            .collect();
         self.package()
             .resolved_graph()
             .nodes

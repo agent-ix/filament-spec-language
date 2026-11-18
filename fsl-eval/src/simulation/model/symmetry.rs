@@ -13,16 +13,16 @@ use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
-    CollectionKind, FieldValue, ObjectId, ObjectReference, OptionValue, UnionValue, UniverseId,
-    Value, compare_keys, from_admitted, from_admitted_map, from_admitted_slots,
+    compare_keys, from_admitted, from_admitted_map, from_admitted_slots, CollectionKind,
+    FieldValue, ObjectId, ObjectReference, OptionValue, UnionValue, UniverseId, Value,
 };
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::model::state::{ModelState, StateObject};
 use quire_canonical::Limits;
 
-use super::encode::{self, Enc, declaration_text};
+use super::encode::{self, declaration_text, Enc};
 use super::walk::stop;
-use super::{BROKEN, ModelSimState, ModelSystem, identity_limits};
+use super::{identity_limits, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::reduction::{Permutation, SymmetryGroup};
 

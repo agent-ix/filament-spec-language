@@ -132,7 +132,7 @@ fn admitted_owner_fixture(
     use fsl_semantics::model::domain_package::{
         DomainPackage, DomainPackageRecord, DomainPackageRef, ObjectTypeRecord,
     };
-    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
+    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
 
     let owner_key = DeclarationKey::fixture("model.A");
     let domain = DomainPackage::new(
@@ -738,16 +738,14 @@ fn quantity_operation_and_ordering_rejections_reach_the_real_typed_operators() {
         graph.dispatch_tables(),
     );
     machine.units = UnitScope::new(&units);
-    assert!(
-        !machine
-            .order(
-                OrderingOperator::Less,
-                OrderedKind::Quantities,
-                &left,
-                &left
-            )
-            .unwrap_or_else(|_| panic!("same-unit comparison"))
-    );
+    assert!(!machine
+        .order(
+            OrderingOperator::Less,
+            OrderedKind::Quantities,
+            &left,
+            &left
+        )
+        .unwrap_or_else(|_| panic!("same-unit comparison")));
     set_values(&mut machine, vec![left.clone(), left.clone()]);
     machine
         .apply(node.root())
@@ -1361,11 +1359,10 @@ fn edge_traversal_shape_probes_reach_all_seven_detecting_sites() {
             &mut meter,
             graph.dispatch_tables(),
         );
-        assert!(
-            m.edge_targets(literal.root(), &reference(), &field)
-                .unwrap_or_else(|_| panic!("optional empty edge"))
-                .is_empty()
-        );
+        assert!(m
+            .edge_targets(literal.root(), &reference(), &field)
+            .unwrap_or_else(|_| panic!("optional empty edge"))
+            .is_empty());
         assert!(meter.admitted_charges().is_empty());
     }
 }
@@ -1904,11 +1901,9 @@ fn admitted_stack_values_bound_locals_and_branch_keep_the_uncharged_valid_prefix
         matches!(values.as_slice(), [Value::Integer(value), Value::Boolean(true)] if value == &Integer::one())
     );
     assert!(matches!(machine.values.as_slice(), [Value::Boolean(false)]));
-    assert!(
-        !machine
-            .pop_boolean()
-            .unwrap_or_else(|_| panic!("Boolean extraction"))
-    );
+    assert!(!machine
+        .pop_boolean()
+        .unwrap_or_else(|_| panic!("Boolean extraction")));
     machine.push_value(Value::Integer(Integer::one()), false);
     assert_eq!(
         machine

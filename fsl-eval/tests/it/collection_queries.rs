@@ -1592,10 +1592,9 @@ fn tc_500_a_running_total_outside_the_domain_is_undefined_at_the_sum_node() {
         run.charges.last(),
         Some(&ChargePoint::IntegerArithmeticArithmetic)
     );
-    assert!(
-        !run.charges
-            .contains(&ChargePoint::IntegerArithmeticResultRetain)
-    );
+    assert!(!run
+        .charges
+        .contains(&ChargePoint::IntegerArithmeticResultRetain));
     assert!(!run.charges.contains(&ChargePoint::CollectionResultRetain));
 }
 
@@ -1738,14 +1737,10 @@ fn tc_500_an_empty_sum_whose_domain_excludes_zero_is_undefined_at_the_sum_node()
         evaluation.location.as_ref(),
         Some(checked.root().location())
     );
-    assert!(
-        !crate::support::admitted_charge_points(&meter)
-            .contains(&ChargePoint::CollectionResultRetain)
-    );
-    assert!(
-        !crate::support::admitted_charge_points(&meter)
-            .contains(&ChargePoint::IntegerArithmeticArithmetic)
-    );
+    assert!(!crate::support::admitted_charge_points(&meter)
+        .contains(&ChargePoint::CollectionResultRetain));
+    assert!(!crate::support::admitted_charge_points(&meter)
+        .contains(&ChargePoint::IntegerArithmeticArithmetic));
 }
 
 /// FSpec FR-041's example domain: `Amount` 1..20, `N = 5`, `Total` 0..100 and

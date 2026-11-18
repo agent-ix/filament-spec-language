@@ -981,12 +981,12 @@ pub(crate) enum WalkFailure {
     /// A function parameter's type has no native run value form.
     FunctionParameterType {
         position: usize,
-        view: UnsupportedView,
+        view: Box<UnsupportedView>,
     },
     /// A function result's type has no native run value form.
     FunctionResultType {
         function: String,
-        view: UnsupportedView,
+        view: Box<UnsupportedView>,
     },
     /// The equality rows do not give an application its decision.
     Equality(EqualityWitnessRefusal),
@@ -1072,11 +1072,11 @@ impl<'wire> BareWalker<'wire> {
             node_value_type(&self.index.types(), target).map_err(|error| match error {
                 TypeError::Unsupported => WalkFailure::FunctionResultType {
                     function,
-                    view: UnsupportedView {
+                    view: Box::new(UnsupportedView {
                         package: self.index.admitted.name().to_owned(),
                         locus: ViewLocus::node(result_node),
                         reason: UnsupportedReason::MissingTypeRepresentation,
-                    },
+                    }),
                 },
                 TypeError::Fault(fault) => WalkFailure::Fault(fault),
             })?;
@@ -1132,7 +1132,10 @@ impl<'wire> BareWalker<'wire> {
                     matches!(body, CheckedTerm::Reference { target } if target == &node);
                 match function_type_position(&view.reason, parameter_position, body_is_node) {
                     Some(FunctionTypePosition::Parameter(position)) => {
-                        Err(WalkFailure::FunctionParameterType { position, view })
+                        Err(WalkFailure::FunctionParameterType {
+                            position,
+                            view: Box::new(view),
+                        })
                     }
                     Some(FunctionTypePosition::Result) => {
                         let function = selected
@@ -1143,7 +1146,10 @@ impl<'wire> BareWalker<'wire> {
                             .ok_or_else(|| {
                                 WalkFailure::Fault(fault("reader-function-name-is-admitted"))
                             })?;
-                        Err(WalkFailure::FunctionResultType { function, view })
+                        Err(WalkFailure::FunctionResultType {
+                            function,
+                            view: Box::new(view),
+                        })
                     }
                     None => Err(WalkFailure::Unsupported(view)),
                 }

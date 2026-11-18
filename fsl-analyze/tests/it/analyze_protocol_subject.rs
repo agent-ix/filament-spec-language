@@ -71,10 +71,19 @@ fn a_race_freedom_item_over_a_parallel_is_refuted() {
     let race = &run.item(0)["counterexample"]["counterexample"]["kind"];
     assert!(race.to_string().contains("race"), "{}", run.document());
     let ws = Workspace::new("protocol-race-default-items");
-    let defaults = analyze(&litmus_request(&ws, &body, json!({"subject": sb_subject()})));
-    let items = defaults.document()["items"].as_array().cloned().unwrap_or_default();
+    let defaults = analyze(&litmus_request(
+        &ws,
+        &body,
+        json!({"subject": sb_subject()}),
+    ));
+    let items = defaults.document()["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(
-        items.iter().any(|item| item["request"]["temporal"]["item_kind"] == "race-freedom"),
+        items
+            .iter()
+            .any(|item| item["request"]["temporal"]["item_kind"] == "race-freedom"),
         "{}",
         defaults.document()
     );
@@ -104,12 +113,16 @@ fn bad_memory_selections_refuse_the_request() {
         ));
         assert_eq!(run.exit, 20, "{}", run.document());
         assert!(
-            run.document()["items"].as_array().is_some_and(Vec::is_empty),
+            run.document()["items"]
+                .as_array()
+                .is_some_and(Vec::is_empty),
             "{}",
             run.document()
         );
         assert!(
-            !run.document().to_string().contains("not read by this build"),
+            !run.document()
+                .to_string()
+                .contains("not read by this build"),
             "{}",
             run.document()
         );
@@ -181,8 +194,16 @@ fn a_constrained_store_buffer_run_settles_constraint_reached() {
         json!({"subject": sb_subject(), "memory": memory, "items": [item(true)]}),
     ));
     let record = &run_with.item(0)["record"];
-    assert_eq!(label(&run_with.item(0)), "inconclusive", "{}", run_with.document());
-    assert!(record.to_string().contains("constraint-reached"), "{record}");
+    assert_eq!(
+        label(&run_with.item(0)),
+        "inconclusive",
+        "{}",
+        run_with.document()
+    );
+    assert!(
+        record.to_string().contains("constraint-reached"),
+        "{record}"
+    );
     assert!(run_with.item(0).get("counterexample").is_none(), "{record}");
     assert!(record.to_string().contains("max_store_buffer"), "{record}");
     let ws = Workspace::new("protocol-memory-bound-reached");
@@ -192,7 +213,9 @@ fn a_constrained_store_buffer_run_settles_constraint_reached() {
         json!({"subject": sb_subject(), "memory": memory, "items": [item(false)]}),
     ));
     assert!(
-        run_without.item(0)["record"].to_string().contains("memory-bound-reached"),
+        run_without.item(0)["record"]
+            .to_string()
+            .contains("memory-bound-reached"),
         "{}",
         run_without.document()
     );

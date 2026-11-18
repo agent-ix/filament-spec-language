@@ -17,9 +17,9 @@ use filament_semantic_value::declaration::{
 use filament_semantic_value::object_closure::ObjectClosure;
 use fsl_replay::spine::{self, ParseRequest, SpineLimits};
 use fsl_replay::{
-    ApplicationEnvironment, CallableSelection, CheckedClosureCompilation, CheckedClosureHandle,
-    DependencyInput, NodeKey, NominalDeclaration, NominalDeclarationForm, NominalDeclarationMember,
-    ReplayLimits, SourceIdentity, StageLimits, acquire_checked_closure,
+    acquire_checked_closure, ApplicationEnvironment, CallableSelection, CheckedClosureCompilation,
+    CheckedClosureHandle, DependencyInput, NodeKey, NominalDeclaration, NominalDeclarationForm,
+    NominalDeclarationMember, ReplayLimits, SourceIdentity, StageLimits,
 };
 use ix_trace_rs::trace;
 use std::sync::{Arc, Mutex};

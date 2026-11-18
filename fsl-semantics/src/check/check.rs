@@ -4411,9 +4411,7 @@ impl<'a> Typer<'a> {
             | ValueType::Uuid
             | ValueType::String
             | ValueType::Timestamp => return Err(mismatch(&location.child(0))),
-            ValueType::Bytes | ValueType::JsonObject => {
-                return Err(mismatch(&location.child(0)))
-            }
+            ValueType::Bytes | ValueType::JsonObject => return Err(mismatch(&location.child(0))),
             // FR-497-AC-2: a carried quantity is no operand of unary `-`.
             ValueType::CarriedQuantity(_) => return Err(mismatch(location)),
         };

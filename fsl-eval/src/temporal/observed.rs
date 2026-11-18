@@ -21,13 +21,13 @@ use fsl_semantics::check::{FormulaNodeId, TemporalClauseNode};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::engine::DecisiveSearch;
-use super::finite_window::{TimestampedTrace, Valuation, WindowEvaluation, evaluate_finite_window};
+use super::finite_window::{evaluate_finite_window, TimestampedTrace, Valuation, WindowEvaluation};
 use super::tape::{TapeEntry, TapeLetter, TapeReading};
 use super::{
     AtomReading, CaptureReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
     TemporalRefusal, TemporalTrace, UndefinedCause,
 };
-use crate::value::{CheckedPackageEvaluation, evaluate_capture};
+use crate::value::{evaluate_capture, CheckedPackageEvaluation};
 use filament_eval::{CallFailure, Evaluation};
 
 /// Why a `holds` condition stopped the run without a reading, kept whole so

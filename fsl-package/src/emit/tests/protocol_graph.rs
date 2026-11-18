@@ -1423,19 +1423,20 @@ fn protocol_results_preserve_independent_emission_when_a_join_is_refused() {
     ));
     assert_eq!(no_owner_pair.exit_code(), 0);
     assert_eq!(no_owner_pair.diagnostics().count(), 0);
-    let [
-        ProtocolEmissionResult::Emitted {
-            nodes: first_nodes, ..
-        },
-        ProtocolEmissionResult::Emitted {
-            nodes: second_nodes, ..
-        },
-    ] = no_owner_pair.results()
+    let [ProtocolEmissionResult::Emitted {
+        nodes: first_nodes, ..
+    }, ProtocolEmissionResult::Emitted {
+        nodes: second_nodes,
+        ..
+    }] = no_owner_pair.results()
     else {
         panic!("both Flow and NoOwner emit: {:?}", no_owner_pair.results());
     };
     assert_eq!(first_nodes, baseline, "Flow remains byte-identical");
-    assert!(!second_nodes.is_empty(), "NoOwner writes its clause and role");
+    assert!(
+        !second_nodes.is_empty(),
+        "NoOwner writes its clause and role"
+    );
 
     let dependent = good.replace("protocol Flow", "protocol Dependent").replace(
         "join all [a, b]",

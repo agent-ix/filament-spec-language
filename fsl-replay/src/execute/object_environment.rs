@@ -13,8 +13,8 @@ use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::RawSourceRef;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{
-    AdmissionFailure, BundleKey, DocumentRef, ObservationOrigin, ObservationRole, ResolveBundle,
-    admit_object_environment,
+    admit_object_environment, AdmissionFailure, BundleKey, DocumentRef, ObservationOrigin,
+    ObservationRole, ResolveBundle,
 };
 
 use super::{Declaring, Recompiled, ReplayRefusal};

@@ -7,8 +7,8 @@ use filament_eval::{
 use filament_exact::{Integer, Meter, Outcome, ScalarLimits, Value};
 use filament_semantic_value::object_closure::ObjectClosure;
 use fsl_replay::{
-    ApplicationEnvironment, DependencyInput, Identifier, QualifiedName, ReplayLimits,
-    SourceIdentity, StageLimits, acquire_checked_closure, call_site,
+    acquire_checked_closure, call_site, ApplicationEnvironment, DependencyInput, Identifier,
+    QualifiedName, ReplayLimits, SourceIdentity, StageLimits,
 };
 
 const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction f using v(x: Int[0, 9]): Integer pure { x }\n";

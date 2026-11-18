@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use filament_exact::{Incomplete, ScalarLimits, Value, compare_keys};
+use filament_exact::{compare_keys, Incomplete, ScalarLimits, Value};
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
@@ -34,8 +34,8 @@ use filament_semantic_value::catalog::Category;
 use fsl_foundation::source::provenance::SourceRegion;
 pub use wire::CauseCodecError;
 pub(crate) use wire::{
-    DecisiveWire, ProtocolWitnessWire, RecordWire, decode_state_value, encode_state_value,
-    validate_state_element,
+    decode_state_value, encode_state_value, validate_state_element, DecisiveWire,
+    ProtocolWitnessWire, RecordWire,
 };
 
 /// Serialize FR-207's canonical runtime value path for command result
@@ -1744,9 +1744,9 @@ mod tests {
     fn tc_192_function_exemplar_reuses_the_four_types_with_none_new() {
         use crate::identity::QualifiedName;
         use crate::proof_result::{
-            BackendProviderSource, TerminalRecord, TerminalValue, read_backend_provider_envelope,
+            read_backend_provider_envelope, BackendProviderSource, TerminalRecord, TerminalValue,
         };
-        use crate::witness::{NoPayload, Witness, WitnessEnvelope, WitnessPacket, origin};
+        use crate::witness::{origin, NoPayload, Witness, WitnessEnvelope, WitnessPacket};
         use filament_exact::Identifier;
         use fsl_foundation::source::provenance::OccurrenceKey;
 

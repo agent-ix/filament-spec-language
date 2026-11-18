@@ -26,7 +26,7 @@ mod state_compensation;
 
 #[path = "../../../../fsl-semantics/tests/support/tc1070.rs"]
 mod tc1070;
-use tc1070::{SOURCE, document, document_ep, model};
+use tc1070::{document, document_ep, model, SOURCE};
 
 #[test]
 fn ep_extension_is_admitted_by_the_shared_tc1070_fixture() {

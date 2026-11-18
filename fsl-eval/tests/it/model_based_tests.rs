@@ -68,7 +68,9 @@ fn generated_coverage(max_trace_length: u64) -> Option<serde_json::Value> {
 #[ignore = "QSL-2237: operation coverage in the model-based test result not implemented yet"]
 fn an_unreachable_operation_is_reported_uncovered_with_its_reason() {
     let record = generated_coverage(8).expect("the run's result record carries `operations`");
-    let entries = record["operations"].as_array().expect("one entry per operation");
+    let entries = record["operations"]
+        .as_array()
+        .expect("one entry per operation");
     let names: Vec<&str> = entries
         .iter()
         .map(|entry| entry["operation"]["name"].as_str().unwrap_or_default())
@@ -93,7 +95,11 @@ fn an_operation_beyond_the_trace_bound_is_uncovered_within_the_bound() {
     let record = generated_coverage(3).expect("the run's result record carries `operations`");
     let reset = record["operations"]
         .as_array()
-        .and_then(|entries| entries.iter().find(|entry| entry["operation"]["name"] == "reset"))
+        .and_then(|entries| {
+            entries
+                .iter()
+                .find(|entry| entry["operation"]["name"] == "reset")
+        })
         .expect("an entry for `reset`");
     assert_eq!(reset["status"], "uncovered", "{reset}");
     assert_eq!(reset["reason"], "unreachable-within-bound", "{reset}");
@@ -110,5 +116,8 @@ fn operation_coverage_is_deterministic_and_settles_no_verdict() {
     let second = generated_coverage(8).expect("the run's result record carries `operations`");
     assert_eq!(first["operations"], second["operations"]);
     assert_eq!(first["evidence"], "tested", "{first}");
-    assert!(first.get("verdict").is_none_or(serde_json::Value::is_null), "{first}");
+    assert!(
+        first.get("verdict").is_none_or(serde_json::Value::is_null),
+        "{first}"
+    );
 }

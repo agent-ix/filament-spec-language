@@ -316,7 +316,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
                 });
             }
             function_evaluations = 1;
-            Ok(Machine::observing_bare_package(
+            Machine::observing_bare_package(
                 &world,
                 objects,
                 meter,
@@ -330,7 +330,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
                 },
             )
             .run(ReaderNode::root(&projection), selected.slots, arguments)
-            .map_err(CallFailure::Fault)?)
+            .map_err(CallFailure::Fault)
         })();
         let ledger = capture.finish(meter);
         ApplicationObservation {

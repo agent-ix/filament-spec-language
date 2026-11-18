@@ -22,12 +22,9 @@ fn workspace_root() -> PathBuf {
 fn metadata(no_deps: bool) -> Value {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let mut command = Command::new(cargo);
-    command.current_dir(workspace_root()).args([
-        "metadata",
-        "--locked",
-        "--format-version",
-        "1",
-    ]);
+    command
+        .current_dir(workspace_root())
+        .args(["metadata", "--locked", "--format-version", "1"]);
     if no_deps {
         command.arg("--no-deps");
     }
@@ -67,7 +64,7 @@ fn pinned_standard() -> (String, String) {
 fn pinned_fixture() -> Value {
     let bytes = filament_specification::published_file(FIXTURE)
         .expect("the pinned standard publishes the fixture");
-    serde_json::from_slice(&bytes).expect("fixture is JSON")
+    serde_json::from_slice(bytes).expect("fixture is JSON")
 }
 
 fn scanned_files(directory: &Path, out: &mut Vec<PathBuf>) {
@@ -200,10 +197,9 @@ fn semver(version: &str) -> (u64, u64, u64) {
 }
 
 fn pinned_inventory() -> Value {
-    let bytes = filament_specification::published_file(
-        "proposals/consumer-facades/consumer-facts.json",
-    )
-    .expect("the pinned standard publishes the consumer-fact inventory");
+    let bytes =
+        filament_specification::published_file("proposals/consumer-facades/consumer-facts.json")
+            .expect("the pinned standard publishes the consumer-fact inventory");
     serde_json::from_slice(bytes).expect("inventory JSON")
 }
 
@@ -249,16 +245,11 @@ fn the_pinned_standard_version_equals_its_tag_and_exposes_published_files() {
         filament_specification::published_file(FIXTURE).is_some(),
         "published_file resolves the fixture from the pinned package"
     );
-    assert!(
-        filament_specification::published_file(
-            "proposals/consumer-facades/consumer-facts.json"
-        )
-        .is_some()
-    );
-    assert!(
-        filament_specification::published_files("proposals/")
-            .any(|(path, _)| path == FIXTURE)
-    );
+    assert!(filament_specification::published_file(
+        "proposals/consumer-facades/consumer-facts.json"
+    )
+    .is_some());
+    assert!(filament_specification::published_files("proposals/").any(|(path, _)| path == FIXTURE));
 }
 
 #[test]

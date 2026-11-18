@@ -10,8 +10,8 @@ use std::path::Path;
 
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::document::{
-    AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, SubjectSelection, analyze_document,
-    resolve_items, resolve_package_items, settle_package_items,
+    analyze_document, resolve_items, resolve_package_items, settle_package_items,
+    AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, SubjectSelection,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
@@ -227,8 +227,8 @@ fn run_package(
                 message: format!("stage_limit_exceeded: {setting}: {failure:?}"),
             }
         })?;
-    let items = resolve_package_items(&package, selection.items.as_deref())
-        .map_err(|pending| RunCause::AnalyzeNotYetImplemented {
+    let items = resolve_package_items(&package, selection.items.as_deref()).map_err(|pending| {
+        RunCause::AnalyzeNotYetImplemented {
             member: "package",
             detail: match pending.request_index {
                 Some(index) => format!(
@@ -236,9 +236,13 @@ fn run_package(
                     index.get(),
                     pending.family.name()
                 ),
-                None => format!(": the {} rule has no package form yet", pending.family.name()),
+                None => format!(
+                    ": the {} rule has no package form yet",
+                    pending.family.name()
+                ),
             },
-        })?;
+        }
+    })?;
     let settled = settle_package_items(items, &engines).map_err(|_| RunCause::AnalyzeFault)?;
     Ok(RunResult {
         exit_code: settled.exit_code,
@@ -251,11 +255,7 @@ fn run_package(
 
 /// The request's inputs and the intake that read them, which still charges
 /// the libraries and domain packages compilation reads.
-fn read<'d>(
-    directory: &'d Path,
-    bytes: &[u8],
-    dependent_bytes: usize,
-) -> Result<Readout<'d>> {
+fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result<Readout<'d>> {
     let request: wire::AnalyzeRequest = request(bytes).map_err(|cause| match cause {
         RunCause::Json(error) => invalid("request", error.to_string()),
         cause => cause,
@@ -811,10 +811,7 @@ fn admit_package(
             "the handoff directory holds no checked package",
         ));
     }
-    let bytes = intake.file(
-        &format!("{handoff}/{PACKAGE_FILE}"),
-        intake.remaining,
-    )?;
+    let bytes = intake.file(&format!("{handoff}/{PACKAGE_FILE}"), intake.remaining)?;
     if request
         .models
         .iter()
@@ -865,33 +862,30 @@ fn admit_package(
             "the handoff directory holds no identity file",
         ));
     }
-    let identity_bytes = intake.file(
-        &format!("{handoff}/{IDENTITIES_FILE}"),
-        intake.remaining,
-    )?;
+    let identity_bytes = intake.file(&format!("{handoff}/{IDENTITIES_FILE}"), intake.remaining)?;
     // One native budget for the pass: the identity read, then the supply's
     // join (FR-531 "One join, then borrowing").
     let mut budget = limits.native_join_limits().budget();
     let identities = fsl_package::ReadIdentityRows::read(&identity_bytes, &admitted, &mut budget)
         .map_err(|refusal| {
-            let cause = match &refusal {
-                fsl_package::IdentityFileRefusal::Malformed { .. } => "malformed-file",
-                fsl_package::IdentityFileRefusal::Format(_) => "unknown-format",
-                fsl_package::IdentityFileRefusal::Unjoined { .. } => "unjoined-row",
-                fsl_package::IdentityFileRefusal::Native(_)
-                | fsl_package::IdentityFileRefusal::Rows(_)
-                | fsl_package::IdentityFileRefusal::SourceObject(_)
-                | fsl_package::IdentityFileRefusal::SourceOperation(_) => "native-witness",
-            };
-            witness_refusal(IDENTITIES_FILE, cause, &refusal.to_string())
-        })?;
+        let cause = match &refusal {
+            fsl_package::IdentityFileRefusal::Malformed { .. } => "malformed-file",
+            fsl_package::IdentityFileRefusal::Format(_) => "unknown-format",
+            fsl_package::IdentityFileRefusal::Unjoined { .. } => "unjoined-row",
+            fsl_package::IdentityFileRefusal::Native(_)
+            | fsl_package::IdentityFileRefusal::Rows(_)
+            | fsl_package::IdentityFileRefusal::SourceObject(_)
+            | fsl_package::IdentityFileRefusal::SourceOperation(_) => "native-witness",
+        };
+        witness_refusal(IDENTITIES_FILE, cause, &refusal.to_string())
+    })?;
     let equality = if directory.join(&handoff).join(EQUALITY_FILE).is_file() {
         let equality_bytes =
             intake.file(&format!("{handoff}/{EQUALITY_FILE}"), intake.remaining)?;
         Some(
-            fsl_package::ReadEqualityRows::read(&equality_bytes, &admitted).map_err(
-                |refusal| witness_refusal(EQUALITY_FILE, "refused-file", &refusal.to_string()),
-            )?,
+            fsl_package::ReadEqualityRows::read(&equality_bytes, &admitted).map_err(|refusal| {
+                witness_refusal(EQUALITY_FILE, "refused-file", &refusal.to_string())
+            })?,
         )
     } else {
         None

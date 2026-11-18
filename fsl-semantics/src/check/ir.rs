@@ -1210,9 +1210,19 @@ pub(crate) fn node_children(kind: &NodeKind<NodeId>) -> Vec<NodeId> {
         | NodeKind::Decimal { left, right, .. }
         | NodeKind::Ieee(_, _, left, right)
         | NodeKind::Quantity(_, left, right)
-        | NodeKind::QuantityScale { quantity: left, factor: right }
-        | NodeKind::QuantityScaleDiv { quantity: left, factor: right }
-        | NodeKind::Index { collection: left, index: right, .. }
+        | NodeKind::QuantityScale {
+            quantity: left,
+            factor: right,
+        }
+        | NodeKind::QuantityScaleDiv {
+            quantity: left,
+            factor: right,
+        }
+        | NodeKind::Index {
+            collection: left,
+            index: right,
+            ..
+        }
         | NodeKind::QuantityPower(left, right)
         | NodeKind::Order(_, _, left, right)
         | NodeKind::Equality(_, _, left, right)

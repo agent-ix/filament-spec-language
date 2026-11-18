@@ -6,15 +6,15 @@
 //! IR's strict reader (FSL's whole I2 read and IR's own); each mutation's
 //! verdict is the reader's, not one the test computes.
 
-use filament_contract_model::{
-    read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
-    CheckedPackageReadLimits, ExactTypeProjectionErrorCode, SelectedExactIdentities,
-};
 use super::population_bound::document;
 use super::protocol_graph::{flow_over, PROFILES};
 use super::protocol_reference::{node_by_id, node_of};
 use super::reachability::{lower_with, model_node, Lowered};
 use super::*;
+use filament_contract_model::{
+    read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
+    CheckedPackageReadLimits, ExactTypeProjectionErrorCode, SelectedExactIdentities,
+};
 
 /// A clause over `over` with a static role on each of the two object types, so
 /// both model declaration nodes are in the graph.

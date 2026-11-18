@@ -17,12 +17,12 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::{EffectiveId, NodeKey, ObjectReference, Value, ValueType};
 use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape, TypeEnvironment};
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_semantics::check::CheckedNode;
 use fsl_semantics::check::footprint::{
-    FootprintObject, FootprintRefusal, SymbolicFootprint, SymbolicLocation, derive_atom_reads,
-    derive_attempt_footprint_fallback, derive_constraint_reads, derive_footprint,
-    derive_guard_reads, derive_node_reads, derive_selected_footprint, derive_slot_reads,
+    derive_atom_reads, derive_attempt_footprint_fallback, derive_constraint_reads,
+    derive_footprint, derive_guard_reads, derive_node_reads, derive_selected_footprint,
+    derive_slot_reads, FootprintObject, FootprintRefusal, SymbolicFootprint, SymbolicLocation,
 };
+use fsl_semantics::check::CheckedNode;
 use fsl_semantics::model::clause_observation::Observation;
 use fsl_semantics::model::object_environment::{ObservedRead, ReadLog};
 use fsl_semantics::model::observation::AdmittedObservations;
@@ -32,7 +32,7 @@ use crate::model_subject::ModelInstance;
 
 use super::encode::{parse_optional_reference, parse_reference};
 use super::walk::stop;
-use super::{Application, BROKEN, ModelSimState, ModelSystem};
+use super::{Application, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::{Expansion, ExpansionStop};
 use crate::simulation::footprint::{Footprint, Location};
 

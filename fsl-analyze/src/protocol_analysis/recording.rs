@@ -2899,7 +2899,7 @@ fn correlation_matches(
     send: &Observation,
     receive: &Observation,
 ) -> bool {
-    let same_message = send.keys.get("message").is_some()
+    let same_message = send.keys.contains_key("message")
         && send.keys.get("message") == receive.keys.get("message");
     let same_instance = send.instance.is_some() && send.instance == receive.instance;
     let send_channel = channel_for_send(protocol, send);
@@ -2978,6 +2978,7 @@ fn recording_meter() -> Meter {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn evaluate_body_value(
     package: &CheckedPackage,
     protocol: &CheckedProtocol,
@@ -3063,6 +3064,7 @@ fn evaluate_body_value(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn evaluate_body(
     package: &CheckedPackage,
     protocol: &CheckedProtocol,

@@ -21,9 +21,9 @@ use fsl_semantics::check::{CheckedExpression, CheckedNode};
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
-use crate::admitted::{AdmittedContext, AdmittedRefusal, context_of};
+use crate::admitted::{context_of, AdmittedContext, AdmittedRefusal};
 use crate::bounds::ReplayLimits;
-use crate::compile::{CompileUnit, CompiledPackage, recompile_unit};
+use crate::compile::{recompile_unit, CompileUnit, CompiledPackage};
 use crate::request::StageLimits;
 use crate::spine::DependencyInput;
 
@@ -2322,23 +2322,19 @@ mod tests {
         assert_eq!(holder.node(), &holder_id);
         assert_eq!(holder.form(), NominalDeclarationForm::Record);
         assert_eq!(holder.qualified_name().last().unwrap().as_str(), "Holder");
-        let [
-            NominalDeclarationMember::RecordField {
-                identifier: flag,
-                value_type: ValueType::Boolean,
-                presence: Presence::Required,
-            },
-            NominalDeclarationMember::RecordField {
-                identifier: pair_name,
-                value_type: ValueType::Composite(pair_key),
-                presence: Presence::Required,
-            },
-            NominalDeclarationMember::RecordField {
-                identifier: shape_name,
-                value_type: ValueType::Composite(_),
-                presence: Presence::Required,
-            },
-        ] = holder.members()
+        let [NominalDeclarationMember::RecordField {
+            identifier: flag,
+            value_type: ValueType::Boolean,
+            presence: Presence::Required,
+        }, NominalDeclarationMember::RecordField {
+            identifier: pair_name,
+            value_type: ValueType::Composite(pair_key),
+            presence: Presence::Required,
+        }, NominalDeclarationMember::RecordField {
+            identifier: shape_name,
+            value_type: ValueType::Composite(_),
+            presence: Presence::Required,
+        }] = holder.members()
         else {
             panic!("record members preserve their checked declaration order and types");
         };
@@ -2370,23 +2366,19 @@ mod tests {
             .nominal_declaration(&selection, &shape_id)
             .expect("the nested union is reachable through Holder");
         assert_eq!(shape.form(), NominalDeclarationForm::Union);
-        let [
-            NominalDeclarationMember::UnionMember {
-                member: empty_member,
-                variant: empty_variant,
-                payload: empty_payload,
-            },
-            NominalDeclarationMember::UnionMember {
-                member: circle_member,
-                variant: circle_variant,
-                payload: circle_payload,
-            },
-            NominalDeclarationMember::UnionMember {
-                member: boxed_member,
-                variant: boxed_variant,
-                payload: boxed_payload,
-            },
-        ] = shape.members()
+        let [NominalDeclarationMember::UnionMember {
+            member: empty_member,
+            variant: empty_variant,
+            payload: empty_payload,
+        }, NominalDeclarationMember::UnionMember {
+            member: circle_member,
+            variant: circle_variant,
+            payload: circle_payload,
+        }, NominalDeclarationMember::UnionMember {
+            member: boxed_member,
+            variant: boxed_variant,
+            payload: boxed_payload,
+        }] = shape.members()
         else {
             panic!("union view retains each sealed member in declared order");
         };
@@ -2532,22 +2524,18 @@ mod tests {
             .nominal_declaration(&selection, &composite_id("P"))
             .expect("the signature's record declaration is available");
         assert_eq!(record.form(), NominalDeclarationForm::Record);
-        let [
-            NominalDeclarationMember::RecordField {
-                identifier: required,
-                value_type: required_type,
-                presence: required_presence,
-            },
-            NominalDeclarationMember::RecordField {
-                identifier: optional,
-                value_type: optional_type,
-                presence: optional_presence,
-            },
-            NominalDeclarationMember::RecordField {
-                presence: Presence::Required,
-                ..
-            },
-        ] = record.members()
+        let [NominalDeclarationMember::RecordField {
+            identifier: required,
+            value_type: required_type,
+            presence: required_presence,
+        }, NominalDeclarationMember::RecordField {
+            identifier: optional,
+            value_type: optional_type,
+            presence: optional_presence,
+        }, NominalDeclarationMember::RecordField {
+            presence: Presence::Required,
+            ..
+        }] = record.members()
         else {
             panic!("record members preserve their declared order and presence");
         };

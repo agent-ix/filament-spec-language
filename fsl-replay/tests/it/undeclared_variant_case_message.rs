@@ -2,10 +2,12 @@
 //! A declared model variant with an unknown case stays a type mismatch and
 //! names the owner and case in the public check refusal.
 
-use filament_semantic_value::location::{ExpressionLocation as Location, ExpressionOwner as Origin};
+use filament_semantic_value::location::{
+    ExpressionLocation as Location, ExpressionOwner as Origin,
+};
 use fsl_foundation::Code;
-use fsl_semantics::check::{CheckCause, CheckRefusal};
 use fsl_replay::spine::CompileRefusal;
+use fsl_semantics::check::{CheckCause, CheckRefusal};
 use ix_trace_rs::trace;
 
 #[trace("FR-360-AC-5")]

@@ -20,7 +20,7 @@ use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::EnumBinding;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use serde_json::{Map, Value as Json, json};
+use serde_json::{json, Map, Value as Json};
 
 /// One argument defect: the catalog code and cause FR-650's table names, and
 /// the JSON pointer of the defect inside the argument's `value`.
@@ -1222,7 +1222,7 @@ fn bytes_text(bytes: &[u8]) -> String {
 
 /// Parse only FR-106's canonical lowercase, even-length hexadecimal payload.
 fn read_bytes(text: &str) -> Option<Vec<u8>> {
-    if text.len() % 2 != 0
+    if !text.len().is_multiple_of(2)
         || !text
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
@@ -1230,7 +1230,9 @@ fn read_bytes(text: &str) -> Option<Vec<u8>> {
         return None;
     }
     text.as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let high = u8::from_str_radix(std::str::from_utf8(&pair[..1]).ok()?, 16).ok()?;
             let low = u8::from_str_radix(std::str::from_utf8(&pair[1..]).ok()?, 16).ok()?;

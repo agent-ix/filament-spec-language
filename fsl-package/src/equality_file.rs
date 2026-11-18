@@ -1631,7 +1631,7 @@ impl ReadEqualityRows {
 mod tests {
     use super::*;
     use ix_trace_rs::trace;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     fn id(name: &str) -> CheckedNodeId {
         serde_json::from_value(json!({ "package": "p", "path": [name], "ordinal": 0 })).unwrap()
