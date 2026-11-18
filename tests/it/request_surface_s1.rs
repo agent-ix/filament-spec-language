@@ -328,7 +328,6 @@ fn a_current_selection_with_parameters_refuses_naming_parameters() {
 /// refuses `extraction-clause-count`, not `invalid-request`.
 #[test]
 #[trace("TC-1744", "FR-662-AC-3")]
-#[ignore = "QSL-2019: the run command's extraction mode is not in the default build yet"]
 fn the_run_command_reaches_markdown_extraction_by_default() {
     let directory = tempfile::tempdir().unwrap();
     let mut request = current_clause_request();
