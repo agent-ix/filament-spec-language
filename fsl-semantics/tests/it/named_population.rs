@@ -491,7 +491,6 @@ fn a_protocol_slot_that_reads_model_state_names_a_population() {
 /// barred-slot occurrence stays pending at S3 rather than refusing.
 #[trace("TC-2834", "FR-1000-AC-2", "FSpec-TC-965", "FSpec-FR-480-AC-2")]
 #[test]
-#[ignore = "QSL-2166: S3 does not type a reference literal or keep it pending yet"]
 fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
     let clause = |body: &str| format!("invariant R using v on M::Counter at current {{ {body} }}");
     checked(false, &clause("self = M::Counter#\"a\""));

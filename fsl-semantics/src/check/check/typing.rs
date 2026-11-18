@@ -1303,6 +1303,36 @@ impl<'a> Typer<'a> {
                 ValueType::String,
                 &location,
             ),
+            ExprNode::ReferenceLiteral {
+                type_name,
+                key,
+                key_span,
+            } => {
+                let declared = self.type_named(&type_name.name, &location)?;
+                let Some(object_type) = self.source_scope().object_type_named(&type_name.name)
+                else {
+                    return Err(CheckRefusal {
+                        location,
+                        cause: CheckCause::ReferenceLiteralTypeMismatch {
+                            name: type_name.clone(),
+                            actual: declared,
+                        },
+                    });
+                };
+                let kind = match filament_checked::construct::reference_literal(
+                    object_type.clone(),
+                    key.text().as_bytes().to_vec(),
+                ) {
+                    Ok(kind) => kind,
+                    Err(filament_checked::construct::ReferenceLiteralError::EmptyIdentity) => {
+                        return Err(CheckRefusal {
+                            location,
+                            cause: CheckCause::EmptyReferenceLiteralKey { span: *key_span },
+                        });
+                    }
+                };
+                node(kind, ValueType::Reference(object_type), &location)
+            }
             ExprNode::Rational(numerator, denominator) => {
                 self.rational_literal(numerator, denominator, hint.as_deref(), &location)?
             }
