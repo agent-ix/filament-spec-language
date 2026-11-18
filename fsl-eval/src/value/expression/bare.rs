@@ -294,6 +294,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
                     outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
                     location: None,
                     losses: Vec::new(),
+                    frame_depth: 0,
                 });
             }
             capture.drain(meter, projection.location(selected.body));
@@ -311,6 +312,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
                     )),
                     location: projection.location(selected.body).cloned(),
                     losses: Vec::new(),
+                    frame_depth: 0,
                 });
             }
             function_evaluations = 1;
@@ -370,6 +372,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
                 outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
                 location: None,
                 losses: Vec::new(),
+                frame_depth: 0,
             });
         }
         Machine::from_bare_package(&world, objects, meter)
@@ -423,6 +426,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         _clause: &fsl_semantics::check::TemporalClauseNode,
         _atom: fsl_semantics::check::FormulaNodeId,
         _over: Value,
+        _captures: &[Value],
         _objects: &ObjectEnvironment,
         _meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
@@ -433,7 +437,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         &self,
         _clause: &fsl_semantics::check::TemporalClauseNode,
         _atom: fsl_semantics::check::FormulaNodeId,
-        _over: &filament_exact::ObjectReference,
+        _binders: super::HoldsBinders<'_>,
         _objects: &ObjectEnvironment,
         _observation: super::ObservationIdentity,
         _meter: &mut Meter,

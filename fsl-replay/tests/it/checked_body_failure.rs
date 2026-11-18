@@ -17,9 +17,9 @@ use filament_semantic_value::declaration::{
 use filament_semantic_value::object_closure::ObjectClosure;
 use fsl_replay::spine::{self, ParseRequest, SpineLimits};
 use fsl_replay::{
-    acquire_checked_closure, ApplicationEnvironment, CallableSelection, CheckedClosureCompilation,
-    CheckedClosureHandle, DependencyInput, NodeKey, NominalDeclaration, NominalDeclarationForm,
-    NominalDeclarationMember, ReplayLimits, SourceIdentity, StageLimits,
+    ApplicationEnvironment, CallableSelection, CheckedClosureCompilation, CheckedClosureHandle,
+    DependencyInput, NodeKey, NominalDeclaration, NominalDeclarationForm, NominalDeclarationMember,
+    ReplayLimits, SourceIdentity, StageLimits, acquire_checked_closure,
 };
 use ix_trace_rs::trace;
 use std::sync::{Arc, Mutex};
@@ -94,6 +94,7 @@ impl Body for ActionBody {
                     ))),
                     location: None,
                     losses: vec![],
+                    frame_depth: 0,
                 })),
                 Ok(true) => panic!("the mismatched value was admitted"),
                 Err(failure) => Err(BodyFailure::fsv_environment(failure, None)),

@@ -7,8 +7,8 @@ use filament_eval::{
 use filament_exact::{Integer, Meter, Outcome, ScalarLimits, Value};
 use filament_semantic_value::object_closure::ObjectClosure;
 use fsl_replay::{
-    acquire_checked_closure, call_site, ApplicationEnvironment, DependencyInput, Identifier,
-    QualifiedName, ReplayLimits, SourceIdentity, StageLimits,
+    ApplicationEnvironment, DependencyInput, Identifier, QualifiedName, ReplayLimits,
+    SourceIdentity, StageLimits, acquire_checked_closure, call_site,
 };
 
 const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction f using v(x: Int[0, 9]): Integer pure { x }\n";
@@ -31,6 +31,7 @@ impl Body for GeneratedCall {
                 ))),
                 location: None,
                 losses: vec![],
+                frame_depth: 0,
             })),
             Resume::Again | Resume::Child(_) => {
                 unreachable!("the generated body finishes on Start")

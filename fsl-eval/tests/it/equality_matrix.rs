@@ -3988,7 +3988,6 @@ fn e28b_equality_on_float_bearing_types_is_admitted() {
 /// differ in bound or key type stay `type-mismatch`.
 #[trace("TC-1822", "FR-680-AC-3", "FSpec-FR-149-AC-28")]
 #[test]
-#[ignore = "QSL-2171: map equality under the FR-149 Map row not implemented yet"]
 fn map_equality_is_admitted_over_one_map_type() {
     let env = TypeEnvironment::default();
     let map = |key: ValueType, maximum: Option<u64>| {

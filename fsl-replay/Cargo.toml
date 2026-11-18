@@ -1,6 +1,6 @@
 [package]
 name = "fsl-replay"
-version = "0.1.0"
+version = "0.3.0"
 publish = false
 edition = "2021"
 rust-version = "1.98"
@@ -22,7 +22,7 @@ quire-extraction = ["dep:fsl-source", "fsl-source/quire-extraction"]
 test-support = []
 
 [dependencies]
-ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 fsl-cst = { path = "../fsl-cst" }
 fsl-eval = { path = "../fsl-eval" }
 fsl-forms = { path = "../fsl-forms" }

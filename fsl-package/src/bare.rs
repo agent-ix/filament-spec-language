@@ -63,6 +63,8 @@ pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/4";
 #[derive(Debug)]
 pub struct BarePackage<'p> {
     package: &'p CheckedPackageV2,
+    /// The package's identity, its admitted `name()` (FR-940 `identity`).
+    identity: fsl_semantics::library::LibraryName,
     supply: Option<BareSupply<'p>>,
     /// The supply's join, held with the witness defect it found: a missing,
     /// foreign or unknown witness is refused by the stage that reads the
@@ -101,6 +103,7 @@ impl<'p> BarePackage<'p> {
     /// The bare package over `package`, with no supply.
     pub fn new(package: &'p CheckedPackageV2) -> Self {
         Self {
+            identity: fsl_semantics::library::LibraryName::of_package(package),
             package,
             supply: None,
             joined: None,
@@ -111,6 +114,11 @@ impl<'p> BarePackage<'p> {
             objects: Ok(Vec::new()),
             populations: Ok(BTreeMap::new()),
         }
+    }
+
+    /// The admitted package's identity (FR-940 `identity`).
+    pub(crate) fn admitted_identity(&self) -> &fsl_semantics::library::LibraryName {
+        &self.identity
     }
 
     /// The identity of this value as an observation owner.

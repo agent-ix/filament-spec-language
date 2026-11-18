@@ -28,7 +28,7 @@ use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use super::{
     AnalyzeLimits, ClaimItem, Diagnostic, Engines, ItemForm, ItemOptions, NegotiatedItem,
@@ -39,6 +39,12 @@ use fsl_eval::simulation::model::PopulationUniverse;
 /// The request document format FR-620 reads.
 pub const REQUEST_FORMAT: &str = "native-analyze/1";
 
+fn present_json_value<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(decoder).map(Some)
+}
+
 /// A `{authority, identity}` reference to a provisioned document.
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
 #[serde(deny_unknown_fields)]
@@ -46,6 +52,29 @@ pub struct DocumentSelection {
     /// The document's declared authority.
     pub authority: String,
     /// The document's declared identity.
+    pub identity: String,
+}
+
+/// One activated protocol role population supplied with a recording request.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ActivatedRolePopulation {
+    /// The checked protocol role whose activated members are listed.
+    pub role: String,
+    /// The protocol activation instance, when the protocol is `on each`.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub instance: Option<Value>,
+    /// The activated role members.
+    pub members: Vec<ActivatedRoleMember>,
+}
+
+/// One authority-scoped identity in an activated role population.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
+#[serde(deny_unknown_fields)]
+pub struct ActivatedRoleMember {
+    /// The member reference authority.
+    pub authority: String,
+    /// The member reference identity.
     pub identity: String,
 }
 
@@ -530,6 +559,9 @@ pub struct ItemSelection {
     /// A `global-conformance` item's supplied FR-737 recording.
     #[serde(default)]
     pub recording: Option<DocumentSelection>,
+    /// The activated population used to close a recording's fan-out scope.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub population: Option<Value>,
     /// A `simulation` item's settings (FR-634).
     #[serde(default)]
     pub simulation: Option<super::SimulationSelection>,
@@ -938,6 +970,150 @@ pub fn resolve_items(
     }
 }
 
+/// An item of a `package` request (FR-850) whose claim names an item family
+/// the package route does not settle yet (FR-940 "Package forms of the
+/// source-checked evaluators"): the request is refused whole rather than
+/// settle that item `unsupported`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingPackageFamily {
+    /// The request index of the first such item, `None` for the default
+    /// items of a request with no `items` member.
+    pub request_index: Option<RequestIndex>,
+    /// What the item names.
+    pub family: PendingFamily,
+}
+
+/// What a pending package-route item names.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PendingFamily {
+    /// The default items of a request with no `items` member.
+    DefaultItems,
+    /// A claimless `simulation` item (FR-634).
+    Simulation,
+    /// A derived item over a model (FSpec FR-368).
+    Derived,
+    /// A temporal clause, named by its `temporal_clause_names` row.
+    Temporal,
+    /// A named declaration.
+    Declaration,
+    /// A name the package carries no row for while it holds a claim whose
+    /// name it does not carry ([`fsl_package::AnalysisView::unnamed_claims`]):
+    /// the name may be that claim's, so it is not settled `unknown-claim`.
+    UnnamedClaim,
+}
+
+impl PendingFamily {
+    /// The family's name in a refusal message.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::DefaultItems => "default-items",
+            Self::Simulation => "simulation",
+            Self::Derived => "derived",
+            Self::Temporal => "temporal",
+            Self::Declaration => "declaration",
+            Self::UnnamedClaim => "unnamed-claim",
+        }
+    }
+}
+
+/// FR-850 "Building the analysis input": resolve a `package` request's items
+/// by name against the package, read only through `view` (FR-940). A
+/// temporal clause is named by its `temporal_clause_names` row and any other
+/// claim by the `declaration.qualified_name` of its node. A name neither
+/// carries settles `invalid-request` with `invalid_capability`/`unknown-claim`
+/// as the source route settles it, but only when the package holds no claim
+/// whose name it does not carry (an `invariant` state clause, a refinement,
+/// a state-graph claim): the name could be that claim's.
+///
+/// # Errors
+///
+/// [`PendingPackageFamily`] for the first item that names a claim, a
+/// derived item or a simulation, or a name that may be an unnamed claim's,
+/// and for the default items: the package route settles no engine family
+/// yet, and it never settles one `unsupported` for a fact the source route
+/// reads (FR-940).
+pub fn resolve_package_items(
+    view: &dyn fsl_package::AnalysisView,
+    selections: Option<&[ItemSelection]>,
+) -> Result<Vec<ResolvedItem>, PendingPackageFamily> {
+    let Some(selections) = selections else {
+        return Err(PendingPackageFamily {
+            request_index: None,
+            family: PendingFamily::DefaultItems,
+        });
+    };
+    let clauses = view.clause_names();
+    let declared = view.declared_names();
+    let unnamed = !view.unnamed_claims().is_empty();
+    selections
+        .iter()
+        .enumerate()
+        .map(|(position, selection)| {
+            let index = RequestIndex::new(position);
+            let pending = |family| PendingPackageFamily {
+                request_index: Some(index),
+                family,
+            };
+            let Some(name) = selection.claim.as_deref() else {
+                return Err(pending(PendingFamily::Simulation));
+            };
+            // A derived item names a model, not a claim (FSpec FR-368).
+            if selection
+                .temporal
+                .as_ref()
+                .is_some_and(|temporal| temporal.item_kind.is_some())
+            {
+                return Err(pending(PendingFamily::Derived));
+            }
+            if clauses.iter().any(|row| row.name.as_ref() == name) {
+                return Err(pending(PendingFamily::Temporal));
+            }
+            if declared.iter().any(|(declared, _)| declared == name) {
+                return Err(pending(PendingFamily::Declaration));
+            }
+            if unnamed {
+                return Err(pending(PendingFamily::UnnamedClaim));
+            }
+            Ok(unknown_claim(index, name))
+        })
+        .collect()
+}
+
+/// [`settle_run`] for the items of a `package` request (FR-850) that
+/// [`resolve_package_items`] settled: the same document, with the registry
+/// of `engines`, written by the one writer both routes share.
+///
+/// # Errors
+///
+/// [`AnalyzeDocumentError::Fault`] when an item is not settled.
+pub fn settle_package_items(
+    items: Vec<ResolvedItem>,
+    engines: &Engines,
+) -> Result<SettledRun, AnalyzeDocumentError> {
+    let mut settled = BTreeMap::new();
+    for item in items {
+        let ResolvedItem::Settled { claim_name, record } = item else {
+            return Err(AnalyzeDocumentError::Fault);
+        };
+        settled.insert(record.request_index(), (claim_name, *record));
+    }
+    write_run(
+        SettledParts {
+            records: Vec::new(),
+            counterexamples: Vec::new(),
+            details: Vec::new(),
+            protocol_conformance: BTreeMap::new(),
+        },
+        &settled,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &[],
+        engines,
+    )
+}
+
 /// One requirement item of a run call (FR-395 "Item of the call") with the
 /// backend and options the run names for it (FR-960).
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1022,6 +1198,7 @@ fn resolve_call_item(
             max_cases: None,
             trace: None,
             recording: None,
+            population: None,
             backend_options: call_item.options.clone(),
         },
         form: None,
@@ -1239,10 +1416,10 @@ fn resolve_one(
     }
     let form = (kind == Capability::TemporalSatisfaction || kind == Capability::GlobalConformance)
         .then(|| {
-        let mut form = temporal_item(package, &claim, &temporal);
-        form.pending_reductions.clone_from(&selection.reductions);
-        ItemForm::Temporal(form)
-    });
+            let mut form = temporal_item(package, &claim, &temporal);
+            form.pending_reductions.clone_from(&selection.reductions);
+            ItemForm::Temporal(form)
+        });
     let item = ClaimItem {
         request_index: index,
         claim,
@@ -1258,6 +1435,7 @@ fn resolve_one(
                 .recording
                 .as_ref()
                 .map(DocumentSelection::reference),
+            population: selection.population.clone(),
             backend_options,
         },
         form,
@@ -1383,6 +1561,7 @@ fn resolve_derived(
         max_cases: None,
         trace: None,
         recording: None,
+        population: None,
         backend_options,
     };
     let mut form = temporal_item(package, &claim.item.claim, temporal);
@@ -1671,6 +1850,7 @@ fn derived_items(
                         max_cases: None,
                         trace: None,
                         recording: None,
+                        population: None,
                         backend_options: BTreeMap::new(),
                     },
                     form: Some(ItemForm::Temporal(TemporalItem {
@@ -1743,6 +1923,9 @@ impl ClaimItem {
                 "recording".to_owned(),
                 json!({"authority": recording.authority, "identity": recording.identity}),
             );
+        }
+        if let Some(population) = &self.options.population {
+            item.insert("population".to_owned(), population.clone());
         }
         if let Some(max_cases) = self.options.max_cases {
             item.insert(
@@ -2046,9 +2229,6 @@ pub fn settle_run(
         _ => AnalyzeDocumentError::Fault,
     })?
     .into_value();
-    let mut records: Vec<TerminalRecord> = outcome.records;
-    records.extend(settled.values().map(|(_, record)| record.clone()));
-    records.sort_by_key(TerminalRecord::request_index);
     // FR-621 "Last stage": each negotiated item's route. An item negotiated
     // to an FSL engine settles at S6c, one negotiated to an outside provider
     // or settled by its negotiation's disposition at S6b.
@@ -2073,7 +2253,64 @@ pub fn settle_run(
             .iter()
             .map(|index| (*index, super::ItemRoute::Negotiated)),
     );
-    let base = super::analyze_document_routed(&records, &outcome.counterexamples, &routes)
+    // FR-634: each simulation item's document at its request index; it
+    // settles no claim, so it is no aggregate gap, and its category ranks
+    // in the exit code.
+    let mut simulated = Vec::new();
+    for item in &simulations {
+        match super::simulation_item::simulate(package, &binding, &limits, item, cancel) {
+            Ok(written) => simulated.push(written),
+            Err(super::simulation_item::SimulationFault::Binding(failure)) => {
+                return Err(AnalyzeDocumentError::Refused(
+                    super::AnalyzeRefusal::Binding(failure),
+                ))
+            }
+            Err(super::simulation_item::SimulationFault::Fault) => {
+                return Err(AnalyzeDocumentError::Fault)
+            }
+        }
+    }
+    write_run(
+        SettledParts {
+            records: outcome.records,
+            counterexamples: outcome.counterexamples,
+            details: outcome.details,
+            protocol_conformance: outcome.protocol_conformance,
+        },
+        &settled,
+        &echoes,
+        &targets,
+        &routes,
+        &simulated,
+        engines,
+    )
+}
+
+/// What the engines settled for a run's negotiated items.
+struct SettledParts {
+    records: Vec<TerminalRecord>,
+    counterexamples: Vec<super::ItemCounterexample>,
+    details: Vec<super::ItemDetail>,
+    protocol_conformance: BTreeMap<RequestIndex, fsl_replay::ProtocolConformanceOutput>,
+}
+
+/// The FR-621 document of a run: the engines' records beside the items
+/// settled without running, each item's entry, the aggregate, the registry
+/// and the exit code. The source route and the package route (FR-850)
+/// write their documents through this one function.
+fn write_run(
+    outcome: SettledParts,
+    settled: &BTreeMap<RequestIndex, (Option<String>, TerminalRecord)>,
+    echoes: &BTreeMap<RequestIndex, Echo>,
+    targets: &BTreeMap<RequestIndex, BackendId>,
+    routes: &BTreeMap<RequestIndex, super::ItemRoute>,
+    simulated: &[(Value, Category)],
+    engines: &Engines,
+) -> Result<SettledRun, AnalyzeDocumentError> {
+    let mut records: Vec<TerminalRecord> = outcome.records;
+    records.extend(settled.values().map(|(_, record)| record.clone()));
+    records.sort_by_key(TerminalRecord::request_index);
+    let base = super::analyze_document_routed(&records, &outcome.counterexamples, routes)
         .map_err(|_| AnalyzeDocumentError::Fault)?;
     let mut document = serde_json::to_value(&base).map_err(|_| AnalyzeDocumentError::Fault)?;
     let written: Vec<Value> = document["items"].as_array().cloned().unwrap_or_default();
@@ -2137,23 +2374,6 @@ pub fn settle_run(
                 disposed,
             },
         ));
-    }
-    // FR-634: each simulation item's document at its request index; it
-    // settles no claim, so it is no aggregate gap, and its category ranks
-    // in the exit code.
-    let mut simulated = Vec::new();
-    for item in &simulations {
-        match super::simulation_item::simulate(package, &binding, &limits, item, cancel) {
-            Ok(written) => simulated.push(written),
-            Err(super::simulation_item::SimulationFault::Binding(failure)) => {
-                return Err(AnalyzeDocumentError::Refused(
-                    super::AnalyzeRefusal::Binding(failure),
-                ))
-            }
-            Err(super::simulation_item::SimulationFault::Fault) => {
-                return Err(AnalyzeDocumentError::Fault)
-            }
-        }
     }
     items.extend(simulated.iter().map(|(written, _)| written.clone()));
     items.sort_by_key(|item| item["request_index"].as_u64().unwrap_or(u64::MAX));
@@ -2357,7 +2577,13 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
         }
         item.insert("counterexample".to_owned(), counterexample);
     }
-    for member in ["obligations", "closure", "global", "projections", "recording"] {
+    for member in [
+        "obligations",
+        "closure",
+        "global",
+        "projections",
+        "recording",
+    ] {
         if let Some(value) = record.get(member) {
             item.insert(member.to_owned(), value.clone());
         }

@@ -59,6 +59,14 @@ impl LibraryName {
         }
     }
 
+    /// The identity of an admitted checked package: its `name()`. The strict
+    /// checked-package reader refuses an empty package name (`/name`,
+    /// `MalformedWire`), so every `CheckedPackageV2` names a library
+    /// identity and this needs no refusal (FR-940 `identity`).
+    pub fn of_package(package: &filament_contract_model::CheckedPackageV2) -> Self {
+        Self(Box::from(package.name()))
+    }
+
     /// The identity string.
     pub fn as_str(&self) -> &str {
         &self.0

@@ -3454,6 +3454,7 @@ impl<'a> Typer<'a> {
                 | ValueType::Reference(_)
                 | ValueType::Population(_) => {}
                 ValueType::Uuid | ValueType::Timestamp => {}
+                ValueType::Bytes | ValueType::JsonObject => {}
             }
         }
         Ok(())
@@ -3840,6 +3841,8 @@ impl<'a> Typer<'a> {
                 | ValueType::String
                 | ValueType::Uuid
                 | ValueType::Timestamp
+                | ValueType::Bytes
+                | ValueType::JsonObject
                 | ValueType::Enum(_)
                 | ValueType::Option(_)
                 | ValueType::Composite(_)
@@ -3987,6 +3990,8 @@ impl<'a> Typer<'a> {
             | (ValueType::String, ValueType::String)
             | (ValueType::Uuid, ValueType::Uuid)
             | (ValueType::Timestamp, ValueType::Timestamp) => return Err(ineligible(location)),
+            (ValueType::Bytes, ValueType::Bytes)
+            | (ValueType::JsonObject, ValueType::JsonObject) => return Err(ineligible(location)),
             _ => return Err(mismatch(location)),
         };
         Ok(node(
@@ -4405,6 +4410,9 @@ impl<'a> Typer<'a> {
             | ValueType::Uuid
             | ValueType::String
             | ValueType::Timestamp => return Err(mismatch(&location.child(0))),
+            ValueType::Bytes | ValueType::JsonObject => {
+                return Err(mismatch(&location.child(0)))
+            }
             // FR-497-AC-2: a carried quantity is no operand of unary `-`.
             ValueType::CarriedQuantity(_) => return Err(mismatch(location)),
         };
@@ -4747,6 +4755,7 @@ impl<'a> Typer<'a> {
             | ValueType::Quantity(_)
             | ValueType::BoundedQuantity(_)
             | ValueType::CarriedQuantity(_) => false,
+            ValueType::Bytes | ValueType::JsonObject => false,
         }
     }
 
@@ -4772,6 +4781,7 @@ impl<'a> Typer<'a> {
             | ValueType::BoundedQuantity(_)
             | ValueType::CarriedQuantity(_)
             | ValueType::Population(_) => false,
+            ValueType::Bytes | ValueType::JsonObject => false,
         }
     }
 
@@ -5908,6 +5918,7 @@ pub(super) fn holds_float(mut ty: &ValueType) -> bool {
             | ValueType::Composite(_)
             | ValueType::Reference(_)
             | ValueType::Population(_) => return false,
+            ValueType::Bytes | ValueType::JsonObject => return false,
         }
     }
 }

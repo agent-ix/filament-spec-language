@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use filament_exact::{compare_keys, Incomplete, ScalarLimits, Value};
+use filament_exact::{Incomplete, ScalarLimits, Value, compare_keys};
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
@@ -34,8 +34,8 @@ use filament_semantic_value::catalog::Category;
 use fsl_foundation::source::provenance::SourceRegion;
 pub use wire::CauseCodecError;
 pub(crate) use wire::{
-    decode_state_value, encode_state_value, validate_state_element, DecisiveWire,
-    ProtocolWitnessWire, RecordWire,
+    DecisiveWire, ProtocolWitnessWire, RecordWire, decode_state_value, encode_state_value,
+    validate_state_element,
 };
 
 /// Serialize FR-207's canonical runtime value path for command result
@@ -613,6 +613,8 @@ pub(crate) fn value_bytes(value: &Value) -> usize {
             Value::Float(_) => 8,
             Value::Uuid(_) | Value::Timestamp(_) => 16,
             Value::String(text) => text.len(),
+            Value::Bytes(bytes) => bytes.len(),
+            Value::JsonObject(object) => object.canonical_text().len(),
             Value::Quantity(quantity) => {
                 let magnitude = quantity.magnitude();
                 digits(magnitude.numerator()) + digits(magnitude.denominator()) + 32
@@ -627,6 +629,13 @@ pub(crate) fn value_bytes(value: &Value) -> usize {
             Value::Collection(collection) => {
                 pending.extend(collection.elements());
                 8
+            }
+            Value::Map(map) => {
+                for (key, value) in map.entries() {
+                    pending.push(key);
+                    pending.push(value);
+                }
+                map.entries().len().saturating_mul(16)
             }
             Value::Option(option) => {
                 pending.extend(option.payload());
@@ -1735,9 +1744,9 @@ mod tests {
     fn tc_192_function_exemplar_reuses_the_four_types_with_none_new() {
         use crate::identity::QualifiedName;
         use crate::proof_result::{
-            read_backend_provider_envelope, BackendProviderSource, TerminalRecord, TerminalValue,
+            BackendProviderSource, TerminalRecord, TerminalValue, read_backend_provider_envelope,
         };
-        use crate::witness::{origin, NoPayload, Witness, WitnessEnvelope, WitnessPacket};
+        use crate::witness::{NoPayload, Witness, WitnessEnvelope, WitnessPacket, origin};
         use filament_exact::Identifier;
         use fsl_foundation::source::provenance::OccurrenceKey;
 
