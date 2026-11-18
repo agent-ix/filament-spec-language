@@ -86,10 +86,19 @@ In the negation normal form of FR-242 (`eventually_I` is `true until_I`,
   clock satisfies the lower guard until a position holds `ψ`, and is never
   discharged by the passing of a deadline.
 - **Acceptance.** Because no deadline forces a pending `until[q, *]`
-  instance to settle, it SHALL carry an acceptance set as an `until` with no
-  interval does (FR-240): a run on which it stays pending forever is not
-  accepted, and with EN-6's divergence set (ADR-026 EZ-6) a time-divergent
-  run cannot keep the clock below `q` forever.
+  instance to settle, the operator SHALL carry an acceptance set (FR-240).
+  That set SHALL be fulfilled at a step where the operator is not pending,
+  where it is discharged, or where it is kept pending at a position that
+  holds both `ψ` and `χ`. On a time-divergent run (EN-6's divergence set,
+  ADR-026 EZ-6), a run that fulfils the set infinitely often satisfies every
+  instance the operator started: each kept start is followed by a position
+  holding `χ` with `ψ` between, and time divergence carries the clock of
+  some such position past `q`. The rule does not ask the kept instance itself
+  to be discharged, because under keep-newest with a reset at each start a
+  position that both starts and witnesses the operator restarts its clock
+  below `q`, so the newest instance can stay pending forever on a run that
+  satisfies every instance, such as `always (p implies eventually[q, *] r)`
+  with `p` and `r` true at every position.
 - **One clock per operator.** An operator started at many positions SHALL
   keep one clock, never blocks of copies. Of two pending `until[q, *]`
   instances the newer implies the older, since a witness at least `q` after
@@ -147,6 +156,7 @@ In the negation normal form of FR-242 (`eventually_I` is `true until_I`,
 | FR-1034-AC-1 | Each of `eventually[1 ms, *] holds(q)`, `always (holds(p) implies eventually[1 ms, *] holds(q))`, `holds(p) until(1 ms, *] holds(q)`, `eventually always[1 ms, *] holds(q)`, `always (holds(q) implies once[1 ms, *] holds(p))` and `eventually (holds(q) and (holds(p) since(1 ms, *] holds(r)))` translates to a claim automaton, never refused `OpenTimedInterval` or `ClockLimit`; on 1,000 random timed lassos per formula with stamps in steps of `1/4` ms and length at most 8, the automaton accepts exactly the lassos on which the evaluator returns `false`, and over all formulas some lasso holds and some is refuted. | Test (TC-2969) |
 | FR-1034-AC-2 | `always (holds(p) implies eventually[2 ms, *] holds(q))`, `eventually always[2 ms, *] holds(q)` (a `release` started at many positions) and `eventually (holds(q) and once[2 ms, *] holds(p))` each translate with exactly one automaton clock, whose only constant is 2 ms. | Test (TC-2969) |
 | FR-1034-AC-3 | Over ADR-026 §11's `Rpc` with client deadline 4 ms (reply at a clock of at least 1 ms and at most 3 ms after `send`), EN-6 proves `always (holds(c.phase = 1) implies eventually[1 ms, *] holds(not (c.phase = 1)))` and `always (holds(c.phase = 2) implies once[1 ms, *] holds(c.phase = 1))`, each certificate accepted by the core checker; it refutes `always (holds(c.phase = 2) implies once(1 ms, *] holds(c.phase = 1))` with `send` then `reply` at delays 0 and 1, the exact lower bound, and that counterexample replays; and it refutes `always (holds(c.phase = 1) implies (holds(c.phase = 1) until[4 ms, *] holds(c.phase = 2)))`, the server deadline forcing the reply before 4 ms. No outcome is `Stopped` and none refuses `OpenTimedInterval`. | Test (TC-2969) |
+| FR-1034-AC-4 | On the time-divergent timed lasso of two positions stamped 0 ms and 1 ms, both at level 1, re-entering position 0 2 ms after it, the automaton of `always (holds(c.level = 1) implies eventually[1 ms, *] holds(c.level = 1))`, whose `p` and `r` hold at every position, does not accept the lasso and the evaluator returns `true`; on the same lasso the automaton of `always (holds(c.level = 1) implies eventually[1 ms, *] holds(c.level = 2))`, whose `until[1 ms, *]` is never discharged, accepts it and the evaluator returns `false`. | Test (TC-2980) |
 
 ## Dependencies
 
