@@ -12,20 +12,20 @@
 //! subjects.
 
 use filament_exact::Cancel;
+use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
-use filament_semantic_value::catalog::InternalFault;
 use fsl_replay::{
     open_systems, replay_refinement_trace, settle_refinement, settle_refinement_refusal,
     RefinementTraceSettlement, SimulationCertificateRequest, TemporalCounterexample,
 };
-use fsl_semantics::model::state::ModelState;
-use serde_json::{json, Value};
 use fsl_semantics::check::{AbstractSide, Capability, CheckedRefinement, DeclarationFamily};
 use fsl_semantics::model::observation::DocumentRef;
+use fsl_semantics::model::state::ModelState;
+use serde_json::{json, Value};
 
 use super::items::model_refusal;
 use super::{AnalyzeItem, AnalyzeLimits, EngineReport, SubjectBinding, TemporalItem};
@@ -91,7 +91,16 @@ pub(super) fn refinement_item<'a>(
             Some(DeclarationFamily::RelationClaim),
             fsl_route::Mode::Bounded,
             en1::BACKEND_ID,
-            move |cancel| run(refinement, package, &concrete, abstract_initial, &form, cancel),
+            move |cancel| {
+                run(
+                    refinement,
+                    package,
+                    &concrete,
+                    abstract_initial,
+                    &form,
+                    cancel,
+                )
+            },
         )
         .claimed(claim.clone()),
     )

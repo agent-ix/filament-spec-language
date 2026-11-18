@@ -39,8 +39,8 @@ mod exact;
 mod items;
 mod reduction_item;
 mod refinement_item;
-mod simulation_item;
 mod request;
+mod simulation_item;
 mod state_graph_item;
 mod timed_item;
 pub(crate) use request::analyze_bound;
@@ -77,7 +77,6 @@ use fsl_semantics::model::observation::{
 
 pub use crate::contract_check::contract_item;
 pub use crate::value_check::value_item;
-pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
 pub use clause_item::{ClauseItemRefusal, ClauseLimits, ClauseSubject, CLAUSE_TRANSCRIPT};
 pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
 #[cfg(feature = "test-support")]
@@ -88,6 +87,7 @@ pub use items::{
     protocol_item, statistical_item, timed_refinement_item, zone_item, DerivedItemMismatch,
     ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem, TimedRefinementItem,
 };
+pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
 
 use crate::provider::{ExternalProvider, NotUnbounded, ProviderOptions, ProviderReport};
 use crate::zone_check::ZoneCheckRecord;

@@ -45,7 +45,10 @@ const SPEC: &str = "test/counter-spec";
 /// FR-368) names the abstract snapshot, counter `a` at 0 in [`SPEC`].
 fn refinement_request(ws: &Workspace, body: &str, items: Value) -> std::path::PathBuf {
     // The abstract `inc` carries the concrete one's contract.
-    let contract = crate::counter::CONTRACT.replace("M::", "Spec::").replace("CanInc", "SpecCanInc").replace("post Inc", "post SpecInc");
+    let contract = crate::counter::CONTRACT
+        .replace("M::", "Spec::")
+        .replace("CanInc", "SpecCanInc")
+        .replace("post Inc", "post SpecInc");
     let unit = crate::counter::unit_text(&format!("{}{contract}{body}", crate::counter::CONTRACT))
         .replacen(
             "model M = \"test/counter\";\n",
@@ -74,12 +77,11 @@ fn refinement_request(ws: &Workspace, body: &str, items: Value) -> std::path::Pa
             "initial_states": [{"authority": "test", "identity": "spec-start"}]});
     }
     let mut request = request_members(Some(items));
-    request["models"]
-        .as_array_mut()
-        .expect("models")
-        .push(json!({"format": "semantic-ir/2.0.0", "source": {"file": "spec.json",
+    request["models"].as_array_mut().expect("models").push(
+        json!({"format": "semantic-ir/2.0.0", "source": {"file": "spec.json",
             "authority": "test", "identity": "counter-spec-model", "document": "Counter",
-            "formal_revision": 1}}));
+            "formal_revision": 1}}),
+    );
     request["documents"] = json!([{"file": "start.json"}, {"file": "spec-start.json"}]);
     let start = json!([{"authority": "test", "identity": "start"}]);
     request["subject"] = json!({"initial_states": start, "universes": start, "proof_bounds": []});
@@ -92,7 +94,8 @@ fn refinement_request(ws: &Workspace, body: &str, items: Value) -> std::path::Pa
 #[trace("TC-1590", "FR-630-AC-1")]
 #[test]
 fn a_refinement_proves_and_a_wrong_mapping_refutes() {
-    let body = refinement("Same", "self.value", "") + &refinement_stepping("Off", "self.value", "stutter", "");
+    let body = refinement("Same", "self.value", "")
+        + &refinement_stepping("Off", "self.value", "stutter", "");
     let ws = Workspace::new("family-refinement");
     let run = analyze(&refinement_request(
         &ws,
@@ -201,8 +204,7 @@ fn an_abstract_subject_of_another_package_is_an_invalid_request() {
     assert_eq!(item["category"], "refusal", "{item}");
     assert_eq!(item["record"]["settled_by"], "disposition", "{item}");
     assert_eq!(
-        item["record"]["diagnostic"]["detail"]["member"],
-        "temporal.abstract_subject.identity",
+        item["record"]["diagnostic"]["detail"]["member"], "temporal.abstract_subject.identity",
         "{item}"
     );
 }

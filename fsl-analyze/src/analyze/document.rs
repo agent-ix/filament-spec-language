@@ -1334,9 +1334,9 @@ fn resolve_derived(
             {
                 Some(claim)
             }
-            ResolvedItem::Claim(_)
-            | ResolvedItem::Settled { .. }
-            | ResolvedItem::Simulation(_) => None,
+            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } | ResolvedItem::Simulation(_) => {
+                None
+            }
         });
     let Some(mut claim) = derived else {
         return Some(invalid_kind(index, Some(name), "inapplicable-kind"));
@@ -1598,9 +1598,9 @@ fn derived_items(
             {
                 Some(claim.item.claim.clone())
             }
-            ResolvedItem::Claim(_)
-            | ResolvedItem::Settled { .. }
-            | ResolvedItem::Simulation(_) => None,
+            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } | ResolvedItem::Simulation(_) => {
+                None
+            }
         })
         .collect();
     let requirements = fsl_semantics::family::Requirements::new(

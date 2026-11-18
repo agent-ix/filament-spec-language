@@ -394,8 +394,16 @@ fn a_step_bound_leaves_the_horizon_state_in_the_frontier() {
     assert_eq!(item["frontier"].as_array().map(Vec::len), Some(1), "{item}");
     let traces = item["traces"].as_array().expect("traces");
     assert_eq!(traces.len(), 1, "{item}");
-    assert_eq!(traces[0]["states"].as_array().map(Vec::len), Some(3), "{item}");
-    assert_eq!(traces[0]["steps"].as_array().map(Vec::len), Some(2), "{item}");
+    assert_eq!(
+        traces[0]["states"].as_array().map(Vec::len),
+        Some(3),
+        "{item}"
+    );
+    assert_eq!(
+        traces[0]["steps"].as_array().map(Vec::len),
+        Some(2),
+        "{item}"
+    );
     assert_eq!(item["coverage"]["states"], "3", "{item}");
     assert_eq!(run.exit, 22, "an incomplete item ranks in the exit code");
 }

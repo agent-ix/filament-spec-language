@@ -10,9 +10,7 @@ use std::num::NonZeroU64;
 
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::Category;
-use fsl_eval::simulation::model::{
-    enumerate_model, sample_model_runs, ModelSystem, SampledRuns,
-};
+use fsl_eval::simulation::model::{enumerate_model, sample_model_runs, ModelSystem, SampledRuns};
 use fsl_eval::simulation::{
     Coverage, EnumerationBounds, EnumerationEnd, NotSimulated, StateKey, BOUND_POSITIONS,
 };
@@ -198,16 +196,28 @@ fn ending(end: &EnumerationEnd, settings: &SimulationSelection) -> (Category, Op
         EnumerationEnd::Exhausted => (Category::Success, None),
         EnumerationEnd::MaxStates => (
             Category::Incomplete,
-            limit("max_states", settings.max_states.map_or(DEFAULT_MAX_STATES, NonZeroU64::get)),
+            limit(
+                "max_states",
+                settings
+                    .max_states
+                    .map_or(DEFAULT_MAX_STATES, NonZeroU64::get),
+            ),
         ),
         EnumerationEnd::MaxSteps => (
             Category::Incomplete,
-            limit("max_steps", settings.max_steps.map_or(DEFAULT_MAX_STEPS, NonZeroU64::get)),
+            limit(
+                "max_steps",
+                settings
+                    .max_steps
+                    .map_or(DEFAULT_MAX_STEPS, NonZeroU64::get),
+            ),
         ),
         EnumerationEnd::StateKeyLimit => (
             Category::Incomplete,
-            Some(json!({"kind": "state-key-limit-exceeded", "limit": "max_state_key_bytes",
-                "value": settings.max_state_key_bytes()})),
+            Some(
+                json!({"kind": "state-key-limit-exceeded", "limit": "max_state_key_bytes",
+                "value": settings.max_state_key_bytes()}),
+            ),
         ),
         EnumerationEnd::Cancelled => (
             Category::Incomplete,
@@ -375,19 +385,18 @@ fn sample(
         samples: settings.samples(),
         max_steps: settings.max_steps(),
     };
-    let (traces, coverage) = match sample_model_runs(system, BOUND_POSITIONS, &sampler, runs, || {
-        cancel.poll()
-    }) {
-        Ok(drawn) => drawn,
-        Err(refused) => {
-            let (category, cause) = not_simulated(&refused);
-            document.insert("cause".to_owned(), cause);
-            document.insert("traces".to_owned(), json!([]));
-            document.insert("coverage".to_owned(), coverage_value(&Coverage::default()));
-            document.insert("frontier".to_owned(), json!([]));
-            return Ok(category);
-        }
-    };
+    let (traces, coverage) =
+        match sample_model_runs(system, BOUND_POSITIONS, &sampler, runs, || cancel.poll()) {
+            Ok(drawn) => drawn,
+            Err(refused) => {
+                let (category, cause) = not_simulated(&refused);
+                document.insert("cause".to_owned(), cause);
+                document.insert("traces".to_owned(), json!([]));
+                document.insert("coverage".to_owned(), coverage_value(&Coverage::default()));
+                document.insert("frontier".to_owned(), json!([]));
+                return Ok(category);
+            }
+        };
     let limit = settings.max_state_key_bytes();
     let mut oversized = false;
     let written = traces
@@ -413,16 +422,20 @@ fn sample(
                     }
                 }
             }
-            Ok(json!({"seed": seed.to_string(), "trace_index": index.to_string(),
-                "states": states, "steps": steps}))
+            Ok(
+                json!({"seed": seed.to_string(), "trace_index": index.to_string(),
+                "states": states, "steps": steps}),
+            )
         })
         .collect::<Result<Vec<_>, SimulationFault>>()?;
     let drawn = u64::try_from(written.len()).unwrap_or(u64::MAX);
     let (category, cause) = if oversized {
         (
             Category::Incomplete,
-            Some(json!({"kind": "state-key-limit-exceeded", "limit": "max_state_key_bytes",
-                "value": limit})),
+            Some(
+                json!({"kind": "state-key-limit-exceeded", "limit": "max_state_key_bytes",
+                "value": limit}),
+            ),
         )
     } else if drawn < settings.samples() {
         (
