@@ -1032,3 +1032,117 @@ fn default_abstract_initial_states_are_every_admissible_completion() {
     );
     assert_eq!(refuted["replay"]["reproduced"], true, "{refuted}");
 }
+
+/// FR-630-AC-5 (TC-2964): the refinement row `value = self.value + 3` types
+/// `Int[3, 6]`, which does not conform to the abstract field type `Int[0, 3]`
+/// (ADR-016 SC-2), so S3 refuses it `ill_typed`/`type-mismatch` and no item
+/// is analyzed.
+#[trace("TC-2964", "FR-630-AC-5")]
+#[test]
+#[ignore = "QSL-2407: the Shifted row refused at S3 type-mismatch as FR-630-AC-5 decides not yet asserted by the suite"]
+fn a_mapping_that_does_not_conform_to_the_abstract_field_is_refused() {
+    let body = refinement_stepping("Shifted", "self.value + 3", "stutter", "");
+    let ws = Workspace::new("family-refinement-shifted-refused");
+    let run = analyze(&refinement_request_without_abstract(
+        &ws,
+        &body,
+        json!([default_initial_item("Shifted", None)]),
+        &[1],
+    ));
+    let document = run.document();
+    let diagnostic = &document["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "ill_typed", "{document}");
+    assert_eq!(diagnostic["cause"], "type-mismatch", "{document}");
+    assert_eq!(document["items"], json!([]), "{document}");
+}
+
+/// Add the field `elapsed: Quantity<ms>` to the Counter document at `path`,
+/// under the unit bound `max 3` when `bounded`.
+fn add_elapsed(ws: &Workspace, path: &str, package: &str, bounded: bool) {
+    let file = ws.path(path);
+    let mut document: Value =
+        serde_json::from_slice(&std::fs::read(&file).expect("the model document")).expect("JSON");
+    let counter = format!("ix://{package}/Counter");
+    let elapsed = format!("{counter}/elapsed");
+    let origin = json!({"generated": {"generatorIdentity": elapsed, "generatorVersion": "1.0.0",
+        "inputIdentities": [elapsed]}});
+    for node in document["types"].as_array_mut().expect("types") {
+        if node["identity"] != json!(counter) {
+            continue;
+        }
+        node["fields"].as_array_mut().expect("fields").push(json!({
+            "identity": elapsed, "name": "elapsed", "typeRef": "ix://filament/unit/ms",
+            "presence": "required", "nullable": false, "defaultKind": "none",
+            "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+            "origin": origin,
+        }));
+        if bounded {
+            node["constraints"].as_array_mut().expect("constraints").push(json!({
+                "identity": format!("{counter}/constraints/elapsedMax"), "keyword": "max",
+                "operands": {"value": "3"}, "appliesTo": "ix://filament/unit/ms",
+                "diagnosticCode": "bound.elapsed", "origin": origin,
+            }));
+        }
+    }
+    std::fs::write(&file, document.to_string()).expect("write");
+}
+
+/// Set `elapsed` to `ms` milliseconds in each Counter object of the snapshot
+/// at `path`.
+fn set_elapsed(ws: &Workspace, path: &str, ms: i64) {
+    let file = ws.path(path);
+    let mut snapshot: Value =
+        serde_json::from_slice(&std::fs::read(&file).expect("the snapshot")).expect("JSON");
+    for population in snapshot["populations"].as_array_mut().expect("populations") {
+        for object in population["objects"].as_array_mut().expect("objects") {
+            object["fields"]["elapsed"] = json!({"rational": {"numerator": ms.to_string(),
+                "denominator": "1"}, "unit": "ms"});
+        }
+    }
+    std::fs::write(&file, snapshot.to_string()).expect("write");
+}
+
+/// FR-630-AC-6 (TC-2971): a well-typed mapping whose image violates an
+/// abstract unit bound has no admissible completion: `Late` over `elapsed`
+/// 2 ms maps to 4 ms above the bound `max 3` and is `InitialNotAbstract` at
+/// position 0, a replayed one-state counterexample; over `elapsed` 1 ms (3 ms,
+/// the bound itself) it is proved.
+#[trace("TC-2971", "FR-630-AC-6")]
+#[test]
+#[ignore = "QSL-2407: an image outside an abstract unit bound settled InitialNotAbstract not implemented yet"]
+fn an_image_outside_an_abstract_unit_bound_is_initial_not_abstract() {
+    let body = format!(
+        "dimension Time;\nunit s : Time = rational(1, 1);\nunit ms : Time = rational(1, 1000) * s;\n\
+         refinement Late using t0 abstract Spec concrete M {{\n\
+         population Spec::counters from M::counters;\n\
+         object Spec::Counter from M::Counter {{ value = self.value; elapsed = self.elapsed + 2 ms; }}\n\
+         step M::Counter::inc -> stutter;\n}}\n"
+    );
+    for (elapsed, expected) in [(2, "refuted"), (1, "proved")] {
+        let ws = Workspace::new(&format!("family-refinement-unit-bound-{elapsed}"));
+        let request = refinement_request_without_abstract(
+            &ws,
+            &body,
+            json!([default_initial_item("Late", None)]),
+            &[0],
+        );
+        add_elapsed(&ws, "model.json", "test/counter", false);
+        add_elapsed(&ws, "spec.json", SPEC, true);
+        for snapshot in ["start.json", "start-0.json", "spec-start.json", "spec-start-one.json"] {
+            if ws.path(snapshot).exists() {
+                set_elapsed(&ws, snapshot, elapsed);
+            }
+        }
+        let run = analyze(&request);
+        let item = run.item(0);
+        assert_eq!(label(&item), expected, "{}", run.document());
+        if expected == "refuted" {
+            assert_eq!(
+                item["counterexample"]["refinement_failure"],
+                json!({"kind": "InitialNotAbstract", "initial": "0"}),
+                "{item}"
+            );
+            assert_eq!(item["replay"]["reproduced"], true, "{item}");
+        }
+    }
+}
