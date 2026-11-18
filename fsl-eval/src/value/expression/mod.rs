@@ -426,6 +426,120 @@ pub struct HoldsBinders<'a> {
     pub captures: &'a [Value],
 }
 
+/// A `holds` atom of a temporal clause as both routes name it (FR-940
+/// "Package forms of the source-checked evaluators"): the clause node's key
+/// and the atom's use position in the clause formula walked in pre-order,
+/// one position per use of a node. The package's `formula_graph()` lists the
+/// same pre-order (FR-515 "One evaluator formula"), so the position names
+/// one atom on the source route's `CheckedFormula` and on the package's
+/// view alike.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HoldsAtom {
+    /// The clause's `temporal`/`temporal_clause` node.
+    pub clause: NodeKey,
+    /// The atom's use position in the formula's pre-order.
+    pub position: usize,
+}
+
+/// The most formula uses a pre-order walk of a source formula visits: the
+/// view's own bound (FR-515 `FormulaTooLarge`), so the source route names no
+/// atom the package's view could not list.
+const FORMULA_USES: u64 = fsl_package::checked_views::FORMULA_VISITS;
+
+/// The formula nodes of `formula` in pre-order, one entry per use, until
+/// `stop` accepts an entry or the walk ends; returns the accepted position
+/// and node.
+fn formula_uses(
+    formula: &fsl_semantics::check::CheckedFormula,
+    mut stop: impl FnMut(usize, fsl_semantics::check::FormulaNodeId) -> bool,
+) -> Option<(usize, fsl_semantics::check::FormulaNodeId)> {
+    let mut pending = vec![formula.root()];
+    let mut position = 0_usize;
+    while let Some(id) = pending.pop() {
+        if u64::try_from(position).map_or(true, |visited| visited >= FORMULA_USES) {
+            return None;
+        }
+        if stop(position, id) {
+            return Some((position, id));
+        }
+        let node = formula.nodes().get(id.index())?;
+        let operands: Vec<_> = node.operands().collect();
+        pending.extend(operands.into_iter().rev());
+        position += 1;
+    }
+    None
+}
+
+impl HoldsAtom {
+    /// The atom `atom` of the source clause `clause`: its first use in the
+    /// formula's pre-order. `None` for a node the formula does not use.
+    pub fn of_source(
+        clause: &fsl_semantics::check::TemporalClauseNode,
+        atom: fsl_semantics::check::FormulaNodeId,
+    ) -> Option<Self> {
+        formula_uses(clause.clause().formula(), |_, id| id == atom).map(|(position, _)| Self {
+            clause: clause.identity(),
+            position,
+        })
+    }
+
+    /// The source formula node this atom's position names in `clause`.
+    fn source_node(
+        &self,
+        clause: &fsl_semantics::check::TemporalClauseNode,
+    ) -> Option<fsl_semantics::check::FormulaNodeId> {
+        formula_uses(clause.clause().formula(), |position, _| {
+            position == self.position
+        })
+        .map(|(_, id)| id)
+    }
+}
+
+/// The source clause node whose key is `clause`. Two declarations of one
+/// clause node share its conditions and guard (FR-337), so the first is the
+/// one every evaluator reads.
+fn source_clause<'g>(
+    graph: &'g fsl_semantics::check::CheckedGraph,
+    clause: &NodeKey,
+) -> Result<&'g fsl_semantics::check::TemporalClauseNode, CallFailure> {
+    graph
+        .temporal_clauses()
+        .iter()
+        .find(|found| found.identity() == *clause)
+        .ok_or_else(|| {
+            CallFailure::Fault(InternalFault::new(
+                "S6a",
+                "temporal-clause-resolved-by-package",
+            ))
+        })
+}
+
+/// The source clause, checked condition and slot count of `atom`. A
+/// position that is no `holds` use of the clause is a fault.
+fn source_condition<'g>(
+    graph: &'g fsl_semantics::check::CheckedGraph,
+    atom: &HoldsAtom,
+) -> Result<
+    (
+        &'g fsl_semantics::check::TemporalClauseNode,
+        CheckedNode<'g>,
+        usize,
+    ),
+    CallFailure,
+> {
+    let clause = source_clause(graph, &atom.clause)?;
+    let (condition, slots) = atom
+        .source_node(clause)
+        .and_then(|node| clause.condition(node))
+        .ok_or_else(|| {
+            CallFailure::Fault(
+                InternalFault::new("S6a", "holds-atom-resolved-by-clause")
+                    .with_named(vec![("position", atom.position.to_string())]),
+            )
+        })?;
+    Ok((clause, condition, slots))
+}
+
 /// The slot bindings of a `holds` condition of `clause` (FR-337 "Captures at
 /// S3"): `over` at slot 0, the hidden trigger slot of an `on each` clause
 /// bound to `over` as well (no condition reads it), then the activation's
@@ -1025,8 +1139,7 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     /// A node that is no `holds` atom of `clause` is an `Err` fault.
     fn evaluate_holds(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
-        atom: fsl_semantics::check::FormulaNodeId,
+        atom: &HoldsAtom,
         over: Value,
         captures: &[Value],
         objects: &ObjectEnvironment,
@@ -1044,8 +1157,7 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     /// A node that is no `holds` atom of `clause` is an `Err` fault.
     fn evaluate_holds_traced(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
-        atom: fsl_semantics::check::FormulaNodeId,
+        atom: &HoldsAtom,
         binders: HoldsBinders<'_>,
         objects: &ObjectEnvironment,
         observation: ObservationIdentity,
@@ -1061,7 +1173,7 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     /// A clause with no guard is an `Err` fault.
     fn evaluate_guard(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
+        clause: &NodeKey,
         over: Value,
         objects: &ObjectEnvironment,
         meter: &mut Meter,
@@ -1920,19 +2032,13 @@ impl CheckedPackageEvaluation for CheckedPackage {
 
     fn evaluate_holds(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
-        atom: fsl_semantics::check::FormulaNodeId,
+        atom: &HoldsAtom,
         over: Value,
         captures: &[Value],
         objects: &ObjectEnvironment,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        let (condition, slots) = clause.condition(atom).ok_or_else(|| {
-            CallFailure::Fault(
-                InternalFault::new("S6a", "holds-atom-resolved-by-clause")
-                    .with_named(vec![("node", atom.index().to_string())]),
-            )
-        })?;
+        let (clause, condition, slots) = source_condition(self.graph(), atom)?;
         Machine::new(
             self.graph().scope(),
             self.graph(),
@@ -1946,20 +2052,14 @@ impl CheckedPackageEvaluation for CheckedPackage {
 
     fn evaluate_holds_traced(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
-        atom: fsl_semantics::check::FormulaNodeId,
+        atom: &HoldsAtom,
         binders: HoldsBinders<'_>,
         objects: &ObjectEnvironment,
         observation: ObservationIdentity,
         meter: &mut Meter,
     ) -> Result<ClauseEvaluation, CallFailure> {
         let HoldsBinders { over, captures } = binders;
-        let (condition, slots) = clause.condition(atom).ok_or_else(|| {
-            CallFailure::Fault(
-                InternalFault::new("S6a", "holds-atom-resolved-by-clause")
-                    .with_named(vec![("node", atom.index().to_string())]),
-            )
-        })?;
+        let (clause, condition, slots) = source_condition(self.graph(), atom)?;
         // `over` is slot 0 and the condition's receiver: a value read from
         // it is rooted at its declared object identity (FR-107 "The
         // receiver path").
@@ -1994,14 +2094,16 @@ impl CheckedPackageEvaluation for CheckedPackage {
 
     fn evaluate_guard(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
+        clause: &NodeKey,
         over: Value,
         objects: &ObjectEnvironment,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        let (guard, slots) = clause.guard().ok_or_else(|| {
-            CallFailure::Fault(InternalFault::new("S6a", "guard-resolved-by-clause"))
-        })?;
+        let (guard, slots) = source_clause(self.graph(), clause)?
+            .guard()
+            .ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new("S6a", "guard-resolved-by-clause"))
+            })?;
         Machine::new(
             self.graph().scope(),
             self.graph(),

@@ -16,7 +16,10 @@ use filament_eval::{
 use filament_exact::{Charge, ChargePoint, Meter, NodeKey, Outcome, Value};
 use filament_semantic_value::call::InputRefusal;
 use filament_semantic_value::catalog::InternalFault;
-use fsl_package::{BarePackage, BareSelectionFailure, BareSlot, BareWorld, ProtocolSlotDescriptor};
+use fsl_package::{
+    BareClauseTerm, BarePackage, BareSelectionFailure, BareSlot, BareWorld, ClauseBinder,
+    ProtocolSlotDescriptor,
+};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::evaluate::reader_source::ReaderNode;
@@ -239,6 +242,40 @@ fn unmet(package: &BarePackage<'_>, reason: &'static str) -> CallFailure {
     )))
 }
 
+/// The values of a clause term's local slots, in slot order (FR-337
+/// "Captures at S3"): `over` and the trigger binder, which the source route
+/// binds to the same object, and each capture the term reads. The slots are
+/// the term's own binder positions, so every one is given.
+fn clause_arguments(
+    term: &BareClauseTerm,
+    over: &Value,
+    captures: &[Value],
+) -> Result<Vec<Value>, CallFailure> {
+    let mut arguments = vec![None; term.binders().len()];
+    for (slot, binder) in term.binders() {
+        let value = match binder {
+            ClauseBinder::Over | ClauseBinder::Trigger => over.clone(),
+            ClauseBinder::Capture(index) => captures.get(*index).cloned().ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new(
+                    "FR-860",
+                    "clause-term-capture-is-supplied",
+                ))
+            })?,
+        };
+        let entry = arguments.get_mut(*slot).ok_or_else(|| {
+            CallFailure::Fault(InternalFault::new("FR-940", "clause-binder-slot-in-frame"))
+        })?;
+        *entry = Some(value);
+    }
+    arguments
+        .into_iter()
+        .map(|value| {
+            value.ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new("FR-940", "clause-binder-slot-is-bound"))
+            })
+        })
+        .collect()
+}
 const SOURCE_DECLARATION: &str = "needs-source-declaration";
 const SOURCE_CHECKED_FORM: &str = "needs-source-checked-form";
 
@@ -420,36 +457,98 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
 
     fn evaluate_holds(
         &self,
-        _clause: &fsl_semantics::check::TemporalClauseNode,
-        _atom: fsl_semantics::check::FormulaNodeId,
-        _over: Value,
-        _captures: &[Value],
-        _objects: &ObjectEnvironment,
-        _meter: &mut Meter,
+        atom: &super::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        Err(unmet(self, SOURCE_CHECKED_FORM))
+        let world = self.world().map_err(|failure| refusal(self, failure))?;
+        let term = self
+            .project_holds(&atom.clause, atom.position)
+            .map_err(|failure| refusal(self, failure))?;
+        let arguments = clause_arguments(&term, &over, captures)?;
+        Machine::from_bare_package(&world, objects, meter)
+            .run(
+                ReaderNode::root(term.projection()),
+                term.projection().frame_slots(),
+                arguments,
+            )
+            .map_err(CallFailure::Fault)
     }
 
     fn evaluate_holds_traced(
         &self,
-        _clause: &fsl_semantics::check::TemporalClauseNode,
-        _atom: fsl_semantics::check::FormulaNodeId,
-        _binders: super::HoldsBinders<'_>,
-        _objects: &ObjectEnvironment,
-        _observation: super::ObservationIdentity,
-        _meter: &mut Meter,
+        atom: &super::HoldsAtom,
+        binders: super::HoldsBinders<'_>,
+        objects: &ObjectEnvironment,
+        observation: super::ObservationIdentity,
+        meter: &mut Meter,
     ) -> Result<ClauseEvaluation, CallFailure> {
-        Err(unmet(self, SOURCE_CHECKED_FORM))
+        let super::HoldsBinders { over, captures } = binders;
+        let world = self.world().map_err(|failure| refusal(self, failure))?;
+        let term = self
+            .project_holds(&atom.clause, atom.position)
+            .map_err(|failure| refusal(self, failure))?;
+        let arguments = clause_arguments(&term, &Value::Reference(over.clone()), captures)?;
+        // `over` is the condition's receiver: a value read from it is rooted
+        // at its declared object identity (FR-107 "The receiver path"), at
+        // whichever local slot the projection gave it.
+        let subject = super::s6a::separation::ValuePathSubject::Object(over.clone());
+        let mut trail = super::s6a::separation::Trail::new(observation.clone(), None);
+        trail.receiver = Some(over.clone());
+        trail.bindings = term.binders().iter().fold(
+            vec![None; arguments.len()],
+            |mut bindings, (slot, binder)| {
+                if *binder == ClauseBinder::Over {
+                    if let Some(entry) = bindings.get_mut(*slot) {
+                        *entry = Some(subject.clone());
+                    }
+                }
+                bindings
+            },
+        );
+        let (evaluation, trail) = Machine::from_bare_package(&world, objects, meter)
+            .with_trail(trail)
+            .run_traced(
+                ReaderNode::root(term.projection()),
+                term.projection().frame_slots(),
+                arguments,
+            )
+            .map_err(CallFailure::Fault)?;
+        Ok(ClauseEvaluation::new(
+            evaluation,
+            trail,
+            Some(super::RuntimeValuePath {
+                observation,
+                subject,
+                steps: Vec::new(),
+            }),
+        ))
     }
 
     fn evaluate_guard(
         &self,
-        _clause: &fsl_semantics::check::TemporalClauseNode,
-        _over: Value,
-        _objects: &ObjectEnvironment,
-        _meter: &mut Meter,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        Err(unmet(self, SOURCE_CHECKED_FORM))
+        let world = self.world().map_err(|failure| refusal(self, failure))?;
+        let term = self
+            .project_guard(clause)
+            .map_err(|failure| refusal(self, failure))?
+            .ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new("S6a", "guard-resolved-by-clause"))
+            })?;
+        let arguments = clause_arguments(&term, &over, &[])?;
+        Machine::from_bare_package(&world, objects, meter)
+            .run(
+                ReaderNode::root(term.projection()),
+                term.projection().frame_slots(),
+                arguments,
+            )
+            .map_err(CallFailure::Fault)
     }
 
     fn evaluate_hyper_holds(

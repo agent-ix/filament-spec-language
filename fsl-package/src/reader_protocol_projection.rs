@@ -1239,6 +1239,23 @@ impl<'wire> BareWalker<'wire> {
         }
     }
 
+    /// The projection of the clause term rooted at `root` over `binders`
+    /// (FR-940 "Package forms of the source-checked evaluators"): a temporal
+    /// clause's `holds` condition or activation guard. The package writes no
+    /// `protocol_locations` row for a clause term (FR-383 rows are written for
+    /// protocol slots only), so its applications carry no location.
+    pub(crate) fn project_term(
+        &self,
+        root: &NodeKey,
+        binders: &[NodeKey],
+    ) -> Result<ReaderProtocolProjection, WalkFailure> {
+        self.slot(&SlotRequest {
+            root: root.clone(),
+            origin: String::new(),
+            binders: binders.to_vec(),
+        })
+    }
+
     /// The number of rows each type-declaration origin holds for each
     /// application, by origin name.
     pub(crate) fn origin_rows(&self) -> BTreeMap<&'wire str, BTreeMap<CheckedNodeId, usize>> {

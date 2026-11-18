@@ -28,6 +28,7 @@ pub(crate) use subject::temporal_subject_within;
 pub use subject::{
     activation_relation, temporal_subject, Activation, ArenaHandle, ClauseOccurrence,
     FormulaNodeUse, FormulaOperation, OperatorDirection, OperatorUse, TemporalSubjectView,
+    FORMULA_VISITS,
 };
 
 /// Why a view was not read: a closed set, so a caller branches on the
