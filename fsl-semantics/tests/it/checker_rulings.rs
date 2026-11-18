@@ -357,7 +357,6 @@ fn reaches_admits_every_destination_multiplicity() {
 /// FR-391-AC-10: a state clause body may use `seq` and the population forms,
 /// and each lowers: checking (which lowers) refuses none of them.
 #[trace("TC-1904", "FR-391-AC-10", "FR-139-AC-2")]
-#[trace("FSpec-TC-1401", "FSpec-FR-376-AC-8", "FSpec-FR-376-AC-9")]
 #[test]
 fn population_forms_and_seq_in_a_state_clause_check_and_lower() {
     for clause in [
