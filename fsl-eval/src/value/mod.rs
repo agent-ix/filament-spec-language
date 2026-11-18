@@ -14,6 +14,7 @@ pub mod collections;
 pub mod composite;
 mod expression;
 pub(crate) use expression::evaluate_clause_set_with_cancel;
+pub(crate) use expression::evaluate_hyper_holds_with_component_bindings;
 
 /// FSpec FR-144 canonical key order of two map keys. Float keys use their
 /// membership identity's IEEE total order; integer and decimal keys use their
