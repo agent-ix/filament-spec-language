@@ -1286,6 +1286,15 @@ fn a_monitor_request_supplies_the_integer_division_law() {
     records.push(json!({"end": true}));
     let lines: Vec<String> = records.iter().map(Value::to_string).collect();
     std::fs::write(directory.path().join("half.jsonl"), lines.join("\n")).unwrap();
+    let program = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile i = \"filament.temporal.infinite-trace/v1\";\n\
+         record Reading {{ level: Int[0, 9]; }}\n\
+         function half using v(a: Int[0, 9]): Int[0, 9] pure {{ a div 2 }}\n\
+         temporal Half using i over (r: Reading) clock \"steps\" on origin {{ always holds(half(r.level) < 5) }}\n"
+    );
+    let div_start = program.find("a div 2").expect("the program's div expression") as u64;
     let run = |law: Option<&str>| {
         let mut request = monitor_request(json!([{"name": "Half"}]), json!({"kind": "finite"}));
         request["request"]["records"] = json!("half.jsonl");
@@ -1295,18 +1304,7 @@ fn a_monitor_request_supplies_the_integer_division_law() {
         }
         let path = directory.path().join("half.json");
         std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
-        std::fs::write(
-            directory.path().join("unit.native"),
-            format!(
-                "language \"ix:native\" edition \"1-draft\";\n\
-                 profile v = \"filament.value.complete/v1\";\n\
-                 profile i = \"filament.temporal.infinite-trace/v1\";\n\
-                 record Reading {{ level: Int[0, 9]; }}\n\
-                 function half using v(a: Int[0, 9]): Int[0, 9] pure {{ a div 2 }}\n\
-                 temporal Half using i over (r: Reading) clock \"steps\" on origin {{ always holds(half(r.level) < 5) }}\n"
-            ),
-        )
-        .unwrap();
+        std::fs::write(directory.path().join("unit.native"), &program).unwrap();
         if law.is_none() {
             // The missing law must refuse before the records file is read.
             std::fs::remove_file(directory.path().join("half.jsonl")).unwrap();
@@ -1331,8 +1329,9 @@ fn a_monitor_request_supplies_the_integer_division_law() {
         Some("missing-selection"),
         "{refused}"
     );
-    let locus = find(&refused, "locus").expect("the missing law is located at `div`");
-    assert!(locus.is_object(), "{refused}");
+    let span = find(&refused, "span").expect("the missing law is located at `div`");
+    assert_eq!(span["start"]["byte"], div_start, "{refused}");
+    assert_eq!(span["end"]["byte"], div_start + 7, "{refused}");
 }
 
 /// FR-645, QSL-2138: a window aggregate over a record trace subject is read
