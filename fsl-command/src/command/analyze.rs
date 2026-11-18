@@ -305,7 +305,7 @@ fn run_package(
 /// The request's inputs and the intake that read them, which still charges
 /// the libraries and domain packages compilation reads.
 fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result<Readout<'d>> {
-    let request: wire::AnalyzeRequest = request(bytes).map_err(|cause| match cause {
+    let mut request: wire::AnalyzeRequest = request(bytes).map_err(|cause| match cause {
         RunCause::Json(error) => invalid("request", error.to_string()),
         cause => cause,
     })?;
@@ -322,7 +322,7 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
             deadline_ms: request.deadline_ms,
         }));
     }
-    let integer_division = request_integer_division(request.integer_division)?;
+    let integer_division = request_integer_division(request.integer_division.take())?;
     let Some(program) = &request.program else {
         return Err(invalid("program", "a program or package is required"));
     };
@@ -528,7 +528,7 @@ fn run_input(
         fsl_replay::spine::SpineLimits::default(),
         integer_division,
         None,
-        |checked, _, _, packages, libraries, _, _, _, _| {
+        |_intake, checked, _, _, packages, libraries, _, _, _, _| {
             let units = std::iter::once(&source).chain(libraries);
             let settled = settle_items(
                 checked.package(),

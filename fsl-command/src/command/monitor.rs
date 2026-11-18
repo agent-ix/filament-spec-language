@@ -567,7 +567,7 @@ fn drive(
         SpineLimits::default(),
         integer_division,
         None,
-        |checked, selections, _, packages, libraries, _, _, _, _| {
+        |_intake, checked, selections, _, packages, libraries, _, _, _, _| {
             // FR-644 "Provider-routed items": the items settle after the
             // program compiles and before the first record is read.
             let items = inputs
