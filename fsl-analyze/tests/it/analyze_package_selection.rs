@@ -9,32 +9,26 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    analyze, below_three, bounded, clause, counter_request, label, request_members, Run, Workspace,
+    analyze, below_three, bounded, clause, counter_request, label, package_selection,
+    request_members, Run, Workspace, HANDOFF,
 };
 
 fn at_most_two() -> String {
     clause("AtMostTwo", "", "always holds(c.value <= 2)")
 }
 
-/// Compile the Counter program with `body` and write its package bytes as
-/// `package.json`; returns the request members with `package` selected and no
+/// Compile the Counter program with `body` into its FR-517 handoff
+/// directory; returns the request members with `package` selecting it and no
 /// `program`, and the package bytes.
 fn package_request(ws: &Workspace, body: &str, items: Value) -> (Value, Vec<u8>) {
     // Writes the program, model and snapshot files beside the request.
     let _ = counter_request(ws, body, items.clone());
-    let request = request_members(Some(items));
-    let compile = json!({"format": "native-compile/1", "request": {
-        "models": request["models"], "program": request["program"]}});
-    let compile_path = ws.write("compile.json", compile.to_string().as_bytes());
-    let package = fsl_command::command::compile(&compile_path).expect("the program compiles");
-    ws.write("package.json", &package);
-    let mut selected = request;
-    selected
-        .as_object_mut()
-        .expect("a request object")
-        .remove("program");
-    selected["package"] = json!({"file": "package.json"});
-    (selected, package)
+    package_selection(ws, &request_members(Some(items)))
+}
+
+/// The handoff file `name` of FR-850's `package` selection.
+fn handoff_file(name: &str) -> String {
+    format!("{HANDOFF}/{name}")
 }
 
 fn analyze_members(ws: &Workspace, name: &str, members: &Value) -> Run {
@@ -88,7 +82,7 @@ fn malformed_package_bytes_refuse_invalid_package() {
         ("no-entry", no_entry.to_string().into_bytes()),
         ("not-json", b"not json".to_vec()),
     ] {
-        ws.write("package.json", &bytes);
+        ws.write(&handoff_file("checked-package.json"), &bytes);
         let run = analyze_members(&ws, &format!("analyze-{name}.json"), &members);
         let diagnostic = first_diagnostic(&run);
         assert_eq!(
@@ -98,6 +92,61 @@ fn malformed_package_bytes_refuse_invalid_package() {
         assert_eq!(run.document()["items"], json!([]), "{name}");
         assert_eq!(run.exit, 20, "{name}");
     }
+}
+
+/// FR-850 "Admission" (lead ruling on the handoff selection): a handoff
+/// with no `identities.json`, or one the identity reader refuses, refuses
+/// the whole request `invalid_package` with a named cause, exit 20, before
+/// any item resolves; a present equality file the reader refuses refuses
+/// the same way.
+#[trace("TC-2410", "FR-850-AC-3")]
+#[test]
+fn a_handoff_without_its_identity_rows_refuses_invalid_package() {
+    let ws = Workspace::new("package-identities");
+    let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Missing"}]));
+    let identities = ws.path(&handoff_file("identities.json"));
+    let rows = std::fs::read(&identities).expect("the handoff writes identities.json");
+    let equality = ws.path(&handoff_file("equality.json"));
+    let equality_rows = std::fs::read(&equality).expect("the handoff writes equality.json");
+
+    std::fs::remove_file(&identities).expect("the identity file is removed");
+    let run = analyze_members(&ws, "analyze-no-identities.json", &members);
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["code"], "invalid_package", "{diagnostic}");
+    assert_eq!(diagnostic["cause"], "missing-file", "{diagnostic}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("identities.json")),
+        "{diagnostic}"
+    );
+    assert_eq!(run.document()["items"], json!([]));
+    assert_eq!(run.exit, 20);
+
+    ws.write(&handoff_file("identities.json"), b"not json");
+    let run = analyze_members(&ws, "analyze-bad-identities.json", &members);
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["code"], "invalid_package", "{diagnostic}");
+    assert_eq!(diagnostic["cause"], "malformed-file", "{diagnostic}");
+    assert_eq!(run.exit, 20);
+
+    ws.write(&handoff_file("identities.json"), &rows);
+    ws.write(&handoff_file("equality.json"), b"{}");
+    let run = analyze_members(&ws, "analyze-bad-equality.json", &members);
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["code"], "invalid_package", "{diagnostic}");
+    assert_eq!(diagnostic["cause"], "refused-file", "{diagnostic}");
+    assert_eq!(run.exit, 20);
+
+    // With both files restored the request is admitted and its unknown
+    // claim settles as an item.
+    ws.write(&handoff_file("equality.json"), &equality_rows);
+    let run = analyze_members(&ws, "analyze-restored.json", &members);
+    assert_eq!(
+        run.item(0)["record"]["diagnostic"]["cause"], "unknown-claim",
+        "{}",
+        run.document()
+    );
 }
 
 /// FR-850-AC-4 (negative): compile members beside `package`, missing models
@@ -276,7 +325,7 @@ fn a_refused_package_never_falls_back_to_source() {
     let items = json!([{"claim": "NotAboveThree"}]);
     let ws = Workspace::new("package-no-fallback");
     let (members, _) = package_request(&ws, &body, items);
-    ws.write("package.json", b"{}");
+    ws.write(&handoff_file("checked-package.json"), b"{}");
     let run = analyze_members(&ws, "analyze-refused.json", &members);
     assert_eq!(run.exit, 20, "{}", run.document());
     assert!(
