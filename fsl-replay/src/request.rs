@@ -308,12 +308,19 @@ pub struct ReplayRequest {
     object_environment: Option<ObjectEnvironmentRef>,
     declared_domains: Vec<DeclaredDomain>,
     byte_provision: ByteProvision,
+    replay_limits: ReplayLimits,
 }
 
 impl ReplayRequest {
     /// The complete raw package retained for native admission before evaluation.
     pub fn package(&self) -> &ReplayPackage {
         &self.package
+    }
+
+    /// The request's input-size limit, retained from decode for every later
+    /// recompilation of this request.
+    pub fn limits(&self) -> ReplayLimits {
+        self.replay_limits
     }
 
     /// The proved package lock's supplied internal-step lists.
@@ -974,6 +981,7 @@ impl ReplayRequest {
             object_environment: wire.object_environment,
             declared_domains: wire.declared_domains,
             byte_provision,
+            replay_limits: limits,
         })
     }
 
