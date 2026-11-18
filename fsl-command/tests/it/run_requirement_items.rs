@@ -515,6 +515,78 @@ fn run_with_providers_settles_the_call_s_items_after_negotiation() {
     assert_eq!((run.negotiations, run.settle_calls), (0, 0));
 }
 
+/// FR-950 / QSL-2375: the provider-backed entry uses caller-selected byte
+/// ceilings and applies the same request overrides as plain `run`.
+#[trace("TC-2701", "FR-950-AC-5")]
+#[test]
+fn provider_run_accepts_run_limits_and_request_overrides() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = write(
+        directory.path(),
+        "Even",
+        json!([{"parameter": "n", "value": 4}]),
+        Some(json!({"backend": PROVIDER})),
+    );
+    let request_bytes = std::fs::metadata(&request).unwrap().len() as usize;
+    let dependent_bytes = std::fs::metadata(directory.path().join("unit.native"))
+        .unwrap()
+        .len() as usize;
+    let limits = command::RunLimits {
+        request_bytes,
+        dependent_bytes,
+    };
+    let clocks = serde_json::value::RawValue::from_string("{}".to_owned()).unwrap();
+    let overrides = command::RequestOverrides {
+        clocks: Some(&clocks),
+        ..command::RequestOverrides::default()
+    };
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let options = fsl_analyze::provider::ProviderOptions::default();
+    let cancel = filament_exact::Cancel::new();
+    let result = command::run_with_providers_and_limits_and_overrides(
+        &request,
+        limits,
+        &overrides,
+        &Fr290,
+        vec![recording_provider(
+            &seen,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+        &options,
+        &cancel,
+    )
+    .expect("the exact request and dependent-file ceilings admit the provider run");
+    assert_eq!(
+        documents(&result).0["outcome"]["value"],
+        json!({"boolean": true})
+    );
+    assert_eq!(seen.lock().unwrap().settle_calls, 1);
+
+    let below_request_size = command::RunLimits {
+        request_bytes: request_bytes - 1,
+        dependent_bytes,
+    };
+    let error = command::run_with_providers_and_limits_and_overrides(
+        &request,
+        below_request_size,
+        &overrides,
+        &Fr290,
+        vec![recording_provider(
+            &seen,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+        &options,
+        &cancel,
+    )
+    .expect_err("the provider run enforces the caller's request byte ceiling");
+    assert!(error.to_string().contains("request_bytes"), "{error}");
+    assert_eq!(
+        seen.lock().unwrap().settle_calls,
+        1,
+        "refusal sends no request"
+    );
+}
+
 /// FR-961-AC-4, FR-961-AC-5: negative cases of the run-side entry: a repeated
 /// provider identity, a refused compile, a counterexample replay does not
 /// reproduce, and a cancelled handle.

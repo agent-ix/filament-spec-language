@@ -15,13 +15,13 @@ mod tl;
 mod wire;
 
 pub use analyze::{
-    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
-    analyze_with_providers_and_limits, prepare_analyze,
+    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
+    prepare_analyze, AnalyzeInput, PreparedAnalyze,
 };
-pub use flow::{FlowAnalyzeError, analyze_flow_report};
-pub use monitor::{MonitorEvent, MonitorSummary, monitor};
+pub use flow::{analyze_flow_report, FlowAnalyzeError};
+pub use monitor::{monitor, MonitorEvent, MonitorSummary};
 pub use output::NativeResult;
-pub use tl::{AtomMapping, TlRecord, record as tl_record};
+pub use tl::{record as tl_record, AtomMapping, TlRecord};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -1457,10 +1457,34 @@ pub fn run_with_providers(
     options: &ProviderOptions,
     cancel: &filament_exact::Cancel,
 ) -> std::result::Result<RunResult, Box<RunError>> {
-    run_configured(
+    run_with_providers_and_limits_and_overrides(
         path,
         RunLimits::default(),
         &RequestOverrides::default(),
+        negotiate,
+        providers,
+        options,
+        cancel,
+    )
+}
+
+/// Run with providers, caller-selected request/dependent byte ceilings, and
+/// request members supplied beside the request file (FR-312, FR-640).
+/// This is the provider-backed counterpart of
+/// [`run_with_limits_and_overrides`].
+pub fn run_with_providers_and_limits_and_overrides(
+    path: &Path,
+    limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+    negotiate: &dyn Negotiate,
+    providers: Vec<fsl_analyze::analyze::Engine>,
+    options: &ProviderOptions,
+    cancel: &filament_exact::Cancel,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    run_configured(
+        path,
+        limits,
+        overrides,
         Settlement {
             negotiate,
             providers,
