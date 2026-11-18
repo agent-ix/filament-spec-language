@@ -80,6 +80,10 @@ pub struct Unit {
     /// The keys of the population's universe, and those present initially.
     keys: Vec<&'static str>,
     present: Vec<&'static str>,
+    /// Whether the unit is checked under `CheckMode::Kernel`, for a function
+    /// body that divides where `Linked` demands a proved nonzero divisor
+    /// (FR-495-AC-3).
+    kernel: bool,
 }
 
 /// How the concrete `Register` differs from the plain one.
@@ -129,6 +133,12 @@ fn integer_field(value: i64) -> Json {
 }
 
 impl Unit {
+    /// This unit checked under `CheckMode::Kernel` (FR-495-AC-3).
+    pub fn kernel(mut self) -> Self {
+        self.kernel = true;
+        self
+    }
+
     /// FR-138's `Register`: the abstract register keeps `value` and the
     /// `prev` the concrete register does not; `write(x)` of either.
     pub fn register() -> Self {
@@ -204,6 +214,7 @@ impl Unit {
             )
         };
         Self {
+            kernel: false,
             keys: keys.to_vec(),
             present: present.to_vec(),
             abstract_package: REGISTER_SPEC,
@@ -242,6 +253,7 @@ impl Unit {
             )
         };
         Self {
+            kernel: false,
             keys: vec!["c"],
             present: vec!["c"],
             abstract_package: COUNTER_SPEC,
@@ -295,6 +307,7 @@ impl Unit {
             )
         };
         Self {
+            kernel: false,
             keys: vec!["p"],
             present: vec!["p"],
             abstract_package: PAIR_SPEC,
@@ -342,6 +355,7 @@ impl Unit {
         };
         let fields = |(a, b): &(i64, i64)| json!({"a": integer_field(*a), "b": integer_field(*b)});
         Self {
+            kernel: false,
             keys: vec!["r"],
             present: vec!["r"],
             abstract_package: PAIR_SPEC,
@@ -460,6 +474,7 @@ impl Unit {
             ""
         };
         Self {
+            kernel: false,
             keys: vec!["r"],
             present: vec!["r"],
             abstract_package: COIN_SPEC,
@@ -550,7 +565,14 @@ impl Unit {
         .with_unwritten_refinements();
         let regions = declarations.regions();
         declarations
-            .check(CheckMode::Kernel, CheckingLimits::default())
+            .check(
+                if self.kernel {
+                    CheckMode::Kernel
+                } else {
+                    CheckMode::Linked
+                },
+                CheckingLimits::default(),
+            )
             .map_err(|refusals| {
                 refusals
                     .into_iter()

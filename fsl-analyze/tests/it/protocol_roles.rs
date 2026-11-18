@@ -2412,6 +2412,39 @@ fn an_attempt_binder_is_bound() {
     }));
 }
 
+/// FR-882-AC-4 (TC-2506): an attempt binder is bound to the attempt's
+/// application record whatever its declared type, so the effect of an
+/// attempt over a void operation, and of one whose binder type differs from
+/// the operation's result type, enables and the run finishes (ADR-027 ST-1,
+/// ST-2).
+#[trace("TC-2506", "FR-882-AC-4")]
+#[test]
+fn an_effect_enables_whatever_the_binder_type() {
+    for run in [
+        // A void operation under a Boolean binder.
+        "sequence Main { attempt T by w on M::Cell::bump contracts [BumpPost] \
+         as (t: Boolean) { true }; effect Fx of T as (e: Boolean) { true }; }",
+        // A Boolean-returning operation under an Integer binder.
+        "sequence Main { attempt T by w on M::Cell::flag contracts [FlagPre, FlagPost] \
+         as (t: Integer) { true }; effect Fx of T as (e: Boolean) { true }; }",
+    ] {
+        let world = World::new(&unit(ORIGIN, "", "", run), &["c"], &[0]);
+        let subject = world.subject();
+        let model =
+            ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
+        let system = ProtocolSystem::new(model, &subject, Sc)
+            .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
+        assert!(
+            reachable(&system).iter().any(|state| {
+                state.steps.iter().any(|(transition, _)| {
+                    transition.kind() == StepKind::Finish && transition.node() == Some("Done")
+                })
+            }),
+            "{run}: the effect enables and the run finishes"
+        );
+    }
+}
+
 /// FR-882-AC-7 (TC-2505): every remaining `Unsupported` variant has an
 /// exercised, non-refusing counterpart for the supported path in its area.
 #[trace("TC-2505", "FR-882-AC-7")]

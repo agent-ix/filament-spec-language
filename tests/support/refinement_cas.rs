@@ -271,6 +271,9 @@ pub struct Variant {
     pub inc: bool,
     /// Replace the CAS operations with the two-state tick/inc fairness model.
     pub fairness_toggle: bool,
+    /// Check the unit under `CheckMode::Kernel`, for a function body that
+    /// divides where `Linked` demands a proved nonzero divisor (FR-495-AC-3).
+    pub kernel: bool,
 }
 
 impl Variant {
@@ -286,6 +289,7 @@ impl Variant {
         tick: false,
         inc: false,
         fairness_toggle: false,
+        kernel: false,
     };
     /// The lost-update model.
     pub const LOST_UPDATE: Self = Self {
@@ -607,7 +611,14 @@ pub fn check_with_internals(
         None => declarations.with_unwritten_refinements(),
     };
     declarations
-        .check(CheckMode::Kernel, CheckingLimits::default())
+        .check(
+            if variant.kernel {
+                CheckMode::Kernel
+            } else {
+                CheckMode::Linked
+            },
+            CheckingLimits::default(),
+        )
         .map_err(|refusals| format!("{refusals:?}"))
 }
 

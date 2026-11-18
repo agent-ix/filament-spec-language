@@ -1094,6 +1094,7 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
         );
     let world = World::with_internals(
         Variant {
+            kernel: true,
             peek: false,
             intended_terminal: true,
             ..Variant::CAS
@@ -1204,6 +1205,7 @@ fn an_undetermined_protocol_assumption_has_a_typed_finite_witness() {
         .replace("finish Done as (d: Boolean) { true };", "finish Done as (d: Boolean) { false };");
     let world = World::with_internals(
         Variant {
+            kernel: true,
             peek: false,
             ..Variant::CAS
         },

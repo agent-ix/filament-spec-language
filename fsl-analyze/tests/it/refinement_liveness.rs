@@ -518,7 +518,7 @@ fn an_undecided_abstract_contract_leaves_the_liveness_half_undecided() {
         "post SpecFlipB using v on Spec::Pair::flipB { self.b = 1 - pre(self.b) }",
         "function mod_defined using v(n: Int[0, 1]): Boolean pure { 1 mod (1 - n) >= 0 }\npost SpecFlipB using v on Spec::Pair::flipB { mod_defined(pre(self.b)) and self.b = 1 - pre(self.b) }",
     );
-    let unit = Unit::probe_pair(contracts, &[(0, 1)]);
+    let unit = Unit::probe_pair(contracts, &[(0, 1)]).kernel();
     let outcome = check_aux(&unit.world(&probe_refinement(&[
         "ensure fair weak whole Spec::Pair::flipB;",
     ])));

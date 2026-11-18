@@ -776,9 +776,15 @@ fn an_undetermined_contract_is_a_bad_state() {
         "ensure fair weak each Spec::Counter::inc;",
         "",
     );
-    let guarded = World::new(&format!(
-        "function mod_defined using v(n: Int[0, 2]): Boolean pure {{ 6 mod (2 - n) >= 0 }}\npre PeekDefined using v on Impl::Counter::peek {{ mod_defined(self.value) }}\n{text}"
-    ));
+    let guarded = World::with(
+        Variant {
+            kernel: true,
+            ..Variant::CAS
+        },
+        &format!(
+            "function mod_defined using v(n: Int[0, 2]): Boolean pure {{ 6 mod (2 - n) >= 0 }}\npre PeekDefined using v on Impl::Counter::peek {{ mod_defined(self.value) }}\n{text}"
+        ),
+    );
     assert_eq!(
         rejected(check(&guarded, &certificate)).0,
         CertificateRule::BadState
