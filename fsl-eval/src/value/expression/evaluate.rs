@@ -25,6 +25,7 @@ use super::s6a::separation::{
     StopReport, Trail, ValuePathStep, ValuePathSubject, WitnessClaim, locatable, occurrence_at,
 };
 use super::slot_admission;
+use crate::simulation::model::{ReferenceBinding, ReferenceBindings};
 use filament_checked::key::DeclarationKey;
 use filament_eval::Evaluation;
 use filament_eval::FamilyOutcome;
@@ -855,6 +856,9 @@ pub(crate) struct Machine<'a, 'm, N> {
     /// FR-487: the component environment each model read of a hyper atom's
     /// condition observes, when the machine runs one.
     components: Option<ComponentReads<'a>>,
+    /// FR-1000: this subject's fixed/created decision for pending reference
+    /// literals; absent outside model-state evaluation.
+    reference_bindings: Option<&'a ReferenceBindings>,
 }
 
 /// The component environments a hyper atom's condition reads (FR-487
@@ -1065,7 +1069,15 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             witnessed_reads: std::collections::BTreeSet::new(),
             absent_parameters: Vec::new(),
             components: None,
+            reference_bindings: None,
         }
+    }
+
+    /// FR-1000: evaluate against the reference literals admitted with the
+    /// model subject that owns the current state.
+    pub(crate) fn with_reference_bindings(mut self, bindings: &'a ReferenceBindings) -> Self {
+        self.reference_bindings = Some(bindings);
+        self
     }
 
     /// FR-125 Instancing: `slot` carries absent-key guard provenance when the
@@ -2255,6 +2267,44 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
 
     fn eval(&mut self, node: N) -> Result<(), Halt> {
         match node.kind() {
+            NodeKind::ReferenceLiteral {
+                object_type,
+                identity,
+            } => {
+                let binding = self
+                    .reference_bindings
+                    .and_then(|bindings| bindings.get(object_type, identity))
+                    .ok_or_else(|| invariant("reference-literal-subject-binding-exists"))?;
+                match binding {
+                    ReferenceBinding::Fixed(reference) => {
+                        self.push_value(Value::Reference(reference.clone()), false);
+                    }
+                    ReferenceBinding::CreatedObject {
+                        object_type,
+                        identity,
+                        population,
+                    } => {
+                        let objects = self.objects_for(node)?;
+                        let reference = objects.references().iter().find(|reference| {
+                            reference.object().as_str() == identity
+                                && self
+                                    .world
+                                    .types()
+                                    .conforms(reference.object_type().clone(), object_type.clone())
+                        });
+                        let Some(reference) = reference else {
+                            return Err(Halt::Family(FamilyResult::Undefined(Box::new(
+                                StateModelUndefined::AbsentKey {
+                                    binding: population.clone(),
+                                    key: render_identity(identity.as_bytes()),
+                                },
+                            ))));
+                        };
+                        self.push_value(Value::Reference(reference.clone()), false);
+                    }
+                }
+                return Ok(());
+            }
             NodeKind::Literal(literal) => {
                 self.push_value(N::literal(literal).clone(), false);
                 return Ok(());

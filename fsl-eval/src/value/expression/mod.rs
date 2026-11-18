@@ -322,8 +322,25 @@ pub fn evaluate_state_predicate_with(
     further: Vec<Value>,
     meter: &mut Meter,
 ) -> Result<Evaluation, InternalFault> {
+    evaluate_state_predicate_with_reference_bindings(
+        package, predicate, current, over, further, None, meter,
+    )
+}
+
+/// [`evaluate_state_predicate_with`] with the model subject's FR-1000
+/// reference-literal decisions. A fixed literal is constant; a created-object
+/// literal is resolved against `current` at this state.
+pub(crate) fn evaluate_state_predicate_with_reference_bindings(
+    package: &CheckedPackage,
+    predicate: &impl fsl_semantics::check::StatePredicate,
+    current: &ObjectEnvironment,
+    over: Option<filament_exact::ObjectReference>,
+    further: Vec<Value>,
+    reference_bindings: Option<&crate::simulation::model::ReferenceBindings>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
     let reads = std::collections::BTreeMap::new();
-    Machine::with_pre(
+    let machine = Machine::with_pre(
         package.graph().scope(),
         package.graph(),
         current,
@@ -331,8 +348,11 @@ pub fn evaluate_state_predicate_with(
         Some(&reads),
         meter,
         package.graph().dispatch_tables(),
-    )
-    .run(
+    );
+    let machine = reference_bindings.map_or(machine, |bindings| {
+        machine.with_reference_bindings(bindings)
+    });
+    machine.run(
         predicate.body(),
         predicate.slots(),
         over.map(Value::Reference)
