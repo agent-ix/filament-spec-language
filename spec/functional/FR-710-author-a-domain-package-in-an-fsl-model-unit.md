@@ -17,6 +17,12 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-610
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-027
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-810
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-866
+    type: depends_on
 ---
 # FR-710: Author a domain package in an FSL model unit
 
@@ -217,6 +223,82 @@ as FR-154 refuses a document whose identity differs. The command-line
 same way, and the library API also returns the compiled document bytes so an
 author can publish the document itself.
 
+### Decision: the command surface names a model unit as one more model format
+
+Every request that reads a domain model already does so through one member,
+`models` (FR-027, FR-100, FR-312, FR-850, FR-1014), whose entries are
+`{format, source}` with `format` a closed reader selection, and `fsl check`
+already takes `--model <identity>=<file>` (FR-866). A model unit is admitted
+through those same two inputs rather than through a new verb or member, so
+every command that takes a model (compile, run, analyze, monitor, export and
+check) takes a model unit with no change to its other members, and an
+example or a newcomer authors the model in FSL source and never writes or
+generates the JSON document. Publishing the document itself reuses the
+compile request: a compile request whose program is a model unit writes the
+compiled document as its artifact, as a native program's compile writes its
+checked package (FR-810).
+
+### Library API
+
+- `fsl_semantics::model::intake::compile_model_unit(parsed: &fsl_cst::ParsedSource,
+  limits: ModelNormalizationLimits) -> Result<CompiledModelUnit, Vec<fsl_foundation::diagnostic::Diagnostic>>`
+  SHALL compile one admitted model unit under this requirement.
+  `CompiledModelUnit` exposes `identity()`, the `domain` string, and
+  `bytes()`, the RFC 8785 document bytes; the refusals are the located
+  diagnostics of "Refusals" above, at the model unit's source.
+- `package_input` SHALL accept, among its byte inputs, the bytes of a model
+  unit, recognized as S1 recognizes one (an FSL header followed by
+  `domain`), compile it with the source labels authority `filament` and
+  identity its `domain` string, and insert the compiled document under that
+  identity, so a model unit and its compiled document collide as two
+  documents of one identity do.
+- `package_input_from_sources(sources: impl IntoIterator<Item = &Source>)`
+  SHALL do the same for sources that carry their own FR-001 labels, which then
+  name every `origin` and every diagnostic; the command uses it.
+
+### Request `models` entry
+
+- A `models` entry with `format` `native-model-unit/1` SHALL carry a source
+  selection exactly as a program does (`file` and the FR-001 labels), counted
+  toward `dependent_bytes` and the selected-file ceiling as a model document
+  is. The command SHALL parse it as an FSL source, compile it under this
+  requirement and admit the compiled document by FR-056 under its `domain`
+  identity, exactly as a `semantic-ir/2.0.0` entry's document is admitted, in
+  every request that reads `models`.
+- A `native-model-unit/1` entry whose source is not a model unit (no
+  `domain` after its header) SHALL refuse `invalid-request`, exit 20, naming
+  member `models`, the entry's index and its format, before any compile
+  stage. A `semantic-ir/2.0.0` entry whose bytes are a model unit is refused
+  as any document that does not parse is (FR-056): the format selects the
+  reader and the bytes never override it.
+- A model unit's refusal SHALL refuse the request at stage `I1` with the
+  diagnostic at the model unit's own span, its source the entry's labels, and
+  no artifact; it is never re-located to a document pointer.
+
+### `fsl check` and `check_outcome`
+
+- A `--model <identity>=<file>` operand (FR-866), and a `CheckInputs`
+  model selection, whose file is a model unit SHALL be compiled under this
+  requirement with the source labels authority `filament` and identity the
+  path as given, and admitted under `<identity>` as a document file is, with
+  FR-866's refusals unchanged. The file is a model unit when it is FSL source
+  whose header is followed by `domain`, and a domain package document
+  otherwise.
+- `fsl check` over a model unit itself SHALL compile it and admit the
+  compiled document by FSpec FR-154, and SHALL return the `check` outcome with
+  category success and `last_stage` `I1`, or this requirement's refusals.
+
+### Compile request over a model unit
+
+- A `native-compile/1` request whose `program` source is a model unit SHALL
+  compile it and return the compiled document as the outcome's artifact,
+  format `semantic-ir/2.0.0`, with no wrapper or extra newline; its
+  `output` member and the driver's `--output` write those bytes (FR-810).
+- Such a request carrying `models`, `libraries`, `clocks`, `handoff`,
+  `refinement_internals` or `integer_division` SHALL refuse
+  `invalid-request`, exit 20, naming the member, before any file the member
+  selects is read: a model unit names only its own declarations.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -226,6 +308,10 @@ author can publish the document itself.
 | FR-710-AC-3 | One model unit holding one declaration of every form in the grammar (object with relationship, contract clauses and invariant; alias, record, tuple, enum, union, option field and map; event; machine with states and a transition; process with a step; store; namespace; open and closed populations; dimension and unit; interface, part, port, connection and allocation) compiles to a document that FR-154 admits, with one node of each FR-208 meaning in the compilation table. | Test (TC-1942) |
 | FR-710-AC-4 | Each refuses with no document, at the model unit's span: `domain` with no string `invalid_syntax`/`unexpected-token` at `;`; `domain` after a `profile` declaration `invalid_syntax`/`unexpected-token` at `domain`; `relationship next: Ghost [0, 1];` `missing_declaration`/`missing-name` at `Ghost`; two objects `Order` `ambiguous_declaration`/`ambiguous-name` at the second; `domain "filament/native/x";` `invalid_model_binding`/`malformed-declaration` at the string; an operation on a `record` with FR-154's `unsupported_construct`/`declaration-form` at the operation. | Test (TC-1943) |
 | FR-710-AC-5 | A package input that supplies the AC-1 model unit under `example/shop` for `model M = "example/shop";` admits it as FR-154 admits the compiled document, and the checked package equals the one built from the compiled document supplied as bytes; supplied under `example/other` for `model M = "example/other";` it refuses `invalid_model_binding`/`wrong-model-selection`. | Test (TC-1943) |
+| FR-710-AC-6 | `compile_model_unit` over the AC-1 model unit returns identity `example/shop` and bytes equal to the document AC-1 compiles; `package_input_from_sources` over that source labelled (`agent-ix`, `test:shop-model`) admits the document under `example/shop` with every `origin` naming that source, and over the model unit beside its own compiled document refuses `invalid_package`/`conflicting-definition` naming `example/shop`. | Test (TC-2998) |
+| FR-710-AC-7 | A `native-compile/1` request over a program with `model M = "example/shop";` and `invariant I using P on M::Order at current { self.total >= 0 }` whose `models` holds `{"format": "native-model-unit/1", "source": {"file": "shop.fsl", ...}}` naming the AC-1 model unit compiles with exit 0 to package bytes equal to the same request whose `models` entry is the compiled document in format `semantic-ir/2.0.0`, and a `native-run/1` request over the same members runs equally; the entry naming a model unit whose `relationship next: Ghost [0, 1];` is unresolved refuses at stage `I1` with `missing_declaration`/`missing-name` at `Ghost` in `shop.fsl`, no artifact; the entry naming the program source itself (no `domain`) refuses `invalid-request` naming `models`, index 0 and `native-model-unit/1`, exit 20; and a `semantic-ir/2.0.0` entry naming `shop.fsl` refuses `invalid_model_binding`/`malformed-declaration`. | Test (TC-2998) |
+| FR-710-AC-8 | `check_outcome` over AC-7's program with the model selection `("example/shop", shop.fsl)` returns category success at `last_stage` S4, equal in category, diagnostics and stage to the same check with the compiled document file; with the selection `("example/other", shop.fsl)` over a program selecting `example/other` it refuses `invalid_model_binding`/`wrong-model-selection`; `check_outcome` over `shop.fsl` itself returns category success at `last_stage` `I1`, and over the AC-4 unit with `Ghost` the `missing_declaration`/`missing-name` refusal at `Ghost`. | Test (TC-2998) |
+| FR-710-AC-9 | A `native-compile/1` request whose `program` is the AC-1 model unit returns as its artifact the bytes `compile_model_unit` gives, and with `output` `{"file": "shop.semantic-ir.json"}` writes exactly those bytes to that file; the same request carrying `models` `[]`, a `libraries` entry, or `clocks`, each refuses `invalid-request` naming that member, exit 20, with no artifact and no file written. | Test (TC-2998) |
 
 ## Dependencies
 
