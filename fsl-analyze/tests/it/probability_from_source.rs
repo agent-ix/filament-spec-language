@@ -48,6 +48,18 @@ const LONG_RUN: &str = "probabilistic LongRun using inf on M over (n: M::Node) u
      with alpha 0.1, beta 0.1, indifference 0.1 \
      { long_run_fraction holds(n.healthy) >= 0.3 }";
 
+const FINITE: &str = "probabilistic Finite using ev on M over (m: M::Msg) under Even on origin \
+     { probability >= rational(0, 1) [ eventually[0,2] holds(m.delivered) ] }";
+
+const UNTIL: &str = "probabilistic Until using inf on M over (m: M::Msg) under Even on origin \
+     { probability >= rational(0, 1) [ holds(m.attempts = 0) until holds(m.delivered or m.attempts = 2) ] }";
+
+const ALWAYS: &str = "probabilistic Always using ev on M over (m: M::Msg) under Even on origin \
+     { probability >= rational(9, 10) [ always[0,2] holds(m.attempts >= 0) ] }";
+
+const REWARD: &str = "probabilistic Reward using inf on M over (m: M::Msg) under Even on origin \
+     { expected accumulate cost until holds(m.delivered or m.attempts = 2) <= rational(2, 1) }";
+
 fn run(name: &str, claims: &str, items: Value) -> Value {
     let ws = Workspace::new(name);
     let request = request_over(
@@ -100,66 +112,74 @@ fn run_health_long_run(name: &str, items: Value) -> Value {
 /// gives the same item.
 #[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
 #[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
-#[test]
-fn statistical_items_settle_measured_from_source() {
-    for (method, method_selection) in [
-        ("okamoto", json!({"type": "okamoto"})),
-        ("sprt", json!({"type": "sprt"})),
+fn statistical_method_from_source(method: &str, method_selection: Value) {
+    let claim_name = if method == "regenerative" {
+        "LongRun"
+    } else {
+        "Delivered"
+    };
+    let item = |workers: u64| {
+        json!([{"claim": claim_name, "probabilistic": {
+            "evidence": "statistical", "method": method_selection,
+            "seed": "7", "max_witnesses": 8, "workers": workers}}])
+    };
+    let (one, four) = if method == "regenerative" {
         (
-            "regenerative",
-            json!({"type": "regenerative", "min_cycles": 1}),
-        ),
-    ] {
-        let claim_name = if method == "regenerative" {
-            "LongRun"
-        } else {
-            "Delivered"
-        };
-        let item = |workers: u64| {
-            json!([{"claim": claim_name, "probabilistic": {
-                "evidence": "statistical", "method": method_selection,
-                "seed": "7", "max_witnesses": 8, "workers": workers}}])
-        };
-        let (one, four) = if method == "regenerative" {
-            (
-                run_health_long_run(&format!("stat-{method}-1"), item(1)),
-                run_health_long_run(&format!("stat-{method}-4"), item(4)),
-            )
-        } else {
-            (
-                run(&format!("stat-{method}-1"), DELIVERED, item(1)),
-                run(&format!("stat-{method}-4"), DELIVERED, item(4)),
-            )
-        };
-        assert!(one["items"][0].is_object(), "{one}");
-        assert!(four["items"][0].is_object(), "{four}");
-        let first = &one["items"][0];
-        assert_eq!(label(first), "measured", "{first}");
-        assert_eq!(
-            first["verdict"]["basis"]["method"]["type"], method,
-            "{first}"
-        );
-        assert_eq!(first["verdict"]["provenance"]["seed"], "7", "{first}");
-        if method == "sprt" {
-            assert!(first["verdict"]["interval"].is_null(), "{first}");
-        } else {
-            assert!(first["verdict"]["interval"].is_object(), "{first}");
-        }
-        assert!(
-            first["verdict"]["basis"]["samples"].as_str().is_some(),
-            "{first}"
-        );
-        assert!(
-            first["verdict"]["basis"]["draws"].as_str().is_some(),
-            "{first}"
-        );
-        assert_eq!(first["request"]["probabilistic"]["workers"], 1);
-        assert_eq!(four["items"][0]["request"]["probabilistic"]["workers"], 4);
-        assert_eq!(
-            first["verdict"], four["items"][0]["verdict"],
-            "workers do not change the measurement"
-        );
+            run_health_long_run(&format!("stat-{method}-1"), item(1)),
+            run_health_long_run(&format!("stat-{method}-4"), item(4)),
+        )
+    } else {
+        (
+            run(&format!("stat-{method}-1"), DELIVERED, item(1)),
+            run(&format!("stat-{method}-4"), DELIVERED, item(4)),
+        )
+    };
+    assert!(one["items"][0].is_object(), "{one}");
+    assert!(four["items"][0].is_object(), "{four}");
+    let first = &one["items"][0];
+    assert_eq!(label(first), "measured", "{first}");
+    assert_eq!(
+        first["verdict"]["basis"]["method"]["type"], method,
+        "{first}"
+    );
+    assert_eq!(first["verdict"]["provenance"]["seed"], "7", "{first}");
+    if method == "sprt" {
+        assert!(first["verdict"]["interval"].is_null(), "{first}");
+    } else {
+        assert!(first["verdict"]["interval"].is_object(), "{first}");
     }
+    assert!(
+        first["verdict"]["basis"]["samples"].as_str().is_some(),
+        "{first}"
+    );
+    assert!(
+        first["verdict"]["basis"]["draws"].as_str().is_some(),
+        "{first}"
+    );
+    assert_eq!(first["request"]["probabilistic"]["workers"], 1);
+    assert_eq!(four["items"][0]["request"]["probabilistic"]["workers"], 4);
+    assert_eq!(
+        first["verdict"], four["items"][0]["verdict"],
+        "workers do not change the measurement"
+    );
+}
+
+#[test]
+fn statistical_okamoto_from_source() {
+    statistical_method_from_source("okamoto", json!({"type": "okamoto"}));
+}
+
+#[test]
+fn statistical_sprt_from_source() {
+    statistical_method_from_source("sprt", json!({"type": "sprt"}));
+}
+
+#[test]
+fn statistical_regenerative_from_source() {
+    statistical_method_from_source(
+        "regenerative",
+        json!({"type": "regenerative", "min_cycles": 1}),
+    );
 }
 
 /// FR-741-AC-2: an exact unbounded reachability item settles `proved` with
@@ -184,12 +204,47 @@ fn an_exact_item_settles_proved_with_its_certificate() {
     assert!(text.contains("391") && text.contains("400"), "{text}");
 }
 
+#[test]
+fn exact_unbounded_from_source() {
+    an_exact_item_settles_proved_with_its_certificate();
+}
+
+/// Exact source routing covers bounded reachability, unbounded until, bounded
+/// always, and expected rewards. Each proved result carries its exact value in
+/// the accepted certificate document.
+#[test]
+fn exact_finite_horizon_from_source() {
+    let claims = format!("{FINITE}\n{UNTIL}\n{ALWAYS}\n{REWARD}");
+    let document = run(
+        "exact-finite-and-subforms",
+        &claims,
+        json!([
+            {"claim": "Finite", "probabilistic": {"evidence": "exact"}},
+            {"claim": "Until", "probabilistic": {"evidence": "exact"}},
+            {"claim": "Always", "probabilistic": {"evidence": "exact"}},
+            {"claim": "Reward", "probabilistic": {"evidence": "exact"}}
+        ]),
+    );
+    for item in document["items"].as_array().expect("four items") {
+        assert_eq!(label(item), "proved", "{item}");
+        assert_eq!(item["certificate"]["accepted"], true, "{item}");
+        assert_eq!(item["certificate"]["kind"], "exact", "{item}");
+        assert!(item["certificate"]["document"].is_object(), "{item}");
+        assert!(
+            item["certificate"]["document"]
+                .to_string()
+                .contains("numerator"),
+            "{item}"
+        );
+    }
+}
+
 /// FR-741-AC-3 (negative): an exact item whose value misses its threshold
 /// settles `refuted` with a counterexample whose replay reproduced it.
 #[ix_trace_rs::trace("TC-2066", "FR-741-AC-3")]
 #[ix_trace_rs::trace("TC-2065", "FR-203-AC-8")]
 #[test]
-fn an_exact_item_below_its_threshold_is_refuted_with_a_replayed_witness() {
+fn probability_refuted_from_source() {
     let document = run(
         "exact-refuted",
         TOO_LIKELY,
