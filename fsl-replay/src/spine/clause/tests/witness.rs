@@ -1159,6 +1159,9 @@ fn built_record(
 ) -> SeparatingWitnessRecord {
     SeparatingWitnessRecord {
         quantifier: Some(occurrence(unit, clause, quantifier, Operator::Quantify)),
+        deciding_comparison: None,
+        operands: None,
+        decision_path: None,
         deciding_element: DecidingElement::Value(element),
         index: Some(index),
         value_path: RuntimeValuePath {

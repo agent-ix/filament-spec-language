@@ -1365,6 +1365,9 @@ mod tests {
                 crate::fixture_node(7),
                 Origin::new(Role::new("expression"), 0),
             )),
+            deciding_comparison: None,
+            operands: None,
+            decision_path: None,
             deciding_element: DecidingElement::Value(Value::Integer(
                 filament_exact::Integer::from(600_i64),
             )),
