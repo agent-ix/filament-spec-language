@@ -1999,7 +1999,6 @@ pub fn evaluate_model_trace(
     })))
 }
 
-
 /// FR-931 "Cross-evaluation" from a snapshot: the native valuation of every
 /// (instance, behaviour) closed trace, in instance order then behaviour
 /// order, and how the enumeration ended.

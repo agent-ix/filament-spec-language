@@ -1363,7 +1363,13 @@ pub(crate) fn run_clause_with_function_modes(
     temporal_selections: &[fsl_package::TemporalClockSelection],
     function_modes: &BTreeMap<String, filament_semantic_value::checking::CheckMode>,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
-    run_clause_reading(request, temporal_selections, false, Some(function_modes), None)
+    run_clause_reading(
+        request,
+        temporal_selections,
+        false,
+        Some(function_modes),
+        None,
+    )
 }
 
 /// FR-757 "Cross-evaluation", FR-931: compile the unit as [`run_clause`]

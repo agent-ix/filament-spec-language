@@ -992,8 +992,9 @@ impl RunCause {
             Self::AnalyzeNotYetImplemented { .. } => Code::UnsupportedConstruct,
             Self::TlCorrespondence { .. } | Self::IntegerDivisionLaw { .. } => Code::UnknownProfile,
             Self::TlClause { .. } => Code::MissingDeclaration,
-            Self::TlSubject(record) => Code::from_code(record.catalog.code())
-                .unwrap_or(Code::InvalidRuntimeInput),
+            Self::TlSubject(record) => {
+                Code::from_code(record.catalog.code()).unwrap_or(Code::InvalidRuntimeInput)
+            }
             Self::TlFault(_) => Code::RuntimeInvariant,
             Self::AnalyzeUniverse(
                 fsl_analyze::analyze::document::UniverseRefusal::Unprovisioned { .. },
@@ -2965,7 +2966,8 @@ fn initial_subject(
             reason: "expected one snapshot file".to_owned(),
         });
     };
-    let reference = serde_json::json!({"authority": initial.authority, "identity": initial.identity});
+    let reference =
+        serde_json::json!({"authority": initial.authority, "identity": initial.identity});
     let subject: fsl_analyze::analyze::document::SubjectSelection =
         serde_json::from_value(serde_json::json!({
             "initial_states": [reference],

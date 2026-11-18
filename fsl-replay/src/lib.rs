@@ -268,10 +268,12 @@ pub use model_check::refinement_settle::{
 #[doc(hidden)]
 pub use model_check::replay::replay_timed_counterexample;
 pub use model_check::replay::{
-    behaviour_valuations, evaluate_model_trace, BehaviourValuationEnd, BehaviourValuations, replay_model_trace, replay_model_trace_with_temporal_selections,
-    replay_protocol_trace, replay_protocol_trace_with_temporal_selections, DelayBar, ModelTraceEnd,
-    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceRun, ModelTraceSettlement,
-    ModelTraceSubject, ModelTraceValue, ProtocolTraceSubject, StrongFairnessHint, TimedReplay,
+    behaviour_valuations, evaluate_model_trace, replay_model_trace,
+    replay_model_trace_with_temporal_selections, replay_protocol_trace,
+    replay_protocol_trace_with_temporal_selections, BehaviourValuationEnd, BehaviourValuations,
+    DelayBar, ModelTraceEnd, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceRun,
+    ModelTraceSettlement, ModelTraceSubject, ModelTraceValue, ProtocolTraceSubject,
+    StrongFairnessHint, TimedReplay,
 };
 pub use model_check::settle::{
     settle_model_check, settle_protocol_check, CertificateChecker, Execution, ModelCheckRecord,

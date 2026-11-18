@@ -980,7 +980,10 @@ fn tl_cross_evaluation_agrees_and_timed_clauses_do_not_lower() {
     let (code, value) = cross_from(&bump_low(), &["a", "b"], true, 4);
     assert_eq!(code, 0, "{value}");
     let cross = &value["tl_lowering"]["cross_evaluation"];
-    assert!(cross["traces"].as_u64().expect("a trace count") > 1, "{value}");
+    assert!(
+        cross["traces"].as_u64().expect("a trace count") > 1,
+        "{value}"
+    );
     assert_eq!(
         value["tl_lowering"]["cross_evaluation"]["faults"],
         json!([]),
