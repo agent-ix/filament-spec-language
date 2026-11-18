@@ -119,6 +119,33 @@ impl ReaderProtocolProjection {
         self.frame_slots
     }
 
+    /// Locate every node of the root context as a node of a standalone
+    /// checked expression (`ExpressionOwner::Expression`), by its child-index
+    /// path from the root: a clause term is checked as a standalone
+    /// expression rooted at the term (FR-337), so this is the location the
+    /// source route's checked term gives each node. A node reached twice
+    /// keeps the location of its first walk position.
+    fn locate_standalone(&mut self) {
+        let mut pending = vec![(self.root, Location::root(Origin::Expression))];
+        while let Some((index, location)) = pending.pop() {
+            let Some(node) = self.nodes.get_mut(index) else {
+                continue;
+            };
+            if node.location.is_some() {
+                continue;
+            }
+            let children = node.children.clone();
+            node.location = Some(location.clone());
+            pending.extend(
+                children
+                    .into_iter()
+                    .enumerate()
+                    .rev()
+                    .map(|(position, child)| (child, location.child(position))),
+            );
+        }
+    }
+
     /// The local slot a supplied binder is read through.
     pub fn local_slot(&self, binder: &NodeKey) -> Option<usize> {
         self.locals.get(binder).copied()
@@ -1249,11 +1276,13 @@ impl<'wire> BareWalker<'wire> {
         root: &NodeKey,
         binders: &[NodeKey],
     ) -> Result<ReaderProtocolProjection, WalkFailure> {
-        self.slot(&SlotRequest {
+        let mut projection = self.slot(&SlotRequest {
             root: root.clone(),
             origin: String::new(),
             binders: binders.to_vec(),
-        })
+        })?;
+        projection.locate_standalone();
+        Ok(projection)
     }
 
     /// The number of rows each type-declaration origin holds for each
