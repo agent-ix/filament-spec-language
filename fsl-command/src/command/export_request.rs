@@ -238,6 +238,18 @@ pub enum ExportRequestError {
     TargetFamilyMismatch,
 }
 
+impl ExportRequestError {
+    /// The request member whose value failed admission.
+    pub const fn member(&self) -> &'static str {
+        match self {
+            Self::Malformed(_) => "export",
+            Self::InvalidValue(member) => member,
+            Self::UnknownProfile => "profile",
+            Self::TargetFamilyMismatch => "target_family",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ExportDisposition, ExportOutcome, ExportRecord, ExportRequest, ExportStatus};

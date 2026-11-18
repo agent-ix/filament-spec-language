@@ -2796,9 +2796,16 @@ fn prepare_run_bytes_with_sources(
     // FR-1015: export's closed request shape and request-local values are
     // admitted before reading any source or entering a run stage.
     if let Some(member) = &request.export {
-        ExportRequest::read(member.clone()).map_err(|error| RunCause::ClauseRequest {
-            member: "export".to_owned(),
-            reason: error.to_string(),
+        ExportRequest::read(member.clone()).map_err(|error| {
+            let field = error.member();
+            RunCause::ClauseRequest {
+                member: if field == "export" {
+                    field.to_owned()
+                } else {
+                    format!("export.{field}")
+                },
+                reason: error.to_string(),
+            }
         })?;
     }
     if request.items.is_some() {
