@@ -99,6 +99,14 @@ impl<'r, 'a> Por<'r, 'a> {
         Self::with_atom_reads(system, atom_reads, instances, fairness, constraint)
     }
 
+    /// This reduction with every step that writes a location in `reads`
+    /// visible, as a step that writes what the state constraint reads is:
+    /// an invariant item's letter (FR-951) reads `reads` at every state.
+    pub(super) fn with_visible_reads(mut self, reads: BTreeSet<Location>) -> Self {
+        self.constraint_reads.extend(reads);
+        self
+    }
+
     /// Construct POR from already-derived atom footprints. State-graph
     /// predicates are checked bodies rather than temporal formula atoms, so
     /// their callers derive these reads through `ModelSystem::atom_reads`.

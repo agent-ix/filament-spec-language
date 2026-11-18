@@ -24,14 +24,25 @@ use fsl_semantics::check::Capability;
 /// EN-1's backend identity, the identity its terminal records name.
 pub const BACKEND_ID: &str = "en-1";
 
-/// The (kind, mode) pairs EN-1 advertises: both temporal extent modes.
-pub const ADVERTISED: [(Option<&str>, Option<&str>); 2] = [
+/// The (kind, mode) pairs EN-1 advertises: both temporal extent modes, for
+/// `temporal-satisfaction` and for an invariant's `operation-contract`.
+pub const ADVERTISED: [(Option<&str>, Option<&str>); 4] = [
     (
         Some(Capability::TemporalSatisfaction.to_wire()),
         Some(Mode::Bounded.to_wire()),
     ),
     (
         Some(Capability::TemporalSatisfaction.to_wire()),
+        Some(Mode::Unbounded.to_wire()),
+    ),
+    // FR-489, FR-625: an `invariant` state clause over a model subject, in
+    // the modes `temporal-satisfaction` has.
+    (
+        Some(Capability::OperationContract.to_wire()),
+        Some(Mode::Bounded.to_wire()),
+    ),
+    (
+        Some(Capability::OperationContract.to_wire()),
         Some(Mode::Unbounded.to_wire()),
     ),
 ];
