@@ -361,7 +361,6 @@ fn a_map_key_and_value_are_checked_against_the_map_type() {
 /// never by a domain-package `{package, node}` declaration key.
 #[trace("TC-2973", "FR-680-AC-7")]
 #[test]
-#[ignore = "QSL-2171: the checked TupleProject keyed by the tuple type's node key not implemented yet"]
 fn a_tuple_position_read_names_its_tuple_by_node_key() {
     let graph = check(
         "tuple Pair(Boolean, Integer);\n\
