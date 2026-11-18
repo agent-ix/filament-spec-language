@@ -675,7 +675,7 @@ impl Subject {
                     .task_sets()
                     .claims()
                     .iter()
-                    .find(|claim| claim.name == name)
+                    .find(|claim| claim.name == *name)
                     .and_then(fsl_semantics::check::CheckedScheduleClaim::occurrence)
                     .ok_or(CaseError::at(CaseStage::Check))?;
                 let candidate = Candidate::new(BackendId::new("en-7"));
