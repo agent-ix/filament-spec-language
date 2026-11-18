@@ -19,9 +19,9 @@ use std::ops::ControlFlow;
 
 use super::dispatch::{Construct, FormsRefusal};
 use super::protocol_control::{
-    access_ordering, await_form, channel_form, choice_form, member_forms, parallel_form,
-    repeat_form, role_form, AwaitForm, ChannelOrdering, FenceForm, ParallelForm,
-    ProtocolMemberForm, RepeatForm, TerminalForm,
+    AwaitForm, ChannelOrdering, FenceForm, ParallelForm, ProtocolMemberForm, RepeatForm,
+    TerminalForm, access_ordering, await_form, channel_form, choice_form, member_forms,
+    parallel_form, repeat_form, role_form,
 };
 use super::spans::DeclarationSpans;
 use super::syntax::{
@@ -35,8 +35,8 @@ use super::syntax::{
 };
 use super::temporal_clause::{capture_form, expression_form, interval_form, parameter_form};
 use super::value::{
-    declared_name, expression, has_token, items, name_form, nodes_of, only, production_node, text,
-    tokens_of, type_form, unexpected, Item,
+    Item, declared_name, expression, has_token, items, name_form, nodes_of, only, production_node,
+    text, tokens_of, type_form, unexpected,
 };
 
 /// The protocol form's output collections, threaded together through every
@@ -893,8 +893,12 @@ impl<'c> ControlWalk<'c, '_, '_> {
     ) -> Result<(), FormsRefusal> {
         let cst = self.cst;
         let declaration_start = self.collector.declarations.len();
-        let observe_only = has_token(&items(cst, control), b"observe");
-        let matched = items(cst, control)
+        let control_items = items(cst, control);
+        let observe_only = matches!(
+            control_items.first(),
+            Some(Item::Token(token)) if token.spelling() == b"observe"
+        );
+        let matched = control_items
             .into_iter()
             .find_map(|item| match item {
                 Item::Node(node) => Some(node),
@@ -919,7 +923,13 @@ impl<'c> ControlWalk<'c, '_, '_> {
                         .push(repeat_form(cst, matched, declaration)?);
                 }
                 let (kind, name) = named(kind)?;
-                declare(self.collector.declarations, kind, name.clone(), self.scope, matched.span());
+                declare(
+                    self.collector.declarations,
+                    kind,
+                    name.clone(),
+                    self.scope,
+                    matched.span(),
+                );
                 self.open(name);
                 children.extend(
                     nodes_of(&matched_items, Production::Control)
@@ -934,7 +944,13 @@ impl<'c> ControlWalk<'c, '_, '_> {
                     .choices
                     .push(choice_form(cst, matched, declaration)?);
                 let (kind, name) = named(ProtocolNodeKind::Choice)?;
-                declare(self.collector.declarations, kind, name.clone(), self.scope, matched.span());
+                declare(
+                    self.collector.declarations,
+                    kind,
+                    name.clone(),
+                    self.scope,
+                    matched.span(),
+                );
                 self.open(name);
                 children.extend(
                     nodes_of(&matched_items, Production::Case)
@@ -947,7 +963,13 @@ impl<'c> ControlWalk<'c, '_, '_> {
                 let (kind, name) = named(ProtocolNodeKind::Parallel)?;
                 let form = parallel_form(cst, matched, self.collector.declarations.len())?;
                 self.collector.parallels.push(form);
-                declare(self.collector.declarations, kind, name.clone(), self.scope, matched.span());
+                declare(
+                    self.collector.declarations,
+                    kind,
+                    name.clone(),
+                    self.scope,
+                    matched.span(),
+                );
                 self.open(name);
                 children.extend(
                     nodes_of(&matched_items, Production::Branch)
@@ -961,7 +983,13 @@ impl<'c> ControlWalk<'c, '_, '_> {
             Production::Check => {
                 let (kind, name) = named(ProtocolNodeKind::Check)?;
                 let owner = self.collector.declarations.len();
-                declare(self.collector.declarations, kind, name, self.scope, matched.span());
+                declare(
+                    self.collector.declarations,
+                    kind,
+                    name,
+                    self.scope,
+                    matched.span(),
+                );
                 // `check N using p { e };`: the name and the alias are its
                 // only two identifier tokens.
                 let [_, alias] = tokens_of(&matched_items, TokenKind::Identifier)[..] else {
@@ -1005,7 +1033,13 @@ impl<'c> ControlWalk<'c, '_, '_> {
             Production::Commit => {
                 let (kind, name) = named(ProtocolNodeKind::Commit)?;
                 let owner = self.collector.declarations.len();
-                declare(self.collector.declarations, kind, name, self.scope, matched.span());
+                declare(
+                    self.collector.declarations,
+                    kind,
+                    name,
+                    self.scope,
+                    matched.span(),
+                );
                 // `commit N by R as (..) { e };`: the role is the
                 // identifier right after `by`.
                 let role = token_after(&matched_items, b"by")
@@ -1165,10 +1199,18 @@ fn event_node_anchors(
         Some(Item::Token(_) | Item::Node(_)) | None => return Err(unexpected(node)),
     };
     let identifiers = tokens_of(&event_items, TokenKind::Identifier);
-    let name_token = identifiers
-        .iter()
-        .find(|token| token.spelling() != b"recommend")
-        .ok_or_else(|| unexpected(node))?;
+    let recommendation = matches!(kind, ProtocolNodeKind::Event)
+        && matches!(event_items.first(), Some(Item::Token(token)) if token.spelling() == b"recommend");
+    let name_token = if recommendation {
+        token_after(&event_items, b"recommend")
+            .filter(|token| token.kind() == TokenKind::Identifier)
+            .ok_or_else(|| unexpected(node))?
+    } else {
+        identifiers
+            .first()
+            .copied()
+            .ok_or_else(|| unexpected(node))?
+    };
     let name = DeclaredName {
         name: text(name_token, node)?,
         span: name_token.span(),
@@ -1234,13 +1276,21 @@ fn event_node_anchors(
     // the assembler resolves the operation, mirroring FR-104's resolution
     // of a state clause's own operation.
     if kind == ProtocolNodeKind::Attempt {
-        collector
-            .attempts
-            .push(attempt_form(cst, &event_items, node, declaration_index, false)?);
-    } else if has_token(&event_items, b"recommend") {
-        collector
-            .attempts
-            .push(attempt_form(cst, &event_items, node, declaration_index, true)?);
+        collector.attempts.push(attempt_form(
+            cst,
+            &event_items,
+            node,
+            declaration_index,
+            false,
+        )?);
+    } else if recommendation {
+        collector.attempts.push(attempt_form(
+            cst,
+            &event_items,
+            node,
+            declaration_index,
+            true,
+        )?);
     }
     let Some(site) = site else {
         return Ok(());
