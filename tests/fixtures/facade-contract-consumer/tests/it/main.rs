@@ -332,10 +332,10 @@ function f using v(x: Integer): Integer pure { x }\n";
         )
         .expect("decode checked schedulability replay request");
 
-        let rational = |value| {
+        let rational = |value: i64| {
             filament_exact::Rational::new(
                 filament_exact::Integer::from(value),
-                filament_exact::Integer::from(1),
+                filament_exact::Integer::from(1_i64),
             )
             .expect("nonzero denominator")
         };
