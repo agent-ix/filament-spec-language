@@ -1,5 +1,5 @@
 ---
-id: TC-2964
+id: TC-2968
 title: "An attempt may omit its result binder"
 type: TC
 relationships:
@@ -8,7 +8,7 @@ relationships:
   - target: ix://agent-ix/filament-spec-language/FR-882
     type: verifies
 ---
-# TC-2964: An attempt may omit its result binder
+# TC-2968: An attempt may omit its result binder
 
 ## Description
 

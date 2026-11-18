@@ -2460,10 +2460,10 @@ fn attempt_result_binders_must_match_the_operation_result_at_s3() {
     assert_eq!(actual_result.as_ref(), &ValueType::Boolean);
 }
 
-/// FR-218-AC-44 and AC-45 (TC-2964): an attempt may omit its result binder.
+/// FR-218-AC-44 and AC-45 (TC-2968): an attempt may omit its result binder.
 /// Over a void operation it must; over a valued operation it discards the
 /// result.
-#[trace("TC-2964", "FR-218-AC-44", "FR-218-AC-45")]
+#[trace("TC-2968", "FR-218-AC-44", "FR-218-AC-45")]
 #[test]
 fn an_attempt_may_omit_its_result_binder() {
     let void = "sequence Main { attempt T by w on M::Cell::touch contracts [TouchPre]; }";

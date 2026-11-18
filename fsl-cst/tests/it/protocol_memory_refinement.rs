@@ -613,9 +613,9 @@ fn a_channel_names_its_connection_with_via() {
     assert!(parsed.is_admissible());
 }
 
-/// FR-218-AC-44 (TC-2964): an attempt without its `as (x: T)` result binder
+/// FR-218-AC-44 (TC-2968): an attempt without its `as (x: T)` result binder
 /// parses, and the formatter prints both forms back to a stable text.
-#[trace("FR-218-AC-44", "TC-2964")]
+#[trace("FR-218-AC-44", "TC-2968")]
 #[test]
 fn an_attempt_without_a_binder_parses_and_formats() {
     let run = "sequence Main {\n\
