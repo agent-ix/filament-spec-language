@@ -88,3 +88,54 @@ pub use expression::{
     ValueInvariantOutcome, ValueInvariantResult, ValuePathStep, ValuePathSubject, WitnessClaim,
     BINDER_ACCOUNTING_VERSION,
 };
+
+#[cfg(test)]
+mod map_order_tests {
+    use super::{map_entry, ordered_map_entries};
+    use filament_exact::{from_admitted_map, Integer, MapType, Value, ValueType};
+    use ix_trace_rs::trace;
+
+    fn integer(value: i64) -> Value {
+        Value::Integer(Integer::from(value))
+    }
+
+    fn map(entries: &[(i64, i64)]) -> filament_exact::MapValue {
+        let map_type = MapType::new(ValueType::Integer, ValueType::Integer, None)
+            .expect("an integer key is scalar");
+        let entries = entries
+            .iter()
+            .map(|(key, value)| (integer(*key), integer(*value)))
+            .collect();
+        match from_admitted_map(map_type, entries).expect("distinct keys") {
+            Value::Map(map) => (*map).clone(),
+            other => panic!("a map value, not {other:?}"),
+        }
+    }
+
+    fn whole(value: &Value) -> Integer {
+        match value {
+            Value::Integer(value) => value.clone(),
+            other => panic!("an Integer, not {other:?}"),
+        }
+    }
+
+    /// FR-650-AC-17: a walk of a map visits its entries in the mathematical
+    /// key order, so key 9 comes before key 10, although the run form array
+    /// sorts the spelling of 10 before that of 9.
+    #[trace("TC-2950", "FR-650-AC-17")]
+    #[test]
+    fn a_map_walk_visits_values_in_mathematical_key_order() {
+        let held = map(&[(10, 100), (9, 90)]);
+        let walked: Vec<Integer> = ordered_map_entries(&held)
+            .expect("integer keys are ordered")
+            .into_iter()
+            .map(|(_, value)| whole(value))
+            .collect();
+        assert_eq!(walked, vec![Integer::from(90_i64), Integer::from(100_i64)]);
+        assert_eq!(
+            whole(map_entry(&held, &integer(10)).expect("key 10 is held")),
+            Integer::from(100_i64)
+        );
+        assert!(map_entry(&held, &integer(11)).is_none());
+    }
+}
