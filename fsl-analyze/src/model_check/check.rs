@@ -1177,6 +1177,9 @@ fn sum(left: RunStats, right: RunStats) -> RunStats {
         automaton_states: left.automaton_states.saturating_add(right.automaton_states),
         depth: left.depth.max(right.depth),
         bound_limited: left.bound_limited.saturating_add(right.bound_limited),
+        message_bound_limited: left
+            .message_bound_limited
+            .saturating_add(right.message_bound_limited),
         instance_limited: left.instance_limited.saturating_add(right.instance_limited),
     }
 }
@@ -1836,6 +1839,7 @@ impl<S: SubjectSystem> Run<'_, S> {
         !self.horizon_cut
             && self.boundary == 0
             && self.bound_limited.is_empty()
+            && self.message_bound_limited.is_empty()
             && self.instance_limited.is_empty()
     }
 
@@ -1846,11 +1850,8 @@ impl<S: SubjectSystem> Run<'_, S> {
             stutter_edges: widen(self.stutter_edges),
             automaton_states: widen(self.monitor.automaton().state_count()),
             depth: widen(self.nodes.iter().map(|node| node.depth).max().unwrap_or(0)),
-            bound_limited: widen(
-                self.bound_limited
-                    .union(&self.message_bound_limited)
-                    .count(),
-            ),
+            bound_limited: widen(self.bound_limited.len()),
+            message_bound_limited: widen(self.message_bound_limited.len()),
             instance_limited: widen(self.instance_limited.len()),
         }
     }

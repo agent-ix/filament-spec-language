@@ -625,7 +625,10 @@ fn behavior_report(
                 .filter(|bound| bound.bound.member == fsl_replay::MemoryBoundMember::MaxMessages)
                 .map(|bound| fsl_replay::ConformanceMessageBoundOutput {
                     value: bound.bound.value,
-                    reached: bound.reached,
+                    reached: bound.reached
+                        || record
+                            .exploration
+                            .is_some_and(|stats| stats.message_bound_limited > 0),
                 })
                 .or_else(|| {
                     (!protocol.channels.is_empty()).then_some(
@@ -634,7 +637,9 @@ fn behavior_report(
                                 .unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND),
                             reached: record.limit_reached.is_some_and(|limit| {
                                 limit.limit == fsl_replay::ModelCheckLimit::ProtocolMaxMessages
-                            }),
+                            }) || record
+                                .exploration
+                                .is_some_and(|stats| stats.message_bound_limited > 0),
                         },
                     )
                 }),
@@ -722,8 +727,6 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
     }
     let mut expanded = 0_u64;
     let mut transitions = 0_u64;
-    let mut bound_reached = false;
-    let mut counterexample = None;
     while let Some(Pending {
         initial_state,
         state,
@@ -734,17 +737,16 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
             return None;
         }
         expanded += 1;
-        let (expansion, cut) = system.successors_bounded(&state).ok()?;
-        bound_reached |= cut.memory || cut.messages;
+        let (expansion, _) = system.successors_bounded(&state).ok()?;
         if system.has_pending_exactly_once_delivery(&state)
             && expansion
                 .successors
                 .iter()
                 .any(|(transition, _)| transition.kind() == StepKind::Finish)
         {
-            counterexample.get_or_insert(TemporalCounterexample {
+            return Some(TemporalCounterexample {
                 initial_state,
-                prefix: prefix.clone(),
+                prefix,
                 over_binding: None,
                 fairness: Vec::new(),
                 kind: CounterexampleKind::Deadlock,
@@ -775,7 +777,7 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
             }
         }
     }
-    (!bound_reached).then_some(counterexample).flatten()
+    None
 }
 
 #[allow(

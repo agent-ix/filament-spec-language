@@ -738,6 +738,7 @@ impl Totals {
             automaton_states: self.automaton_states,
             depth: self.depth,
             bound_limited: 0,
+            message_bound_limited: 0,
             instance_limited: widen(self.instance_limited.len()),
         }
     }
@@ -1665,19 +1666,21 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             .filter(|state| state.findings.contains(&Finding::MessagesBoundLimited))
             .map(|state| self.state_key(&state.state.model))
             .collect::<Result<_, _>>()?;
+        let mut stats = totals.stats();
+        stats.message_bound_limited = widen(message_limited.len());
+        if let Some(counterexample) = shortest {
+            return Ok(ModelCheckOutcome::Violated {
+                counterexample,
+                stats,
+            });
+        }
         if let (Some(bound), false) = (self.memory_bound, limited.is_empty()) {
             return Ok(ModelCheckOutcome::Memory {
                 cause: MemoryCause::BoundReached {
                     bound,
                     states: widen(limited.len()),
                 },
-                stats: totals.stats(),
-            });
-        }
-        if let Some(counterexample) = shortest {
-            return Ok(ModelCheckOutcome::Violated {
-                counterexample,
-                stats: totals.stats(),
+                stats,
             });
         }
         if let (Some(bound), false) = (self.message_bound, message_limited.is_empty()) {
@@ -1686,13 +1689,11 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     bound,
                     states: widen(message_limited.len()),
                 },
-                stats: totals.stats(),
+                stats,
             });
         }
         if ignored_fairness_lasso {
-            return Ok(ModelCheckOutcome::RefutedIgnoringConstraints {
-                stats: totals.stats(),
-            });
+            return Ok(ModelCheckOutcome::RefutedIgnoringConstraints { stats });
         }
         if let (Some(bound), false) = (self.instance_bound, totals.instance_limited.is_empty()) {
             return Ok(ModelCheckOutcome::Undecided {

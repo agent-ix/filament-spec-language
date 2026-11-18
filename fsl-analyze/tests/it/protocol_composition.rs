@@ -728,7 +728,7 @@ fn an_eventually_clause_satisfied_by_the_replayed_prefix_holds_under_the_infinit
 /// counted per channel, so over a protocol with no RA access it cuts the second send on the
 /// capacity-1 channel before its overflow policy applies; at 2 the overflow
 /// refutes; unset, the record states 4, not reached.
-#[trace("TC-2986", "FR-225-AC-6")]
+#[trace("TC-2986", "FR-225-AC-6", "FR-636-AC-4")]
 #[test]
 fn max_messages_bounds_each_channels_occupancy() {
     let body = "record Ack { ok: Boolean; }\n\

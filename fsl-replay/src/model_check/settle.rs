@@ -357,10 +357,11 @@ pub fn settle_protocol_check(
     }
     record.memory_bound = bound.map(|bound| StatedMemoryBound {
         bound,
-        // Reached whenever a store was cut: by the engine's run, whatever
-        // it settled (a `refuted` run too), or by the closure checker's
-        // re-expansion.
+        // Reached whenever a memory-bound step was cut. `max_messages` also
+        // records channel cuts separately from RA message cuts.
         reached: outcome.stats().bound_limited > 0
+            || (bound.member == MemoryBoundMember::MaxMessages
+                && outcome.stats().message_bound_limited > 0)
             || matches!(
                 record.value,
                 TerminalValue::Inconclusive(InconclusiveCause::MemoryBoundReached { .. })
