@@ -16,7 +16,7 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
 use fsl_semantics::model::observation::{
-    document_reference, DocumentProvision, DocumentRef, ObservationLimits,
+    DocumentProvision, DocumentRef, ObservationLimits, document_reference,
 };
 use ix_trace_rs::trace;
 use serde_json::json;

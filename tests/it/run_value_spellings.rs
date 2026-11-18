@@ -234,7 +234,6 @@ fn entry(key: &str, value: u8) -> Value {
 }
 
 #[test]
-#[ignore = "QSL-2171: S1 does not parse Map<K, V>[a, b] and filament_exact has no map value yet"]
 #[trace("TC-2372", "FR-650-AC-11")]
 #[trace("FSpec-TC-1720", "FSpec-FR-181-AC-31")]
 fn a_map_round_trips_in_key_order() {

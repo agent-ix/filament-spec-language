@@ -13,7 +13,7 @@ description = "ADR-011 §6.1 layer 2: S2 parsed semantic forms -- the forms core
 # `tests/it/family_outcome_layering.rs` (TC-398) asserts that this table and
 # `[dev-dependencies]` name no other workspace crate.
 [dependencies]
-ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 fsl-cst = { path = "../fsl-cst" }
 fsl-foundation = { path = "../fsl-foundation" }
 filament-semantic-value = { workspace = true }

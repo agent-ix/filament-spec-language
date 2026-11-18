@@ -41,6 +41,10 @@ const FUNCTIONS: &str = "\
     unit inch : Length = rational(127, 5000) * m;\n\
     record Carried { amount: Quantity<m, Int[-2, 2]>; }\n\
     function total using v(): Boolean pure { 3 ms + 2 ms = 5 ms }\n\
+    function scaled_integer using v(): Boolean pure { 3 ms * 2 = 6 ms }\n\
+    function scaled_rational using v(): Boolean pure { 3 ms * rational(1, 2) = rational(3, 2) ms }\n\
+    function scaled_decimal using v(): Boolean pure { 3 ms * decimal(15, 1) = rational(9, 2) ms }\n\
+    function scaled_reversed using v(): Boolean pure { 2 * 3 ms = 6 ms }\n\
     function lower using v(): Boolean pure { rational(1, 2) ms < 1 ms }\n\
     function fraction using v(): Boolean pure { 0.5 ms = rational(2, 4) ms }\n\
     function other using v(): Boolean pure { 3 ms = 4 ms }\n\
@@ -132,6 +136,19 @@ fn a_quantity_literal_evaluates_with_its_own_unit_magnitude() {
     assert!(!truth(&package, "other"));
     assert!(truth(&package, "negative"));
     assert!(truth(&package, "converted"));
+}
+
+/// FSpec FR-142-AC-41 (TC-1324): multiplying a quantity by an exact scalar
+/// preserves the declared unit and computes the exact magnitude in either
+/// source operand order.
+#[trace("FSpec-FR-142-AC-41", "FSpec-TC-1324")]
+#[test]
+fn exact_scalar_multiplication_keeps_the_quantity_unit() {
+    let package = package();
+    assert!(truth(&package, "scaled_integer"));
+    assert!(truth(&package, "scaled_rational"));
+    assert!(truth(&package, "scaled_decimal"));
+    assert!(truth(&package, "scaled_reversed"));
 }
 
 /// FR-091-AC-72: the checked package-unit conversion is evaluated with the

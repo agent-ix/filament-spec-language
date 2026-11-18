@@ -493,7 +493,9 @@ pub fn classify_domains(
             | ValueType::Reference(_)
             | ValueType::Population(Some(_))
             | ValueType::Uuid
-            | ValueType::Timestamp => {}
+            | ValueType::Timestamp
+            | ValueType::Bytes
+            | ValueType::JsonObject => {}
         }
     }
     Ok(domains)

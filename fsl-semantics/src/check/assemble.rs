@@ -2662,6 +2662,8 @@ fn model_value_type(
             NativeValueType::Integer => ValueType::Integer,
             NativeValueType::Uuid => ValueType::Uuid,
             NativeValueType::Timestamp => ValueType::Timestamp,
+            NativeValueType::Bytes => ValueType::Bytes,
+            NativeValueType::JsonObject => ValueType::JsonObject,
             NativeValueType::Float32 => return Err(Unmapped::Float(IeeeWidth::Binary32)),
             NativeValueType::Float64 => return Err(Unmapped::Float(IeeeWidth::Binary64)),
             // FR-056 admits these native names at the domain-package boundary,
@@ -2720,6 +2722,8 @@ fn model_value_type(
                 }
                 ScalarValueDomain::Native(NativeValueType::Uuid) => ValueType::Uuid,
                 ScalarValueDomain::Native(NativeValueType::Timestamp) => ValueType::Timestamp,
+                ScalarValueDomain::Native(NativeValueType::Bytes) => ValueType::Bytes,
+                ScalarValueDomain::Native(NativeValueType::JsonObject) => ValueType::JsonObject,
                 ScalarValueDomain::Native(_) => return Err(Unmapped::Unsupported),
             },
             Some(DomainPackageRecord::OptionType(option)) => {

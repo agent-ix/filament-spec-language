@@ -8,7 +8,7 @@ use filament_exact::{Integer, Value, ValueType};
 use std::ops::Not;
 
 use crate::simulation::model::SymbolicSubject;
-use crate::smt::script::{symbol, Script, Sort, Term};
+use crate::smt::script::{Script, Sort, Term, symbol};
 use crate::smt::{Refusal, SmtEncodingRefusal};
 
 /// One state copy: the prefix of the names of its constants, `s<i>`.
@@ -92,6 +92,8 @@ fn sort_of(value_type: &ValueType) -> Result<FieldSort, &'static str> {
         ValueType::Map(_) => Err("a Map"),
         ValueType::Text(_) => Err("a Text"),
         ValueType::String => Err("a String"),
+        ValueType::Bytes => Err("Bytes"),
+        ValueType::JsonObject => Err("JsonObject"),
         ValueType::Uuid => Err("a Uuid"),
         ValueType::Timestamp => Err("a Timestamp"),
         ValueType::Option(_) => Err("an Option"),

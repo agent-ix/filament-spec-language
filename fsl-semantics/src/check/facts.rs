@@ -13,7 +13,7 @@
 //! D-1).
 
 use filament_checked::node::{
-    Arithmetic, CheckedLiteral, Connective, NodeKind, OrderedKind, RecordField, Visit,
+    Arithmetic, CheckedLiteral, Connective, IndexedKind, NodeKind, OrderedKind, RecordField, Visit,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
@@ -32,7 +32,7 @@ use super::refusal::{
 };
 use crate::model::clause_observation::Observation;
 use filament_exact::{ArithmeticOperator, OrderingOperator};
-use filament_exact::{CollectionType, QuantityCarrier, Value, ValueType};
+use filament_exact::{CollectionType, MapType, QuantityCarrier, Value, ValueType};
 use filament_exact::{
     DecimalType, Integer, IntegerInterval, NonZeroInteger, Rational, RationalDomain,
 };
@@ -467,6 +467,21 @@ fn cardinality(collection: &CollectionType) -> Interval {
             upper: End::Finite(Integer::from(bound.maximum())),
         },
         // An unbounded collection (ADR-014 §2) holds any finite count.
+        None => Interval {
+            lower: End::Finite(Integer::zero()),
+            upper: End::PositiveInfinity,
+        },
+    }
+}
+
+/// The entry-count interval a map type declares; an unbounded map holds any
+/// finite count.
+fn map_cardinality(map: &MapType) -> Interval {
+    match map.bound() {
+        Some(bound) => Interval {
+            lower: End::Finite(Integer::from(bound.minimum())),
+            upper: End::Finite(Integer::from(bound.maximum())),
+        },
         None => Interval {
             lower: End::Finite(Integer::zero()),
             upper: End::PositiveInfinity,
@@ -1071,8 +1086,12 @@ impl<'a> Definedness<'a> {
         facts: &Rc<Facts>,
     ) -> Outcomes {
         let unchanged = || Some(Rc::clone(facts));
-        let ValueType::Collection(collection_type) = collection.value_type() else {
-            return (unchanged(), unchanged());
+        let declared = match collection.value_type() {
+            ValueType::Collection(collection_type) => cardinality(collection_type),
+            // `contains(m, k)` over a map is the membership fact that proves
+            // the index obligation of `m[k]` (FSpec FR-144 "Map values").
+            ValueType::Map(map_type) => map_cardinality(map_type),
+            _ => return (unchanged(), unchanged()),
         };
         let (Some(collection), Some(value)) = (
             self.stable_path(collection, facts),
@@ -1084,7 +1103,7 @@ impl<'a> Definedness<'a> {
         let nonempty = facts
             .intervals
             .get(&size)
-            .map_or_else(|| cardinality(collection_type), Interval::of_proved)
+            .map_or_else(|| declared, Interval::of_proved)
             .intersect(&Interval {
                 lower: End::Finite(Integer::one()),
                 upper: End::PositiveInfinity,
@@ -1646,6 +1665,29 @@ impl<'a> Definedness<'a> {
                 Some(path) if facts.present.contains(&path) => Ok(()),
                 _ => Err(Self::refuse(node, Obligation::Presence)),
             },
+            // FSpec FR-144 "Indexing": the index obligation of a map read is
+            // the membership fact `contains(m, k)` over the same stable paths.
+            NodeKind::Index {
+                collection,
+                index,
+                kind: IndexedKind::Map,
+            } => {
+                let proved = match (
+                    self.stable_path(node.at(*collection), facts),
+                    self.stable_path(node.at(*index), facts),
+                ) {
+                    (Some(collection), Some(index)) => facts
+                        .members
+                        .get(&collection)
+                        .is_some_and(|members| members.contains(&index)),
+                    _ => false,
+                };
+                if proved {
+                    Ok(())
+                } else {
+                    Err(Self::refuse(node.at(*index), Obligation::Presence))
+                }
+            }
             // A reduction (no identity) of a possibly empty source.
             NodeKind::Fold {
                 source,
@@ -1898,6 +1940,7 @@ impl<'n> filament_walk::Walk for IntervalWalk<'_, '_, '_, 'n> {
                 let operand = node.at(*operand);
                 let bound = match operand.value_type() {
                     ValueType::Collection(collection) => cardinality(collection),
+                    ValueType::Map(map) => map_cardinality(map),
                     // The size of a text is bounded by its declared length.
                     ValueType::Text(text) => Interval {
                         lower: End::Finite(Integer::from(text.min())),

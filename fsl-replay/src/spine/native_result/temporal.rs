@@ -52,6 +52,7 @@ fn undefined_cause(reason: &str) -> Option<TemporalUndefinedCause> {
         Undefined::IeeeNotFinite,
         Undefined::EmptyReduction,
         Undefined::NoneValue,
+        Undefined::NoElement,
         Undefined::SumOutOfDomain,
     ]
     .into_iter()

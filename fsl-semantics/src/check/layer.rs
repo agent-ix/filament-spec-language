@@ -92,6 +92,8 @@ pub(super) fn typed_equalities(
                 | ValueType::String
                 | ValueType::Uuid
                 | ValueType::Timestamp
+                | ValueType::Bytes
+                | ValueType::JsonObject
                 | ValueType::Enum(_)
                 | ValueType::Map(_)
                 | ValueType::Population(_) => {}
