@@ -321,7 +321,8 @@ fn assert_reproduces_keeping_identities(case: Case, clause: &str) -> StateClause
     let arm = witness_arm(&result);
     assert_eq!(
         arm.settlement(),
-        WitnessSettlement::ReproducedWithEvaluatedWitness
+        WitnessSettlement::ReproducedWithEvaluatedWitness,
+        "{arm:?}"
     );
     assert_eq!(arm.category(), Category::Violation);
     assert_eq!(arm.value(), Some(EvaluatedValue::Boolean(false)));
