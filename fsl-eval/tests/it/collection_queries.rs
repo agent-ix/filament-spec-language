@@ -336,7 +336,7 @@ fn index_reads_ordered_collection_elements_and_returns_no_element_out_of_range()
             format!("{:?}", completed(&good)),
             format!("{:?}", int(expected))
         );
-        assert_eq!((good.work, good.results), (1, 1));
+        assert_eq!((good.work, good.results), (2, 1));
 
         for bad_index in bad_indexes {
             let checked = check(

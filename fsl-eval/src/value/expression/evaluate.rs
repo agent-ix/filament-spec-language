@@ -2396,7 +2396,6 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 charge_element(self.meter)?;
                 retain_scalar(value.clone(), self.meter)?
             }
-            NodeKind::Index { .. } => return Err(unsupported_construct("index")),
             NodeKind::ConvertText(_, _) => return Err(unsupported_construct("text_conversion")),
             // FR-322: the payload arguments are evaluated and on the stack in
             // position order; the first stopped one never reaches here. Type
