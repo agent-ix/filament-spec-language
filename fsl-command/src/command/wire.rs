@@ -2,8 +2,8 @@
 //! FR-026–028, FR-031: closed records; existing constructors own identifier validity.
 
 use filament_contract_model as ir;
-use fsl_foundation::serde_object::{deserialize_objects, from_object};
 use fsl_foundation::AccountingSetting;
+use fsl_foundation::serde_object::{deserialize_objects, from_object};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
@@ -56,6 +56,20 @@ pub(super) struct CompileRequest {
     /// FR-665: checked-package handoff written after compilation succeeds.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub handoff: Option<Handoff>,
+}
+
+/// FR-767's run-side supplied library: its own law is independent of the
+/// top-level program law.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RunLibrary {
+    pub identity: String,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub refinement_internals: Option<serde_json::Value>,
+    #[serde(deserialize_with = "from_object")]
+    pub source: SourceFile,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub integer_division: Option<serde_json::Value>,
 }
 
 /// FR-665's checked-package handoff selection.
@@ -153,7 +167,7 @@ fn compile_program<'de, D: serde::Deserializer<'de>>(
         other => {
             return Err(serde::de::Error::custom(format!(
                 "expected a compile program object or source array, found {other}"
-            )))
+            )));
         }
     };
     Ok(CompileProgram {
@@ -223,6 +237,9 @@ pub(super) struct Request {
     pub models: Vec<Model>,
     #[serde(deserialize_with = "from_object")]
     pub program: Program,
+    /// FR-767: a precompiled package does not take a request-selected law.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub package: Option<FileSelection>,
     #[serde(default, deserialize_with = "from_object")]
     pub limits: Limits,
     /// FR-100: a `1-draft` program's named call. Absent for a `0-draft`
@@ -235,10 +252,14 @@ pub(super) struct Request {
     /// FR-651: several independent call or clause selections in one request.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub items: Option<serde_json::Value>,
+    /// FR-767: an optional caller-selected law for this program's `div` and
+    /// `rem` nodes; imported libraries retain their own selection.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub integer_division: Option<serde_json::Value>,
     /// FR-100/ADR-015 D-1: a `1-draft` program's supplied libraries; none
     /// when absent.
     #[serde(default, deserialize_with = "deserialize_objects")]
-    pub libraries: Vec<Library>,
+    pub libraries: Vec<RunLibrary>,
     /// FR-660: request supplied extension definitions.
     #[serde(default, deserialize_with = "extensions")]
     pub extensions: Vec<Extension>,

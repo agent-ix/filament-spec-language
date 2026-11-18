@@ -15,13 +15,13 @@ mod tl;
 mod wire;
 
 pub use analyze::{
-    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
-    prepare_analyze, AnalyzeInput, PreparedAnalyze,
+    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
+    analyze_with_providers_and_limits, prepare_analyze,
 };
-pub use flow::{analyze_flow_report, FlowAnalyzeError};
-pub use monitor::{monitor, MonitorEvent, MonitorSummary};
+pub use flow::{FlowAnalyzeError, analyze_flow_report};
+pub use monitor::{MonitorEvent, MonitorSummary, monitor};
 pub use output::NativeResult;
-pub use tl::{record as tl_record, AtomMapping, TlRecord};
+pub use tl::{AtomMapping, TlRecord, record as tl_record};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -565,6 +565,7 @@ struct FunctionRunData {
     dependencies: fsl_replay::spine::DependencyInput,
     extension_catalog: Option<fsl_semantics::library::bundle::DefinitionCatalog>,
     call: fsl_replay::spine::Call,
+    integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     /// FR-960: the call's `requirements`; `None` settles no item.
     requirements: Option<requirements::Requirements>,
 }
@@ -748,6 +749,16 @@ pub enum RunCause {
         "unknown_profile/unsupported-selection: tl_lowering.correspondence {value:?} is none of mltl.closed-trace/v1, mltl.online-prefix/v1 and mltl.origin-complete-history/v1"
     )]
     TlCorrespondence {
+        /// The value given.
+        value: String,
+    },
+    /// FR-767: `integer_division` names no supported division law.
+    #[error(
+        "unknown_profile/unsupported-selection: integer-division law `{value}` supplied by `{member}` is not one of euclidean, floor and truncating"
+    )]
+    IntegerDivisionLaw {
+        /// The member that supplied the value.
+        member: String,
         /// The value given.
         value: String,
     },
@@ -965,7 +976,7 @@ impl RunCause {
             Self::AnalyzeRequest { .. } => Code::InvalidRequest,
             Self::AnalyzePackage { code, .. } => *code,
             Self::AnalyzeNotYetImplemented { .. } => Code::UnsupportedConstruct,
-            Self::TlCorrespondence { .. } => Code::UnknownProfile,
+            Self::TlCorrespondence { .. } | Self::IntegerDivisionLaw { .. } => Code::UnknownProfile,
             Self::TlClause { .. } => Code::MissingDeclaration,
             Self::TlNotYetImplemented { .. } => Code::UnsupportedConstruct,
             Self::TlFault(_) => Code::RuntimeInvariant,
@@ -1119,6 +1130,7 @@ impl RunError {
             | RunCause::Json(_)
             | RunCause::ClauseRequest { .. }
             | RunCause::TlCorrespondence { .. }
+            | RunCause::IntegerDivisionLaw { .. }
             | RunCause::TlClause { .. }
             | RunCause::TlNotYetImplemented { .. }
             | RunCause::TlFault(_)
@@ -2806,6 +2818,35 @@ fn prepare_run_bytes_with_sources(
     admitted_sources: &mut crate::Sources,
 ) -> Result<PreparedRun> {
     let request: wire::Request = request_with_overrides(bytes, overrides)?;
+    if request.package.is_some() && request.integer_division.is_some() {
+        return Err(RunCause::ClauseRequest {
+            member: "integer_division".to_owned(),
+            reason: "a package already carries its selected integer-division law".to_owned(),
+        });
+    }
+    if request.package.is_some() {
+        return Err(RunCause::ClauseRequest {
+            member: "package".to_owned(),
+            reason: "package-only native-run execution is tracked by QSL-2390".to_owned(),
+        });
+    }
+    let integer_division =
+        read_integer_division(request.integer_division.as_ref(), "integer_division")?;
+    let library_integer_division = request
+        .libraries
+        .iter()
+        .enumerate()
+        .map(|(index, library)| {
+            read_integer_division(
+                library.integer_division.as_ref(),
+                &format!("libraries[{index}].integer_division"),
+            )
+            .map(|law| law.map(|law| (library.identity.clone(), law)))
+        })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
     validate_extension_entries(&request.extensions)?;
     // FR-931: a malformed `tl_lowering` member refuses before any source
     // file is read.
@@ -2848,7 +2889,13 @@ fn prepare_run_bytes_with_sources(
         // the runner before any model or library source is read (FR-100).
         let source = intake.source(&request.program.source, "program.source")?;
         require_complete_edition(source.source())?;
-        prepare_complete_run(&mut intake, &request, source)
+        prepare_complete_run(
+            &mut intake,
+            &request,
+            source,
+            integer_division,
+            library_integer_division,
+        )
     })();
     *admitted_sources = crate::Sources::from_sources(intake.sources.iter().cloned());
     prepared
@@ -2890,10 +2937,42 @@ fn prepare_lowering(
 
 /// Prepare FR-100's function or clause selection without executing a stage.
 /// `source` is the program source, already read by bounded intake.
+fn read_integer_division(
+    value: Option<&serde_json::Value>,
+    member: &str,
+) -> Result<Option<fsl_replay::AdmittedIntegerDivision>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let law = value.as_str().ok_or_else(|| RunCause::ClauseRequest {
+        member: member.to_owned(),
+        reason: "expected one of euclidean, floor and truncating".to_owned(),
+    })?;
+    let role = match law {
+        "euclidean" => fsl_replay::DefinitionRole::IntegerDivisionEuclidean,
+        "floor" => fsl_replay::DefinitionRole::IntegerDivisionFloor,
+        "truncating" => fsl_replay::DefinitionRole::IntegerDivisionTruncating,
+        _ => {
+            return Err(RunCause::IntegerDivisionLaw {
+                member: member.to_owned(),
+                value: law.to_owned(),
+            });
+        }
+    };
+    fsl_replay::admit_integer_division(&[role.reference()], None)
+        .map(Some)
+        .map_err(|_| RunCause::ClauseRequest {
+            member: member.to_owned(),
+            reason: "the selected law could not be admitted".to_owned(),
+        })
+}
+
 fn prepare_complete_run(
     intake: &mut Intake<'_>,
     request: &wire::Request,
     source: FormalSource,
+    integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
+    library_integer_division: Vec<(String, fsl_replay::AdmittedIntegerDivision)>,
 ) -> Result<PreparedRun> {
     if let Some(member) = &request.tl_lowering {
         return prepare_lowering(intake, request, member, source);
@@ -2952,7 +3031,7 @@ fn prepare_complete_run(
                 intake.source(&library.source, &format!("libraries[{index}].source"))?,
             ))
         })
-        .collect::<Result<Vec<(&wire::Library, FormalSource)>>>()?;
+        .collect::<Result<Vec<(&wire::RunLibrary, FormalSource)>>>()?;
     // FR-660: the same request-owned catalog is available to run compilation.
     let extension_catalog = Some(extension_catalog(&request.extensions, intake)?);
     let dependencies =
@@ -2964,6 +3043,17 @@ fn prepare_complete_run(
                 bytes: read.source().text().as_bytes().to_vec(),
             }
         }))
+        .and_then(|dependencies| {
+            dependencies.with_refinement_internals(libraries.iter().filter_map(
+                |(library, _)| {
+                    library
+                        .refinement_internals
+                        .as_ref()
+                        .map(|value| (library.identity.clone(), value.clone()))
+                },
+            ))
+        })
+        .and_then(|dependencies| dependencies.with_integer_division(library_integer_division))
         .map_err(|refusal| {
             spine_run_failure(
                 &source,
@@ -3026,6 +3116,7 @@ fn prepare_complete_run(
             dependencies,
             extension_catalog,
             call: spine_call,
+            integer_division,
             requirements,
         }),
     }))
@@ -3114,8 +3205,30 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
     // evaluation is the same with and without them.
     let call_cancel = filament_exact::Cancel::new();
     let objects = fsl_semantics::model::object_environment::ObjectEnvironment::default();
-    let run = |catalog: Option<&fsl_semantics::library::bundle::DefinitionCatalog>| match catalog {
-        Some(catalog) => fsl_replay::spine::run_with_profile_catalog(
+    let run = |catalog: Option<&fsl_semantics::library::bundle::DefinitionCatalog>| match (
+        catalog,
+        prepared.integer_division,
+    ) {
+        (Some(catalog), Some(integer_division)) => {
+            fsl_replay::spine::run_with_profile_catalog_and_integer_division(
+                source.source().identity().clone(),
+                package_name(source.source().identity()),
+                source.source().path(),
+                source.source().text().as_bytes(),
+                &prepared.packages,
+                &prepared.dependencies,
+                fsl_replay::spine::SpineLimits::default(),
+                &prepared.call,
+                &objects,
+                fsl_replay::spine::ProfileCatalogInput {
+                    catalog,
+                    limits: fsl_semantics::library::bundle::PackageLimits::default(),
+                },
+                integer_division,
+                &call_cancel,
+            )
+        }
+        (Some(catalog), None) => fsl_replay::spine::run_with_profile_catalog(
             source.source().identity().clone(),
             package_name(source.source().identity()),
             source.source().path(),
@@ -3131,7 +3244,7 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
             },
             &call_cancel,
         ),
-        None => fsl_replay::spine::run(
+        (None, _) => fsl_replay::spine::run(
             source.source().identity().clone(),
             package_name(source.source().identity()),
             source.source().path(),
@@ -3163,31 +3276,32 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
     };
     // FR-961 step 3 to 5: the call runs through FR-395's
     // `run_with_requirements`, and its items are settled on the same compile.
-    let (ran, settled) = fsl_replay::run_with_requirements_reading_and_profile_catalog(
-        &fsl_replay::RequirementsRun {
-            source: source.source().identity().clone(),
-            package_name: package_name(source.source().identity()),
-            path: source.source().path(),
-            bytes: source.source().text().as_bytes(),
-            packages: &prepared.packages,
-            dependencies: &prepared.dependencies,
-            limits: fsl_replay::spine::SpineLimits::default(),
-            call: &prepared.call,
-            objects: &objects,
-            cancel: &call_cancel,
-        },
-        prepared
-            .extension_catalog
-            .as_ref()
-            .map(|catalog| fsl_replay::spine::ProfileCatalogInput {
-                catalog,
-                limits: fsl_semantics::library::bundle::PackageLimits::default(),
+    let (ran, settled) =
+        fsl_replay::run_with_requirements_reading_and_profile_catalog_and_integer_division(
+            &fsl_replay::RequirementsRun {
+                source: source.source().identity().clone(),
+                package_name: package_name(source.source().identity()),
+                path: source.source().path(),
+                bytes: source.source().text().as_bytes(),
+                packages: &prepared.packages,
+                dependencies: &prepared.dependencies,
+                limits: fsl_replay::spine::SpineLimits::default(),
+                call: &prepared.call,
+                objects: &objects,
+                cancel: &call_cancel,
+            },
+            prepared.extension_catalog.as_ref().map(|catalog| {
+                fsl_replay::spine::ProfileCatalogInput {
+                    catalog,
+                    limits: fsl_semantics::library::bundle::PackageLimits::default(),
+                }
             }),
-        |checked, members| {
-            settle::settle_call(checked, members, selection, &prepared.packages, settle)
-        },
-    )
-    .map_err(compile_failure)?;
+            prepared.integer_division,
+            |checked, members| {
+                settle::settle_call(checked, members, selection, &prepared.packages, settle)
+            },
+        )
+        .map_err(compile_failure)?;
     let (outcome, _) = ran.into_parts();
     let mut result =
         output::spine_run_result(source, &prepared.call.function, outcome, Some(settled?))?;

@@ -2152,15 +2152,49 @@ pub fn check_with_refinement_internals(
     limits: SpineLimits,
     cancel: &Cancel,
 ) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
-    check_with_refinement_internals_and_function_modes(
+    check_with_refinement_internals_and_integer_division(
         parsed,
         package_name,
         inputs,
         models,
         dependencies,
+        None,
         limits,
         cancel,
+    )
+}
+
+/// Check one unit with the caller's integer-division law and the ordinary
+/// refinement and clock inputs. Imported libraries keep their own headers.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one source's authored inputs, caller-selected division law, and stage context"
+)]
+pub fn check_with_refinement_internals_and_integer_division(
+    parsed: &ParsedUnitSource,
+    package_name: String,
+    inputs: SourceInputs<'_>,
+    models: &AdmittedModels,
+    dependencies: &DependencyInput,
+    integer_division: Option<crate::AdmittedIntegerDivision>,
+    limits: SpineLimits,
+    cancel: &Cancel,
+) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
+    check_with_context_and_temporal_selections(
+        parsed,
+        package_name,
+        &super::StateClauseExecutionPoints::new(),
+        inputs.refinement_internals,
+        inputs.temporal_selections,
+        inputs.clocks,
+        integer_division,
         None,
+        None,
+        models,
+        dependencies,
+        limits,
+        cancel,
+        false,
     )
 }
 
@@ -4136,9 +4170,12 @@ impl<'a> Resolution<'a> {
                 refusal,
             })
         })?;
-        let mut selected = (frame.raw == self.continuation_source)
-            .then_some(self.integer_division)
-            .flatten();
+        let mut selected = if frame.raw == self.continuation_source {
+            self.integer_division
+        } else {
+            let identity = LibraryName::new(&frame.package_name).ok();
+            identity.and_then(|identity| self.dependencies.integer_division(&identity))
+        };
         for source in &source_units {
             selected = fsl_semantics::check::resolve_integer_division(
                 &source.unit().selections().profiles,

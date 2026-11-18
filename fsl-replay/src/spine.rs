@@ -77,6 +77,7 @@ pub use lifecycle::{
     check_with_execution_points_and_refinement_internals,
     check_with_execution_points_and_source_inputs, check_with_integer_division,
     check_with_profile_catalog, check_with_profile_catalog_and_inputs, check_with_refinement_internals,
+    check_with_refinement_internals_and_integer_division,
     check_with_temporal_selections_and_execution_points, core_vocabulary, extension_forms, package,
     package_with_temporal_selections, parse, parse_selecting_extensions, parse_with_extensions,
     preflight_unit_list, refusal_or_fault, select, select_units, AdmittedModels, AdmittedUnitList,
@@ -216,10 +217,11 @@ pub use bind::{
 mod call;
 mod identity_form;
 mod run_value;
-pub(crate) use call::run_reading;
+pub(crate) use call::{run_reading, run_reading_with_integer_division};
 pub use call::{
     default_accounting, run, run_with_profile_catalog, Call, CallArgument, CallIncomplete,
-    CallLocus, CallOutcome, CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument,
+    run_with_profile_catalog_and_integer_division, CallLocus, CallOutcome, CallRefusal,
+    CallSnapshot, CallValue, RunRefusal, WireArgument,
     DEFAULT_WORK_UNITS,
 };
 pub use identity_form::{effective_form, node_key_form, universe_form};
@@ -2417,6 +2419,8 @@ pub struct DependencyInput {
     /// FR-147/FR-099: each supplied library's own unchecked internal-list
     /// value, keyed by the library identity that owns it.
     refinement_internals: BTreeMap<LibraryName, serde_json::Value>,
+    /// FR-767: each supplied library's caller-selected division law.
+    integer_division: BTreeMap<LibraryName, crate::AdmittedIntegerDivision>,
 }
 
 /// Which source of a compile a [`DependencyInputRefusal`] names.
@@ -2478,6 +2482,12 @@ pub enum DependencyInputRefusal {
         /// The unmatched library identity.
         identity: String,
     },
+    /// A caller-selected division law names no supplied library.
+    #[error("invalid_request: integer_division names unsupplied library {identity}")]
+    UnknownIntegerDivision {
+        /// The unmatched library identity.
+        identity: String,
+    },
     /// A multi-source library was supplied without any source units.
     #[error("invalid_package/invalid-value: library {identity} has no source units")]
     EmptyLibraryUnits {
@@ -2509,6 +2519,7 @@ impl DependencyInputRefusal {
             | Self::LibraryIdentityMismatch { .. } => Code::InvalidPackage,
             Self::EmptyLibraryUnits { .. } => Code::InvalidPackage,
             Self::UnknownRefinementInternals { .. } => Code::InvalidRequest,
+            Self::UnknownIntegerDivision { .. } => Code::InvalidRequest,
         }
     }
 
@@ -2520,7 +2531,9 @@ impl DependencyInputRefusal {
             | Self::SharedOwner { .. }
             | Self::LibraryIdentityMismatch { .. }
             | Self::EmptyLibraryUnits { .. } => None,
-            Self::UnknownRefinementInternals { .. } => Some(HostCause::SelectionIdentity),
+            Self::UnknownRefinementInternals { .. } | Self::UnknownIntegerDivision { .. } => {
+                Some(HostCause::SelectionIdentity)
+            }
         }
     }
 
@@ -2531,7 +2544,9 @@ impl DependencyInputRefusal {
             | Self::SharedOwner { .. }
             | Self::LibraryIdentityMismatch { .. } => Some("conflicting-definition"),
             Self::EmptyLibraryUnits { .. } => Some("invalid-value"),
-            Self::EmptyIdentity { .. } | Self::UnknownRefinementInternals { .. } => None,
+            Self::EmptyIdentity { .. }
+            | Self::UnknownRefinementInternals { .. }
+            | Self::UnknownIntegerDivision { .. } => None,
         }
     }
 }
@@ -2577,6 +2592,7 @@ impl DependencyInput {
             libraries: held,
             library_units,
             refinement_internals: BTreeMap::new(),
+            integer_division: BTreeMap::new(),
         })
     }
 
@@ -2667,6 +2683,7 @@ impl DependencyInput {
         dependencies.libraries.remove(identity);
         dependencies.library_units.remove(identity);
         dependencies.refinement_internals.remove(identity);
+        dependencies.integer_division.remove(identity);
         dependencies
     }
 
@@ -2688,6 +2705,36 @@ impl DependencyInput {
             self.refinement_internals.insert(name, value);
         }
         Ok(self)
+    }
+
+    /// The dependency input with caller-selected division laws attached to
+    /// their supplied library identities (FR-767).
+    pub fn with_integer_division(
+        mut self,
+        laws: impl IntoIterator<
+            Item = (String, crate::AdmittedIntegerDivision),
+        >,
+    ) -> Result<Self, DependencyInputRefusal> {
+        for (identity, law) in laws {
+            let name = LibraryName::new(&identity).map_err(|_| {
+                DependencyInputRefusal::UnknownIntegerDivision {
+                    identity: identity.clone(),
+                }
+            })?;
+            if !self.libraries.contains_key(&name) {
+                return Err(DependencyInputRefusal::UnknownIntegerDivision { identity });
+            }
+            self.integer_division.insert(name, law);
+        }
+        Ok(self)
+    }
+
+    /// The caller-selected integer-division law for `identity`, if any.
+    pub(crate) fn integer_division(
+        &self,
+        identity: &LibraryName,
+    ) -> Option<crate::AdmittedIntegerDivision> {
+        self.integer_division.get(identity).copied()
     }
 
     /// The unchecked internal-list value owned by `identity`, if supplied.

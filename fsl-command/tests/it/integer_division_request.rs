@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use fsl_command::command;
 use fsl_replay::Operation;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const HEADER: &str =
     "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
@@ -113,15 +113,25 @@ fn refusal(error: &command::RunError, operation: Operation) -> (String, String, 
 fn returned(path: &Path) -> String {
     let result = command::run(path, &crate::negotiation::Fr290).expect("the run completes");
     assert_eq!(result.exit_code, 0);
-    result.value.as_value()["outcome"]["value"]["decimal"]
+    result.value.as_value()["outcome"]["value"]["integer"]
         .as_str()
         .map(str::to_owned)
         .or_else(|| {
-            result.value.as_value()["outcome"]["value"]["decimal"]
+            result.value.as_value()["outcome"]["value"]["integer"]
                 .as_i64()
                 .map(|value| value.to_string())
         })
-        .expect("an integer value")
+        .or_else(|| {
+            result.value.as_value()["outcome"]["value"]["decimal"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| {
+                    result.value.as_value()["outcome"]["value"]["decimal"]
+                        .as_i64()
+                        .map(|value| value.to_string())
+                })
+        })
+        .unwrap_or_else(|| panic!("an integer value: {}", result.value))
 }
 
 #[test]
@@ -154,6 +164,109 @@ fn request_member_selects_each_law_for_compile_and_run() {
             assert_eq!(returned(&path), expected, "{function} under {law}");
         }
     }
+}
+
+#[test]
+#[trace("TC-2188", "FR-767-AC-1")]
+fn run_request_member_selects_each_integer_division_law() {
+    for (law, quotient, remainder) in [
+        ("truncating", "-2", "-1"),
+        ("floor", "-3", "2"),
+        ("euclidean", "-3", "2"),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let program = format!("{HEADER}{BODY}");
+        write(directory.path(), "program.native", program.as_bytes());
+        for (function, expected) in [("q", quotient), ("r", remainder)] {
+            let path = request(
+                directory.path(),
+                None,
+                "native-run/1",
+                run_body(Some(json!(law)), function),
+            );
+            assert_eq!(returned(&path), expected, "{function} under {law}");
+        }
+    }
+}
+
+#[test]
+#[trace("TC-2188", "FR-767-AC-5")]
+fn program_and_library_laws_are_selected_independently_during_run() {
+    let directory = tempfile::tempdir().unwrap();
+    let program = format!("{HEADER}{IMPORTING}");
+    write(directory.path(), "program.native", program.as_bytes());
+    let library = format!("{HEADER}{LIBRARY}");
+    write(directory.path(), "library.native", library.as_bytes());
+    let mut body = json!({
+        "models": [],
+        "program": {"source": source("program.native", "test:program")},
+        "libraries": [{
+            "identity": "test/lib",
+            "source": source("library.native", "test:library"),
+            "integer_division": "truncating"
+        }],
+        "integer_division": "floor"
+    });
+    let call = |function: &str| {
+        json!({"function":function, "arguments":[
+            {"parameter":"a", "value":-7}, {"parameter":"b", "value":3}
+        ]})
+    };
+    body["call"] = call("q");
+    let program_run = request(directory.path(), None, "native-run/1", body.clone());
+    assert_eq!(returned(&program_run), "-3");
+    body["call"] = call("viaLib");
+    let library_run = request(directory.path(), None, "native-run/1", body.clone());
+    assert_eq!(returned(&library_run), "-2");
+
+    body["libraries"][0].as_object_mut().unwrap().remove("integer_division");
+    let missing_library_law = request(directory.path(), None, "native-run/1", body);
+    let error = command::run(&missing_library_law, &crate::negotiation::Fr290)
+        .expect_err("the program law does not supply an imported library's law");
+    let (code, cause, _) = refusal(&error, Operation::Execute);
+    assert_eq!((code.as_str(), cause.as_str()), ("missing_declaration", "missing-selection"));
+}
+
+#[test]
+#[trace("TC-2188", "FR-767-AC-3")]
+fn malformed_or_unknown_run_law_refuses_before_reading_the_program() {
+    for (law, code, cause) in [
+        (json!(null), "invalid-request", ""),
+        (json!(3), "invalid-request", ""),
+        (json!("ceiling"), "unknown_profile", "unsupported-selection"),
+        (json!("Floor"), "unknown_profile", "unsupported-selection"),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = request(
+            directory.path(),
+            None,
+            "native-run/1",
+            run_body(Some(law.clone()), "q"),
+        );
+        let error = command::run(&path, &crate::negotiation::Fr290)
+            .expect_err("the malformed member refuses before the missing source is read");
+        let document = error.value().expect("a refusal document");
+        assert_eq!(document["code"], code, "{law}: {document}");
+        if !cause.is_empty() {
+            assert_eq!(document["cause"], cause, "{law}: {document}");
+        }
+        assert!(error.to_string().contains("integer_division"), "{error}");
+    }
+}
+
+#[test]
+#[trace("TC-2188", "FR-767-AC-3")]
+fn native_run_package_and_integer_division_refuse_before_reading_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut body = run_body(Some(json!("floor")), "q");
+    body["package"] = json!({"file":"package.json"});
+    let path = request(directory.path(), None, "native-run/1", body);
+    let error = command::prepare_run(&path, command::RunLimits::default())
+        .err()
+        .expect("a package cannot be combined with a request-selected law");
+    let (code, _, message) = refusal(&error, Operation::Execute);
+    assert_eq!(code, "invalid-request");
+    assert!(message.contains("integer_division"), "{message}");
 }
 
 #[test]

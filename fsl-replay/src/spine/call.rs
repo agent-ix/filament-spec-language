@@ -28,7 +28,7 @@ use filament_semantic_value::catalog::{CatalogCode, Category, InternalFault};
 use filament_semantic_value::declaration::EnvironmentFailure;
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_eval::execution::{
-    execute, ExecuteLimits, ExecuteRequest, ExecuteSelection, PrepareLimits, SuppliedBackends,
+    ExecuteLimits, ExecuteRequest, ExecuteSelection, PrepareLimits, SuppliedBackends, execute,
 };
 use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::diagnostic::{Code, Locus, RefusalRecord};
@@ -560,7 +560,7 @@ impl RunRefusal {
     /// the outcome diagnostic carry this same object.
     #[must_use]
     pub fn details(&self) -> Option<serde_json::Map<String, serde_json::Value>> {
-        use serde_json::{json, Value};
+        use serde_json::{Value, json};
         let object = |value: Value| match value {
             Value::Object(members) => Some(members),
             _ => None,
@@ -663,6 +663,7 @@ pub fn run(
         call,
         objects,
         None,
+        None,
         cancel,
     )
 }
@@ -696,6 +697,43 @@ pub fn run_with_profile_catalog(
         call,
         objects,
         Some(profile_catalog),
+        None,
+        cancel,
+    )
+}
+
+/// Compile and run `bytes` with a caller-selected integer-division law and
+/// request-supplied extension definitions (FR-767).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "FR-100 run inputs plus the request-owned catalog and division selection"
+)]
+pub fn run_with_profile_catalog_and_integer_division(
+    source: SourceIdentity,
+    package_name: String,
+    path: &str,
+    bytes: &[u8],
+    packages: &fsl_semantics::model::intake::PackageInput,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    profile_catalog: ProfileCatalogInput<'_>,
+    integer_division: crate::AdmittedIntegerDivision,
+    cancel: &Cancel,
+) -> Result<CallOutcome, Box<RunRefusal>> {
+    run_with_optional_profile_catalog(
+        source,
+        package_name,
+        path,
+        bytes,
+        packages,
+        dependencies,
+        limits,
+        call,
+        objects,
+        Some(profile_catalog),
+        Some(integer_division),
         cancel,
     )
 }
@@ -715,9 +753,10 @@ fn run_with_optional_profile_catalog(
     call: &Call,
     objects: &ObjectEnvironment,
     profile_catalog: Option<ProfileCatalogInput<'_>>,
+    integer_division: Option<crate::AdmittedIntegerDivision>,
     cancel: &Cancel,
 ) -> Result<CallOutcome, Box<RunRefusal>> {
-    run_reading(
+    run_reading_with_integer_division(
         source,
         package_name,
         path,
@@ -730,6 +769,7 @@ fn run_with_optional_profile_catalog(
         &SuppliedBackends::default(),
         &PrepareLimits::default(),
         profile_catalog,
+        integer_division,
         cancel,
         |_, _, _| Ok(()),
     )
@@ -758,6 +798,46 @@ pub(crate) fn run_reading<T>(
     backends: &SuppliedBackends<'_>,
     prepare: &PrepareLimits,
     profile_catalog: Option<ProfileCatalogInput<'_>>,
+    cancel: &Cancel,
+    read: impl FnOnce(&CheckedUnit, &EmittedUnit, &AdmittedModels) -> Result<T, Box<RunRefusal>>,
+) -> Result<(CallOutcome, T), Box<RunRefusal>> {
+    run_reading_with_integer_division(
+        source,
+        package_name,
+        path,
+        bytes,
+        packages,
+        dependencies,
+        limits,
+        call,
+        objects,
+        backends,
+        prepare,
+        profile_catalog,
+        None,
+        cancel,
+        read,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "run's explicit source, package, evaluation, backend, catalog and law inputs"
+)]
+pub(crate) fn run_reading_with_integer_division<T>(
+    source: SourceIdentity,
+    package_name: String,
+    path: &str,
+    bytes: &[u8],
+    packages: &fsl_semantics::model::intake::PackageInput,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    backends: &SuppliedBackends<'_>,
+    prepare: &PrepareLimits,
+    profile_catalog: Option<ProfileCatalogInput<'_>>,
+    integer_division: Option<crate::AdmittedIntegerDivision>,
     cancel: &Cancel,
     read: impl FnOnce(&CheckedUnit, &EmittedUnit, &AdmittedModels) -> Result<T, Box<RunRefusal>>,
 ) -> Result<(CallOutcome, T), Box<RunRefusal>> {
@@ -790,7 +870,7 @@ pub(crate) fn run_reading<T>(
         .map_err(refusal)?
         .into_value();
     let check_selections = call.clocks.check_selections(&parsed);
-    let checked = front_end::check_with_refinement_internals(
+    let checked = front_end::check_with_refinement_internals_and_integer_division(
         &parsed,
         package_name,
         super::SourceInputs {
@@ -800,6 +880,7 @@ pub(crate) fn run_reading<T>(
         },
         &models,
         dependencies,
+        integer_division,
         limits,
         cancel,
     )
@@ -950,12 +1031,12 @@ pub(crate) fn run_compiled(
                 Err(super::run_value::WriteStop::NoForm) => {
                     return Err(Box::new(RunRefusal::UnsupportedResult {
                         function: call.function.clone(),
-                    }))
+                    }));
                 }
                 Err(super::run_value::WriteStop::Fault(invariant)) => {
                     return Err(Box::new(RunRefusal::Fault(InternalFault::new(
                         "call", invariant,
-                    ))))
+                    ))));
                 }
             }
         }
@@ -976,8 +1057,8 @@ fn bind_snapshot_populations(
     use fsl_semantics::model::dispatch::GeneralizationClosure;
     use fsl_semantics::model::domain_package::DomainPackageRecord;
     use fsl_semantics::model::population::{
-        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
-        PopulationDocument, PopulationMember,
+        AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, PopulationDocument,
+        PopulationMember, admit_binding,
     };
     let mut environment = objects.clone();
     for (position, (name, value_type)) in parameters.iter().enumerate() {

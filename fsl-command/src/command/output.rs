@@ -237,6 +237,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::AnalyzeRefused(_)
         | RunCause::MonitorRefused(_)
         | RunCause::TlCorrespondence { .. }
+        | RunCause::IntegerDivisionLaw { .. }
         | RunCause::TlClause { .. }
         | RunCause::TlNotYetImplemented { .. } => (types::Stage::Request, types::Details::None),
         RunCause::TlFault(_) => (types::Stage::Output, types::Details::None),
@@ -348,7 +349,9 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 _ => None,
             },
             RunCause::TemporalCorrection(_) => Some("invalid-value"),
-            RunCause::TlCorrespondence { .. } => Some("unsupported-selection"),
+            RunCause::TlCorrespondence { .. } | RunCause::IntegerDivisionLaw { .. } => {
+                Some("unsupported-selection")
+            }
             RunCause::TlClause { .. } => Some("missing-name"),
             RunCause::TlNotYetImplemented { .. } => Some("not-yet-implemented"),
             _ => None,
