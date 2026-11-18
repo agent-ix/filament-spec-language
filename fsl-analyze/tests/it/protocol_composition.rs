@@ -728,9 +728,8 @@ fn an_eventually_clause_satisfied_by_the_replayed_prefix_holds_under_the_infinit
 /// counted per channel, so over a protocol with no RA access it cuts the second send on the
 /// capacity-1 channel before its overflow policy applies; at 2 the overflow
 /// refutes; unset, the record states 4, not reached.
-#[trace("TC-2986", "FR-225-AC-6")]
+#[trace("TC-2986", "FR-225-AC-6", "FR-636-AC-4")]
 #[test]
-#[ignore = "QSL-2431: max_messages as the per-channel occupancy bound is not implemented yet"]
 fn max_messages_bounds_each_channels_occupancy() {
     let body = "record Ack { ok: Boolean; }\n\
         protocol Burst using pp over (k: M::Core) on origin {\n\
@@ -753,12 +752,42 @@ fn max_messages_bounds_each_channels_occupancy() {
     ));
     assert_eq!(label(&run.item(0)), "incomplete");
     assert_eq!(run.item(0)["record"]["cause"]["limit"], "max_messages");
-    let bounded = run.item(0).to_string();
-    assert!(bounded.contains("max_messages"), "{bounded}");
+    assert_eq!(run.item(0)["record"]["max_messages"]["value"], 1);
+    assert!(run.item(0)["record"]["max_messages"]["reached"]
+        .as_bool()
+        .unwrap_or(false));
     assert_eq!(label(&run.item(1)), "refuted");
-    let unset = run.item(2).to_string();
-    assert!(
-        unset.contains("max_messages"),
-        "the record states the bound: {unset}"
-    );
+    assert_eq!(run.item(1)["record"]["max_messages"]["value"], 2);
+    assert!(!run.item(1)["record"]["max_messages"]["reached"]
+        .as_bool()
+        .unwrap_or(true));
+    assert_eq!(run.item(2)["record"]["max_messages"]["value"], 4);
+    assert!(!run.item(2)["record"]["max_messages"]["reached"]
+        .as_bool()
+        .unwrap_or(true));
+}
+
+/// FR-225-AC-6 (TC-2986): the message bound applies to each channel
+/// independently; one queued message on each of two channels fits a bound
+/// of one per channel.
+#[trace("TC-2986", "FR-225-AC-6")]
+#[test]
+fn max_messages_does_not_sum_occupancy_across_channels() {
+    let body = "record Ack { ok: Boolean; }\n\
+        protocol Separate using pp over (k: M::Core) on origin {\n\
+        role Buyer on M::Cell;\nrole Seller on M::Cell;\n\
+        channel First from Buyer to Seller carries Ack ordering unordered delivery exactly-once-premise capacity 2 overflow reject;\n\
+        channel Second from Buyer to Seller carries Ack ordering unordered delivery exactly-once-premise capacity 2 overflow reject;\n\
+        run parallel Both { branch left sequence L { send A via First as (a: Ack) { true }; receive AReceived via First of A as (ar: Ack) { true }; } \
+        branch right sequence R { send B via Second as (b: Ack) { true }; receive BReceived via Second of B as (br: Ack) { true }; } } join all [left, right];\n\
+        finish Done as (zz: Boolean) { true };\n}\n";
+    let ws = Workspace::new("protocol-per-channel-message-bound");
+    let run = analyze(&litmus_request(
+        &ws,
+        body,
+        json!({"items": [{"claim": "Separate", "kind": "global-conformance",
+            "temporal": {"limits": {"max_messages": 1}}}]}),
+    ));
+    let item = run.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
 }

@@ -310,7 +310,20 @@ pub fn settle_protocol_check(
         certificate.max_store_buffer,
         certificate.max_messages,
     ) {
-        SubjectMemory::Sc => None,
+        SubjectMemory::Sc => certificate
+            .subject
+            .model
+            .simulation
+            .input
+            .evaluator
+            .protocol(&certificate.subject.protocol)
+            .is_some_and(|protocol| !protocol.channels.is_empty())
+            .then_some(MemoryBound {
+                member: MemoryBoundMember::MaxMessages,
+                value: certificate
+                    .max_messages
+                    .unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND),
+            }),
         SubjectMemory::Tso(tso) => Some(MemoryBound {
             member: MemoryBoundMember::MaxStoreBuffer,
             value: tso.max_store_buffer(),
@@ -344,10 +357,11 @@ pub fn settle_protocol_check(
     }
     record.memory_bound = bound.map(|bound| StatedMemoryBound {
         bound,
-        // Reached whenever a store was cut: by the engine's run, whatever
-        // it settled (a `refuted` run too), or by the closure checker's
-        // re-expansion.
+        // Reached whenever a memory-bound step was cut. `max_messages` also
+        // records channel cuts separately from RA message cuts.
         reached: outcome.stats().bound_limited > 0
+            || (bound.member == MemoryBoundMember::MaxMessages
+                && outcome.stats().message_bound_limited > 0)
             || matches!(
                 record.value,
                 TerminalValue::Inconclusive(InconclusiveCause::MemoryBoundReached { .. })
@@ -517,6 +531,19 @@ fn settle<T: SubjectTransition>(
                     bound: *bound,
                     states: *states,
                 })
+            }
+            MemoryCause::ChannelBoundReached { bound, .. } => {
+                let limit = ModelCheckLimit::ProtocolMaxMessages;
+                Row::incomplete(
+                    IncompleteCause::LimitReached {
+                        limit,
+                        value: bound.value,
+                    },
+                    Some(ReachedLimit {
+                        limit,
+                        value: bound.value,
+                    }),
+                )
             }
         },
         ModelCheckOutcome::RecoveryView { predicate, .. } => {

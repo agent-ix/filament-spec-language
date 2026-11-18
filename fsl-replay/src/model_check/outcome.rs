@@ -33,6 +33,9 @@ pub struct RunStats {
     /// The distinct model states whose expansion cut a store at the memory
     /// bound (ADR-025 MB-3); 0 for a subject with no memory bound.
     pub bound_limited: u64,
+    /// The distinct model states where a send was cut by the per-channel
+    /// `max_messages` bound (FR-225-AC-6).
+    pub message_bound_limited: u64,
     /// The distinct model states left with an `activate` step unexpanded at
     /// `max_live_instances` (ADR-027 AE-4); 0 for a subject with no instance
     /// bound.
@@ -135,6 +138,14 @@ pub enum MemoryCause {
         /// The bound.
         bound: MemoryBound,
         /// The bound-limited states.
+        states: u64,
+    },
+    /// FR-225: the per-channel protocol message bound cut a send before the
+    /// channel's overflow policy could be explored (FR-636).
+    ChannelBoundReached {
+        /// The per-channel bound.
+        bound: MemoryBound,
+        /// The states where a send was cut.
         states: u64,
     },
 }

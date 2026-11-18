@@ -180,6 +180,21 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         let channel = self.channel_of(node)?;
         let text = self.program.text(node)?.to_owned();
         let instance = Self::instance(state, ordinal)?;
+        if self.channel_message_bound.is_some_and(|bound| {
+            let occupancy = instance
+                .queues
+                .iter()
+                .filter(|(key, _)| key.channel == message.channel)
+                .fold(0_u64, |total, (_, entries)| {
+                    total.saturating_add(u64::try_from(entries.len()).unwrap_or(u64::MAX))
+                });
+            occupancy >= bound
+        }) {
+            // MB-3: this send is a boundary cut before capacity and overflow
+            // semantics run. Counts are scoped to this channel instance.
+            gathered.cut.messages = true;
+            return Ok(());
+        }
         if let Some(pending) = instance.pending_sends.get(&(path.clone(), node)) {
             let payload = pending.payload.clone();
             let remaining = pending.remaining;
