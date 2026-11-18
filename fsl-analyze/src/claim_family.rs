@@ -89,11 +89,22 @@ pub fn claim_family(
     claim: &OccurrenceKey,
 ) -> Option<DeclarationFamily> {
     match item_kind {
+        ItemKind::Formula => node_family(package.graph(), claim),
+        kind => kind_family(kind),
+    }
+}
+
+/// The declaration family an item whose `item_kind` is not `formula` takes
+/// from its `item_kind`, whatever node it is anchored on, so no package is
+/// read for it (the package route's derived items, FR-940); `None` for a
+/// `formula` item, which takes the family of its claim's node.
+pub(crate) fn kind_family(item_kind: ItemKind) -> Option<DeclarationFamily> {
+    match item_kind {
         ItemKind::DeadlockFreedom | ItemKind::TimeLockFreedom | ItemKind::RaceFreedom => {
             Some(DeclarationFamily::TemporalTrace)
         }
         ItemKind::Refinement => Some(DeclarationFamily::RelationClaim),
-        ItemKind::Formula => node_family(package.graph(), claim),
+        ItemKind::Formula => None,
     }
 }
 

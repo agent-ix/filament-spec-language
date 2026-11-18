@@ -10,24 +10,12 @@ use fsl_eval::simulation::TransitionSystem;
 use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits, V2ReadLimits};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use ix_trace_rs::trace;
-use serde_json::Value as Json;
 
 use crate::counter::{document, package_with_clauses, subject, Documents, CONTRACT, UNLIMITED};
 
-/// The Counter domain package with no operation: its object type keeps its
-/// field and population and declares nothing a step applies.
+/// The Counter domain package with no operation.
 fn still_document() -> Vec<u8> {
-    let mut document: Json =
-        serde_json::from_slice(&document(false)).expect("the Counter document is JSON");
-    for declared in document["types"]
-        .as_array_mut()
-        .expect("the document declares types")
-    {
-        if declared.get("operations").is_some() {
-            declared["operations"] = Json::Array(Vec::new());
-        }
-    }
-    document.to_string().into_bytes()
+    crate::model_world::still_counter().document
 }
 
 /// The admitted bytes `package` was written to, with the identity and
@@ -382,4 +370,110 @@ fn the_model_checker_decides_deadlock_freedom_over_the_package_route_as_over_sou
         verdicts.push(from_package.expect("checked").starts_with("Holds"));
     }
     assert_eq!(verdicts, [true, false], "the still Counter deadlocks");
+}
+
+/// FR-850-AC-2, FR-940-AC-6 (deadlock-freedom, QSL-2403): over a Counter
+/// world whose model declares no operation, so it deadlocks at its start,
+/// the derived deadlock-freedom item settles through `derived_model_item`
+/// with the same record on the package route as on the source route, its
+/// anchor and terminal declarations joined against the admitted package;
+/// and the counterexample replays from the package bytes and the handoff
+/// files with the source replay's settlement.
+#[trace("TC-2410", "FR-850-AC-2")]
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn a_package_route_deadlock_settles_and_replays_as_the_source_deadlock() {
+    use filament_exact::Cancel;
+    use fsl_analyze::analyze::{
+        analyze_items, deadlock_model_item, derived_model_item, AnalyzeLimits, Engine, Engines,
+        PackageDeadlockSubject, RunInput, TemporalItem,
+    };
+    use fsl_route::request::{DerivedLimits, ItemKind};
+    use serde_json::json;
+
+    use crate::model_world::{still_counter, Clause, World, INFINITE};
+
+    let world = World::new(
+        still_counter(),
+        "",
+        INFINITE,
+        &[Clause {
+            activation: "on each (q: M::Counter)",
+            formula: "always holds(c.value <= 3)",
+        }],
+        &[("c", json!({"value": {"integer": "0"}}))],
+    );
+    let written = crate::derived_request::written(
+        &world.subject(&["c"], UNLIMITED),
+        &DerivedLimits::default(),
+    );
+    let derived = &written.items()[1];
+    assert_eq!(derived.item_kind(), Some(ItemKind::DeadlockFreedom));
+    let obligation = written.obligation(derived.index()).expect("its obligation");
+    let form = TemporalItem {
+        item_kind: ItemKind::DeadlockFreedom,
+        ..TemporalItem::default()
+    };
+    let run = RunInput::source(&world.package);
+    let source_item = || {
+        deadlock_model_item(
+            &run,
+            &world.binding(&["c"]),
+            AnalyzeLimits::unbounded(),
+            &world.provision,
+            derived.occurrence(),
+            &form,
+        )
+        .expect("the derived target is formed")
+    };
+    let handoff = world.handoff();
+    let bare = handoff.bare();
+    let input = PackageModelInput::of(
+        &bare,
+        world.binding(&["c"]).packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the package route reads every form");
+    let package_item = || {
+        PackageDeadlockSubject::new(
+            &input,
+            &handoff.bytes,
+            handoff.supply(),
+            world.binding(&["c"]),
+            AnalyzeLimits::unbounded(),
+            derived.occurrence(),
+            &form,
+        )
+        .model_item()
+    };
+
+    let mut engines = Engines::default();
+    engines
+        .with(Engine::model_check().expect("EN-1's own manifest is admitted"))
+        .expect("one engine");
+    let settled = |item: fsl_analyze::analyze::ModelItem<'_>| {
+        let item = derived_model_item(derived, obligation, item).expect("the join admits");
+        let mut records = analyze_items(&engines, vec![item], &Cancel::new());
+        format!("{:?}", records.remove(0))
+    };
+    let from_source = settled(source_item());
+    assert_eq!(settled(package_item()), from_source);
+    assert!(from_source.contains("Refuted"), "{from_source}");
+
+    let outcome = fsl_analyze::model_check::check_model(source_item().request, &Cancel::new())
+        .expect("checked");
+    let fsl_replay::ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("the still Counter deadlocks: {outcome:?}");
+    };
+    let source_replay = (source_item().replay)(&counterexample).expect("the source replays");
+    let package_replay = (package_item().replay)(&counterexample).expect("the bytes replay");
+    assert_eq!(
+        format!("{:?}", package_replay.settlement),
+        format!("{:?}", source_replay.settlement)
+    );
+    assert_eq!(package_replay.hints, source_replay.hints);
+    assert_eq!(
+        source_replay.terminals.mismatch(&package_replay.terminals),
+        None
+    );
 }

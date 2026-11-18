@@ -405,20 +405,20 @@ pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
 /// What a replay request is written over besides its item: the package, its
 /// dependency entries, the subject, the shared limits, the byte provision
 /// and the backend.
-struct WireParts<'r, 'a> {
-    package: ReplayPackage,
-    dependencies: Vec<fsl_replay::DependencyEntryWire>,
-    binding: &'r SubjectBinding<'a>,
-    limits: &'r AnalyzeLimits,
-    byte_provision: Vec<(String, String, Vec<u8>)>,
-    backend: &'static str,
+pub(super) struct WireParts<'r, 'a> {
+    pub(super) package: ReplayPackage,
+    pub(super) dependencies: Vec<fsl_replay::DependencyEntryWire>,
+    pub(super) binding: &'r SubjectBinding<'a>,
+    pub(super) limits: &'r AnalyzeLimits,
+    pub(super) byte_provision: Vec<(String, String, Vec<u8>)>,
+    pub(super) backend: &'static str,
 }
 
 /// FR-128's replay request over `package` and the witness envelope of
 /// `payload`, the counterexample of the item `shape` names, with the
 /// subject's documents and `byte_provision`: the source entries on the
 /// source route, none on the package route (FR-850).
-fn request_and_envelope<T: Clone + fsl_eval::simulation::SubjectTransition>(
+pub(super) fn request_and_envelope<T: Clone + fsl_eval::simulation::SubjectTransition>(
     parts: WireParts<'_, '_>,
     shape: ReplayShape,
     payload: &TemporalCounterexample<T>,
