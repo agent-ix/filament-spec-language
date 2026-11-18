@@ -12,8 +12,9 @@ relationships:
 
 Verify FR-174's hyper reduction eligibility rule: a key symmetry and a state
 constraint selected on an eligible HP-2 item execute, keep the verdict and
-report `HoldsReduced`, and a "yes" selection on an ineligible form settles
-V-8. Scope: FR-174-AC-7.
+report `HoldsReduced`, that a state constraint is eligible on every HP-2
+item whatever its subjects and fairness, and that a "yes" selection on an
+ineligible form settles V-8. Scope: FR-174-AC-7.
 
 ## Test Procedure
 
@@ -24,6 +25,8 @@ V-8. Scope: FR-174-AC-7.
    (`self.l <= 1`), with `Zero` (`self.l = 0`), and with the symmetry and
    `Low` both selected.
 3. Run `Opaque` (HP-3) with the key symmetry selected.
+4. Run `SavesPower` (two subjects) and `NonInterference` with `fair each`
+   constraints, each with `Low` selected and with no selection.
 
 Tag every step `#[trace("TC-3011", "FR-174-AC-7")]`.
 
@@ -37,3 +40,5 @@ Tag every step `#[trace("TC-3011", "FR-174-AC-7")]`.
   `ConstraintReached` with its boundary states; both: `HoldsReduced` naming
   `Symmetry` then `CopySwap`.
 - Step 3: `Reduction{Unsupported{Symmetry}}` with empty run statistics.
+- Step 4: each runs under the constraint, is neither `Unsupported` nor
+  `NotPreserving`, and has the verdict of its run with no selection.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-740-AC-5, FR-740-AC-6, FR-569-AC-18 (TC-3009); FSpec FR-640-AC-6 and
+//! FR-740-AC-5, FR-740-AC-6, FR-569-AC-18 (TC-3012); FSpec FR-640-AC-6 and
 //! FR-610-AC-9 (TC-2033): a delay, a random parameter and a workload declared
 //! on an object type the unit declares in its own source are emitted on that
 //! type's source `model`/`object_type` node, and the identity rows carry each
@@ -137,7 +137,7 @@ fn first_reference(node: &Value) -> &Value {
 const TIMED: &str = "object O { d: Clock; operation step() modifies self.d; }\n\
     object Other { n: Integer; operation poke() modifies self.n; }\n";
 
-#[trace("TC-3009", "FR-740-AC-5")]
+#[trace("TC-3012", "FR-740-AC-5")]
 #[trace("FSpec-TC-2033", "FSpec-FR-640-AC-6")]
 #[test]
 #[ignore = "QSL-2439: delays on a timed source model emitted on the source object node not implemented yet"]
@@ -164,7 +164,7 @@ fn a_delay_on_each_source_object_of_a_timed_source_model_is_emitted() {
     assert!(body.contains("\"1\"") && body.contains("\"3\""), "{body}");
 }
 
-#[trace("TC-3009", "FR-740-AC-5")]
+#[trace("TC-3012", "FR-740-AC-5")]
 #[trace("FSpec-TC-2033", "FSpec-FR-640-AC-6")]
 #[test]
 #[ignore = "QSL-2439: an untimed source model's delay refused delay-on-untimed-model not verified yet"]
@@ -179,7 +179,7 @@ fn a_delay_on_an_untimed_source_model_is_refused_at_its_span() {
     assert_eq!(refusal.cause.cause(), Some("delay-on-untimed-model"));
 }
 
-#[trace("TC-3009", "FR-740-AC-6")]
+#[trace("TC-3012", "FR-740-AC-6")]
 #[trace("FSpec-TC-2033", "FSpec-FR-640-AC-6")]
 #[test]
 #[ignore = "QSL-2439: random parameters and workloads on the source model emitted on the source object node not implemented yet"]
@@ -199,7 +199,7 @@ fn a_random_parameter_and_a_workload_on_the_source_model_are_emitted() {
     assert_eq!(first_reference(workload[0]), object);
 }
 
-#[trace("TC-3009", "FR-569-AC-18")]
+#[trace("TC-3012", "FR-569-AC-18")]
 #[trace("FSpec-TC-2033", "FSpec-FR-610-AC-9")]
 #[test]
 #[ignore = "QSL-2439: source operation entries carry their parameters not implemented yet"]

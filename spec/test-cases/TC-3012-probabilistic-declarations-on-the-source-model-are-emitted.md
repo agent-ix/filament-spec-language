@@ -1,5 +1,5 @@
 ---
-id: TC-3009
+id: TC-3012
 title: "Probabilistic declarations on the source model are emitted"
 type: TC
 relationships:
@@ -8,7 +8,7 @@ relationships:
   - target: ix://agent-ix/filament-spec-language/FR-569
     type: verifies
 ---
-# TC-3009: Probabilistic declarations on the source model are emitted
+# TC-3012: Probabilistic declarations on the source model are emitted
 
 ## Description
 
@@ -33,11 +33,11 @@ FR-740-AC-5, FR-740-AC-6, FR-569-AC-18, FSpec FR-640-AC-6.
 4. Compile `object O { d: Clock; n: Integer; operation arm(x: Clock, k:
    Int[1, 3]) modifies self.d; }` and serialize its identity rows.
 
-Tag steps 1 and 2 `#[trace("TC-3009", "FR-740-AC-5")]` and
+Tag steps 1 and 2 `#[trace("TC-3012", "FR-740-AC-5")]` and
 `#[trace("FSpec-TC-2033", "FSpec-FR-640-AC-6")]`, step 3
-`#[trace("TC-3009", "FR-740-AC-6")]` and
+`#[trace("TC-3012", "FR-740-AC-6")]` and
 `#[trace("FSpec-TC-2033", "FSpec-FR-640-AC-6")]`, step 4
-`#[trace("TC-3009", "FR-569-AC-18")]`.
+`#[trace("TC-3012", "FR-569-AC-18")]`.
 
 ## Expected Results
 

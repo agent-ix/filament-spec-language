@@ -244,3 +244,26 @@ fn an_operation_inherited_from_two_unrelated_types_is_ambiguous() {
         (Code::AmbiguousDeclaration, "ambiguous-name")
     );
 }
+
+/// FR-249-AC-10: a release of a task whose period is zero or negative is
+/// refused at check by the task set's own `invalid-task-set`, at the period,
+/// and the release adds no `missing-name`.
+#[trace("TC-3008", "FR-249-AC-10")]
+#[test]
+#[ignore = "QSL-2240: refusal of a release of a non-positive-period task at the period alone not verified yet"]
+fn a_release_of_a_non_positive_period_task_refuses_at_the_period() {
+    for period in ["0 ms", "-4 ms"] {
+        let reported = refused(&format!(
+            "taskset Bad {{ task p periodic {period} deadline 4 ms wcet 1 ms priority 1 lo; }}\n
+             release Bad.p on ConfigVersion::attemptUpdate;"
+        ));
+        let [(code, tag, at)] = &reported[..] else {
+            panic!("one refusal for {period}: {reported:?}");
+        };
+        assert_eq!((*code, *tag), (Code::InvalidTimedModel, "invalid-task-set"));
+        assert!(
+            at.ends_with(period.trim_start_matches('-')),
+            "{period}: at {at:?}"
+        );
+    }
+}

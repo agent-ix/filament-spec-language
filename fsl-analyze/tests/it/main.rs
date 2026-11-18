@@ -161,6 +161,7 @@ mod statistical_witness_replay;
 mod step_simulation;
 mod strong_fairness;
 mod strong_hint;
+mod task_automaton_lowering;
 mod tied_item_resolution;
 mod time_lock_item;
 mod timed_product_certificate;

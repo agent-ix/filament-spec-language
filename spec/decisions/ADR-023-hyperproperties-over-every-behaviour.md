@@ -239,17 +239,20 @@ The rows below are proposed for ADR-021 PT-2, under the same normative rule
 | PH-1 | HP-1 step relation, one subject | yes: the first execution ranges over orbit representatives, the others over full orbits | no: the relation reads every reachable state | refutation real; pass only when unreached (ADR-021 RV-4) |
 | PH-2 | HP-2, every variable over one subject, every fairness constraint `whole` | yes, with the diagonal action: one permutation on every component, the object parameters' stabiliser applied (ADR-021 SYM-6) | no: lockstep pairs positions across traces | lasso real; pass only when unreached |
 | PH-3 | HP-2 over two subjects, or with any `each` constraint | no | no | as PH-2 |
-| PH-4 | HP-6, every variable over one subject | yes, diagonal, as PH-2: EN-1 settles V-8, since it builds no diagonal action for a hyper product (below) | no: skipped and visible steps interleave per component, and the reduction changes which visible steps align | refutation real (a bad projected prefix of explored paths); pass only when unreached |
+| PH-4 | HP-6, every variable over one subject | yes, diagonal, as PH-2: EN-1 settles V-8, since it builds the diagonal action on the HP-2 lockstep product only, not on a projected product (below) | no: skipped and visible steps interleave per component, and the reduction changes which visible steps align | refutation real (a bad projected prefix of explored paths); pass only when unreached |
 | PH-5 | Copy-swap (§16): HP-2 with variables S3 finds swappable (CS-1), whose variables carry no fairness set | yes, with no fairness: the swap renames no key, but a fairness constraint is read on the slot of its variable and the quotient moves a copy between slots, so a class whose variables carry any fairness set is not swapped, whatever the granularity (CS-3) | not applicable: the swap is a symmetry, not an interleaving reduction | as the form's own row |
 | PH-6 | HP-3, every variable over one subject | yes, diagonal, with `X` renamed member by member and re-sorted, as ADR-021 renames ADR-020's AX-2 set | no | no: a cut existential state removes a witness, so a refutation would not be real |
 
 **What EN-1 admits.** A row says whether a reduction preserves the verdict;
 it does not make the engine able to apply it. For a hyper item EN-1 builds
-the quotient by the copy group (§16) alone. A selected reduction whose row
+the quotient by the copy group (§16) and, on an HP-2 item, by the diagonal
+action of a selected key symmetry, and applies a selected state constraint
+to an HP-2 lockstep product. A selected reduction whose row
 reads "no" settles V-6 `ReductionNotPreserving` before any expansion. A
 selected reduction whose row reads "yes", key symmetry with the diagonal
 action or a state constraint, is executed on an HP-2 item that FSL FR-174's
-hyper reduction eligibility rule admits, and on any other item settles V-8
+hyper reduction eligibility rule admits (a state constraint on every HP-2
+item, key symmetry on one over one subject with only `whole` fairness), and on any other item settles V-8
 `unsupported-requested-capability` before any expansion, naming the
 reduction; it is never ignored. Copy-swap is never selected, so
 it has no place in a request. HP-6's partial-order row reads "no", so a

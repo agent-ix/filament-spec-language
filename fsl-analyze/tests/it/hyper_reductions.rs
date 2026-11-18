@@ -141,3 +141,63 @@ fn a_key_symmetry_on_an_ineligible_form_settles_unsupported() {
         .expect("not refused");
     assert!(!matches!(eligible, HyperOutcome::Reduction { .. }));
 }
+
+/// The constraint `Low` declared after `declaration`.
+fn with_low(declaration: &str) -> String {
+    format!("{declaration}\nconstraint Low using v on V::Vault at current {{ self.l <= 1 }}")
+}
+
+/// Whether two outcomes give one verdict: both hold, or both are violated.
+fn same_verdict(left: &HyperOutcome, right: &HyperOutcome) -> bool {
+    let holds = |outcome: &HyperOutcome| {
+        matches!(
+            outcome,
+            HyperOutcome::Holds { .. } | HyperOutcome::HoldsReduced { .. }
+        )
+    };
+    let violated = |outcome: &HyperOutcome| matches!(outcome, HyperOutcome::Violated { .. });
+    (holds(left) && holds(right)) || (violated(left) && violated(right))
+}
+
+#[trace("TC-3011", "FR-174-AC-7")]
+#[test]
+#[ignore = "QSL-2248: a state constraint on an HP-2 product over two subjects or under each fairness not implemented yet"]
+fn a_state_constraint_is_eligible_on_every_hp2_item() {
+    let power = World::with_second_model(
+        Vault::Secure,
+        &crate::hyper_world::STARTS,
+        &with_low(
+            "hyper SavesPower using inf over behaviours (d: V::Vault, e: N::Vault) \
+             forall trace s of V forall trace n of N \
+             match { s.step.Vault::step.i = n.step.Vault::step.i } \
+             { always holds(d.l @ s = e.l @ n) }",
+        ),
+    );
+    let each = World::new(
+        Vault::Secure,
+        false,
+        &crate::hyper_world::STARTS,
+        &with_low(
+            "hyper P using inf over behaviours (v: V::Vault) \
+             forall trace a of V fair weak each V::Vault::step; \
+             forall trace b of V fair weak each V::Vault::step; \
+             match { a.step.op = b.step.op } { always holds(v.l @ a = v.l @ b) }",
+        ),
+    );
+    for world in [&power, &each] {
+        let constrained = world
+            .run_selecting(with_constraint(Reductions::default(), "Low"))
+            .expect("not refused");
+        assert!(
+            !matches!(constrained, HyperOutcome::Reduction { .. }),
+            "{constrained:?}"
+        );
+        let unconstrained = world
+            .run(ModelCheckLimits::default(), &Cancel::new())
+            .expect("not refused");
+        assert!(
+            same_verdict(&constrained, &unconstrained),
+            "{constrained:?} against {unconstrained:?}"
+        );
+    }
+}
