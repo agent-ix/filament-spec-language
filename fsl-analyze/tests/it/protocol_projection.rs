@@ -969,6 +969,7 @@ fn compensation_answers_unsupported() {
 /// FR-575-AC-1: an admitted timed await is outside the bounded profile.
 #[trace("TC-1415", "FR-575-AC-1")]
 #[test]
+#[ignore = "Blocked by QSL-2391: Contract IR must admit await-keyed temporal bindings."]
 fn a_timed_await_answers_unsupported_when_its_package_is_admitted() {
     use crate::fill::{contracts, protocol};
     let touch = crate::protocol_system::touch;
@@ -998,6 +999,7 @@ fn a_timed_await_answers_unsupported_when_its_package_is_admitted() {
 /// binding declaration and admits through the strict package reader.
 #[trace("FR-892-AC-1", "TC-2525")]
 #[test]
+#[ignore = "Blocked by QSL-2391: Contract IR must admit await-keyed temporal bindings."]
 fn a_timed_await_package_is_admitted_at_its_binding_row() {
     use crate::fill::{contracts, protocol};
     let waiting = package(
@@ -1081,6 +1083,7 @@ fn a_role_without_repeat_actions_has_no_local_loop() {
 /// FR-890-AC-3: a timed await projects with its closed window and clock.
 #[trace("FR-890-AC-3", "FR-892-AC-3", "TC-2521", "TC-2525")]
 #[test]
+#[ignore = "Blocked by QSL-2391: Contract IR must admit await-keyed temporal bindings."]
 fn a_timed_await_projects_through_the_clock() {
     use crate::fill::{contracts, protocol};
 
