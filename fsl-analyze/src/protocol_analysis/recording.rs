@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::analyze::document::{ActivatedRoleMember, ActivatedRolePopulation};
 use filament_eval::FamilyOutcome;
 use filament_exact::{FieldValue, Integer, Meter, Outcome, ScalarLimits, Value, ValueType};
 use filament_semantic_value::catalog::CatalogCode;
@@ -56,6 +57,9 @@ pub struct RecordingObligationId {
     /// The protocol instance when the obligation is instance-scoped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instance: Option<String>,
+    /// The replicated role member when this is a fan-out control obligation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role_instance: Option<RecordingRoleInstance>,
 }
 
 /// The result for one obligation.
@@ -389,6 +393,15 @@ pub fn assess_recording(
     package: &CheckedPackage,
     bytes: &[u8],
 ) -> Result<RecordingAssessment, RecordingRefusal> {
+    assess_recording_with_population(package, bytes, None)
+}
+
+/// Assess a recording with its optional activated role population.
+pub fn assess_recording_with_population(
+    package: &CheckedPackage,
+    bytes: &[u8],
+    population: Option<&[ActivatedRolePopulation]>,
+) -> Result<RecordingAssessment, RecordingRefusal> {
     let document: RecordingDocument = serde_json::from_slice(bytes)
         .map_err(|error| RecordingRefusal::new("invalid-value", error.to_string(), None))?;
     if document.format != FORMAT {
@@ -421,7 +434,8 @@ pub fn assess_recording(
             None,
         ));
     }
-    let closure_scope_complete = validate_closure_premises(protocol, &document)?;
+    validate_population(protocol, population)?;
+    let closure_scope_complete = validate_closure_premises(protocol, &document, population)?;
 
     let roles: BTreeSet<&str> = protocol
         .roles
@@ -485,7 +499,8 @@ pub fn assess_recording(
     validate_correlations(&document)?;
     validate_identities(&document)?;
 
-    let obligations = assess_obligations(package, protocol, &document, closure_scope_complete);
+    let mut obligations = assess_obligations(package, protocol, &document, closure_scope_complete);
+    add_fanout_control_obligations(protocol, &document, population, &mut obligations);
     let trace_position = obligations
         .iter()
         .find(|entry| {
@@ -551,9 +566,92 @@ pub fn assess_recording(
     })
 }
 
+fn recording_member(member: &ActivatedRoleMember) -> RecordingRoleInstance {
+    RecordingRoleInstance {
+        authority: member.authority.clone(),
+        identity: member.identity.clone(),
+    }
+}
+
+fn validate_population(
+    protocol: &CheckedProtocol,
+    population: Option<&[ActivatedRolePopulation]>,
+) -> Result<(), RecordingRefusal> {
+    let Some(population) = population else {
+        return Ok(());
+    };
+    let on_each = matches!(
+        protocol.obligations.activation,
+        fsl_semantics::check::CheckedActivation::OnEach { .. }
+    );
+    let mut groups = BTreeSet::new();
+    for group in population {
+        let Some(role) = protocol.roles.iter().find(|role| role.name == group.role) else {
+            return Err(RecordingRefusal::new(
+                "missing-name",
+                format!(
+                    "activated population names undeclared role `{}`",
+                    group.role
+                ),
+                None,
+            ));
+        };
+        if !role.replicated {
+            return Err(RecordingRefusal::new(
+                "invalid-value",
+                format!(
+                    "static role `{}` cannot have an activated population",
+                    group.role
+                ),
+                None,
+            ));
+        }
+        if group.role.is_empty()
+            || group.instance.as_deref().is_some_and(str::is_empty)
+            || group
+                .members
+                .iter()
+                .any(|member| member.authority.is_empty() || member.identity.is_empty())
+        {
+            return Err(RecordingRefusal::new(
+                "invalid-value",
+                "activated population role, instance, authority and identity must be nonempty",
+                None,
+            ));
+        }
+        if group.instance.is_some() != on_each {
+            return Err(RecordingRefusal::new(
+                "invalid-value",
+                "activated population instance must match the protocol activation scope",
+                None,
+            ));
+        }
+        if !groups.insert((group.role.as_str(), group.instance.as_deref())) {
+            return Err(RecordingRefusal::new(
+                "invalid-value",
+                format!("activated population repeats role `{}`", group.role),
+                None,
+            ));
+        }
+        let members: BTreeSet<_> = group.members.iter().collect();
+        if members.len() != group.members.len() {
+            return Err(RecordingRefusal::new(
+                "invalid-value",
+                format!(
+                    "activated population repeats a member of role `{}`",
+                    group.role
+                ),
+                None,
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_closure_premises(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
+    population: Option<&[ActivatedRolePopulation]>,
 ) -> Result<bool, RecordingRefusal> {
     if document.closure.state != "closed" {
         return Ok(false);
@@ -641,24 +739,30 @@ fn validate_closure_premises(
                     role_instance: None,
                 });
             } else {
-                // The request has no population binding from which to prove
-                // that the observed member references enumerate the complete
-                // fan-out. Validate their stated premises, but keep closure
-                // unsettled until that scope is available.
-                has_unresolved_fanout_scope = true;
                 let mut role_instances = BTreeSet::new();
-                for observation in members {
-                    let Some(role_instance) = &observation.role_instance else {
-                        return Err(RecordingRefusal::new(
-                            "invalid-value",
-                            format!(
-                                "fan-out observation at `{}` has no role_instance",
-                                observation.node
-                            ),
-                            None,
-                        ));
-                    };
-                    role_instances.insert(role_instance.clone());
+                if let Some(population) = population {
+                    for role in &fanout_roles {
+                        for entry in population.iter().filter(|entry| {
+                            entry.role == *role && entry.instance.as_deref() == instance.as_deref()
+                        }) {
+                            role_instances.extend(entry.members.iter().map(recording_member));
+                        }
+                    }
+                } else {
+                    has_unresolved_fanout_scope = true;
+                    for observation in members {
+                        let Some(role_instance) = &observation.role_instance else {
+                            return Err(RecordingRefusal::new(
+                                "invalid-value",
+                                format!(
+                                    "fan-out observation at `{}` has no role_instance",
+                                    observation.node
+                                ),
+                                None,
+                            ));
+                        };
+                        role_instances.insert(role_instance.clone());
+                    }
                 }
                 for role_instance in role_instances {
                     expected.insert(RecordingPremise {
@@ -734,7 +838,8 @@ fn validate_closure_premises(
     // registrations at one checked node and instance therefore remain
     // unsettled instead of being collapsed into one apparently complete fact.
     let ambiguous_workflows = workflow_identities.values().any(|count| *count > 1);
-    let unresolved_fanout = actual.iter().any(|premise| premise.role_instance.is_some());
+    let unresolved_fanout =
+        population.is_none() && actual.iter().any(|premise| premise.role_instance.is_some());
     Ok(!ambiguous_workflows
         && !unresolved_fanout
         && !has_unresolved_fanout_scope
@@ -2461,6 +2566,91 @@ fn assess_obligations(
         });
     }
     obligations
+}
+
+fn add_fanout_control_obligations(
+    protocol: &CheckedProtocol,
+    document: &RecordingDocument,
+    population: Option<&[ActivatedRolePopulation]>,
+    obligations: &mut Vec<RecordingObligation>,
+) {
+    let on_each = matches!(
+        protocol.obligations.activation,
+        fsl_semantics::check::CheckedActivation::OnEach { .. }
+    );
+    let instances = recording_instances(document);
+    for control in &protocol.controls.controls {
+        if control.kind != fsl_forms::ProtocolNodeKind::Branch {
+            continue;
+        }
+        let node = format!("{}::{}", protocol.name, control.path.join("::"));
+        let fanout_roles = protocol
+            .owners
+            .iter()
+            .filter_map(|owner| {
+                let role = protocol.roles.get(owner.role)?;
+                (role.replicated
+                    && protocol_node_name(protocol, owner.node.0).starts_with(&format!("{node}::")))
+                .then_some(role.name.as_str())
+            })
+            .collect::<BTreeSet<_>>();
+        for instance in &instances {
+            for role in &fanout_roles {
+                let mut members = BTreeSet::new();
+                if let Some(population) = population {
+                    for group in population.iter().filter(|group| {
+                        group.role == *role && group.instance.as_deref() == instance.as_deref()
+                    }) {
+                        members.extend(group.members.iter().map(recording_member));
+                    }
+                } else {
+                    members.extend(
+                        document
+                            .observations
+                            .iter()
+                            .filter(|observation| {
+                                observation.instance == *instance
+                                    && observation.role == *role
+                                    && observation.node.starts_with(&format!("{node}::"))
+                            })
+                            .filter_map(|observation| observation.role_instance.clone()),
+                    );
+                }
+                for member in members {
+                    let observed = document
+                        .observations
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, observation)| {
+                            observation.instance == *instance
+                                && observation.role == *role
+                                && observation.role_instance.as_ref() == Some(&member)
+                                && observation.node.starts_with(&format!("{node}::"))
+                        })
+                        .map(|(position, _)| position)
+                        .collect::<Vec<_>>();
+                    let (verdict, cause) = if !observed.is_empty() {
+                        (RecordingVerdict::Satisfied, None)
+                    } else if document.closure.state == "closed" && population.is_some() {
+                        (RecordingVerdict::Violated, Some(RecordingCause::Missing))
+                    } else {
+                        (RecordingVerdict::Pending, None)
+                    };
+                    obligations.push(RecordingObligation {
+                        obligation: RecordingObligationId {
+                            kind: "control".to_owned(),
+                            node: Some(node.clone()),
+                            instance: on_each.then(|| instance.clone()).flatten(),
+                            role_instance: Some(member),
+                        },
+                        verdict,
+                        cause,
+                        witness: observed,
+                    });
+                }
+            }
+        }
+    }
 }
 
 fn recording_instances(document: &RecordingDocument) -> BTreeSet<Option<String>> {

@@ -5,9 +5,9 @@
 //! name.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{Run, Workspace, analyze, label, litmus_request};
+use crate::analyze_cli_support::{analyze, label, litmus_request, Run, Workspace};
 
 /// FR-990-AC-7's fan-out fixture: replicated role `r` over `cells`, with a
 /// `parallel` of `left` and `right` joined `all`.
@@ -28,7 +28,11 @@ fn member(identity: &str) -> Value {
 }
 
 fn work(node: &str, identity: &str) -> Value {
-    let event = if node == LEFT { "Left::LeftWork" } else { "Right::RightWork" };
+    let event = if node == LEFT {
+        "Left::LeftWork"
+    } else {
+        "Right::RightWork"
+    };
     json!({"kind": "event", "node": format!("{node}::{event}"), "role": "r",
            "role_instance": member(identity), "keys": {}, "record": true})
 }
@@ -106,7 +110,10 @@ fn every_supplied_member_observed_and_premised_proves_the_recording() {
     assert_eq!(item["global"]["complete"], true, "{item}");
     for node in [LEFT, RIGHT] {
         for identity in ["x", "y"] {
-            assert_eq!(member_control(&item, node, identity)["verdict"], "satisfied");
+            assert_eq!(
+                member_control(&item, node, identity)["verdict"],
+                "satisfied"
+            );
         }
     }
 }
@@ -123,7 +130,10 @@ fn a_member_absent_from_the_recording_is_refused_or_refuted() {
         Some(known()),
     );
     let item = omitted.item(0);
-    assert_eq!(item["record"]["diagnostic"]["code"], "invalid_runtime_input", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+        "{item}"
+    );
     let detail = item["record"]["diagnostic"]["detail"].to_string();
     assert!(detail.contains(LEFT) && detail.contains("\"y\""), "{item}");
     assert!(item.get("obligations").is_none(), "{item}");
@@ -165,7 +175,10 @@ fn an_unknown_population_leaves_closure_scope_incomplete() {
     );
     let item = run.item(0);
     assert_eq!(label(&item), "inconclusive", "{item}");
-    assert_eq!(item["global"]["cause"], "incomplete-closure-scope", "{item}");
+    assert_eq!(
+        item["global"]["cause"], "incomplete-closure-scope",
+        "{item}"
+    );
     assert_eq!(item["global"]["complete"], false, "{item}");
     assert_eq!(item["closure"]["state"], "closed", "{item}");
     for node in [LEFT, RIGHT] {
@@ -182,7 +195,10 @@ fn an_unknown_population_leaves_closure_scope_incomplete() {
 fn defective_populations_refuse_the_item_or_the_request() {
     let complete = recording(&["x", "y"], &["x", "y"], "closed");
     let item_refusals = [
-        (json!([{"role": "q", "members": [member("x")]}]), "missing-name"),
+        (
+            json!([{"role": "q", "members": [member("x")]}]),
+            "missing-name",
+        ),
         (
             json!([{"role": "r", "instance": "w-1", "members": [member("x"), member("y")]}]),
             "invalid-value",
@@ -191,14 +207,27 @@ fn defective_populations_refuse_the_item_or_the_request() {
             json!([{"role": "r", "members": [member("x"), member("x"), member("y")]}]),
             "invalid-value",
         ),
-        (json!([{"role": "r", "members": [member("x")]}]), "invalid-value"),
+        (
+            json!([{"role": "r", "members": [member("x")]}]),
+            "invalid-value",
+        ),
         (json!([]), "missing-member"),
     ];
     for (index, (population, subcode)) in item_refusals.into_iter().enumerate() {
-        let run = run(&format!("population-item-refusal-{index}"), &complete, Some(population));
+        let run = run(
+            &format!("population-item-refusal-{index}"),
+            &complete,
+            Some(population),
+        );
         let item = run.item(0);
-        assert_eq!(item["record"]["diagnostic"]["code"], "invalid_runtime_input", "{item}");
-        assert!(item["record"]["diagnostic"].to_string().contains(subcode), "{item}");
+        assert_eq!(
+            item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+            "{item}"
+        );
+        assert!(
+            item["record"]["diagnostic"].to_string().contains(subcode),
+            "{item}"
+        );
         assert!(item.get("obligations").is_none(), "{item}");
     }
 
@@ -209,11 +238,21 @@ fn defective_populations_refuse_the_item_or_the_request() {
     .into_iter()
     .enumerate()
     {
-        let run = run(&format!("population-request-refusal-{index}"), &complete, Some(population));
+        let run = run(
+            &format!("population-request-refusal-{index}"),
+            &complete,
+            Some(population),
+        );
         assert_eq!(run.exit, 20);
         let document = run.document();
-        assert_eq!(document["diagnostics"][0]["code"], "invalid-request", "{document}");
-        assert!(document.to_string().contains("/items/0/population"), "{document}");
+        assert_eq!(
+            document["diagnostics"][0]["code"], "invalid-request",
+            "{document}"
+        );
+        assert!(
+            document.to_string().contains("/items/0/population"),
+            "{document}"
+        );
     }
 
     let ws = Workspace::new("population-without-recording");

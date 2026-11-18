@@ -10,16 +10,16 @@ use std::path::Path;
 
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::document::{
-    AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, SubjectSelection, analyze_document,
-    resolve_items,
+    analyze_document, resolve_items, AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate,
+    SubjectSelection,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
 use fsl_semantics::model::observation::DocumentProvision;
 
 use super::{
-    FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
-    check_sources, intake_with_bytes, request, require_complete_edition, wire,
+    check_sources, intake_with_bytes, request, require_complete_edition, wire, FileCounts,
+    FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
 };
 
 fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
@@ -109,6 +109,22 @@ fn read<'d>(
                 &format!("/items/{position}/recording"),
                 "recording is only valid on a global-conformance item",
             ));
+        }
+        if let Some(population) = &item.population {
+            if item.kind.as_deref()
+                != Some(fsl_semantics::check::Capability::GlobalConformance.to_wire())
+            {
+                return Err(invalid(
+                    &format!("/items/{position}/population"),
+                    "population is only valid on a global-conformance item",
+                ));
+            }
+            serde_json::from_value::<Vec<fsl_analyze::analyze::document::ActivatedRolePopulation>>(
+                population.clone(),
+            )
+            .map_err(|error| {
+                invalid(&format!("/items/{position}/population"), error.to_string())
+            })?;
         }
     }
     // FR-634: a `simulation` item names no claim and carries its

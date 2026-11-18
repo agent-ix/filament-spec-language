@@ -97,6 +97,8 @@ pub struct ItemOptions {
     pub trace: Option<fsl_semantics::model::observation::DocumentRef>,
     /// The provisioned FR-737 execution assessed by `global-conformance`.
     pub recording: Option<fsl_semantics::model::observation::DocumentRef>,
+    /// The caller's activated role population for a recording assessment.
+    pub population: Option<serde_json::Value>,
     /// The named backend's options (FSpec FR-196, FR-331 `options`),
     /// each one the backend publishes (FR-967); empty when none are given.
     pub backend_options: std::collections::BTreeMap<String, String>,
@@ -533,11 +535,7 @@ fn work<'a>(
                             .recording
                             .as_ref()
                             .and_then(|reference| binding.snapshots.get(reference));
-                        let recording_identity = item
-                            .options
-                            .recording
-                            .as_ref()
-                            .cloned();
+                        let recording_identity = item.options.recording.as_ref().cloned();
                         match recording {
                             Some(recording) => {
                                 crate::protocol_analysis::conformance::global_recording_item(
@@ -546,6 +544,7 @@ fn work<'a>(
                                     None,
                                     recording_identity,
                                     Some(recording),
+                                    item.options.population.clone(),
                                 )
                             }
                             None => crate::protocol_analysis::conformance::global_behavior_item(
