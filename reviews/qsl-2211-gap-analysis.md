@@ -46,3 +46,10 @@ FR-383-AC-69 is tagged to the package test and the expected assertions are prese
 | FND-002 | fixed | The test now covers nested-choice attempt and commit in source order, role-level compensation/attempt/effect/event-for/commit refusals, and checks the recovery flow without an observe role; the send test also checks the unmarked control case. |
 | FND-003 | fixed | The test now covers unknown recommended operation, a recommendation with a foreign contract, and a while-guard read of the recommendation binder. |
 | FND-004 | fixed | The evaluator tests compare registration keys and values for observe-only transitions, demonstrate the unobserved role's write, and assert observe-attempt checking refuses before evaluator subject construction. |
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Verified closed at 3bd07b0; the pin-only delta leaves duplicate-marker, exact-locus and parity assertions unchanged. |
+| FND-002 | fixed | Verified closed at 3bd07b0; the pin-only delta leaves the action and boundary coverage unchanged. |
+| FND-003 | fixed | Verified closed at 3bd07b0; the pin-only delta leaves recommendation resolution and binder-read coverage unchanged. |
+| FND-004 | fixed | Verified closed at 3bd07b0; the pin-only delta leaves evaluator state and refusal coverage unchanged. |

@@ -37,3 +37,7 @@ The Rust review found no additional ownership, panic, unsafe-code, concurrency, 
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-001 | fixed | The fix uses role-prefix position for the role name and recognizes `recommend` only as the first event-form token; regression coverage exercises role `observe`, event `recommend`, and recommendation `recommend`. |
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Verified closed at 3bd07b0; the pin-only delta leaves the position-aware role and recommendation parsing unchanged. |
