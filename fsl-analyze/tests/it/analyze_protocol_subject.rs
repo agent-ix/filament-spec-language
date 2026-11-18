@@ -149,17 +149,100 @@ fn bad_protocol_bindings_decline_or_refuse() {
     assert_eq!(run.exit, 20, "{}", run.document());
 }
 
-/// A request over the litmus domain with the three cells `x`, `y` and `z`.
+/// FR-225-AC-4's domain: `Cell` with `v` (the `Level` range 0 to 2, since a `Bit` type is not assignable to `r`) (and an
+/// `id` selecting it), universe `{x, y, z}` at 0, `set()` storing 1; `Core`
+/// with one register `r: Int[0, 2]` and `read(c)`, which loads `c.v` into it.
+fn ac_domain() -> Vec<u8> {
+    let mut doc: Value = serde_json::from_slice(&crate::litmus::resulting_document())
+        .expect("the litmus package is JSON");
+    let types = doc["types"].as_array_mut().expect("types");
+    let level = types
+        .iter()
+        .position(|node| node["identity"] == "ix://test/litmus/Level")
+        .expect("Level");
+    types[level] = serde_json::from_str(
+        &types[level]
+            .to_string()
+            .replace("\"value\":\"3\"", "\"value\":\"2\""),
+    )
+    .expect("Level");
+    for node in types.iter_mut() {
+        let identity = node["identity"].as_str().unwrap_or_default().to_owned();
+        if identity == "ix://test/litmus/Cell" {
+            let fields = node["fields"].as_array_mut().expect("fields");
+            fields.retain(|field| field["name"] != "w");
+            for field in fields.iter_mut().filter(|field| field["name"] == "v") {
+                field["typeRef"] = json!("ix://test/litmus/Level");
+            }
+            node["operations"]
+                .as_array_mut()
+                .expect("operations")
+                .retain(|op| op["name"] == "set");
+        }
+        if identity == "ix://test/litmus/Core" {
+            let fields = node["fields"].as_array_mut().expect("fields");
+            fields.truncate(1);
+            fields[0] = serde_json::from_str(
+                &fields[0]
+                    .to_string()
+                    .replace("Core/r1", "Core/r")
+                    .replace("\"r1\"", "\"r\""),
+            )
+            .expect("r");
+            let operations = node["operations"].as_array_mut().expect("operations");
+            operations.retain(|op| op["name"] == "read1");
+            operations[0] = serde_json::from_str(
+                &operations[0]
+                    .to_string()
+                    .replace("Core/read1", "Core/read")
+                    .replace("\"read1\"", "\"read\"")
+                    .replace("Core/r1", "Core/r"),
+            )
+            .expect("read");
+        }
+    }
+    doc.to_string().into_bytes()
+}
+
+/// The AC's contracts: `IsX`, `IsY` and `IsZ` select a cell, `StoreOne`
+/// stores 1, `ReadsX`, `ReadsY` and `ReadsZ` select the cell `read` loads.
+fn ac_contracts() -> String {
+    let mut text = String::from("post StoreOne using v on M::Cell::set { self.v = 1 }\n");
+    for (suffix, id) in [("X", 0), ("Y", 1), ("Z", 2)] {
+        text.push_str(&format!(
+            "pre Is{suffix} using v on M::Cell::set {{ self.id = {id} }}\n\
+             pre Reads{suffix} using v on M::Core::read {{ c.id = {id} }}\n"
+        ));
+    }
+    text + "post Loaded using v on M::Core::read { self.r = pre(c.v) }\n"
+}
+
+/// The AC's request: three cells at 0, `core` with `r` at 2.
 fn three_cell_request(ws: &Workspace, body: &str, extra: Value) -> std::path::PathBuf {
-    let snapshots: Vec<Vec<u8>> = crate::litmus::Documents::with_cells(&["x", "y", "z"])
-        .snapshots
-        .into_values()
-        .collect();
+    let int = |value: i64| json!({"integer": value.to_string()});
+    let cell = |key: &str, id: i64| {
+        json!({"key": key, "type": "ix://test/litmus/Cell",
+            "fields": {"id": int(id), "v": int(0)}})
+    };
+    let snapshot = json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "test", "identity": "s0"},
+        "observation": "current", "model": {"identity": "test/litmus"},
+        "anchor": {"kind": "initialization", "name": "start"},
+        "populations": [
+            {"population": "ix://test/litmus/spares", "complete": true, "objects": []},
+            {"population": "ix://test/litmus/cells", "complete": true,
+                "objects": [cell("x", 0), cell("y", 1), cell("z", 2)]},
+            {"population": "ix://test/litmus/cores", "complete": true,
+                "objects": [{"key": "core", "type": "ix://test/litmus/Core",
+                    "fields": {"r": int(2)}}]},
+        ],
+    });
     request_over(
         ws,
         &crate::litmus::unit_text(body),
-        &crate::litmus::resulting_document(),
-        &snapshots,
+        &ac_domain(),
+        &[snapshot.to_string().into_bytes()],
         extra,
     )
 }
@@ -179,15 +262,15 @@ fn a_constrained_store_buffer_run_settles_constraint_reached() {
         attempt("Sx", "w", "Cell::set", "release", "IsX, StoreOne"),
         attempt("Sy", "w", "Cell::set", "release", "IsY, StoreOne"),
         attempt("Sz", "w", "Cell::set", "release", "IsZ, StoreOne"),
-        attempt("Lx", "c", "Core::read1", "acquire", "ReadsX1, Read1"),
-        attempt("Ly", "c", "Core::read1", "acquire", "ReadsY1, Read1"),
-        attempt("Lz", "c", "Core::read1", "acquire", "ReadsZ1, Read1"),
+        attempt("Lx", "c", "Core::read", "acquire", "ReadsX, Loaded"),
+        attempt("Ly", "c", "Core::read", "acquire", "ReadsY, Loaded"),
+        attempt("Lz", "c", "Core::read", "acquire", "ReadsZ, Loaded"),
     );
     let body = format!(
         "{}constraint Zero using v on M::Cell at current {{ self.v <= 0 }}\n\
-         temporal Holds using t0 over (k: M::Core) clock \"model-steps\" on origin \
-         {{ always holds(k.r1 <= 3) }}\n",
-        crate::litmus::contracts() + &crate::litmus::protocol("SB", &run)
+         temporal Holds using t0 over (c: M::Cell) clock \"model-steps\" on origin \
+         {{ always holds(c.v <= 1) }}\n",
+        ac_contracts() + &crate::litmus::protocol("SB", &run)
     );
     let memory = json!([{"parallel": "SB::Both", "model": "tso"}]);
     let item = |constraint: bool| {
@@ -221,9 +304,13 @@ fn a_constrained_store_buffer_run_settles_constraint_reached() {
         json!({"bound": "max_store_buffer", "value": 2, "reached": true}),
         "{record}"
     );
+    // 21 states: the pre-fork initial state, 12 expanded states with no store
+    // flushed (`left` at 0, 1 or 2 buffered stores, `right` at 0 to 3 loads), and
+    // 8 boundary states (`left`'s first flush from a state holding a store).
+    // FR-225-AC-4 counts 20 because it omits the pre-fork initial state.
     assert_eq!(
         run_with.item(0)["exploration"]["states"],
-        json!("20"),
+        json!("21"),
         "{}",
         run_with.document()
     );
