@@ -6,7 +6,9 @@
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{analyze, label, litmus_request, order_protocol, Run, Workspace};
+use crate::analyze_cli_support::{
+    analyze, bounded, counter_request, label, litmus_request, order_protocol, Run, Workspace,
+};
 
 fn root() -> Value {
     let universe = crate::fixture_ids::universe_id("u");
@@ -50,6 +52,25 @@ fn run_items(name: &str, items: Vec<Value>) -> Run {
         &order_protocol(true),
         json!({ "items": items }),
     ))
+}
+
+fn run_items_with_raw_bounds(name: &str, items: Vec<Value>) -> Run {
+    let ws = Workspace::new(name);
+    let path = litmus_request(&ws, &order_protocol(true), json!({"items": items}));
+    replace_number(&path, "max_depth", 123456789, "18446744073709551616");
+    replace_number(&path, "max_history", 123456789, "18446744073709551616");
+    analyze(&path)
+}
+
+fn replace_number(path: &std::path::Path, member: &str, placeholder: u64, replacement: &str) {
+    let source = std::fs::read_to_string(path).expect("request text");
+    let token = format!("\"{member}\":{placeholder}");
+    assert!(source.contains(&token), "request includes {token}");
+    std::fs::write(
+        path,
+        source.replacen(&token, &format!("\"{member}\":{replacement}"), 1),
+    )
+    .expect("request text is rewritten");
 }
 
 fn assert_refused(item: &Value, cause: &str, member: &str) {
@@ -177,4 +198,50 @@ fn upper_bound_and_unknown_role_refusals_are_item_local() {
     assert_refused(&run.item(1), "invalid-value", "temporal.max_depth");
     assert_eq!(label(&run.item(2)), "proved", "{}", run.item(2));
     assert_invalid_role(&run.item(3));
+}
+
+/// FR-636: an integer beyond `u64` still refuses only its protocol item.
+#[trace("TC-2988", "FR-636-AC-7")]
+#[test]
+fn integers_above_u64_settle_per_protocol_item() {
+    let run = run_items_with_raw_bounds(
+        "protocol-bounds-above-u64",
+        vec![
+            realizability(json!({
+                "profile": "bounded-static",
+                "max_depth": 16,
+                "max_history": 123456789
+            })),
+            realizability(json!({
+                "profile": "bounded-static",
+                "max_depth": 123456789,
+                "max_history": 16
+            })),
+            realizability(json!({
+                "profile": "bounded-static",
+                "max_depth": 16,
+                "max_history": 16
+            })),
+        ],
+    );
+    assert_eq!(run.exit, 20, "{}", run.document());
+    assert_refused(&run.item(0), "invalid-value", "temporal.max_history");
+    assert_refused(&run.item(1), "invalid-value", "temporal.max_depth");
+    assert_eq!(label(&run.item(2)), "proved", "{}", run.item(2));
+}
+
+/// FR-620: non-protocol temporal bounds keep the shared safe-count rejection.
+#[trace("FR-620")]
+#[test]
+fn oversized_nonprotocol_depth_refuses_the_request() {
+    let ws = Workspace::new("nonprotocol-depth-over-safe-count");
+    let path = counter_request(
+        &ws,
+        &bounded(),
+        json!([{"claim": "Bounded", "temporal": {"max_depth": 123456789}}]),
+    );
+    replace_number(&path, "max_depth", 123456789, "9007199254740992");
+    let run = analyze(&path);
+    assert_eq!(run.exit, 20, "{}", run.document());
+    assert_eq!(run.document()["category"], "refusal", "{}", run.document());
 }

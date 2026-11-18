@@ -550,11 +550,42 @@ count_members! {
     read_max_solver_time => "temporal.limits.max_solver_time",
 }
 
-/// `temporal.max_depth`: retain oversized integers for protocol-analysis
-/// items, which settle them per item; other item validation remains at its
-/// existing request boundary.
-fn read_max_depth<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Option<u64>, D::Error> {
-    u64::deserialize(decoder).map(Some)
+/// An integer request bound, retaining out-of-range integer tokens until the
+/// item kind determines whether they are a request error or an item refusal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RequestCount {
+    /// The in-range integer, or `None` when the integer is out of range.
+    value: Option<u64>,
+}
+
+impl RequestCount {
+    fn read<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+        let raw = Box::<serde_json::value::RawValue>::deserialize(decoder)?;
+        let token = raw.get();
+        let digits = token.strip_prefix('-').unwrap_or(token);
+        if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(serde::de::Error::custom("the bound must be a JSON integer"));
+        }
+        let value = if token == "-0" {
+            Some(0)
+        } else {
+            token
+                .parse::<u64>()
+                .ok()
+                .filter(|value| *value <= MAX_COUNT)
+        };
+        Ok(Self { value })
+    }
+
+    fn value(self) -> Option<u64> {
+        self.value
+    }
+}
+
+impl<'de> Deserialize<'de> for RequestCount {
+    fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+        Self::read(decoder)
+    }
 }
 
 /// FSpec FR-331's `temporal.limits`, each member a positive count.
@@ -658,11 +689,11 @@ pub struct TemporalSelection {
     #[serde(default)]
     pub stutter_closure: Option<bool>,
     /// A bounded search's horizon.
-    #[serde(default, deserialize_with = "read_max_depth")]
-    pub max_depth: Option<u64>,
+    #[serde(default)]
+    pub max_depth: Option<RequestCount>,
     /// Realizability's local-history bound (FR-636, ADR-036 PA-14).
     #[serde(default)]
-    pub max_history: Option<u64>,
+    pub max_history: Option<RequestCount>,
     /// The item's own budgets.
     #[serde(default)]
     pub limits: Option<TemporalLimitsSelection>,
@@ -709,7 +740,7 @@ pub struct CheckLimitsSelection {
 /// One FSpec FR-520 analysis item, as a document writes it. Closed: an
 /// unknown member, and each member FSL computes, refuses the request.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, try_from = "ItemSelectionWire")]
 pub struct ItemSelection {
     /// The claim's declared name.
     #[serde(default)]
@@ -762,6 +793,91 @@ pub struct ItemSelection {
     /// A `simulation` item's settings (FR-634).
     #[serde(default)]
     pub simulation: Option<super::SimulationSelection>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ItemSelectionWire {
+    #[serde(default)]
+    claim: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    backend: Option<String>,
+    #[serde(default)]
+    required: Option<bool>,
+    #[serde(default)]
+    temporal: Option<TemporalSelection>,
+    #[serde(default)]
+    probabilistic: Option<Value>,
+    #[serde(default)]
+    hybrid: Option<Value>,
+    #[serde(default)]
+    check: Option<CheckSelection>,
+    #[serde(default)]
+    options: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    reductions: Option<Value>,
+    #[serde(default)]
+    correspondence: Option<Value>,
+    #[serde(default)]
+    premises: Option<Value>,
+    #[serde(default)]
+    assessed_root: Option<Value>,
+    #[serde(default)]
+    trace: Option<DocumentSelection>,
+    #[serde(default)]
+    recording: Option<DocumentSelection>,
+    #[serde(default, deserialize_with = "present_json_value")]
+    population: Option<Value>,
+    #[serde(default)]
+    simulation: Option<super::SimulationSelection>,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("a non-protocol item carries an unsupported protocol member or count")]
+struct ItemSelectionReadError;
+
+impl TryFrom<ItemSelectionWire> for ItemSelection {
+    type Error = ItemSelectionReadError;
+
+    fn try_from(wire: ItemSelectionWire) -> Result<Self, Self::Error> {
+        let protocol_analysis = matches!(
+            wire.kind.as_deref(),
+            Some("local-projection" | "realizability")
+        );
+        if !protocol_analysis
+            && wire.temporal.as_ref().is_some_and(|temporal| {
+                temporal.max_depth.is_some_and(|bound| {
+                    bound
+                        .value()
+                        .is_none_or(|value| usize::try_from(value).is_err())
+                }) || temporal.profile.is_some()
+                    || temporal.max_history.is_some()
+            })
+        {
+            return Err(ItemSelectionReadError);
+        }
+        Ok(Self {
+            claim: wire.claim,
+            kind: wire.kind,
+            backend: wire.backend,
+            required: wire.required,
+            temporal: wire.temporal,
+            probabilistic: wire.probabilistic,
+            hybrid: wire.hybrid,
+            check: wire.check,
+            options: wire.options,
+            reductions: wire.reductions,
+            correspondence: wire.correspondence,
+            premises: wire.premises,
+            assessed_root: wire.assessed_root,
+            trace: wire.trace,
+            recording: wire.recording,
+            population: wire.population,
+            simulation: wire.simulation,
+        })
+    }
 }
 
 impl ItemSelection {
@@ -1513,7 +1629,14 @@ fn resolve_one(
         }
         if temporal
             .max_depth
-            .is_some_and(|bound| bound == 0 || bound > MAX_COUNT || usize::try_from(bound).is_err())
+            .is_some_and(|bound| bound.value().is_none())
+        {
+            return invalid_member_cause(index, name, "temporal.max_depth", "invalid-value");
+        }
+        if temporal
+            .max_depth
+            .and_then(RequestCount::value)
+            .is_some_and(|bound| bound == 0)
         {
             return invalid_member_cause(index, name, "temporal.max_depth", "invalid-value");
         }
@@ -1530,7 +1653,7 @@ fn resolve_one(
         if kind == Capability::Realizability
             && temporal
                 .max_history
-                .is_some_and(|bound| bound == 0 || bound > MAX_COUNT)
+                .is_some_and(|bound| bound.value().is_none_or(|value| value == 0))
         {
             return invalid_member_cause(index, name, "temporal.max_history", "invalid-value");
         }
@@ -1650,8 +1773,11 @@ fn resolve_one(
             backend_options,
             protocol_analysis: protocol_analysis_kind.then(|| ProtocolAnalysisSelection {
                 profile: temporal.profile.clone().expect("profile checked above"),
-                max_depth: temporal.max_depth.expect("max_depth checked above"),
-                max_history: temporal.max_history,
+                max_depth: temporal
+                    .max_depth
+                    .and_then(RequestCount::value)
+                    .expect("valid max_depth checked above"),
+                max_history: temporal.max_history.and_then(RequestCount::value),
                 role: projection_role.clone(),
                 assessed_root: selection.assessed_root.clone(),
                 assessed_root_draft,
@@ -2082,7 +2208,8 @@ fn temporal_settings(selection: &TemporalSelection) -> TemporalItem {
         // engine; other items retain the existing `usize` conversion rule.
         max_depth: selection
             .max_depth
-            .map(|depth| usize::try_from(depth).unwrap_or(usize::MAX)),
+            .and_then(RequestCount::value)
+            .and_then(|depth| usize::try_from(depth).ok()),
         witness_samples: selection.witness_samples,
         seed: selection.seed_count(),
         abstract_initial: selection.abstract_subject.as_ref().map(|subject| {

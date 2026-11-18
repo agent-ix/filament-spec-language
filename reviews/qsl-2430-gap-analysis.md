@@ -28,3 +28,10 @@ Ran `quoin matrix --repo . --json` with Quoin 0.36.6. Across 5,719 unique criter
 | --- | --- | --- | --- |
 | FND-001 | medium | TC-2988 and its tagged AC-7 test cover zero bounds but not values above 2^53 - 1, leaving the upper-range refusal requirement without executable evidence. | spec/test-cases/TC-2988-protocol-analysis-item-profile-and-bounds.md:17-25; spec/functional/FR-636-request-protocol-analysis-items-and-replay-supplied-protocol-traces.md:131-139 |
 | FND-002 | high | The repository-wide matrix has 1,160 untagged criteria out of 5,719 unique criteria; these have no tagged executable evidence in the computed matrix. This is a pre-existing repository baseline, not introduced by PR #2928. | spec/ |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | deferred | This is the pre-existing repository-wide traceability baseline and is outside the QSL-2430 implementation scope. |
