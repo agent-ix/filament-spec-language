@@ -17,7 +17,8 @@ Verify that FR-489's claim-form rule narrows an unnamed item's candidates to one
 1. Analyze unnamed `operation-contract` items for an invariant with and without a model subject and for a `post` contract over `Engines::fsl()`.
 2. Capture the FR-331 request item of the first; repeat with the linked descriptors registered in another order.
 3. Register a process provider advertising `operation-contract` and repeat step 1's first item, unnamed and naming `en-1`.
-. Compute the FR-146 per-step record items of the CAS refinement over `en-1` and an SMT `operation-contract` backend, and the invariant item over a model subject over the same registry.
+4. Register a process provider advertising `value-validity` and run `sq` with `requirements` `{}` and with `value-checker` named.
+5. Compute the FR-146 per-step record items of the CAS refinement over `en-1` and an SMT `operation-contract` backend, and the invariant item over a model subject over the same registry.
 
 Test: `fsl-analyze/tests/it/tied_item_resolution.rs` `an_unnamed_tied_item_reaches_negotiation_with_one_candidate`, `an_undecided_tie_settles_ambiguous_backend`; `fsl-command/tests/it/run_requirement_items.rs` `an_unnamed_run_item_with_two_value_validity_candidates_is_ambiguous`; `fsl-analyze/tests/it/refinement_request.rs` `per_step_records_exclude_en1_and_an_invariant_keeps_it`.
 
