@@ -2,6 +2,7 @@
 //! FR-010-AC-8: stable native codes round-trip and match their documentation.
 
 use fsl_foundation::diagnostic::Code;
+use ix_trace_rs::trace;
 use std::collections::BTreeSet;
 
 const DOCUMENTATION: &str = include_str!("../../docs/native-error-codes.md");
@@ -146,7 +147,7 @@ fn every_complete_cause_appears_in_a_diagnostic_test() {
 /// the clause-run request reader (FR-312) produces them: `extraction-package-conflict`
 /// for a request carrying `extraction` and `package`, `extraction-clause-count`
 /// for a non-singleton binding list, and `invalid-quire-context` for a context Quire rejects.
-#[ix_trace_rs::trace("TC-109", "FR-031-AC-6", "FR-031-AC-7")]
+#[trace("TC-109", "FR-031-AC-6", "FR-031-AC-7")]
 #[test]
 fn the_request_reader_produces_the_extraction_refusal_codes() {
     const READER: &str = include_str!("../../fsl-command/src/command.rs");
