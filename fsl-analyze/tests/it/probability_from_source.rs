@@ -490,6 +490,29 @@ fn exact_every_scheduler_from_source() {
 
 #[test]
 fn exact_fair_scheduler_from_source() {
+    let checked_source = crate::prob_world::World::new(&crate::prob_world::link(FAIR_DELIVER));
+    let claim = checked_source
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("DeliverFair")
+        .expect("the source claim checks");
+    assert_eq!(claim.scheduler, fsl_semantics::check::ProbScheduler::Every);
+    assert!(!claim.fairness.is_empty(), "the fairness set is checked");
+    assert!(
+        matches!(
+            &claim.form,
+            fsl_semantics::check::ProbForm::Probability {
+                event: fsl_semantics::check::Event::Formula {
+                    timed_horizon: None,
+                    ..
+                },
+                ..
+            }
+        ),
+        "FR-200 bounded fair event form: {:?}",
+        claim.form
+    );
     let document = run(
         "fair-scheduler",
         FAIR_DELIVER,
