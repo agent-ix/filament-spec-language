@@ -55,6 +55,7 @@ mod mltl_differential;
 mod model_based_tests;
 mod model_reference_queries;
 mod model_simulation;
+mod monitor_vs_infinite_trace;
 mod named_population;
 mod native_literals;
 mod native_scalar_equality;

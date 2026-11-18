@@ -156,7 +156,7 @@ impl<'a> Ticks<'a> {
                 Ok(Some(TickBound {
                     lower: convert(interval.lower())?,
                     lower_closed: interval.lower_closed(),
-                    upper: convert(interval.upper())?,
+                    upper: interval.upper().map(convert).transpose()?,
                     upper_closed: interval.upper_closed(),
                 }))
             }
@@ -166,14 +166,19 @@ impl<'a> Ticks<'a> {
                     TemporalUpper::Finite(upper) => Ok(Some(TickBound {
                         lower: count(interval.lower()),
                         lower_closed: true,
-                        upper: count(upper),
+                        upper: Some(count(upper)),
                         upper_closed: true,
                     })),
-                    // `[0, *]` is the unbounded operator.
+                    // `[0, *]` is the operator written with no interval.
                     TemporalUpper::Open if interval.lower() == 0 => Ok(None),
-                    TemporalUpper::Open => Err(MonitorPlanRefusal::OpenIntervalLowerBound {
-                        node: operator.node.index(),
-                    }),
+                    // `[a, *]` with `a > 0` has a least distance and no upper
+                    // end (FR-251 "Unbounded past operators", FR-943).
+                    TemporalUpper::Open => Ok(Some(TickBound {
+                        lower: count(interval.lower()),
+                        lower_closed: true,
+                        upper: None,
+                        upper_closed: false,
+                    })),
                 }
             }
             _ => Ok(None),
@@ -252,22 +257,28 @@ pub fn produce(
             continue;
         };
         let id = SubformulaId::new(operator.node.index());
-        let tick_interval = TickInterval::new(
-            bound.lower.clone(),
-            bound.lower_closed,
-            bound.upper.clone(),
-            bound.upper_closed,
-        );
+        let tick_interval = match bound.upper.clone() {
+            Some(upper) => TickInterval::new(
+                bound.lower.clone(),
+                bound.lower_closed,
+                upper,
+                bound.upper_closed,
+            ),
+            None => TickInterval::unbounded(bound.lower.clone(), bound.lower_closed),
+        };
         tick_bounds.insert(operator.node.index(), bound);
         intervals.push((id, tick_interval));
     }
     let shape = TickShape::of(clause.formula(), &tick_bounds, &target.uncertainty);
-    for (id, _) in &intervals {
-        let retention = shape
-            .node(id.index())
-            .map(|node| node.retention.clone())
-            .ok_or(MonitorPlanRefusal::InvalidBufferInputs)?;
-        buffers.push((*id, buffer_capacity(&rate_limit, &retention)?));
+    // Every interval operator with an upper bound and every past operator
+    // keeps a buffer (FR-251 "Buffers", "Unbounded past operators").
+    for (index, node) in shape.nodes() {
+        if node.buffered {
+            buffers.push((
+                SubformulaId::new(*index),
+                buffer_capacity(&rate_limit, &node.retention)?,
+            ));
+        }
     }
 
     let formula = clause.formula();

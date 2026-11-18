@@ -212,9 +212,13 @@ impl<'c> Form<'c> {
                 if !(interval.lower().is_zero() && interval.lower_closed()) {
                     return Err(shape());
                 }
+                // A deadline needs an upper bound; `[0, *)` checks as no interval.
+                let Some(bound) = interval.upper() else {
+                    return Err(shape());
+                };
                 Ok(Self::Deadline {
                     kind,
-                    bound: interval.upper().clone(),
+                    bound: bound.clone(),
                     reads: atoms
                         .into_iter()
                         .map(|(id, predicate)| (UndefinedRead::Atom(id), predicate))

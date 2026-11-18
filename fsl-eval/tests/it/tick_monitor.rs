@@ -57,8 +57,8 @@ impl Plan {
             if let Some(CheckedInterval::Timed(interval)) = &operator.interval {
                 let scale = ratio(1000, 1);
                 let lower = interval.lower().mul(&scale);
-                let upper = interval.upper().mul(&scale);
-                if let Some(rate) = &self.capacity_rate {
+                let upper = interval.upper().map(|upper| upper.mul(&scale));
+                if let (Some(rate), Some(upper)) = (&self.capacity_rate, &upper) {
                     // FR-251 "Buffers": the upper bound plus the tick cover.
                     let window = upper
                         .add(&ratio(1, 1))

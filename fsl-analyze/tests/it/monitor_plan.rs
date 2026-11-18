@@ -177,7 +177,7 @@ fn producer_keeps_checked_formula_atoms_and_converts_intervals_to_ticks() {
     assert_eq!(plan.program().atoms().len(), 2);
     assert_eq!(plan.intervals().len(), 1);
     assert_eq!(plan.intervals()[0].1.lower(), &ratio(0, 1));
-    assert_eq!(plan.intervals()[0].1.upper(), &ratio(3, 1));
+    assert_eq!(plan.intervals()[0].1.upper(), Some(&ratio(3, 1)));
     assert_eq!(plan.buffers(), &[(plan.intervals()[0].0, 9)]);
     assert!(matches!(
         obligations[0],
@@ -693,10 +693,7 @@ fn production_and_admission_refuse_a_clause_with_no_complete_program() {
     use fsl_analyze::monitor_plan::{admit, PlanAdmissionRefusal};
     let library = || fsl_semantics::library::LibraryName::new("fixture").expect("a library name");
     let target = base_target();
-    for (shape, past) in [
-        ("once holds(c.versionNumber = 2)", true),
-        ("always eventually holds(c.versionNumber = 2)", false),
-    ] {
+    for shape in ["always eventually holds(c.versionNumber = 2)"] {
         let (package, _) = checked_clause(shape);
         let clause = package.graph().temporal_clauses()[0].clause();
         let produced = produce(
@@ -720,17 +717,10 @@ fn production_and_admission_refuse_a_clause_with_no_complete_program() {
             Err(PlanAdmissionRefusal::Underivable(produced.clone())),
             "{shape}"
         );
-        if past {
-            assert!(
-                matches!(produced, MonitorPlanRefusal::UnboundedPast { .. }),
-                "{produced:?}"
-            );
-        } else {
-            assert!(
-                matches!(produced, MonitorPlanRefusal::UnboundedOverUnbounded { .. }),
-                "{produced:?}"
-            );
-        }
+        assert!(
+            matches!(produced, MonitorPlanRefusal::UnboundedOverUnbounded { .. }),
+            "{produced:?}"
+        );
     }
 }
 
@@ -1000,7 +990,7 @@ fn a_non_timed_clause_is_planned_with_a_position_counter() {
     ));
     assert_eq!(plan.intervals().len(), 1);
     assert_eq!(plan.intervals()[0].1.lower(), &ratio(0, 1));
-    assert_eq!(plan.intervals()[0].1.upper(), &ratio(3, 1));
+    assert_eq!(plan.intervals()[0].1.upper(), Some(&ratio(3, 1)));
     assert_eq!(plan.buffers(), &[(plan.intervals()[0].0, 5)]);
 }
 
@@ -1013,7 +1003,7 @@ fn fixed_sample_and_infinite_trace_clauses_are_planned() {
         "filament.temporal.fixed-sample.false-extension/v1",
         STEP_DEADLINE,
     ));
-    assert_eq!(fixed.intervals()[0].1.upper(), &ratio(3, 1));
+    assert_eq!(fixed.intervals()[0].1.upper(), Some(&ratio(3, 1)));
     assert_eq!(fixed.buffers(), &[(fixed.intervals()[0].0, 5)]);
     let _ = plan_of(&position_counted(
         "filament.temporal.infinite-trace/v1",
@@ -1026,7 +1016,6 @@ fn fixed_sample_and_infinite_trace_clauses_are_planned() {
 /// refused at check (`OpenInterval`) or at planning.
 #[trace("TC-2623", "FR-943-AC-2")]
 #[test]
-#[ignore = "QSL-2321: a timed interval [q, *] is refused at check and in the monitor plan"]
 fn a_timed_open_past_interval_is_planned() {
     let target = MonitorTarget {
         unit: "us".to_owned(),
@@ -1042,7 +1031,6 @@ fn a_timed_open_past_interval_is_planned() {
 /// `OpenIntervalLowerBound`; the future `eventually[2,*]` is planned too.
 #[trace("TC-2623", "FR-943-AC-3")]
 #[test]
-#[ignore = "QSL-2321: the position-counted monitor plan refuses [a, *] with a > 0 (OpenIntervalLowerBound)"]
 fn a_step_open_interval_is_planned_on_the_position_counter() {
     let past = position_counted(
         "filament.temporal.infinite-trace/v1",
@@ -1144,4 +1132,110 @@ fn a_position_witness_at_the_upper_bound_decides() {
         !steps.iter().flatten().any(|&(origin, _, code)| origin == 0 && code == 4),
         "never indeterminate at the bound: {steps:?}"
     );
+}
+
+/// FR-943-AC-3, the monitor half: with `p` true at position 0, the step
+/// `once[3,*] holds(p)` is `indeterminate` at position 2 (the monitor reads no
+/// position before its baseline), never `false` at the lower bound, and `true`
+/// from position 4; `eventually[2,*] holds(p)` from an origin at position 0 is
+/// not discharged by `p` at position 1 and is discharged `true` by `p` at
+/// position 3. The tick cover of FR-251 (`1 + 2u`, here 1) makes a witness
+/// exactly at the lower bound `indeterminate` in the monitor, so the AC's
+/// `true` at position 3 and discharge at position 2 hold for the batch
+/// evaluator and are one position sharper than FR-251 lets the monitor be.
+#[trace("TC-2623", "FR-943-AC-3")]
+#[test]
+fn a_step_open_interval_decides_at_its_lower_bound_on_the_position_counter() {
+    use crate::monitor_entries::{run_reference, Input};
+    let profile = "filament.temporal.infinite-trace/v1";
+    let past = plan_of(&position_counted(
+        profile,
+        "once[3,*] holds(c.versionNumber = 2)",
+    ));
+    let atom = *crate::monitor_entries::atoms_of(&past)
+        .first()
+        .expect("the clause holds one atom");
+    let node = i128::try_from(past.buffers()[0].0.index()).expect("a node index");
+    let truth = |tick: u64| Input::Reading(tick, vec![(atom, tick == 0)]);
+    let inputs: Vec<Input> = (0..5).map(truth).collect();
+    let entries = run_reference(&past, &inputs);
+    let code = |tick: i128| {
+        entries[usize::try_from(tick).expect("a tick")]
+            .iter()
+            .find(|(key, _)| *key == tick * 1000 + node)
+            .map(|(_, code)| *code)
+    };
+    assert_eq!(code(2), Some(4), "indeterminate at position 2");
+    assert_ne!(code(3), Some(2), "never false at the lower bound");
+    assert_eq!(code(4), Some(1), "true from position 4");
+
+    let future = plan_of(&position_counted(
+        profile,
+        "eventually[2,*] holds(c.versionNumber = 2)",
+    ));
+    let atom = *crate::monitor_entries::atoms_of(&future)
+        .first()
+        .expect("the clause holds one atom");
+    let node = i128::try_from(future.program().root().index()).expect("a node index");
+    let truth = |tick: u64, value: bool| Input::Reading(tick, vec![(atom, value)]);
+    let entries_at = |inputs: &[Input]| run_reference(&future, inputs);
+    let found = |entries: &[Vec<(i128, i64)>], step: usize| {
+        entries[step]
+            .iter()
+            .find(|(key, _)| *key == node)
+            .map(|(_, code)| *code)
+    };
+    // `p` at position 1 does not discharge the origin at position 0.
+    let early = entries_at(&[truth(0, false), truth(1, true), truth(2, false)]);
+    assert_ne!(found(&early, 1), Some(1));
+    assert_ne!(found(&early, 2), Some(1));
+    // `p` at position 3 discharges it.
+    let late = entries_at(&[
+        truth(0, false),
+        truth(1, false),
+        truth(2, false),
+        truth(3, true),
+    ]);
+    assert_eq!(found(&late, 3), Some(1));
+}
+
+/// FR-943-AC-3 as written: `once[3,*]` is `true` at position 3 and
+/// `eventually[2,*]` is discharged by `p` at position 2. FR-251's tick cover
+/// makes the monitor decide one position later, so the AC and FR-251 differ
+/// (next spec batch).
+#[trace("TC-2623", "FR-943-AC-3")]
+#[test]
+#[ignore = "QSL-2321: FR-943-AC-3 decides at the lower bound itself; FR-251's tick cover decides one position later"]
+fn a_step_open_interval_decides_at_the_lower_bound_itself() {
+    use crate::monitor_entries::{run_reference, Input};
+    let profile = "filament.temporal.infinite-trace/v1";
+    let past = plan_of(&position_counted(
+        profile,
+        "once[3,*] holds(c.versionNumber = 2)",
+    ));
+    let atom = *crate::monitor_entries::atoms_of(&past)
+        .first()
+        .expect("the clause holds one atom");
+    let node = i128::try_from(past.buffers()[0].0.index()).expect("a node index");
+    let inputs: Vec<Input> = (0..5)
+        .map(|tick| Input::Reading(tick, vec![(atom, tick == 0)]))
+        .collect();
+    let entries = run_reference(&past, &inputs);
+    let at_three = entries[3].iter().find(|(key, _)| *key == 3 * 1000 + node);
+    assert_eq!(at_three.map(|(_, code)| *code), Some(1));
+
+    let future = plan_of(&position_counted(
+        profile,
+        "eventually[2,*] holds(c.versionNumber = 2)",
+    ));
+    let atom = *crate::monitor_entries::atoms_of(&future)
+        .first()
+        .expect("the clause holds one atom");
+    let root = i128::try_from(future.program().root().index()).expect("a node index");
+    let inputs: Vec<Input> = (0..3)
+        .map(|tick| Input::Reading(tick, vec![(atom, tick == 2)]))
+        .collect();
+    let entries = run_reference(&future, &inputs);
+    let found = entries[2].iter().find(|(key, _)| *key == root);
+    assert_eq!(found.map(|(_, code)| *code), Some(1));
 }
