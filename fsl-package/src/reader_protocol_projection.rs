@@ -1037,6 +1037,58 @@ impl<'wire> BareWalker<'wire> {
         })
     }
 
+    /// Read the checked result type of a named pure function without
+    /// projecting its body. This lets callers reject an unrepresentable
+    /// result before a body operation can produce an earlier refusal.
+    pub(crate) fn function_result_type(
+        &self,
+        name: &str,
+    ) -> Result<Option<ReaderFunctionResultType>, WalkFailure> {
+        let selected = self.index.nodes.values().find(|node| {
+            has_form(node, WireTag::Function, WireForm::PureFunction)
+                && node.declaration.as_ref().is_some_and(|declaration| {
+                    declaration.qualified_name.len() == 1
+                        && declaration.qualified_name[0].as_ref() == name
+                })
+        });
+        let Some(selected) = selected else {
+            return Ok(None);
+        };
+        let function = selected
+            .declaration
+            .as_ref()
+            .and_then(|declaration| declaration.qualified_name.last())
+            .map(|name| name.to_string())
+            .ok_or_else(|| WalkFailure::Fault(fault("reader-function-name-is-admitted")))?;
+        let (_, body) = function_parts(&selected.body)
+            .ok_or_else(|| WalkFailure::Fault(fault("reader-pure-function-has-checked-body")))?;
+        let CheckedTerm::Reference { target } = body else {
+            return Err(WalkFailure::Fault(fault(
+                "reader-function-body-has-checked-identity",
+            )));
+        };
+        let result_node = self.index.key(target).map_err(WalkFailure::Fault)?;
+        let value_type =
+            node_value_type(&self.index.types(), target).map_err(|error| match error {
+                TypeError::Unsupported => WalkFailure::FunctionResultType {
+                    function,
+                    view: UnsupportedView {
+                        package: self.index.admitted.name().to_owned(),
+                        locus: ViewLocus::node(result_node),
+                        reason: UnsupportedReason::MissingTypeRepresentation,
+                    },
+                },
+                TypeError::Fault(fault) => WalkFailure::Fault(fault),
+            })?;
+        Ok(Some(ReaderFunctionResultType {
+            function_node: self
+                .index
+                .key(&selected.node_id)
+                .map_err(WalkFailure::Fault)?,
+            value_type,
+        }))
+    }
+
     /// Project the named pure function and every function its body reaches.
     /// The function's body has no protocol-origin location rows, so this
     /// route retains the admitted node types and evaluator operations only.
@@ -1209,6 +1261,11 @@ impl<'wire> BareWalker<'wire> {
     pub(crate) fn key(&self, application: &CheckedNodeId) -> Result<NodeKey, InternalFault> {
         self.index.key(application)
     }
+}
+
+pub(crate) struct ReaderFunctionResultType {
+    pub(crate) function_node: NodeKey,
+    pub(crate) value_type: ValueType,
 }
 
 /// The positions of a slot in FR-383's walk order: pre-order, children in

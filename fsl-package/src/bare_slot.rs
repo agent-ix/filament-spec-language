@@ -721,6 +721,42 @@ impl<'p> BarePackage<'p> {
             self.exact_type_projections(),
         )
         .map_err(SlotSelectionFailure::Fault)?;
+        if let Some(result) =
+            walker
+                .function_result_type(name)
+                .map_err(|failure| match failure {
+                    WalkFailure::Unsupported(view) => {
+                        BareSelectionFailure::Unsupported(Box::new(view))
+                    }
+                    WalkFailure::FunctionParameterType { position, view } => {
+                        BareSelectionFailure::FunctionParameterType {
+                            position,
+                            view: Box::new(view),
+                        }
+                    }
+                    WalkFailure::FunctionResultType { function, view } => {
+                        BareSelectionFailure::FunctionResultType {
+                            function,
+                            view: Box::new(view),
+                        }
+                    }
+                    WalkFailure::Equality(refusal) => BareSelectionFailure::Equality(refusal),
+                    WalkFailure::Fault(failure) => SlotSelectionFailure::Fault(failure).into(),
+                })?
+        {
+            let world = self.world()?;
+            if contains_nested_population(&result.value_type, world.types())
+                || world.types().runtime_type(&result.value_type).is_none()
+            {
+                return Err(BareSelectionFailure::FunctionResultType {
+                    function: name.to_owned(),
+                    view: Box::new(UnsupportedView::missing_type(
+                        self.package().name(),
+                        result.function_node,
+                    )),
+                });
+            }
+        }
         let projection = walker
             .project_function(name)
             .map_err(|failure| match failure {
@@ -760,17 +796,6 @@ impl<'p> BarePackage<'p> {
             {
                 return Err(BareSelectionFailure::FunctionParameterType {
                     position,
-                    view: Box::new(UnsupportedView::missing_type(
-                        self.package().name(),
-                        selected.clone(),
-                    )),
-                });
-            }
-            if contains_nested_population(function.result_type, world.types())
-                || world.types().runtime_type(function.result_type).is_none()
-            {
-                return Err(BareSelectionFailure::FunctionResultType {
-                    function: name.to_owned(),
                     view: Box::new(UnsupportedView::missing_type(
                         self.package().name(),
                         selected.clone(),

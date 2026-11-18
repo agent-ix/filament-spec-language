@@ -830,8 +830,85 @@ mod tests {
                 &mut result_meter,
             )
             .expect_err("the unsupported result is refused before argument admission");
-        assert_operation_refusal_without_function_detail(result_failure);
+        assert_type_refusal(result_failure, "function", "gives");
         assert_eq!(result_meter.consumed(LimitKind::WorkUnits), 0);
+    }
+
+    /// FR-945-AC-2 / FR-650: a supported checked result type does not turn an
+    /// unsupported operation at the body root into a result-type refusal.
+    #[trace("FR-945-AC-2", "FR-650-AC-6")]
+    #[test]
+    fn unsupported_body_root_operation_keeps_generic_refusal_details() {
+        let models = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+            .expect("the package selects no models");
+        let source_text = "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             function gives using v(): Set<Integer>[0, 3] pure { set[1] }\n";
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "bare-call-operation"),
+            "bare-call-operation.native",
+            source_text.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("the source unit parses");
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+        let unit = fsl_forms::build_unit(&parsed).expect("the source unit builds");
+        let selected_models = fsl_semantics::model::intake::admit_unit(
+            &unit.selections().models,
+            &models,
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        )
+        .expect("the package selects no models");
+        let declarations = PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "bare-call-operation-test".to_owned(),
+            unit,
+            selected_models,
+            Vec::new(),
+        )
+        .expect("the declarations assemble");
+        let source = fsl_package::CheckedPackage::link(
+            declarations
+                .check(CheckMode::Linked, CheckingLimits::default())
+                .expect("the set-returning function checks"),
+        );
+        let limits = fsl_package::V2ReadLimits::fixture();
+        let emit_limits = fsl_package::EmitLimits::fixture();
+        let original = fsl_package::read_evaluation_package(
+            &source,
+            fsl_semantics::library::LibraryName::new("bare-call-operation-test")
+                .expect("library identity"),
+            &models,
+            limits,
+            emit_limits,
+        )
+        .expect("source package emits and is admitted");
+        let mut rows_budget = limits.native_join_budget();
+        let rows = original
+            .emission()
+            .identity_rows(original.admitted(), &mut rows_budget)
+            .expect("identity rows join the package");
+        let mut join_budget = limits.native_join_budget();
+        let bare = BarePackage::new(original.admitted())
+            .with_supply(
+                fsl_package::BareSupply {
+                    identities: &rows,
+                    equality: None,
+                },
+                &mut join_budget,
+            )
+            .expect("the bare view admits its rows");
+        let mut meter = Meter::new(UNLIMITED);
+        let failure = bare
+            .call(
+                &QualifiedName::unqualified("gives").expect("function name"),
+                vec![Value::Boolean(true)],
+                &ObjectEnvironment::default(),
+                &mut meter,
+            )
+            .expect_err("the unsupported operation is refused before argument admission");
+        assert_operation_refusal_without_function_detail(failure);
+        assert_eq!(meter.consumed(LimitKind::WorkUnits), 0);
     }
 
     fn assert_operation_refusal_without_function_detail(failure: CallFailure) {
