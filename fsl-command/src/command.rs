@@ -1571,7 +1571,9 @@ fn run_configured(
             } else if let Some(result) = check_argv(directory, bytes)? {
                 Ok(Some(result))
             } else {
-                if let Some(result) = items::run_bytes(directory, bytes, limits, overrides, &settle)? {
+                if let Some(result) =
+                    items::run_bytes(directory, bytes, limits, overrides, &settle)?
+                {
                     Ok(Some(result))
                 } else {
                     #[cfg(feature = "quire-extraction")]
