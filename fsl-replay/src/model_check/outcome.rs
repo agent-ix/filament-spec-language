@@ -137,6 +137,14 @@ pub enum MemoryCause {
         /// The bound-limited states.
         states: u64,
     },
+    /// FR-225: the per-channel protocol message bound cut a send before the
+    /// channel's overflow policy could be explored (FR-636).
+    ChannelBoundReached {
+        /// The per-channel bound.
+        bound: MemoryBound,
+        /// The states where a send was cut.
+        states: u64,
+    },
 }
 
 /// One EN-1 run's outcome (FR-126 Outputs).

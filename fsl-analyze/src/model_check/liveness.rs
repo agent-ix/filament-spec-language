@@ -113,9 +113,9 @@ use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_foundation::IdentityLimits;
 use fsl_replay::{
     undefined_finding, AppliedReduction, ClauseIdentity, ClauseRootRefusal, CounterexampleKind,
-    IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound, MemoryCause,
-    ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep, ProofCertificate, Proviso,
-    ReachedLimit, ReductionCause, RunStats, TemporalCounterexample, UndecidedCause,
+    IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound, MemoryBoundMember,
+    MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep, ProofCertificate,
+    Proviso, ReachedLimit, ReductionCause, RunStats, TemporalCounterexample, UndecidedCause,
     UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 use fsl_semantics::check::{CaptureSite, CheckedTemporalClause, FormulaNodeId};
@@ -248,6 +248,7 @@ pub(super) fn check(
             diagnostic_fairness: None,
             bindings: &bindings,
             memory_bound: None,
+            message_bound: None,
             instance_bound: None,
             root_cancelled,
             no_initial,
@@ -366,6 +367,10 @@ pub(super) fn check_protocol<M: MemoryModel>(
             diagnostic_fairness,
             bindings: &bindings,
             memory_bound,
+            message_bound: system.channel_message_bound().map(|value| MemoryBound {
+                member: MemoryBoundMember::MaxMessages,
+                value,
+            }),
             instance_bound: options.instance_bound,
             root_cancelled,
             no_initial: simulation.initial.is_empty(),
@@ -407,6 +412,8 @@ struct Bound<'r, S: LiveSubject> {
     /// The memory bound a protocol subject runs under, which a bound-limited
     /// state reaches (ADR-025 MB-4).
     memory_bound: Option<MemoryBound>,
+    /// The per-channel occupancy bound for a protocol subject (FR-225).
+    message_bound: Option<MemoryBound>,
     /// The live-instance bound a protocol liveness run explored under.
     instance_bound: Option<InstanceBound>,
     /// The cancellation that stopped the clause identity's resolution.
@@ -471,6 +478,7 @@ fn decide_bindings<S: LiveSubject>(
         letters: bound.letters,
         bindings: bound.bindings,
         memory_bound: bound.memory_bound,
+        message_bound: bound.message_bound,
         instance_bound: bound.instance_bound,
         request,
         cancel,
@@ -843,6 +851,8 @@ enum Finding<T> {
     HorizonCut,
     /// The memory bound left a store of the state unexpanded (ADR-025 MB-3).
     BoundLimited,
+    /// A channel occupancy bound left a send of the state unexpanded.
+    MessagesBoundLimited,
     /// The live-instance bound left an enabled activation unexpanded.
     InstanceBoundLimited,
 }
@@ -1157,6 +1167,9 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
         if cut.memory {
             findings.push(Finding::BoundLimited);
         }
+        if cut.messages {
+            findings.push(Finding::MessagesBoundLimited);
+        }
         if cut.instances {
             findings.push(Finding::InstanceBoundLimited);
         }
@@ -1181,7 +1194,7 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
         }
         // ADR-025 MB-3 and ADR-027 AE-4: a boundary state with only cut
         // successors is never stutter-extended.
-        if (cut.memory || cut.instances) && expansion.successors.is_empty() {
+        if (cut.memory || cut.messages || cut.instances) && expansion.successors.is_empty() {
             return Ok(Expansion {
                 successors: Vec::new(),
                 findings,
@@ -1492,6 +1505,7 @@ struct Run<'r, S: LiveSubject> {
     letters: &'r dyn ModelLetters,
     bindings: &'r [Binding],
     memory_bound: Option<MemoryBound>,
+    message_bound: Option<MemoryBound>,
     instance_bound: Option<InstanceBound>,
     request: RunRequest,
     cancel: &'r Cancel,
@@ -1645,6 +1659,12 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 }
             }
         }
+        let message_limited: BTreeSet<StateKey> = explored
+            .iter()
+            .flat_map(|run| run.graph.states())
+            .filter(|state| state.findings.contains(&Finding::MessagesBoundLimited))
+            .map(|state| self.state_key(&state.state.model))
+            .collect::<Result<_, _>>()?;
         if let (Some(bound), false) = (self.memory_bound, limited.is_empty()) {
             return Ok(ModelCheckOutcome::Memory {
                 cause: MemoryCause::BoundReached {
@@ -1657,6 +1677,15 @@ impl<'r, S: LiveSubject> Run<'r, S> {
         if let Some(counterexample) = shortest {
             return Ok(ModelCheckOutcome::Violated {
                 counterexample,
+                stats: totals.stats(),
+            });
+        }
+        if let (Some(bound), false) = (self.message_bound, message_limited.is_empty()) {
+            return Ok(ModelCheckOutcome::Memory {
+                cause: MemoryCause::ChannelBoundReached {
+                    bound,
+                    states: widen(message_limited.len()),
+                },
                 stats: totals.stats(),
             });
         }

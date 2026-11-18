@@ -310,7 +310,20 @@ pub fn settle_protocol_check(
         certificate.max_store_buffer,
         certificate.max_messages,
     ) {
-        SubjectMemory::Sc => None,
+        SubjectMemory::Sc => certificate
+            .subject
+            .model
+            .simulation
+            .input
+            .evaluator
+            .protocol(&certificate.subject.protocol)
+            .is_some_and(|protocol| !protocol.channels.is_empty())
+            .then_some(MemoryBound {
+                member: MemoryBoundMember::MaxMessages,
+                value: certificate
+                    .max_messages
+                    .unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND),
+            }),
         SubjectMemory::Tso(tso) => Some(MemoryBound {
             member: MemoryBoundMember::MaxStoreBuffer,
             value: tso.max_store_buffer(),
@@ -517,6 +530,19 @@ fn settle<T: SubjectTransition>(
                     bound: *bound,
                     states: *states,
                 })
+            }
+            MemoryCause::ChannelBoundReached { bound, .. } => {
+                let limit = ModelCheckLimit::ProtocolMaxMessages;
+                Row::incomplete(
+                    IncompleteCause::LimitReached {
+                        limit,
+                        value: bound.value,
+                    },
+                    Some(ReachedLimit {
+                        limit,
+                        value: bound.value,
+                    }),
+                )
             }
         },
         ModelCheckOutcome::RecoveryView { predicate, .. } => {

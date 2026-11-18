@@ -370,6 +370,7 @@ fn behavior_report(
     protocol: &fsl_semantics::check::CheckedProtocol,
     record: fsl_replay::ModelCheckRecord<ProtocolTransition>,
     reported_counterexample: Option<serde_json::Value>,
+    max_messages: Option<u64>,
 ) -> crate::analyze::EngineReport {
     use fsl_replay::{
         ConformanceClosureOutput, ConformanceGlobalOutput, ConformanceObligationOutput,
@@ -619,6 +620,24 @@ fn behavior_report(
                     None
                 },
             },
+            max_messages: record
+                .memory_bound
+                .filter(|bound| bound.bound.member == fsl_replay::MemoryBoundMember::MaxMessages)
+                .map(|bound| fsl_replay::ConformanceMessageBoundOutput {
+                    value: bound.bound.value,
+                    reached: bound.reached,
+                })
+                .or_else(|| {
+                    (!protocol.channels.is_empty()).then_some(
+                        fsl_replay::ConformanceMessageBoundOutput {
+                            value: max_messages
+                                .unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND),
+                            reached: record.limit_reached.is_some_and(|limit| {
+                                limit.limit == fsl_replay::ModelCheckLimit::ProtocolMaxMessages
+                            }),
+                        },
+                    )
+                }),
             projections: Some(
                 protocol
                     .roles
@@ -649,19 +668,29 @@ fn internal_fault() -> crate::analyze::EngineReport {
 fn pending_finish_counterexample(
     subject: &ProtocolSubject<'_>,
     limits: fsl_replay::ModelCheckLimits,
+    max_messages: Option<u64>,
 ) -> Option<TemporalCounterexample<ProtocolTransition>> {
     let model = ModelSystem::new(subject.model.simulation.clone()).ok()?;
+    let message_bound =
+        max_messages.unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND);
     match SubjectMemory::of(&subject.memory, None, None) {
         SubjectMemory::Sc => {
-            let system = ProtocolSystem::new(model, subject, Sc).ok()?;
+            let system = ProtocolSystem::new(model, subject, Sc)
+                .ok()?
+                .with_channel_message_bound(message_bound);
             pending_finish_in::<Sc>(&system, limits)
         }
         SubjectMemory::Tso(memory) => {
-            let system = ProtocolSystem::new(model, subject, memory).ok()?;
+            let system = ProtocolSystem::new(model, subject, memory)
+                .ok()?
+                .with_channel_message_bound(message_bound);
             pending_finish_in::<Tso>(&system, limits)
         }
         SubjectMemory::Ra(memory) => {
-            let system = ProtocolSystem::new(model, subject, memory).ok()?;
+            let channel_bound = memory.max_messages();
+            let system = ProtocolSystem::new(model, subject, memory)
+                .ok()?
+                .with_channel_message_bound(channel_bound);
             pending_finish_in::<Ra>(&system, limits)
         }
     }
@@ -693,6 +722,8 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
     }
     let mut expanded = 0_u64;
     let mut transitions = 0_u64;
+    let mut bound_reached = false;
+    let mut counterexample = None;
     while let Some(Pending {
         initial_state,
         state,
@@ -703,16 +734,17 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
             return None;
         }
         expanded += 1;
-        let expansion = system.successors(&state).ok()?;
+        let (expansion, cut) = system.successors_bounded(&state).ok()?;
+        bound_reached |= cut.memory || cut.messages;
         if system.has_pending_exactly_once_delivery(&state)
             && expansion
                 .successors
                 .iter()
                 .any(|(transition, _)| transition.kind() == StepKind::Finish)
         {
-            return Some(TemporalCounterexample {
+            counterexample.get_or_insert(TemporalCounterexample {
                 initial_state,
-                prefix,
+                prefix: prefix.clone(),
                 over_binding: None,
                 fairness: Vec::new(),
                 kind: CounterexampleKind::Deadlock,
@@ -743,7 +775,7 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
             }
         }
     }
-    None
+    (!bound_reached).then_some(counterexample).flatten()
 }
 
 #[allow(
@@ -797,7 +829,8 @@ fn every_behavior_result(
         Ok(outcome) => outcome,
         Err(_) => return internal_fault(),
     };
-    let pending_delivery = pending_finish_counterexample(&scan_subject, form.limits);
+    let pending_delivery =
+        pending_finish_counterexample(&scan_subject, form.limits, form.max_messages);
     let outcome = match pending_delivery {
         Some(counterexample) => fsl_replay::ModelCheckOutcome::Violated {
             counterexample: Box::new(counterexample),
@@ -850,7 +883,7 @@ fn every_behavior_result(
         };
         fsl_replay::protocol_temporal_wire(counterexample, &subject, None).ok()
     });
-    behavior_report(index, protocol, record, counterexample)
+    behavior_report(index, protocol, record, counterexample, form.max_messages)
 }
 
 /// A global-conformance counterexample that can be replayed from a checked subject.
@@ -1124,6 +1157,7 @@ pub(crate) fn recording_output(
             complete: assessment.global.complete,
             cause: assessment.global.cause,
         },
+        max_messages: None,
         projections: None,
         recording: Some(fsl_replay::ConformanceRecordingIdentity {
             authority: recording_identity.authority.clone(),

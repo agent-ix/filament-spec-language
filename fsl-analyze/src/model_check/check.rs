@@ -618,6 +618,8 @@ pub fn check_model(
         chooser: None,
         memory_bound: None,
         bound_limited: BTreeSet::new(),
+        message_bound: None,
+        message_bound_limited: BTreeSet::new(),
         instance_bound: None,
         instance_limited: BTreeSet::new(),
     };
@@ -830,10 +832,22 @@ pub fn check_protocol_constrained(
     );
     let built = match memory {
         SubjectMemory::Sc => ProtocolSystem::new(model, subject, Sc).map(|system| {
+            let bound = system.has_channels().then_some(MemoryBound {
+                member: MemoryBoundMember::MaxMessages,
+                value: request
+                    .max_messages
+                    .unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND),
+            });
             protocol_run.decide(
-                &system.with_max_live_instances(live_instances),
+                &system
+                    .with_channel_message_bound(
+                        request
+                            .max_messages
+                            .unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND),
+                    )
+                    .with_max_live_instances(live_instances),
                 automaton,
-                None,
+                bound,
             )
         }),
         SubjectMemory::Tso(tso) => {
@@ -843,7 +857,13 @@ pub fn check_protocol_constrained(
             };
             ProtocolSystem::new(model, subject, tso).map(|system| {
                 protocol_run.decide(
-                    &system.with_max_live_instances(live_instances),
+                    &system
+                        .with_channel_message_bound(
+                            request
+                                .max_messages
+                                .unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND),
+                        )
+                        .with_max_live_instances(live_instances),
                     automaton,
                     Some(bound),
                 )
@@ -854,9 +874,12 @@ pub fn check_protocol_constrained(
                 member: MemoryBoundMember::MaxMessages,
                 value: ra.max_messages(),
             };
+            let channel_bound = ra.max_messages();
             ProtocolSystem::new(model, subject, ra).map(|system| {
                 protocol_run.decide(
-                    &system.with_max_live_instances(live_instances),
+                    &system
+                        .with_channel_message_bound(channel_bound)
+                        .with_max_live_instances(live_instances),
                     automaton,
                     Some(bound),
                 )
@@ -1074,6 +1097,11 @@ impl ProtocolRun<'_> {
             chooser: None,
             memory_bound: bound,
             bound_limited: BTreeSet::new(),
+            message_bound: system.channel_message_bound().map(|value| MemoryBound {
+                member: MemoryBoundMember::MaxMessages,
+                value,
+            }),
+            message_bound_limited: BTreeSet::new(),
             instance_bound: self.instance_bound,
             instance_limited: BTreeSet::new(),
         };
@@ -1263,6 +1291,8 @@ fn check_reduced(
             chooser: ample.as_ref().map(|ample| ample as &dyn Chooser<_, _>),
             memory_bound: None,
             bound_limited: BTreeSet::new(),
+            message_bound: None,
+            message_bound_limited: BTreeSet::new(),
             instance_bound: None,
             instance_limited: BTreeSet::new(),
         };
@@ -1732,6 +1762,9 @@ struct Run<'r, S: SubjectSystem> {
     /// the memory bound (ADR-025 MB-3); a model state read under several
     /// monitor states counts once.
     bound_limited: BTreeSet<StateKey>,
+    /// The protocol-channel bound and states where a send reached it.
+    message_bound: Option<MemoryBound>,
+    message_bound_limited: BTreeSet<StateKey>,
     /// The instance bound the subject's `activation on each` runs under
     /// (ADR-027 AE-4); `None` for a subject with none.
     instance_bound: Option<InstanceBound>,
@@ -1813,7 +1846,11 @@ impl<S: SubjectSystem> Run<'_, S> {
             stutter_edges: widen(self.stutter_edges),
             automaton_states: widen(self.monitor.automaton().state_count()),
             depth: widen(self.nodes.iter().map(|node| node.depth).max().unwrap_or(0)),
-            bound_limited: widen(self.bound_limited.len()),
+            bound_limited: widen(
+                self.bound_limited
+                    .union(&self.message_bound_limited)
+                    .count(),
+            ),
             instance_limited: widen(self.instance_limited.len()),
         }
     }
@@ -1942,12 +1979,35 @@ impl<S: SubjectSystem> Run<'_, S> {
                     },
                     stats: self.stats(),
                 }
+            } else if let (Some(bound), true) = (
+                self.message_bound,
+                self.memory_bound
+                    .is_none_or(|memory| memory.member != MemoryBoundMember::MaxMessages)
+                    && !self.message_bound_limited.is_empty(),
+            ) {
+                ModelCheckOutcome::Memory {
+                    cause: MemoryCause::ChannelBoundReached {
+                        bound,
+                        states: widen(self.message_bound_limited.len()),
+                    },
+                    stats: self.stats(),
+                }
             } else if let (Some(bound), true) = (self.memory_bound, !self.bound_limited.is_empty())
             {
                 ModelCheckOutcome::Memory {
                     cause: MemoryCause::BoundReached {
                         bound,
                         states: widen(self.bound_limited.len()),
+                    },
+                    stats: self.stats(),
+                }
+            } else if let (Some(bound), true) =
+                (self.message_bound, !self.message_bound_limited.is_empty())
+            {
+                ModelCheckOutcome::Memory {
+                    cause: MemoryCause::ChannelBoundReached {
+                        bound,
+                        states: widen(self.message_bound_limited.len()),
                     },
                     stats: self.stats(),
                 }
@@ -2075,6 +2135,13 @@ impl<S: SubjectSystem> Run<'_, S> {
                 // ADR-025 MB-3: a state whose only enabled steps are cut
                 // stores is a boundary state: never stutter-extended and
                 // never a deadlock.
+                if expansion.successors.is_empty() {
+                    continue;
+                }
+            }
+            if cut.messages {
+                self.message_bound_limited
+                    .insert(self.nodes[at].state_key.clone());
                 if expansion.successors.is_empty() {
                     continue;
                 }

@@ -2505,6 +2505,7 @@ mod tests {
                 complete: true,
                 cause: None,
             },
+            max_messages: None,
             projections: Some(vec![fsl_replay::ConformanceProjectionOutput {
                 role: "Buyer".to_owned(),
                 label: "proved".to_owned(),
