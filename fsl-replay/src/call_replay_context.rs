@@ -14,11 +14,11 @@ use fsl_foundation::{BackendId, RequestIndex, SourceIdentity};
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
-use crate::call_requirements::{CallRequirement, CallRequirements, associate, package_name_of};
+use crate::call_requirements::{associate, package_name_of, CallRequirement, CallRequirements};
 use crate::limits::CallerLimits;
 use crate::proof_result::{PluginReplayContext, PluginReplayRefusal};
 use crate::request::ReplayRequestWire;
-use crate::spine::{Call, CallOutcome, DependencyInput, RunRefusal, run_reading};
+use crate::spine::{run_reading, Call, CallOutcome, DependencyInput, RunRefusal};
 use crate::witness::CanonicalAssignment;
 
 /// The plugin replay context of one run (FR-404): it builds a replay request
@@ -197,10 +197,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::ReplayLimits;
     use crate::execute::callable_parameter_keys;
-    use crate::spine::{self, ParseRequest, default_accounting};
+    use crate::spine::{self, default_accounting, ParseRequest};
     use crate::witness::WitnessValue;
+    use crate::ReplayLimits;
     use crate::{TerminalRecord, TerminalValue};
     use fsl_foundation::SettingLimits;
     use ix_trace_rs::trace;
