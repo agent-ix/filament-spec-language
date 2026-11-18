@@ -2135,21 +2135,16 @@ fn an_undecided_protocol_capture_is_a_finding_on_each() {
 
 }
 
-/// FR-882-AC-2 (TC-2505): an undecided protocol capture under `on origin`
-/// is an undefined value at the instance's first state, settled as a
-/// refutation by the undefined rule; the system is built and reports the
-/// finding instead of refusing to build.
+/// FR-882-AC-2 (TC-2505): a choice guard that calls a Kernel-checked
+/// function whose `mod` divisor is zero produces an undefined finding at the
+/// initial state under both `on origin` and `on each`.
 #[trace("TC-2505", "FR-882-AC-2")]
 #[test]
-#[ignore = "QSL-1903: held out of the default gate per planner; explicit run currently passes"]
-fn an_undecided_initial_capture_is_a_refutation_on_origin() {
+fn an_undecided_initial_choice_guard_is_a_finding_on_origin_and_each() {
     let kernel_function = "function q using v(x: Integer): Integer pure { 6 mod x }\n";
-    let run = format!(
-        "sequence Main {{ choice Pick by w visible (q(c) = 0) {{ \
-         case yes when {{ q(c) = 0 }} sequence Zero {{ {} }} \
-         case no when {{ not (q(c) = 0) }} sequence Other {{ }} }} }}",
-        attempt("T", "setTwo", "TwoPre, TwoPost", "t", "true"),
-    );
+    let run = "sequence Main { choice Pick by w visible (q(c) = 0) { \
+               case yes when { q(c) = 0 } sequence Zero { } \
+               case no when { not (q(c) = 0) } sequence Other { } } }";
     let protocol = |activation: &str| {
         format!(
             "{}{kernel_function}protocol R using p over (k: M::Cell) {activation} {{ \
