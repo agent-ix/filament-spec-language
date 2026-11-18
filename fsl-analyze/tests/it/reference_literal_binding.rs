@@ -63,8 +63,8 @@ fn guarded_protocol(key: &str) -> String {
          send Go via ch as (go: Pick) {{ true }};\n\
          receive Got via ch of Go as (got: Pick) {{ true }};\n\
          choice Decide by S visible (got.target) {{ \
-         case yes when {{ got.target = M::Counter#\"{key}\" }} sequence Yes {{ }} \
-         case no when {{ not (got.target = M::Counter#\"{key}\") }} sequence No {{ }} }} }}\n\
+         case yes when {{ true or got.target = M::Counter#\"{key}\" }} sequence Yes {{ }} \
+         case no when {{ false }} sequence No {{ }} }} }}\n\
          finish Done as (d: Boolean) {{ true }};\n}}\n"
     )
 }
