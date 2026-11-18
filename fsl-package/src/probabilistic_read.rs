@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FSL FR-740: the random parameters and workloads of an admitted package,
-//! read from its `probabilistic` nodes.
+//! FSL FR-740: the random parameters, workloads and delays of an admitted
+//! package, read from its `probabilistic` nodes.
 //!
 //! The IR's typed read ([`CheckedPackageV2::random_parameters`],
 //! [`CheckedPackageV2::workloads`]) is keyed by a model node and an
@@ -15,8 +15,8 @@ use filament_contract_model::{
 };
 use filament_exact::{Integer, Rational};
 use fsl_semantics::check::{
-    PackageLiteral, PackageProbabilistic, PackageRandomParameter, PackageSupport, PackageWeight,
-    PackageWorkload,
+    PackageDelay, PackageDelayFamily, PackageLiteral, PackageProbabilistic, PackageRandomParameter,
+    PackageSupport, PackageWeight, PackageWorkload,
 };
 
 use crate::checked_v2::wire_graph;
@@ -90,7 +90,7 @@ fn literal(term: &CheckedTerm) -> Option<PackageLiteral> {
 }
 
 impl BarePackage<'_> {
-    /// FSL FR-740: every `random_parameter` and `workload` node of the
+    /// FSL FR-740: every `random_parameter`, `workload` and `delay_distribution` node of the
     /// package, in node order, with the model nodes as structural keys.
     ///
     /// # Errors
@@ -169,8 +169,42 @@ fn read(package: &CheckedPackageV2) -> Result<PackageProbabilistic, Probabilisti
                     weights,
                 });
             }
+            CheckedNodeKind::Probabilistic(ProbabilisticForm::DelayDistribution) => {
+                read.delays.push(PackageDelay {
+                    declaring: bound(body, 0)
+                        .and_then(key)
+                        .ok_or(fault("delay-declaring"))?,
+                    operation: bound(body, 1)
+                        .and_then(text)
+                        .ok_or(fault("delay-operation"))?
+                        .to_owned(),
+                    family: delay_family(body).ok_or(fault("delay-family"))?,
+                });
+            }
             _ => {}
         }
     }
     Ok(read)
+}
+
+/// The family of a `delay_distribution` body and its parameters.
+fn delay_family(body: &CheckedTerm) -> Option<PackageDelayFamily> {
+    let parameters = bound(body, 3)?;
+    Some(match text(bound(body, 2)?)? {
+        "uniform" => PackageDelayFamily::Uniform,
+        "uniform_interval" => PackageDelayFamily::UniformInterval {
+            lower: rational(bound(parameters, 0)?)?,
+            upper: rational(bound(parameters, 1)?)?,
+        },
+        "exponential" => PackageDelayFamily::Exponential {
+            rate: rational(bound(parameters, 0)?)?,
+        },
+        "discrete" => PackageDelayFamily::Discrete(
+            members(parameters)?
+                .iter()
+                .map(|row| Some((rational(bound(row, 0)?)?, rational(bound(row, 1)?)?)))
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        _ => return None,
+    })
 }

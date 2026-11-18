@@ -183,8 +183,9 @@ pub use probabilistic::{
     Reward, SupportValue, WeightOwner, Workload,
 };
 pub use probabilistic::{
-    PackageLiteral, PackageProbabilistic, PackageProbabilisticRefusal, PackageRandomParameter,
-    PackageSupport, PackageWeight, PackageWorkload,
+    PackageDelay, PackageDelayFamily, PackageLiteral, PackageProbabilistic,
+    PackageProbabilisticRefusal, PackageRandomParameter, PackageSupport, PackageWeight,
+    PackageWorkload,
 };
 pub use state_model::StateModelRefusal;
 pub use sum_case::{mint_union_member_key, ExhaustivenessObligation, SumCaseCause};

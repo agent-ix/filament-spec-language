@@ -601,6 +601,13 @@ fn assert_reads_back_equal(
         checked.random_parameters().len()
     );
     assert_eq!(read.workloads().len(), checked.workloads().len());
+    assert_eq!(read.delays().len(), checked.delays().len());
+    for expected in checked.delays() {
+        let found = read
+            .delay(expected.operation().key())
+            .unwrap_or_else(|| panic!("{} is read back", expected.operation().name()));
+        assert_eq!(found, expected.distribution());
+    }
     for expected in checked.random_parameters() {
         let found = read
             .random_parameter(expected.operation().key(), expected.parameter())
@@ -955,4 +962,117 @@ fn the_reader_refuses_a_workload_that_misnames_an_operation() {
         .expect("a fresh evidence key");
     let read = read_v2(&jcs(&wire), library(), V2ReadLimits::fixture(), &evidence);
     assert!(matches!(read, Read::Refused(_)), "{read:?}");
+}
+
+/// The ConfigVersion unit with `time Config dense unit ms` and the delay
+/// declaration `delay`, over the domain package that declares `ms`; with the
+/// document.
+pub(super) fn delay_package(delay: &str) -> (Vec<u8>, CheckedPackage) {
+    let document = super::timed_source::package_units_document();
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         profile t = \"filament.temporal.complete/v1\";\n\
+         model Config = {:?};\n\
+         dimension Time;\nunit ms : Time = rational(1, 1);\n\
+         time Config dense unit ms;\n\
+         {delay}\n",
+        config_version_unit::PACKAGE_IDENTITY,
+    );
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the delay checks: {refusals:?}"));
+    (document, CheckedPackage::link(graph))
+}
+
+const DELAYS: [(&str, &str); 4] = [
+    ("uniform", "uniform"),
+    ("uniform_interval", "uniform[1 ms, 3 ms]"),
+    ("exponential", "exponential(rational(3, 2))"),
+    ("discrete", "discrete { 3 ms: 1, 1 ms: 9 }"),
+];
+
+/// TC-2062 (FR-740-AC-3), FSpec FR-640-AC-2: each family of a checked delay
+/// is emitted as one `probabilistic`/`delay_distribution` node with its
+/// family, parameters and one `declaration` occurrence at the declaration's
+/// label span; the strict reader admits the package and the typed read gives
+/// the declaring type, the operation and the family.
+#[trace("TC-2062", "FR-740-AC-3")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-2")]
+#[test]
+fn delay_round_trips() {
+    for (family, written) in DELAYS {
+        let (document, package) =
+            delay_package(&format!("delay ConfigVersion::attemptUpdate ~ {written};"));
+        let [checked] = package.graph().probabilistic_model().delays() else {
+            panic!("one checked delay");
+        };
+        let (wire, read) = emit_and_read(&package, &document);
+        let (admitted, source_map) = admitted_of(read);
+        let [node] = super::owners::node_where(&wire, "probabilistic", "delay_distribution")[..]
+        else {
+            panic!("{family}: one delay_distribution node");
+        };
+        assert_eq!(
+            node["occurrences"],
+            json!([{"role": "declaration", "ordinal": 0}])
+        );
+        let body = node["body"].to_string();
+        assert!(body.contains("attemptUpdate"), "{body}");
+        assert!(body.contains(&format!("\"{family}\"")), "{body}");
+        let id: CheckedNodeId = serde_json::from_value(node["node_id"].clone()).expect("an id");
+        let region = package
+            .graph()
+            .region(&checked.declaration_location())
+            .expect("the declaration has a region");
+        assert_eq!(
+            declaration_region(&source_map, &id),
+            (region.start(), region.end())
+        );
+        let bare = crate::BarePackage::new(&admitted);
+        let read = bare.probabilistic().expect("the nodes read");
+        let [delay] = &read.delays[..] else {
+            panic!("{family}: one delay read");
+        };
+        assert_eq!(delay.operation, checked.operation().name());
+    }
+}
+
+/// FSL FR-740: each delay family reads back as S3's record, with the times
+/// and weights exact and the discrete delays in declared order.
+#[trace("TC-2062", "FR-740-AC-3")]
+#[test]
+fn a_delay_reads_back_as_the_s3_record() {
+    for (_, written) in DELAYS {
+        let (document, package) =
+            delay_package(&format!("delay ConfigVersion::attemptUpdate ~ {written};"));
+        let unit = package.graph().time_sources()[0].unit_node.clone();
+        let units = BTreeMap::from([("ms".to_owned(), filament_exact::UnitId::declared(unit))]);
+        assert_reads_back_equal(&package, &document, &units);
+    }
+}
+
+/// FSpec FR-640-AC-3: a changed delay parameter changes the node identity.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+fn changing_a_delay_parameter_changes_the_node_identity() {
+    let delay_id = |written: &str| {
+        let (document, package) =
+            delay_package(&format!("delay ConfigVersion::attemptUpdate ~ {written};"));
+        let (wire, _) = emit_and_read(&package, &document);
+        let [node] = super::owners::node_where(&wire, "probabilistic", "delay_distribution")[..]
+        else {
+            panic!("one delay_distribution node");
+        };
+        node["node_id"].clone()
+    };
+    let base = delay_id("discrete { 3 ms: 1, 1 ms: 9 }");
+    assert_ne!(base, delay_id("discrete { 3 ms: 1, 1 ms: 8 }"));
+    assert_ne!(base, delay_id("discrete { 3 ms: 1, 2 ms: 9 }"));
+    assert_ne!(
+        delay_id("exponential(rational(3, 2))"),
+        delay_id("exponential(2)")
+    );
 }
