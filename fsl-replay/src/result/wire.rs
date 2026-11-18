@@ -43,7 +43,10 @@ use filament_semantic_value::catalog::Category;
 
 mod replay;
 mod value;
-use value::{Keys, decode_element, encode_element, reference_of, validate_element_shape};
+use value::{
+    Keys, decode_element, encode_element, reference_of, validate_boolean_element_shape,
+    validate_element_shape,
+};
 
 /// Why a [`DisagreementCause`] did not encode or read.
 #[derive(Debug, thiserror::Error)]
@@ -916,9 +919,8 @@ impl RecordWire<Box<RawValue>> {
                 }
                 let value = quire_canonical::read(self.deciding_element.get().as_bytes(), u64::MAX)
                     .map_err(|_| CauseCodecError::Shape("deciding_element"))?;
-                if !matches!(value.root().node(), Node::Bool(_)) {
-                    return Err(CauseCodecError::Shape("deciding_element"));
-                }
+                validate_boolean_element_shape(value.root())
+                    .map_err(|_| CauseCodecError::Shape("deciding_element"))?;
                 for operand in operands {
                     let value = quire_canonical::read(operand.get().as_bytes(), u64::MAX)
                         .map_err(|_| CauseCodecError::Shape("operands"))?;
