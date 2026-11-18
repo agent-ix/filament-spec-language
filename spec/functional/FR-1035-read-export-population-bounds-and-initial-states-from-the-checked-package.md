@@ -31,17 +31,23 @@ population's authored bound to the mapper.
   declare none. The FR-610 identity rows carry `{name, symmetric}` only and
   are not read for bounds. A population that no `bound` names exports with
   no `Cardinality` (TLA+) or `length` (Lean) conjunct.
-- The checked package SHALL expose, for each population of its selected
-  model population catalog, that population's authored bound, or its
-  absence. The bound is found by the population's model root and population
-  identity, as the catalog names them, and it carries the maximum and the
-  source region of the bound's `[N]`. It is not found by the declaring
-  unit's model alias. Today the catalog entry exposes only the population's
-  identity and members, and `CheckedGraph::population_bounds` lists the
-  unit's `bound` declarations by label, alias, population and maximum with
-  no join to a catalog entry and no region. The join and the region are this
-  requirement's code, and the `fsl:` comment of the conjunct's `TypeOK`
-  definition names that region.
+- The checked package SHALL expose each selected population's authored
+  bound through
+  `CheckedGraph::population_bound(&self, root: &CheckedNodeId, entry:
+  &CheckedModelPopulation<'_>) -> Option<&PopulationBound>`. `root` is the
+  selected model's root, as `CheckedSelectedModelPopulations::root` gives
+  it, and `entry` is one of that model's catalog populations. The key is
+  that root and the entry's identity, never the declaring unit's model
+  alias, so two units that alias one model differently find one bound.
+- `PopulationBound` SHALL carry `label: String`, the `bound` declaration's
+  label; `maximum: u64`, the inclusive maximum `N`; and `region:
+  SourceRegion`, the region of the declaration's `[N]`. The accessor
+  returns `None` exactly when no `bound` names the population. The
+  population is then unbounded, and its exported variable carries no
+  `Cardinality` or `length` conjunct.
+- The `fsl:` comment of the `TypeOK` (TLA+) or `WF` (Lean) definition SHALL
+  name the `[N]` region of each bound it states, as FSpec FR-814 spells a
+  region.
 - The bound is read the same way whether or not a reachability walks the
   population. FR-380 emits the `bounded_domain`/`model_population` node
   only for a walked bound, so the mapper never infers a bound from the
@@ -54,7 +60,7 @@ population's authored bound to the mapper.
   entry, or the implicit `mode M when { true }`, with `M` its first mode. A
   state model's `Init` SHALL be its well-typedness, `Init == TypeOK` and
   `def Init (s : State) : Prop := WF s`. A `constraint` clause (FR-158),
-  such as the spine model's `Low`, and an invariant are never read into
+  such as `Small`, and an invariant, such as `Low`, are never read into
   `Init`.
 
 ## Acceptance Criteria
@@ -62,7 +68,9 @@ population's authored bound to the mapper.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-1035-AC-1 | The spine unit with `bound HistoryBound on Config::config_history [8]` and no reachability exports to TLA+ with `Cardinality(DOMAIN v_` and `) <= 8` in `TypeOK`. The same unit without the `bound` has no `Cardinality` in its text. | Test (TC-3003) |
-| FR-1035-AC-2 | The spine unit with the invariant `Low` and no `initial` exports `Init == TypeOK`, exit `0`. `Braking` with no `initial` exports an `Init` naming the mode `Moving`. | Test (TC-3003) |
+| FR-1035-AC-2 | The spine unit with the invariant `Low` and no `initial` exports `Init == TypeOK`, exit `0`. With `constraint Small using v on Config::ConfigVersion at current { self.versionNumber <= 3 }` added, `Init` holds no `<= 3`. `Braking` with no `initial` exports an `Init` naming the mode `Moving`. | Test (TC-3003) |
+| FR-1035-AC-3 | For the spine unit without a `bound`, `CheckedGraph::population_bound` returns `None` for the `config_history` catalog entry under its model root, and the exported `TypeOK` constrains that population by no `Cardinality`. With `bound HistoryBound on Config::config_history [8]`, it returns `maximum` 8, label `HistoryBound` and `region` the bytes of `[8]`. | Test (TC-3003) |
+| FR-1035-AC-4 | With that bound, the `fsl:` comment preceding `TypeOK` names the `[8]` region as `<authority>/<identity>:<start>-<end>`, where `start` and `end` are the offsets of `[8]` in the unit. | Test (TC-3003) |
 
 ## Dependencies
 

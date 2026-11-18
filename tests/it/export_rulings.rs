@@ -265,3 +265,31 @@ fn init_states_the_declared_initial_constraints() {
         .expect("an Init definition");
     assert!(init.contains("Moving"), "{init}");
 }
+
+#[test]
+#[trace("TC-3003", "FR-1035-AC-3")]
+#[trace("TC-3003", "FR-1035-AC-4")]
+#[ignore = "QSL-1979: CheckedGraph::population_bound and the bound's [N] region are not implemented yet"]
+fn the_type_ok_comment_names_the_bound_region() {
+    let low =
+        "invariant Low using v on Config::ConfigVersion at current { self.versionNumber >= 0 }\n";
+    let unbounded = format!("{SPINE_HEADER}{low}");
+    let (_, value) = export(&unbounded, true, tla(json!(["Low"])));
+    assert!(!text(&value).contains("Cardinality"), "{value}");
+    let bounded = format!("{SPINE_HEADER}bound HistoryBound on Config::config_history [8]\n{low}");
+    let start = bounded.find("[8]").expect("the bound's [N]");
+    let region = format!("agent-ix/test:w53:unit.native:{start}-{}", start + 3);
+    let (exit, value) = export(&bounded, true, tla(json!(["Low"])));
+    assert_eq!(exit, 0, "{value}");
+    let lines: Vec<&str> = text(&value).lines().collect();
+    let type_ok = lines
+        .iter()
+        .position(|line| line.starts_with("TypeOK =="))
+        .expect("a TypeOK definition");
+    let comment = lines[..type_ok]
+        .iter()
+        .rev()
+        .find(|line| line.starts_with("\\* fsl: "))
+        .expect("the TypeOK comment");
+    assert!(comment.contains(&region), "{comment} names {region}");
+}
