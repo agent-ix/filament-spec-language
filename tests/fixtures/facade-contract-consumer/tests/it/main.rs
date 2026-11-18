@@ -245,6 +245,13 @@ mod code_generation {
         assert_eq!(site.site.frame_operation.to_string(), "M::Widget::touch");
         assert!(!format!("{:?}", site.site.obligation_identity()).is_empty());
     }
+
+    #[test]
+    #[ignore = "QSL-1109"]
+    #[trace("TC-2575", "FR-911-AC-2")]
+    fn cf_cg_04_01_closed_form_check_exposes_the_checked_verdict() {
+        panic!("pending QSL-1109: CF-CG-04 check_closed_form consumer contract");
+    }
 }
 
 mod ir {
@@ -321,6 +328,13 @@ schedulable CtlFp on Ctl under fixed_priority;\n";
         assert_eq!(root.occurrence().origin().role().as_str(), "claim");
         assert_eq!(root.occurrence().origin().ordinal(), 0);
         assert!(!format!("{:?}", root.occurrence()).is_empty());
+    }
+
+    #[test]
+    #[ignore = "QSL-1109"]
+    #[trace("TC-2575", "FR-911-AC-2")]
+    fn cf_ir_04_01_schedulability_root_exposes_obligation_identity() {
+        panic!("pending QSL-1109: CF-IR-04 obligation_identity consumer contract");
     }
 
     #[test]
@@ -914,5 +928,23 @@ temporal T using t over (r: Reading) clock \"positions\" on origin { eventually[
         assert!(!root.emission().package().bytes().is_empty());
         assert!(!format!("{:?}", root.plan()).is_empty());
         assert!(!format!("{:?}", root.checked_unit()).is_empty());
+    }
+
+    #[test]
+    #[ignore = "QSL-1867"]
+    #[trace("TC-2575", "FR-911-AC-2")]
+    fn cf_rt_02_01_admitted_progress_view_exposes_plan_authority() {
+        panic!("pending QSL-1867: CF-RT-02 admit_progress_view consumer contract");
+    }
+}
+
+mod observation {
+    use super::*;
+
+    #[test]
+    #[ignore = "OBS-1"]
+    #[trace("TC-2575", "FR-911-AC-2")]
+    fn cf_ob_01_01_checked_subject_kinds_expose_domain_declarations() {
+        panic!("pending OBS-1: CF-OB-01 subject_kinds consumer contract");
     }
 }
