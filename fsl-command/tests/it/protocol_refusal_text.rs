@@ -6,8 +6,8 @@ use std::path::Path;
 
 use filament_exact::Cancel;
 use fsl_command::command;
-use fsl_inspect::{RenderForm, RenderSources, render_outcome};
-use fsl_replay::{Operation, RenderLimits, spine::CompileRefusal};
+use fsl_inspect::{render_outcome, RenderForm, RenderSources};
+use fsl_replay::{spine::CompileRefusal, Operation, RenderLimits};
 use fsl_semantics::check::{CheckCause, ProtocolAnchorCause};
 use ix_trace_rs::trace;
 use serde_json::json;
@@ -28,8 +28,8 @@ const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
       finish End as (outcome: Boolean) { true };\n\
     }\n";
 
-fn request(directory: &Path) -> std::path::PathBuf {
-    std::fs::write(directory.join("unit.native"), UNIT).unwrap();
+fn request(directory: &Path, unit: &str) -> std::path::PathBuf {
+    std::fs::write(directory.join("unit.native"), unit).unwrap();
     std::fs::write(directory.join("model.json"), MODEL).unwrap();
     let path = directory.join("compile.json");
     let request = json!({"format": "native-compile/1", "request": {
@@ -48,7 +48,7 @@ fn request(directory: &Path) -> std::path::PathBuf {
 #[test]
 fn a_protocol_slot_refusal_renders_its_declared_subject_and_location() {
     let directory = tempfile::tempdir().unwrap();
-    let path = request(directory.path());
+    let path = request(directory.path(), UNIT);
     let Err(error) = command::compile_outcome(&path) else {
         panic!("the guard reads model state");
     };
@@ -89,4 +89,114 @@ fn a_protocol_slot_refusal_renders_its_declared_subject_and_location() {
         rendered.contains(&format!("offered issuer/offered:unit:{start}-{end}")),
         "the rendered locus is the read at {start}..{end}: {rendered}"
     );
+}
+
+/// FR-884-AC-3: a decision refusal names its typed subject and locates the
+/// exact source span selected from that cause.
+#[trace("TC-2508", "FR-884-AC-3", "FR-865-AC-5")]
+#[test]
+fn a_wrong_observation_refusal_renders_its_decision_and_read_location() {
+    let unit = UNIT
+        .replace(
+            "role R on M::Widget;",
+            "role R on M::Widget; role S on M::Widget; \
+             channel C from R to S carries Boolean ordering unordered delivery unknown \
+             capacity 2 overflow block;",
+        )
+        .replace(
+            "event Tick by R as (tick: Boolean) { true };",
+            "send Tx via C as (tx: Boolean) { true }; \
+             receive Rx via C of Tx as (rx: Boolean) { true };",
+        )
+        .replace("input.code > 0", "rx")
+        .replace("input.code <= 0", "not rx");
+    let directory = tempfile::tempdir().unwrap();
+    let path = request(directory.path(), &unit);
+    let Err(error) = command::compile_outcome(&path) else {
+        panic!("the decision reads an unlisted fact of another role");
+    };
+    let command::RunCause::Spine(failure) = &error.cause else {
+        panic!("a compiler check refusal: {:?}", error.cause);
+    };
+    let CompileRefusal::Check { refusals, region } = &failure.refusal else {
+        panic!("a check refusal: {:?}", failure.refusal);
+    };
+    assert!(
+        refusals.iter().any(|refusal| matches!(
+            &refusal.cause,
+            CheckCause::ProtocolAnchor(cause)
+                if matches!(cause.as_ref(), ProtocolAnchorCause::WrongObservation {
+                    node, owner, binder, ..
+                } if node == "Pick" && owner == "R" && binder == "rx")
+        )),
+        "{refusals:?}"
+    );
+    let start = unit.find("when { rx }").expect("the refused read") as u64 + "when { ".len() as u64;
+    let end = start + "rx".len() as u64;
+    let region = region.as_ref().expect("the refusal has a subject region");
+    assert_eq!((region.start(), region.end()), (start, end));
+    let rendered = render_refusal(&error);
+    assert!(rendered.contains("`Pick` reads `rx`"), "{rendered}");
+    assert!(
+        rendered.contains(&format!("offered issuer/offered:unit:{start}-{end}")),
+        "the rendered locus is the read at {start}..{end}: {rendered}"
+    );
+}
+
+/// FR-884-AC-3: an undeclared owner refusal names and locates that owner.
+#[trace("TC-2508", "FR-884-AC-3", "FR-865-AC-5")]
+#[test]
+fn an_undeclared_owner_refusal_renders_its_name_and_location() {
+    let unit = UNIT
+        .replace("by R visible ()", "by Absent visible ()")
+        .replace("input.code > 0", "true")
+        .replace("input.code <= 0", "false");
+    let directory = tempfile::tempdir().unwrap();
+    let path = request(directory.path(), &unit);
+    let Err(error) = command::compile_outcome(&path) else {
+        panic!("the choice names no declared role");
+    };
+    let command::RunCause::Spine(failure) = &error.cause else {
+        panic!("a compiler check refusal: {:?}", error.cause);
+    };
+    let CompileRefusal::Check { refusals, region } = &failure.refusal else {
+        panic!("a check refusal: {:?}", failure.refusal);
+    };
+    assert!(
+        refusals.iter().any(|refusal| matches!(
+            &refusal.cause,
+            CheckCause::ProtocolAnchor(cause)
+                if matches!(cause.as_ref(), ProtocolAnchorCause::NodeRole { node, name, .. }
+                    if node == "Pick" && name == "Absent")
+        )),
+        "{refusals:?}"
+    );
+    let start = unit.find("Absent").expect("the undeclared owner") as u64;
+    let end = start + "Absent".len() as u64;
+    let region = region.as_ref().expect("the refusal has a subject region");
+    assert_eq!((region.start(), region.end()), (start, end));
+    let rendered = render_refusal(&error);
+    assert!(
+        rendered.contains("`Pick` names `Absent`, which is no role of the protocol"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains(&format!("offered issuer/offered:unit:{start}-{end}")),
+        "the rendered locus is the owner at {start}..{end}: {rendered}"
+    );
+}
+
+fn render_refusal(error: &command::RunError) -> String {
+    let document = error.outcome_document(Operation::Package);
+    render_outcome(
+        &document,
+        RenderForm::Text,
+        &RenderSources::from_sources(error.sources().as_slice().to_vec()),
+        RenderLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("the refusal renders")
+    .value()
+    .as_str()
+    .to_owned()
 }
