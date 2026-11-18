@@ -410,9 +410,9 @@ pub use ir::{
     EqualityUnitIdentityFact, EqualityUnitOperandRole, EqualityUnitTypeFact, Node, NodeId, Slot,
 };
 
+pub use assemble::model_operation_table;
 #[cfg(any(test, feature = "test-support"))]
 pub use assemble::model_type_environment;
-pub use assemble::model_operation_table;
 pub use assemble::{
     AdmittedImport, AssemblyCause, AssemblyError, AssemblyLimits, AssemblyRefusal, AssemblyRun,
     ClockReadingDeclaration, ClockSite, ClockSlot, ClockTypePosition, ClockUse,
