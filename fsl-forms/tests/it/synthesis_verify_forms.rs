@@ -101,10 +101,14 @@ fn pick_builds_a_synthesis_form() {
     let form =
         synthesis_form(PICK).unwrap_or_else(|refusal| panic!("S2 builds `synthesis`: {refusal}"));
     assert_eq!(form.name.name, "Pick");
+    assert!(form.name.span.start < form.name.span.end);
     assert_eq!(form.grammar.name, "Digit");
+    assert!(form.grammar.span.start < form.grammar.span.end);
     assert_eq!(form.domain.name, "Digit");
+    assert!(form.domain.span.start < form.domain.span.end);
     assert!(form.objective.is_none());
     assert!(form.satisfies_span.start < form.satisfies_span.end);
+    assert!(!form.satisfies.spans.is_empty());
     assert!(format!("{:?}", form.satisfies.expression).contains("Multiply"));
 }
 
@@ -120,6 +124,7 @@ fn pick_with_minimize_builds_a_synthesis_form_holding_its_objective() {
     assert_eq!(objective.direction, SynthesisDirectionForm::Minimize);
     assert!(format!("{:?}", objective.expression.expression).contains("Pick"));
     assert!(objective.span.start < objective.span.end);
+    assert!(!objective.expression.spans.is_empty());
 }
 
 /// FR-754-AC-1: `maximize Pick` parses and its objective direction is retained.
