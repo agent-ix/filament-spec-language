@@ -217,13 +217,13 @@ fn an_inductive_enclosure_certificate_is_checked_in_the_core() {
 
 // ---- FR-755: planner ---------------------------------------------------
 
-/// FR-755-AC-1/AC-2: minimizing length to reach `length >= 1` gives an
-/// `optimal` one-step plan with an accepted `potential` certificate; plan
-/// lengths `Int[0, 0]` make the goal `infeasible` with a closure certificate.
+/// FR-1010-AC-3 and FSpec FR-805-AC-6: minimizing length to reach
+/// `length >= 1` gives an `optimal` one-step plan whose objective value is
+/// `{"type": "integer", "value": "1"}`; plan lengths `Int[0, 0]` make the goal `infeasible`
+/// with a closure certificate and every no-plan member present and `null`.
 #[test]
-#[trace("TC-2105", "FR-755-AC-1")]
-#[trace("TC-2105", "FR-755-AC-2")]
-#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-1")]
+#[trace("TC-2860", "FR-1010-AC-3")]
+#[trace("FSpec-TC-1955", "FSpec-FR-805-AC-6")]
 #[ignore = "QSL-1978: planner and optimizer not implemented yet"]
 fn the_planner_returns_optimal_and_infeasible_with_certificates() {
     let unit = |lengths: &str| {
@@ -244,7 +244,11 @@ fn the_planner_returns_optimal_and_infeasible_with_certificates() {
     );
     let result = &value["synthesis"];
     assert_eq!(result["status"], "optimal", "{value}");
-    assert_eq!(result["objective"], 1, "{value}");
+    assert_eq!(
+        result["objective"]["value"],
+        json!({"type": "integer", "value": "1"}),
+        "{value}"
+    );
     assert_eq!(result["certificate"]["type"], "potential", "{value}");
     assert_eq!(result["certification"], "certified", "{value}");
     let (_, value) = run(
@@ -261,6 +265,15 @@ fn the_planner_returns_optimal_and_infeasible_with_certificates() {
         value["synthesis"]["certificate"]["type"], "closure",
         "{value}"
     );
+    let infeasible = &value["synthesis"];
+    for member in ["plan", "replay", "bound"] {
+        assert!(
+            infeasible.get(member).is_some_and(Value::is_null),
+            "{member}: {value}"
+        );
+    }
+    assert!(infeasible["objective"]["value"].is_null(), "{value}");
+    assert_eq!(infeasible["objective"]["expression"], "length", "{value}");
 }
 
 // ---- FR-756: TLA+ and Lean export --------------------------------------
@@ -809,18 +822,21 @@ fn the_planner_keeps_plans_within_policy() {
 fn the_planner_minimizes_a_per_step_cost_sum() {
     let value = reach("minimize Reach.steps.sum(s => 2)", json!([]));
     assert_eq!(value["synthesis"]["status"], "optimal", "{value}");
-    assert_eq!(value["synthesis"]["objective"], 2, "{value}");
+    assert_eq!(
+        value["synthesis"]["objective"]["value"],
+        json!({"type": "integer", "value": "2"}),
+        "{value}"
+    );
     assert_eq!(
         value["synthesis"]["certificate"]["type"], "potential",
         "{value}"
     );
 }
 
-/// FSpec FR-650-AC-3 and AC-5: plan lengths admitting no goal give
-/// `infeasible`; a run stopped by its work limit is `incomplete` naming it.
+/// FSpec FR-650-AC-3: plan lengths admitting no goal give `infeasible`; a
+/// run stopped by its work limit is `incomplete` naming it.
 #[test]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-3")]
-#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-5")]
 #[ignore = "QSL-1978: planner infeasibility and work limits not implemented yet"]
 fn the_planner_reports_infeasible_and_incomplete() {
     let unit = format!(
@@ -851,29 +867,35 @@ fn the_planner_reports_infeasible_and_incomplete() {
     assert_eq!(value["synthesis"]["status"], "incomplete", "{value}");
 }
 
-/// FSpec FR-650-AC-6: a supplied plan with a disabled invocation is never
-/// reported; replaying it is a method failure naming that step.
+/// FR-755-AC-4 and FSpec FR-650-AC-7: the planner's test seams are library
+/// parameters, never request members, so a `synthesis` member naming one
+/// refuses `unknown-member` at its `/synthesis` pointer before any search.
+/// The replay failure itself runs through the plan substitution seam in
+/// `plan_export_surface.rs`.
 #[test]
-#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-6")]
-#[ignore = "QSL-1978: native replay of planner plans not implemented yet"]
-fn a_plan_with_a_disabled_invocation_is_a_method_failure() {
+#[trace("TC-2105", "FR-755-AC-4")]
+#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-7")]
+#[ignore = "QSL-1978: the closed synthesis member list is not implemented yet"]
+fn a_test_seam_named_on_the_wire_is_an_unknown_member() {
     let unit = format!(
         "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
          synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
          satisfies {{ Reach.length >= 1 }};\n"
     );
-    let (_, value) = run(
+    let (exit, value) = run(
         &unit,
         true,
         (
             "synthesis",
             json!({"declaration": "Reach",
         "initial": "spine-snapshot.json",
-        "replay_plan": [{"operation": "noSuchOperation"}]}),
+        "replay_plan": [{"operation": "double"}]}),
         ),
     );
-    refusal_names(&value, "method-failure");
-    refusal_names(&value, "noSuchOperation");
+    assert_eq!(exit, 20, "{value}");
+    refusal_names(&value, "unknown-member");
+    refusal_names(&value, "/synthesis/replay_plan");
+    assert!(value["synthesis"].get("status").is_none(), "{value}");
 }
 
 /// FSpec FR-651-AC-2, AC-4 and FR-297-AC-5: the Lean export preserves the
@@ -1357,7 +1379,7 @@ fn snapshot_of(directory: &Path, keys: &[&str], complete: bool) -> Value {
         .map(|key| {
             let mut object = template.clone();
             object["key"] = json!(key);
-            object["fields"]["versionNumber"] = json!({"integer": "0"});
+            object["fields"]["versionNumber"] = json!({"type": "integer", "value": "0"});
             object["fields"]["parent"] = json!({"absent": {}});
             object
         })
