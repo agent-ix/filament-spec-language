@@ -78,7 +78,7 @@ pub(super) fn build<'s, 'a>(
         ProbScheduler::Every => None,
     };
     let form = Form::of(claim)?;
-    admit(system, claim, workload)?;
+    admit(system, package, claim, workload)?;
     let (base_scale, subdivisions) = scale_of(system, &timed, claim, &form)?;
     let scale = base_scale
         .checked_mul(subdivisions)
@@ -292,10 +292,11 @@ pub(crate) fn model_constraints<'m>(
 /// FR-204 "Admission": the delay distributions and the form shape.
 fn admit(
     system: &ModelSystem<'_>,
+    package: &filament_checked::CheckedPackage,
     claim: &CheckedProbabilisticClaim,
     workload: Option<&Workload>,
 ) -> Result<(), ProductRefusal> {
-    let delays = system.package().graph().probabilistic_model().delays();
+    let delays = package.graph().probabilistic_model().delays();
     for delay in delays
         .iter()
         .filter(|delay| delay.operation().model() == claim.subject.alias.as_str())

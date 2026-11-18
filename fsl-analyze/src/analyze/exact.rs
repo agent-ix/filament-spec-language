@@ -375,7 +375,7 @@ fn run_timed(
         let bytes = write_probability_certificate(&document, document_limits, cancel)?;
         check_probability_certificate_document(
             &system,
-            simulation.package.graph().probabilistic_model().claims(),
+            simulation.packages.graph().probabilistic_model().claims(),
             &identity,
             &bytes,
             document_limits,
