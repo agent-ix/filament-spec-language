@@ -163,7 +163,7 @@ fn nested_equalities_each_retain_producer_facts() {
 }
 
 /// FSpec FR-149-AC-25: the emitted equality decision retains its IEEE schedule.
-#[ix_trace_rs::trace("QSL-2173")]
+#[ix_trace_rs::trace("FSpec-TC-194", "FSpec-FR-149-AC-25", "FSpec-FR-322-AC-288", "QSL-2173")]
 #[test]
 fn float_equality_schedule_roundtrips_as_float() {
     let emission = emitted(
