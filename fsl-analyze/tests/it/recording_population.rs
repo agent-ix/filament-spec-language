@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-990 (TC-2951): a recording-mode `global-conformance` item enumerates
+//! FR-990 (TC-2955): a recording-mode `global-conformance` item enumerates
 //! each fan-out member from its `population` member, the activated role
 //! instances the request supplies, never from the members the observations
 //! name.
@@ -92,7 +92,7 @@ fn member_control<'a>(item: &'a Value, node: &str, identity: &str) -> &'a Value 
 }
 
 /// FR-990-AC-7: every supplied member observed and premised settles `proved`.
-#[trace("TC-2951", "FR-990-AC-7")]
+#[trace("TC-2955", "FR-990-AC-7")]
 #[test]
 #[ignore = "QSL-2394: fan-out members enumerated from the supplied activated population not implemented yet"]
 fn every_supplied_member_observed_and_premised_proves_the_recording() {
@@ -113,7 +113,7 @@ fn every_supplied_member_observed_and_premised_proves_the_recording() {
 
 /// FR-990-AC-8: a member absent from the recording is a refused premise set
 /// or a `missing` violation, never incomplete closure.
-#[trace("TC-2951", "FR-990-AC-8")]
+#[trace("TC-2955", "FR-990-AC-8")]
 #[test]
 #[ignore = "QSL-2394: an omitted fan-out member reported from the supplied population not implemented yet"]
 fn a_member_absent_from_the_recording_is_refused_or_refuted() {
@@ -154,7 +154,7 @@ fn a_member_absent_from_the_recording_is_refused_or_refuted() {
 
 /// FR-990-AC-9: without a population the member set is unknown, and the
 /// item is `incomplete-closure-scope`, never `proved`.
-#[trace("TC-2951", "FR-990-AC-9")]
+#[trace("TC-2955", "FR-990-AC-9")]
 #[test]
 #[ignore = "QSL-2394: member control obligations under an unknown population not implemented yet"]
 fn an_unknown_population_leaves_closure_scope_incomplete() {
@@ -176,7 +176,7 @@ fn an_unknown_population_leaves_closure_scope_incomplete() {
 }
 
 /// FR-990-AC-10: defective populations refuse the item or the request.
-#[trace("TC-2951", "FR-990-AC-10")]
+#[trace("TC-2955", "FR-990-AC-10")]
 #[test]
 #[ignore = "QSL-2394: population refusals not implemented yet"]
 fn defective_populations_refuse_the_item_or_the_request() {

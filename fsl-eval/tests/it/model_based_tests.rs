@@ -64,8 +64,8 @@ fn generated_coverage(max_trace_length: u64) -> Option<serde_json::Value> {
 /// FR-752-AC-4 (FSpec FR-190-AC-11): every operation has one entry in
 /// declaration order; the unreachable `jam` is reported uncovered with
 /// reason `unreachable`, never covered.
-#[trace("TC-2952", "FR-752-AC-4")]
-#[trace("FSpec-TC-2002", "FSpec-FR-190-AC-11")]
+#[trace("TC-2956", "FR-752-AC-4")]
+#[trace("FSpec-TC-2004", "FSpec-FR-190-AC-11")]
 #[test]
 #[ignore = "QSL-2237: operation coverage in the model-based test result not implemented yet"]
 fn an_unreachable_operation_is_reported_uncovered_with_its_reason() {
@@ -87,8 +87,8 @@ fn an_unreachable_operation_is_reported_uncovered_with_its_reason() {
 
 /// FR-752-AC-4 (FSpec FR-190-AC-12): below the bound that reaches
 /// `value = 5`, `reset` is uncovered within the bound, never unreachable.
-#[trace("TC-2952", "FR-752-AC-4")]
-#[trace("FSpec-TC-2002", "FSpec-FR-190-AC-12")]
+#[trace("TC-2956", "FR-752-AC-4")]
+#[trace("FSpec-TC-2004", "FSpec-FR-190-AC-12")]
 #[test]
 #[ignore = "QSL-2237: bounded operation coverage reasons not implemented yet"]
 fn an_operation_beyond_the_trace_bound_is_uncovered_within_the_bound() {
@@ -103,8 +103,8 @@ fn an_operation_beyond_the_trace_bound_is_uncovered_within_the_bound() {
 
 /// FR-752-AC-4 (FSpec FR-190-AC-13): coverage changes no verdict and is
 /// deterministic.
-#[trace("TC-2952", "FR-752-AC-4")]
-#[trace("FSpec-TC-2002", "FSpec-FR-190-AC-13")]
+#[trace("TC-2956", "FR-752-AC-4")]
+#[trace("FSpec-TC-2004", "FSpec-FR-190-AC-13")]
 #[test]
 #[ignore = "QSL-2237: operation coverage determinism and verdict independence not implemented yet"]
 fn operation_coverage_is_deterministic_and_settles_no_verdict() {

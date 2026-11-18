@@ -1,12 +1,12 @@
 ---
-id: TC-2952
+id: TC-2956
 title: "Model-based tests report operation coverage"
 type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-752
     type: verifies
 ---
-# TC-2952: Model-based tests report operation coverage
+# TC-2956: Model-based tests report operation coverage
 
 ## Description
 

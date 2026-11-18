@@ -1,12 +1,12 @@
 ---
-id: TC-2951
+id: TC-2955
 title: "Fan-out members come from the supplied activated population"
 type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-990
     type: verifies
 ---
-# TC-2951: Fan-out members come from the supplied activated population
+# TC-2955: Fan-out members come from the supplied activated population
 
 ## Description
 
