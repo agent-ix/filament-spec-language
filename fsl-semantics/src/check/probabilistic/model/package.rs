@@ -323,8 +323,19 @@ impl StateModel {
     }
 }
 
-/// The value of `ty` that `literal` spells.
+/// The scalar-limit bits of one package literal (FR-185's exact-value
+/// measure).
+const LITERAL_INTEGER_BITS: u64 = 65_536;
+
+/// The value of `ty` that `literal` spells, admitted by `ty` itself: an
+/// `Int`, `Rational` or bounded-quantity literal outside its type's bounds
+/// is no value of it, so the reader refuses what S3 would have refused.
 fn value_of(literal: &PackageLiteral, ty: &ValueType) -> Option<Value> {
+    let value = unchecked_value_of(literal, ty)?;
+    ty.admits(&value).then_some(value)
+}
+
+fn unchecked_value_of(literal: &PackageLiteral, ty: &ValueType) -> Option<Value> {
     match (literal, ty) {
         (PackageLiteral::Boolean(value), ValueType::Boolean) => Some(Value::Boolean(*value)),
         (PackageLiteral::Integer(value), ValueType::Integer | ValueType::Int(_)) => {
@@ -341,17 +352,24 @@ fn value_of(literal: &PackageLiteral, ty: &ValueType) -> Option<Value> {
         ),
         (PackageLiteral::Text(text), ValueType::Text(text_type)) => {
             let payload = TextPayload::from_utf8(text.as_bytes()).ok()?;
+            // Limits sized to this literal: its own bytes and scalars in,
+            // and the worst normalization expansion (18x, NFKC) out.
+            let length = u64::try_from(text.len()).ok()?;
             let mut meter = Meter::new(ScalarLimits {
-                integer_bits: u64::MAX,
-                decimal_digits: u64::MAX,
-                scale_expansion: u64::MAX,
-                text_input_bytes: u64::MAX,
-                text_scalars: u64::MAX,
-                normalized_scalars: u64::MAX,
-                unit_edges: u64::MAX,
-                value_occurrences: u64::MAX,
-                work_units: u64::MAX,
-                result_units: u64::MAX,
+                integer_bits: LITERAL_INTEGER_BITS,
+                decimal_digits: LITERAL_INTEGER_BITS,
+                scale_expansion: LITERAL_INTEGER_BITS,
+                text_input_bytes: length,
+                text_scalars: length,
+                normalized_scalars: length.saturating_mul(18),
+                unit_edges: LITERAL_INTEGER_BITS,
+                value_occurrences: LITERAL_INTEGER_BITS,
+                work_units: length
+                    .saturating_mul(64)
+                    .saturating_add(LITERAL_INTEGER_BITS),
+                result_units: length
+                    .saturating_mul(64)
+                    .saturating_add(LITERAL_INTEGER_BITS),
             });
             Some(Value::Text(
                 admit_text(&payload, text_type, &mut meter).completed()?,

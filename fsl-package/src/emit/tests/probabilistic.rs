@@ -30,7 +30,7 @@ fn probabilistic_package() -> CheckedPackage {
 /// the reward beside it is refused `unsupported_construct`/
 /// `not-yet-implemented`, naming the reward `cost`, its feature, the unit's
 /// profile and the reward's own locus.
-#[trace("TC-620", "FR-185-AC-7")]
+#[trace("TC-2062", "FR-185-AC-12")]
 #[test]
 fn a_checked_reward_refuses_emission_beside_an_emitted_workload() {
     let refusal = emit_checked(&probabilistic_package()).expect_err("emission refuses");
@@ -655,7 +655,7 @@ fn a_workload_reads_back_as_the_s3_record() {
 /// a support literal kind and would refuse the package. The rebuild of an
 /// enum value's rank from its type is covered at S3
 /// (`an_enum_valued_package_rebuilds_the_s3_records`).
-#[trace("TC-2062", "FR-740-AC-1")]
+#[trace("TC-2062", "FR-185-AC-12")]
 #[test]
 fn an_enum_valued_random_parameter_refuses_emission_with_its_locus() {
     use super::variant_types::fixture;
@@ -788,10 +788,10 @@ fn a_workload_over_two_types_with_a_shared_supertype_names_the_lineage_type() {
 /// FSpec FR-640 (FSL FR-740): a workload whose model has two unrelated types
 /// (`Base` and `ConfigVersion`) has no model node whose lineage covers both,
 /// so emission refuses it with the workload's locus rather than writing a
-/// node the reader refuses.
-#[trace("TC-2062", "FR-740-AC-1")]
+/// node the reader refuses (QSL-2444 tracks emitting such a workload).
+#[trace("TC-2062", "FR-185-AC-12")]
 #[test]
-fn a_workload_over_unrelated_types_refuses_with_its_locus() {
+fn a_workload_over_unrelated_types_refuses_with_its_locus_qsl_2444() {
     use super::abstraction::fixture;
     let document = crate::emit::tests::wire_bytes(&fixture::document()).expect("serializes");
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
@@ -837,13 +837,68 @@ fn workload_weight_order_changes_no_bytes_and_weight_zero_is_emitted() {
     };
     assert!(workload["body"].to_string().contains("\"0\""), "{workload}");
 
-    // The fixture model has one operation, so the reordering is of the
-    // workload's declaration among the unit's other declarations.
-    let first = emit_checked(&package("weight ConfigVersion::attemptUpdate = 1;"))
-        .expect("the package emits");
-    let again = emit_checked(&package("weight ConfigVersion::attemptUpdate = 1;"))
-        .expect("the package emits");
-    assert_eq!(first.package().bytes(), again.package().bytes());
+    // Two operations (`Base::op`, `Leaf::step`) with the weight lines written
+    // in both orders.
+    let ordered = |weights: &str| {
+        let (_, package) = lineage_package(&format!("workload Mixed on M {{ {weights} }}"));
+        emit_checked(&package).expect("the package emits")
+    };
+    let forward = ordered("weight Base::op = 1; weight Leaf::step = 3;");
+    let reverse = ordered("weight Leaf::step = 3; weight Base::op = 1;");
+    assert_eq!(forward.package().bytes(), reverse.package().bytes());
+}
+
+/// FSpec FR-640-AC-3: changing one weight or one support value changes the
+/// node's identity, while reordering weight lines (asserted separately in
+/// `workload_weight_order_changes_no_bytes_and_weight_zero_is_emitted`)
+/// does not.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+fn changing_one_weight_or_support_value_changes_the_node_identity() {
+    let workload_id = |weights: &str| {
+        let (document, package) = lineage_package(&format!("workload Mixed on M {{ {weights} }}"));
+        let (wire, _) = emit_and_read(&package, &document);
+        let [node] = super::owners::node_where(&wire, "probabilistic", "workload")[..] else {
+            panic!("one workload node");
+        };
+        node["node_id"].clone()
+    };
+    let base = workload_id("weight Base::op = 1; weight Leaf::step = 3;");
+    assert_ne!(
+        base,
+        workload_id("weight Base::op = 1; weight Leaf::step = 4;")
+    );
+    assert_eq!(
+        base,
+        workload_id("weight Leaf::step = 3; weight Base::op = 1;")
+    );
+
+    let random_id = |support: &str| {
+        use super::abstraction::fixture;
+        let document =
+            crate::emit::tests::wire_bytes(&fixture::document()).expect("the fixture serializes");
+        let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+        let unit = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.model.complete/v1\";\n\
+             model M = {package:?};\n\
+             random ConfigVersion::attemptUpdate(n) ~ {{ {support} }};\n",
+            package = fixture::PACKAGE,
+        );
+        let graph = assemble_with_models(unit.as_bytes(), &packages)
+            .expect("the unit assembles")
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+        let (wire, _) = emit_and_read(&CheckedPackage::link(graph), &document);
+        let [node] = super::owners::node_where(&wire, "probabilistic", "random_parameter")[..]
+        else {
+            panic!("one random_parameter node");
+        };
+        node["node_id"].clone()
+    };
+    let base = random_id("3: 1, 1: 3");
+    assert_ne!(base, random_id("3: 1, 1: 2"), "one weight differs");
+    assert_ne!(base, random_id("3: 1, 2: 3"), "one support value differs");
 }
 
 /// TC-2062 (FR-740-AC-4): a claim `under Steady` is emitted beside the

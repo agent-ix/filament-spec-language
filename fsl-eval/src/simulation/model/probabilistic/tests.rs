@@ -450,7 +450,7 @@ fn the_support_graph_is_the_state_graph() {
 /// parameters and workload and refuses at `unsupported_construct`/
 /// `not-yet-implemented`, naming its reward, `reward` and the selected
 /// profile.
-#[trace("TC-620", "FR-185-AC-7")]
+#[trace("TC-2062", "FR-185-AC-12")]
 #[test]
 fn service_checks_and_refuses_emission_naming_its_reward() {
     let world = World::new(&world::service(""));
@@ -728,10 +728,10 @@ fn service_random_parameter_and_workload_are_emitted() {
     assert_eq!((count("random_parameter"), count("workload")), (1, 1));
 }
 
-/// FR-740-AC-1 (TC-2062): the Boolean random parameter `ok` of `Service` is
+/// FR-185-AC-12 (TC-2062): the Boolean random parameter `ok` of `Service` is
 /// refused at emission with its locus, because IR's reader admits no Boolean
 /// support value (its join refuses every non-string literal payload).
-#[trace("TC-2062", "FR-740-AC-1")]
+#[trace("TC-2062", "FR-185-AC-12")]
 #[test]
 fn service_refuses_emission_naming_its_boolean_random_parameter() {
     let world = World::new(&service_without_reward(true));

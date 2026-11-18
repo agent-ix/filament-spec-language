@@ -120,16 +120,20 @@ fn spelling(value: &Rational) -> String {
 }
 
 /// The canonical spelling of a support value, as its node's identity
-/// carries it.
-fn support_spelling(value: &Value) -> String {
+/// carries it: integers and rationals in FR-205 form, a quantity as its
+/// magnitude, and a text as its JSON string encoding (the encoding of the
+/// literal's own `value` member: double-quoted, `"` and `\` escaped, control
+/// characters as `\b \f \n \r \t` or lowercase `\u00xx`, every other
+/// character verbatim). `None` for a value the reader cannot admit yet
+/// (Boolean and enum supports; IR-1569), which the caller refuses with the
+/// declaration's locus.
+fn support_spelling(value: &Value) -> Option<String> {
     match value {
-        Value::Boolean(value) => value.to_string(),
-        Value::Integer(value) => value.to_string(),
-        Value::Rational(value) => spelling(value),
-        Value::Text(value) => format!("{:?}", value.retained()),
-        Value::Quantity(value) => spelling(value.magnitude()),
-        Value::Enum(member) => member.variant().case().to_string(),
-        _ => String::new(),
+        Value::Integer(value) => Some(value.to_string()),
+        Value::Rational(value) => Some(spelling(value)),
+        Value::Text(value) => serde_json::to_string(value.retained()).ok(),
+        Value::Quantity(value) => Some(spelling(value.magnitude())),
+        _ => None,
     }
 }
 
@@ -281,7 +285,7 @@ fn random_parameter_node(
         };
         content.push(format!(
             "{}*{}",
-            support_spelling(&support.value.0),
+            support_spelling(&support.value.0).ok_or_else(unwritable)?,
             spelling(&support.weight)
         ));
         rows.push(claim_aggregate(vec![
@@ -326,6 +330,8 @@ fn workload_node(
     let region = region_of(graph, &location)?;
     let text = scalar_type(ids, graph, nodes, source_map, "text", &region)?;
     let rational = scalar_type(ids, graph, nodes, source_map, "rational", &region)?;
+    // A workload whose operations no single model type's lineage declares
+    // has no model node to hang from; QSL-2444 tracks emitting it.
     let (model_key, model) = workload
         .model_key()
         .and_then(|declaration| model_node(ids, nodes, declaration))

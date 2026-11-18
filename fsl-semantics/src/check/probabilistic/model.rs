@@ -719,11 +719,21 @@ impl<'a> ProbabilisticInput<'a> {
             ProbabilisticOperation {
                 model: alias.clone(),
                 key: key.clone(),
+                // The declaring type's key: the model's own object of that
+                // identity, else any type table entry of it. Never a refusal
+                // here, so a unit S3 accepted before the key was recorded
+                // still checks; a key without a node is refused at emission
+                // with the declaration's locus.
                 declaring_key: objects
                     .values()
                     .find(|candidate| self.object_types.get(*candidate) == Some(&declaring))
+                    .or_else(|| {
+                        self.object_types
+                            .iter()
+                            .find_map(|(candidate, id)| (*id == declaring).then_some(candidate))
+                    })
                     .cloned()
-                    .ok_or(Unresolved::Missing)?,
+                    .unwrap_or_else(|| key.clone()),
                 declaring,
                 name: declaration.name().to_owned(),
             },
