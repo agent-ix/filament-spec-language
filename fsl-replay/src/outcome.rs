@@ -1555,7 +1555,7 @@ fn statistical_estimate_wire(
 ) -> serde_json::Value {
     let estimate = estimate
         .cloned()
-        .unwrap_or_else(|| filament_exact::Rational::from_integer(Integer::from(0)));
+        .unwrap_or_else(|| filament_exact::Rational::from_integer(Integer::from(0_i64)));
     let mut value = serde_json::Map::new();
     value.insert("value".to_owned(), rational_wire(&estimate));
     if let Some(quantile) = quantile {
