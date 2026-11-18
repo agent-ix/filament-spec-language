@@ -209,7 +209,7 @@ fn a_compensation_and_a_timed_await_emit_together() {
 /// package and identifies the declaration that needs one.
 #[trace("TC-2525", "FR-892-AC-4")]
 #[test]
-fn a_timed_unit_without_clock_selection_is_refused_by_declaration_name() {
+fn the_missing_clock_message_names_the_template() {
     let temporal =
         "temporal Due using t over (c: M::Ledger) clock \"model-steps\" on origin { always[0,120] true }\n";
     let mut unit = unit_text(temporal, "true", "false");
