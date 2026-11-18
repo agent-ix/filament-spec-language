@@ -50,8 +50,39 @@ fn function_projection(
         .ok_or_else(|| InputRefusal::UnknownFunction(function.to_string()))?;
     package
         .project_function(name)
-        .map_err(|failure| refusal(package, failure))?
+        .map_err(|failure| function_refusal(package, failure))?
         .ok_or_else(|| InputRefusal::UnknownFunction(function.to_string()).into())
+}
+
+fn function_refusal(package: &BarePackage<'_>, failure: BareSelectionFailure) -> CallFailure {
+    match failure {
+        BareSelectionFailure::FunctionParameterType { position, view } => {
+            unsupported_function_type(&view, "position", position.to_string())
+        }
+        BareSelectionFailure::FunctionResultType { function, view } => {
+            unsupported_function_type(&view, "function", function)
+        }
+        other => refusal(package, other),
+    }
+}
+
+fn unsupported_function_type(
+    view: &fsl_package::UnsupportedView,
+    detail: &'static str,
+    value: String,
+) -> CallFailure {
+    let (code, cause) = view.catalog();
+    let mut record = super::occurrence_record(code, cause, Vec::new());
+    record.fields.insert(detail, value);
+    let locus = view
+        .locus()
+        .key()
+        .map_or(CallAdmissionLocus::Package, |key| {
+            CallAdmissionLocus::Node(key.clone())
+        });
+    CallFailure::Admission(Box::new(CallAdmissionFailure::Refused(
+        filament_eval::CallAdmissionRecord { record, locus },
+    )))
 }
 
 /// What supply admission reads from a bytes-only package: the bare
@@ -570,6 +601,52 @@ mod tests {
         )
     }
 
+    fn population_collection_package() -> (
+        fsl_package::CheckedPackage,
+        fsl_semantics::model::intake::PackageInput,
+    ) {
+        let model_bytes =
+            include_bytes!("../../../../examples/config-version/model.semantic-ir.json");
+        let models = fsl_semantics::model::intake::package_input([model_bytes.as_slice()])
+            .expect("model document reads");
+        let source_text =
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             model M = \"example/config-version\";\n\
+             function takes using v(a: Sequence<Integer>[0, 3], b: Sequence<Integer>[0, 3]): Integer pure { 1 }\n\
+             function gives using v(): Sequence<Integer>[0, 3] pure { sequence[1] }\n\
+             function population_source using v(p: Population<M::ConfigVersion>[3]): Integer pure { 1 }\n";
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "bare-call-types"),
+            "bare-call-types.native",
+            source_text.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("the source unit parses");
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+        let unit = fsl_forms::build_unit(&parsed).expect("the source unit builds");
+        let selected_models = fsl_semantics::model::intake::admit_unit(
+            &unit.selections().models,
+            &models,
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        )
+        .expect("the model selection admits");
+        let declarations = PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "bare-call-types-test".to_owned(),
+            unit,
+            selected_models,
+            Vec::new(),
+        )
+        .expect("the declarations assemble");
+        let source = fsl_package::CheckedPackage::link(
+            declarations
+                .check(CheckMode::Linked, CheckingLimits::default())
+                .expect("the source-supported package checks"),
+        );
+        (source, models)
+    }
+
     fn completed_integer(evaluation: Evaluation) -> Integer {
         match evaluation.outcome {
             FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(value))) => value,
@@ -652,6 +729,134 @@ mod tests {
         assert_eq!(
             observed_meter.consumed(LimitKind::WorkUnits),
             bare_meter.consumed(LimitKind::WorkUnits)
+        );
+    }
+
+    /// FR-945-AC-2 / FR-650: nested population types are refused from the
+    /// admitted package before argument admission or a function-call charge.
+    #[trace("FR-945-AC-2", "FR-650-AC-6")]
+    #[test]
+    fn nested_population_parameter_and_result_have_typed_details() {
+        let (source, models) = population_collection_package();
+        let limits = fsl_package::V2ReadLimits::fixture();
+        let emit_limits = fsl_package::EmitLimits::fixture();
+        let original = fsl_package::read_evaluation_package(
+            &source,
+            fsl_semantics::library::LibraryName::new("bare-call-types-test")
+                .expect("library identity"),
+            &models,
+            limits,
+            emit_limits,
+        )
+        .expect("source package emits and is admitted");
+        let mut wire = fsl_semantics::check::wire_id::resolved_package_value(
+            original.emission().package().bytes(),
+        )
+        .expect("emitted package resolves to its node ids");
+        let nodes = wire["semantic_graph"]["nodes"]
+            .as_array_mut()
+            .expect("semantic graph has nodes");
+        let population_type = nodes
+            .iter()
+            .find(|node| {
+                node["node_tag"] == "bounded_domain" && node["semantic_form"] == "model_population"
+            })
+            .expect("the admitted package carries its population type")["node_id"]
+            .clone();
+        let sequence = nodes
+            .iter_mut()
+            .find(|node| {
+                node["node_tag"] == "composite_type" && node["semantic_form"] == "sequence"
+            })
+            .expect("the admitted package carries its sequence type");
+        sequence["body"]["members"][0]["target"] = population_type.clone();
+        sequence["dependencies"] = serde_json::json!([population_type]);
+        wire["semantic_graph"]
+            .as_object_mut()
+            .expect("semantic graph is an object")
+            .remove("operand_rows");
+        fsl_semantics::check::wire_id::write_operand_rows(&mut wire);
+        let nested_population_bytes = serde_json::to_vec(&wire).expect("mutated package encodes");
+        let emission = original
+            .emission()
+            .clone()
+            .with_package_bytes(nested_population_bytes);
+        let admitted = fsl_package::read_evaluation_emission(
+            &source,
+            &emission,
+            fsl_semantics::library::LibraryName::new("bare-call-types-test")
+                .expect("library identity"),
+            &models,
+            limits,
+            emit_limits,
+            fsl_package::SourceWitnessSupplier::new(&emission),
+        )
+        .expect("the checked package with nested-population type nodes admits");
+        let mut rows_budget = limits.native_join_budget();
+        let rows = admitted
+            .emission()
+            .identity_rows(admitted.admitted(), &mut rows_budget)
+            .expect("identity rows join the admitted bytes");
+        let mut join_budget = limits.native_join_budget();
+        let bare = BarePackage::new(admitted.admitted())
+            .with_supply(
+                fsl_package::BareSupply {
+                    identities: &rows,
+                    equality: None,
+                },
+                &mut join_budget,
+            )
+            .expect("the bare view admits its rows");
+        let objects = ObjectEnvironment::default();
+
+        let mut parameter_meter = Meter::new(UNLIMITED);
+        let parameter_failure = bare
+            .call(
+                &QualifiedName::unqualified("takes").expect("function name"),
+                vec![Value::Boolean(true)],
+                &objects,
+                &mut parameter_meter,
+            )
+            .expect_err("the unsupported parameter is refused before argument admission");
+        assert_type_refusal(parameter_failure, "position", "0");
+        assert_eq!(parameter_meter.consumed(LimitKind::WorkUnits), 0);
+
+        let mut result_meter = Meter::new(UNLIMITED);
+        let result_failure = bare
+            .call(
+                &QualifiedName::unqualified("gives").expect("function name"),
+                vec![Value::Boolean(true)],
+                &objects,
+                &mut result_meter,
+            )
+            .expect_err("the unsupported result is refused before argument admission");
+        assert_type_refusal(result_failure, "function", "gives");
+        assert_eq!(result_meter.consumed(LimitKind::WorkUnits), 0);
+    }
+
+    fn assert_type_refusal(failure: CallFailure, detail: &str, value: &str) {
+        let CallFailure::Admission(failure) = failure else {
+            panic!("expected typed admission refusal, got {failure:?}");
+        };
+        let CallAdmissionFailure::Refused(failure) = *failure else {
+            panic!("expected typed refusal, got {failure:?}");
+        };
+        assert_eq!(
+            (
+                failure.record.catalog.code(),
+                failure.record.catalog.cause()
+            ),
+            ("unknown_required_feature", "unsupported-feature")
+        );
+        assert_eq!(
+            failure.record.fields.len(),
+            1,
+            "fields: {:?}",
+            failure.record.fields
+        );
+        assert_eq!(
+            failure.record.fields.get(detail).map(String::as_str),
+            Some(value)
         );
     }
 }

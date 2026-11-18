@@ -978,6 +978,16 @@ impl<'wire> OriginRows<'wire> {
 pub(crate) enum WalkFailure {
     /// An admitted form, operation or type without a projection.
     Unsupported(UnsupportedView),
+    /// A function parameter's type has no native run value form.
+    FunctionParameterType {
+        position: usize,
+        view: UnsupportedView,
+    },
+    /// A function result's type has no native run value form.
+    FunctionResultType {
+        function: String,
+        view: UnsupportedView,
+    },
     /// The equality rows do not give an application its decision.
     Equality(EqualityWitnessRefusal),
     /// The admitted package broke a projection invariant.
@@ -1036,11 +1046,29 @@ impl<'wire> BareWalker<'wire> {
         match failure {
             BuildError::Equality(refusal) => Err(WalkFailure::Equality(refusal)),
             BuildError::Unsupported { reason, node } => {
-                Err(WalkFailure::Unsupported(UnsupportedView {
+                let view = UnsupportedView {
                     package: self.index.admitted.name().to_owned(),
                     locus: ViewLocus::node(self.index.key(&node).map_err(WalkFailure::Fault)?),
                     reason,
-                }))
+                };
+                let (parameters, body) = function_parts(&selected.body).ok_or_else(|| {
+                    WalkFailure::Fault(fault("reader-pure-function-has-checked-body"))
+                })?;
+                if let Some(position) = parameters.iter().position(|parameter| {
+                    matches!(parameter, CheckedTerm::Reference { target } if target == &node)
+                }) {
+                    Err(WalkFailure::FunctionParameterType { position, view })
+                } else if matches!(body, CheckedTerm::Reference { target } if target == &node) {
+                    let function = selected
+                        .declaration
+                        .as_ref()
+                        .and_then(|declaration| declaration.qualified_name.last())
+                        .map(|name| name.to_string())
+                        .ok_or_else(|| WalkFailure::Fault(fault("reader-function-name-is-admitted")))?;
+                    Err(WalkFailure::FunctionResultType { function, view })
+                } else {
+                    Err(WalkFailure::Unsupported(view))
+                }
             }
             BuildError::Fault(fault) => Err(WalkFailure::Fault(fault)),
             BuildError::Suspended => Err(WalkFailure::Fault(fault(
