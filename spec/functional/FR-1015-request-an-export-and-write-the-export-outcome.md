@@ -49,6 +49,12 @@ writes no target bytes of its own, so the two give byte-identical files.
   `export.nodes` and `export.work_units`, each an unsigned integer used as
   given; an absent setting takes its FR-255 default. Any other name refuses
   `invalid-request` at `/request/export/limits/<name>` naming it, exit `20`.
+- The driver's `--limit` reaches FSL as the request override
+  `RequestOverrides::limits`. A setting given both in `export.limits` and in
+  that override SHALL refuse `invalid-request` naming `limits` and the
+  setting, exit `20`, before any stage runs, so one export never runs under
+  two values of one limit; a setting given in only one of them takes that
+  value.
 - A request below its floor SHALL write `status` `refused` with
   `below-fidelity-floor`, no `target_text`, exit `21`.
 - A denied export charge SHALL write `status` `incomplete` naming
@@ -69,7 +75,7 @@ writes no target bytes of its own, so the two give byte-identical files.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-1015-AC-1 | Exporting `SlowEnough` over `Braking` under the default floor writes `status` `refused` with `below-fidelity-floor`, no `target_text`, exit `21`; under `minimum_fidelity` `any` it writes `assembled` with the `unrepresented` record claiming no region. | Test (TC-2865) |
-| FR-1015-AC-2 | `limits` `{"export.output_bytes": 1}` writes `incomplete` naming `export.output_bytes`, exit `22`; `limits` `{"output_bytes": 1}` refuses `invalid-request` naming `output_bytes`, exit `20`. | Test (TC-2865) |
+| FR-1015-AC-2 | `limits` `{"export.output_bytes": 1}` writes `incomplete` naming `export.output_bytes`, exit `22`; `limits` `{"output_bytes": 1}` refuses `invalid-request` naming `output_bytes`, exit `20`.; the same request with `RequestOverrides::limits` setting `export.output_bytes` refuses `invalid-request` naming `limits` and `export.output_bytes`, exit `20`, and the request without that `limits` entry under the override set to 1 writes `incomplete` naming `export.output_bytes`, exit `22`. | Test (TC-2865) |
 | FR-1015-AC-3 | Exporting FR-756-AC-1's counter with `output` `{"file": "counter.tla"}` writes a file whose bytes equal the outcome's `target_text`, and an `output` member `{"path": "counter.tla", "bytes_written": N}` with `N` that text's length; the same request through `RequestOverrides::output` naming the same path in a fresh directory writes byte-identical bytes; a path that already exists refuses `invalid-request` naming it, exit `20`, `last_stage` null, bytes unchanged; the member and the override together refuse naming `output` and `--output`, exit `20`, with no file. | Test (TC-2992) |
 | FR-1015-AC-4 | The counter export's `package` member is `{"source_package", "target_profile", "generator", "limits"}` with `limits` `{"export.output_bytes": 16777216, "export.nodes": 100000, "export.work_units": 16777216}`; two runs give equal members, and a run with `limits` `{"export.nodes": 99999}` gives a member that differs only in that limit. | Test (TC-2992) |
 

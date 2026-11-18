@@ -64,7 +64,8 @@ function's selection (`g`, `f`).
 14. Build a protocol over step 1's package whose attempt of `withdraw` lists
     `contracts [Debited]` only, and explore it from a state with
     `balance = 3` and `limit = 0`, applying the attempt with `amount = 5`
-. Check a bank unit declaring `Credit` on `deposit` before a 200-conjunct
+    (AC-33).
+15. Check a bank unit declaring `Credit` on `deposit` before a 200-conjunct
     `pre` clause `Big`, with `s3.nodes` at 160 (AC-36,
     `the_cumulative_node_meter_trips_at_the_earlier_postcondition`).
 

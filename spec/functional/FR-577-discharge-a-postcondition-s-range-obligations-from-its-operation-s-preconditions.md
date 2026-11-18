@@ -198,6 +198,11 @@ FR-121 carries the region on `CallSiteRefusal::Compile`.
   `post` clause, in declaration order, whose charge makes the running count
   exceed the limit, even when a `pre` clause declared after it consumed most
   of the budget.
+- When the `pre` clauses alone exceed the `s3.nodes` limit, including in a
+  unit with no `post` clause, the checker SHALL refuse `stage_limit_exceeded`
+  naming `s3.nodes` located in the first `pre` clause, in declaration order,
+  whose charge makes the running count exceed the limit, and SHALL charge no
+  `post` clause.
 
 The order follows the facts: a `post` walk cannot start before the `pre`
 facts it begins with are built, so the preconditions are metered first. The
