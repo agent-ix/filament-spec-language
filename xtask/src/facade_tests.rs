@@ -273,7 +273,7 @@ fn scan_sources(directory: &Path) -> Result<Vec<ContractFunction>> {
     Ok(functions)
 }
 
-fn inventory_facts(override_path: Option<&Path>, workspace_root: &Path) -> Result<Vec<Fact>> {
+fn inventory_facts(override_path: Option<&Path>) -> Result<Vec<Fact>> {
     let bytes = match override_path {
         Some(path) => fs::read(path).map_err(|error| Error::io(path, error))?,
         None => filament_specification::published_file(INVENTORY)
@@ -328,7 +328,7 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
             *path = workspace_root.join(&*path);
         }
     }
-    let facts = inventory_facts(inventory.as_deref(), workspace_root)?;
+    let facts = inventory_facts(inventory.as_deref())?;
     let mut known = std::collections::BTreeMap::<String, Option<String>>::new();
     let mut failures = Vec::new();
     for fact in facts {
