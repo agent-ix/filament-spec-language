@@ -477,6 +477,22 @@ fn outcome_text(
             .get("kind")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| fault("outcome result has no kind"))?;
+        if kind == "replayed" {
+            let rows = result
+                .get("results")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| fault("replayed result has no results"))?;
+            for (index, row) in rows.iter().enumerate() {
+                let member = |name: &str| {
+                    row.get(name)
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| fault("replayed result row lacks arm or settlement"))
+                };
+                let (arm, settlement) = (member("arm")?, member("settlement")?);
+                writer.unit(|| format!("result {index}: {arm} {settlement}\n"))?;
+            }
+            return Ok(());
+        }
         let mut members = result
             .as_object()
             .cloned()

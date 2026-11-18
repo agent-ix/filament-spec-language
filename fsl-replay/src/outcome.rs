@@ -2068,6 +2068,15 @@ pub enum ExecuteResult {
 enum OutcomeResult {
     Execute(ExecuteResult),
     Parsed(ParsedOutcome),
+    Replayed(ReplayedOutcome),
+}
+
+/// A replay outcome's `replayed` result: each entry is the row of the FSpec
+/// FR-323 `results` document, unchanged and in row order (FR-286).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct ReplayedOutcome {
+    kind: &'static str,
+    results: Vec<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -2535,23 +2544,34 @@ impl OutcomeDocument {
     /// or the refusal's category and diagnostic.
     pub fn from_replay(result: &Result<ReplayResult, ReplayRefusal>) -> Self {
         match result {
-            Ok(ReplayResult::Witness(arm)) => {
-                Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category())
+            Ok(arm) => {
+                let row = arm
+                    .to_function_json()
+                    .ok()
+                    .and_then(|row| serde_json::from_str(&row).ok());
+                match row {
+                    Some(row) => {
+                        let mut document =
+                            Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category());
+                        document.result = Some(OutcomeResult::Replayed(ReplayedOutcome {
+                            kind: "replayed",
+                            results: vec![row],
+                        }));
+                        document
+                    }
+                    None => Self::new(
+                        Operation::Replay,
+                        Some(OutcomeStage::S8),
+                        Category::InternalFailure,
+                    )
+                    .with_diagnostics(vec![OutcomeDiagnostic::new(
+                        None,
+                        Code::OutputFailure.as_str(),
+                        None,
+                        "the replay result row did not serialize",
+                    )]),
+                }
             }
-            Ok(ReplayResult::Input(arm)) => {
-                Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category())
-            }
-            Ok(ReplayResult::ObservedTemporal(arm)) => {
-                Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category())
-            }
-            Ok(ReplayResult::ProtocolAnalysis(arm)) => {
-                Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category())
-            }
-            Ok(ReplayResult::ModelGraph(arm)) => Self::new(
-                Operation::Replay,
-                Some(OutcomeStage::S8),
-                ReplayResult::ModelGraph(arm.clone()).category(),
-            ),
             Err(refusal) => Self::new(
                 Operation::Replay,
                 replay_stage(refusal),
@@ -4204,6 +4224,12 @@ mod tests {
             Vec::new(),
             charges,
         );
+        let row: Value = serde_json::from_str(
+            &ReplayResult::Input(arm.clone())
+                .to_function_json()
+                .expect("a row"),
+        )
+        .expect("the row is JSON");
         assert_eq!(
             json_of(&OutcomeDocument::from_replay(&Ok(ReplayResult::Input(arm)))),
             json!({
@@ -4214,7 +4240,7 @@ mod tests {
                 "items": [],
                 "diagnostics": [],
                 "artifacts": [],
-                "result": null,
+                "result": {"kind": "replayed", "results": [row]},
             })
         );
         let unknown = ReplayRefusal::UnknownFunction {

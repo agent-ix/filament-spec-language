@@ -44,7 +44,6 @@ fn row(result: &ReplayResult) -> Value {
 /// is `inconclusive` with `parity`.
 #[trace("FSpec-TC-2010", "FSpec-FR-323-AC-40")]
 #[test]
-#[ignore = "QSL-2292: the observed-temporal results row not implemented yet"]
 fn an_observed_temporal_replay_writes_its_row() {
     let violated = || TemporalOutcome::Violated {
         at: TemporalPosition::new(2),
@@ -96,7 +95,6 @@ fn an_observed_temporal_replay_writes_its_row() {
 /// `max_states` 1 is `incomplete` with its `limit`.
 #[trace("FSpec-TC-2010", "FSpec-FR-323-AC-41")]
 #[test]
-#[ignore = "QSL-2292: the model-graph results row not implemented yet"]
 fn a_state_graph_replay_writes_its_row() {
     let reproduced = ReplayResult::ModelGraph(GraphReplayResult {
         settlement: GraphReplaySettlement::Reproduced,
@@ -141,7 +139,6 @@ fn a_state_graph_replay_writes_its_row() {
 /// `inconclusive` with its walk disagreement.
 #[trace("FSpec-TC-2010", "FSpec-FR-323-AC-42")]
 #[test]
-#[ignore = "QSL-2292: the protocol-analysis results row not implemented yet"]
 fn a_protocol_analysis_replay_writes_its_row() {
     let reproduced = ReplayResult::ProtocolAnalysis(ProtocolReplayResult {
         settlement: ProtocolReplaySettlement::Reproduced,
