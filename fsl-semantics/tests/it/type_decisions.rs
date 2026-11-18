@@ -166,7 +166,6 @@ fn a_dotted_tuple_position_is_a_syntax_error() {
 
 #[trace("TC-1822", "FR-680-AC-3", "FSpec-FR-144-AC-33")]
 #[test]
-#[ignore = "QSL-2171: the source Map<K, V> type and its reads not implemented yet"]
 fn a_source_map_type_checks_with_its_guarded_read() {
     assert_checks(
         "function f using v(m: Map<Int[0, 3], Integer>[0, 4], k: Int[0, 3]): Integer pure \

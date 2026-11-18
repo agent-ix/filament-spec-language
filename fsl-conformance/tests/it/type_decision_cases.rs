@@ -80,7 +80,6 @@ fn tuple_position_pair() {
 
 #[trace("TC-1822", "FR-680-AC-3", "FSpec-FR-144-AC-33", "FSpec-FR-149-AC-28")]
 #[test]
-#[ignore = "QSL-2171: source Map<K, V> type and map equality not implemented yet"]
 fn map_pair() {
     assert_pair(
         case!("map-accepted.native"),
