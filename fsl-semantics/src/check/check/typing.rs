@@ -1087,7 +1087,7 @@ impl<'a> Typer<'a> {
                     (name, expression.at(*value), expression.at(*body)),
                     location,
                     frames,
-                );
+                )
             }
             ExprNode::Case(case) => {
                 self.enter(&location)?;
