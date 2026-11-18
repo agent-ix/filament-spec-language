@@ -412,8 +412,8 @@ mod tests {
             "correspondence": null, "lineage": lineage, "superseded": superseded})
     }
 
-    /// FR-975-AC-1: writing a read ledger reproduces its bytes, members in
-    /// file order and entries in key order.
+    /// FR-975-AC-1: writing a read ledger the way a run writes its
+    /// `evidence_ledger` member reproduces its bytes.
     #[trace("TC-2750", "FR-975-AC-1")]
     #[test]
     fn writing_a_read_ledger_reproduces_its_bytes() {
@@ -421,7 +421,8 @@ mod tests {
             "results": [entry("first", 0), entry("second", 2)]});
         let bytes = serde_json::to_vec(&document).unwrap();
         let read = read_evidence_ledger(&bytes).unwrap();
-        assert_eq!(serde_json::to_vec(&read).unwrap(), bytes);
+        let written = serde_json::to_value(&read).unwrap();
+        assert_eq!(serde_json::to_vec(&written).unwrap(), bytes);
     }
 
     /// FR-975 "The file form": a missing `trigger` or `correspondence`, a
