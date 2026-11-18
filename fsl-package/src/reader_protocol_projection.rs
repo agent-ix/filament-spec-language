@@ -994,6 +994,25 @@ pub(crate) enum WalkFailure {
     Fault(InternalFault),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FunctionTypePosition {
+    Parameter(usize),
+    Result,
+}
+
+fn function_type_position(
+    reason: &UnsupportedReason,
+    parameter_position: Option<usize>,
+    body_is_node: bool,
+) -> Option<FunctionTypePosition> {
+    if !matches!(reason, UnsupportedReason::MissingTypeRepresentation) {
+        return None;
+    }
+    parameter_position
+        .map(FunctionTypePosition::Parameter)
+        .or_else(|| body_is_node.then_some(FunctionTypePosition::Result))
+}
+
 /// The slot walks of a package read from its bytes alone (FR-533 "Slot
 /// naming on the bytes route"): the projection of FR-390 over the package's
 /// own nodes, the identity witness and the equality rows.
@@ -1054,20 +1073,27 @@ impl<'wire> BareWalker<'wire> {
                 let (parameters, body) = function_parts(&selected.body).ok_or_else(|| {
                     WalkFailure::Fault(fault("reader-pure-function-has-checked-body"))
                 })?;
-                if let Some(position) = parameters.iter().position(|parameter| {
+                let parameter_position = parameters.iter().position(|parameter| {
                     matches!(parameter, CheckedTerm::Reference { target } if target == &node)
-                }) {
-                    Err(WalkFailure::FunctionParameterType { position, view })
-                } else if matches!(body, CheckedTerm::Reference { target } if target == &node) {
-                    let function = selected
-                        .declaration
-                        .as_ref()
-                        .and_then(|declaration| declaration.qualified_name.last())
-                        .map(|name| name.to_string())
-                        .ok_or_else(|| WalkFailure::Fault(fault("reader-function-name-is-admitted")))?;
-                    Err(WalkFailure::FunctionResultType { function, view })
-                } else {
-                    Err(WalkFailure::Unsupported(view))
+                });
+                let body_is_node =
+                    matches!(body, CheckedTerm::Reference { target } if target == &node);
+                match function_type_position(&view.reason, parameter_position, body_is_node) {
+                    Some(FunctionTypePosition::Parameter(position)) => {
+                        Err(WalkFailure::FunctionParameterType { position, view })
+                    }
+                    Some(FunctionTypePosition::Result) => {
+                        let function = selected
+                            .declaration
+                            .as_ref()
+                            .and_then(|declaration| declaration.qualified_name.last())
+                            .map(|name| name.to_string())
+                            .ok_or_else(|| {
+                                WalkFailure::Fault(fault("reader-function-name-is-admitted"))
+                            })?;
+                        Err(WalkFailure::FunctionResultType { function, view })
+                    }
+                    None => Err(WalkFailure::Unsupported(view)),
                 }
             }
             BuildError::Fault(fault) => Err(WalkFailure::Fault(fault)),
@@ -3400,6 +3426,30 @@ mod order_tests {
 
     fn witness(reason: impl Into<UnsupportedReason>) -> UnsupportedView {
         UnsupportedView::witness("pkg", reason.into())
+    }
+
+    /// Only a missing type representation can be attributed to a function's
+    /// parameter or result type; an unsupported body operation stays generic.
+    #[trace("FR-945", "TC-1333")]
+    #[test]
+    fn unsupported_root_operation_is_not_a_function_result_type() {
+        let operation = UnsupportedReason::MissingOperationProjection {
+            operation: "future-operation".to_owned(),
+        };
+        assert_eq!(
+            function_type_position(&operation, None, true),
+            None,
+            "a body-root operation refusal must not carry function-result details"
+        );
+        assert_eq!(
+            function_type_position(&UnsupportedReason::MissingTypeRepresentation, None, true),
+            Some(FunctionTypePosition::Result)
+        );
+        assert_eq!(
+            function_type_position(&operation, Some(0), false),
+            None,
+            "an operation refusal must not be attributed to a parameter type"
+        );
     }
 
     fn first(views: Vec<UnsupportedView>) -> String {

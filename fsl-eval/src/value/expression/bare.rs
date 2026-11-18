@@ -830,8 +830,38 @@ mod tests {
                 &mut result_meter,
             )
             .expect_err("the unsupported result is refused before argument admission");
-        assert_type_refusal(result_failure, "function", "gives");
+        assert_operation_refusal_without_function_detail(result_failure);
         assert_eq!(result_meter.consumed(LimitKind::WorkUnits), 0);
+    }
+
+    fn assert_operation_refusal_without_function_detail(failure: CallFailure) {
+        let CallFailure::Admission(failure) = failure else {
+            panic!("expected typed admission refusal, got {failure:?}");
+        };
+        let CallAdmissionFailure::Refused(failure) = *failure else {
+            panic!("expected typed refusal, got {failure:?}");
+        };
+        assert_eq!(
+            (
+                failure.record.catalog.code(),
+                failure.record.catalog.cause()
+            ),
+            ("unknown_required_feature", "unsupported-feature")
+        );
+        assert!(
+            failure
+                .record
+                .fields
+                .get("reason")
+                .is_some_and(|reason| { reason.starts_with("missing-operation-projection:") }),
+            "expected the operation projection reason, fields: {:?}",
+            failure.record.fields
+        );
+        assert!(
+            !failure.record.fields.contains_key("function"),
+            "a supported checked result type must not add function detail: {:?}",
+            failure.record.fields
+        );
     }
 
     fn assert_type_refusal(failure: CallFailure, detail: &str, value: &str) {
