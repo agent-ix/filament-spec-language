@@ -144,7 +144,7 @@ fn witness_unit() -> Unit {
     unit_for(witness_unit_text(), config_version_domain_document())
 }
 
-fn comparison_witness_unit() -> Unit {
+fn comparison_witness_unit_text() -> String {
     let unit = witness_unit_text()
         .lines()
         .filter(|line| {
@@ -157,7 +157,14 @@ fn comparison_witness_unit() -> Unit {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    unit_for(unit, config_version_domain_document())
+    unit
+}
+
+fn comparison_witness_unit() -> Unit {
+    unit_for(
+        comparison_witness_unit_text(),
+        config_version_domain_document(),
+    )
 }
 
 #[trace("FR-003-AC-9")]
@@ -3014,6 +3021,94 @@ fn tc_2981_a_path_ending_at_a_comparison_records_the_comparison_and_its_operands
         &record.value_path.subject,
         ValuePathSubject::Object(reference) if reference.object().as_str() == "mid"
     ));
+    let (observations, _, mut meter) =
+        evaluate(&unit, "MatchesParent", Snapshot::High, "mid", 1_000_000);
+    assert_eq!(
+        separate(
+            &unit.compiled.package,
+            "MatchesParent",
+            &observations,
+            &record,
+            &[],
+            &mut meter,
+        )
+        .unwrap(),
+        SeparationOutcome::Holds
+    );
+    let mut missing_path = record.clone();
+    missing_path.decision_path = Some(vec![equality.clone()]);
+    assert_eq!(
+        separate(
+            &unit.compiled.package,
+            "MatchesParent",
+            &observations,
+            &missing_path,
+            &[],
+            &mut meter,
+        )
+        .unwrap(),
+        SeparationOutcome::Failed(SeparationStep::Quantifier, SeparationReason::Unmet)
+    );
+    let mut wrong_operands = record.clone();
+    wrong_operands.operands = Some([integer(600), integer(1)]);
+    assert_eq!(
+        separate(
+            &unit.compiled.package,
+            "MatchesParent",
+            &observations,
+            &wrong_operands,
+            &[],
+            &mut meter,
+        )
+        .unwrap(),
+        SeparationOutcome::Failed(SeparationStep::Element, SeparationReason::Unmet)
+    );
+    let mut wrong_result = record.clone();
+    wrong_result.deciding_element = DecidingElement::Value(Value::Boolean(true));
+    assert_eq!(
+        separate(
+            &unit.compiled.package,
+            "MatchesParent",
+            &observations,
+            &wrong_result,
+            &[],
+            &mut meter,
+        )
+        .unwrap(),
+        SeparationOutcome::Failed(SeparationStep::Body, SeparationReason::Unmet)
+    );
+    let (selection, snapshots) = selection("MatchesParent", Snapshot::High, "mid");
+    let domain = config_version_domain_document();
+    let packages = fsl_semantics::model::intake::package_input([domain.as_slice()]).unwrap();
+    let mut request = config_version_request_for(
+        comparison_witness_unit_text(),
+        packages,
+        "comparison-witness.native",
+        ClauseRunSelection::Clause(selection),
+    );
+    request.snapshots = snapshots;
+    request.accounting = default_accounting(1_000_000);
+    let report = run_clause(request).expect("the comparison clause runs");
+    let bytes = crate::spine::write_clause_run_result(&report).unwrap();
+    let wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        wire["witness"]["deciding_comparison"]["node_id"],
+        crate::id_text::node_text(equality.node()).unwrap()
+    );
+    assert_eq!(wire["witness"]["operands"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        wire["witness"]["decision_path"].as_array().unwrap().len(),
+        2
+    );
+    let crate::spine::NativeRunResult::Clause(read) =
+        crate::spine::read_native_run_result(&bytes).unwrap()
+    else {
+        panic!("the report reads as a clause result");
+    };
+    assert_eq!(
+        read.witness(&unit.compiled.package).unwrap(),
+        report.witness
+    );
     assert!(
         matches!(derive(&unit, "AtLeastParent", Snapshot::High, "mid"), Some(Derived {
             basis: SettlementBasis::DecisiveWitness,
