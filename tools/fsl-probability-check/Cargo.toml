@@ -9,6 +9,7 @@ description = "Source-backed exact probability certificate checker executable"
 
 [dependencies]
 fsl-replay = { path = "../../fsl-replay" }
+fsl-package = { path = "../../fsl-package" }
 fsl-foundation = { path = "../../fsl-foundation" }
 fsl-semantics = { path = "../../fsl-semantics" }
 fsl-eval = { path = "../../fsl-eval" }

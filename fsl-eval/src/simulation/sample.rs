@@ -337,15 +337,12 @@ mod tests {
         (0..steps).map(|_| sampler.next_index(n)).collect()
     }
 
-    /// FSpec's TC-210 "Sampler index-sequence vector" section, read from the
-    /// checkout `FSPEC_DIR` names; `None` when it is unset (`make
-    /// conformance` requires it). Nothing from it is copied into FSL.
+    /// FSpec's published TC-210 "Sampler index-sequence vector" section.
     fn tc_210_section() -> Option<String> {
-        let fspec = std::env::var_os("FSPEC_DIR")?;
-        let path = std::path::Path::new(&fspec)
-            .join("spec/test-cases/TC-210-finite-simulation-reproducibility.md");
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("{} is readable: {error}", path.display()));
+        let bytes = filament_specification::published_file(
+            "spec/test-cases/TC-210-finite-simulation-reproducibility.md",
+        )?;
+        let text = std::str::from_utf8(bytes).expect("TC-210 is UTF-8");
         let start = text
             .find("## Sampler index-sequence vector")
             .expect("TC-210 has the sampler index-sequence section");
@@ -385,12 +382,11 @@ mod tests {
     }
 
     /// TC-454 step 1c: the published index sequence for seed 424242,
-    /// trace 0, `n = 5` is the sampler's (read from FSpec's TC-210).
+    /// trace 0, `n = 5` is the sampler's (read from the published FSpec TC-210).
     #[trace("TC-454", "FR-101-AC-3")]
     #[test]
     fn tc_454_published_index_sequence_is_the_samplers() {
-        let section =
-            tc_210_section().expect("FSPEC_DIR must name a filament-specification checkout");
+        let section = tc_210_section().expect("pinned FSpec publishes TC-210");
         let published: Vec<usize> = section
             .split("index `")
             .skip(1)

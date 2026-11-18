@@ -55,6 +55,7 @@ serde_json = "1.0.151"
 test-support = []
 
 [dev-dependencies]
+filament-specification = { workspace = true }
 # The analyze request stubs (FR-620 to FR-636) read `native-analyze/1`
 # documents through the in-process command adapter.
 fsl-command = { path = "../fsl-command" }
@@ -74,7 +75,7 @@ fsl-semantics = { path = "../fsl-semantics", features = ["test-support"] }
 fsl-eval = { path = "../fsl-eval", features = ["test-support"] }
 filament-eval = { workspace = true }
 # FR-159-AC-5 validates EN-1's manifest entry against FSpec's backend-provider
-# schema, read in place from `$FSPEC_DIR`.
+# schema, read from the pinned standard package.
 jsonschema = { version = "0.17.1", default-features = false, features = ["draft202012"] }
 
 [[test]]

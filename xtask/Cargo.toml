@@ -8,6 +8,7 @@ license = "AGPL-3.0-or-later"
 description = "Workspace developer tooling: cargo xtask seam-probe / string-edge."
 
 [dependencies]
+filament-specification = { workspace = true }
 # FR-059's `graph::classify` (ecosystem packages, ADR-032 DT-4).
 arch-lint = { path = "../tools/arch-lint" }
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
@@ -38,13 +39,13 @@ syn = { version = "2.0.119", features = ["full", "visit"] }
 thiserror = "2.0.20"
 jsonschema = { version = "0.17.1", default-features = false, features = ["draft202012"] }
 serde_json_canonicalizer = "0.3.2"
+tempfile = "3.27.0"
 
 [features]
 # FR-567: a test may replace the matrix cell set; the command line cannot.
 test-support = []
 
 [dev-dependencies]
-tempfile = "3.27.0"
 
 # FR-765-AC-3: needs the sibling driver and examples checkouts; run by
 # `make examples-check` after the gate itself.

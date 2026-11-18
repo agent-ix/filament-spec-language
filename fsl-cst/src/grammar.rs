@@ -348,7 +348,7 @@ fn source_and_types(g: &mut Grammar) {
             star(r(P::Profile)),
             star(r(P::ImportDeclaration)),
             star(r(P::Model)),
-            plus(r(P::Declaration)),
+            star(r(P::Declaration)),
             Rule::Terminal(Terminal::End),
         ]),
     );

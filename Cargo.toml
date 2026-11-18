@@ -1,11 +1,12 @@
 [workspace]
-members = [".", "xtask", "tools/arch-lint", "tools/fsl-probability-check", "fsl-walk-grow", "fsl-foundation", "fsl-cst", "fsl-command", "fsl-conformance", "fsl-replay", "fsl-source", "fsl-forms", "fsl-semantics", "fsl-package", "fsl-route", "fsl-eval", "fsl-analyze", "fsl-inspect", "fsl-bench", "fsl-string-edge", "tests/fixtures/checked-closure-consumer", "tests/fixtures/hyper-query-consumer"]
+members = [".", "xtask", "tools/arch-lint", "tools/fsl-probability-check", "fsl-walk-grow", "fsl-foundation", "fsl-cst", "fsl-command", "fsl-conformance", "fsl-replay", "fsl-source", "fsl-forms", "fsl-semantics", "fsl-package", "fsl-route", "fsl-eval", "fsl-analyze", "fsl-inspect", "fsl-bench", "fsl-string-edge", "tests/fixtures/checked-closure-consumer", "tests/fixtures/hyper-query-consumer", "tests/fixtures/facade-contract-consumer"]
 resolver = "2"
 # A cargo-fuzz crate with its own workspace; fuzz/Cargo.toml says why.
 exclude = ["fuzz"]
 
 [workspace.dependencies]
 filament-specification-qualification = { git = "https://github.com/agent-ix/filament-specification", tag = "v0.1.1" }
+filament-specification = { package = "filament-specification-qualification", git = "https://github.com/agent-ix/filament-specification", tag = "v0.1.1" }
 # `default-features = false`: the encoder builds `no_std` + `alloc`, so the
 # layer-SV leaf `filament-semantic-value` can mint the compound-unit id
 # through it; a crate that writes through `io::Write` turns on `std`.
@@ -98,6 +99,7 @@ ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" 
 # FR-660: acceptance reads the pinned standard only through its published
 # file API; production code has no need for this dependency.
 filament-specification-qualification = { workspace = true }
+filament-specification = { workspace = true }
 # Non-core request-file intake exercised by the root acceptance tests.
 fsl-command = { path = "fsl-command" }
 # The integration tests drive the checked-package temporal evidence call. No

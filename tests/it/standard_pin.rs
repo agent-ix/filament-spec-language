@@ -99,7 +99,6 @@ fn the_standard_is_a_tag_pinned_dependency_whose_fixture_carries_the_wire_tag() 
 
 #[test]
 #[trace("TC-2140", "FR-760-AC-2", "FSpec-TC-1641", "FSpec-FR-660-AC-2")]
-#[ignore = "QSL-2233: removal of the FSPEC_DIR sibling-checkout lookup from the Makefile, CI workflow and tests is not implemented yet"]
 fn no_file_locates_the_standard_by_variable_or_sibling_path() {
     let root = workspace_root();
     let mut files = vec![root.join("Makefile")];
@@ -117,15 +116,13 @@ fn no_file_locates_the_standard_by_variable_or_sibling_path() {
             scanned_files(&path.join("tests"), &mut files);
         }
     }
-    let this_file = root.join(file!());
     let offenders: Vec<String> = files
         .iter()
-        .filter(|path| **path != this_file)
         .filter(|path| {
             fs::read_to_string(path).is_ok_and(|text| {
-                text.contains("FSPEC_DIR")
-                    || text.contains("../filament-specification")
-                    || text.contains("repository: agent-ix/filament-specification")
+                text.contains(concat!("FSPEC", "_DIR"))
+                    || text.contains(concat!("../filament", "-specification"))
+                    || text.contains(concat!("repository: agent-ix/filament", "-specification"))
             })
         })
         .map(|path| path.display().to_string())

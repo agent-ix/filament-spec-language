@@ -44,6 +44,7 @@ use filament_semantic_value::admission::AdmissionRecord;
 use filament_semantic_value::call::InputRefusal;
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::TypeEnvironment;
+use filament_semantic_value::model_transition::ModelTransition;
 use filament_semantic_value::supplied_stop::{
     SuppliedCause, SuppliedFailure, SuppliedLimits, SuppliedPhase, SuppliedRun, SuppliedStop,
 };
@@ -82,7 +83,7 @@ use filament_eval::{
 };
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckedExpression, CheckedNode, StatePredicate};
+use fsl_semantics::check::{CheckedExpression, CheckedModelRelation, CheckedNode, StatePredicate};
 
 fn protocol_reference_failure(
     authority: &fsl_package::AdmittedProtocolObservation<'_>,
@@ -296,6 +297,170 @@ pub fn evaluate_history_update(
         package.graph().dispatch_tables(),
     )
     .run(row.body(), row.slots(), bindings)
+}
+
+/// FR-179: evaluate a checked relation body over one transition per execution.
+pub fn evaluate_model_relation(
+    package: &CheckedPackage,
+    relation: &CheckedModelRelation,
+    arguments: Vec<Value>,
+    pre_components: &[&ObjectEnvironment],
+    post_components: &[&ObjectEnvironment],
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
+    let fault = |invariant| InternalFault::new("S6a", invariant);
+    let count = relation.executions().len();
+    if pre_components.len() != count || post_components.len() != count {
+        return Err(fault("relation-binds-one-pre-and-post-state-per-execution"));
+    }
+    if arguments.len() != relation.body_parameters().len() {
+        return Err(fault("relation-binds-one-value-per-execution-member"));
+    }
+    let Some(current) = post_components.first().copied() else {
+        return Err(fault("relation-has-at-least-one-execution"));
+    };
+    let reads: std::collections::BTreeMap<_, _> = relation
+        .component_reads()
+        .iter()
+        .map(|(location, (component, _))| (location.clone(), *component))
+        .collect();
+    let observations: std::collections::BTreeMap<_, _> = relation
+        .component_reads()
+        .iter()
+        .map(|(location, (_, observation))| (location.clone(), *observation))
+        .collect();
+    Machine::new(
+        package.graph().scope(),
+        package.graph(),
+        current,
+        meter,
+        package.graph().dispatch_tables(),
+    )
+    .with_components(evaluate::ComponentReads {
+        environments: post_components,
+        pre_environments: Some(pre_components),
+        reads: &reads,
+        observations: Some(&observations),
+    })
+    .run(
+        relation.typed_body().root(),
+        relation.body_parameters().len(),
+        arguments,
+    )
+}
+
+/// FR-179: bind checked execution members from a tuple of model transitions.
+pub fn evaluate_model_relation_transitions(
+    package: &CheckedPackage,
+    relation: &CheckedModelRelation,
+    transitions: &[&ModelTransition],
+    results: &[Option<&str>],
+    pre_components: &[&ObjectEnvironment],
+    post_components: &[&ObjectEnvironment],
+    meter: &mut Meter,
+) -> Result<ModelRelationEvaluation, InternalFault> {
+    let fault = |invariant| InternalFault::new("S6a", invariant);
+    if transitions.len() != relation.executions().len() || results.len() != transitions.len() {
+        return Err(fault(
+            "relation-binds-one-transition-and-result-per-execution",
+        ));
+    }
+    let parameters = relation.body_parameters();
+    let mut arguments = Vec::with_capacity(parameters.len());
+    let mut slot = 0;
+    for (index, ((variable, operation), transition)) in
+        relation.executions().iter().zip(transitions).enumerate()
+    {
+        if transition.operation() != fsl_semantics::check::operation_text(operation) {
+            return Err(fault("relation-transition-matches-its-operation"));
+        }
+        let (self_name, _) = parameters
+            .get(slot)
+            .ok_or_else(|| fault("relation-has-a-self-binder-per-execution"))?;
+        if self_name != &format!("{variable}.self") {
+            return Err(fault("relation-self-binders-follow-execution-order"));
+        }
+        let receiver = transition
+            .receiver()
+            .and_then(crate::simulation::model::encode::parse_reference)
+            .ok_or_else(|| fault("relation-transition-receiver-decodes"))?;
+        arguments.push(Value::Reference(receiver));
+        slot += 1;
+        if parameters
+            .get(slot)
+            .is_some_and(|(name, _)| name == &format!("{variable}.result"))
+        {
+            let (_, result_type) = &parameters[slot];
+            arguments.push(
+                results[index]
+                    .and_then(|text| crate::hyper::decode(text, result_type))
+                    .ok_or_else(|| fault("relation-transition-result-decodes"))?,
+            );
+            slot += 1;
+        }
+        for text in transition.arguments() {
+            let (name, value_type) = parameters
+                .get(slot)
+                .ok_or_else(|| fault("relation-transition-arguments-match-its-operation"))?;
+            if !name.starts_with(&format!("{variable}.")) || name.ends_with(".self") {
+                return Err(fault("relation-argument-binders-follow-execution-order"));
+            }
+            arguments.push(
+                crate::hyper::decode(text, value_type)
+                    .ok_or_else(|| fault("relation-transition-argument-decodes"))?,
+            );
+            slot += 1;
+        }
+    }
+    if slot != parameters.len() {
+        return Err(fault("relation-binds-every-checked-execution-member"));
+    }
+    let evaluation = evaluate_model_relation(
+        package,
+        relation,
+        arguments,
+        pre_components,
+        post_components,
+        meter,
+    )?;
+    match evaluation.outcome {
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true))) => {
+            Ok(ModelRelationEvaluation::Holds)
+        }
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(false))) => {
+            Ok(ModelRelationEvaluation::Refuted)
+        }
+        FamilyOutcome::Evaluated(Outcome::Undefined(undefined)) => Ok(
+            ModelRelationEvaluation::Undefined(crate::temporal::UndefinedCause::Kernel(undefined)),
+        ),
+        FamilyOutcome::FamilyEvaluated(filament_eval::FamilyResult::Undefined(cause)) => {
+            Ok(ModelRelationEvaluation::Undefined(
+                crate::temporal::UndefinedCause::Family(cause.undefined_record()),
+            ))
+        }
+        FamilyOutcome::Evaluated(Outcome::Completed(_)) => {
+            Ok(ModelRelationEvaluation::Undetermined(
+                crate::simulation::model::ClauseOutcome::NotBoolean,
+            ))
+        }
+        FamilyOutcome::Evaluated(Outcome::Refused(refusal)) => {
+            Ok(ModelRelationEvaluation::Undetermined(
+                crate::simulation::model::ClauseOutcome::KernelRefused(refusal),
+            ))
+        }
+        FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)) => {
+            Ok(ModelRelationEvaluation::Undetermined(
+                crate::simulation::model::ClauseOutcome::Incomplete(incomplete),
+            ))
+        }
+        FamilyOutcome::FamilyEvaluated(filament_eval::FamilyResult::Refused(cause)) => {
+            Ok(ModelRelationEvaluation::Undetermined(
+                crate::simulation::model::ClauseOutcome::FamilyRefused(cause.catalog_code()),
+            ))
+        }
+        #[cfg(seam_probe)]
+        FamilyOutcome::__SeamProbe => unreachable!("the seam probe is not a runtime value"),
+    }
 }
 
 /// FR-167 (ADR-022 GM-3): evaluate the state-graph or probabilistic-claim
@@ -855,6 +1020,19 @@ pub struct FrameEvaluation {
     /// The frame witness: present exactly when the outcome is
     /// `Completed(false)`.
     pub witness: Option<Box<fsl_semantics::model::observation::FrameWitness>>,
+}
+
+/// The three-valued result of evaluating one relation tuple.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ModelRelationEvaluation {
+    /// The relation body returned true.
+    Holds,
+    /// The relation body returned false.
+    Refuted,
+    /// The relation body was undefined.
+    Undefined(crate::temporal::UndefinedCause),
+    /// Evaluation refused, exhausted its budget, or returned a non-Boolean.
+    Undetermined(crate::simulation::model::ClauseOutcome),
 }
 
 /// Argument admission for [`CheckedPackage::call`] and
@@ -1915,7 +2093,9 @@ fn evaluate_hyper_holds_inner(
     )
     .with_components(evaluate::ComponentReads {
         environments: components,
+        pre_environments: None,
         reads,
+        observations: None,
     });
     if let Some(reference_bindings) = reference_bindings {
         machine = machine.with_component_reference_bindings(reference_bindings);

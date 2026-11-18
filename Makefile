@@ -159,14 +159,6 @@ cargo-deny-bans:
 # =============================================================================
 
 SIBLINGS ?= $(shell cd "$$(git rev-parse --path-format=absolute --git-common-dir)/../.." && pwd -P)
-ifeq ($(origin FSPEC_DIR),undefined)
-FSPEC_DIR := $(SIBLINGS)/filament-specification
-endif
-# Freeze the raw caller value before Make can expand literal '$' path bytes.
-# `override` and `export` stay separate statements: GNU Make 3.81 (macOS) turns a
-# combined `override export V :=` into a recursive variable that expands the `$`.
-override FSPEC_DIR := $(value FSPEC_DIR)
-export FSPEC_DIR
 LOCAL_PATCHES ?= filament-contract-ir:filament-contract-model:crates/filament-contract-model \
 	quire-canonical:quire-canonical:. \
 	ix-trace-rs:ix-trace-rs:.
@@ -343,10 +335,10 @@ fuzz-deep-input:
 # Each aggregate prerequisite depends on validation, rather than racing it as
 # a sibling under -j (or continuing past it under -k). Standalone lane commands
 # retain their existing behavior; this ordering belongs to the aggregate gate.
-CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core build-no-std examples-check
+CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning facade-tests cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core build-no-std examples-check
 CI_TARGETS := $(CI_CHECKS)
 # The public aggregate validates the native documents before the xtask wrapper
-# canonicalizes FSPEC_DIR for every child lane.
+# runs the focused conformance lanes.
 # Incremental compilation metadata is a multi-gigabyte part of this workspace's
 # local CI target tree, while the gate runs complete, fingerprinted checks
 # rather than edit/compile cycles. Disable that metadata and dev/test debug
@@ -366,24 +358,24 @@ ci: check-spec-validation pin-check
 pin-check:
 	@cargo run --locked --package xtask -- pin-check
 
-# The internal graph is used by xtask after it has canonicalized FSPEC_DIR.
-# Scope the input prerequisite to this graph, so standalone targets such as
-# ci-clean-build retain their own process oracle.
+# Scope the conformance prerequisite to this graph, so standalone targets such
+# as ci-clean-build retain their own process oracle.
 .PHONY: ci-internal
 ci-internal: $(CI_TARGETS)
 ifneq ($(filter ci-internal,$(MAKECMDGOALS)),)
-$(CI_TARGETS): check-conformance-input
+$(CI_TARGETS):
 endif
 
-# Resolve and validate the raw FSPEC_DIR inside xtask. The exported Make value
-# reaches the recipe shell as data; Rust canonicalizes it before child Cargo runs.
-CONFORMANCE_XTASK = FSPEC_DIR="$$FSPEC_DIR" cargo run --locked --package xtask --
-.PHONY: check-conformance-input
-check-conformance-input:
-	@$(CONFORMANCE_XTASK) conformance-input
+# FSpec inputs come from the pinned published package dependency.
+CONFORMANCE_XTASK = cargo run --locked --package xtask --
 
-conformance: check-conformance-input
+conformance:
 	@$(CONFORMANCE_XTASK) conformance
+
+# FR-912: compare the pinned consumer-fact inventory with live public-API tests.
+.PHONY: facade-tests
+facade-tests:
+	cargo run --locked --package xtask -- facade-tests
 
 # FR-765 (QSL-2101): the filament-examples gate over this checkout. Runs the
 # sibling filament-driver's examples gate (driver FR-021) with every language

@@ -2,7 +2,7 @@
 //! FSpec FR-483 and FR-484 (TC-972, TC-973): the `value-validity` check arm.
 //!
 //! The FSpec vectors `proposals/backend-check-arm-v1/vectors.json` are read
-//! in place from `$FSPEC_DIR`, never copied. A vector's `model` is a small
+//! from the pinned package. A vector's `model` is a small
 //! expression over bounded integers; each is written out as an FSL function,
 //! compiled through S1 to S4 and checked by the arm through `analyze`, and
 //! the arm's result is compared with the vector's result, cause and locus and
@@ -46,18 +46,12 @@ use serde_json::Value as Json;
 // ---- reading the vectors ----
 
 fn vectors() -> Vec<Json> {
-    let root = std::env::var_os("FSPEC_DIR")
-        .expect("FSPEC_DIR names the FSpec checkout whose check-arm vectors this reads");
-    let path = std::path::Path::new(&root).join("proposals/backend-check-arm-v1/vectors.json");
-    let text = std::fs::read_to_string(&path).expect("the vectors file is readable");
-    let document: Json = serde_json::from_str(&text).expect("the vectors are JSON");
+    let document = crate::published_fspec::json("proposals/backend-check-arm-v1/vectors.json");
     document["cases"].as_array().expect("cases").clone()
 }
 
 fn descriptor_cases() -> Vec<Json> {
-    let root = std::env::var_os("FSPEC_DIR").expect("FSPEC_DIR");
-    let path = std::path::Path::new(&root).join("proposals/backend-check-arm-v1/vectors.json");
-    let document: Json = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let document = crate::published_fspec::json("proposals/backend-check-arm-v1/vectors.json");
     document["descriptor_cases"].as_array().unwrap().clone()
 }
 

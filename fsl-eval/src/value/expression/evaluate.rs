@@ -870,8 +870,19 @@ pub(crate) struct Machine<'a, 'm, N> {
 pub(crate) struct ComponentReads<'a> {
     /// One observation per trace variable, in quantifier order.
     pub(crate) environments: &'a [&'a ObjectEnvironment],
+    /// One pre-state observation per trace variable, when evaluating a model
+    /// relation over transitions.
+    pub(crate) pre_environments: Option<&'a [&'a ObjectEnvironment]>,
     /// The component each model read observes, keyed by the read's location.
     pub(crate) reads: &'a std::collections::BTreeMap<Location, usize>,
+    /// The observation selected for each component read, when the caller has
+    /// both pre- and post-state observations.
+    pub(crate) observations: Option<
+        &'a std::collections::BTreeMap<
+            Location,
+            fsl_semantics::model::clause_observation::Observation,
+        >,
+    >,
 }
 
 /// A parameter of a claim at a key with no conforming object.
@@ -3710,10 +3721,24 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// case (SR-750 FND-013).
     fn objects_for(&self, node: N) -> Result<&'a ObjectEnvironment, Halt> {
         if let Some(components) = &self.components {
-            if let Some(component) = node
-                .location()
-                .and_then(|location| components.reads.get(location))
-            {
+            if let Some((location, component)) = node.location().and_then(|location| {
+                components
+                    .reads
+                    .get(location)
+                    .map(|component| (location, component))
+            }) {
+                if components
+                    .observations
+                    .and_then(|observations| observations.get(location))
+                    == Some(&fsl_semantics::model::clause_observation::Observation::Pre)
+                {
+                    if let Some(pre_environments) = components.pre_environments {
+                        return pre_environments
+                            .get(*component)
+                            .cloned()
+                            .ok_or_else(|| invariant("component-pre-environment-resolved"));
+                    }
+                }
                 return components
                     .environments
                     .get(*component)

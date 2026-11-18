@@ -19,9 +19,9 @@ use fsl_eval::simulation::model::{
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
-use fsl_package::CheckedPackage;
+use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
-    GraphEvidence, GraphEvidenceEnvelope, GraphReplayResult, ModelTraceSubject, ObligationIdentity,
+    GraphEvidence, GraphEvidenceEnvelope, GraphReplayResult, ModelTraceSubject,
     ProfileSelection, ReplayLimits, ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplayResult,
     ReplaySource, RequestTargetWire, StateGraphInstanceOutcome, StateGraphOutcome,
     StateGraphPropertyForm, StateGraphRecord, TerminalValue, TrapClosure, WitnessPath,

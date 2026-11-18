@@ -399,13 +399,11 @@ fn a_capture_of_every_declared_type_is_admitted() {
 #[trace("FSpec-FR-322-AC-34", "TC-1073")]
 #[test]
 fn model_field_read_form_survives_emission_and_typed_readback() {
-    let fspec = std::env::var_os("FSPEC_DIR").expect("FSPEC_DIR names the FSpec checkout");
     let vectors: Value = serde_json::from_slice(
-        &std::fs::read(
-            std::path::PathBuf::from(fspec)
-                .join("proposals/checked-package-v2/model-member-type-vectors.json"),
+        filament_specification::published_file(
+            "proposals/checked-package-v2/model-member-type-vectors.json",
         )
-        .expect("FSpec model-member vectors are readable"),
+        .expect("pinned FSpec publishes model-member vectors"),
     )
     .expect("FSpec model-member vectors are JSON");
     let projection_cases = vectors["projection_cases"]

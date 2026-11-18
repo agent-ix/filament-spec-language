@@ -88,6 +88,8 @@ pub mod value_check;
 mod witness;
 mod witness_entry_name;
 
+use fsl_package::{ModelIdentity, ObligationIdentity};
+
 pub use admitted::{
     compile_admitted, compile_admitted_with_temporal_selections, AdmittedCompilation,
     AdmittedComposite, AdmittedCompositeForm, AdmittedContext, AdmittedDimension, AdmittedEnum,
@@ -122,6 +124,7 @@ pub use certificate::closed_form::outcome::{
     AmcEvidence, ClosedFormAnalysis, ClosedFormEvidence, ClosedFormOutcome, DemandWitness,
     HighModeMiss, JobIterates, MissEvidence, ScheduleLimit, TaskFixpoint,
 };
+pub use certificate::closed_form::check::{check_closed_form, CertificateRefusal, ClaimTriple, ClosedFormResult};
 pub use certificate::closed_form::recompute::{recompute, ClosedFormCheck, ClosedFormDisagreement};
 pub use certificate::closed_form::settle::settle;
 pub use certificate::closed_form::task_set::{
@@ -205,8 +208,8 @@ pub use hybrid_replay::{
     TraceBefore, TraceFault, TraceJump, TraceRefusal, TraceState, UndefinedCause, UndefinedInstant,
 };
 pub use identity::{
-    DeclaredDomain, DefinitionSourceRef, EmptyQualifiedName, ModelIdentity, ObligationIdentity,
-    ProfileSelection, QualifiedName, TracePosition,
+    DeclaredDomain, DefinitionSourceRef, EmptyQualifiedName, ProfileSelection, QualifiedName,
+    TracePosition,
 };
 pub use limits::{AccountingLimits, CallerLimits, EngineLimits, RenderLimits};
 pub use model_check::counterexample::{
@@ -229,7 +232,10 @@ pub use model_check::hyper_counterexample::{
     HyperUndefined, MatchWitness, MatchWitnessCheck, StepMark,
 };
 pub use model_check::hyper_outcome::{BoundCovers, HyperOutcome, HyperReductionCause};
-pub use model_check::hyper_replay::{check_match_witness, replay_hyper_trace_tuple, HyperReplay};
+pub use model_check::hyper_replay::{
+    check_match_witness, replay_hyper_trace_tuple, replay_model_relation_tuple, HyperReplay,
+    ModelRelationReplay,
+};
 pub use model_check::hyper_settle::{
     settle_hyper_check, settle_hyper_form, settle_hyper_smt, HyperRecord, HyperSettleRefusal,
     LimitOrigin, ProductMember, UsedLimit,

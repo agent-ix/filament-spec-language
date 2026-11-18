@@ -392,8 +392,8 @@ pub struct Execution {
 
 /// Execute qualification, retaining successful operation bytes for callers
 /// that compare determinism. The CLI writes only the report.
-pub fn execute(workspace_root: &Path, operands: &[OsString]) -> Result<Execution> {
-    let fspec = fspec_dir(workspace_root)?;
+pub fn execute(_workspace_root: &Path, operands: &[OsString]) -> Result<Execution> {
+    let fspec = fspec_dir();
     execute_with_fspec(&fspec, operands)
 }
 
@@ -699,18 +699,8 @@ fn parse_args(operands: &[OsString]) -> Result<Args> {
     })
 }
 
-fn fspec_dir(workspace_root: &Path) -> Result<PathBuf> {
-    let path = std::env::var_os("FSPEC_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            workspace_root
-                .parent()
-                .unwrap_or(workspace_root)
-                .join("filament-specification")
-        });
-    fs::canonicalize(&path).map_err(|error| {
-        Error::QualificationRefusal(format!("FSPEC_DIR {}: {error}", path.display()))
-    })
+fn fspec_dir() -> PathBuf {
+    crate::published_fspec::directory("proposals/")
 }
 
 fn validate_semantics(corpus: &Corpus) -> Result<()> {
@@ -1322,15 +1312,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(512 * 1024)
             .spawn(|| {
-                let fspec = std::env::var_os("FSPEC_DIR")
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_else(|| {
-                        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                            .ancestors()
-                            .map(|parent| parent.join("filament-specification"))
-                            .find(|path| path.is_dir())
-                            .expect("an FSpec checkout or FSPEC_DIR")
-                    });
+                let fspec = crate::published_fspec::directory("proposals/");
                 let mut nested = b"[".repeat(50_000);
                 nested.push(b'0');
                 nested.extend_from_slice(&b"]".repeat(50_000));
