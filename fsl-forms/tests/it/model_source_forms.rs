@@ -341,3 +341,22 @@ fn a_ref_term_wraps_its_place_operand() {
         &ExprNode::Name("other".into())
     );
 }
+
+/// FR-1000-AC-7 (TC-2953): S2 builds a reference literal as one
+/// `ReferenceLiteral{type_name, key}` value form holding the qualified name as
+/// written and the decoded key, at the literal's source span.
+#[trace("TC-2953", "FR-1000-AC-7")]
+#[test]
+#[ignore = "QSL-2166: S1 has no reference-literal production and S2 no ReferenceLiteral value form yet"]
+fn a_reference_literal_builds_one_value_form() {
+    for (literal, key) in [("M::T#\"s1\"", "s1"), ("M::T#\"\\u00e9\"", "\u{e9}")] {
+        let (source, function) = function(literal);
+        let root = format!("{:?}", function.body.root_node());
+        assert!(root.starts_with("ReferenceLiteral"), "{literal}: {root}");
+        assert!(root.contains("type_name: \"M::T\""), "{literal}: {root}");
+        assert!(root.contains(&format!("key: {key:?}")), "{literal}: {root}");
+        assert!(function.body.root().children().is_empty(), "{literal}");
+        let spans = &function.spans().expect("source-derived spans").body;
+        assert_eq!(spans.span(spans.root()), Some(span(&source, literal)));
+    }
+}
