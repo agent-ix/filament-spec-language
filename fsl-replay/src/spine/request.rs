@@ -545,15 +545,15 @@ pub struct TemporalSelectionWire {
     #[serde(default, deserialize_with = "present")]
     pub ledger: Option<String>,
     /// FR-526: the relation of this run's result to a prior one.
-    #[serde(default, deserialize_with = "present")]
+    #[serde(default, deserialize_with = "relation_member")]
     pub relation: Option<RelationWire>,
     /// FR-526: the relative path of the evidence ledger file a prior run
     /// wrote.
-    #[serde(default, deserialize_with = "present")]
+    #[serde(default, deserialize_with = "evidence_ledger_member")]
     pub evidence_ledger: Option<String>,
     /// FR-526: the late observations a superseding repair admits, by
     /// observation identity.
-    #[serde(default, deserialize_with = "present")]
+    #[serde(default, deserialize_with = "admit_late_member")]
     pub admit_late: Option<Vec<String>>,
 }
 
@@ -574,6 +574,35 @@ fn present<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
     decoder: D,
 ) -> Result<Option<T>, D::Error> {
     T::deserialize(decoder).map(Some)
+}
+
+/// [`present`], with a malformed value's error naming `member` (FR-985).
+fn present_member<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
+    decoder: D,
+    member: &str,
+) -> Result<Option<T>, D::Error> {
+    use serde::de::Error;
+    T::deserialize(decoder)
+        .map(Some)
+        .map_err(|error| D::Error::custom(format!("{member}: {error}")))
+}
+
+fn relation_member<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<RelationWire>, D::Error> {
+    present_member(decoder, "relation")
+}
+
+fn evidence_ledger_member<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<String>, D::Error> {
+    present_member(decoder, "evidence_ledger")
+}
+
+fn admit_late_member<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<Vec<String>>, D::Error> {
+    present_member(decoder, "admit_late")
 }
 
 /// A temporal clause's object binding.

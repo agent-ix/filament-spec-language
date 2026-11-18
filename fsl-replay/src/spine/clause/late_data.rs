@@ -45,6 +45,9 @@ pub(super) struct Screened {
     pub(super) unmatched: Vec<String>,
     /// What the result identity reads of the cutoff and the classification.
     pub(super) lateness: Lateness,
+    /// The input positions of the observations `trace` keeps, in input
+    /// order.
+    pub(super) kept: Vec<usize>,
 }
 
 /// FR-966 "Interval stamp admission": the first observation, in input order,
@@ -96,6 +99,7 @@ pub(super) fn screen(
             admitted: Vec::new(),
             unmatched: late_inputs.admit_late.clone(),
             lateness: Lateness::default(),
+            kept: (0..observations.len()).collect(),
         }));
     };
     let cover = eval_cover(window.cover);
@@ -199,6 +203,7 @@ pub(super) fn screen(
         },
         admitted,
         unmatched,
+        kept: kept.iter().map(|(position, _)| *position).collect(),
     }))
 }
 
