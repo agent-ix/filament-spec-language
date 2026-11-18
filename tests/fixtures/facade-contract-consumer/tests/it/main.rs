@@ -156,7 +156,7 @@ mod code_generation {
     fn cf_cg_01_01_call_site_returns_the_selected_function_and_package() {
         let source = fsl_replay::SourceIdentity::new("consumer", "call-site");
         let selected = fsl_replay::QualifiedName::new(vec![
-            filament_exact::Identifier::new("f").expect("identifier")
+            filament_exact::Identifier::new("f").expect("identifier"),
         ])
         .expect("qualified name");
         let site = fsl_replay::call_site(
@@ -248,14 +248,135 @@ mod code_generation {
     #[test]
     #[trace("TC-2575", "FR-911-AC-2")]
     fn cf_cg_04_01_closed_form_check_exposes_the_checked_verdict() {
-        let _: fn(
-            fsl_replay::ReplayRequest,
-            &fsl_package::ObligationIdentity,
-            &fsl_replay::ClaimTriple,
-            &fsl_replay::ClosedFormResult,
-            &filament_exact::Cancel,
-        ) -> Result<fsl_replay::ClosedFormCheck, fsl_replay::CertificateRefusal> =
-            fsl_replay::check_closed_form;
+        let unit = "language \"ix:native\" edition \"1-draft\";\n\
+profile v = \"filament.value.complete/v1\";\n\
+profile t = \"filament.temporal.complete/v1\";\n\
+dimension Time;\n\
+unit ms : Time = rational(1, 1);\n\
+taskset Ctl { task a periodic 4 ms deadline 4 ms wcet 1 ms priority 1 lo; }\n\
+schedulable CtlFp on Ctl under fixed_priority;\n\
+function f using v(x: Integer): Integer pure { x }\n";
+        let source = fsl_replay::SourceIdentity::new("consumer", "closed-form-check");
+        let function = fsl_replay::QualifiedName::new(vec![
+            filament_exact::Identifier::new("f").expect("function name"),
+        ])
+        .expect("qualified function name");
+        let site = fsl_replay::call_site(
+            source,
+            "consumer".into(),
+            "unit.native",
+            unit.as_bytes(),
+            [],
+            &fsl_replay::DependencyInput::default(),
+            &function,
+        )
+        .expect("compile checked schedulability input and function");
+        let evidence = evidence_for(&site.package, None);
+        let checked = match filament_contract_model::read_checked_package(
+            &site.package,
+            filament_contract_model::CheckedPackageReadLimits::bounded(),
+            &evidence,
+        ) {
+            filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("strict reader refused schedulability input: {other:?}"),
+        };
+        let roots = fsl_package::schedulability_roots(&checked).expect("schedulability roots");
+        let [root] = roots.as_slice() else {
+            panic!("one schedulability claim root: {roots:?}")
+        };
+        let claim = root.occurrence().clone();
+        let obligation = root.obligation_identity();
+
+        let replay_limits = fsl_replay::ReplayLimits::default();
+        let request = fsl_replay::ReplayRequest::decode(
+            fsl_replay::ReplayRequestWire {
+                package: fsl_replay::ReplayPackage::read(&site.package, replay_limits.input_bytes)
+                    .expect("read emitted package"),
+                profile_selections: vec![],
+                dependencies: vec![],
+                replay_target: fsl_replay::RequestTargetWire::function(
+                    function,
+                    site.site.declaration.clone(),
+                ),
+                source: fsl_replay::ReplaySource::Input(vec![fsl_replay::CanonicalAssignment {
+                    parameter: site.site.parameters[0].1.clone(),
+                    value: fsl_replay::WitnessValue::Integer(1),
+                }]),
+                obligation_identity: site.site.obligation_identity().clone(),
+                backend: "kani-backend-1".to_owned(),
+                state_environment: fsl_replay::StateEnvironment::new(vec![]),
+                accounting_limits: filament_exact::ScalarLimits {
+                    integer_bits: u64::MAX,
+                    decimal_digits: u64::MAX,
+                    scale_expansion: u64::MAX,
+                    text_input_bytes: u64::MAX,
+                    text_scalars: u64::MAX,
+                    normalized_scalars: u64::MAX,
+                    unit_edges: u64::MAX,
+                    value_occurrences: u64::MAX,
+                    work_units: u64::MAX,
+                    result_units: u64::MAX,
+                },
+                stage_limits: std::collections::BTreeMap::new(),
+                supplied_limits: None,
+                object_environment: None,
+                declared_domains: vec![],
+                byte_provision: vec![(
+                    "consumer".to_owned(),
+                    "closed-form-check".to_owned(),
+                    unit.as_bytes().to_vec(),
+                )],
+                documents: vec![],
+            },
+            replay_limits,
+        )
+        .expect("decode checked schedulability replay request");
+
+        let rational = |value| {
+            filament_exact::Rational::new(
+                filament_exact::Integer::from(value),
+                filament_exact::Integer::from(1),
+            )
+            .expect("nonzero denominator")
+        };
+        let subject = fsl_replay::ScheduleSubject::new(
+            fsl_replay::TaskSet::new(
+                fsl_replay::QualifiedName::new(vec![
+                    filament_exact::Identifier::new("Ctl").expect("task-set name"),
+                ])
+                .expect("qualified task-set name"),
+                vec![fsl_replay::Task {
+                    name: filament_exact::Identifier::new("a").expect("task name"),
+                    arrival: fsl_replay::Arrival::Periodic {
+                        period: rational(4),
+                    },
+                    deadline: rational(4),
+                    wcet: fsl_replay::Wcet::Single(rational(1)),
+                    priority: Some(1),
+                    criticality: fsl_replay::Criticality::Lo,
+                    jitter: rational(0),
+                    blocking: rational(0),
+                }],
+            )
+            .expect("task set is admitted"),
+            fsl_replay::ScheduleClaim::Schedulable(fsl_replay::SchedulingPolicy::FixedPriority),
+        )
+        .expect("schedulability claim is admitted");
+        let cancel = filament_exact::Cancel::new();
+        let outcome = fsl_analyze::schedulability::analyze(
+            &subject,
+            &fsl_analyze::schedulability::ScheduleLimits::default(),
+            &cancel,
+        );
+        let result = fsl_replay::ClosedFormResult {
+            originating_obligation: obligation.clone(),
+            outcome,
+        };
+
+        assert!(matches!(
+            fsl_replay::check_closed_form(request, &obligation, &claim, &result, &cancel),
+            Ok(fsl_replay::ClosedFormCheck::Agrees),
+        ));
     }
 }
 
@@ -373,7 +494,10 @@ schedulable CtlFp on Ctl under fixed_priority;\n";
         let identity = root.obligation_identity();
         assert_eq!(identity.node(), root.occurrence().node());
         assert_eq!(identity.model(), None);
-        assert_eq!(u64::from(identity.ordinal()), root.occurrence().origin().ordinal());
+        assert_eq!(
+            u64::from(identity.ordinal()),
+            root.occurrence().origin().ordinal()
+        );
     }
 
     #[test]
@@ -587,8 +711,8 @@ temporal T using t over (r: M::Widget) clock \"model-time\" on origin { eventual
             .expect("model types")
             .retain(|ty| ty["identity"] == "ix://acme/orders/Widget");
         let model = serde_json::to_vec(&model).expect("single-object model serializes");
-        let packages = fsl_semantics::model::intake::package_input([model.as_slice()])
-            .expect("model intake");
+        let packages =
+            fsl_semantics::model::intake::package_input([model.as_slice()]).expect("model intake");
         let unit = "language \"ix:native\" edition \"1-draft\";\n\
 profile v = \"filament.value.complete/v1\";\n\
 profile t = \"filament.temporal.timed/v1\";\n\
@@ -624,11 +748,9 @@ temporal T using t over (r: M::Widget) clock \"model-time\" on origin { eventual
             target: &target,
             settings: &settings,
         };
-        let root = fsl_analyze::monitor_root::emit_plan_root(
-            &request,
-            &filament_exact::Cancel::new(),
-        )
-        .expect("plan root emits");
+        let root =
+            fsl_analyze::monitor_root::emit_plan_root(&request, &filament_exact::Cancel::new())
+                .expect("plan root emits");
         let selected_source = root.checked_unit().source().identity().clone();
         let claim = root.plan().subject().clone();
         let observation_subject = filament_observation::authority::SubjectSelection {
