@@ -2011,6 +2011,47 @@ fn record_projection_and_record_values_name_their_record_node() {
     assert_eq!(held[0].semantic_form(), "option");
 }
 
+/// FR-680-AC-1: proved Sequence and OrderedSet indexes lower through the
+/// existing collection.index operation, without a separate emitter arm.
+#[trace("FR-680-AC-1", "TC-1820")]
+#[test]
+fn sequence_and_ordered_set_indexes_lower_as_collection_index() {
+    let sequence_type = TypeForm::collection(CollectionKind::Sequence, SPAN)
+        .with_arguments(vec![int_form(0, 9)])
+        .with_bounds(vec!["1".into(), "3".into()]);
+    let sequence = function(
+        "sequence_read",
+        &[("s", sequence_type)],
+        int_form(0, 9),
+        None,
+        Expression::index(name_expr("s"), integer_expr(0)),
+    );
+
+    let ordered_set_type = TypeForm::collection(CollectionKind::OrderedSet, SPAN)
+        .with_arguments(vec![int_form(0, 9)])
+        .with_bounds(vec!["0".into(), "3".into()]);
+    let ordered_set = function(
+        "ordered_set_read",
+        &[("o", ordered_set_type)],
+        int_form(0, 9),
+        None,
+        Expression::if_then_else(
+            Expression::binary(
+                BinaryOperator::GreaterOrEqual,
+                Expression::size(name_expr("o"), None),
+                integer_expr(2),
+            ),
+            Expression::index(name_expr("o"), integer_expr(1)),
+            integer_expr(0),
+        ),
+    );
+
+    for checked_function in [sequence, ordered_set] {
+        let graph = check(vec![checked_function]).expect("the checked index lowers");
+        application(graph.semantic_graph(), "filament.op.collection.index");
+    }
+}
+
 /// FR-092 L6: a literal `1` that is not an operand of an FR-357 operator is
 /// a `value`/`literal` node.
 #[trace("FR-092-AC-11", "FR-092-AC-4", "TC-413")]

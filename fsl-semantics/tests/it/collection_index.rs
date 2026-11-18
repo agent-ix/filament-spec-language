@@ -45,7 +45,6 @@ fn assert_refused(declarations: &str, code: Code, cause: &str) {
 
 #[trace("TC-1820", "FR-680-AC-1", "FSpec-FR-144-AC-31")]
 #[test]
-#[ignore = "Blocked by IR-1491: checked collection.index has no FSL producer yet"]
 fn index_with_a_proved_in_range_position_checks_with_the_element_type() {
     let result = check("function f using v(s: Sequence<Integer>[1, 3]): Integer pure { s[0] }");
     assert!(result.is_ok(), "{result:?}");

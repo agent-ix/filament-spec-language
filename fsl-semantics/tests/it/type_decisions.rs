@@ -82,7 +82,6 @@ fn assert_refused(declarations: &str, code: Code, cause: &str) -> CheckRefusal {
 
 #[trace("TC-1820", "FR-680-AC-1", "FSpec-FR-144-AC-31")]
 #[test]
-#[ignore = "QSL-2172: indexing a sequence, ordered set or projected field not implemented yet"]
 fn an_index_of_a_sequence_or_ordered_set_reads_the_element_type() {
     assert_checks("function f using v(s: Sequence<Integer>[1, 3]): Integer pure { s[0] }");
     assert_checks(
@@ -97,7 +96,6 @@ fn an_index_of_a_sequence_or_ordered_set_reads_the_element_type() {
 
 #[trace("TC-1820", "FR-680-AC-1", "FSpec-FR-144-AC-32")]
 #[test]
-#[ignore = "QSL-2172: index obligation and index refusals not implemented yet"]
 fn an_unproved_or_ineligible_index_is_refused() {
     assert_refused(
         "function f using v(s: Sequence<Integer>[0, 3]): Integer pure { s[0] }",
@@ -248,7 +246,9 @@ fn a_quantity_scaled_by_a_number_keeps_its_unit() {
 #[ignore = "QSL-2168: quantity scaling refusals not implemented yet"]
 fn an_unproved_or_ineligible_scaling_is_refused() {
     assert_refused(
-        &format!("{UNITS}function f using v(d: Quantity<ms>, k: Int[0, 9]): Quantity<ms> pure {{ d / k }}"),
+        &format!(
+            "{UNITS}function f using v(d: Quantity<ms>, k: Int[0, 9]): Quantity<ms> pure {{ d / k }}"
+        ),
         Code::UndefinedExpression,
         "unproved-nonzero",
     );

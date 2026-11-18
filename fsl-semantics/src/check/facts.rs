@@ -24,7 +24,7 @@ use std::rc::Rc;
 mod persistent;
 
 use self::persistent::PersistentMap;
-use super::check::{holds_float, DispatchOperation};
+use super::check::{DispatchOperation, holds_float};
 use super::ir::{CheckedNode, DispatchTable, Slot};
 use super::observation::Observations;
 use super::refusal::{
@@ -900,11 +900,7 @@ impl<'a> Definedness<'a> {
         while let NodeKind::ConvertScalar(_, operand) = inner.kind() {
             inner = inner.at(*operand);
         }
-        if is_integer(inner) {
-            inner
-        } else {
-            node
-        }
+        if is_integer(inner) { inner } else { node }
     }
 
     fn comparison(
@@ -1683,6 +1679,29 @@ impl<'a> Definedness<'a> {
                     _ => false,
                 };
                 if proved {
+                    Ok(())
+                } else {
+                    Err(Self::refuse(node.at(*index), Obligation::Presence))
+                }
+            }
+            NodeKind::Index {
+                collection,
+                index,
+                kind:
+                    filament_checked::node::IndexedKind::Sequence
+                    | filament_checked::node::IndexedKind::OrderedSet,
+            } => {
+                let collection_node = node.at(*collection);
+                let ValueType::Collection(collection_type) = collection_node.value_type() else {
+                    return Err(Self::refuse(node, Obligation::Presence));
+                };
+                let size = self
+                    .stable_path(collection_node, facts)
+                    .and_then(|path| facts.intervals.get(&Subject::Size(path)))
+                    .map_or_else(|| cardinality(collection_type), Interval::of_proved);
+                let position = self.interval(node.at(*index), facts);
+                let zero = End::Finite(Integer::zero());
+                if position.lower >= zero && position.upper < size.lower {
                     Ok(())
                 } else {
                     Err(Self::refuse(node.at(*index), Obligation::Presence))
