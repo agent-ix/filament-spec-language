@@ -478,7 +478,7 @@ mod protocol {
 profile p = \"filament.protocol.finite-global/v1\";\n\
 profile v = \"filament.value.complete/v1\";\n\
 profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
-profile u = \"filament.temporal.infinite-trace/v1\";\n\
+profile u = \"filament.temporal.timed/v1\";\n\
 model M = \"acme/orders\";\n\
 protocol Flow using p over (input: M::Widget) on origin {\n\
   role Buyer on M::Widget;\n\
@@ -930,7 +930,7 @@ mod runtime {
         let packages = fsl_semantics::model::intake::PackageInput::new();
         let unit = "language \"ix:native\" edition \"1-draft\";\n\
 profile v = \"filament.value.complete/v1\";\n\
-profile t = \"filament.temporal.infinite-trace/v1\";\n\
+profile t = \"filament.temporal.timed/v1\";\n\
 record Reading { level: Int[0, 9]; }\n\
 dimension Positions;\n\
 unit position : Positions = rational(1, 1);\n\
