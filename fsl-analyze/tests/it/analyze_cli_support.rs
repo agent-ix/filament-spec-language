@@ -285,7 +285,7 @@ pub(crate) fn litmus_request(ws: &Workspace, body: &str, extra: Value) -> PathBu
     request_over(
         ws,
         &crate::litmus::unit_text(body),
-        &crate::litmus::document(),
+        &crate::litmus::resulting_document(),
         &snapshots,
         extra,
     )

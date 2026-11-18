@@ -12,17 +12,15 @@
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ProtocolSubject};
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
-use fsl_eval::simulation::protocol::{
-    classify_accesses, ProtocolTransition, ResolvedMemory,
-};
+use fsl_eval::simulation::protocol::{classify_accesses, ProtocolTransition, ResolvedMemory};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
     replay_protocol_trace_with_temporal_selections, DeclineCode, ModelCheckItem,
     ModelTraceReplayResult, ModelTraceSubject, ProofRefusalCause, ProtocolCertificateRequest,
-    ProtocolTraceSubject, ReplayLimits, ReplayRefusal, ReplayTargetMembers,
-    RequestTargetWire, TemporalCounterexample,
+    ProtocolTraceSubject, ReplayLimits, ReplayRefusal, ReplayTargetMembers, RequestTargetWire,
+    TemporalCounterexample,
 };
 use fsl_route::request::ItemKind;
 use fsl_route::Mode;
@@ -38,9 +36,7 @@ use super::{
 };
 use crate::claim_family::claim_family;
 use crate::model_check::{manifest as en1, ProtocolCheckRequest};
-use crate::protocol_analysis::subject::{
-    protocol_subject, SubjectBindings, SubjectPackage, SubjectRefusal,
-};
+use crate::protocol_analysis::{protocol_subject, SubjectBindings, SubjectPackage, SubjectRefusal};
 
 /// The witness transcript of a derived `race-freedom` counterexample: it
 /// carries no values, the payload being the racing prefix (FR-128).
@@ -168,22 +164,21 @@ pub(super) fn protocol_clause_item<'a>(
     form: &TemporalItem,
     protocol: &ProtocolBinding,
 ) -> Option<AnalyzeItem<'a>> {
-    let node: Option<&'a TemporalClauseNode> = match form.item_kind {
-        ItemKind::Formula => Some(
-            package
-                .graph()
-                .temporal_clauses()
-                .iter()
-                .find(|node| node.identity() == *claim.node() && node.claim() == claim.origin())?,
-        ),
-        ItemKind::RaceFreedom | ItemKind::DeadlockFreedom => None,
-        ItemKind::TimeLockFreedom | ItemKind::Refinement => return None,
-    };
+    let node: Option<&'a TemporalClauseNode> =
+        match form.item_kind {
+            ItemKind::Formula => {
+                Some(package.graph().temporal_clauses().iter().find(|node| {
+                    node.identity() == *claim.node() && node.claim() == claim.origin()
+                })?)
+            }
+            ItemKind::RaceFreedom | ItemKind::DeadlockFreedom => None,
+            ItemKind::TimeLockFreedom | ItemKind::Refinement => return None,
+        };
     if let Some(node) = node {
         clause_name(node).ok()?;
     }
-    package.graph().protocol(&protocol.protocol)?;
     let family = claim_family(package, form.item_kind, claim);
+    let anchored = claim_for(node, claim);
     let (binding, form, protocol, claim) = (
         binding.clone(),
         form.clone(),
@@ -208,19 +203,37 @@ pub(super) fn protocol_clause_item<'a>(
                         detail,
                     ));
                 };
+                if !form.reductions.symmetry.is_empty() || form.reductions.partial_order {
+                    let mut detail = serde_json::Map::new();
+                    detail.insert("member".to_owned(), serde_json::json!("reductions"));
+                    return EngineReport::Refused(Refusal::DeclinedWithDetail(
+                        ProofRefusalCause::InvalidInput,
+                        DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                        CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                        detail,
+                    ));
+                }
                 let over = over_instance(&binding, &(population, key));
                 let subject = |max_candidates| {
                     subject_of(package, &binding, &limits, max_candidates, &protocol, &over)
                 };
                 let refused = |refusal: &SubjectRefusal| {
                     EngineReport::Refused(match refusal {
-                        SubjectRefusal::UnknownProtocol(_) | SubjectRefusal::Memory(_) => {
-                            Refusal::Declined(
+                        SubjectRefusal::UnknownProtocol(name) => {
+                            let mut detail = serde_json::Map::new();
+                            detail.insert("protocol".to_owned(), serde_json::json!(name));
+                            Refusal::DeclinedWithDetail(
                                 ProofRefusalCause::InvalidInput,
                                 DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
                                 CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                                detail,
                             )
                         }
+                        SubjectRefusal::Memory(_) => Refusal::Declined(
+                            ProofRefusalCause::InvalidInput,
+                            DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                            CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                        ),
                     })
                 };
                 let (run_subject, certificate_subject) =
@@ -309,11 +322,12 @@ pub(super) fn protocol_clause_item<'a>(
                         },
                         replay: Box::new(replay),
                     },
+                    form.reductions.constraint.as_deref(),
                     cancel,
                 )
             },
         )
-        .claimed(claim_for(node, &claim)),
+        .claimed(anchored),
     )
 }
 

@@ -363,7 +363,7 @@ pub(super) fn replay_over(
 
 /// FR-128's replay request and witness envelope for `payload`, the
 /// counterexample of the item `shape` names.
-pub(super) fn replay_wire<T: Clone>(
+pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
     inputs: &ReplayInputs<'_, '_>,
     shape: ReplayShape,
     payload: &TemporalCounterexample<T>,

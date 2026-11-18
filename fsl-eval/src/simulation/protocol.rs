@@ -1181,6 +1181,17 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             }
             roles.push((role.name.clone(), binding.model.clone()));
         }
+        // FSL FR-1033-AC-5: a binding naming no role of the protocol is not one
+        // the protocol admits.
+        if let Some(unknown) = subject
+            .roles
+            .iter()
+            .find(|binding| !protocol.roles.iter().any(|role| role.name == binding.role))
+        {
+            return Err(ProtocolRefusal::RoleMapping {
+                role: unknown.role.clone(),
+            });
+        }
         let over_values = over_values(&model, protocol, &subject.over)?;
         let governing = subject
             .memory

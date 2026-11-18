@@ -1212,11 +1212,7 @@ fn resolve_call_item(
         item,
         claim_name: function.to_owned(),
         candidates,
-        subject: SubjectSelection {
-            initial_states: Vec::new(),
-            universes: Vec::new(),
-            proof_bounds: Vec::new(),
-        },
+        subject: SubjectSelection::default(),
         unrouted: false,
     }))
 }
@@ -1263,6 +1259,9 @@ fn resolve_one(
     };
     if let Some(resolved) = resolve_protocol_freedom(package, subject, index, selection, registry, name)
     {
+        return resolved;
+    }
+    if let Some(resolved) = resolve_schedule_claim(package, subject, index, selection, registry, name) {
         return resolved;
     }
     let Some(node) = declarations(package).get(name).cloned() else {
@@ -1444,6 +1443,7 @@ fn resolve_one(
             return refused;
         }
     }
+    let protocol_bound = protocol.is_some();
     let form = (kind == Capability::TemporalSatisfaction || kind == Capability::GlobalConformance)
         .then(|| {
         let mut form = temporal_item(package, &claim, &temporal);
@@ -1480,7 +1480,7 @@ fn resolve_one(
             selection.unrouted()
         } || (selection.reductions.is_some() && kind != Capability::TemporalSatisfaction)
             || reads_no_clocks(package, &temporal)
-            || (protocol.is_none()
+            || (!protocol_bound
                 && temporal
                     .limits
                     .is_some_and(|limits| limits.sets_memory_limits()))
@@ -1608,6 +1608,76 @@ fn resolve_derived(
         selection.unrouted() || reads_no_clocks(package, temporal) || !own_subject.same_model(subject);
     claim.subject = own_subject;
     Some(ResolvedItem::Claim(claim))
+}
+
+/// FR-246, FR-633: a `schedulable` or `response` claim named by its declared
+/// name. A task-set claim's node is minted beside the semantic graph (FSpec
+/// FR-482), so its name resolves through the checked task sets and its
+/// record's occurrence, not through [`declarations`]. `None` when `name` is
+/// no task-set claim.
+fn resolve_schedule_claim(
+    package: &CheckedPackage,
+    subject: &SubjectSelection,
+    index: RequestIndex,
+    selection: &ItemSelection,
+    registry: &Registry,
+    name: &str,
+) -> Option<ResolvedItem> {
+    let claim = package
+        .graph()
+        .task_sets()
+        .claims()
+        .iter()
+        .find(|checked| checked.name == name)?
+        .occurrence()?;
+    if selection
+        .kind
+        .as_deref()
+        .is_some_and(|label| label != Capability::Schedulability.to_wire())
+    {
+        return Some(invalid_kind(index, Some(name), "inapplicable-kind"));
+    }
+    let named = selection.backend.as_deref().map(BackendId::new);
+    let backend_options = selection.options.clone().unwrap_or_default();
+    if let Some(refused) = unknown_option(
+        index,
+        Some(name),
+        registry,
+        named.as_ref(),
+        &backend_options,
+    ) {
+        return Some(refused);
+    }
+    let records = requirement_items(package, registry, named.as_ref());
+    let candidates = records
+        .iter()
+        .find(|record| record.occurrence() == &claim)
+        .map_or_else(
+            || registry.candidates(Capability::Schedulability, named.as_ref()),
+            |record| record.candidates().clone(),
+        );
+    Some(ResolvedItem::Claim(Box::new(ResolvedClaim {
+        item: ClaimItem {
+            request_index: index,
+            claim,
+            kind: Capability::Schedulability,
+            extent: ExtentClassification::Bounded,
+            backend: named,
+            candidates: candidate_list(&candidates),
+            options: ItemOptions {
+                required: selection.required.unwrap_or(true),
+                max_cases: None,
+                trace: None,
+                recording: None,
+                backend_options,
+            },
+            form: None,
+        },
+        claim_name: name.to_owned(),
+        candidates,
+        subject: subject.clone(),
+        unrouted: selection.unrouted(),
+    })))
 }
 
 /// A request member the item cannot read: the item settles `declined`
@@ -1904,6 +1974,22 @@ fn default_items(
                 registry,
             ));
         }
+    }
+    // FR-246, FR-620: a task-set claim's record is a default item too, the
+    // claims in source order.
+    for claim in graph.task_sets().claims() {
+        let selection = ItemSelection {
+            claim: Some(claim.name.clone()),
+            kind: Some(Capability::Schedulability.to_wire().to_owned()),
+            ..ItemSelection::default()
+        };
+        resolved.push(resolve_one(
+            package,
+            subject,
+            RequestIndex::new(resolved.len()),
+            &selection,
+            registry,
+        ));
     }
     let derived = if subject.protocol.is_some() {
         protocol_derived_items(
@@ -2843,6 +2929,15 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
             }),
         );
     }
+    // FSpec FR-439: the record states the memory budget the run used and
+    // whether it reached it.
+    let memory_bound = detail.and_then(|detail| detail.memory_bound).map(|stated| {
+        json!({
+            "bound": stated.bound.member.as_str(),
+            "value": stated.bound.value,
+            "reached": stated.reached,
+        })
+    });
     if scoped {
         item.insert(
             "axes".to_owned(),
@@ -2859,6 +2954,9 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     }
     // FR-621: `settled_by`, and `backend` exactly when a result settled
     // the record.
+    if let Some(stated) = memory_bound {
+        record.insert("memory_bound".to_owned(), stated);
+    }
     record.insert(
         "settled_by".to_owned(),
         json!(if disposed { "disposition" } else { "result" }),

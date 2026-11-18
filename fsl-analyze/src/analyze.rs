@@ -504,6 +504,10 @@ pub struct ItemDetail {
     pub checker: Option<fsl_replay::CertificateChecker>,
     /// The steps of the supplied trace a `finite-replay` proof replayed.
     pub replayed_steps: Option<u64>,
+    /// The memory bound a weak-memory protocol run used and whether it was
+    /// reached (FSpec FR-439, FR-225); `None` under `sc` and for a model
+    /// subject.
+    pub memory_bound: Option<fsl_replay::StatedMemoryBound>,
 }
 
 impl ItemDetail {
@@ -520,6 +524,7 @@ impl ItemDetail {
                 .and_then(|model| model.checker)
                 .or_else(|| protocol.and_then(|protocol| protocol.checker)),
             replayed_steps: record.replayed_steps,
+            memory_bound: protocol.and_then(|protocol| protocol.memory_bound),
         }
     }
 }
@@ -1552,7 +1557,13 @@ impl AnalyzeRecord {
             return Some(found.wire.clone());
         }
         if let Some(found) = &self.schedule_miss {
-            return Some(Ok((**found).clone()));
+            // FSpec FR-331's counterexample entry around FR-419's miss object.
+            let backend = self.terminal().and_then(|terminal| terminal.backend());
+            return Some(Ok(serde_json::json!({
+                "request_index": self.request_index.get(),
+                "backend": backend.map(BackendId::as_str),
+                "counterexample": (**found).clone(),
+            })));
         }
         self.probabilistic_counterexample
             .as_ref()

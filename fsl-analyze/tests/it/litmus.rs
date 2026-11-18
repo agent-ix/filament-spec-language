@@ -725,3 +725,24 @@ pub(crate) fn field(state: &ModelSimState, population: &str, object: &str, field
         other => panic!("{object}.{field} is not an integer: {other:?}"),
     }
 }
+
+/// [`document`] with every operation returning a `Boolean`: a unit checked
+/// from a request binds each attempt's result, so the operation it names must
+/// return one (S3 refuses `attempt binder has type Boolean, operation result
+/// is None` otherwise).
+pub(crate) fn resulting_document() -> Vec<u8> {
+    let mut value: Json = serde_json::from_slice(&document()).expect("the litmus package is JSON");
+    for object in value["types"].as_array_mut().into_iter().flatten() {
+        for operation in object
+            .get_mut("operations")
+            .and_then(Json::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            if operation.get("returns").is_none() {
+                *operation = returning(operation.clone());
+            }
+        }
+    }
+    serde_json::to_vec(&value).expect("the litmus package serializes")
+}

@@ -66,13 +66,22 @@ fn a_race_freedom_item_over_a_parallel_is_refuted() {
             "items": [{"claim": "SB::Both", "temporal": {"item_kind": "race-freedom"}}]}),
     ));
     assert_eq!(label(&run.item(0)), "refuted", "{}", run.document());
-    let race = &run.item(0)["counterexample"]["counterexample"]["kind"];
+    let race = &run.item(0)["counterexample"]["kind"];
     assert!(race.to_string().contains("race"), "{}", run.document());
     let ws = Workspace::new("protocol-race-default-items");
-    let defaults = analyze(&litmus_request(&ws, &body, json!({"subject": sb_subject()})));
-    let items = defaults.document()["items"].as_array().cloned().unwrap_or_default();
+    let defaults = analyze(&litmus_request(
+        &ws,
+        &body,
+        json!({"subject": sb_subject()}),
+    ));
+    let items = defaults.document()["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(
-        items.iter().any(|item| item["request"]["temporal"]["item_kind"] == "race-freedom"),
+        items
+            .iter()
+            .any(|item| item["request"]["temporal"]["item_kind"] == "race-freedom"),
         "{}",
         defaults.document()
     );
@@ -101,12 +110,16 @@ fn bad_memory_selections_refuse_the_request() {
         ));
         assert_eq!(run.exit, 20, "{}", run.document());
         assert!(
-            run.document()["items"].as_array().is_some_and(Vec::is_empty),
+            run.document()["items"]
+                .as_array()
+                .is_some_and(Vec::is_empty),
             "{}",
             run.document()
         );
         assert!(
-            !run.document().to_string().contains("not read by this build"),
+            !run.document()
+                .to_string()
+                .contains("not read by this build"),
             "{}",
             run.document()
         );
@@ -176,10 +189,31 @@ fn a_constrained_store_buffer_run_settles_constraint_reached() {
         json!({"subject": sb_subject(), "memory": memory, "items": [item(true)]}),
     ));
     let record = &run_with.item(0)["record"];
-    assert_eq!(label(&run_with.item(0)), "inconclusive", "{}", run_with.document());
-    assert!(record.to_string().contains("constraint-reached"), "{record}");
+    assert_eq!(
+        label(&run_with.item(0)),
+        "inconclusive",
+        "{}",
+        run_with.document()
+    );
+    assert!(
+        record.to_string().contains("constraint-reached"),
+        "{record}"
+    );
     assert!(run_with.item(0).get("counterexample").is_none(), "{record}");
     assert!(record.to_string().contains("max_store_buffer"), "{record}");
+    assert_eq!(
+        record["memory_bound"],
+        json!({"bound": "max_store_buffer", "value": 2, "reached": true}),
+        "{record}"
+    );
+    assert!(
+        run_with.item(0)["exploration"]["states"]
+            .as_str()
+            .is_some_and(|states| states.parse::<u64>().is_ok_and(|n| n > 0)),
+        "{}",
+        run_with.document()
+    );
+    assert_eq!(record["cause"]["boundary_states"], 8, "{record}");
     let ws = Workspace::new("protocol-memory-bound-reached");
     let run_without = analyze(&litmus_request(
         &ws,
@@ -187,8 +221,60 @@ fn a_constrained_store_buffer_run_settles_constraint_reached() {
         json!({"subject": sb_subject(), "memory": memory, "items": [item(false)]}),
     ));
     assert!(
-        run_without.item(0)["record"].to_string().contains("memory-bound-reached"),
+        run_without.item(0)["record"]
+            .to_string()
+            .contains("memory-bound-reached"),
         "{}",
         run_without.document()
+    );
+}
+
+/// FR-1033-AC-3: an item with no `subject.protocol` is decided over the model
+/// subject, and its echoed request names no protocol.
+#[trace("TC-2959", "FR-1033-AC-3")]
+#[test]
+fn an_item_without_a_protocol_subject_is_decided_over_the_model_subject() {
+    let body = sb_unit(&sb_run("", "release", "acquire"));
+    let ws = Workspace::new("protocol-subject-model");
+    let run = analyze(&litmus_request(
+        &ws,
+        &body,
+        json!({"items": [{"claim": "NoBothZero"}]}),
+    ));
+    let item = run.item(0);
+    assert!(
+        item["request"]["temporal"]["subject"]
+            .get("protocol")
+            .is_none(),
+        "{}",
+        run.document()
+    );
+    assert!(
+        !item["record"].to_string().contains("max_store_buffer"),
+        "{}",
+        run.document()
+    );
+}
+
+/// FR-1033-AC-5: a role binding the protocol does not admit settles the item
+/// `declined` with `wrong-role-mapping`.
+#[trace("TC-2959", "FR-1033-AC-5")]
+#[test]
+fn a_role_binding_the_protocol_does_not_admit_declines_the_item() {
+    let body = sb_unit(&sb_run("", "release", "acquire"));
+    let ws = Workspace::new("protocol-binding-role");
+    let run = analyze(&litmus_request(
+        &ws,
+        &body,
+        json!({"subject": {"protocol": {"protocol": "SB",
+            "over": {"reference": {"population": "ix://test/litmus/cores", "key": "core"}},
+            "roles": {"w": binding(), "c": binding(), "zz": binding()}}},
+            "items": [{"claim": "NoBothZero"}]}),
+    ));
+    assert_eq!(label(&run.item(0)), "declined", "{}", run.document());
+    assert!(
+        run.document().to_string().contains("wrong-role-mapping"),
+        "{}",
+        run.document()
     );
 }
