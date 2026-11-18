@@ -251,8 +251,7 @@ mod tests {
         use filament_semantic_value::checking::CheckMode;
 
         let identity = SourceIdentity::new("agent-ix", "test:lifecycle");
-        let packages = fsl_semantics::model::intake::package_input([])
-            .expect("no model packages");
+        let packages = fsl_semantics::model::intake::package_input([]).expect("no model packages");
         let dependencies = DependencyInput::default();
         let cancel = Cancel::new();
         let function_modes = BTreeMap::new();
@@ -361,6 +360,48 @@ mod tests {
         )
     }
 
+    fn kernel_declaration_for(
+        source: &str,
+        function: &str,
+        identity: SourceIdentity,
+    ) -> (OccurrenceKey, Vec<NodeKey>) {
+        use filament_semantic_value::checking::CheckMode;
+
+        let limits = CallerLimits::default().spine;
+        let packages = fsl_semantics::model::intake::package_input([])
+            .expect("no model packages");
+        let dependencies = DependencyInput::default();
+        let function_modes = BTreeMap::new();
+        let composed = spine::compose_in_mode(
+            identity,
+            "unit.native",
+            source.as_bytes(),
+            &packages,
+            &dependencies,
+            limits,
+            spine::ComposeModes {
+                check_mode: Some(CheckMode::Kernel),
+                function_modes: &function_modes,
+            },
+        )
+        .expect("the unit composes under Kernel");
+        let callable = composed
+            .checked
+            .package()
+            .graph()
+            .callable(function)
+            .expect("declared");
+        let parameters = callable_parameter_keys(composed.checked.package(), &callable)
+            .expect("a function node");
+        (
+            OccurrenceKey::new(
+                callable.identity.clone(),
+                Origin::new(Role::new("declaration"), 0),
+            ),
+            parameters,
+        )
+    }
+
     fn bound_at(node: NodeKey) -> ProofBound {
         ProofBound::new(
             DomainKey::Node { node, path: vec![] },
@@ -452,7 +493,7 @@ mod tests {
         };
         let result = run_with_replay_context_kernel(&source, CallerLimits::default(), &call);
         assert!(matches!(result.outcome(), CallOutcome::Undefined { .. }));
-        let (_, parameters) = declaration_for(
+        let (_, parameters) = kernel_declaration_for(
             &source,
             "r",
             SourceIdentity::new("agent-ix", "test:lifecycle"),
