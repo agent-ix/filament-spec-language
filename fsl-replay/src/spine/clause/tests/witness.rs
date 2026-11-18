@@ -2992,7 +2992,9 @@ fn tc_2981_a_path_ending_at_a_comparison_records_the_comparison_and_its_operands
     };
     let equality = occurrence(&unit, "MatchesParent", &[1], Operator::Binary);
     assert_eq!(record.deciding_comparison, Some(equality.clone()));
-    assert_eq!(record.operands, Some([integer(600), integer(0)]));
+    let operands = record.operands.as_ref().expect("comparison operands");
+    assert!(crate::result::same_element(&operands[0], &integer(600)));
+    assert!(crate::result::same_element(&operands[1], &integer(0)));
     assert_eq!(
         record.decision_path,
         Some(vec![
@@ -3016,7 +3018,7 @@ fn tc_2981_a_path_ending_at_a_comparison_records_the_comparison_and_its_operands
         matches!(derive(&unit, "AtLeastParent", Snapshot::High, "mid"), Some(Derived {
             basis: SettlementBasis::DecisiveWitness,
             record: Some(record),
-        }) if record.operands == Some([integer(600), integer(0)]) && record.deciding_element == DecidingElement::Value(Value::Boolean(true))),
+        }) if record.operands.as_ref().is_some_and(|operands| crate::result::same_element(&operands[0], &integer(600)) && crate::result::same_element(&operands[1], &integer(0))) && record.deciding_element == DecidingElement::Value(Value::Boolean(true))),
         "AtLeastParent over high ends at its `>=` and is a decisive witness"
     );
     // With no parent the walk ends at `present(self.parent)`, a call.

@@ -1104,7 +1104,7 @@ fn canonical_decimal(text: &str) -> Option<u64> {
 
 impl RecordWire<ElementSlot> {
     fn read(
-        self,
+        mut self,
         keys: Keys<'_>,
         elements: &mut Elements,
     ) -> Result<SeparatingWitnessRecord, CauseCodecError> {
