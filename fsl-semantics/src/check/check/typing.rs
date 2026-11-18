@@ -25,11 +25,10 @@ use std::sync::Arc;
 
 use super::native_literal::NativeConstructor;
 use super::{
-    LocalKind, Typer, catalogued_step, contains_pre_eligible_read, contextual, ineligible,
-    is_integer, mismatch, node, refuse,
+    catalogued_step, contains_pre_eligible_read, contextual, ineligible, is_integer, mismatch,
+    node, refuse, LocalKind, Typer,
 };
-use crate::check::DispatchOperation;
-use crate::check::call_target::{ResolvedTarget, resolve_target};
+use crate::check::call_target::{resolve_target, ResolvedTarget};
 use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
 use crate::check::refusal::{
@@ -38,6 +37,7 @@ use crate::check::refusal::{
 };
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
+use crate::check::DispatchOperation;
 use filament_exact::Cancel;
 use filament_exact::{
     ArithmeticOperator, CollectionKind, CollectionType, DecimalType, FloatType, IeeeValue,
@@ -1463,7 +1463,7 @@ impl<'a> Typer<'a> {
                     CheckRefusal::ill_typed(&location, IllTypedCause::OperatorIneligible)
                 } else {
                     missing_segment(&name.name, &location)
-                });
+                })
             }
             ExprNode::Name(name) if self.population_named(&name.name).is_some() => {
                 self.population_objects(&name.name, &location)?
@@ -1512,7 +1512,7 @@ impl<'a> Typer<'a> {
                     (expression, case),
                     location,
                     frames,
-                ));
+                ))
             }
             ExprNode::Let {
                 name,
@@ -1526,7 +1526,7 @@ impl<'a> Typer<'a> {
                     (name, expression.at(*value), expression.at(*body)),
                     location,
                     frames,
-                );
+                )
             }
             ExprNode::If {
                 condition,
@@ -4119,13 +4119,13 @@ impl<'a> Typer<'a> {
                             population,
                             &location,
                             Some(population_span),
-                        ));
+                        ))
                     }
                     None => {
                         return Err(refuse(
                             &location,
                             CheckCause::PopulationFormOutsideRefinement,
-                        ));
+                        ))
                     }
                 }
             }
@@ -4148,7 +4148,7 @@ impl<'a> Typer<'a> {
                     } else {
                         CheckCause::PopulationFormOutsideRefinement
                     },
-                ));
+                ))
             }
         };
         let element = self.element_type(&source)?;
@@ -4165,7 +4165,7 @@ impl<'a> Typer<'a> {
             (None, None) => {
                 return self
                     .finish_population(form, source, slot, None, None, &location)
-                    .map(Step::Typed);
+                    .map(Step::Typed)
             }
         };
         frames.push(Frame::Population(Box::new(PopulationFrame {
