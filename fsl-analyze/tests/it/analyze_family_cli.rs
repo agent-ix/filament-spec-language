@@ -107,6 +107,99 @@ fn a_refinement_proves_and_a_wrong_mapping_refutes() {
     assert!(refuted["counterexample"]["steps"].is_array(), "{refuted}");
 }
 
+/// FR-630 "Outputs": the refuted item's counterexample carries the abstract
+/// image of each position, from the initial state to the first failing
+/// edge, and the refinement's FR-146 step records; it is refuted at that
+/// first edge, the concrete `inc` the wrong row maps to a stutter.
+#[trace("TC-1590", "FR-630-AC-1")]
+#[test]
+fn a_refuted_refinement_names_its_first_failing_edge_and_abstract_images() {
+    let ws = Workspace::new("family-refinement-images");
+    let run = analyze(&refinement_request(
+        &ws,
+        &refinement_stepping("Off", "self.value", "stutter", ""),
+        json!([{"claim": "Off", "kind": "refinement", "temporal": {"item_kind": "refinement"}}]),
+    ));
+    let refuted = run.item(0);
+    assert_eq!(label(&refuted), "refuted", "{refuted}");
+    let counterexample = &refuted["counterexample"];
+    assert_eq!(
+        counterexample["prefix"].as_array().map(Vec::len),
+        Some(1),
+        "the first edge fails: {counterexample}"
+    );
+    let steps = counterexample["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 2, "positions 0 and 1: {counterexample}");
+    for (position, step) in steps.iter().enumerate() {
+        assert_eq!(step["position"], position, "{step}");
+        assert_eq!(step["abstract_state"]["type"], "simulation-state", "{step}");
+    }
+    assert!(
+        counterexample["step_simulations"].is_array(),
+        "{counterexample}"
+    );
+}
+
+/// FR-630 "Budgets" (FR-625): a refinement item whose product reaches
+/// `max_states` 1 settles `incomplete` naming the limit, never `proved`.
+#[trace("TC-1590", "FR-630")]
+#[test]
+fn a_refinement_budget_of_one_state_is_incomplete() {
+    let ws = Workspace::new("family-refinement-budget");
+    let run = analyze(&refinement_request(
+        &ws,
+        &refinement("Same", "self.value", ""),
+        json!([{"claim": "Same", "kind": "refinement",
+            "temporal": {"item_kind": "refinement", "limits": {"max_states": 1}}}]),
+    ));
+    let item = run.item(0);
+    assert_eq!(label(&item), "incomplete", "{item}");
+    assert!(item["record"].to_string().contains("max_states"), "{item}");
+}
+
+/// FR-630, FR-143: a strong abstract fairness constraint gives the
+/// liveness half the typed result the library gives it, through the wire;
+/// the item is never `proved` (QSL-2243 decides the strong reading).
+#[trace("TC-1590", "FR-630")]
+#[test]
+fn a_strong_abstract_fairness_refinement_settles_the_library_result() {
+    let ws = Workspace::new("family-refinement-strong");
+    let run = analyze(&refinement_request(
+        &ws,
+        &refinement(
+            "Strong",
+            "self.value",
+            "ensure fair strong each Spec::Counter::inc;\n",
+        ),
+        json!([{"claim": "Strong", "kind": "refinement",
+            "temporal": {"item_kind": "refinement"}}]),
+    ));
+    let item = run.item(0);
+    assert_ne!(label(&item), "proved", "{item}");
+    assert_eq!(label(&item), "unsupported", "{item}");
+}
+
+/// FR-630, FSpec FR-368: an `abstract_subject` whose `identity` is not the
+/// refinement's abstract model package settles `invalid-request`.
+#[trace("TC-1590", "FR-630")]
+#[test]
+fn an_abstract_subject_of_another_package_is_an_invalid_request() {
+    let ws = Workspace::new("family-refinement-identity");
+    let path = refinement_request(
+        &ws,
+        &refinement("Same", "self.value", ""),
+        json!([{"claim": "Same", "kind": "refinement", "temporal": {"item_kind": "refinement"}}]),
+    );
+    let mut request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the request reads"))
+            .expect("the request is JSON");
+    request["request"]["items"][0]["temporal"]["abstract_subject"]["identity"] =
+        json!("test/counter");
+    let path = ws.write("analyze.json", request.to_string().as_bytes());
+    let run = analyze(&path);
+    assert_eq!(label(&run.item(0)), "invalid-request", "{}", run.document());
+}
+
 /// FR-630-AC-2: `refinement_internals` reaches compilation.
 #[trace("TC-1590", "FR-630-AC-2")]
 #[test]
