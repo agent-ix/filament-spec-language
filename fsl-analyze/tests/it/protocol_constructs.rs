@@ -5,21 +5,26 @@
 
 use std::collections::BTreeSet;
 
+use filament_exact::Cancel;
+use fsl_analyze::model_check::{ProtocolCheckRequest, check_protocol};
 use fsl_eval::simulation::protocol::{
     ProtocolState, ProtocolSystem, ProtocolTransition, Sc, StepKind, ThreadPath, WaitCause,
 };
-use fsl_eval::simulation::SubjectSystem;
+use fsl_eval::simulation::{Limits, SubjectSystem, TransitionSystem};
 use ix_trace_rs::trace;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use fsl_foundation::diagnostic::Code;
-use fsl_replay::{CompileRefusal, ReplayRefusal};
+use fsl_replay::{
+    CompileRefusal, IncompleteCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
+    ModelCheckOutcome, ReachedLimit, ReplayRefusal,
+};
 use fsl_semantics::check::{CheckCause, ProtocolConstruct, ProtocolReferenceCause};
 
 use crate::fill::{
-    attempt, compiled, contracts, json_of, projections, protocol, reachable, sc_system, Reached,
+    Reached, attempt, compiled, contracts, json_of, projections, protocol, reachable, sc_system,
 };
-use crate::protocol_system::{touch, Case};
+use crate::protocol_system::{Case, touch};
 
 /// The protocol `P` with `members` and `run` over `ADR-027 §7`'s contracts,
 /// from `c.v = 0`.
@@ -98,6 +103,28 @@ fn queues(system: &ProtocolSystem<'_, Sc>, state: &ProtocolState<Sc>) -> Vec<(Js
             (entry["key"].clone(), payloads)
         })
         .collect()
+}
+
+/// Reach the state immediately after `S1` without exploring delivery
+/// descendants. Unknown delivery can duplicate then lose forever, so the
+/// complete graph is intentionally unbounded.
+fn state_after_send(system: &ProtocolSystem<'_, Sc>) -> ProtocolState<Sc> {
+    const MAX_EXPANDED_STATES: usize = 32;
+
+    let mut pending = system.initial();
+    for _ in 0..MAX_EXPANDED_STATES {
+        let state = pending
+            .pop()
+            .unwrap_or_else(|| panic!("the initial protocol state was exhausted before S1"));
+        let expansion = system.successors(&state).expect("the state expands");
+        for (transition, next) in expansion.successors {
+            if transition.kind() == StepKind::Send && last(&transition) == "S1" {
+                return next;
+            }
+            pending.push(next);
+        }
+    }
+    panic!("S1 was not reached within {MAX_EXPANDED_STATES} expanded states");
 }
 
 /// The index of the state `steps` reach from the initial state, each step
@@ -274,14 +301,16 @@ fn two_protocols_declaring_one_channel_name_keep_their_queues_apart() {
     for (name, other) in [("Pipeline", "Billing"), ("Billing", "Pipeline")] {
         let subject = case.subject(name);
         let system = sc_system(&subject);
-        let reached = reachable(&system);
-        let sent = follow(&reached, &[(StepKind::Send, "S1")]);
-        let held = key(&system, &reached[sent].state)["queues"].to_string();
+        let sent_state = state_after_send(&system);
+        let held = key(&system, &sent_state)["queues"].to_string();
         assert!(held.contains(&format!("{name}::Pay")), "{name}: {held}");
         assert!(!held.contains(&format!("{other}::Pay")), "{name}: {held}");
+        let expansion = system
+            .successors(&sent_state)
+            .expect("the sent state expands");
         for kind in [StepKind::Duplicate, StepKind::Lose] {
-            let (transition, _) = reached[sent]
-                .steps
+            let (transition, _) = expansion
+                .successors
                 .iter()
                 .find(|(transition, _)| transition.kind() == kind)
                 .unwrap_or_else(|| panic!("{name}: no {kind:?}"));
@@ -290,6 +319,54 @@ fn two_protocols_declaring_one_channel_name_keep_their_queues_apart() {
             assert!(!identity.contains(&format!("{other}::Pay")), "{identity}");
         }
     }
+}
+
+/// FR-101-AC-7/15 (TC-455/TC-536): unknown delivery allows a duplicate/lose
+/// loop that keeps producing distinct states. The public checker stops at
+/// the caller's state budget and names the limit it reached.
+#[trace("TC-455", "TC-536", "FR-101-AC-7", "FR-101-AC-15")]
+#[test]
+fn unknown_delivery_loop_stops_at_the_fr101_state_limit() {
+    let members = channel(
+        "Pay",
+        "ordering fifo by (m: Boolean) { true } delivery unknown capacity 2 overflow block",
+    );
+    let run = "sequence Main { send S1 via Pay as (s1: Boolean) { s1 }; }";
+    let unit = contracts("self.v = 0") + &protocol("Pipeline", &members, run, "d");
+    let case = Case::new(&unit, &[0]);
+    let mut limits = ModelCheckLimits::default();
+    limits.limits = Limits {
+        max_states: 64,
+        max_transitions: 4096,
+    };
+
+    let outcome = check_protocol(
+        ProtocolCheckRequest {
+            subject: case.subject("Pipeline"),
+            temporal_clock_selections: &[],
+            item: ModelCheckItem::DeadlockFreedom,
+            max_depth: None,
+            max_store_buffer: None,
+            max_messages: None,
+            ignore_memory_constraints: false,
+            max_live_instances: None,
+            limits,
+        },
+        &Cancel::new(),
+    )
+    .expect("the bounded protocol request is admitted");
+
+    assert!(matches!(
+        outcome,
+        ModelCheckOutcome::Stopped {
+            cause: IncompleteCause::ResourceExhausted,
+            limit: Some(ReachedLimit {
+                limit: ModelCheckLimit::MaxStates,
+                value: 64,
+            }),
+            stats,
+        } if stats.product_states == 64
+    ));
 }
 
 /// FR-206-AC-7 (TC-651, ADR-027 ST-3, PX-1): over a `fifo` channel `ch` of
