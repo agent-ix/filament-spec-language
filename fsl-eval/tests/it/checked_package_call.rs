@@ -425,7 +425,13 @@ fn bare_package_call_matches_the_checked_package_call() {
         .call(&function, vec![argument], &objects, &mut bare_meter)
         .expect("the bytes call evaluates");
 
-    assert_eq!(evaluated(source), evaluated(bytes));
+    let Outcome::Completed(Value::Integer(source_value)) = evaluated(source) else {
+        panic!("the source call returns its integer parameter");
+    };
+    let Outcome::Completed(Value::Integer(bytes_value)) = evaluated(bytes) else {
+        panic!("the bytes call returns its integer parameter");
+    };
+    assert_eq!(source_value, bytes_value);
     assert_eq!(
         source_meter.consumed(LimitKind::WorkUnits),
         bare_meter.consumed(LimitKind::WorkUnits)
@@ -442,10 +448,12 @@ fn bare_package_call_matches_the_checked_package_call() {
             max_size_requests: 32,
         },
     );
-    assert_eq!(
-        evaluated(observed.evaluation.expect("the observing bytes call evaluates")),
-        Outcome::Completed(Value::Integer(Integer::from(17_i64)))
-    );
+    let Outcome::Completed(Value::Integer(observed_value)) =
+        evaluated(observed.evaluation.expect("the observing bytes call evaluates"))
+    else {
+        panic!("the observing bytes call returns its integer parameter");
+    };
+    assert_eq!(observed_value, Integer::from(17_i64));
     assert_eq!(observed.function_evaluations, 1);
     assert_eq!(
         observed_meter.consumed(LimitKind::WorkUnits),
