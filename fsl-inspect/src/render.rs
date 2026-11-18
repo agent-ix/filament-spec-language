@@ -1560,8 +1560,9 @@ mod tests {
         assert_eq!(
             text,
             format!(
-                "analyze: refusal (exit 20)\n{}:8-{past_end_by_one}: ill_typed: bad range\n",
-                source_label(region.source())
+                "analyze: refusal (exit 20)\n{}:{}-{past_end_by_one}: ill_typed: bad range\n",
+                source_label(region.source()),
+                region.start(),
             )
         );
         // The region's end exactly at the source's length still resolves.
