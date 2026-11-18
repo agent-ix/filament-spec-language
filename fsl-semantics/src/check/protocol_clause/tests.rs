@@ -24,7 +24,9 @@ mod attempts;
 mod binders;
 mod controls;
 mod coverage;
+mod declaration;
 mod graph;
+mod refusal_corpus;
 mod rules;
 
 /// S1, S2 and the assembler over `declarations`, against

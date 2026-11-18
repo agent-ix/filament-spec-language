@@ -500,7 +500,6 @@ impl ModelTraceRefusal {
             | Self::Automaton(fsl_eval::automaton::AutomatonError::InvertedInterval { .. })
             | Self::Automaton(fsl_eval::automaton::AutomatonError::PastOverFuture)
             | Self::Automaton(fsl_eval::automaton::AutomatonError::RepeatedPunctualInterval)
-            | Self::Automaton(fsl_eval::automaton::AutomatonError::OpenTimedInterval)
             | Self::Automaton(fsl_eval::automaton::AutomatonError::ClockLimit { .. })
             | Self::Automaton(fsl_eval::automaton::AutomatonError::ProfileNotTranslated {
                 ..
@@ -737,6 +736,172 @@ pub fn replay_model_trace(
         &[],
         replay_limits,
     )
+}
+
+/// The FR-517 handoff files a package-route replay reads beside the package
+/// bytes (FR-850 "Admission"): the identity rows and, when the handoff holds
+/// them, the equality rows.
+#[derive(Clone, Copy, Debug)]
+pub struct HandoffSupply<'s> {
+    /// The bytes of `identities.json`.
+    pub identities: &'s [u8],
+    /// The bytes of `equality.json`, when present.
+    pub equality: Option<&'s [u8]>,
+}
+
+/// FR-850, FR-940: [`replay_model_trace`] over the package route. The replay
+/// reads the request's package bytes and the handoff `supply`, never a source
+/// provision: the strict reader admits the bytes against the request's domain
+/// packages, the supply is attached to the `BarePackage`, the model system is
+/// built from its model-check input and the envelope's clause is its package
+/// form, read by its `clause_node` (FR-128). An untimed authored clause and a
+/// package-level freedom item over a model subject are replayed; an invariant
+/// and a timed reading have no package form here yet and are refused, never
+/// replayed from source.
+///
+/// # Errors
+///
+/// [`ReplayRefusal`] as [`replay_model_trace`] refuses, and a fault when the
+/// bytes or supply the analysis admitted do not admit again.
+pub fn replay_model_trace_from_package(
+    wire: ReplayRequestWire,
+    supply: HandoffSupply<'_>,
+    subject: &ModelTraceSubject,
+    envelope: &WitnessEnvelope<TemporalCounterexample>,
+    letters: &dyn ModelLetters,
+    replay_limits: ReplayLimits,
+) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+    let fault = |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("FR-850", cause));
+    let request = ReplayRequest::decode_package_route(wire, replay_limits)?;
+    let limits = request_limits(
+        request.stage_limits(),
+        request.accounting_limits(),
+        replay_limits,
+    )?;
+    let packages =
+        fsl_semantics::model::intake::package_input(request.byte_provision().package_documents())
+            .map_err(|refusal| ReplayRefusal::DomainPackages(Box::new(refusal)))?;
+    let read_limits =
+        fsl_package::V2ReadLimits::bounded(crate::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
+    let admitted =
+        fsl_package::admit_checked_package(request.package().bytes(), &packages, read_limits)
+            .map_err(|_| fault("package-bytes-admit"))?;
+    let mut budget = read_limits.native_join_limits().budget();
+    let identities = fsl_package::ReadIdentityRows::read(supply.identities, &admitted, &mut budget)
+        .map_err(|_| fault("handoff-identities-admit"))?;
+    let equality = supply
+        .equality
+        .map(|bytes| fsl_package::ReadEqualityRows::read(bytes, &admitted))
+        .transpose()
+        .map_err(|_| fault("handoff-equality-admit"))?;
+    let bare = fsl_package::BarePackage::new(&admitted)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &identities,
+                equality: equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .map_err(|_| fault("handoff-supply-joins"))?;
+    let input =
+        fsl_eval::simulation::model::PackageModelInput::of(&bare, &packages, limits.spine.model)
+            .map_err(|_| fault("package-route-input"))?;
+    if subject.timed.is_some() {
+        return Err(fault("package-route-replays-no-timed-reading-yet"));
+    }
+    let payload = envelope.family_payload();
+    let documents = request.byte_provision().snapshots();
+    let meter = request.accounting_limits();
+    let system = ModelSystem::new(ModelSimulationRequest {
+        input: input.input(),
+        packages: &packages,
+        normalization: limits.spine.model,
+        snapshots: &documents,
+        initial: subject.initial.clone(),
+        universes: subject.universes.clone(),
+        observation: limits.observation,
+        expansion: subject.expansion,
+        meter,
+        emit: limits.spine.package.emit(),
+    })
+    .map_err(ReplayRefusal::Admission)?;
+    let (for_deadlock, for_race) = derived_items(payload);
+    if for_deadlock || for_race || matches!(payload.kind, CounterexampleKind::TimeLock) {
+        // A package-level freedom item over a model subject is anchored at
+        // the `model_root` node of a model selection the package records, with
+        // the `generated` occurrence 0, as [`resolve_item`] anchors it.
+        let anchored = fsl_package::AnalysisView::model_selections(&bare)
+            .iter()
+            .filter_map(|selection| fsl_semantics::check::model_root_key(selection).ok())
+            .any(|root| root == *envelope.clause_node());
+        if !anchored {
+            return Err(refused(ModelTraceRefusal::UnknownTemporalClause {
+                clause_node: envelope.clause_node().clone(),
+            }));
+        }
+        let expected = OccurrenceKey::new(
+            envelope.clause_node().clone(),
+            filament_exact::Origin::new(filament_exact::Role::new("generated"), 0),
+        );
+        if expected != *envelope.occurrence_key() {
+            return Err(refused(ModelTraceRefusal::ItemIdentity {
+                clause_node: envelope.clause_node().clone(),
+                occurrence_key: Box::new(envelope.occurrence_key().clone()),
+                expected_node: envelope.clause_node().clone(),
+                expected_key: Box::new(expected),
+            }));
+        }
+        let (settlement, hints) = settle(&system, payload, None)?;
+        return Ok(ModelTraceReplayResult {
+            settlement,
+            hints,
+            terminals: TerminalKeys::default(),
+        });
+    }
+    let clause = input
+        .temporal_clause(
+            envelope.clause_node(),
+            filament_semantic_value::checking::CheckingLimits::default().nodes(),
+        )
+        .map_err(|_| {
+            refused(ModelTraceRefusal::UnknownTemporalClause {
+                clause_node: envelope.clause_node().clone(),
+            })
+        })?;
+    let identity = super::identity::ClauseIdentity::of_admitted(&admitted, &clause)
+        .map_err(|_| fault("package-clause-identity"))?;
+    let expected = OccurrenceKey::new(
+        envelope.clause_node().clone(),
+        identity.occurrence().origin().clone(),
+    );
+    if expected != *envelope.occurrence_key() {
+        return Err(refused(ModelTraceRefusal::ItemIdentity {
+            clause_node: envelope.clause_node().clone(),
+            occurrence_key: Box::new(envelope.occurrence_key().clone()),
+            expected_node: envelope.clause_node().clone(),
+            expected_key: Box::new(expected),
+        }));
+    }
+    if payload.fairness != clause.fairness() {
+        return Err(refused(ModelTraceRefusal::FairnessSet {
+            payload: payload.fairness.clone(),
+            recompiled: clause.fairness().to_vec(),
+        }));
+    }
+    let (settlement, hints) = settle(
+        &system,
+        payload,
+        Some(FormulaReplay {
+            clause: &clause,
+            letters,
+            meter,
+        }),
+    )?;
+    Ok(ModelTraceReplayResult {
+        settlement,
+        hints,
+        terminals: TerminalKeys::default(),
+    })
 }
 
 /// Replay a model trace while recompiling with explicit temporal clock selections.

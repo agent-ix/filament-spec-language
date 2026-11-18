@@ -15,6 +15,7 @@ use fsl_analyze::monitor_session::{
     ClauseStatus, MonitorObservation, MonitorOpen, MonitorPosition, MonitorSession, MonitorStamp,
     MonitorState, MonitorStep, MonitorTraceKind,
 };
+use fsl_analyze::provider::ProviderOptions;
 use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::source::Source;
 use fsl_replay::spine::{
@@ -420,6 +421,7 @@ fn read_inputs(intake: &mut super::Intake<'_>, request: wire::MonitorRequest) ->
             clocks: request.clocks,
             output: None,
             handoff: None,
+            check_mode: filament_semantic_value::checking::CheckMode::Linked,
         },
     })
 }
@@ -675,17 +677,33 @@ fn file_lines(intake: &mut super::Intake<'_>, path: Option<&str>) -> Result<Vec<
 /// handing each event to `sink` before the next record is read. It writes
 /// nothing to the process streams.
 ///
+/// FR-635 "One rule for every provider-routing entry": `providers` are the
+/// driver's started process providers and `options` the run's provider
+/// limits; the registry is built from `Engines::fsl()` and them before the
+/// request is read, as every provider-routing verb builds it, and an empty
+/// `providers` is the entry with no plugin configured.
+///
 /// # Errors
 ///
-/// The command-error envelope's cause for a request-file defect, a compile
-/// refusal, an `open` or `resume` refusal, before any record is read.
+/// `invalid-request` naming `providers` when a provider repeats a registered
+/// `BackendId`, before the request is read; the command-error envelope's
+/// cause for a request-file defect, a compile refusal, an `open` or `resume`
+/// refusal, before any record is read.
 pub fn monitor(
     path: &Path,
     records: impl Iterator<Item = std::io::Result<Vec<u8>>>,
     sink: &mut dyn FnMut(&MonitorEvent),
+    providers: Vec<fsl_analyze::analyze::Engine>,
+    options: &ProviderOptions,
     limits: RunLimits,
     cancel: &Cancel,
 ) -> std::result::Result<MonitorSummary, Box<RunError>> {
+    super::analyze::engines_with(providers, options).map_err(|cause| {
+        Box::new(RunError {
+            cause,
+            sources: crate::Sources::default(),
+        })
+    })?;
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
         drive(
             directory,

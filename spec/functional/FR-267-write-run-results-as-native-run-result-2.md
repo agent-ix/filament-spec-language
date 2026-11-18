@@ -156,7 +156,9 @@ change `WireFormat` names `native-run-result/2` and no `native-run-result/1`
   shape refuses with a located wire diagnostic. Shape selection applies
   only after the exact `format` check; it does not infer the wire version.
 - The writer SHALL write each component of the record in FSpec's spelling
-  for it: the deciding quantifier, the deciding element in the kernel value
+  for it: the deciding quantifier, the deciding comparison, the two
+  operands and the decision path of a comparison record (FR-265), each
+  operand in the kernel value wire form, the deciding element in the kernel value
   wire form, the index, the value path, and the trace position where
   present.
 - The writer SHALL write an absent component as an absent member, never as
@@ -165,6 +167,9 @@ change `WireFormat` names `native-run-result/2` and no `native-run-result/1`
   - whose `witness` is missing a required component, carries a member the
     record does not define, or gives an absent component a default value
     (FSpec FR-351-AC-5);
+  - whose `witness` carries only some of `deciding_comparison`, `operands`
+    and `decision_path`, carries both `quantifier` and `deciding_comparison`,
+    or holds `operands` other than two values (FSpec FR-351-AC-10);
   - whose `basis` is absent or not an FSpec FR-243 label;
   - that carries `witness` with a basis that is not decisive, or a decisive
     basis with no `witness` (FSpec FR-352-AC-3);
@@ -473,6 +478,9 @@ condition is false; the reader refuses `null` or a default in its place.
 | Separating witness | `index` | FSpec FR-352 | Unsigned position when assigned | Restore component |
 | Separating witness | `value_path` | FSpec FR-352 | FR-207 runtime value path | Restore component |
 | Separating witness | `trace_position` | FSpec FR-352 | Unsigned position when assigned | Restore component |
+| Separating witness | `deciding_comparison` | FSpec FR-352 | FR-351 occurrence key on a comparison record | Restore component |
+| Separating witness | `operands` | FSpec FR-352 | Two canonical typed values on a comparison record | Restore component |
+| Separating witness | `decision_path` | FSpec FR-352 | Non-empty occurrence-key list on a comparison record | Restore component |
 | Command error | `format` | FR-267 | Exact `native-run-result/2` | Check before variant selection |
 | Command error | `stage` | FR-100, FR-267 | Command stage | Restore stage |
 | Command error | `code` | FR-100, FR-267 | Catalog code | Restore code |
@@ -558,6 +566,7 @@ disposition kinds the document carries are the ones FSpec FR-352 registers.
 | FR-267-AC-20 | Each of the six rows `pending-window`, `pending-next-event`, `indeterminate`, `activation-incomplete`, `progress-limit-reached` and `progress-contradicted`, and the `pending` row, is written with exactly the members, `category`, `basis` and `outcome` of its FSpec FR-352 row (FSpec FR-352-AC-16): `pending-window` at position 0 with deadline 5, `pending-next-event` at position 3 and `pending` with category `pending` and basis `unsettled`, `indeterminate` with category `indeterminate`, `activation-incomplete` and `progress-limit-reached` with category `incomplete` and no `outcome`, and the watermark `progress-contradicted` with category `refusal`. The reader refuses a `temporal` whose `kind` is outside the sixteen (`pending-forever`), naming `disposition.temporal.kind` (FSpec FR-352-AC-17). | Test (TC-1980) |
 | FR-267-AC-21 | A `timestamped` run's result carries `ledger` in `filament.progress-ledger/1` form and reads back equal; a `finite` run's result with a `ledger` member added is refused naming `ledger`; FR-645-AC-1's refusal writes `reason`, `request_pointer` and `message` and reads them back. | Test (TC-1663) |
 | FR-267-AC-22 | A clause-run result document carries `axes` equal to the FR-516 result's four fields, and two runs differing only in scope closure differ only in `axes.settlement`. | Test (TC-1582) |
+| FR-267-AC-23 | The `native-run-result/2` document of FR-265-AC-11's `MatchesParent` run writes `witness` with `deciding_comparison`, `operands` `[600, 0]` in the kernel value wire form, `decision_path`, `deciding_element` `false` and `value_path`, and no `quantifier`, `index` or `trace_position`; the reader restores the equal record; the same document with `operands` removed, with one operand, or with a `quantifier` added each refuses naming that member. | Test (TC-2981) |
 
 ## Dependencies
 

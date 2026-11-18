@@ -199,7 +199,7 @@ fn assert_ambiguous_loci_order(refusals: &[CheckRefusal], expected: [usize; 2]) 
 /// declarations, and `Main::Applied` refuses at the anchor, naming
 /// both in source order. Swapping the two declarations swaps nothing
 /// but their order in the refusal.
-#[trace("TC-512", "FR-113-AC-4")]
+#[trace("TC-512", "FR-113-AC-4", "FR-884-AC-5")]
 #[test]
 fn two_declarations_of_one_name_refuse_at_both_and_at_a_qualified_anchor() {
     let extra = "effect Applied of Tried as (again: Boolean) { true };\n";

@@ -55,5 +55,6 @@ Tag the tests `#[trace("TC-743", "FR-268-AC-n")]`.
 - Step 3: pass; then failures at steps 1, 3, 3, 3 and 4; then failures at
   step 2 (`UndefinedEvaluation`), step 4 (`UndefinedEvaluation`) and step 2
   (the refusal record); then `inconclusive` with `NoValue`.
-- Step 4: no record on either envelope or result and FR-122-AC-1's
+- Step 4: FR-266-AC-2's comparison record on each envelope and its
+  `Witness`-arm result, and FR-122-AC-1's
   settlements; a decode refusal under FR-070-AC-7; equal results.

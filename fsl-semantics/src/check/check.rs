@@ -1150,6 +1150,14 @@ impl<'a> SourceScope<'a> {
         self.scope.unit_packages(self.source, name)
     }
 
+    /// Whether `name` names an unbounded package Rational in this unit; see
+    /// [`ModelSpellings::unbounded_rational`](super::model_spelling::ModelSpellings::unbounded_rational).
+    pub(crate) fn unbounded_rational(&self, name: &str) -> bool {
+        self.scope
+            .model_spellings
+            .unbounded_rational(self.source, name)
+    }
+
     /// The object type `name` names in this unit; see
     /// [`Scope::object_type_named`].
     pub(crate) fn object_type_named(&self, name: &str) -> Option<EffectiveId> {

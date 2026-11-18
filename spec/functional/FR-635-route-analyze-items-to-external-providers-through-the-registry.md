@@ -82,7 +82,9 @@ so every verb sees the same registry for the same configuration. The entries
 are `fsl_command::command::analyze_with_providers(path, negotiate,
 providers, options, cancel)` for `analyze` (and `prove`, which shares the analyze
 items, FR-280), with `analyze(path, vocabulary, cancel)` the same entry with
-none; `command::monitor` (FR-644); the `run` entry `run_with_providers` (FR-961), whose provider items
+none; `command::monitor` (FR-644), which routes the monitor request's `items`, never its
+monitored `clauses`, and settles them as `analyze_with_providers` does before
+the first record is read (FR-644 "Provider-routed items"); the `run` entry `run_with_providers` (FR-961), whose provider items
 go through the same provider request and transport (FR-950); every entry takes
 the run's limits as one `ProviderOptions` (FR-964) and resolves an unnamed
 tied item by FR-962; and the FR-280
@@ -192,6 +194,7 @@ builder unchanged.
 | FR-635-AC-2 | The Counter item `Bounded` settles byte-equal with and without the test provider registered. | Test (TC-1595) |
 | FR-635-AC-3 | `backend` naming an unregistered `BackendId` settles `invalid-request` `unknown-backend`, exit 20. | Test (TC-1595) |
 | FR-635-AC-4 | A process provider whose `hello` manifest advertises `value-validity` only in the `bounded` mode is refused at registration naming its `BackendId`, and the run's `registry` does not list it; a production layering snapshot (FR-489) built in the same process as AC-1's run holds exactly the linked descriptors and not the test plugin. | Test (TC-2294) |
+| FR-635-AC-5 | `command::monitor` over FR-644-AC-8's request routes only its `items` to the recording provider and never a monitored clause: every `ProviderRequest` it sends holds only the items of `Even`, and its summary's `registry` lists `en-1`, `en-7` and the provider, as `analyze_with_providers` lists them for the same configuration. | Test (TC-2984) |
 
 FR-950 states the acceptance criteria of the provider request and its
 transport.

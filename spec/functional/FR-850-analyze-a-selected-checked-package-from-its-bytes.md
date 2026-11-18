@@ -209,6 +209,12 @@ member is the same as the source route gives.
   the outcome of the request with `package` selecting `P`'s bytes SHALL equal
   the outcome of the request over the source, member for member, except for
   the `request` echo's selection member.
+- The equality holds over every member of a clause's record, its `span`
+  included, with no member normalized. A package clause's span SHALL be read
+  from the `declaration_region` of its `temporal_clause_names` or
+  `claim_names` row (FSpec FR-322 "Clause declaration regions"), the whole
+  declaration the source route's checked clause spans, and never from the
+  occurrence's `source_map` region, which covers only the name token.
 - Analysis of a package selection performs no parse, select or check stage:
   the outcome's `last_stage` for a whole-request refusal before any item is
   `null`, and an item's record never carries a source-stage diagnostic.
@@ -226,6 +232,7 @@ The Counter fixture is FR-620's.
 | FR-850-AC-5 | AC-1's package request with the item `{"claim": "Missing"}` settles that item `invalid-request` with `invalid_capability`/`unknown-claim` naming `Missing`, as the source route does. | Test (TC-2410) |
 | FR-850-AC-6 | AC-1's handoff directory with `identities.json` removed refuses the whole request at the request stage, `invalid_package`, cause `missing-file`, naming `identities.json`, exit 20, `items` empty and no engine run; with `identities.json` replaced by `{}` it refuses `invalid_package`, `malformed-file`, naming `identities.json`; with its `format` changed it refuses `invalid_package`, `unknown-format`; with `equality.json` removed the request analyzes as AC-1 states; with `equality.json` replaced by `not json` it refuses `invalid_package`, `refused-file`, naming `equality.json`; a `package` `{"directory": "absent"}` refuses `invalid_package`, `missing-file`, naming the path. | Test (TC-2966) |
 | FR-850-AC-7 | Over the handoff directory of FR-940-AC-4's Counter unit, a `package` request with the items `{"claim": "NotAboveThree"}` (an invariant state clause) and `{"claim": "ReachThree"}` (a `possible` state-graph claim) resolves each through its `claim_names` row and settles it with the source route's record; `{"claim": "Missing"}` settles `invalid-request` `unknown-claim`; the same directory whose `checked-package.json` has the `NotAboveThree` row removed refuses `invalid_package`/`invalid-value` at `/claim_names`, and one with two rows of one `qualified_name` refuses `ambiguous_declaration`/`ambiguous-name`, each before any engine runs. | Test (TC-2967) |
+| FR-850-AC-8 | For every temporal clause and every state clause of FR-940-AC-4's Counter handoff, the clause the package route builds from the admitted bytes equals the source route's checked clause in every member, `span` included, and its `span` equals the `declaration_region` of the clause's name row; a handoff whose `checked-package.json` has one name row's `declaration_region` removed refuses the whole request `invalid_package` at the request stage naming that member, exit 20, before any engine runs. | Test (TC-2983) |
 
 ## Dependencies
 

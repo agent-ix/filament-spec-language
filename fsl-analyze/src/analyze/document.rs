@@ -1533,8 +1533,19 @@ fn resolve_one(
         .as_ref()
         .and_then(|temporal| temporal.item_kind)
         .map_or(ItemKind::Formula, |item_kind| item_kind.kind());
-    let applies = crate::claim_family::claim_family(package, item_kind, &claim)
-        .is_some_and(|family| kind.applies_to_declaration(family));
+    let protocol_claim = package.graph().protocols().iter().any(|protocol| {
+        package
+            .graph()
+            .protocol_node_keys(&protocol.name)
+            .and_then(|keys| keys.clause.as_ref())
+            == Some(claim.node())
+    });
+    let protocol_deadlock = protocol_claim
+        && kind == Capability::GlobalConformance
+        && item_kind == ItemKind::DeadlockFreedom;
+    let applies = protocol_deadlock
+        || crate::claim_family::claim_family(package, item_kind, &claim)
+            .is_some_and(|family| kind.applies_to_declaration(family));
     let backend_options = selection.options.clone().unwrap_or_default();
     if applies {
         if let Some(refused) = unknown_option(
@@ -1590,7 +1601,25 @@ fn resolve_one(
         .subject
         .clone()
         .map_or_else(|| subject.clone(), |own| own.completed_by(subject));
-    let protocol = if kind == Capability::TemporalSatisfaction
+    let protocol = if protocol_deadlock {
+        let owner = package.graph().protocols().iter().find(|protocol| {
+            package
+                .graph()
+                .protocol_node_keys(&protocol.name)
+                .and_then(|keys| keys.clause.as_ref())
+                == Some(claim.node())
+        });
+        match (owner, own_subject.protocol.as_ref()) {
+            (Some(owner), Some(selected)) if selected.protocol == owner.name => {
+                match selected.binding(package, &own_subject.memory) {
+                    Some(binding) => Some(binding),
+                    None => return invalid_value(index, name, "capacities"),
+                }
+            }
+            (Some(_), _) => return invalid_value(index, name, "temporal.subject.protocol"),
+            (None, _) => None,
+        }
+    } else if kind == Capability::TemporalSatisfaction
         && temporal
             .item_kind
             .is_none_or(|item_kind| item_kind.kind() == ItemKind::Formula)
@@ -1633,7 +1662,8 @@ fn resolve_one(
             return refused;
         }
     }
-    let protocol_bound = protocol.is_some();
+    let protocol_bound =
+        protocol.is_some() || (kind == Capability::GlobalConformance && protocol_claim);
     let form = (kind == Capability::TemporalSatisfaction || kind == Capability::GlobalConformance)
         .then(|| {
             let mut form = temporal_item(package, &claim, &temporal);
@@ -1695,7 +1725,11 @@ fn admit_reductions(
     let Some(selection) = form.pending_reductions.take() else {
         return Ok(());
     };
-    let simulation = super::request::simulation(package, binding, limits);
+    let simulation = super::request::simulation(
+        &fsl_eval::simulation::model::ModelCheckInput::source(package),
+        binding,
+        limits,
+    );
     let Ok(system) = fsl_eval::simulation::model::ModelSystem::new(simulation) else {
         form.pending_reductions = Some(selection);
         return Ok(());
@@ -2784,7 +2818,7 @@ pub fn settle_run(
         })
         .collect();
     let outcome = super::request::analyze_bound(
-        package,
+        &super::RunInput::source(package),
         &binding,
         &provision,
         &negotiated,

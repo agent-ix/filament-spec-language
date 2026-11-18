@@ -1649,9 +1649,11 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     }
                 }
             }
-            // ST-1 binds the record (receiver, arguments, result). With no
-            // result of the binder's type, the record is kept only for the
-            // attempt's effects, whose ST-2 enabledness reads it.
+            // ST-1 binds every attempt binder to the record (receiver,
+            // arguments, result). With no result of the binder's type the
+            // binder is still bound, but S3 refuses each read of it
+            // (FR-218-AC-44), so no expression reads it here; the attempt's
+            // effects' ST-2 enabledness reads the record.
             let bound = bound.or_else(|| {
                 self.program.binder_of.contains_key(&node).then(|| Bound {
                     value: None,

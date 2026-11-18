@@ -34,7 +34,8 @@ reached the limit accepts the setting. `fsl parse`, `fsl check` and
 through FR-255's settings operation, for every setting of every stage the
 command runs, and `fsl check` and `fsl compile` the intake byte ceilings, so
 a limit any of them reports can be raised on that same command. `fsl run`
-keeps its existing options (FR-287-AC-4).
+keeps its byte options (FR-287-AC-4) and accepts `--limit` for the observation
+settings as FR-312 states.
 
 ### The settings each command accepts
 

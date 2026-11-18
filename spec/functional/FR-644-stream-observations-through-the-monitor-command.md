@@ -3,6 +3,12 @@ id: FR-644
 title: "Stream observations through the monitor command"
 type: FR
 relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-635
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-620
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-950
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
   - target: ix://agent-ix/filament-spec-language/FR-643
@@ -71,6 +77,10 @@ The request file, a closed JSON envelope `{"format": "native-monitor/1",
   summary, with the summary's exit code. This is the batch form of the same
   stream: a file of records gives the events a live stream of the same records
   gives.
+- `items`: optional, a non-empty array of FSpec FR-520 analysis items, with
+  `subject`, `documents` and `deadline_ms` optional beside it, each member
+  read as FR-620 reads it in a `native-analyze/1` request. These are the
+  monitor request's provider-routed items ("Provider-routed items" below).
 
 The record stream is JSON Lines: one closed JSON object per line, each exactly
 one of
@@ -93,9 +103,40 @@ one of
 In process: `command::monitor(path: &Path, records: impl Iterator<Item =
 Result<Vec<u8>, std::io::Error>>, sink: &mut dyn FnMut(&MonitorEvent), limits:
 RunLimits, cancel: &Cancel) -> Result<MonitorSummary, Box<RunError>>`. It also
-takes the started process providers as `providers`, by FR-635's rule for
-every provider-routing entry (FR-635 "One rule for every provider-routing
-entry").
+takes the started process providers as `providers` and the run's
+`ProviderOptions` as `options`, by FR-635's rule for every provider-routing
+entry (FR-635 "One rule for every provider-routing entry"), and the caller's
+negotiator as `negotiate: &dyn Negotiate`, the one `analyze_with_providers`
+and `run_with_providers` take (FR-961 "The negotiator is a parameter").
+
+### Provider-routed items
+
+A provider receives a checked package and request items (FSpec FR-331); no
+FR-331 member carries an observation record. The verdict of a monitored
+clause over the observed stream is therefore always the session's (FR-643),
+and the `clauses` never route to a provider. What a monitor request routes
+is its `items`: claims of the same compiled program decided over the
+program's behaviours, such as a clause monitored at run time that is also
+proved over its model. `monitor` SHALL settle them exactly as
+`analyze_with_providers` settles the items of the `native-analyze/1`
+request with the monitor request's `models`, `program`, `libraries`,
+`integer_division`, `clocks`, `items`, `subject`, `documents` and
+`deadline_ms`, over the registry `Engines::fsl()` and `providers`: route
+each item (FR-620), negotiate it with `negotiate`, settle the items
+`Supported` on a linked engine in process, and send the items `Supported`
+on a provider through `fsl_analyze::provider::settle_items`, one FR-950
+`ProviderRequest` per backend whose `package` is the admitted bytes of this
+monitor's own compile, by one `ExternalProvider::settle` call per request
+under `cancel`. A provider's `proved` is recorded `trusted`, its `refuted`
+only after S6a replay reproduces its counterexample, and its `unknown` as
+`inconclusive` `solver-inconclusive` (FR-290, FR-635).
+
+The items SHALL settle after the program compiles and before the first
+record is read, so a refused item is known before any event, and every
+event and the summary's clause entries SHALL be those of the same request
+without `items`. Once `cancel` fires no further provider request is sent and
+every unsettled item settles `incomplete` with cause `cancelled{source}`. A
+request without `items` calls neither the negotiator nor any provider.
 
 ## Outputs
 
@@ -129,8 +170,14 @@ entry").
   "trigger": "cancelled", "cause": "<cause>"}` (FR-853); the number of records
   read; `cancelled`, the handle's cause `requested` or `deadline`, present
   exactly when the stream was cancelled (FR-853); and the final ledger exactly when the kind carries progress (`progressed` or
-  `timestamped`), so a `finite` stream's summary carries no ledger.
-- The exit code: FR-285's code of the most severe final category, in the order
+  `timestamped`), so a `finite` stream's summary carries no ledger. A
+  request carrying `items` adds the summary member `items`, one record per
+  item in request order, each the item record FR-621 writes for that item in
+  the outcome of the equivalent `native-analyze/1` request ("Provider-routed
+  items"), and the `registry` member that outcome carries (FR-635); a
+  request without `items` carries neither member.
+- The exit code: FR-285's code of the most severe final category, a settled
+  item's category counted beside the clauses', in the order
   internal failure (30), refusal (20), violation or undefined (10),
   indeterminate (11), unsupported (21), incomplete (22), and otherwise 0.
 
@@ -159,6 +206,11 @@ entry").
 - The driver's `monitor` verb SHALL take the request file operand and `--input
   <file>` (default standard input), write each event and the summary as one JSON
   line to standard output, and follow FR-287's stream, usage and exit rules.
+  It SHALL accept `--provider-config` and `--provider-limit` as every
+  provider-routing verb does (FR-287, FSpec FR-561), passing the processes it
+  started as `providers` and the resolved limits as
+  `options.provider_limits`, and its production negotiator as `negotiate`;
+  it refuses neither option on `monitor`.
 
 ## Acceptance Criteria
 
@@ -171,6 +223,10 @@ entry").
 | FR-644-AC-5 | Through `command::run`, a `native-monitor/1` request whose `records` file holds sample observations for two infinite-trace clauses over a record trace subject, `Reaches` (`eventually holds(r.level = 2)`) and `Never` (`always holds(r.level < 2)`), over levels 0, 1, 2, 1 then `{"end": true}` returns a `filament.monitor-run/1` document in which, for each clause after each observation record `k`: the `category` of the clause's latest event equals the `category` of the clause-run result of the native-run/1 request over the `finite` trace of samples 0 to `k`; that event's `disposition` equals the clause-run disposition over samples 0 to `j`, `j` the record of the latest event (`Never` settles `violation` at record 2, its event `settled` `true`, so from record 2 on `j` is 2 and its disposition carries the three-sample counterexample while the run over four samples carries four; `Reaches` stays `pending`, its events `settled` `false`, and `j` is the record of its latest pending event); the summary's `settled` and disposition for each clause equal its latest event's, `Reaches` `pending`; the summary's `settlement` is the settling event's for `Never` and `{"step": "4", "trigger": "finish"}` for `Reaches`; and the exit code is 10 (`Never` is violated). | Test (TC-1668) |
 | FR-644-AC-6 | A `timed` stream of FR-643-AC-10's `Ack` with the one record `req` at 0, followed by `{"through": 250}`, gives, at the `through` record, an event for `Ack` with `settled` `true` and category `violation`; a `{"through": X}` record on a `finite` stream, and a record `{"end": "closed"}`, each give a `refusal` event, `invalid-request`, naming `through` and `end` respectively, and leave the session unchanged. | Test (TC-2324) |
 | FR-644-AC-7 | Through `command::run`, a `finite` stream of FR-643-AC-7's `E` over levels 0, 1, 2 then `{"end": true}` gives at record 2 an event with `settled` `true`, a `disposition` equal to the native-run/1 clause run over samples 0 to 2 (category `success`, basis `closed-scope`, no `finite_window`), and `settlement` `{"step": "3", "trigger": "decided", "basis": "decisive-witness", "horizon": "2", "position": "2"}`; the events at records 0 and 1 carry `settled` `false` and no `settlement`; the summary entry carries the same `settlement`, and the summary has no `ledger`. | Test (TC-2340) |
+| FR-644-AC-8 | `command::monitor` over AC-1's stream, its unit adding `function Even using v(n: Int[0, 9]): Boolean pure { n * 2 - n = n }`, with `items` `[{"claim": "Even", "backend": "fsl.test-recording-provider"}]` and the recording provider (advertising `value-validity` `unbounded`, answering `proved`) in `providers`, calls the provider's `settle` exactly once, before the sink receives its first event, with one `ProviderRequest` holding the items of `Even` whose `package` decodes to the monitor's admitted package; the summary's `items` and `registry` equal those of `analyze_with_providers` over the equivalent `native-analyze/1` request, each item `proved` with certification `trusted`; the events and the summary's clause entries equal those of the same stream without `items`, and the exit code is 10. | Test (TC-2984) |
+| FR-644-AC-9 | AC-1's stream with the recording provider in `providers` and no `items` calls neither the negotiator nor the provider, and its events and summary are byte-equal to the stream's with `providers` empty. | Test (TC-2984) |
+| FR-644-AC-10 | AC-8's request whose item names the unregistered backend `fsl.absent` settles that item `invalid-request` `unknown-backend` in the summary's `items`, calls no provider, still streams every record with AC-1's events, and exits 20; AC-8's request with a provider answering `unknown` settles the item `inconclusive` `solver-inconclusive` and exits 10 (the violation outranks it), and with every clause successful exits 22; two providers of one `BackendId` refuse `invalid-request` naming `providers`, exit 20, before any record is read and with no event. | Test (TC-2984) |
+| FR-644-AC-11 | AC-8's request with `cancel` fired before `monitor` is called settles the item `incomplete` with cause `cancelled{requested}` and sends no provider request; the driver's `fsl monitor monitor.json --provider-config providers.json --input records.jsonl` over AC-8's request and a configured test plugin writes AC-8's events and a summary carrying its `items`, and does not refuse `--provider-config`. | Test (TC-2984) |
 
 ## Dependencies
 

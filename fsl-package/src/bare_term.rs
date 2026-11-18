@@ -553,3 +553,220 @@ fn declaration_index(
             .count(),
     )
 }
+
+/// Why the package form of a temporal clause was not projected (FR-940).
+#[derive(Debug)]
+pub enum BareClauseRefusal {
+    /// The clause is not selected: a witness refusal, a key no temporal
+    /// clause has, a node that is no readable clause.
+    Selection(BareSelectionFailure),
+    /// The clause carries a fact its package form does not read yet; no
+    /// form is built without it.
+    Pending {
+        /// The fact.
+        fact: &'static str,
+        /// The node that carries it.
+        node: CheckedNodeId,
+    },
+}
+
+impl From<BareSelectionFailure> for BareClauseRefusal {
+    fn from(failure: BareSelectionFailure) -> Self {
+        Self::Selection(failure)
+    }
+}
+
+impl<'p> BarePackage<'p> {
+    /// FR-940: the package form of the temporal clause whose node key is
+    /// `clause`, read from the package's admitted nodes, source map, name
+    /// rows and type projections: its name, span, profile, `over`, trigger
+    /// and capture binders, clock role, activation and formula arena. Its
+    /// population domains are the caller's: they are read from the
+    /// supplied domain packages, which a package does not hold. Charges
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`BareClauseRefusal::Selection`] for a clause the package does not
+    /// select; [`BareClauseRefusal::Pending`] for a fact the form does not
+    /// read yet: a fairness set, an interval, an aggregate atom or a
+    /// formula node used twice.
+    #[ix_trace_rs::string_edge]
+    pub fn temporal_clause_form(
+        &self,
+        clause: &NodeKey,
+    ) -> Result<fsl_semantics::check::PackageClauseForm, BareClauseRefusal> {
+        use fsl_semantics::check::{BinaryTemporal, PackageFormulaNode, UnaryTemporal};
+        let package = self.package();
+        self.witness()?;
+        let graph = wire_graph(package).map_err(|_| fault("bare-package-has-structural-keys"))?;
+        let nodes: BTreeMap<&CheckedNodeId, &CheckedSemanticNodeV2> = package
+            .resolved_graph()
+            .nodes
+            .iter()
+            .map(|node| (&node.node_id, node))
+            .collect();
+        let missing =
+            || BareSelectionFailure::from(SlotSelectionFailure::MissingNode(clause.clone()));
+        let malformed =
+            || BareSelectionFailure::from(SlotSelectionFailure::MalformedNode(clause.clone()));
+        let mut found = None;
+        for node in nodes.values() {
+            if node.semantic_form.as_ref() != "temporal_clause" {
+                continue;
+            }
+            let key = graph
+                .key(&node.node_id)
+                .map_err(|_| fault("bare-package-has-structural-keys"))?;
+            if key == *clause {
+                found = Some(*node);
+                break;
+            }
+        }
+        let node = found.ok_or_else(missing)?;
+        let view = temporal_subject(package, &node.node_id).map_err(|_| malformed())?;
+        let name = view.name().ok_or_else(malformed)?.to_owned();
+        let CheckedTerm::Application { arguments, .. } = &node.body else {
+            return Err(malformed().into());
+        };
+        // FR-337 "Clause emission": `over`, clock, activation, captures,
+        // fairness, formula.
+        let [_, clock, _, _, CheckedTerm::Aggregate { members: fairness }, _] =
+            arguments.as_slice()
+        else {
+            return Err(malformed().into());
+        };
+        if !fairness.is_empty() {
+            return Err(BareClauseRefusal::Pending {
+                fact: "fairness",
+                node: node.node_id.clone(),
+            });
+        }
+        let clock = text(clock).ok_or_else(malformed)?.to_owned();
+        let span = view
+            .source_span()
+            .regions
+            .first()
+            .map(region_span)
+            .ok_or_else(malformed)?;
+        let binder =
+            |id: &CheckedNodeId| -> Result<(String, filament_exact::ValueType), BareClauseRefusal> {
+                let parameter = nodes.get(id).ok_or_else(malformed)?;
+                let name = group_member(&parameter.body, "name")
+                    .and_then(text)
+                    .ok_or_else(malformed)?;
+                let value_type = self
+                    .exact_type_projections()
+                    .get(id)
+                    .and_then(|projected| projected.as_ref().ok())
+                    .map(|projected| projected.value_type().clone())
+                    .ok_or_else(malformed)?;
+                Ok((name.to_owned(), value_type))
+            };
+        let over = binder(view.over())?;
+        let (activation, trigger) = match view.activation() {
+            Activation::Origin => (fsl_semantics::check::Activation::Origin, None),
+            Activation::Each { trigger, guard } => (
+                fsl_semantics::check::Activation::Each {
+                    guarded: guard.is_some(),
+                },
+                Some(binder(trigger)?),
+            ),
+        };
+        let mut captures = Vec::with_capacity(view.captures().len());
+        for (initializer, capture) in view.captures().iter().zip(view.capture_names()) {
+            let value_type = self
+                .exact_type_projections()
+                .get(initializer)
+                .and_then(|projected| projected.as_ref().ok())
+                .map(|projected| projected.value_type().clone())
+                .ok_or_else(malformed)?;
+            captures.push((capture.clone(), value_type));
+        }
+        let uses = view.formula_graph();
+        let mut formula = Vec::with_capacity(uses.len());
+        let mut seen = BTreeSet::new();
+        for entry in uses {
+            let pending = |fact| BareClauseRefusal::Pending {
+                fact,
+                node: entry.node.clone(),
+            };
+            if !seen.insert(entry.node) {
+                return Err(pending("shared-formula-node"));
+            }
+            if entry.interval.is_some() {
+                return Err(pending("interval"));
+            }
+            let operand =
+                |position: usize| entry.operands.get(position).copied().ok_or_else(malformed);
+            let kind = entry.kind().ok_or_else(malformed)?;
+            formula.push(match kind {
+                FormulaOperation::True => PackageFormulaNode::Constant(true),
+                FormulaOperation::False => PackageFormulaNode::Constant(false),
+                FormulaOperation::Holds => PackageFormulaNode::Holds {
+                    span: package
+                        .source_map()
+                        .iter()
+                        .find(|map| map.node_id == *entry.node)
+                        .and_then(|map| map.regions.first())
+                        .map(region_span)
+                        .ok_or_else(malformed)?,
+                },
+                FormulaOperation::Aggregate => return Err(pending("aggregate")),
+                FormulaOperation::Not => PackageFormulaNode::Not(operand(0)?),
+                FormulaOperation::And => PackageFormulaNode::And(operand(0)?, operand(1)?),
+                FormulaOperation::Or => PackageFormulaNode::Or(operand(0)?, operand(1)?),
+                FormulaOperation::Implies => PackageFormulaNode::Implies(operand(0)?, operand(1)?),
+                FormulaOperation::Eventually
+                | FormulaOperation::Always
+                | FormulaOperation::Once
+                | FormulaOperation::Historically => PackageFormulaNode::Unary {
+                    operator: match kind {
+                        FormulaOperation::Eventually => UnaryTemporal::Eventually,
+                        FormulaOperation::Always => UnaryTemporal::Always,
+                        FormulaOperation::Once => UnaryTemporal::Once,
+                        _ => UnaryTemporal::Historically,
+                    },
+                    operand: operand(0)?,
+                },
+                FormulaOperation::Until
+                | FormulaOperation::Release
+                | FormulaOperation::Since
+                | FormulaOperation::Triggered => PackageFormulaNode::Binary {
+                    operator: match kind {
+                        FormulaOperation::Until => BinaryTemporal::Until,
+                        FormulaOperation::Release => BinaryTemporal::Release,
+                        FormulaOperation::Since => BinaryTemporal::Since,
+                        _ => BinaryTemporal::Triggered,
+                    },
+                    left: operand(0)?,
+                    right: operand(1)?,
+                },
+            });
+        }
+        let profile = fsl_semantics::check::TemporalProfile::from_identity(
+            &view.profile().definition.identity,
+        )
+        .ok_or_else(malformed)?;
+        Ok(fsl_semantics::check::PackageClauseForm {
+            name,
+            span,
+            profile,
+            package_name: package.name().to_owned(),
+            over,
+            clock,
+            activation,
+            trigger,
+            captures,
+            formula,
+            populations: Vec::new(),
+        })
+    }
+}
+
+fn region_span(region: &filament_contract_model::CheckedSourceRegion) -> fsl_foundation::Span {
+    fsl_foundation::Span {
+        start: usize::try_from(region.start).unwrap_or(usize::MAX),
+        end: usize::try_from(region.end).unwrap_or(usize::MAX),
+    }
+}

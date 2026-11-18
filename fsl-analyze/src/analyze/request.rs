@@ -357,7 +357,7 @@ pub fn analyze(
     fsl_foundation::diagnostic::StageFailure<super::AnalyzeRefusal>,
 > {
     analyze_bound(
-        package,
+        &super::RunInput::source(package),
         &request.binding,
         &request.provision,
         &request.items,
@@ -367,8 +367,8 @@ pub fn analyze(
     )
 }
 
-pub(crate) fn analyze_bound(
-    package: &fsl_package::CheckedPackage,
+pub(crate) fn analyze_bound<'a>(
+    analysis: &super::RunInput<'a>,
     binding: &super::SubjectBinding<'_>,
     provision: &SourceProvision,
     requested: &[NegotiatedItem],
@@ -379,15 +379,16 @@ pub(crate) fn analyze_bound(
     fsl_foundation::diagnostic::Staged<super::AnalyzeOutcome>,
     fsl_foundation::diagnostic::StageFailure<super::AnalyzeRefusal>,
 > {
+    let (package, input) = (analysis.package, &analysis.model);
     use fsl_foundation::diagnostic::{StageFailure, Staged};
-    let simulation = simulation(package, binding, limits);
+    let simulation = simulation(input, binding, limits);
     fsl_eval::simulation::model::ModelSystem::new(simulation)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Binding(failure)))?;
     check_provision(package, provision)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Provision(failure)))?;
     let items = requested
         .iter()
-        .map(|item| work(package, binding, provision, item, engines, limits))
+        .map(|item| work(analysis, binding, provision, item, engines, limits))
         .collect::<Vec<_>>();
     let requirements = items
         .iter()
@@ -481,12 +482,12 @@ pub(super) fn dependency_wires(
 }
 
 pub(super) fn simulation<'a>(
-    package: &'a fsl_package::CheckedPackage,
+    input: &fsl_eval::simulation::model::ModelCheckInput<'a>,
     binding: &super::SubjectBinding<'a>,
     limits: &super::AnalyzeLimits,
 ) -> fsl_eval::simulation::model::ModelSimulationRequest<'a> {
     fsl_eval::simulation::model::ModelSimulationRequest {
-        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
+        input: input.clone(),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,
@@ -502,20 +503,25 @@ pub(super) fn simulation<'a>(
 }
 
 fn work<'a>(
-    package: &'a fsl_package::CheckedPackage,
+    analysis: &super::RunInput<'a>,
     binding: &super::SubjectBinding<'a>,
     provision: &'a SourceProvision,
     negotiated: &'a NegotiatedItem,
     engines: &super::Engines,
     limits: &super::AnalyzeLimits,
 ) -> super::AnalyzeItem<'a> {
+    let (package, input) = (analysis.package, &analysis.model);
     use super::AnalyzeItem;
     let item = &negotiated.item;
     let temporal_kind = match &item.form {
         Some(ItemForm::Temporal(form)) => form.item_kind,
         Some(ItemForm::Probabilistic(_) | ItemForm::Hybrid(_)) | None => ItemKind::Formula,
     };
-    let family = crate::claim_family::claim_family(package, temporal_kind, &item.claim);
+    let family = if item.kind == Capability::GlobalConformance {
+        Some(fsl_semantics::check::DeclarationFamily::Protocol)
+    } else {
+        crate::claim_family::claim_family(package, temporal_kind, &item.claim)
+    };
     let wrong_occurrence = package
         .graph()
         .temporal_clauses()
@@ -534,64 +540,79 @@ fn work<'a>(
     let absent = || AnalyzeItem::unadapted(item.request_index, item.kind, family);
     let mut built = match &item.form {
         Some(ItemForm::Temporal(_form)) if item.kind == Capability::GlobalConformance => {
-            let protocol = package.graph().protocols().iter().find(|protocol| {
-                package
-                    .graph()
-                    .protocol_node_keys(&protocol.name)
-                    .and_then(|keys| keys.clause.as_ref())
-                    == Some(item.claim.node())
-            });
-            match protocol {
-                Some(protocol) => {
-                    let missing_role = if item.options.recording.is_some() {
-                        None
-                    } else {
-                        let selected_model_packages: std::collections::BTreeSet<&str> = binding
-                            .universes
-                            .iter()
-                            .map(|universe| universe.population.package.as_str())
-                            .collect();
-                        protocol.roles.iter().find(|role| {
-                            role.context.as_ref().is_some_and(|context| {
-                                !selected_model_packages.contains(context.original().package())
+            if _form.item_kind == ItemKind::DeadlockFreedom {
+                super::protocol_item::protocol_clause_item(
+                    analysis,
+                    binding,
+                    *limits,
+                    provision,
+                    &item.claim,
+                    item.request_index,
+                    _form,
+                )
+                .unwrap_or_else(absent)
+            } else {
+                let protocol = package.graph().protocols().iter().find(|protocol| {
+                    package
+                        .graph()
+                        .protocol_node_keys(&protocol.name)
+                        .and_then(|keys| keys.clause.as_ref())
+                        == Some(item.claim.node())
+                });
+                match protocol {
+                    Some(protocol) => {
+                        let missing_role = if item.options.recording.is_some() {
+                            None
+                        } else {
+                            let selected_model_packages: std::collections::BTreeSet<&str> = binding
+                                .universes
+                                .iter()
+                                .map(|universe| universe.population.package.as_str())
+                                .collect();
+                            protocol.roles.iter().find(|role| {
+                                role.context.as_ref().is_some_and(|context| {
+                                    !selected_model_packages.contains(context.original().package())
+                                })
                             })
-                        })
-                    };
-                    if let Some(role) = missing_role {
-                        crate::protocol_analysis::conformance::missing_role_item(
-                            item.request_index,
-                            &role.name,
-                        )
-                    } else {
-                        let recording = item
-                            .options
-                            .recording
-                            .as_ref()
-                            .and_then(|reference| binding.snapshots.get(reference));
-                        let recording_identity = item.options.recording.as_ref().cloned();
-                        match recording {
-                            Some(recording) => {
-                                crate::protocol_analysis::conformance::global_recording_item(
-                                    item.request_index,
-                                    package,
-                                    None,
-                                    recording_identity,
-                                    Some(recording),
-                                    item.options.population.clone(),
-                                )
-                            }
-                            None => crate::protocol_analysis::conformance::global_behavior_item(
+                        };
+                        if let Some(role) = missing_role {
+                            crate::protocol_analysis::conformance::missing_role_item(
                                 item.request_index,
-                                package,
-                                binding.clone(),
-                                *limits,
-                                protocol,
-                                _form,
-                            ),
+                                &role.name,
+                            )
+                        } else {
+                            let recording = item
+                                .options
+                                .recording
+                                .as_ref()
+                                .and_then(|reference| binding.snapshots.get(reference));
+                            let recording_identity = item.options.recording.as_ref().cloned();
+                            match recording {
+                                Some(recording) => {
+                                    crate::protocol_analysis::conformance::global_recording_item(
+                                        item.request_index,
+                                        package,
+                                        None,
+                                        recording_identity,
+                                        Some(recording),
+                                        item.options.population.clone(),
+                                    )
+                                }
+                                None => {
+                                    crate::protocol_analysis::conformance::global_behavior_item(
+                                        item.request_index,
+                                        analysis,
+                                        binding.clone(),
+                                        *limits,
+                                        protocol,
+                                        _form,
+                                    )
+                                }
+                            }
                         }
                     }
+                    None => absent(),
                 }
-                None => absent(),
             }
         }
         Some(ItemForm::Temporal(form))
@@ -599,7 +620,7 @@ fn work<'a>(
                 && super::document::is_state_graph(package, &item.claim) =>
         {
             super::state_graph_item::state_graph_item(
-                package,
+                analysis,
                 binding,
                 *limits,
                 provision,
@@ -616,7 +637,7 @@ fn work<'a>(
                 && super::refinement_item::refinement_at(package, &item.claim).is_some() =>
         {
             super::refinement_item::refinement_item(
-                package,
+                analysis,
                 binding,
                 *limits,
                 &item.claim,
@@ -629,7 +650,7 @@ fn work<'a>(
             if item.kind == Capability::TemporalSatisfaction && form.protocol.is_some() =>
         {
             super::protocol_item::protocol_clause_item(
-                package,
+                analysis,
                 binding,
                 *limits,
                 provision,
@@ -648,7 +669,7 @@ fn work<'a>(
         {
             if super::document::timed(package) {
                 super::timed_item::zone_derived_item(
-                    package,
+                    analysis,
                     binding,
                     *limits,
                     provision,
@@ -659,7 +680,7 @@ fn work<'a>(
                 .unwrap_or_else(absent)
             } else if form.item_kind == ItemKind::DeadlockFreedom {
                 super::derived_item::deadlock_item(
-                    package,
+                    analysis,
                     binding,
                     *limits,
                     provision,
@@ -678,7 +699,7 @@ fn work<'a>(
                 && super::document::timed(package) =>
         {
             super::timed_item::zone_clause_item(
-                package,
+                analysis,
                 binding,
                 *limits,
                 provision,
@@ -690,7 +711,7 @@ fn work<'a>(
         }
         Some(ItemForm::Temporal(form)) if item.kind == Capability::TemporalSatisfaction => {
             match super::ClauseSubject::from_provision(
-                package,
+                analysis,
                 binding.clone(),
                 *limits,
                 provision,
@@ -721,7 +742,7 @@ fn work<'a>(
                         item.request_index,
                         crate::exact_probabilistic::ProductRequest {
                             subject: fsl_eval::model_subject::ModelSubject {
-                                simulation: simulation(package, binding, limits),
+                                simulation: simulation(input, binding, limits),
                                 proof_bounds: Vec::new(),
                             },
                             claim,
@@ -738,7 +759,7 @@ fn work<'a>(
                         item.request_index,
                         crate::statistical::StatisticalRequest {
                             subject: fsl_eval::model_subject::ModelSubject {
-                                simulation: simulation(package, binding, limits),
+                                simulation: simulation(input, binding, limits),
                                 proof_bounds: Vec::new(),
                             },
                             claim,
@@ -830,7 +851,7 @@ fn work<'a>(
                         );
                     crate::protocol_analysis::finite_replay_item(
                         item.request_index,
-                        package,
+                        analysis,
                         binding.clone(),
                         *limits,
                         provision,
@@ -855,7 +876,7 @@ fn work<'a>(
                 }
             };
             super::invariant_item::invariant_item(
-                package,
+                analysis,
                 binding,
                 *limits,
                 provision,
@@ -871,7 +892,7 @@ fn work<'a>(
                     crate::contract_check::ContractRequest {
                         package,
                         claim,
-                        subject: simulation(package, binding, limits),
+                        subject: simulation(input, binding, limits),
                         abstract_subject: None,
                         max_cases: item.options.max_cases,
                     }

@@ -1732,6 +1732,7 @@ pub fn check(
             refinement_internals: None,
             temporal_selections: &[],
             clocks: None,
+            check_mode: None,
         },
         models,
         dependencies,
@@ -1759,6 +1760,7 @@ pub fn check_with_integer_division(
         &[],
         None,
         Some(*selection),
+        None,
         None,
         None,
         models,
@@ -1858,6 +1860,7 @@ pub fn check_with_profile_catalog_and_inputs(
         source.clocks,
         None,
         Some(profile_catalog),
+        None,
         None,
         models,
         dependencies,
@@ -1978,6 +1981,10 @@ pub struct SourceInputs<'a> {
     /// The request's `clocks` member (FR-640), which serves the library
     /// units the check compiles; `None` when the caller selects by locus.
     pub clocks: Option<&'a super::RequestClocks>,
+    /// FR-952 "Selecting the mode in a compile request": the mode every
+    /// function body is checked under; `None` is `Linked`. Declared clauses
+    /// stay under `Linked`.
+    pub check_mode: Option<CheckMode>,
 }
 
 /// S3 and S4 over an admitted source-unit list, with the root request's
@@ -2001,6 +2008,7 @@ pub fn check_units_with_refinement_internals(
             refinement_internals: inputs.refinement_internals.as_ref(),
             temporal_selections: inputs.temporal_selections,
             clocks: inputs.clocks,
+            check_mode: inputs.check_mode,
             ..UnitCheckOptions::default()
         },
         limits,
@@ -2222,6 +2230,7 @@ pub fn check_with_refinement_internals_and_integer_division(
         integer_division,
         None,
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -2256,6 +2265,7 @@ pub(crate) fn check_with_refinement_internals_and_function_modes(
         None,
         None,
         function_modes,
+        None,
         models,
         dependencies,
         limits,
@@ -2314,6 +2324,7 @@ pub fn check_with_execution_points_and_refinement_internals(
         None,
         None,
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -2344,6 +2355,7 @@ pub fn check_with_temporal_selections_and_execution_points(
         execution_points,
         None,
         temporal_selections,
+        None,
         None,
         None,
         None,
@@ -2379,6 +2391,7 @@ pub fn check_with_execution_points_and_source_inputs(
         None,
         None,
         None,
+        inputs.check_mode,
         models,
         dependencies,
         limits,
@@ -2422,6 +2435,7 @@ pub(crate) fn check_for_continuation(
         inputs.integer_division,
         None,
         inputs.function_modes,
+        None,
         models,
         dependencies,
         limits,
@@ -2444,6 +2458,7 @@ fn check_with_context_and_temporal_selections(
     integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
     extension_catalog: Option<ProfileCatalogInput<'_>>,
     function_modes: Option<&BTreeMap<String, CheckMode>>,
+    check_mode: Option<CheckMode>,
     models: &AdmittedModels,
     dependencies: &DependencyInput,
     limits: SpineLimits,
@@ -2476,7 +2491,7 @@ fn check_with_context_and_temporal_selections(
             clocks,
             integer_division,
             extension_catalog,
-            check_mode: CheckMode::Linked,
+            check_mode: check_mode.unwrap_or(CheckMode::Linked),
             function_modes,
             active: Vec::new(),
             compiled: BTreeMap::new(),
@@ -3223,9 +3238,21 @@ fn protocol_check_outcome(
         {
             let refusal = refused.refusals.first().cloned();
             if let Some(primary) = refusal.clone() {
+                // FR-096 / FR-884: protocol refusals carry the subject span
+                // on their typed cause. Keep the protocol declaration span
+                // only as a fallback for causes without a located subject.
+                let subject_span = match &primary.cause {
+                    CheckCause::ProtocolAnchor(cause) => Some(cause.span()),
+                    CheckCause::ProtocolObligation(cause) => Some(cause.span()),
+                    CheckCause::Temporal(cause) => Some(cause.span()),
+                    CheckCause::StateGraph(cause) => cause.span(),
+                    _ => None,
+                }
+                .unwrap_or(declaration_span);
+                let subject_region = region(parsed.source().reference(), subject_span);
                 if first_failure.is_none() {
                     first_failure = Some(CompileRefusal::Check {
-                        region: region(parsed.source().reference(), declaration_span),
+                        region: subject_region.clone(),
                         refusals: refused.refusals.clone(),
                     });
                 }
@@ -3254,8 +3281,7 @@ fn protocol_check_outcome(
                     cause: catalog
                         .map(|code| code.cause().to_owned())
                         .unwrap_or_else(|| "unknown-cause".to_owned()),
-                    locus: region(parsed.source().reference(), refused.declaration_span)
-                        .map(Locus::Region),
+                    locus: subject_region.map(Locus::Region),
                 });
             } else {
                 results.push(super::ProtocolResult::Refused {

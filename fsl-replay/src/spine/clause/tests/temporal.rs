@@ -1594,14 +1594,22 @@ fn a_window_aggregate_over_a_model_subject_is_refused_at_compile() {
     );
 }
 
-/// `Reaches` over the same `Finite` trace is pending: the catalog's pending, exit 0,
-/// no truth. Over a lasso with loop 0, 1 it violates at position 0; over a
-/// lasso with loop 0, 1, 2 it holds.
+/// `Reaches` over the same `Finite` trace 0, 1, 2 is a good prefix: success,
+/// exit 0, truth `true` (FR-328). Over the `Finite` trace 0, 1, which neither
+/// satisfies nor violates it for every extension, it is pending: the
+/// catalog's pending, exit 0, no truth. Over a lasso with loop 0, 1 it
+/// violates at position 0; over a lasso with loop 0, 1, 2 it holds.
 #[trace("TC-840", "FR-330-AC-2")]
 #[trace("TC-769", "FR-285-AC-9")]
 #[test]
-fn an_infinite_trace_clause_reads_a_finite_prefix_as_pending_and_a_lasso_exactly() {
-    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1, 2]));
+fn an_infinite_trace_clause_settles_a_good_prefix_pends_the_rest_and_reads_a_lasso_exactly() {
+    let good = report(finite(Unit::Infinite, "Reaches", &[0, 1, 2]));
+    assert_eq!(outcome(&good), &TemporalVerdict::Holds);
+    assert_eq!(good.disposition.category(), Category::Success);
+    assert_eq!(exit_code(&good), 0);
+    assert_eq!(good.disposition.truth(), Some(true));
+
+    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1]));
     assert_eq!(outcome(&pending), &TemporalVerdict::Pending);
     assert_eq!(pending.disposition.category(), Category::Pending);
     assert_eq!(exit_code(&pending), 0);
@@ -1721,7 +1729,7 @@ fn a_temporal_run_refuses_consequent_events_typed() {
         violated.consequent_source_events,
         ConsequentSourceEvents::Refused(ConsequentEventRefusal::Temporal)
     );
-    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1, 2]));
+    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1]));
     assert_eq!(pending.disposition.truth(), None);
     assert_eq!(
         pending.consequent_source_events,
@@ -2748,7 +2756,7 @@ fn clause_run_document_carries_four_independent_axes() {
 #[trace("TC-1582", "FR-622-AC-1")]
 #[test]
 fn every_monitor_item_carries_its_clause_runs_axes() {
-    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1, 2]));
+    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1]));
     let refuted = report(finite(Unit::Bounded, "Bounded", &[0, 1, 2]));
     let (_, json) = monitor_json(&[("Reaches", &pending), ("Bounded", &refuted)]);
     for (item, run) in json["items"]
@@ -4135,7 +4143,7 @@ fn monitor_json(runs: &[(&str, &ClauseRunReport)]) -> (crate::OutcomeDocument, s
 #[trace("TC-770", "FR-285-AC-9")]
 #[test]
 fn a_pending_clause_run_is_a_pending_monitor_document_that_exits_zero() {
-    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1, 2]));
+    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1]));
     let (document, json) = monitor_json(&[("Counters::Counter::Reaches", &pending)]);
     assert_eq!(document.category(), Category::Pending);
     assert_eq!(document.category().exit_code(), 0);
@@ -4166,7 +4174,7 @@ fn a_pending_clause_run_is_a_pending_monitor_document_that_exits_zero() {
 #[test]
 fn indeterminate_and_mixed_clause_runs_rank_by_severity() {
     let indeterminate = report(timestamped(&[0], &[0], 5, None));
-    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1, 2]));
+    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1]));
     let refuted = report(finite(Unit::Bounded, "Bounded", &[0, 1, 2]));
     let held = report(lasso(Unit::Infinite, "Reaches", 0, &[0, 1, 2]));
 
@@ -4512,7 +4520,7 @@ fn a_violated_item_carries_a_witness_exactly_when_the_report_holds_one() {
     assert_eq!(item["counterexample"]["trace_position"], 0);
     assert_eq!(item.get("cause"), Some(&serde_json::Value::Null));
 
-    let mut pending = report(finite(Unit::Infinite, "Reaches", &[0, 1, 2]));
+    let mut pending = report(finite(Unit::Infinite, "Reaches", &[0, 1]));
     pending.witness = run.witness.clone();
     assert!(item_json("Reaches", &pending).get("witness").is_none());
 }
@@ -4540,7 +4548,7 @@ fn valid_temporal_reports_have_no_witness_item_member() {
     let held = report(lasso(Unit::Infinite, "Reaches", 0, &[0, 1, 2]));
     assert_eq!(outcome(&held), &TemporalVerdict::Holds);
 
-    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1, 2]));
+    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1]));
     assert_eq!(outcome(&pending), &TemporalVerdict::Pending);
 
     let pending_window = report(timestamped(&[0], &[0], 1, Some(1)));
@@ -4686,8 +4694,8 @@ fn assert_undecided(report: &ClauseRunReport, identity: &str, position: u64) {
 
 /// FR-330-AC-12: `Bounded` over `Finite` 0, 1, 2 violates at position 0,
 /// where its atom no quantifier decides is false: `decisive` is undecided at
-/// the root of the position-0 observation. A pending run (`Reaches` over the
-/// same trace) and an `Undefined` run (FR-330-AC-5's clause) carry none.
+/// the root of the position-0 observation. A pending run (`Reaches` over
+/// 0, 1) and an `Undefined` run (FR-330-AC-5's clause) carry none.
 #[trace("TC-840", "FR-330-AC-12")]
 #[test]
 fn only_a_temporal_violation_carries_decisive_information() {
@@ -4695,7 +4703,7 @@ fn only_a_temporal_violation_carries_decisive_information() {
     assert_eq!(outcome(&bounded), &TemporalVerdict::Violated { at: 0 });
     assert_undecided(&bounded, "counter-0", 0);
 
-    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1, 2]));
+    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1]));
     assert_eq!(outcome(&pending), &TemporalVerdict::Pending);
     assert!(pending.decisive.is_none());
 

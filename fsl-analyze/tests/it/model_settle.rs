@@ -35,8 +35,10 @@ use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
 use crate::counter::{
-    document, package, subject, unit_text, universe, Documents, Letters, CONTRACT, UNLIMITED,
+    document, package_with_mode, subject, unit_text, universe, Documents, Letters, CONTRACT,
+    UNLIMITED,
 };
+use filament_semantic_value::checking::CheckMode;
 
 /// The letters of a replay that reads no atom: the deadlock-freedom item has
 /// none.
@@ -101,9 +103,20 @@ impl Case {
 }
 
 pub(crate) fn case(body: &str, values: &[i64]) -> Case {
+    case_in_mode(body, values, CheckMode::Linked)
+}
+
+/// [`case`] over a body whose `functions` (unit-level declarations) are checked
+/// in `CheckMode::Kernel`, so a function whose divisor may be zero is checked
+/// by the Kernel (FR-495-AC-3).
+fn kernel_case(body: &str, functions: &str, values: &[i64]) -> Case {
+    case_in_mode(&format!("{body}{functions}"), values, CheckMode::Kernel)
+}
+
+fn case_in_mode(body: &str, values: &[i64], mode: CheckMode) -> Case {
     let document = document(false);
     let unit = unit_text(body).into_bytes();
-    let checked = package(&document, body);
+    let checked = package_with_mode(&document, body, mode);
     let mut documents = Documents::new(document);
     let initial: Vec<DocumentRef> = values
         .iter()
@@ -502,7 +515,10 @@ fn a_counterexample_resolves_its_item_by_clause_node_and_occurrence_key() {
     assert_eq!((code, tag), (Code::StaleDependency, "content-mismatch"));
 }
 
-const GUARDED: &str = "pre CanInc using v on M::Counter::inc { 6 mod (2 - self.value) >= 0 }\n\
+/// The Kernel-checked division the guard and terminal fixtures call.
+const DIVIDE: &str = "function q using v(x: Integer): Integer pure { 6 mod x }\n";
+
+const GUARDED: &str = "pre CanInc using v on M::Counter::inc { q(2 - self.value) >= 0 }\n\
                        post Inc using v on M::Counter::inc { self.value - pre(self.value) = 1 }\n";
 
 /// The deadlock-freedom item's analogue of FR-128-AC-5 (ADR-018 UE-6),
@@ -515,7 +531,7 @@ const GUARDED: &str = "pre CanInc using v on M::Counter::inc { 6 mod (2 - self.v
 #[trace("TC-539")]
 #[test]
 fn an_undefined_guard_counterexample_reproduces_only_where_it_is_undefined() {
-    let case = case(GUARDED, &[0]);
+    let case = kernel_case(GUARDED, DIVIDE, &[0]);
     let payload = counterexample(&case);
     let CounterexampleKind::UndefinedEvaluation(evaluation) = &payload.kind else {
         panic!("an undefined guard: {payload:?}");
@@ -919,21 +935,21 @@ fn a_disagreeing_or_refused_replay_never_settles_refuted() {
     assert_eq!(failed.value.category(), Category::InternalFailure);
 }
 
-const TERMINAL_WHEN: &str = "terminal Done using v on M when { 6 mod (3 - self.value) = 0 };\n";
+const TERMINAL_WHEN: &str = "terminal Done using v on M when { q(3 - self.value) = 0 };\n";
 
 fn with_terminal(terminal: &str) -> String {
     format!("{CONTRACT}{terminal}")
 }
 
 /// FR-128-AC-6 (deadlock-freedom half) and FR-411-AC-3: under `terminal when
-/// 6 mod (3 - c.value) = 0`, the prefix to value 3 with `kind:
+/// q(3 - c.value) = 0` (`q` divides 6 by its argument), the prefix to value 3 with `kind:
 /// UndefinedEvaluation{where: position 3, cause: division-by-zero}` at the
 /// terminal reproduces with `trace_position` 3, and the same prefix with
 /// `kind: Deadlock` settles the same witness value and the item `refuted`.
 #[trace("TC-539", "FR-128-AC-6", "FR-411-AC-3")]
 #[test]
 fn an_undefined_terminal_predicate_reproduces_and_a_deadlock_kind_settles_the_same_value() {
-    let case = case(&with_terminal(TERMINAL_WHEN), &[0]);
+    let case = kernel_case(&with_terminal(TERMINAL_WHEN), DIVIDE, &[0]);
     let payload = counterexample(&case);
     let CounterexampleKind::UndefinedEvaluation(evaluation) = &payload.kind else {
         panic!("an undefined terminal predicate: {payload:?}");

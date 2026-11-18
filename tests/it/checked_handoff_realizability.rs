@@ -251,6 +251,7 @@ fn request<'a>(
     let subject = protocol_subject(
         SubjectPackage {
             package: handoff.checked(),
+            input: fsl_eval::simulation::model::ModelCheckInput::source(handoff.checked()),
             packages: handoff.packages(),
             snapshots,
         },
@@ -368,6 +369,7 @@ fn refusal(
     protocol_subject(
         SubjectPackage {
             package: handoff.checked(),
+            input: fsl_eval::simulation::model::ModelCheckInput::source(handoff.checked()),
             packages: handoff.packages(),
             snapshots: &snapshots,
         },
