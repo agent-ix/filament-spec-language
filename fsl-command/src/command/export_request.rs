@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-1015: strict reader for an export selection embedded in a native run.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +15,20 @@ pub struct ExportLimits {
     pub nodes: Option<u64>,
     /// Maximum mapper work units.
     pub work_units: Option<u64>,
+}
+
+impl ExportLimits {
+    /// Caller-supplied overrides under FR-817's export setting names.
+    pub fn named_overrides(&self) -> BTreeMap<String, u64> {
+        [
+            ("output_bytes", self.output_bytes),
+            ("nodes", self.nodes),
+            ("work_units", self.work_units),
+        ]
+        .into_iter()
+        .filter_map(|(name, value)| value.map(|value| (format!("export.{name}"), value)))
+        .collect()
+    }
 }
 
 /// A closed export request, before package-dependent validation.
@@ -519,6 +533,23 @@ mod tests {
             "export.output_bytes"
         );
         assert_eq!(outcome.cause.as_ref().unwrap()["value"], 1);
+    }
+
+    #[test]
+    fn names_export_limit_overrides() {
+        let request = ExportRequest::read(json!({
+            "profile": "filament.output.tla2/v1",
+            "obligations": ["Low"],
+            "limits": {"nodes": 4, "work_units": 8}
+        }))
+        .unwrap();
+        assert_eq!(
+            request.limits.named_overrides(),
+            BTreeMap::from([
+                ("export.nodes".to_owned(), 4),
+                ("export.work_units".to_owned(), 8),
+            ])
+        );
     }
 
     #[test]
