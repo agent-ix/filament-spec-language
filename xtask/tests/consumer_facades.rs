@@ -95,6 +95,26 @@ fn pin_check_passes_the_workspace_and_refuses_a_branch_dependency() {
     fs::write(
         &manifest,
         "[package]\nname = \"scratch\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
+         [patch.\"https://github.com/agent-ix/filament-contract-ir\"]\nfilament-contract-model = { git = \"https://github.com/agent-ix/filament-contract-ir\", branch = \"main\" }\n",
+    )
+    .expect("write patch-only manifest");
+    let refused = xtask(&[
+        "pin-check",
+        "--manifest",
+        manifest.to_str().expect("UTF-8 path"),
+    ]);
+    let text = report(&refused);
+    assert_eq!(refused.status.code(), Some(1), "{text}");
+    assert!(text.contains("filament-contract-model"), "{text}");
+    assert!(text.contains("uses branch"), "{text}");
+    assert!(
+        text.contains(manifest.to_str().expect("UTF-8 path")),
+        "{text}"
+    );
+
+    fs::write(
+        &manifest,
+        "[package]\nname = \"scratch\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
          [replace]\n\"filament-contract-model:0.1.0\" = { git = \"https://github.com/agent-ix/filament-contract-ir\", rev = \"deadbeef\" }\n",
     )
     .expect("write replace-only manifest");
