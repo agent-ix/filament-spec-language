@@ -1427,9 +1427,9 @@ impl TemporalClauseNode {
             return false;
         }
         let reads = |root: CheckedNode<'_>| {
-            root.descendants().into_iter().any(
-                |node| matches!(node.kind(), NodeKind::Local(slot) if captures.contains(&slot)),
-            )
+            root.descendants()
+                .into_iter()
+                .any(|node| matches!(node.kind(), NodeKind::Local(slot) if captures.contains(slot)))
         };
         if let Some((condition, _)) = self.condition(atom) {
             return reads(condition);

@@ -2717,7 +2717,14 @@ pub(super) fn decisive_over(
     let position = atom.position.index();
     let evaluation = run
         .package
-        .evaluate_holds_traced(node, atom.atom, over, captures, objects, observation, meter)
+        .evaluate_holds_traced(
+            node,
+            atom.atom,
+            fsl_eval::value::HoldsBinders { over, captures },
+            objects,
+            observation,
+            meter,
+        )
         .map_err(|failure| {
             let refusal = *convert_call_failure(failure);
             Box::new(if let RunRefusal::Fault(internal) = refusal {

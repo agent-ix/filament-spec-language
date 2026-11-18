@@ -415,6 +415,17 @@ pub fn evaluate_activation_guard(
     )
 }
 
+/// The binders a `holds` condition of a temporal clause reads (FR-337,
+/// FR-860): the object the clause's `over` parameter is bound to and the
+/// captures the activation it is read for fixed, in source order.
+#[derive(Clone, Copy, Debug)]
+pub struct HoldsBinders<'a> {
+    /// The `over` object.
+    pub over: &'a filament_exact::ObjectReference,
+    /// The activation's capture values; empty for a clause with none.
+    pub captures: &'a [Value],
+}
+
 /// The slot bindings of a `holds` condition of `clause` (FR-337 "Captures at
 /// S3"): `over` at slot 0, the hidden trigger slot of an `on each` clause
 /// bound to `over` as well (no condition reads it), then the activation's
@@ -1025,8 +1036,9 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     /// FR-330 Outputs, FR-283 `decisive`: [`Self::evaluate_holds`] with
     /// FR-107's witness channel kept: the result carries, beside the
     /// evaluation, each decision and each quantifier stop report on the
-    /// condition's own level ([`ClauseEvaluation`]). `over` is the object the
-    /// clause's `over` parameter is bound to, and `observation` the identity
+    /// condition's own level ([`ClauseEvaluation`]). `binders` are the object
+    /// the clause's `over` parameter is bound to and the captures of the
+    /// activation the atom is read for, and `observation` the identity
     /// of the observation `objects` admitted, which roots every value path.
     ///
     /// A node that is no `holds` atom of `clause` is an `Err` fault.
@@ -1034,8 +1046,7 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
         &self,
         clause: &fsl_semantics::check::TemporalClauseNode,
         atom: fsl_semantics::check::FormulaNodeId,
-        over: &filament_exact::ObjectReference,
-        captures: &[Value],
+        binders: HoldsBinders<'_>,
         objects: &ObjectEnvironment,
         observation: ObservationIdentity,
         meter: &mut Meter,
@@ -1937,12 +1948,12 @@ impl CheckedPackageEvaluation for CheckedPackage {
         &self,
         clause: &fsl_semantics::check::TemporalClauseNode,
         atom: fsl_semantics::check::FormulaNodeId,
-        over: &filament_exact::ObjectReference,
-        captures: &[Value],
+        binders: HoldsBinders<'_>,
         objects: &ObjectEnvironment,
         observation: ObservationIdentity,
         meter: &mut Meter,
     ) -> Result<ClauseEvaluation, CallFailure> {
+        let HoldsBinders { over, captures } = binders;
         let (condition, slots) = clause.condition(atom).ok_or_else(|| {
             CallFailure::Fault(
                 InternalFault::new("S6a", "holds-atom-resolved-by-clause")
