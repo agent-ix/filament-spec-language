@@ -1999,7 +1999,6 @@ pub fn evaluate_model_trace(
     })))
 }
 
-<<<<<<< HEAD
 /// FR-931 "Cross-evaluation" from a snapshot: the native valuation of every
 /// (instance, behaviour) closed trace, in instance order then behaviour
 /// order, and how the enumeration ended.
@@ -2131,7 +2130,7 @@ pub fn behaviour_valuations(
         traces,
         end: BehaviourValuationEnd::Complete,
     })
-=======
+}
 
 /// FR-941: the evaluator's reading of one required clause over a replayed
 /// protocol behaviour.
@@ -2191,7 +2190,6 @@ pub fn evaluate_protocol_trace<M: MemoryModel>(
         undefined: replayed.undefined.take(),
         positions: positions.len(),
     })))
->>>>>>> origin/main
 }
 
 /// The letters of a counterexample's replayed positions, for the instance
