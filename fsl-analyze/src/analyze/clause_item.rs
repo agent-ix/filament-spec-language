@@ -18,7 +18,9 @@
 
 use filament_exact::Identifier;
 use filament_semantic_value::catalog::InternalFault;
-use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
+use fsl_eval::simulation::model::{
+    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
+};
 use fsl_eval::simulation::Limits;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
@@ -86,6 +88,7 @@ pub enum ClauseItemRefusal {
 #[derive(Clone)]
 pub struct ClauseSubject<'a> {
     package: &'a CheckedPackage,
+    input: ModelCheckInput<'a>,
     binding: SubjectBinding<'a>,
     limits: AnalyzeLimits,
     provision: &'a super::SourceProvision,
@@ -107,20 +110,20 @@ impl<'a> ClauseSubject<'a> {
     ///
     /// [`ClauseItemRefusal`] when the package holds no such named clause.
     pub fn new(
-        package: &'a CheckedPackage,
+        analysis: &super::RunInput<'a>,
         binding: SubjectBinding<'a>,
         limits: AnalyzeLimits,
         provision: &'a super::SourceProvision,
         key: &OccurrenceKey,
         run: ClauseLimits,
     ) -> Result<Self, ClauseItemRefusal> {
-        Self::from_provision(package, binding, limits, provision, key, run, Vec::new())
+        Self::from_provision(analysis, binding, limits, provision, key, run, Vec::new())
     }
 
     /// Build a clause subject over the operation's complete source provision
     /// and the item's explicit proof-bound substitution.
     pub fn from_provision(
-        package: &'a CheckedPackage,
+        analysis: &super::RunInput<'a>,
         binding: SubjectBinding<'a>,
         limits: AnalyzeLimits,
         provision: &'a super::SourceProvision,
@@ -128,6 +131,7 @@ impl<'a> ClauseSubject<'a> {
         run: ClauseLimits,
         proof_bounds: Vec<fsl_foundation::bound::ProofBound>,
     ) -> Result<Self, ClauseItemRefusal> {
+        let (package, input) = (analysis.package, &analysis.model);
         let node = package
             .graph()
             .temporal_clauses()
@@ -137,6 +141,7 @@ impl<'a> ClauseSubject<'a> {
         clause_name(node)?;
         Ok(Self {
             package,
+            input: input.clone(),
             binding,
             limits,
             provision,
@@ -256,7 +261,7 @@ impl<'a> ClauseSubject<'a> {
 
     fn simulation(&self) -> ModelSimulationRequest<'a> {
         ModelSimulationRequest {
-            input: fsl_eval::simulation::model::ModelCheckInput::source(self.package),
+            input: self.input.clone(),
             packages: self.binding.packages,
             normalization: self.limits.normalization,
             snapshots: self.binding.snapshots,
@@ -375,13 +380,6 @@ pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
     ReplayRefusal,
 > {
     let fault = |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
-    let ReplayShape {
-        target,
-        members,
-        node: identity,
-        occurrence,
-        transcript: text,
-    } = shape;
     let emission =
         fsl_package::emit_checked_with_temporal_selections(inputs.package, &[], inputs.limits.emit)
             .map_err(|_| fault("package-emission"))?;
@@ -390,27 +388,83 @@ pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
         ReplayLimits::default().input_bytes,
     )
     .map_err(|_| fault("package-emission"))?;
+    request_and_envelope(
+        WireParts {
+            package,
+            dependencies: super::request::dependency_wires(inputs.package),
+            binding: inputs.binding,
+            limits: inputs.limits,
+            byte_provision: inputs.provision.wire_entries(),
+            backend: inputs.backend,
+        },
+        shape,
+        payload,
+    )
+}
+
+/// What a replay request is written over besides its item: the package, its
+/// dependency entries, the subject, the shared limits, the byte provision
+/// and the backend.
+pub(super) struct WireParts<'r, 'a> {
+    pub(super) package: ReplayPackage,
+    pub(super) dependencies: Vec<fsl_replay::DependencyEntryWire>,
+    pub(super) binding: &'r SubjectBinding<'a>,
+    pub(super) limits: &'r AnalyzeLimits,
+    pub(super) byte_provision: Vec<(String, String, Vec<u8>)>,
+    pub(super) backend: &'static str,
+}
+
+/// FR-128's replay request over `package` and the witness envelope of
+/// `payload`, the counterexample of the item `shape` names, with the
+/// subject's documents and `byte_provision`: the source entries on the
+/// source route, none on the package route (FR-850).
+pub(super) fn request_and_envelope<T: Clone + fsl_eval::simulation::SubjectTransition>(
+    parts: WireParts<'_, '_>,
+    shape: ReplayShape,
+    payload: &TemporalCounterexample<T>,
+) -> Result<
+    (
+        ReplayRequestWire,
+        WitnessEnvelope<TemporalCounterexample<T>>,
+    ),
+    ReplayRefusal,
+> {
+    let WireParts {
+        package,
+        dependencies,
+        binding,
+        limits,
+        byte_provision,
+        backend,
+    } = parts;
+    let fault = |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
+    let ReplayShape {
+        target,
+        members,
+        node: identity,
+        occurrence,
+        transcript: text,
+    } = shape;
     let transcript = || Witness::parse(text).map_err(|_| fault("transcript"));
     let wire = ReplayRequestWire {
         package,
         profile_selections: Vec::new(),
-        dependencies: super::request::dependency_wires(inputs.package),
+        dependencies,
         replay_target: target,
         source: ReplaySource::Witness(transcript()?),
         obligation_identity: ObligationIdentity::new(identity.clone(), None, 0),
-        backend: inputs.backend.to_owned(),
+        backend: backend.to_owned(),
         state_environment: StateEnvironment::new(Vec::new()),
-        accounting_limits: inputs.limits.accounting,
+        accounting_limits: limits.accounting,
         stage_limits: std::collections::BTreeMap::new(),
         supplied_limits: None,
         object_environment: None,
         declared_domains: Vec::new(),
-        byte_provision: inputs.provision.wire_entries(),
-        documents: inputs
-            .binding
+        byte_provision,
+        documents: binding
             .packages
             .values()
-            .chain(inputs.binding.snapshots.values())
+            .chain(binding.snapshots.values())
             .cloned()
             .collect(),
     };
@@ -421,9 +475,9 @@ pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
             clause_node: Some(identity),
             replay_target: members,
             profile_selections: Some(Vec::new()),
-            run_limits: Some(inputs.limits.accounting),
+            run_limits: Some(limits.accounting),
             declared_domains: Some(Vec::new()),
-            backend: Some(inputs.backend.to_owned()),
+            backend: Some(backend.to_owned()),
             trace_position: Some(None),
             source: Some(EnvelopeSource::Witness(transcript()?)),
             family_payload: Some(payload.clone()),
@@ -527,4 +581,213 @@ pub(crate) fn replay_protocol_over(
         letters,
         ReplayLimits::default(),
     )
+}
+
+/// FR-850, FR-940: the inputs of one authored-clause item on the package
+/// route. The clause is its package form, read from the `BarePackage` by its
+/// node key ([`fsl_eval::simulation::model::PackageModelInput::temporal_clause`]),
+/// the model system is built from the package route's model-check input,
+/// and a counterexample replays from the package bytes and the handoff
+/// supply ([`fsl_replay::replay_model_trace_from_package`]), never from a
+/// source provision.
+pub struct PackageClauseSubject<'a> {
+    input: fsl_eval::simulation::model::ModelCheckInput<'a>,
+    clause: fsl_semantics::check::CheckedTemporalClause,
+    key: filament_exact::NodeKey,
+    occurrence: OccurrenceKey,
+    binding: SubjectBinding<'a>,
+    limits: AnalyzeLimits,
+    run: ClauseLimits,
+    package_bytes: &'a [u8],
+    supply: fsl_replay::HandoffSupply<'a>,
+}
+
+impl<'a> PackageClauseSubject<'a> {
+    /// The subject of the clause whose node key is `key` over `package`,
+    /// the package route's model-check input, whose admitted bytes are
+    /// `package_bytes` and whose handoff supply is `supply`.
+    ///
+    /// # Errors
+    ///
+    /// [`ClauseItemRefusal::UnknownClause`] when the package holds no such
+    /// clause or its package form is not read; [`ClauseItemRefusal::UnnamedClause`]
+    /// when its name is no identifier.
+    pub fn new(
+        package: &'a fsl_eval::simulation::model::PackageModelInput<'a>,
+        package_bytes: &'a [u8],
+        supply: fsl_replay::HandoffSupply<'a>,
+        binding: SubjectBinding<'a>,
+        limits: AnalyzeLimits,
+        key: &filament_exact::NodeKey,
+        run: ClauseLimits,
+    ) -> Result<Self, ClauseItemRefusal> {
+        let input = package.input();
+        let admitted = input
+            .admitted_package()
+            .ok_or(ClauseItemRefusal::UnknownClause)?;
+        let clause = package
+            .temporal_clause(
+                key,
+                filament_semantic_value::checking::CheckingLimits::default().nodes(),
+            )
+            .map_err(|_| ClauseItemRefusal::UnknownClause)?;
+        let identity = fsl_replay::ClauseIdentity::of_admitted(admitted, &clause)
+            .map_err(|_| ClauseItemRefusal::UnknownClause)?;
+        named(&clause)?;
+        Ok(Self {
+            input,
+            clause,
+            key: key.clone(),
+            occurrence: identity.occurrence().clone(),
+            binding,
+            limits,
+            run,
+            package_bytes,
+            supply,
+        })
+    }
+
+    /// The `temporal-satisfaction` item that runs the package-form clause
+    /// on EN-1 and settles it as [`ClauseSubject::item`] settles the source
+    /// form, replaying a counterexample from the package bytes.
+    pub fn item(self, index: RequestIndex) -> AnalyzeItem<'a> {
+        let claim = self.occurrence.clone();
+        AnalyzeItem::new(
+            index,
+            Capability::TemporalSatisfaction,
+            CLAUSE_FAMILY,
+            Mode::Bounded,
+            en1::BACKEND_ID,
+            move |cancel| {
+                let subject = &self;
+                let system = match ModelSystem::new(subject.simulation()) {
+                    Ok(system) => system,
+                    Err(failure) => return EngineReport::Refused(admission(&failure)),
+                };
+                let Ok(letters) = system.package_clause_letters(&subject.clause, &subject.key)
+                else {
+                    return EngineReport::Refused(Refusal::Failed(BROKEN));
+                };
+                let item = || ModelCheckItem::Clause {
+                    clause: &subject.clause,
+                    letters: &letters,
+                };
+                let report = settle_model_item(
+                    ModelItem {
+                        request: ModelCheckRequest {
+                            temporal_clock_selections: &[],
+                            subject: subject.model_subject(),
+                            item: item(),
+                            max_depth: subject.run.max_depth,
+                            limits: ModelCheckLimits {
+                                limits: subject.run.limits,
+                                ..ModelCheckLimits::default()
+                            },
+                            reductions: Default::default(),
+                        },
+                        certificate: CertificateRequest {
+                            temporal_clock_selections: &[],
+                            subject: subject.model_subject(),
+                            item: item(),
+                            smt_encoding: Default::default(),
+                        },
+                        replay: Box::new(|payload| subject.replay(payload, &letters)),
+                    },
+                    cancel,
+                );
+                match report {
+                    EngineReport::Model(model) => {
+                        let over = model
+                            .counterexample
+                            .as_ref()
+                            .and_then(|found| found.over_binding.as_ref())
+                            .and_then(|instance| letters.instance_reference(instance));
+                        EngineReport::Clause(model, over)
+                    }
+                    other => other,
+                }
+            },
+        )
+        .claimed(claim)
+    }
+
+    fn simulation(&self) -> ModelSimulationRequest<'a> {
+        ModelSimulationRequest {
+            input: self.input.clone(),
+            packages: self.binding.packages,
+            normalization: self.limits.normalization,
+            snapshots: self.binding.snapshots,
+            initial: self.binding.initial.clone(),
+            universes: self.binding.universes.clone(),
+            observation: self.limits.observation,
+            expansion: ExpansionLimits {
+                max_candidates: self.run.max_candidates,
+            },
+            meter: self.limits.accounting,
+            emit: self.limits.emit,
+        }
+    }
+
+    fn model_subject(&self) -> fsl_eval::model_subject::ModelSubject<'a> {
+        fsl_eval::model_subject::ModelSubject {
+            simulation: self.simulation(),
+            proof_bounds: Vec::new(),
+        }
+    }
+
+    /// FR-128's replay of `payload` over the package bytes and the handoff
+    /// supply: the request carries the package and the subject's documents
+    /// and no source provision.
+    fn replay(
+        &self,
+        payload: &TemporalCounterexample,
+        letters: &dyn fsl_eval::model_subject::ModelLetters,
+    ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+        let fault =
+            |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
+        let name = named(&self.clause).map_err(|_| fault("clause-name"))?;
+        let package = ReplayPackage::read(self.package_bytes, ReplayLimits::default().input_bytes)
+            .map_err(|_| fault("package-bytes"))?;
+        let (wire, envelope) = request_and_envelope(
+            WireParts {
+                package,
+                dependencies: Vec::new(),
+                binding: &self.binding,
+                limits: &self.limits,
+                byte_provision: Vec::new(),
+                backend: en1::BACKEND_ID,
+            },
+            ReplayShape {
+                target: RequestTargetWire::state_clause(name.clone()),
+                members: ReplayTargetMembers::state_clause(name),
+                node: self.key.clone(),
+                occurrence: self.occurrence.clone(),
+                transcript: CLAUSE_TRANSCRIPT,
+            },
+            payload,
+        )?;
+        fsl_replay::replay_model_trace_from_package(
+            wire,
+            self.supply,
+            &ModelTraceSubject {
+                timed: None,
+                initial: self.binding.initial.clone(),
+                universes: self.binding.universes.clone(),
+                expansion: ExpansionLimits {
+                    max_candidates: self.run.max_candidates,
+                },
+            },
+            &envelope,
+            letters,
+            ReplayLimits::default(),
+        )
+    }
+}
+
+/// The `state_clause` target of a checked temporal clause: its name.
+fn named(
+    clause: &fsl_semantics::check::CheckedTemporalClause,
+) -> Result<QualifiedName, ClauseItemRefusal> {
+    let segment = Identifier::new(clause.name()).map_err(|_| ClauseItemRefusal::UnnamedClause)?;
+    QualifiedName::new(vec![segment]).map_err(|_| ClauseItemRefusal::UnnamedClause)
 }

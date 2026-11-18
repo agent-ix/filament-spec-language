@@ -406,6 +406,8 @@ fn package_frame_equals_source_frame() {
     let source = handoff.compiled.checked();
     let graph = source.graph();
     let name = |text: &str| Identifier::new(text).expect("an identifier");
+    let operations = package_operations(&bare, &handoff);
+    assert_eq!(&operations, graph.scope().operations());
     let selection = graph
         .resolve_operation(&name("M"), &name("Counter"), &name("inc"))
         .expect("inc resolves");
@@ -473,11 +475,16 @@ fn package_frame_equals_source_frame() {
         let from_source = source
             .evaluate_frame(frame.clone(), &admitted, &mut meter)
             .expect("the source frame evaluates");
-        // The package route's operation table is the model-check input's
-        // (QSL-2404); the package's own model operations stand for it here.
-        let from_package =
-            fsl_eval::bare::evaluate_frame(&bare, graph.scope().operations(), &frame, &admitted)
-                .expect("the package frame evaluates");
+        // The package route reads the declared effect from its own operation
+        // table, the one S3 declares for its domain packages (FR-940).
+        let from_package = fsl_eval::simulation::model::ModelEvaluator::evaluate_frame(
+            &bare,
+            &frame,
+            &admitted,
+            &operations,
+            &mut Meter::new(UNLIMITED),
+        )
+        .expect("the package frame evaluates");
         assert_eq!(
             outcome(&from_package.evaluation),
             outcome(&from_source.evaluation),
@@ -498,6 +505,84 @@ fn package_frame_equals_source_frame() {
         ));
     }
     assert_eq!(verdicts, [(true, false), (false, true)]);
+}
+
+/// The operation table the package route's model-check input reads: the one
+/// S3 declares for the domain packages bound to the package's selections.
+fn package_operations(
+    bare: &BarePackage<'_>,
+    handoff: &Handoff,
+) -> fsl_semantics::model::operation::OperationTable {
+    let world = bare.world().expect("the package's declarations read");
+    let selections = fsl_package::AnalysisView::model_selections(bare);
+    fsl_semantics::model::state::StateModel::new(
+        fsl_semantics::model::observation::ModelSelections::new(&selections, &[]),
+        world.types(),
+        handoff.compiled.packages(),
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the supplied domain package admits")
+    .operation_table(&BTreeMap::new())
+    .expect("its operations are typed")
+}
+
+/// FR-940: the model-check evaluator of either route evaluates a `holds`
+/// atom and a `when` guard keyed by node with the value, location and work
+/// of the source form, so a model check reaches the package forms through
+/// the evaluator its input carries.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn the_model_evaluator_reaches_the_package_holds_and_guard_forms() {
+    let (_ws, handoff, mut budget) = handoff("package-forms-evaluator");
+    let bare = BarePackage::new(&handoff.admitted)
+        .with_supply(
+            BareSupply {
+                identities: &handoff.identities,
+                equality: handoff.equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .expect("the handoff's supply joins the package");
+    let source: &dyn fsl_eval::simulation::model::ModelEvaluator = handoff.compiled.checked();
+    let package: &dyn fsl_eval::simulation::model::ModelEvaluator = &bare;
+    let guarded = clause(&handoff, 1);
+    let mut readings = Vec::new();
+    for value in [1, 2, 3] {
+        let objects = objects(&handoff, value);
+        let over = Value::Reference(counter(&objects));
+        for index in [0, 3] {
+            for atom in holds_atoms(clause(&handoff, index)) {
+                let (mut at_source, mut at_package) =
+                    (Meter::new(UNLIMITED), Meter::new(UNLIMITED));
+                let from_source = source
+                    .evaluate_holds(&atom, over.clone(), &[], &objects, &mut at_source)
+                    .expect("the source form evaluates");
+                let from_package = package
+                    .evaluate_holds(&atom, over.clone(), &[], &objects, &mut at_package)
+                    .expect("the package form evaluates");
+                assert_eq!(outcome(&from_package), outcome(&from_source));
+                assert_eq!(from_package.location, from_source.location);
+                assert_eq!(
+                    at_package.consumed(LimitKind::WorkUnits),
+                    at_source.consumed(LimitKind::WorkUnits)
+                );
+                readings.push(boolean(&from_package));
+            }
+        }
+        let (mut at_source, mut at_package) = (Meter::new(UNLIMITED), Meter::new(UNLIMITED));
+        let from_source = source
+            .evaluate_guard(&guarded.identity(), over.clone(), &objects, &mut at_source)
+            .expect("the source guard evaluates");
+        let from_package = package
+            .evaluate_guard(&guarded.identity(), over, &objects, &mut at_package)
+            .expect("the package guard evaluates");
+        assert_eq!(outcome(&from_package), outcome(&from_source));
+        assert_eq!(boolean(&from_package), value >= 2);
+    }
+    assert!(
+        readings.contains(&true) && readings.contains(&false),
+        "{readings:?}"
+    );
 }
 
 /// FR-940-AC-6 with FR-495-AC-3: under `CheckMode::Kernel` a function whose
@@ -853,5 +938,66 @@ fn package_state_clauses_equal_their_source_forms() {
             expected,
             "precondition {precondition}"
         );
+    }
+}
+
+/// FR-940 "Package forms of the source-checked evaluators" (QSL-2425): the
+/// package form of each temporal clause of the Counter handoff, read from the
+/// `BarePackage`'s admitted nodes by its node key with the supplied domain
+/// packages' population domains, is the clause the source route's checked
+/// graph holds: the same name, span, binders, clock, activation, operators,
+/// formula and claim, so the model checker reads one clause on both routes.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn the_package_form_of_each_temporal_clause_equals_its_source_form() {
+    let (_ws, handoff, mut budget) = handoff("package-forms-clause");
+    let bare = BarePackage::new(&handoff.admitted)
+        .with_supply(
+            BareSupply {
+                identities: &handoff.identities,
+                equality: handoff.equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .expect("the handoff's supply joins the package");
+    let world = bare.world().expect("the package's declarations read");
+    let selections = fsl_package::AnalysisView::model_selections(&bare);
+    let model = fsl_semantics::model::state::StateModel::new(
+        fsl_semantics::model::observation::ModelSelections::new(&selections, &[]),
+        world.types(),
+        handoff.compiled.packages(),
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the supplied domain package admits");
+    let clauses = handoff.compiled.checked().graph().temporal_clauses();
+    assert_eq!(clauses.len(), 4);
+    for source in clauses {
+        let mut form = bare
+            .temporal_clause_form(&source.identity())
+            .unwrap_or_else(|refusal| panic!("{}: {refusal:?}", source.clause().name()));
+        if let filament_exact::ValueType::Reference(object) = &form.over.1 {
+            form.populations = model.overlapping_populations(object.clone());
+        }
+        let package = fsl_semantics::check::CheckedTemporalClause::of_package_form(
+            form,
+            world.types(),
+            filament_semantic_value::checking::CheckingLimits::default().nodes(),
+        )
+        .unwrap_or_else(|refusal| panic!("{}: {refusal}", source.clause().name()));
+        // The package carries the declaration's name region, not its whole
+        // span: the name lies within the declaration, and every other field
+        // is the source form's.
+        let (name, declaration) = (package.span(), source.clause().span());
+        assert!(
+            declaration.start <= name.start && name.end <= declaration.end,
+            "{name:?} within {declaration:?}"
+        );
+        assert_eq!(
+            format!("{package:?}"),
+            format!("{:?}", source.clause().clone().with_span(name)),
+            "{}",
+            source.clause().name()
+        );
+        assert!(package == source.clause().clone().with_span(name));
     }
 }

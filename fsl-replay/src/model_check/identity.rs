@@ -52,6 +52,47 @@ impl ClauseIdentity {
         self.over.clone()
     }
 
+    /// FR-940: the identity of the package-form `clause` in the admitted
+    /// package of the package route, read from its own bytes: the clause's
+    /// `temporal_clause_names` row names its node and claim occurrence, and
+    /// the I2 lookup resolves that root as [`Self::resolve`] resolves the
+    /// source package's read-back.
+    ///
+    /// # Errors
+    ///
+    /// [`ClauseRootRefusal::Undeclared`] when no single name row names the
+    /// clause; as [`Self::resolve`] when the lookup does not find its root.
+    pub fn of_admitted(
+        package: &fsl_package::CheckedPackageV2,
+        clause: &CheckedTemporalClause,
+    ) -> Result<Self, ClauseRootRefusal> {
+        let undeclared = || ClauseRootRefusal::Undeclared {
+            name: clause.name().to_owned(),
+        };
+        let mut rows = package
+            .temporal_clause_names()
+            .unwrap_or_default()
+            .iter()
+            .filter(|row| &*row.name == clause.name());
+        let row = rows.next().ok_or_else(undeclared)?;
+        if rows.next().is_some() {
+            return Err(undeclared());
+        }
+        let key = fsl_package::checked_views::temporal_subject(package, &row.declaration)
+            .ok()
+            .and_then(|view| view.declaration_key())
+            .ok_or_else(undeclared)?;
+        let triple = OccurrenceKey::new(
+            key,
+            filament_exact::Origin::new(filament_exact::Role::new("claim"), row.occurrence),
+        );
+        let root = resolve_clause_root(package, &triple)?;
+        Ok(Self {
+            occurrence: root.occurrence().clone(),
+            over: root.over().cloned(),
+        })
+    }
+
     /// The identity of `clause` in `package`, read from the package's
     /// emitted `filament.checked-package/v2` bytes through the I2 lookup.
     /// `domain_packages` is FR-056's package input the read checks the

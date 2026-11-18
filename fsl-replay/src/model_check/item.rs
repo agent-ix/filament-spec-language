@@ -243,21 +243,28 @@ impl ModelCheckItem<'_> {
                 }])
             }
             Self::Clause { clause, .. } => {
-                let package = subject
-                    .simulation
-                    .source_package()
-                    .ok_or(ItemRefusal::Fault(InternalFault::new(
-                        "model-check-item",
-                        "the-item-reads-source-forms",
-                    )))?;
-                let identity = ClauseIdentity::resolve(
-                    package,
-                    subject.simulation.packages,
-                    clause,
-                    temporal_clock_selections,
-                    cancel,
-                    subject.simulation.emit,
-                )?;
+                // The source route reads the clause's identity from its own
+                // emission, the package route from its admitted bytes (FR-940).
+                let identity = match (
+                    subject.simulation.source_package(),
+                    subject.simulation.admitted_package(),
+                ) {
+                    (Some(package), _) => ClauseIdentity::resolve(
+                        package,
+                        subject.simulation.packages,
+                        clause,
+                        temporal_clock_selections,
+                        cancel,
+                        subject.simulation.emit,
+                    )?,
+                    (None, Some(admitted)) => ClauseIdentity::of_admitted(admitted, clause)?,
+                    (None, None) => {
+                        return Err(ItemRefusal::Fault(InternalFault::new(
+                            "model-check-item",
+                            "the-item-reads-a-package",
+                        )))
+                    }
+                };
                 let over = &clause.over().1;
                 let bindings = system.instances(over).map_err(ItemRefusal::Unbounded)?;
                 if bindings.len() > MAX_ATOMS {

@@ -1725,7 +1725,11 @@ fn admit_reductions(
     let Some(selection) = form.pending_reductions.take() else {
         return Ok(());
     };
-    let simulation = super::request::simulation(package, binding, limits);
+    let simulation = super::request::simulation(
+        &fsl_eval::simulation::model::ModelCheckInput::source(package),
+        binding,
+        limits,
+    );
     let Ok(system) = fsl_eval::simulation::model::ModelSystem::new(simulation) else {
         form.pending_reductions = Some(selection);
         return Ok(());
@@ -2814,7 +2818,7 @@ pub fn settle_run(
         })
         .collect();
     let outcome = super::request::analyze_bound(
-        package,
+        &super::RunInput::source(package),
         &binding,
         &provision,
         &negotiated,

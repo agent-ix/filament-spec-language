@@ -66,7 +66,8 @@ pub fn run(
     limits: &AnalyzeLimits,
     cancel: &Cancel,
 ) -> ProviderResults {
-    match analyze_bound(package, binding, provision, items, engines, limits, cancel) {
+    let run = crate::analyze::RunInput::source(package);
+    match analyze_bound(&run, binding, provision, items, engines, limits, cancel) {
         Ok(staged) => {
             let outcome = staged.into_value();
             ProviderResults {

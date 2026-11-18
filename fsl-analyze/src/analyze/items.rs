@@ -31,7 +31,7 @@ use fsl_semantics::model::observation::AdmissionFailure;
 use filament_exact::{Cancel, ObjectReference, ValueType};
 
 use super::{AnalyzeItem, EngineReport, Refusal};
-use crate::claim_family::claim_family;
+use crate::claim_family::{claim_family, kind_family};
 use crate::model_check::{
     check_model, check_protocol_constrained, manifest as en1, HyperRefusal, LivenessRefusal,
     ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
@@ -536,6 +536,44 @@ pub enum DerivedItemMismatch {
     },
 }
 
+/// What the FR-411 "Deadlock-freedom verdict join" reads of the package a
+/// derived item's run or certificate check is over.
+#[derive(Clone, Copy)]
+enum JoinPackage<'p> {
+    /// The source route: the package's `CheckedGraph` (FR-531).
+    Source(&'p CheckedPackage),
+    /// The package route (FR-940): the model selections the admitted package
+    /// records. The package route's input admits no `terminal` node
+    /// ([`fsl_package::BarePackage::first_unread_model_form`] refuses one), so
+    /// the package declares no terminal state.
+    Package(&'p [fsl_semantics::model::domain_package::DomainPackageRef]),
+}
+
+impl JoinPackage<'_> {
+    /// Whether the package holds a `model_root` node whose `generated`
+    /// occurrence 0 is `claim`.
+    fn anchors(self, claim: &OccurrenceKey) -> bool {
+        match self {
+            Self::Source(package) => package
+                .graph()
+                .model_roots()
+                .any(|(_, root)| OccurrenceKey::generated(root) == *claim),
+            Self::Package(selections) => selections
+                .iter()
+                .filter_map(|selection| fsl_semantics::check::model_root_key(selection).ok())
+                .any(|root| OccurrenceKey::generated(root) == *claim),
+        }
+    }
+
+    /// Each selected model's terminal node key.
+    fn terminal_keys(self) -> TerminalKeys {
+        match self {
+            Self::Source(package) => package.graph().terminal_keys(),
+            Self::Package(_) => TerminalKeys::default(),
+        }
+    }
+}
+
 /// The source package a derived item's run or check is over: a
 /// package-route subject carries none to read `derived`'s anchor from.
 fn source<'p>(
@@ -548,21 +586,34 @@ fn source<'p>(
     })
 }
 
+/// The package a model subject's run or check reading `input` is over: the
+/// source package on the source route, the admitted package's model
+/// selections on the package route (FR-940).
+fn joined<'p>(
+    input: &fsl_eval::simulation::model::ModelCheckInput<'p>,
+    derived: &RequestItem,
+) -> Result<JoinPackage<'p>, DerivedItemMismatch> {
+    match (input.source_package(), input.admitted_package()) {
+        (Some(package), _) => Ok(JoinPackage::Source(package)),
+        (None, Some(_)) => Ok(JoinPackage::Package(input.model_selections)),
+        (None, None) => Err(DerivedItemMismatch::OtherAnchor {
+            index: derived.index(),
+            occurrence: derived.occurrence().clone(),
+        }),
+    }
+}
+
 /// FSpec FR-368 "Claim and anchor": every package a run or a certificate
 /// check of `derived` is over holds the `model_root` node `derived` is
 /// anchored at, with its `generated` occurrence 0 (FR-411
 /// "Deadlock-freedom verdict join": the node of the obligation identity).
 fn join_anchor<'p>(
     derived: &RequestItem,
-    packages: impl IntoIterator<Item = &'p CheckedPackage>,
+    packages: impl IntoIterator<Item = JoinPackage<'p>>,
 ) -> Result<(), DerivedItemMismatch> {
     let claim = derived.occurrence();
     for package in packages {
-        let anchored = package
-            .graph()
-            .model_roots()
-            .any(|(_, root)| OccurrenceKey::generated(root) == *claim);
-        if !anchored {
+        if !package.anchors(claim) {
             return Err(DerivedItemMismatch::OtherAnchor {
                 index: derived.index(),
                 occurrence: claim.clone(),
@@ -577,14 +628,14 @@ fn join_anchor<'p>(
 /// certificate check of it is over.
 fn join_terminals<'p>(
     derived: &RequestItem,
-    packages: impl IntoIterator<Item = &'p CheckedPackage>,
+    packages: impl IntoIterator<Item = JoinPackage<'p>>,
 ) -> Result<TerminalKeys, DerivedItemMismatch> {
     let index = derived.index();
     let expected = derived
         .derived_terminals()
         .ok_or(DerivedItemMismatch::NotDerived { index })?;
     for package in packages {
-        if let Some(mismatch) = expected.mismatch(&package.graph().terminal_keys()) {
+        if let Some(mismatch) = expected.mismatch(&package.terminal_keys()) {
             return Err(DerivedItemMismatch::TerminalDeclaration { index, mismatch });
         }
     }
@@ -677,22 +728,15 @@ pub fn derived_model_item<'a>(
         });
     }
     let packages = [
-        source(item.request.subject.simulation.source_package(), derived)?,
-        source(
-            item.certificate.subject.simulation.source_package(),
-            derived,
-        )?,
+        joined(&item.request.subject.simulation.input, derived)?,
+        joined(&item.certificate.subject.simulation.input, derived)?,
     ];
     join_anchor(derived, packages)?;
     let expected = join_terminals(derived, packages)?;
     item.replay = joined_replay(item.replay, expected);
     item.request.limits.limits = derived_graph_limits(limits);
     item.request.max_depth = None;
-    let family = claim_family(
-        source(item.request.subject.simulation.source_package(), derived)?,
-        ItemKind::DeadlockFreedom,
-        derived.occurrence(),
-    );
+    let family = kind_family(ItemKind::DeadlockFreedom);
     Ok(run_model_item(index, family, item))
 }
 
@@ -822,8 +866,14 @@ pub fn derived_zone_item<'a, S: Clone + Eq + 'a>(
     // deadlock-freedom run settles `Proved{Reduced, Uncertified}` with no
     // certificate check (FR-160), so the run alone can decide the verdict.
     let packages = [
-        source(item.request.subject.system().source_package(), derived)?,
-        source(item.certificate.simulation.source_package(), derived)?,
+        JoinPackage::Source(source(
+            item.request.subject.system().source_package(),
+            derived,
+        )?),
+        JoinPackage::Source(source(
+            item.certificate.simulation.source_package(),
+            derived,
+        )?),
     ];
     join_anchor(derived, packages)?;
     if kind == ItemKind::DeadlockFreedom {

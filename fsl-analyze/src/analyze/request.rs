@@ -357,7 +357,7 @@ pub fn analyze(
     fsl_foundation::diagnostic::StageFailure<super::AnalyzeRefusal>,
 > {
     analyze_bound(
-        package,
+        &super::RunInput::source(package),
         &request.binding,
         &request.provision,
         &request.items,
@@ -367,8 +367,8 @@ pub fn analyze(
     )
 }
 
-pub(crate) fn analyze_bound(
-    package: &fsl_package::CheckedPackage,
+pub(crate) fn analyze_bound<'a>(
+    analysis: &super::RunInput<'a>,
     binding: &super::SubjectBinding<'_>,
     provision: &SourceProvision,
     requested: &[NegotiatedItem],
@@ -379,15 +379,16 @@ pub(crate) fn analyze_bound(
     fsl_foundation::diagnostic::Staged<super::AnalyzeOutcome>,
     fsl_foundation::diagnostic::StageFailure<super::AnalyzeRefusal>,
 > {
+    let (package, input) = (analysis.package, &analysis.model);
     use fsl_foundation::diagnostic::{StageFailure, Staged};
-    let simulation = simulation(package, binding, limits);
+    let simulation = simulation(input, binding, limits);
     fsl_eval::simulation::model::ModelSystem::new(simulation)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Binding(failure)))?;
     check_provision(package, provision)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Provision(failure)))?;
     let items = requested
         .iter()
-        .map(|item| work(package, binding, provision, item, engines, limits))
+        .map(|item| work(analysis, binding, provision, item, engines, limits))
         .collect::<Vec<_>>();
     let requirements = items
         .iter()
@@ -481,12 +482,12 @@ pub(super) fn dependency_wires(
 }
 
 pub(super) fn simulation<'a>(
-    package: &'a fsl_package::CheckedPackage,
+    input: &fsl_eval::simulation::model::ModelCheckInput<'a>,
     binding: &super::SubjectBinding<'a>,
     limits: &super::AnalyzeLimits,
 ) -> fsl_eval::simulation::model::ModelSimulationRequest<'a> {
     fsl_eval::simulation::model::ModelSimulationRequest {
-        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
+        input: input.clone(),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,
@@ -502,13 +503,14 @@ pub(super) fn simulation<'a>(
 }
 
 fn work<'a>(
-    package: &'a fsl_package::CheckedPackage,
+    analysis: &super::RunInput<'a>,
     binding: &super::SubjectBinding<'a>,
     provision: &'a SourceProvision,
     negotiated: &'a NegotiatedItem,
     engines: &super::Engines,
     limits: &super::AnalyzeLimits,
 ) -> super::AnalyzeItem<'a> {
+    let (package, input) = (analysis.package, &analysis.model);
     use super::AnalyzeItem;
     let item = &negotiated.item;
     let temporal_kind = match &item.form {
@@ -540,7 +542,7 @@ fn work<'a>(
         Some(ItemForm::Temporal(_form)) if item.kind == Capability::GlobalConformance => {
             if _form.item_kind == ItemKind::DeadlockFreedom {
                 super::protocol_item::protocol_clause_item(
-                    package,
+                    analysis,
                     binding,
                     *limits,
                     provision,
@@ -599,7 +601,7 @@ fn work<'a>(
                                 None => {
                                     crate::protocol_analysis::conformance::global_behavior_item(
                                         item.request_index,
-                                        package,
+                                        analysis,
                                         binding.clone(),
                                         *limits,
                                         protocol,
@@ -618,7 +620,7 @@ fn work<'a>(
                 && super::document::is_state_graph(package, &item.claim) =>
         {
             super::state_graph_item::state_graph_item(
-                package,
+                analysis,
                 binding,
                 *limits,
                 provision,
@@ -635,7 +637,7 @@ fn work<'a>(
                 && super::refinement_item::refinement_at(package, &item.claim).is_some() =>
         {
             super::refinement_item::refinement_item(
-                package,
+                analysis,
                 binding,
                 *limits,
                 &item.claim,
@@ -648,7 +650,7 @@ fn work<'a>(
             if item.kind == Capability::TemporalSatisfaction && form.protocol.is_some() =>
         {
             super::protocol_item::protocol_clause_item(
-                package,
+                analysis,
                 binding,
                 *limits,
                 provision,
@@ -667,7 +669,7 @@ fn work<'a>(
         {
             if super::document::timed(package) {
                 super::timed_item::zone_derived_item(
-                    package,
+                    analysis,
                     binding,
                     *limits,
                     provision,
@@ -678,7 +680,7 @@ fn work<'a>(
                 .unwrap_or_else(absent)
             } else if form.item_kind == ItemKind::DeadlockFreedom {
                 super::derived_item::deadlock_item(
-                    package,
+                    analysis,
                     binding,
                     *limits,
                     provision,
@@ -697,7 +699,7 @@ fn work<'a>(
                 && super::document::timed(package) =>
         {
             super::timed_item::zone_clause_item(
-                package,
+                analysis,
                 binding,
                 *limits,
                 provision,
@@ -709,7 +711,7 @@ fn work<'a>(
         }
         Some(ItemForm::Temporal(form)) if item.kind == Capability::TemporalSatisfaction => {
             match super::ClauseSubject::from_provision(
-                package,
+                analysis,
                 binding.clone(),
                 *limits,
                 provision,
@@ -740,7 +742,7 @@ fn work<'a>(
                         item.request_index,
                         crate::exact_probabilistic::ProductRequest {
                             subject: fsl_eval::model_subject::ModelSubject {
-                                simulation: simulation(package, binding, limits),
+                                simulation: simulation(input, binding, limits),
                                 proof_bounds: Vec::new(),
                             },
                             claim,
@@ -757,7 +759,7 @@ fn work<'a>(
                         item.request_index,
                         crate::statistical::StatisticalRequest {
                             subject: fsl_eval::model_subject::ModelSubject {
-                                simulation: simulation(package, binding, limits),
+                                simulation: simulation(input, binding, limits),
                                 proof_bounds: Vec::new(),
                             },
                             claim,
@@ -849,7 +851,7 @@ fn work<'a>(
                         );
                     crate::protocol_analysis::finite_replay_item(
                         item.request_index,
-                        package,
+                        analysis,
                         binding.clone(),
                         *limits,
                         provision,
@@ -874,7 +876,7 @@ fn work<'a>(
                 }
             };
             super::invariant_item::invariant_item(
-                package,
+                analysis,
                 binding,
                 *limits,
                 provision,
@@ -890,7 +892,7 @@ fn work<'a>(
                     crate::contract_check::ContractRequest {
                         package,
                         claim,
-                        subject: simulation(package, binding, limits),
+                        subject: simulation(input, binding, limits),
                         abstract_subject: None,
                         max_cases: item.options.max_cases,
                     }
