@@ -418,6 +418,20 @@ pub enum ModelSampleError {
     Replay(ReplayError<ModelTransition>),
 }
 
+/// Why [`shrink_model_trace`] could not retain a failing prefix.
+#[derive(Debug, Eq, PartialEq, thiserror::Error)]
+pub enum ModelShrinkError {
+    /// The supplied trace did not reproduce the caller's failure oracle.
+    #[error("the supplied trace does not reproduce the failure")]
+    NotCounterexample,
+    /// An accepted candidate did not replay against the model that generated it.
+    #[error(transparent)]
+    Replay(ReplayError<ModelTransition>),
+    /// The trace's identities could not be encoded during replay.
+    #[error(transparent)]
+    NotSimulated(NotSimulated),
+}
+
 /// One operation of an object type's effective view, with the texts and keys
 /// that name it.
 struct Application {
@@ -1753,6 +1767,59 @@ pub fn sample_model(
     replay(system, &trace, identity_limits()).map_err(ModelSampleError::Replay)?;
     let effects = effects_of(system, &trace)?;
     Ok(ModelTrace { trace, effects })
+}
+
+/// Shrink a model trace by removing its suffix while preserving a caller's
+/// native failure oracle.
+///
+/// Each candidate is replayed against `system` before `fails` is called. The
+/// returned trace is the shortest prefix reached by this ordered pass that
+/// still satisfies the oracle. The oracle should evaluate the same claim and
+/// disposition against the candidate trace using the native evaluator.
+///
+/// # Errors
+///
+/// [`ModelShrinkError::NotCounterexample`] when the supplied trace does not
+/// satisfy `fails`; replay and model-bound failures retain their typed cause.
+pub fn shrink_model_trace(
+    system: &ModelSystem<'_>,
+    trace: &ModelTrace,
+    mut fails: impl FnMut(&ModelTrace) -> bool,
+) -> Result<ModelTrace, ModelShrinkError> {
+    replay(system, &trace.trace, identity_limits()).map_err(|error| match error {
+        ReplayError::KeyEncoding(refusal) => {
+            ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+        }
+        other => ModelShrinkError::Replay(other),
+    })?;
+    if !fails(trace) {
+        return Err(ModelShrinkError::NotCounterexample);
+    }
+
+    let mut smallest = trace.clone();
+    while !smallest.trace.steps.is_empty() {
+        let length = smallest.trace.steps.len() - 1;
+        let mut candidate = smallest.clone();
+        candidate.trace.steps.truncate(length);
+        candidate
+            .trace
+            .findings
+            .retain(|finding| finding.depth <= length);
+        if let Some(provenance) = candidate.trace.provenance.as_mut() {
+            provenance.stopped = StopReason::StepLimit;
+        }
+        replay(system, &candidate.trace, identity_limits()).map_err(|error| match error {
+            ReplayError::KeyEncoding(refusal) => {
+                ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+            }
+            other => ModelShrinkError::Replay(other),
+        })?;
+        candidate.effects.truncate(length);
+        if fails(&candidate) {
+            smallest = candidate;
+        }
+    }
+    Ok(smallest)
 }
 
 /// The expansions of one run's sampled walks, kept so that a state the walks

@@ -33,6 +33,11 @@ use fsl_semantics::model::state::{ModelState, StateModel};
 use ix_trace_rs::trace;
 use serde_json::{json, Value as Json};
 
+#[path = "mbt_generate.rs"]
+mod mbt_generate;
+#[path = "mbt_shrink.rs"]
+mod mbt_shrink;
+
 pub(crate) const PACKAGE: &str = "test/counters";
 
 fn ident(suffix: &str) -> String {
@@ -249,6 +254,25 @@ struct World {
 /// The fixture package with `operations`, checked with `clauses` as its unit.
 fn world(operations: Vec<Json>, clauses: &str) -> World {
     try_world(operations, clauses).expect("the unit checks")
+}
+
+/// [`world`] with the counter's value domain extended to `upper`.
+fn world_with_level_bound(operations: Vec<Json>, clauses: &str, upper: u64) -> World {
+    let mut document: Json =
+        serde_json::from_slice(&counters_document(operations, false)).expect("fixture JSON");
+    let types = document["types"].as_array_mut().expect("types array");
+    let level = types
+        .iter_mut()
+        .find(|ty| ty["identity"] == ident("Level"))
+        .expect("Level declaration");
+    *level = bound_type("Level", upper);
+    build_world_document(
+        serde_json::to_vec(&document).expect("fixture serializes"),
+        clauses,
+        false,
+        false,
+    )
+    .expect("the unit checks")
 }
 
 /// [`world`] with `tag: Integer?` and `id: Integer` added to `Counter`: fields
