@@ -442,7 +442,7 @@ fn clause_report_with_record(
             if let Some(regions) = extraction_original_regions(report, selection, map)? {
                 record["original_regions"] = Value::Array(regions);
             }
-            Ok(record)
+            Ok::<_, RunCause>(record)
         })
         .transpose()?;
     let bytes = fsl_replay::spine::write_clause_run_result_for_with_extraction(
