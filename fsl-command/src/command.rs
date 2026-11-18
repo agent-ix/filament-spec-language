@@ -15,13 +15,13 @@ mod tl;
 mod wire;
 
 pub use analyze::{
-    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
-    prepare_analyze, AnalyzeInput, PreparedAnalyze,
+    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
+    analyze_with_providers_and_limits, prepare_analyze,
 };
 pub use flow::{analyze_flow_report, FlowAnalyzeError};
 pub use monitor::{monitor, MonitorEvent, MonitorProviders, MonitorSummary};
 pub use output::NativeResult;
-pub use tl::{record as tl_record, AtomMapping, TlRecord};
+pub use tl::{AtomMapping, TlRecord, record as tl_record};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -760,6 +760,19 @@ pub enum RunCause {
         /// Unchanged diagnostics returned by Quire's semantic-block validator.
         diagnostics: Vec<fsl_source::SemanticFailure>,
     },
+    /// FR-031: extraction failed after the request's Quire context validated.
+    #[cfg(feature = "quire-extraction")]
+    #[error("{message}")]
+    ExtractionFailure {
+        /// FR-030's catalog code.
+        code: Code,
+        /// The command-error stage for this extraction failure.
+        stage: ExtractionFailureStage,
+        /// Original identity, selected binding and any completed Quire outcome.
+        details: serde_json::Map<String, serde_json::Value>,
+        /// The upstream extraction diagnostic.
+        message: String,
+    },
     /// FR-027/FR-480: a source-unit list must not be empty.
     #[error("the compile program has no source units")]
     EmptyCompileProgram,
@@ -919,6 +932,16 @@ pub enum RunCause {
     ItemsFault,
 }
 
+#[cfg(feature = "quire-extraction")]
+/// Stage that refused a Markdown extraction request.
+#[derive(Clone, Copy, Debug)]
+pub enum ExtractionFailureStage {
+    /// The authored binding did not identify an extracted clause.
+    Selection,
+    /// Quire rejected or could not provide the clause context.
+    Quire,
+}
+
 /// The two owner projections of the same source-intake refusal.
 #[derive(Debug, thiserror::Error)]
 #[error("{native}")]
@@ -1001,6 +1024,8 @@ impl RunCause {
             Self::ExtractionClauseCount { .. } => Code::ExtractionClauseCount,
             #[cfg(feature = "quire-extraction")]
             Self::InvalidQuireContext { .. } => Code::InvalidQuireContext,
+            #[cfg(feature = "quire-extraction")]
+            Self::ExtractionFailure { code, .. } => *code,
             Self::Spine(failure) => failure.refusal.code(),
             Self::ExtensionCatalog(_) => Code::InvalidPackage,
             Self::SpineRun(refusal) => refusal.code(),
@@ -1211,6 +1236,29 @@ impl RunError {
                         None,
                         self.outcome_message(),
                     ),
+                ])
+            }
+            #[cfg(feature = "quire-extraction")]
+            RunCause::ExtractionFailure { stage, details, .. } => {
+                let mut details = details.clone();
+                details.insert(
+                    "stage".to_owned(),
+                    serde_json::Value::String(
+                        match stage {
+                            ExtractionFailureStage::Selection => "selection",
+                            ExtractionFailureStage::Quire => "quire",
+                        }
+                        .to_owned(),
+                    ),
+                );
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        None,
+                        self.cause.code().as_str(),
+                        None,
+                        self.outcome_message(),
+                    )
+                    .with_details(Some(details)),
                 ])
             }
             RunCause::AnalyzePackage { cause, .. } => {
@@ -1571,7 +1619,19 @@ fn run_configured(
             } else if let Some(result) = check_argv(directory, bytes)? {
                 Ok(Some(result))
             } else {
-                items::run_bytes(directory, bytes, limits, overrides, &settle)
+                if let Some(result) =
+                    items::run_bytes(directory, bytes, limits, overrides, &settle)?
+                {
+                    Ok(Some(result))
+                } else {
+                    #[cfg(feature = "quire-extraction")]
+                    if let Some(result) =
+                        run_extracted_clause_bytes(directory, bytes, limits.dependent_bytes)?
+                    {
+                        return Ok(Some(result));
+                    }
+                    Ok(None)
+                }
             }
         }
     })?;
@@ -1581,6 +1641,30 @@ fn run_configured(
     let prepared = prepare_run_with_overrides(path, limits, overrides)?;
     let sources = prepared.admitted_sources();
     execute_prepared(prepared, &settle).map_err(|cause| Box::new(RunError { cause, sources }))
+}
+
+#[cfg(feature = "quire-extraction")]
+fn run_extracted_clause_bytes(
+    directory: &Path,
+    bytes: &[u8],
+    dependent_bytes: usize,
+) -> Result<Option<RunResult>> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(RunCause::Json)?;
+    if !value
+        .pointer("/request/program/extraction")
+        .is_some_and(|extraction| !extraction.is_null())
+    {
+        return Ok(None);
+    }
+    let request = read_clause_run_request_bytes(directory, bytes, Some(dependent_bytes))?;
+    let (extraction, map) = extraction_record(&request, &value)?;
+    let selection = request.selection.clone();
+    let report =
+        fsl_replay::spine::run_clause(request).map_err(|error| RunCause::ClauseRequest {
+            member: "clause".to_owned(),
+            reason: error.to_string(),
+        })?;
+    output::clause_report_with_extraction(report, &selection, extraction, &map).map(Some)
 }
 
 /// FR-661: handle the driver's in-process `version` invocation used by the
@@ -1828,63 +1912,261 @@ pub fn read_clause_run_request(
     path: &Path,
 ) -> std::result::Result<fsl_replay::spine::ClauseRunRequest, ClauseRunRequestRefusal> {
     with_request(path, |directory, bytes| {
-        let request: wire::Request = request(bytes)?;
-        #[cfg(feature = "quire-extraction")]
-        if request.program.extraction.is_some() && request.package.is_some() {
-            return Err(RunCause::ExtractionPackageConflict);
-        }
-        #[cfg(feature = "quire-extraction")]
-        if request.program.extraction.is_some() && request.program.clauses.len() != 1 {
-            return Err(RunCause::ExtractionClauseCount {
-                actual: request.program.clauses.len(),
-            });
-        }
-        let clause = request
-            .clause
-            .as_ref()
-            .ok_or_else(|| RunCause::ClauseRequest {
-                member: "clause".to_owned(),
-                reason: "missing clause run".to_owned(),
-            })?;
-        if request.call.is_some() {
-            return Err(RunCause::ClauseRequest {
-                member: "call".to_owned(),
-                reason: "call and clause are mutually exclusive".to_owned(),
-            });
-        }
-        let mut intake = intake(
-            directory,
-            FileCounts {
-                programs: request.libraries.len().saturating_add(1),
-                models: request.models.len(),
-                observations: clause
-                    .observations
-                    .values()
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .len(),
-                extensions: request.extensions.len(),
-            },
-        )?;
-        reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
-        let source = intake.source(&request.program.source, "program.source")?;
-        #[cfg(feature = "quire-extraction")]
-        if let Some(extraction) = &request.program.extraction {
-            let _body_identity = (
-                &extraction.body.authority,
-                &extraction.body.identity,
-                &extraction.body.document,
-            );
-            let binding = &request.program.clauses[0];
-            let _clause_id = &binding.clause;
-            fsl_source::clause_context(&binding.package, source.source())
-                .map_err(|diagnostics| RunCause::InvalidQuireContext { diagnostics })?;
-        } else {
-            require_complete_edition(source.source())?;
-        }
-        #[cfg(not(feature = "quire-extraction"))]
-        require_complete_edition(source.source())?;
-        clause::read(&mut intake, &request, clause, source)
+        read_clause_run_request_bytes(directory, bytes, None)
     })
+}
+
+fn read_clause_run_request_bytes(
+    directory: &Path,
+    bytes: &[u8],
+    dependent_bytes: Option<usize>,
+) -> Result<fsl_replay::spine::ClauseRunRequest> {
+    let request: wire::Request = request(bytes)?;
+    #[cfg(feature = "quire-extraction")]
+    if request.program.extraction.is_some() && request.package.is_some() {
+        return Err(RunCause::ExtractionPackageConflict);
+    }
+    #[cfg(feature = "quire-extraction")]
+    if request.program.extraction.is_some() && request.call.is_some() {
+        return Err(RunCause::ExtractionRequiresRun);
+    }
+    #[cfg(feature = "quire-extraction")]
+    if request.program.extraction.is_some() && request.program.clauses.len() != 1 {
+        return Err(RunCause::ExtractionClauseCount {
+            actual: request.program.clauses.len(),
+        });
+    }
+    let clause = request
+        .clause
+        .as_ref()
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: "clause".to_owned(),
+            reason: "missing clause run".to_owned(),
+        })?;
+    if request.call.is_some() {
+        return Err(RunCause::ClauseRequest {
+            member: "call".to_owned(),
+            reason: "call and clause are mutually exclusive".to_owned(),
+        });
+    }
+    let counts = FileCounts {
+        programs: request.libraries.len().saturating_add(1),
+        models: request.models.len(),
+        observations: clause
+            .observations
+            .values()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        extensions: request.extensions.len(),
+    };
+    let mut intake = match dependent_bytes {
+        Some(maximum) => intake_with_bytes(directory, counts, maximum)?,
+        None => intake(directory, counts)?,
+    };
+    reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
+    let source = intake.source(&request.program.source, "program.source")?;
+    #[cfg(feature = "quire-extraction")]
+    if let Some(extraction) = &request.program.extraction {
+        let binding = &request.program.clauses[0];
+        let context = fsl_source::clause_context(&binding.package, source.source())
+            .map_err(|diagnostics| RunCause::InvalidQuireContext { diagnostics })?;
+        let body_identity = fsl_foundation::SourceIdentity::new(
+            extraction.body.authority.clone(),
+            extraction.body.identity.clone(),
+        );
+        let extracted = match fsl_source::extract(
+            source.source().clone(),
+            &context,
+            fsl_source::Selection {
+                clause_id: binding.clause.clone(),
+                package: binding.package.clone(),
+                body: body_identity,
+            },
+            fsl_source::Limits::default(),
+        ) {
+            Ok(extracted) => extracted,
+            Err(error) => return Err(extraction_failure(error)?),
+        };
+        return clause::read_extracted(&mut intake, &request, clause, source, extracted);
+    } else {
+        require_complete_edition(source.source())?;
+    }
+    #[cfg(not(feature = "quire-extraction"))]
+    require_complete_edition(source.source())?;
+    clause::read(&mut intake, &request, clause, source)
+}
+
+#[cfg(feature = "quire-extraction")]
+fn extraction_failure(error: Box<fsl_source::Error>) -> Result<RunCause> {
+    let code = error.code();
+    let stage = match &error.cause {
+        fsl_source::Cause::Preflight(_) => ExtractionFailureStage::Selection,
+        fsl_source::Cause::Join(_)
+            if error.extraction().is_some_and(|outcome| {
+                outcome.availability.state != fsl_source::AvailabilityState::Available
+            }) =>
+        {
+            ExtractionFailureStage::Quire
+        }
+        fsl_source::Cause::Join(_) => ExtractionFailureStage::Selection,
+    };
+    let original = error.original();
+    let identity = original.identity();
+    let selection = error.selection();
+    let mut details = serde_json::Map::from_iter([
+        (
+            "original".to_owned(),
+            serde_json::json!({
+                "authority": identity.authority,
+                "identity": identity.identity,
+            }),
+        ),
+        (
+            "path".to_owned(),
+            serde_json::Value::String(original.path().to_owned()),
+        ),
+        (
+            "body".to_owned(),
+            serde_json::json!({
+                "authority": selection.body.authority,
+                "identity": selection.body.identity,
+            }),
+        ),
+        (
+            "binding".to_owned(),
+            serde_json::json!({
+                "clause": selection.clause_id,
+                "package": selection.package,
+            }),
+        ),
+    ]);
+    if let Some(outcome) = error.extraction() {
+        let mut value = serde_json::Map::from_iter([
+            (
+                "availability".to_owned(),
+                serde_json::to_value(&outcome.availability).map_err(RunCause::Output)?,
+            ),
+            (
+                "clause_text".to_owned(),
+                serde_json::to_value(&outcome.clause_text).map_err(RunCause::Output)?,
+            ),
+            (
+                "diagnostics".to_owned(),
+                serde_json::to_value(&outcome.diagnostics).map_err(RunCause::Output)?,
+            ),
+        ]);
+        if let Some(clauses) = &outcome.clauses {
+            value.insert(
+                "clauses".to_owned(),
+                serde_json::to_value(clauses).map_err(RunCause::Output)?,
+            );
+        }
+        details.insert("outcome".to_owned(), serde_json::Value::Object(value));
+    }
+    Ok(RunCause::ExtractionFailure {
+        code,
+        stage,
+        details,
+        message: error.to_string(),
+    })
+}
+
+#[cfg(feature = "quire-extraction")]
+fn extraction_record(
+    request: &fsl_replay::spine::ClauseRunRequest,
+    envelope: &serde_json::Value,
+) -> Result<(serde_json::Value, fsl_foundation::source_map::SourceMap)> {
+    let fsl_replay::spine::ClauseRunSource::Extracted(extracted) = &request.source else {
+        return Err(RunCause::ClauseRequest {
+            member: "program.extraction".to_owned(),
+            reason: "extraction request did not produce an extracted source".to_owned(),
+        });
+    };
+    let body_document = envelope
+        .pointer("/request/program/extraction/body/document")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: "program.extraction.body.document".to_owned(),
+            reason: "missing body document identity".to_owned(),
+        })?;
+    let binding = envelope
+        .pointer("/request/program/clauses/0")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: "program.clauses[0]".to_owned(),
+            reason: "missing extraction binding".to_owned(),
+        })?;
+    let clause = binding
+        .get("clause")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: "program.clauses[0].clause".to_owned(),
+            reason: "missing extraction clause".to_owned(),
+        })?;
+    let package = binding
+        .get("package")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: "program.clauses[0].package".to_owned(),
+            reason: "missing extraction package".to_owned(),
+        })?;
+    let map = extracted.map();
+    let original = map.original();
+    let body = map.body();
+    let outcome = extracted.extraction();
+    let mut outcome_value = serde_json::Map::from_iter([
+        (
+            "availability".to_owned(),
+            serde_json::to_value(&outcome.availability).map_err(RunCause::Output)?,
+        ),
+        (
+            "clause_text".to_owned(),
+            serde_json::to_value(&outcome.clause_text).map_err(RunCause::Output)?,
+        ),
+        (
+            "diagnostics".to_owned(),
+            serde_json::to_value(&outcome.diagnostics).map_err(RunCause::Output)?,
+        ),
+    ]);
+    if let Some(clauses) = &outcome.clauses {
+        outcome_value.insert(
+            "clauses".to_owned(),
+            serde_json::to_value(clauses).map_err(RunCause::Output)?,
+        );
+    }
+    let segments: Vec<_> = map
+        .segments()
+        .iter()
+        .map(|segment| {
+            serde_json::json!({
+                "body_start": segment.body.start,
+                "body_end": segment.body.end,
+                "original_start": segment.original.start,
+                "original_end": segment.original.end,
+            })
+        })
+        .collect();
+    let record = serde_json::json!({
+        "original": {
+            "authority": original.identity().authority,
+            "identity": original.identity().identity,
+            "path": original.path(),
+            "bytes": original.text().as_bytes(),
+        },
+        "body": {
+            "authority": body.identity().authority,
+            "identity": body.identity().identity,
+            "document": body_document,
+            "bytes": body.text().as_bytes(),
+        },
+        "binding": {"clause": clause, "package": package},
+        "outcome": outcome_value,
+        "map": {
+            "region": {"start": map.region().start, "end": map.region().end},
+            "segments": segments,
+        }
+    });
+    Ok((record, map.clone()))
 }
 
 /// Compile a `1-draft` source-only job through the spine (FR-027).

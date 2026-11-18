@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::{
     ClauseRequestParts, ClauseRunRequest, ClauseRunSource, DependencyInput, SpineLimits,
     SuppliedLibrary, SuppliedObservation,
@@ -31,6 +32,40 @@ pub(super) fn read(
     request: &wire::Request,
     clause: &wire::ClauseRun,
     source: FormalSource,
+) -> Result<ClauseRunRequest> {
+    let source_identity = source.source().identity().clone();
+    let run_source = ClauseRunSource::Program {
+        identity: source_identity.clone(),
+        path: source.source().path().to_owned(),
+        bytes: source.source().text().as_bytes().to_vec(),
+    };
+    read_with_source(intake, request, clause, source_identity, run_source)
+}
+
+#[cfg(feature = "quire-extraction")]
+pub(super) fn read_extracted(
+    intake: &mut Intake<'_>,
+    request: &wire::Request,
+    clause: &wire::ClauseRun,
+    source: FormalSource,
+    extracted: fsl_source::ExtractedSource,
+) -> Result<ClauseRunRequest> {
+    let source_identity = source.source().identity().clone();
+    read_with_source(
+        intake,
+        request,
+        clause,
+        source_identity,
+        ClauseRunSource::Extracted(extracted),
+    )
+}
+
+fn read_with_source(
+    intake: &mut Intake<'_>,
+    request: &wire::Request,
+    clause: &wire::ClauseRun,
+    source_identity: SourceIdentity,
+    source: ClauseRunSource,
 ) -> Result<ClauseRunRequest> {
     if request
         .models
@@ -120,12 +155,6 @@ pub(super) fn read(
     {
         timestamped.late.evidence_ledger = evidence_ledger;
     }
-    let source_identity = source.source().identity().clone();
-    let source = ClauseRunSource::Program {
-        identity: source.source().identity().clone(),
-        path: source.source().path().to_owned(),
-        bytes: source.source().text().as_bytes().to_vec(),
-    };
     fsl_replay::spine::read_clause_run_request(ClauseRequestParts {
         package_name: super::package_name(&source_identity),
         source,
