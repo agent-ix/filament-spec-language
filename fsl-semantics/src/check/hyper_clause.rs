@@ -2409,6 +2409,7 @@ fn check_match(
                 | ExprNode::DecimalValue { .. }
                 | ExprNode::Quantity(_)
                 | ExprNode::String(_)
+                | ExprNode::ReferenceLiteral { .. }
                 | ExprNode::Binary { .. }
                 | ExprNode::Not(_)
                 | ExprNode::Negate(_)

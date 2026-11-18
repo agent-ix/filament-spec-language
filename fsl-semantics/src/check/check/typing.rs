@@ -1319,11 +1319,15 @@ impl<'a> Typer<'a> {
                         },
                     });
                 };
+                let identity = key.text().as_bytes().to_vec();
                 let kind = match filament_checked::construct::reference_literal(
                     object_type.clone(),
-                    key.text().as_bytes().to_vec(),
+                    identity.clone(),
                 ) {
-                    Ok(kind) => kind,
+                    Ok(_) => NodeKind::ReferenceLiteral {
+                        object_type: object_type.clone(),
+                        identity,
+                    },
                     Err(filament_checked::construct::ReferenceLiteralError::EmptyIdentity) => {
                         return Err(CheckRefusal {
                             location,

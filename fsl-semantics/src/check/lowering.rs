@@ -4547,6 +4547,11 @@ impl<'a> Lowering<'a> {
             NodeKind::Literal(CheckedLiteral(value)) => {
                 return self.literal(node, value).map(LowerStep::Lowered);
             }
+            NodeKind::ReferenceLiteral { identity, .. } => {
+                return self
+                    .reference_literal(node, identity)
+                    .map(LowerStep::Lowered);
+            }
             NodeKind::Local(slot) => {
                 let key = binders
                     .find(*slot)
@@ -6822,6 +6827,33 @@ impl<'a> Lowering<'a> {
     /// enum member.
     fn literal(&mut self, node: CheckedNode<'_>, value: &Value) -> Result<LeafTerm, CheckRefusal> {
         self.literal_as(node, value, node.value_type(), None)
+    }
+
+    /// A reference literal's canonical typed leaf, retaining its decoded key
+    /// as a string value under the declared reference type.
+    fn reference_literal(
+        &mut self,
+        node: CheckedNode<'_>,
+        identity: &[u8],
+    ) -> Result<LeafTerm, CheckRefusal> {
+        let identity = std::str::from_utf8(identity).map_err(|_| {
+            fault(
+                node.location(),
+                KeyFault::StageFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "FR-1000",
+                        "reference-literal-identity-is-utf8",
+                    ),
+                ),
+            )
+        })?;
+        let ty = self.type_ref(node.value_type(), node.location())?;
+        self.value_node(
+            node,
+            "literal",
+            ty.clone(),
+            BodyTerm::literal_node(ty, LiteralValue::String(identity.to_owned())),
+        )
     }
 
     /// [`Self::literal`] typed at the bare `scalar` type node when one is
