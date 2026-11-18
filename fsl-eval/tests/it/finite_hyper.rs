@@ -27,6 +27,91 @@ fn population() -> FiniteTracePopulation<i32> {
     .expect("distinct identities form a population")
 }
 
+fn deterministic_three_trace_population() -> FiniteTracePopulation<(u8, u8)> {
+    FiniteTracePopulation::new(
+        "population-3",
+        "example/Obs",
+        FiniteTraceClosure::Closed,
+        vec![
+            FiniteTrace {
+                identity: "a".into(),
+                records: vec![(0, 0), (1, 1)],
+            },
+            FiniteTrace {
+                identity: "b".into(),
+                records: vec![(0, 0), (1, 1)],
+            },
+            FiniteTrace {
+                identity: "c".into(),
+                records: vec![(2, 0), (2, 0)],
+            },
+        ],
+    )
+    .expect("the three trace identities are distinct")
+}
+
+fn deterministic_body(tuple: &[&FiniteTrace<(u8, u8)>]) -> FiniteTupleOutcome {
+    for position in 0..tuple
+        .iter()
+        .map(|trace| trace.records.len())
+        .min()
+        .unwrap_or(0)
+    {
+        let input = tuple[0].records[position].0;
+        let output = tuple[0].records[position].1;
+        if tuple
+            .iter()
+            .skip(1)
+            .any(|trace| trace.records[position].0 == input && trace.records[position].1 != output)
+        {
+            return FiniteTupleOutcome::False {
+                position: u64::try_from(position).expect("test position fits"),
+            };
+        }
+    }
+    if tuple.iter().map(|trace| trace.records.len()).min()
+        != tuple.iter().map(|trace| trace.records.len()).max()
+    {
+        return FiniteTupleOutcome::Incomplete;
+    }
+    FiniteTupleOutcome::True
+}
+
+#[trace("TC-2535", "FR-898-AC-3")]
+#[test]
+fn three_trace_determinism_proves_and_names_a_violating_pair() {
+    let population = deterministic_three_trace_population();
+    let quantifiers = [(Forall, "a".into()), (Forall, "b".into())];
+    assert_eq!(
+        evaluate_finite_hyper(&population, 3, &quantifiers, deterministic_body),
+        FiniteHyperOutcome::Proved
+    );
+
+    let violating = FiniteTracePopulation {
+        traces: population
+            .traces
+            .iter()
+            .cloned()
+            .map(|mut trace| {
+                if trace.identity == "c" {
+                    trace.records[1] = (1, 2);
+                }
+                trace
+            })
+            .collect(),
+        ..population
+    };
+    assert_eq!(
+        evaluate_finite_hyper(&violating, 3, &quantifiers, deterministic_body),
+        FiniteHyperOutcome::Refuted {
+            false_tuples: vec![FiniteFalseTuple {
+                traces: vec!["a".into(), "c".into()],
+                position: 1,
+            }],
+        }
+    );
+}
+
 #[trace("TC-1786", "FR-739-AC-1")]
 #[test]
 fn finite_population_rejects_empty_and_duplicate_trace_identities() {
