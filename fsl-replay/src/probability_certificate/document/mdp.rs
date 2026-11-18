@@ -360,10 +360,7 @@ fn reward_subject(
     ProbabilityDocumentError,
 > {
     use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
-    if !std::ptr::eq(
-        system.package().graph().probabilistic_model().claims(),
-        claims,
-    ) {
+    if !std::ptr::eq(system.input().probabilistic.claims(), claims) {
         return Err(ProbabilityDocumentError::IdentityMismatch);
     }
     let claim = bind_claim(claims, item, cancel)?;
@@ -427,10 +424,7 @@ fn subject(
     ProbabilityDocumentError,
 > {
     use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
-    if !std::ptr::eq(
-        system.package().graph().probabilistic_model().claims(),
-        claims,
-    ) {
+    if !std::ptr::eq(system.input().probabilistic.claims(), claims) {
         return Err(ProbabilityDocumentError::IdentityMismatch);
     }
     let claim = bind_claim(claims, item, cx.cancel)?;

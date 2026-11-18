@@ -442,9 +442,25 @@ may repair such a disagreement by inventing another evaluation rule.
   infinite-trace profile both forms are admitted and both are planned: the
   outer unbounded `always` as FR-251-AC-35 plans an unbounded operator, and
   the `on each` form with one instance per activation.
-- **Tick cover.** A reading `k` covers the **half-open** interval `[k, k+1)`
-  of the counter unit (this supersedes ADR-026 MN-2's "closed"), widened at
-  each end by the declared uncertainty `u` to `[k-u, k+1+u)`.
+- **Tick cover.** A reading `k` of a time counter covers the **half-open**
+  interval `[k, k+1)` of the counter unit (this supersedes ADR-026 MN-2's
+  "closed"), widened at each end by the declared uncertainty `u` to
+  `[k-u, k+1+u)`.
+- **Exact position readings.** A position counter's reading is not a sample
+  of continuous time: position `k` is the instant `k` itself, a point stamp
+  under no declared cover (FSpec FR-160 "Bounded cover"), so its cover is the
+  point `{k}` and every interval bound over positions decides by exact integer
+  comparison. A witness at a distance exactly equal to a lower or upper bound
+  is therefore determinate: `once[3,*] holds(p)` with `p` true at position 0 is
+  `true` at position 3, and `eventually[0, 3] holds(q)` from an origin at 0 is
+  discharged `true` by `q` at position 3. This is the reading of FR-092's
+  declarative semantics over positions, which the batch evaluator applies, so
+  the monitor and the batch evaluator agree on every position-counted clause
+  (AC-7). A time counter keeps the half-open cover, because its reading
+  truncates an instant anywhere in `[k, k+1)`, and a witness at a tick distance
+  equal to a bound there stays `indeterminate` (AC-1, AC-34). The retention and
+  capacity rules of Buffers are unchanged for position counters: the one-tick
+  cover term counts the inclusive end position of each window.
 - **Sound rounding.** Each observed instant SHALL be the interval its tick
   covers, widened by the declared uncertainty (FSpec FR-160). An interval
   bound SHALL decide true or false only when every pair of instants in the
@@ -740,6 +756,7 @@ may repair such a disagreement by inventing another evaluation rule.
 | FR-251-AC-51 | The plan root of a tick-monitor unit with atom `holds(g(c.versionNumber))`, for a helper `g` whose parameter is the unbounded `Integer` (a type that contains the field's bounded type), is written and admitted by the strict reader, exactly as for a helper `f` whose parameter is the field's own type: the checker makes the argument widening an explicit exact integer conversion (FR-065-AC-9), so the argument's type node is the parameter's (Contract IR FR-347). A base package the strict reader refuses is still reported as the typed base-package refusal carrying the reader's catalog code, never as a producer invariant failure (QSL-1822, QSL-1824). | Test (TC-1081) |
 | FR-251-AC-52 | Over the ConfigVersion model subject (`over (c: M::ConfigVersion)`) under the event-position profile with `clock "model-steps"`, the clause `on each (q: M::ConfigVersion) { holds(c.versionNumber = 2) implies eventually[0, 3] holds(c.versionNumber = 3) }` is planned with a `MonitorTarget` of unit `step`, uncertainty 0 and rate 1, never refused `NotTimedClause`: its one interval is `[0, 3]` with no unit conversion and its buffer capacity is 5 (`ceil(1 x (3 + 1)) + 1`). The same body written with an outer `always` and no `on each` activation is refused at S3 `unsupported_construct`/`expression-form` at `always`'s span (FR-326-AC-1), so no plan is asked for. | Test (TC-2385) |
 | FR-251-AC-53 | The clause of AC-52 under the fixed-sample profile with `clock "model-steps"` is planned with the same interval and capacity. Under the infinite-trace profile, `on each (q: M::ConfigVersion) { holds(c.versionNumber = 2) implies eventually holds(c.versionNumber = 3) }` is planned with one unbounded `eventually` instance per activation counted against the activation capacity, and `on origin { always (holds(c.versionNumber = 2) implies eventually holds(c.versionNumber = 3)) }` is planned as FR-251-AC-35 plans an unbounded operator, keeping no history buffer; each is never refused `NotTimedClause`. | Test (TC-2386) |
+| FR-251-AC-54 | A position-counted reading is exact: under the infinite-trace profile with `p` true at position 0, the generated monitor entries for `once[3,*] holds(p)` give `indeterminate` at position 2 and `true` at position 3, and `eventually[2,*] holds(p)` from an origin at position 0 is discharged `true` by `p` at position 2; under the event-position profile, AC-52's `eventually[0, 3]` with `c.versionNumber = 3` first at step 3 after an activation at step 0 settles `true` at step 3, not `indeterminate`; in each case the monitor verdict equals the batch evaluator's at the same position, and the plan's retention and capacity are those of AC-52 and FR-943-AC-3. | Test (TC-2968) |
 
 ## Dependencies
 

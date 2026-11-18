@@ -880,6 +880,17 @@ impl ConformanceReplayRefusal {
         }
     }
 
+    /// The subject is over a package read from its bytes, whose recording
+    /// assessment reads source forms the package route does not carry yet.
+    fn package_route() -> Self {
+        Self {
+            code: CatalogCode::new("unknown_required_feature", "unsupported-feature"),
+            cause: "unsupported-feature".to_owned(),
+            position: None,
+            detail: "the recording assessment reads source checked forms".to_owned(),
+        }
+    }
+
     fn recording(refusal: super::recording::RecordingRefusal) -> Self {
         Self {
             code: refusal.code(),
@@ -984,9 +995,13 @@ pub fn replay_counterexample(
         } => {
             fsl_replay::BoundExceeded::check(recording.len(), limits)
                 .map_err(|error| ConformanceReplayRefusal::invalid(error.to_string(), None))?;
-            let assessment =
-                super::recording::assess_recording(subject.model.simulation.package, recording)
-                    .map_err(ConformanceReplayRefusal::recording)?;
+            let package = subject
+                .model
+                .simulation
+                .source_package()
+                .ok_or_else(ConformanceReplayRefusal::package_route)?;
+            let assessment = super::recording::assess_recording(package, recording)
+                .map_err(ConformanceReplayRefusal::recording)?;
             if assessment.global.label == "refuted"
                 && assessment.trace_position == Some(*trace_position)
             {

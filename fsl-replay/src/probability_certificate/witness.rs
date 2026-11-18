@@ -185,7 +185,11 @@ fn replay_probabilistic_witness_impl(
     #[cfg(feature = "test-support")] observe: &mut dyn FnMut(ProbabilityWitnessSemanticPhase),
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     poll_cancel(cancel)?;
-    if !std::ptr::eq(package, system.package()) || item != &witness.item {
+    if !system
+        .source_package()
+        .is_some_and(|own| std::ptr::eq(package, own))
+        || item != &witness.item
+    {
         return Err(ProbabilityWitnessError::Refused);
     }
     let claim = bind_claim(package.graph().probabilistic_model().claims(), item, cancel).map_err(

@@ -48,7 +48,7 @@ fn replay(
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     replay_probabilistic_witness(
-        system.package(),
+        system.source_package().expect("a source-route system"),
         &system,
         &witness.item,
         witness,
@@ -407,7 +407,7 @@ fn claim_and_package_mismatches_are_refused() {
     );
     assert!(matches!(
         replay_probabilistic_witness(
-            system.package(),
+            system.source_package().expect("a source-route system"),
             &system,
             &other,
             &witness,
@@ -420,7 +420,9 @@ fn claim_and_package_mismatches_are_refused() {
     let other_system = ModelSystem::new(other_world.subject().simulation).unwrap();
     assert!(matches!(
         replay_probabilistic_witness(
-            other_system.package(),
+            other_system
+                .source_package()
+                .expect("a source-route system"),
             &system,
             &witness.item,
             &witness,
@@ -706,7 +708,7 @@ fn fix_round_poisoned_model_and_ordinal_in_both_copies_are_refused() {
         assert!(
             matches!(
                 replay_probabilistic_witness(
-                    system.package(),
+                    system.source_package().expect("a source-route system"),
                     &system,
                     &poisoned,
                     &witness,

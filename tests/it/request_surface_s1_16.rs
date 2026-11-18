@@ -1260,25 +1260,15 @@ fn a_malformed_tl_lowering_member_is_refused() {
     refusal_names(&value, "tl_lowering.clause");
 }
 
-/// FR-931-AC-4: cross-evaluation agrees on the spine's behaviours.
+/// FR-931-AC-4: cross-evaluation agrees on the behaviours of AC-6's snapshot.
 #[test]
 #[trace("TC-2603", "FR-931-AC-4")]
-#[ignore = "QSL-2147 spec gap: FR-931-AC-4 names spine-snapshot.json, anchored at the handler validate, which FR-120 refuses as an initial state (wrong_snapshot/wrong-anchor), and its two objects over Int[0, 1000] exceed the default max_candidates per expansion"]
-fn tl_cross_evaluation_agrees_on_the_spine_behaviours() {
-    let unit = low(EVENT_POSITION, LOW_BODY);
-    let (code, value) = run(
-        &unit,
-        true,
-        (
-            "tl_lowering",
-            json!({"clause": "Low",
-                "cross_evaluate": {"initial": "spine-snapshot.json", "max_steps": 4}}),
-        ),
-    );
+fn tl_cross_evaluation_agrees_on_the_snapshot_behaviours() {
+    let (code, value) = cross_from(&bump_low(), &["a", "b"], true, 2);
     assert_eq!(code, 0, "{value}");
     let cross = &value["tl_lowering"]["cross_evaluation"];
     let traces = cross["traces"].as_u64().expect("a trace count");
-    assert!(traces >= 1, "{value}");
+    assert!(traces >= 2, "{value}");
     assert!(cross["positions"].as_u64().expect("a position count") >= traces);
     assert_eq!(cross["agree"], true);
     assert_eq!(cross["faults"], json!([]));
@@ -1565,9 +1555,7 @@ fn tl_cross_evaluation_enumerates_instances_and_behaviours_of_a_snapshot() {
 fn tl_cross_evaluation_refuses_an_incomplete_universe_and_counts_an_empty_one() {
     let unit = bump_low();
     let (code, value) = cross_from(&unit, &["a"], false, 2);
-    // FR-931-AC-7 says exit 20; ADR-029 CB-4 gives `incomplete_population`
-    // the incomplete row, exit 22, for every request (FR-620's universe
-    // refusal included). The catalog row governs until the spec reconciles.
+    // `incomplete_population` is the incomplete row, exit 22 (ADR-029 CB-4).
     assert_eq!(code, 22, "{value}");
     assert_eq!(value["stage"], "request", "{value}");
     refusal_names(&value, "incomplete_population");

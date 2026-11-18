@@ -472,7 +472,7 @@ pub(crate) fn subject<'a>(
     ModelSubject {
         simulation: ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
-            package,
+            input: fsl_eval::simulation::model::ModelCheckInput::source(package),
             packages: &documents.packages,
             normalization: ModelNormalizationLimits::default(),
             snapshots: &documents.snapshots,

@@ -23,9 +23,13 @@ mod analysis_view;
 #[cfg(feature = "std")]
 pub use analysis_view::{AnalysisView, DependencyClosure};
 #[cfg(feature = "std")]
+pub use model_input_form::UnreadModelForm;
+#[cfg(feature = "std")]
 mod bare;
 #[cfg(feature = "std")]
 mod bare_slot;
+#[cfg(feature = "std")]
+mod bare_term;
 #[cfg(feature = "std")]
 mod bare_units;
 #[cfg(feature = "std")]
@@ -44,6 +48,8 @@ pub mod evaluation_view;
 mod export;
 #[cfg(feature = "std")]
 mod introduced_binders;
+#[cfg(feature = "std")]
+mod model_input_form;
 #[cfg(feature = "std")]
 mod native_row;
 #[cfg(feature = "std")]
@@ -71,6 +77,8 @@ pub use bare::{
 };
 #[cfg(feature = "std")]
 pub use bare_slot::{BareSelectionFailure, BareSlot, BareSource};
+#[cfg(feature = "std")]
+pub use bare_term::{BareClauseTerm, BareFrameOperation, BareStateClause, ClauseBinder};
 #[cfg(feature = "std")]
 pub use bare_world::BareWorld;
 pub use checked::{CheckedPackage, ResolvedDependency};

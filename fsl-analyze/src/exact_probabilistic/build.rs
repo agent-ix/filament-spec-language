@@ -117,7 +117,10 @@ fn build_configured(
     } = request;
     let limits_all = limits;
     let limits = limits_all.model;
-    let package = subject.simulation.package;
+    let package = subject
+        .simulation
+        .source_package()
+        .ok_or_else(|| fault("the-product-reads-source-forms"))?;
     let system = ModelSystem::new_with_cancel(subject.simulation, cancel).map_err(|failure| {
         if let Some(cause) = cancel.tripped() {
             ProductRefusal::Stopped(ProductStop::Cancelled(cause))

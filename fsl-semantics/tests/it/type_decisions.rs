@@ -356,3 +356,26 @@ fn a_map_key_and_value_are_checked_against_the_map_type() {
         "function f using v({MAP_SIGNATURE}): Integer pure {{ size(m) }}"
     ));
 }
+
+/// FR-680-AC-7 (TC-2973): a checked tuple position read names its tuple by
+/// the tuple type's node key, the key its operand's `Composite` type carries,
+/// never by a domain-package `{package, node}` declaration key.
+#[trace("TC-2973", "FR-680-AC-7")]
+#[test]
+#[ignore = "QSL-2171: the checked TupleProject keyed by the tuple type's node key not implemented yet"]
+fn a_tuple_position_read_names_its_tuple_by_node_key() {
+    let graph = check(
+        "tuple Pair(Boolean, Integer);\n\
+         function g using v(p: Pair): Integer pure { p[1] }",
+    )
+    .unwrap_or_else(|refusals| panic!("the read checks: {refusals:?}"));
+    let text = format!("{graph:?}");
+    let at = text.find("TupleProject").expect("a checked TupleProject node");
+    let node = &text[at..];
+    let node = &node[..node.find("position").expect("its position")];
+    assert!(
+        !node.contains("DeclarationKey") && !node.contains("package:"),
+        "the tuple is named by its node key: {node}"
+    );
+    assert!(node.contains("NodeKey"), "the tuple is named by its node key: {node}");
+}

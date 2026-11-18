@@ -35,10 +35,12 @@ Tag the tests `#[trace("TC-652", "FR-207-AC-n")]`.
 
 ## Expected Results
 
-- Step 1: t0 to t8, nine states, eight transitions; registration and
+- Step 1: 17 states and 22 transitions: t0 to t8 and the eight `cfail`,
+  `ctimeout` and `cexpire` states FR-207-AC-1 names; registration and
   activation in the steps FR-207-AC-1 names; no instance and no registration at t5.
-- Step 2: `finish` disabled at t4; `cend` alone at t6; `recovered`, and
-  `unrecovered` in the variant.
+- Step 2: `finish` disabled at t4, where `cattempt`, `cfail`, `ctimeout` and
+  `cexpire` are enabled; `cend` and `cexpire` only at t6; `recovered` after
+  `cend`, `timed-out` after `cexpire`, and `unrecovered` in the variant.
 - Step 3: the enabled steps FR-207-AC-3 states.
 - Step 4: closed at `Ok`; no activation, no compensation thread, no second
   registration.
@@ -49,7 +51,9 @@ Tag the tests `#[trace("TC-652", "FR-207-AC-n")]`.
 - Step 6: two `cattempt` identities at t4, differing only in `record`;
   under `not e.ok`, two retry `cattempt` steps and `cend` after `ok` false
   and `cend` alone after `ok` true; under `l.ok`, one retry `cattempt` with
-  `ok` true and `cend` after either first attempt.
+  `ok` true and `cend` after either first attempt (counting `cattempt` and
+  `cend` only); each such point also enables `cfail` and `ctimeout` per
+  record and `cexpire`.
 - Step 7: `recovered` with `seen` true for the trigger 3, `unrecovered` with
   `seen` false for the trigger 2, and `registered` with `seen` false until
   `finish` for the triggers 1 and 0.

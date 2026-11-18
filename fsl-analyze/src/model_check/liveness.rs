@@ -174,8 +174,13 @@ pub(super) fn check(
     let symmetric = !request.reductions.symmetry.is_empty();
     // The clause's identity is resolved from the package, as the safety path
     // does (FR-337-AC-5): a package that gives it no root refuses.
+    let package = request
+        .subject
+        .simulation
+        .source_package()
+        .ok_or_else(|| fault("liveness-reads-source-forms"))?;
     let root_cancelled = match ClauseIdentity::resolve(
-        request.subject.simulation.package,
+        package,
         request.subject.simulation.packages,
         clause,
         request.temporal_clock_selections,
@@ -307,8 +312,11 @@ pub(super) fn check_protocol<M: MemoryModel>(
     };
     let model = system.model();
     let simulation = &subject.model.simulation;
+    let package = simulation
+        .source_package()
+        .ok_or_else(|| fault("liveness-reads-source-forms"))?;
     let root_cancelled = match ClauseIdentity::resolve(
-        simulation.package,
+        package,
         simulation.packages,
         clause,
         temporal_clock_selections,

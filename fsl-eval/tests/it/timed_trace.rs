@@ -1487,3 +1487,49 @@ fn the_timed_claim_automaton_agrees_under_each_activation() {
         "{held} held, {violated} violated"
     );
 }
+
+/// FR-1034-AC-1 (TC-2969): an interval with a lower bound and no upper
+/// bound translates to the lower-bound-only component, never refused
+/// `OpenTimedInterval` or `ClockLimit`, and on 1,000 random timed lassos per
+/// formula the automaton accepts exactly where the evaluator refutes.
+#[trace("TC-2969", "FR-1034-AC-1")]
+#[test]
+#[ignore = "QSL-2408: zone claim automaton for [q, *] not implemented yet"]
+fn an_open_upper_interval_automaton_agrees_with_the_evaluator() {
+    let mut stream = Stream(0x2408_0e2e_0000_0001);
+    let (mut held, mut violated) = (0, 0);
+    for body in [
+        "eventually[1 ms, *] holds(c.level = 2)",
+        "always (holds(c.level = 1) implies eventually[1 ms, *] holds(c.level = 2))",
+        "holds(c.level = 1) until(1 ms, *] holds(c.level = 2)",
+        "eventually always[1 ms, *] holds(c.level = 2)",
+        "always (holds(c.level = 2) implies once[1 ms, *] holds(c.level = 1))",
+        "eventually (holds(c.level = 2) and \
+         (holds(c.level = 1) since(1 ms, *] holds(c.level = 0)))",
+    ] {
+        let fixture = timed(body);
+        let (h, v) = agreement(&fixture, body, &mut stream, 1_000, 8);
+        held += h;
+        violated += v;
+    }
+    assert!(held > 0 && violated > 0, "{held} held, {violated} violated");
+}
+
+/// FR-1034-AC-2 (TC-2969): one clock per `[q, *]` operator, however many
+/// positions start it, whose only constant is the lower bound.
+#[trace("TC-2969", "FR-1034-AC-2")]
+#[test]
+#[ignore = "QSL-2408: one lower-bound-only clock per [q, *] operator not implemented yet"]
+fn an_open_upper_interval_takes_one_clock_with_its_lower_bound() {
+    for body in [
+        "always (holds(c.level = 1) implies eventually[2 ms, *] holds(c.level = 2))",
+        "eventually always[2 ms, *] holds(c.level = 2)",
+        "eventually (holds(c.level = 2) and once[2 ms, *] holds(c.level = 1))",
+    ] {
+        let claim = TimedClaim::new(&timed(body).clause, 1 << 20)
+            .unwrap_or_else(|why| panic!("{body}: {why}"));
+        assert_eq!(claim.clock_count(), 1, "{body}");
+        assert_eq!(claim.constants(), vec![ms(2)], "{body}");
+        assert_eq!(claim.all_constants(), vec![ms(2)], "{body}");
+    }
+}

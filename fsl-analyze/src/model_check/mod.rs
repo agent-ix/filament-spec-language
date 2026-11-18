@@ -30,7 +30,8 @@ mod state_graph;
 
 pub use ample::{Atoms, Por};
 pub use check::{
-    check_model, check_protocol, ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
+    check_model, check_protocol, check_protocol_constrained, ModelCheckRefusal, ModelCheckRequest,
+    ProtocolCheckRequest,
 };
 pub use fsl_replay::SubjectIdentity;
 pub use graph::{

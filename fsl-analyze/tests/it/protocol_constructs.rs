@@ -1532,8 +1532,8 @@ fn a_post_test_repeat_reads_the_latest_body_binder() {
     let protocol = subject
         .model
         .simulation
-        .package
-        .graph()
+        .input
+        .evaluator
         .protocol("P")
         .expect("the protocol");
     assert!(protocol.slots.repeats[0].post_test);

@@ -268,12 +268,19 @@ pub use model_check::refinement_settle::{
 #[doc(hidden)]
 pub use model_check::replay::replay_timed_counterexample;
 pub use model_check::replay::{
+<<<<<<< HEAD
     behaviour_valuations, evaluate_model_trace, replay_model_trace,
     replay_model_trace_with_temporal_selections, replay_protocol_trace,
     replay_protocol_trace_with_temporal_selections, BehaviourValuationEnd, BehaviourValuations,
     DelayBar, ModelTraceEnd, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceRun,
     ModelTraceSettlement, ModelTraceSubject, ModelTraceValue, ProtocolTraceSubject,
     StrongFairnessHint, TimedReplay,
+=======
+    evaluate_model_trace, evaluate_protocol_trace, replay_model_trace, replay_model_trace_with_temporal_selections,
+    replay_protocol_trace, replay_protocol_trace_with_temporal_selections, DelayBar, ModelTraceEnd,
+    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceRun, ModelTraceSettlement,
+    ModelTraceSubject, ModelTraceValue, ProtocolTraceEnd, ProtocolTraceRun, ProtocolTraceSubject, StrongFairnessHint, TimedReplay,
+>>>>>>> origin/main
 };
 pub use model_check::settle::{
     settle_model_check, settle_protocol_check, CertificateChecker, Execution, ModelCheckRecord,
@@ -458,7 +465,7 @@ pub use spine::{
     CallOriginRead, ClauseDisposition, ClauseRunRecord, ClauseRunReport, ClauseRunUsage,
     CommandErrorRecord, ConsequentSourceEvents, NativeRunLimits, NativeRunOutcome,
     NativeRunReadError, NativeRunResult, NativeRunResultError, RefusalLocusRead, SourceRefRead,
-    SpanRead, TemporalRecord,
+    SpanRead, TemporalRecord, temporal_disposition_json,
 };
 // The input refusal a `ReplayRefusal::Input` and a value-parity
 // `ValueParityResult::RefusedInput` carry.

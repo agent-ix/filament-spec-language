@@ -51,7 +51,6 @@ use crate::simulation::model::{
     Observed, ObservedIdentities, OperationRef, Verdict, EXHAUSTED,
 };
 use crate::simulation::subject::Cut;
-use crate::value::evaluate_join_predicate;
 
 /// One application of an attempt, the observation it was applied over and
 /// the message it read there (FR-229).
@@ -316,7 +315,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     self.by_owner(
                         instance,
                         self.program.template(index)?.role,
-                        Some(StepKind::CAttempt),
+                        Some(&[StepKind::CAttempt, StepKind::CFail, StepKind::CTimeout]),
                         &mut gathered,
                         |gathered| self.compensation(state, ordinal, path, thread.rest, gathered),
                     )?;
@@ -1283,13 +1282,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 .into_iter()
                 .map(|label| Value::Boolean(is_completed(label)))
                 .collect();
-            let evaluation = evaluate_join_predicate(
-                self.package,
-                function,
-                arguments,
-                &mut Meter::new(self.model.meter()),
-            )
-            .map_err(|_| ProtocolRefusal::fault("a-join-predicate-evaluates"))?;
+            let evaluation = self
+                .evaluator
+                .evaluate_join_predicate(function, arguments, &mut Meter::new(self.model.meter()))
+                .map_err(|_| ProtocolRefusal::fault("a-join-predicate-evaluates"))?;
             return match verdict(&evaluation.outcome) {
                 Verdict::True => Ok(true),
                 Verdict::False => Ok(false),
