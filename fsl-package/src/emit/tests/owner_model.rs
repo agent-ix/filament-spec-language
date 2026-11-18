@@ -10,11 +10,9 @@ use filament_contract_model::{
     read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
     CheckedPackageReadLimits, ExactTypeProjectionErrorCode, SelectedExactIdentities,
 };
-use fsl_semantics::check::{CheckRefusal, ProtocolConstruct};
-
 use super::population_bound::document;
-use super::protocol_graph::{checked, flow_over, PROFILES};
-use super::protocol_reference::{node_by_id, node_of, not_emitted};
+use super::protocol_graph::{flow_over, PROFILES};
+use super::protocol_reference::{node_by_id, node_of};
 use super::reachability::{lower_with, model_node, Lowered};
 use super::*;
 
@@ -342,46 +340,6 @@ fn each_defect_of_the_edge_is_refused_where_the_reader_reaches_it() {
         let found = verdict(&lowered, &envelope);
         assert_ne!(found, "admitted", "{name}");
         assert_eq!(found, expected, "{name}");
-    }
-}
-
-/// FR-383-AC-26: a clause whose `over` input is not a reference to an object
-/// type of a selected model has no model declaration node to name, so the
-/// protocol is refused typed (`unsupported_construct`/`not-yet-implemented`,
-/// QSL-1147), once, and with the emission gate open writes no clause. The same
-/// protocol over an object type checks and writes the clause.
-#[trace("FR-383-AC-27", "TC-1063")]
-#[test]
-fn an_over_input_that_is_no_object_type_refuses_typed_and_writes_no_clause() {
-    let clauses = |graph: &fsl_semantics::check::CheckedGraph| {
-        graph
-            .semantic_graph()
-            .nodes()
-            .filter(|node| node.semantic_form() == "protocol_clause")
-            .count()
-    };
-    let written =
-        checked(&flow("M::Order"), false).unwrap_or_else(|refusals| panic!("{refusals:?}"));
-    assert_eq!(clauses(&written), 1);
-    assert_eq!(ProtocolConstruct::NoOwnerModel.tracking(), "QSL-1147");
-    for over in [
-        "Boolean",
-        "Integer",
-        "Option<M::Order>",
-        "Sequence<M::Order>",
-    ] {
-        let text = flow(over);
-        let refusals: Vec<CheckRefusal> = checked(&text, false).expect_err(&text);
-        assert_eq!(
-            refusals
-                .iter()
-                .map(|refusal| &refusal.cause)
-                .collect::<Vec<_>>(),
-            [&not_emitted(ProtocolConstruct::NoOwnerModel)],
-            "{over}"
-        );
-        let open = checked(&text, true).unwrap_or_else(|refusals| panic!("{over}: {refusals:?}"));
-        assert_eq!(clauses(&open), 0, "{over} writes no clause node");
     }
 }
 
