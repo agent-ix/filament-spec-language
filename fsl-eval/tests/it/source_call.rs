@@ -130,17 +130,16 @@ fn package_of_with_mode(declarations: &str, mode: CheckMode) -> CheckedPackage {
 #[test]
 fn sum_out_of_domain_same_cause_call_and_clause() {
     let package = package_of_with_mode(
-        "type Pos = Int[0, 9];\n\
-         function total using v(x: Pos): Pos pure { \
-         sum<Pos>(n in sequence[x, x]: n) }",
+        "type Pos = Int[1, 9];\n\
+         type Total = Int[0, 9];\n\
+         function amounts using v(): Sequence<Pos>[2, 2] pure { sequence[9, 9] }\n\
+         function total using v(): Total pure { sum<Total>(n in amounts(): n) }",
         CheckMode::Kernel,
     );
     let evaluation = package
         .call(
             &QualifiedName::unqualified("total").expect("total is an identifier"),
-            vec![filament_exact::Value::Integer(
-                filament_exact::Integer::from(9_i64),
-            )],
+            Vec::new(),
             &ObjectEnvironment::default(),
             &mut Meter::new(UNLIMITED),
         )
