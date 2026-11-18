@@ -282,7 +282,6 @@ fn inventory_facts(override_path: Option<&Path>, workspace_root: &Path) -> Resul
                     "facade-tests: pinned inventory {INVENTORY} is absent"
                 ))
             })?
-            .as_bytes()
             .to_vec(),
     };
     let inventory: Inventory = serde_json::from_slice(&bytes).map_err(|error| {
