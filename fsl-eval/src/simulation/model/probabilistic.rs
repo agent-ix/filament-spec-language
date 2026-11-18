@@ -36,7 +36,6 @@ use super::walk::{exhausted, expand_enabled, stop};
 use super::{refused, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::simulation::StateKey;
-use crate::value::evaluate_reward;
 
 /// A transition identity without its random arguments (ADR-024 PM-2): the
 /// operation, the receiver and the non-random arguments.
@@ -392,7 +391,7 @@ fn is_negative(value: &Value) -> bool {
 impl ModelSystem<'_> {
     /// The checked declarations this system reads.
     fn declarations(&self) -> &CheckedProbabilisticModel {
-        self.package.graph().probabilistic_model()
+        self.input.probabilistic
     }
 
     /// The operation whose declaration identity text is `text`: its
@@ -425,7 +424,9 @@ impl ModelSystem<'_> {
         if let Some(cancel) = cancel {
             meter = meter.with_cancel(cancel.clone());
         }
-        let evaluation = evaluate_reward(self.package, reward, arguments, &mut meter)
+        let evaluation = self
+            .evaluator()
+            .evaluate_reward(reward, arguments, &mut meter)
             .map_err(|_| stop(BROKEN))?;
         if let filament_eval::FamilyOutcome::Evaluated(Outcome::Completed(value)) =
             &evaluation.outcome

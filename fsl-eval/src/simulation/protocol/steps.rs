@@ -51,7 +51,6 @@ use crate::simulation::model::{
     Observed, ObservedIdentities, OperationRef, Verdict, EXHAUSTED,
 };
 use crate::simulation::subject::Cut;
-use crate::value::evaluate_join_predicate;
 
 /// One application of an attempt, the observation it was applied over and
 /// the message it read there (FR-229).
@@ -1283,8 +1282,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 .into_iter()
                 .map(|label| Value::Boolean(is_completed(label)))
                 .collect();
-            let evaluation = evaluate_join_predicate(
-                self.package,
+            let evaluation = self.evaluator.evaluate_join_predicate(
                 function,
                 arguments,
                 &mut Meter::new(self.model.meter()),

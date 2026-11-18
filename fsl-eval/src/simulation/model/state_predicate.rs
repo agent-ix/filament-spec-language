@@ -22,7 +22,6 @@ use super::walk::{exhausted, stop, walk_of};
 use super::{ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::temporal::UndefinedCause;
-use crate::value::evaluate_state_predicate_with;
 
 /// How a state-graph predicate read at one state.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -141,8 +140,7 @@ impl ModelSystem<'_> {
             if let Some(cancel) = cancel {
                 meter = meter.with_cancel(cancel.clone());
             }
-            let evaluation = evaluate_state_predicate_with(
-                self.package,
+            let evaluation = self.evaluator().evaluate_state_predicate(
                 *predicate,
                 &walk.observation.environment,
                 bound,

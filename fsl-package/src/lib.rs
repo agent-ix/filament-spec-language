@@ -23,6 +23,8 @@ mod analysis_view;
 #[cfg(feature = "std")]
 pub use analysis_view::{AnalysisView, DependencyClosure};
 #[cfg(feature = "std")]
+pub use model_input_form::UnreadModelForm;
+#[cfg(feature = "std")]
 mod bare;
 #[cfg(feature = "std")]
 mod bare_slot;
@@ -44,6 +46,8 @@ pub mod evaluation_view;
 mod export;
 #[cfg(feature = "std")]
 mod introduced_binders;
+#[cfg(feature = "std")]
+mod model_input_form;
 #[cfg(feature = "std")]
 mod native_row;
 #[cfg(feature = "std")]

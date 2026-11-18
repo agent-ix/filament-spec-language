@@ -20,7 +20,6 @@ use super::walk::{exhausted, stop, walk_of};
 use super::{ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::temporal::UndefinedCause;
-use crate::value::evaluate_terminal_predicate;
 
 /// FR-124's classification of one state of a subject.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,7 +76,7 @@ impl ModelSystem<'_> {
         if has_successor {
             return Ok(TerminalClass::NotTerminal);
         }
-        for terminal in &self.terminals {
+        for terminal in self.terminals() {
             match terminal.declaration {
                 PackageTerminalDeclaration::Any => return Ok(TerminalClass::Intended),
                 PackageTerminalDeclaration::When(predicate) => match self.read(state, predicate)? {
@@ -124,8 +123,7 @@ impl ModelSystem<'_> {
         objects.sort();
         let mut holds = true;
         for object in objects {
-            let evaluation = evaluate_terminal_predicate(
-                self.package,
+            let evaluation = self.evaluator().evaluate_terminal_predicate(
                 predicate,
                 &walk.observation.environment,
                 object,

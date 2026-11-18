@@ -210,9 +210,8 @@ impl TimedSystem<'_, '_> {
             }
             let distribution = self
                 .system
-                .package
-                .graph()
-                .probabilistic_model()
+                .input()
+                .probabilistic
                 .delays()
                 .iter()
                 .find(|delay| {

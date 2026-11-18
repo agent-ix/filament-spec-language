@@ -284,7 +284,7 @@ pub fn evaluate_history_update(
 /// is, so every read observes `current`.
 pub fn evaluate_state_predicate(
     package: &CheckedPackage,
-    predicate: &impl fsl_semantics::check::StatePredicate,
+    predicate: &(impl fsl_semantics::check::StatePredicate + ?Sized),
     current: &ObjectEnvironment,
     over: Option<filament_exact::ObjectReference>,
     meter: &mut Meter,
@@ -297,7 +297,7 @@ pub fn evaluate_state_predicate(
 /// (FR-230 "Quantified reads").
 pub fn evaluate_state_predicate_with(
     package: &CheckedPackage,
-    predicate: &impl fsl_semantics::check::StatePredicate,
+    predicate: &(impl fsl_semantics::check::StatePredicate + ?Sized),
     current: &ObjectEnvironment,
     over: Option<filament_exact::ObjectReference>,
     further: Vec<Value>,
@@ -393,7 +393,7 @@ pub fn evaluate_operation_contract(
 /// activation at S3").
 pub fn evaluate_activation_guard(
     package: &CheckedPackage,
-    guard: &impl fsl_semantics::check::StatePredicate,
+    guard: &(impl fsl_semantics::check::StatePredicate + ?Sized),
     current: &ObjectEnvironment,
     bound: filament_exact::ObjectReference,
     meter: &mut Meter,
@@ -453,7 +453,7 @@ fn holds_bindings(
 /// [`evaluate_activation_guard_at_absent_key`]).
 pub fn evaluate_capture(
     package: &CheckedPackage,
-    capture: &impl fsl_semantics::check::StatePredicate,
+    capture: &(impl fsl_semantics::check::StatePredicate + ?Sized),
     current: &ObjectEnvironment,
     bindings: Vec<Value>,
     absent: Option<(Vec<usize>, String)>,
@@ -482,7 +482,7 @@ pub fn evaluate_capture(
 /// `lookup`'s operand (see [`evaluate_state_predicate_at_absent_key`]).
 pub fn evaluate_activation_guard_at_absent_key(
     package: &CheckedPackage,
-    guard: &impl fsl_semantics::check::StatePredicate,
+    guard: &(impl fsl_semantics::check::StatePredicate + ?Sized),
     current: &ObjectEnvironment,
     key: filament_exact::ObjectReference,
     binding: String,
@@ -516,7 +516,7 @@ pub fn evaluate_activation_guard_at_absent_key(
 /// undefined value.
 pub fn evaluate_state_predicate_at_absent_key(
     package: &CheckedPackage,
-    predicate: &impl fsl_semantics::check::StatePredicate,
+    predicate: &(impl fsl_semantics::check::StatePredicate + ?Sized),
     current: &ObjectEnvironment,
     key: filament_exact::ObjectReference,
     binding: String,

@@ -10,7 +10,7 @@ use fsl_semantics::model::observation::{AdmissionUsage, AdmittedObservations, Se
 use super::walk::{exhausted, stop, Walk};
 use super::{ClauseInfo, ClauseOutcome, ModelFinding, BROKEN};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
-use crate::value::{CheckedPackageEvaluation, ClauseSetOutcome};
+use crate::value::ClauseSetOutcome;
 
 /// How one clause evaluation decided.
 pub(crate) enum Verdict {
@@ -94,7 +94,7 @@ pub(super) fn invariants(walk: &Walk<'_, '_>) -> Result<Vec<ModelFinding>, Expan
             }
             let observations = invariant_observations(walk, clause, *row);
             let evaluation = system
-                .package
+                .evaluator()
                 .evaluate_clause(&clause.qualified, &observations, &mut walk.meter())
                 .map_err(|_| stop(BROKEN))?;
             if walk
@@ -183,8 +183,7 @@ pub(super) fn conjunction(
         .zip(&observations)
         .map(|(info, observations)| (info.qualified.clone(), observations))
         .collect();
-    let evaluation = crate::value::evaluate_clause_set_with_cancel(
-        walk.system.package,
+    let evaluation = walk.system.evaluator().evaluate_clause_set(
         &set,
         walk.system.meter,
         walk.cancel.as_ref(),

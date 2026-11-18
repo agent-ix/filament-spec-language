@@ -34,10 +34,6 @@ use super::{state_document, ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
 use crate::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use crate::simulation::StateKey;
 use crate::temporal::{AtomReading, CaptureReading};
-use crate::value::{
-    evaluate_activation_guard, evaluate_activation_guard_at_absent_key, evaluate_capture,
-    evaluate_state_predicate, evaluate_state_predicate_at_absent_key,
-};
 
 /// Why a clause has no [`ClauseLetters`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -300,15 +296,14 @@ impl ModelLetters for ClauseLetters<'_, '_> {
         let observed = self.observe(state)?;
         let condition = Condition { body, slots };
         let evaluation = match self.bound(&observed.rows, instance) {
-            Some(bound) => evaluate_state_predicate(
-                self.system.package,
+            Some(bound) => self.system.evaluator().evaluate_state_predicate(
                 &condition,
                 &observed.observation.environment,
                 Some(bound),
+                Vec::new(),
                 meter,
             ),
-            None => evaluate_state_predicate_at_absent_key(
-                self.system.package,
+            None => self.system.evaluator().evaluate_state_predicate_at_absent_key(
                 &condition,
                 &observed.observation.environment,
                 self.key_reference(instance)?,
@@ -342,15 +337,13 @@ impl ModelLetters for ClauseLetters<'_, '_> {
         let observed = self.observe(state)?;
         let condition = Condition { body, slots };
         let evaluation = match self.bound(&observed.rows, instance) {
-            Some(bound) => evaluate_activation_guard(
-                self.system.package,
+            Some(bound) => self.system.evaluator().evaluate_activation_guard(
                 &condition,
                 &observed.observation.environment,
                 bound,
                 meter,
             ),
-            None => evaluate_activation_guard_at_absent_key(
-                self.system.package,
+            None => self.system.evaluator().evaluate_activation_guard_at_absent_key(
                 &condition,
                 &observed.observation.environment,
                 self.key_reference(instance)?,
@@ -400,8 +393,7 @@ impl ModelLetters for ClauseLetters<'_, '_> {
             let absent = bound
                 .is_none()
                 .then(|| ((0..binders).collect(), instance.population.node.clone()));
-            let evaluation = evaluate_capture(
-                self.system.package,
+            let evaluation = self.system.evaluator().evaluate_capture(
                 &capture,
                 &observed.observation.environment,
                 arguments,

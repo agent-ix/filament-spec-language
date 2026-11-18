@@ -23,6 +23,10 @@ mod domain;
 pub(crate) mod encode;
 mod footprints;
 mod frames;
+mod input;
+pub use input::{
+    ModelCheckInput, ModelEvaluator, PackageModelInput, PendingPackageForm, StateClauseEntry,
+};
 mod key_budget;
 mod letters;
 pub use key_budget::{ModelKeyBudget, ModelKeyError, ModelKeyExpansionError};
@@ -141,8 +145,8 @@ pub struct ExpansionLimits {
 /// Everything [`ModelSystem::new`] reads (FR-120 "Inputs").
 #[derive(Clone)]
 pub struct ModelSimulationRequest<'a> {
-    /// The S4 package.
-    pub package: &'a CheckedPackage,
+    /// What the check reads of the S4 package (FR-531, FR-940).
+    pub input: ModelCheckInput<'a>,
     /// FR-056's package input: domain package bytes by the identity each declares.
     pub packages: &'a fsl_semantics::model::intake::PackageInput,
     /// The normalization limits FR-106 admission takes.
@@ -496,10 +500,9 @@ pub struct ModelSystem<'a> {
     over: Option<String>,
     types: &'a TypeEnvironment,
     operations: &'a fsl_semantics::model::operation::OperationTable,
-    package: &'a CheckedPackage,
-    /// FR-411: the package's `terminal` declarations, read from its emitted
-    /// `temporal`/`terminal` nodes.
-    terminals: Vec<fsl_package::PackageTerminal<'a>>,
+    /// What the system reads of its package; its `terminal` declarations
+    /// (FR-411) resolved when the system was built.
+    input: ModelCheckInput<'a>,
     model: StateModel,
     universes: BTreeMap<DeclarationKey, Vec<String>>,
     initial: Vec<ModelSimState>,
@@ -567,10 +570,25 @@ fn fault(invariant: &'static str) -> AdmissionFailure {
 }
 
 impl<'a> ModelSystem<'a> {
-    /// The checked package this system is over: what a settlement joins a
-    /// run's verdict on, such as its terminal declarations (FR-411).
-    pub fn package(&self) -> &'a CheckedPackage {
-        self.package
+    /// What this system reads of its package (FR-531, FR-940).
+    pub fn input(&self) -> &ModelCheckInput<'a> {
+        &self.input
+    }
+
+    /// The source package this system is over, for an engine with no
+    /// package form yet; `None` on the package route.
+    pub fn source_package(&self) -> Option<&'a CheckedPackage> {
+        self.input.source_package()
+    }
+
+    /// The evaluator of the package's checked forms.
+    pub(crate) fn evaluator(&self) -> &'a dyn ModelEvaluator {
+        self.input.evaluator
+    }
+
+    /// The package's `terminal` declarations (FR-411).
+    pub(crate) fn terminals(&self) -> &[fsl_package::PackageTerminal<'a>] {
+        self.input.terminals.as_deref().unwrap_or_default()
     }
 
     /// Resolve a checked operation's declaring type without substituting the
@@ -650,8 +668,7 @@ impl<'a> ModelSystem<'a> {
     /// [`Self::typing`] for values alone, which hold no element-count
     /// member: it lives as long as the package.
     pub(crate) fn value_typing(&self) -> encode::Typing<'a> {
-        let scope = self.package.graph().scope();
-        encode::Typing::with_variants(self.types, scope.variant_types()).with_enums(scope.enums())
+        encode::Typing::with_variants(self.types, self.input.variant_types).with_enums(self.input.enums)
     }
 
     /// Check the universes, then admit each initial document in the given
@@ -661,7 +678,7 @@ impl<'a> ModelSystem<'a> {
     ///
     /// FR-106's [`AdmissionFailure`]: `Refused` or `Incomplete`, one record.
     pub fn new(request: ModelSimulationRequest<'a>) -> Result<Self, AdmissionFailure> {
-        let selections = request.package.graph().model_inputs();
+        let selections = request.input.model_inputs();
         Self::over(request, selections, None)
     }
 
@@ -675,7 +692,7 @@ impl<'a> ModelSystem<'a> {
         request: ModelSimulationRequest<'a>,
         cancel: &filament_exact::Cancel,
     ) -> Result<Self, AdmissionFailure> {
-        let selections = request.package.graph().model_inputs();
+        let selections = request.input.model_inputs();
         Self::over(request, selections, Some(cancel))
     }
 
@@ -700,9 +717,8 @@ impl<'a> ModelSystem<'a> {
         model: &str,
     ) -> Result<Self, AdmissionFailure> {
         let selected: Vec<_> = request
-            .package
-            .graph()
-            .model_selections()
+            .input
+            .model_selections
             .iter()
             .filter(|selection| selection.identity == model)
             .cloned()
@@ -714,7 +730,7 @@ impl<'a> ModelSystem<'a> {
                 &[("model", model.to_owned())],
             ));
         }
-        let sources = request.package.graph().source_packages();
+        let sources = request.input.source_packages;
         Self::over(
             request,
             fsl_semantics::model::observation::ModelSelections::new(&selected, sources),
@@ -727,10 +743,17 @@ impl<'a> ModelSystem<'a> {
         selections: fsl_semantics::model::observation::ModelSelections<'_>,
         cancel: Option<&filament_exact::Cancel>,
     ) -> Result<Self, AdmissionFailure> {
-        let graph = request.package.graph();
-        let types = graph.scope().types();
+        let input = request.input;
+        let types = input.types;
         let only = selections.selections();
         let model = StateModel::new(selections, types, request.packages, request.normalization)?;
+        if !input.operations_read && model.declares_operations() {
+            return Err(refused(
+                Code::UnknownRequiredFeature,
+                "unsupported-feature",
+                &[("form", "operation".to_owned())],
+            ));
+        }
         let populations = model.populations();
 
         let mut universes = BTreeMap::new();
@@ -831,7 +854,7 @@ impl<'a> ModelSystem<'a> {
             fields.insert(type_key, declared);
             applications.insert(
                 identity.clone(),
-                Self::applications_of(graph, &model, identity)?,
+                Self::applications_of(input.types, input.operations, &model, identity)?,
             );
         }
 
@@ -843,7 +866,7 @@ impl<'a> ModelSystem<'a> {
         // ranges over every count; with no declared maximum, the timed
         // subject ranges it up to `max_clocks` (`TimedSystem::initial`).
         let mut counts: Vec<ClockCount> = Vec::new();
-        for timed in graph.timed_models() {
+        for timed in input.timed_models {
             for clock in timed.clocks() {
                 let [fsl_semantics::check::PlaceStep::Field(name), fsl_semantics::check::PlaceStep::Slot(shape)] =
                     clock.path()
@@ -913,7 +936,7 @@ impl<'a> ModelSystem<'a> {
         // state, rooted and enumerated like a field; an initial state
         // ranges over absent and present.
         let mut bits: Vec<(DeclarationKey, StateField)> = Vec::new();
-        for timed in graph.timed_models() {
+        for timed in input.timed_models {
             for clock in timed.clocks() {
                 let (true, [fsl_semantics::check::PlaceStep::Field(name)]) =
                     (clock.presence_bit(), clock.path())
@@ -972,17 +995,21 @@ impl<'a> ModelSystem<'a> {
                 .flatten()
                 .any(|field| field.key == bound.member)
         });
+        input
+            .terminals
+            .as_ref()
+            .map_err(|_| fault("terminal-nodes-resolve"))?;
+        let clauses = Self::clauses_of(&input.state_clauses)?;
+        let probabilistic = probabilistic::Tables::of(input.probabilistic)?;
         let system = Self {
             over: match only {
                 [only] => Some(only.identity.clone()),
                 _ => None,
             },
             types,
-            operations: graph.scope().operations(),
-            package: request.package,
-            terminals: fsl_package::resolve_terminals(request.package)
-                .map_err(|_| fault("terminal-nodes-resolve"))?,
-            clauses: Self::clauses_of(request.package)?,
+            operations: input.operations,
+            input,
+            clauses,
             model,
             universes,
             initial,
@@ -996,7 +1023,7 @@ impl<'a> ModelSystem<'a> {
             applied: application::AppliedMemo::default(),
             key_names: encode::KeyNames::default(),
             canonical: encode::Canonicalizer::default(),
-            probabilistic: probabilistic::Tables::of(graph.probabilistic_model())?,
+            probabilistic,
             member_bounds,
             record_orders,
             clock_counts: counts,
@@ -1177,12 +1204,11 @@ impl<'a> ModelSystem<'a> {
 
     /// The operations in `identity`'s effective view (FR-103, FR-081), by name.
     fn applications_of(
-        graph: &fsl_semantics::check::CheckedGraph,
+        types: &TypeEnvironment,
+        operations: &fsl_semantics::model::operation::OperationTable,
         model: &StateModel,
         identity: EffectiveId,
     ) -> Result<Vec<Application>, AdmissionFailure> {
-        let operations = graph.scope().operations();
-        let types = graph.scope().types();
         let mut names = BTreeSet::new();
         for declaring in types.object_types() {
             if types.conforms(identity.clone(), declaring.key()) {
@@ -1220,23 +1246,18 @@ impl<'a> ModelSystem<'a> {
     }
 
     /// The package's state clauses by kind, each kind in ascending name order.
-    fn clauses_of(package: &CheckedPackage) -> Result<Clauses, AdmissionFailure> {
+    fn clauses_of(entries: &[StateClauseEntry]) -> Result<Clauses, AdmissionFailure> {
         let mut clauses = Clauses::default();
-        for clause in package.graph().state_clauses() {
+        for clause in entries {
             let info = ClauseInfo {
-                name: clause.name().to_owned(),
-                qualified: QualifiedName::unqualified(clause.name())
+                name: clause.name.clone(),
+                qualified: QualifiedName::unqualified(&clause.name)
                     .map_err(|_| fault("clause-name"))?,
-                identity: clause.identity(),
-                context: clause.context(),
-                operation: clause.operation().map(|operation| {
-                    (
-                        operation.declaring.clone(),
-                        operation.declaration.name().to_owned(),
-                    )
-                }),
+                identity: clause.identity.clone(),
+                context: clause.context.clone(),
+                operation: clause.operation.clone(),
             };
-            match clause.observation() {
+            match clause.observation {
                 Observation::Current => clauses.invariants.push(info),
                 Observation::Pre => clauses.preconditions.push(info),
                 Observation::Post => clauses.postconditions.push(info),
@@ -1397,7 +1418,7 @@ impl<'a> ModelSystem<'a> {
         // Each field's declaring type and ordinal among that type's own
         // fields, found through the effective attribute set of every type
         // (which lists a field in the same order as `self.fields`).
-        let graph = self.package.graph();
+        let evaluator = self.evaluator();
         let mut field_homes: BTreeMap<&DeclarationKey, (EffectiveId, u32)> = BTreeMap::new();
         for declaration in self.types.object_types() {
             let Some(type_key) = self.model.type_key(declaration.key()) else {
@@ -1421,7 +1442,7 @@ impl<'a> ModelSystem<'a> {
                     continue;
                 };
                 let owner = attribute.owner();
-                let Some(ordinal) = graph
+                let Some(ordinal) = evaluator
                     .own_field_ordinal(&owner, attribute.field().name())
                     .and_then(|ordinal| u32::try_from(ordinal).ok())
                 else {
@@ -1436,7 +1457,7 @@ impl<'a> ModelSystem<'a> {
         // owner's one name-ordered sequence of own fields.
         let mut clock_fields: BTreeMap<EffectiveId, BTreeMap<String, &DeclarationKey>> =
             BTreeMap::new();
-        for timed in self.package.graph().timed_models() {
+        for timed in self.input.timed_models {
             for clock in timed.clocks() {
                 let Some(fsl_semantics::check::PlaceStep::Field(name)) = clock.path().first()
                 else {
@@ -1453,7 +1474,7 @@ impl<'a> ModelSystem<'a> {
         }
         for (owner, named) in &clock_fields {
             for (name, key) in named {
-                if let Some(ordinal) = graph
+                if let Some(ordinal) = evaluator
                     .own_field_ordinal(owner, name)
                     .and_then(|ordinal| u32::try_from(ordinal).ok())
                 {

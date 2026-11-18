@@ -34,7 +34,6 @@ use super::{
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::model::encode::{value_enc, Enc};
 use crate::simulation::model::{verdict, ModelFinding, ModelSimState, Verdict};
-use crate::value::evaluate_protocol_slot;
 
 /// How many entries of `queue` ahead of `position` have the bytes of the one
 /// at `position`.
@@ -141,8 +140,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             }));
         };
         let observation = self.model.observation_of(observed)?;
-        let evaluation = evaluate_protocol_slot(
-            self.package,
+        let evaluation = self.evaluator.evaluate_protocol_slot(
             body,
             vec![Some(payload.clone())],
             &observation.environment,

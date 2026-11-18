@@ -38,7 +38,7 @@ use super::{
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::Footprint;
 use crate::simulation::key;
-use crate::value::{CheckedPackageEvaluation, Provenance, WrittenCollection};
+use crate::value::{Provenance, WrittenCollection};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_semantics::check::CollectionWrite;
 
@@ -1367,9 +1367,8 @@ impl Run<'_, '_, '_> {
         let mut written: Vec<WrittenSlots> = Vec::new();
         for info in self.postconditions {
             let writes = system
-                .package
-                .graph()
-                .timed_models()
+                .input()
+                .timed_models
                 .iter()
                 .flat_map(|model| model.resets())
                 .filter(|resets| resets.clause() == info.name)
@@ -1475,7 +1474,7 @@ impl Run<'_, '_, '_> {
     ) -> Result<(Value, Vec<(Value, Provenance)>), ExpansionStop> {
         let system = self.walk.system;
         let observations = self.post_observations(candidate, delta, info)?;
-        match system.package.evaluate_collection_write(
+        match system.evaluator().evaluate_collection_write(
             &info.qualified,
             &observations,
             write.field(),
