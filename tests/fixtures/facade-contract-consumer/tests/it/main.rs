@@ -399,6 +399,65 @@ mod protocol {
         CheckedBindingNameKind, CheckedNodeId, CheckedPackageV2, CheckedSemanticNodeV2, CheckedTerm,
     };
 
+    fn temporal_selections(model: &[u8]) -> Vec<fsl_package::TemporalClockSelection> {
+        use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+        use fsl_semantics::check::PackageDeclarations;
+
+        let source = fsl_foundation::SourceIdentity::new("consumer", "protocol-contract");
+        let parsed = fsl_cst::parse(
+            source,
+            "protocol.native",
+            UNIT.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("protocol parses");
+        let raw_source = parsed.source().reference().clone();
+        let built = fsl_forms::build_unit(&parsed).expect("protocol forms build");
+        let models = fsl_semantics::model::intake::package_input([model]).expect("model intake");
+        let selected = fsl_semantics::model::intake::admit_unit(
+            &built.selections().models,
+            &models,
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        )
+        .expect("model selections admit");
+        let graph = PackageDeclarations::assemble(
+            raw_source,
+            "protocol-consumer".into(),
+            built,
+            selected,
+            Vec::new(),
+        )
+        .expect("protocol assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect("protocol checks");
+        let source = graph.source().clone();
+        let clock = filament_contract_model::ClockConfiguration::EventPosition {
+            sequence_authority: "protocol-events".into(),
+        };
+        graph
+            .protocols()
+            .iter()
+            .flat_map(|protocol| {
+                protocol
+                    .obligations
+                    .compensations
+                    .iter()
+                    .filter(|template| template.temporal_profile.is_some())
+                    .map(|template| template.span)
+                    .chain(
+                        protocol
+                            .awaits
+                            .iter()
+                            .filter(|awaited| awaited.profile.is_some())
+                            .map(|awaited| awaited.span),
+                    )
+            })
+            .map(|span| {
+                fsl_package::TemporalClockSelection::new(source.clone(), span, clock.clone())
+            })
+            .collect()
+    }
+
     const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
 profile p = \"filament.protocol.finite-global/v1\";\n\
 profile v = \"filament.value.complete/v1\";\n\
@@ -429,7 +488,8 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
     fn checked_protocol() -> filament_contract_model::CheckedPackageV2 {
         let source = fsl_replay::SourceIdentity::new("consumer", "protocol-contract");
         let model = super::code_generation::model_with_touch();
-        let emitted = fsl_replay::compile_package(
+        let selections = temporal_selections(&model);
+        let emitted = fsl_replay::compile_package_with_temporal_selections(
             fsl_replay::CompileUnit {
                 source,
                 package_name: "protocol-consumer".into(),
@@ -438,6 +498,7 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
             },
             [&model[..]],
             &fsl_replay::DependencyInput::default(),
+            &selections,
             fsl_replay::StageLimits::default(),
             fsl_replay::ReplayLimits::default(),
         )
