@@ -18,6 +18,24 @@ use filament_semantic_value::call::WrongSnapshotCause;
 use fsl_semantics::model::normalize::{ModelRefusal, ModelRefusalCause};
 use fsl_semantics::model::observation::AdmissionRecord;
 
+/// A typed unsupported construct refused before an evaluator invents
+/// semantics for it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UnsupportedConstruct {
+    /// The construct whose semantics this path does not implement.
+    pub(crate) what: &'static str,
+}
+
+impl CatalogCoded for UnsupportedConstruct {
+    fn catalog_code(&self) -> CatalogCode {
+        CatalogCode::new("unsupported_construct", "not-yet-implemented")
+    }
+
+    fn catalog_fields(&self) -> Option<BTreeMap<&'static str, String>> {
+        Some(BTreeMap::from([("what", self.what.to_owned())]))
+    }
+}
+
 /// ADR-013 T-6: `ProtocolClause`'s evaluation-time refusal cause, carrying
 /// [`WrongSnapshotCause`]. `ProtocolClause` owns `Pre` (ADR-012 §4.3;
 /// FR-091-AC-8). The evaluator raises only

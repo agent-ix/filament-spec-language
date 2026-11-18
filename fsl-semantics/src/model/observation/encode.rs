@@ -299,6 +299,8 @@ fn native_json(native: &super::NativeObject) -> serde_json::Value {
             RawNativeKind::Known(NativeKind::String) => json!("string"),
             RawNativeKind::Known(NativeKind::Uuid) => json!("uuid"),
             RawNativeKind::Known(NativeKind::Timestamp) => json!("timestamp"),
+            RawNativeKind::Known(NativeKind::Bytes) => json!("bytes"),
+            RawNativeKind::Known(NativeKind::JsonObject) => json!("json_object"),
             RawNativeKind::Known(NativeKind::Text) => json!("text"),
             RawNativeKind::Known(NativeKind::Quantity) => json!("quantity"),
             RawNativeKind::Known(NativeKind::Rational) => json!("rational"),

@@ -23,9 +23,11 @@ pub struct ChargeAmounts {
 }
 
 impl ChargeAmounts {
-    /// The accumulated amount of one counter.
+    /// The accumulated amount of one FR-520 counter. The session-only
+    /// `LiveOccurrences` limit is outside the ten-counter binder ledger and
+    /// therefore returns zero here (FR-255, NFR-130).
     pub fn amount(&self, kind: LimitKind) -> u64 {
-        self.amounts[position(kind)]
+        position(kind).map_or(0, |index| self.amounts[index])
     }
 
     fn absorb_interval(&mut self, interval: &ChargeAccounting) {
@@ -35,7 +37,10 @@ impl ChargeAmounts {
     }
 
     pub(crate) fn absorb(&mut self, kind: LimitKind, amount: u64) {
-        let held = &mut self.amounts[position(kind)];
+        let Some(index) = position(kind) else {
+            return;
+        };
+        let held = &mut self.amounts[index];
         *held = match kind {
             // Interval sums never exceed the meter's checked global totals, so
             // the saturation is unreachable and only keeps the add total.
@@ -48,6 +53,9 @@ impl ChargeAmounts {
             | LimitKind::NormalizedScalars
             | LimitKind::UnitEdges
             | LimitKind::ValueOccurrences => (*held).max(amount),
+            // This limit is enforced by the evaluation session and is not
+            // one of the ten FR-520 binder-attributed counters.
+            LimitKind::LiveOccurrences => return,
         };
     }
 
@@ -67,18 +75,19 @@ impl ChargeAmounts {
     }
 }
 
-fn position(kind: LimitKind) -> usize {
+fn position(kind: LimitKind) -> Option<usize> {
     match kind {
-        LimitKind::IntegerBits => 0,
-        LimitKind::DecimalDigits => 1,
-        LimitKind::ScaleExpansion => 2,
-        LimitKind::TextInputBytes => 3,
-        LimitKind::TextScalars => 4,
-        LimitKind::NormalizedScalars => 5,
-        LimitKind::UnitEdges => 6,
-        LimitKind::ValueOccurrences => 7,
-        LimitKind::WorkUnits => 8,
-        LimitKind::ResultUnits => 9,
+        LimitKind::IntegerBits => Some(0),
+        LimitKind::DecimalDigits => Some(1),
+        LimitKind::ScaleExpansion => Some(2),
+        LimitKind::TextInputBytes => Some(3),
+        LimitKind::TextScalars => Some(4),
+        LimitKind::NormalizedScalars => Some(5),
+        LimitKind::UnitEdges => Some(6),
+        LimitKind::ValueOccurrences => Some(7),
+        LimitKind::WorkUnits => Some(8),
+        LimitKind::ResultUnits => Some(9),
+        LimitKind::LiveOccurrences => None,
     }
 }
 

@@ -34,7 +34,7 @@ mod protocol;
 mod rows;
 mod step_label;
 
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug, With};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, With, standalone};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::check::wire_id::structural_id;
@@ -72,18 +72,18 @@ pub(crate) use rows::{
     KeyedFairnessRow, KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows, KeyedStepRow,
     KeyedStepTarget,
 };
-pub use step_label::{observation, LabelStep, RowObservation, StepLabel};
+pub use step_label::{LabelStep, RowObservation, StepLabel, observation};
 
 use super::check::{
-    bind_parameters, PopulationScope, ScopedHistory, ScopedPopulation, StateContext, Typer,
+    PopulationScope, ScopedHistory, ScopedPopulation, StateContext, Typer, bind_parameters,
 };
-use super::ir::{static_integer_range, CheckedBody, CheckedNode};
+use super::ir::{CheckedBody, CheckedNode, static_integer_range};
 use super::lowering::AdmittedModel;
 use super::observation::Observations;
 use super::profile::TemporalProfile;
 use super::protocol_clause::ProtocolNodeId;
 use super::refusal::{CheckCause, CheckRefusal, KeyFault};
-use super::state_clause::{observation_of, ClauseDeclarations, ClauseOperation, PopulationDomain};
+use super::state_clause::{ClauseDeclarations, ClauseOperation, PopulationDomain, observation_of};
 use crate::family::CheckContext;
 use crate::model::clause_observation::Observation;
 use crate::model::domain_package::{DomainPackageRef, PopulationRecord};
@@ -1100,7 +1100,7 @@ fn leaf_checked_term(
     use crate::check::node_key::{LeafTerm, LiteralValue, NodeRef};
     use filament_contract_model::CheckedTerm;
     use serde::de::Error as _;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     let admitted = |node: &NodeRef| {
         node.admitted().map(structural_id).ok_or_else(|| {
             RefinementV2EncodingError::Body(serde_json::Error::custom(
@@ -1132,6 +1132,8 @@ fn leaf_checked_term(
                 LiteralValue::String(value) => ("string", json!(value)),
                 LiteralValue::Uuid(value) => ("uuid", json!(value.to_string())),
                 LiteralValue::Timestamp(value) => ("timestamp", json!(value.to_string())),
+                LiteralValue::Bytes(value) => ("bytes", json!(value)),
+                LiteralValue::JsonObject(value) => ("json_object", json!(value)),
                 LiteralValue::None => ("none", Value::Null),
                 LiteralValue::Enum(case) => ("enum", json!(case)),
             };
@@ -2230,6 +2232,8 @@ fn holds_reference(
         | ValueType::String
         | ValueType::Uuid
         | ValueType::Timestamp
+        | ValueType::Bytes
+        | ValueType::JsonObject
         | ValueType::Enum(_)
         | ValueType::Population(_) => Ok(false),
     }
@@ -2272,6 +2276,8 @@ fn lift(lifting: &BTreeMap<EffectiveId, EffectiveId>, value_type: &ValueType) ->
         | ValueType::String
         | ValueType::Uuid
         | ValueType::Timestamp
+        | ValueType::Bytes
+        | ValueType::JsonObject
         | ValueType::Enum(_)
         | ValueType::Composite(_)
         | ValueType::Population(_)) => other.clone(),

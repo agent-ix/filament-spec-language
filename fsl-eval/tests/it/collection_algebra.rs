@@ -1140,3 +1140,170 @@ mod checked {
         );
     }
 }
+
+/// FSpec FR-144 "Indexing" and "Map values": a source map is read by `m[k]`,
+/// `contains(m, k)` and `size(m)`, evaluated against supplied map values.
+mod map_source {
+    use super::UNLIMITED;
+    use filament_eval::FamilyOutcome;
+    use filament_exact::{
+        from_admitted_map, CardinalityBound, Integer, IntegerInterval, LimitKind, MapType, Meter,
+        Outcome, Undefined, Value, ValueType,
+    };
+    use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
+    use fsl_package::CheckedPackage;
+    use fsl_semantics::check::PackageDeclarations;
+    use fsl_semantics::model::object_environment::ObjectEnvironment;
+    use ix_trace_rs::trace;
+
+    const FUNCTIONS: &str = "\
+        function look using v(m: Map<Int[0, 3], Integer>[0, 4], k: Int[0, 3]): Integer pure \
+        { if contains(m, k) then m[k] else 0 }\n\
+        function has using v(m: Map<Int[0, 3], Integer>[0, 4], k: Int[0, 3]): Boolean pure \
+        { contains(m, k) }\n\
+        function entries using v(m: Map<Int[0, 3], Integer>[0, 4]): Integer pure { size(m) }\n";
+
+    /// An unguarded read: linking refuses it, direct kernel evaluation runs it.
+    const UNGUARDED: &str = "\
+        function raw using v(m: Map<Int[0, 3], Integer>[0, 4], k: Int[0, 3]): Integer pure \
+        { m[k] }\n";
+
+    fn package(mode: CheckMode, functions: &str) -> CheckedPackage {
+        let text = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n{functions}"
+        );
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("a", "u"),
+            "unit.native",
+            text.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("S1 reads the unit");
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+        let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+        PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "fixture".to_owned(),
+            unit,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("the assembler admits the declarations")
+        .check(mode, CheckingLimits::default())
+        .map(CheckedPackage::link)
+        .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"))
+    }
+
+    fn integer(value: i64) -> Value {
+        Value::Integer(Integer::from(value))
+    }
+
+    fn map(entries: &[(i64, i64)]) -> Value {
+        let key = ValueType::Int(
+            IntegerInterval::new(Integer::from(0_i64), Integer::from(3_i64)).unwrap(),
+        );
+        let map_type = MapType::new(
+            key,
+            ValueType::Integer,
+            Some(CardinalityBound::new(0, 4).unwrap()),
+        )
+        .expect("a scalar key");
+        from_admitted_map(
+            map_type,
+            entries
+                .iter()
+                .map(|(key, value)| (integer(*key), integer(*value)))
+                .collect(),
+        )
+        .expect("distinct keys")
+    }
+
+    fn call(package: &CheckedPackage, name: &str, arguments: Vec<Value>) -> Outcome<Value> {
+        call_metered(package, name, arguments).0
+    }
+
+    /// The outcome of `name(arguments)` and the work units it charged.
+    fn call_metered(
+        package: &CheckedPackage,
+        name: &str,
+        arguments: Vec<Value>,
+    ) -> (Outcome<Value>, u64) {
+        let mut meter = Meter::new(UNLIMITED);
+        meter.enable_charge_accounting();
+        let evaluation = package
+            .call(
+                &QualifiedName::unqualified(name).expect("an identifier"),
+                arguments,
+                &ObjectEnvironment::default(),
+                &mut meter,
+            )
+            .expect("the call runs");
+        let FamilyOutcome::Evaluated(outcome) = evaluation.outcome else {
+            panic!("a kernel outcome, not {:?}", evaluation.outcome);
+        };
+        let work = meter
+            .take_charge_accounting()
+            .map_or(0, |accounting| accounting.amount(LimitKind::WorkUnits));
+        (outcome, work)
+    }
+
+    fn whole(outcome: Outcome<Value>) -> i64 {
+        match outcome {
+            Outcome::Completed(Value::Integer(value)) => {
+                i64::try_from(value.to_u64().expect("a small non-negative integer")).expect("fits")
+            }
+            Outcome::Completed(_)
+            | Outcome::Undefined(_)
+            | Outcome::Refused(_)
+            | Outcome::Incomplete(_) => {
+                panic!("a completed Integer")
+            }
+        }
+    }
+
+    fn truth(outcome: Outcome<Value>) -> bool {
+        match outcome {
+            Outcome::Completed(Value::Boolean(value)) => value,
+            Outcome::Completed(_)
+            | Outcome::Undefined(_)
+            | Outcome::Refused(_)
+            | Outcome::Incomplete(_) => {
+                panic!("a completed Boolean")
+            }
+        }
+    }
+
+    #[trace("TC-1822", "FR-680-AC-3", "FSpec-FR-144-AC-33")]
+    #[test]
+    fn map_lookup_and_bounds_evaluate() {
+        let linked = package(CheckMode::Linked, FUNCTIONS);
+        let held = || map(&[(2, 20), (1, 10)]);
+        assert_eq!(whole(call(&linked, "look", vec![held(), integer(1)])), 10);
+        assert_eq!(whole(call(&linked, "look", vec![held(), integer(2)])), 20);
+        assert_eq!(whole(call(&linked, "look", vec![held(), integer(3)])), 0);
+        assert_eq!(truth(call(&linked, "has", vec![held(), integer(1)])), true);
+        assert_eq!(truth(call(&linked, "has", vec![held(), integer(0)])), false);
+        assert_eq!(whole(call(&linked, "entries", vec![held()])), 2);
+        assert_eq!(whole(call(&linked, "entries", vec![map(&[])])), 0);
+    }
+
+    /// Direct kernel evaluation runs no linking proof, so an index with no
+    /// element is the located `no-element` undefined outcome with no value.
+    #[trace("TC-1822", "FR-680-AC-3", "FSpec-FR-144-AC-33")]
+    #[test]
+    fn a_map_index_with_no_entry_is_undefined_under_kernel_evaluation() {
+        let kernel = package(CheckMode::Kernel, UNGUARDED);
+        assert_eq!(
+            whole(call(&kernel, "raw", vec![map(&[(1, 10)]), integer(1)])),
+            10
+        );
+        let (absent, absent_work) = call_metered(&kernel, "raw", vec![map(&[(1, 10)]), integer(2)]);
+        assert!(matches!(absent, Outcome::Undefined(Undefined::NoElement)));
+        // FR-144-AC-34: an absent key charges neither `collection.element` nor
+        // `collection.result-retain`: a present read pays one work unit for each.
+        let (_, present_work) = call_metered(&kernel, "raw", vec![map(&[(1, 10)]), integer(1)]);
+        assert_eq!(present_work, absent_work + 2);
+    }
+}

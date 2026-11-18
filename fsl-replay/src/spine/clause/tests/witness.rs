@@ -9,17 +9,17 @@
 //! domains are in `witness_member`.
 
 use super::frame::object;
-use super::frame_replay::{packet, request, unit_for, witness_source, Unit};
+use super::frame_replay::{Unit, packet, request, unit_for, witness_source};
 use super::*;
-use crate::execute::{separate, settle_separation, stopped_reason, SeparationOutcome};
+use crate::execute::{SeparationOutcome, separate, settle_separation, stopped_reason};
 use crate::proof_result::SettlementBasis;
 use crate::result::{DecidingElement, SeparatingWitnessRecord};
-use crate::witness::{derive_separating_witness, Derived};
+use crate::witness::{Derived, derive_separating_witness};
 use crate::{
-    replay_state_clause, DisagreementCause, InputSettlement, ObservationIdentity, ReplayRefusal,
-    ReplayResult, ReplaySource, RuntimeValuePath, SeparationReason, SeparationStep,
-    StateClauseCounterexample, StateClauseReplayResult, ValuePathStep, ValuePathSubject, Verdict,
-    WitnessEnvelope, WitnessFailure, WitnessSettlement,
+    DisagreementCause, InputSettlement, ObservationIdentity, ReplayRefusal, ReplayResult,
+    ReplaySource, RuntimeValuePath, SeparationReason, SeparationStep, StateClauseCounterexample,
+    StateClauseReplayResult, ValuePathStep, ValuePathSubject, Verdict, WitnessEnvelope,
+    WitnessFailure, WitnessSettlement, replay_state_clause,
 };
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::checking::CheckMode;
@@ -87,9 +87,18 @@ const CLAUSES: &[(&str, &str)] = &[
     ("FloatOrder", "fl(ONE) < fl(TWO)"),
     ("FloatNot", "not (fl(ONE) < fl(TWO))"),
     ("FloatLet", "let k = 500 in fl(ONE) < fl(TWO)"),
-    ("FloatOrOperand", "self.versionNumber = 0 or fl(ONE) < fl(TWO)"),
-    ("FloatAndOperand", "self.versionNumber > 0 and fl(ONE) < fl(TWO)"),
-    ("FloatImpliesOperand", "self.versionNumber > 0 implies fl(ONE) < fl(TWO)"),
+    (
+        "FloatOrOperand",
+        "self.versionNumber = 0 or fl(ONE) < fl(TWO)",
+    ),
+    (
+        "FloatAndOperand",
+        "self.versionNumber > 0 and fl(ONE) < fl(TWO)",
+    ),
+    (
+        "FloatImpliesOperand",
+        "self.versionNumber > 0 implies fl(ONE) < fl(TWO)",
+    ),
     (
         "NoneSelected",
         "forall(n in filter(m in ints(sequence[0, self.versionNumber]): m > 900): n < 0)",
@@ -1997,6 +2006,7 @@ fn tc_744_an_undefined_step_maps_to_undefined_evaluation() {
         )),
         location: Some(at.clone()),
         losses: Vec::new(),
+        frame_depth: 0,
     };
     let reason = stopped_reason(
         evaluation,
@@ -2510,7 +2520,7 @@ fn tc_744_every_deciding_element_kind_round_trips() {
 /// that unit's id.
 fn metre_package() -> (fsl_package::CheckedPackage, filament_exact::UnitId) {
     use fsl_semantics::value::{
-        admit_unit_graph, DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage,
+        DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage, admit_unit_graph,
     };
     let owner = json!({"kind": "source", "authority": "agent-ix", "identity": "example", "package_name": "example"});
     let length = DimensionPreimage::from_json(json!({

@@ -15,10 +15,9 @@
 
 use filament_eval::{CallFailure, Evaluation, FamilyOutcome};
 use filament_exact::{
-    admit_text, form_collection, AdmittedCharge, CardinalityBound, Charge, ChargePoint,
-    CollectionKind, CollectionType, Decimal, Incomplete, InjectedDenial, Integer, IntegerInterval,
-    LimitKind, Meter, Outcome, ScalarLimits, Text, TextPayload, TextProfile, TextType, Value,
-    ValueType,
+    AdmittedCharge, CardinalityBound, Charge, ChargePoint, CollectionKind, CollectionType, Decimal,
+    Incomplete, InjectedDenial, Integer, IntegerInterval, LimitKind, Meter, Outcome, ScalarLimits,
+    Text, TextPayload, TextProfile, TextType, Value, ValueType, admit_text, form_collection,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
@@ -182,6 +181,8 @@ fn only(kind: LimitKind, bound: u64) -> ScalarLimits {
         LimitKind::ValueOccurrences => limits.value_occurrences = bound,
         LimitKind::WorkUnits => limits.work_units = bound,
         LimitKind::ResultUnits => limits.result_units = bound,
+        // The session-level limit is not a ScalarLimits field.
+        LimitKind::LiveOccurrences => {}
     }
     limits
 }
@@ -199,7 +200,7 @@ fn requested(charge: &AdmittedCharge, kind: LimitKind) -> Option<u64> {
         LimitKind::NormalizedScalars => charge.normalized_scalars,
         LimitKind::UnitEdges => charge.unit_edges,
         LimitKind::ValueOccurrences => charge.value_occurrences,
-        LimitKind::WorkUnits | LimitKind::ResultUnits => None,
+        LimitKind::WorkUnits | LimitKind::ResultUnits | LimitKind::LiveOccurrences => None,
     }
 }
 
