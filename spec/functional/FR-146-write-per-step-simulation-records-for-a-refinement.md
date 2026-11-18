@@ -180,8 +180,8 @@ wording.
 ### Routing and settlement
 
 - The records SHALL be offered to negotiation like any `operation-contract`
-  record (FR-075): candidates are chosen by kind alone (ADR-012 §1.1), and a
-  record's extent meets the candidate's advertised mode only at
+  record (FR-075): candidates are chosen by kind alone, subject to FR-962's
+  EN-1 exclusion (ADR-012 §1.1), and a record's extent meets the candidate's advertised mode only at
   negotiation, so an `Unbounded` record settles `requires-bound` unless its
   candidate advertises `operation-contract` in unbounded mode. A record no
   candidate settles SHALL settle V-8 `unsupported`.

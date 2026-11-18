@@ -354,6 +354,14 @@ impl std::fmt::Debug for RequirementRecord {
 }
 
 impl RequirementRecord {
+    /// The record with its requirements marked as an `invariant` state
+    /// clause's ([`Requirements::of_invariant_clause`]).
+    #[must_use]
+    pub(crate) fn of_invariant_clause(mut self) -> Self {
+        self.requirements = self.requirements.of_invariant_clause();
+        self
+    }
+
     /// The record with its path condition replaced: the seam a test uses to
     /// build a record whose guard sits at an occurrence that is not a
     /// checked node.

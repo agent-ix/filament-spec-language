@@ -469,7 +469,6 @@ fn schedulability_proves_on_en7_and_a_tight_response_refutes() {
 #[trace("TC-1595", "FR-635-AC-1")]
 #[trace("TC-1595", "FR-635-AC-2")]
 #[test]
-#[ignore = "QSL-2131: EN-7 is not registered in Engines::fsl() yet (FR-489-AC-5), and this criterion lists it"]
 fn an_item_naming_a_registered_provider_settles_on_it() {
     use fsl_analyze::provider::ProviderVerdict;
     let provider = PROCESS_PROVIDER.to_owned();

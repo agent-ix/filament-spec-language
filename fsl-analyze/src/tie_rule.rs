@@ -23,7 +23,9 @@ use crate::{contract_check, model_check};
 /// is exactly EN-1 and `contract-checker`. EN-1 then decides an `invariant`
 /// state clause of a request naming a model subject; `contract-checker`
 /// decides one with no model subject, an operation's `pre` or `post`
-/// contract and a frame obligation. Every other set is returned whole.
+/// contract and a frame obligation. EN-1 is first excluded from the set of
+/// any item that is not such an invariant (FR-962,
+/// [`fsl_route::tie::exclude_en1`]). Every other set is returned whole.
 pub fn resolve_tie(
     package: &CheckedPackage,
     claim: &OccurrenceKey,
@@ -35,6 +37,12 @@ pub fn resolve_tie(
     if named.is_some() || kind != Capability::OperationContract {
         return candidates;
     }
+    let invariant_over_model = model_subject
+        && matches!(
+            select_contract(package, claim).map(|contract| contract.form()),
+            Ok(ContractForm::Invariant)
+        );
+    let candidates = fsl_route::tie::exclude_en1(candidates, kind, named, invariant_over_model);
     let CandidateOutcome::Candidates(set) = &candidates else {
         return candidates;
     };

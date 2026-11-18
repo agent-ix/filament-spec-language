@@ -162,6 +162,7 @@ pub struct Requirements {
     evidence: Option<ClaimEvidence>,
     property_form: Option<PropertyForm>,
     timed: bool,
+    invariant_clause: bool,
 }
 
 impl Requirements {
@@ -177,6 +178,7 @@ impl Requirements {
             evidence: None,
             property_form: None,
             timed: false,
+            invariant_clause: false,
         }
     }
 
@@ -194,6 +196,22 @@ impl Requirements {
     /// Whether the item is a timed item EN-6 decides ([`Self::over_timed`]).
     pub fn timed(&self) -> bool {
         self.timed
+    }
+
+    /// The requirements of an `invariant` state clause's record (FSL
+    /// FR-962): the one `operation-contract` claim form EN-1 may decide,
+    /// over a model subject. The mark is FSL's own; the item's wire
+    /// `requirements` do not carry it.
+    #[must_use]
+    pub fn of_invariant_clause(mut self) -> Self {
+        self.invariant_clause = true;
+        self
+    }
+
+    /// Whether the record is an `invariant` state clause's
+    /// ([`Self::of_invariant_clause`]).
+    pub fn invariant_clause(&self) -> bool {
+        self.invariant_clause
     }
 
     /// The requirements with the property form the record is routed and

@@ -23,5 +23,5 @@ pub use matrix::{
 };
 pub use run::{run_case, run_case_with, CaseError, CaseOutcome, CaseStage, Report};
 
-pub use cases::lifecycle_matrix;
+pub use cases::{lifecycle_matrix, task_set_case};
 pub use fault_backend::FaultInjectingBackend;

@@ -162,6 +162,10 @@ pub enum ModelCheckRefusal {
     /// memory model and so no data race.
     #[error("the race-freedom item is decided over a protocol subject only")]
     RaceOverModel,
+    /// FR-951's invariant item over a protocol subject: an invariant item
+    /// is decided over a model subject.
+    #[error("the invariant item is decided over a model subject only")]
+    InvariantOverProtocol,
     /// The refinement's concrete subject is a protocol, whose refinement
     /// check is not built yet (FR-142, FR-145).
     #[error("a refinement over a concrete protocol is not checked yet")]
@@ -296,6 +300,12 @@ enum Item<'a> {
     /// FR-224's derived race-freedom item: `always holds(not raced)`, read
     /// from the step into each position.
     Race,
+    /// FR-951's invariant item: `always holds(I)`, `I` the named
+    /// `invariant` state clause over every conforming object of a state.
+    Invariant {
+        /// The invariant's declared name.
+        name: &'a str,
+    },
 }
 
 impl Item<'_> {
@@ -304,7 +314,7 @@ impl Item<'_> {
     fn fairness(&self) -> &[FairnessConstraint] {
         match self {
             Self::Clause { fairness, .. } => fairness,
-            Self::Deadlock | Self::Race => &[],
+            Self::Deadlock | Self::Race | Self::Invariant { .. } => &[],
         }
     }
 
@@ -314,7 +324,7 @@ impl Item<'_> {
             Self::Clause {
                 protocol_fairness, ..
             } => protocol_fairness,
-            Self::Deadlock | Self::Race => &[],
+            Self::Deadlock | Self::Race | Self::Invariant { .. } => &[],
         }
     }
 
@@ -322,7 +332,7 @@ impl Item<'_> {
     fn instance_count(&self) -> usize {
         match self {
             Self::Clause { bindings, .. } => bindings.len(),
-            Self::Deadlock | Self::Race => 1,
+            Self::Deadlock | Self::Race | Self::Invariant { .. } => 1,
         }
     }
 }
@@ -689,6 +699,9 @@ pub fn check_protocol(
     request: ProtocolCheckRequest<'_>,
     cancel: &Cancel,
 ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
+    if matches!(request.item, ModelCheckItem::Invariant { .. }) {
+        return Err(ModelCheckRefusal::InvariantOverProtocol);
+    }
     if let ModelCheckItem::Clause { clause, .. } = request.item {
         if clause.property_form() == Some(PropertyForm::Liveness) {
             return check_protocol_liveness(request, cancel);
@@ -993,7 +1006,7 @@ impl ProtocolRun<'_> {
         // FR-430 adds scheduler constraints to infinite-trace clauses, not
         // to the derived deadlock-freedom item.
         let fairness = match self.item {
-            Item::Deadlock | Item::Race => Vec::new(),
+            Item::Deadlock | Item::Race | Item::Invariant { .. } => Vec::new(),
             Item::Clause { .. } => system
                 .fairness_set_with_targets(self.item.fairness(), self.item.protocol_fairness())?,
         };
@@ -1163,7 +1176,7 @@ fn check_reduced(
                 }]
             }
         }
-        ModelCheckItem::DeadlockFreedom => vec![Plan {
+        ModelCheckItem::DeadlockFreedom | ModelCheckItem::Invariant { .. } => vec![Plan {
             bindings: Vec::new(),
             group: group.clone(),
             orbit: Vec::new(),
@@ -1395,6 +1408,15 @@ fn ample_of<'r, 'a>(
             constraint,
         ),
         Item::Deadlock | Item::Race => Por::new(system, None, &[], &[], constraint),
+        // FR-951: the invariant's letter reads what its body reads, so
+        // every step that writes a location it reads is visible.
+        Item::Invariant { name } => Por::new(system, None, &[], &[], constraint).and_then(|por| {
+            Ok(por.with_visible_reads(
+                system
+                    .constraint_reads(name)
+                    .map_err(ModelCheckRefusal::Footprint)?,
+            ))
+        }),
     }?;
     Ok(ModelAmple { system, por })
 }
@@ -1429,9 +1451,9 @@ pub(super) fn precheck(
             ModelCheckItem::Clause { clause, .. } => clause
                 .property_form()
                 .ok_or_else(|| fault("a-decided-clause-has-a-form"))?,
-            ModelCheckItem::DeadlockFreedom | ModelCheckItem::RaceFreedom => {
-                PropertyForm::ReachableInvariant
-            }
+            ModelCheckItem::DeadlockFreedom
+            | ModelCheckItem::RaceFreedom
+            | ModelCheckItem::Invariant { .. } => PropertyForm::ReachableInvariant,
         };
         return Ok(Admitted::Settled(settled(ReductionCause::NotPreserving {
             reduction,
@@ -1481,6 +1503,9 @@ fn prepare(
         // The derived items read one atom, true at every position, so they
         // share an automaton.
         let derived = match (item, counting) {
+            (ModelCheckItem::Invariant { clause }, _) => Item::Invariant {
+                name: clause.name(),
+            },
             (ModelCheckItem::RaceFreedom, Counting::Every) => {
                 return Err(ModelCheckRefusal::RaceOverModel);
             }
@@ -2451,7 +2476,7 @@ impl<S: SubjectSystem> Run<'_, S> {
                 last_read: Some(last),
                 ..
             } => usize::try_from(*last).map_or(usize::MAX, |last| last.saturating_add(1)),
-            Item::Clause { .. } | Item::Deadlock | Item::Race => 0,
+            Item::Clause { .. } | Item::Deadlock | Item::Race | Item::Invariant { .. } => 0,
         };
         (key, monitor, distance.min(reach))
     }
@@ -2543,6 +2568,9 @@ impl<S: SubjectSystem> Run<'_, S> {
     ) -> Step<Reading> {
         if matches!(self.item, Item::Deadlock) {
             return Ok((before.to_vec(), Vec::new(), None));
+        }
+        if let Item::Invariant { name } = self.item {
+            return self.invariant_letter(node, before, name);
         }
         if matches!(self.item, Item::Race) {
             let bad = match &node.parent {
@@ -2830,8 +2858,49 @@ impl<S: SubjectSystem> Run<'_, S> {
     fn binding_of(&self, instance: usize) -> Option<ModelInstance> {
         match self.item {
             Item::Clause { bindings, .. } => bindings.get(instance).cloned(),
-            Item::Deadlock | Item::Race => None,
+            Item::Deadlock | Item::Race | Item::Invariant { .. } => None,
         }
+    }
+
+    /// FR-951 and FR-338: the invariant item's letter `I` at `node`, the
+    /// invariant `name`'s body over every object of the state whose type
+    /// conforms to its context type, read as FR-158 reads a state
+    /// constraint. A false `I` violates the item at `node` with a `formula`
+    /// counterexample, and an undefined one with the undefined-evaluation
+    /// envelope at the invariant; the monitor of `always holds(I)` steps on
+    /// the letter either way.
+    fn invariant_letter(
+        &mut self,
+        node: &Node<S::State, S::TransitionId>,
+        before: &[StateId],
+        name: &str,
+    ) -> Step<Reading> {
+        self.poll()?;
+        let reducer = self
+            .reducer
+            .ok_or_else(|| fault("an-invariant-run-reads-a-model-state"))?;
+        let bad = match reducer.constraint_value(&node.state, name) {
+            Ok(ConstraintValue::Holds) => None,
+            Ok(ConstraintValue::Boundary) => Some((CounterexampleKind::Formula, 0)),
+            Ok(ConstraintValue::Undefined { cause, .. }) => {
+                let site = Self::site(node, UndefinedLocus::Invariant(name.to_owned()), None);
+                Some((
+                    CounterexampleKind::UndefinedEvaluation(UndefinedEvaluation { site, cause }),
+                    0,
+                ))
+            }
+            Err(stop) => return Err(self.expansion_stop(stop)),
+        };
+        let letter = if bad.is_none() {
+            Letter::from_bits(1)
+        } else {
+            Letter::default()
+        };
+        let mut after = Vec::with_capacity(before.len());
+        for from in before {
+            after.push(self.monitor.step(*from, letter).map_err(Self::automaton)?);
+        }
+        Ok((after, Vec::new(), bad))
     }
 
     /// FR-124 and ADR-018 DL-7: the deadlock-freedom item's letter at node

@@ -105,7 +105,6 @@ fn explicit_state_items_prove_and_refute() {
 /// FR-625-AC-4: an invariant state clause is an explicit-state item.
 #[trace("TC-1585", "FR-625-AC-4")]
 #[test]
-#[ignore = "QSL-2301: needs an EN-1 invariant item form (translation, closure certificate, replayed state-clause counterexample) and the record backend member FR-621 states"]
 fn invariant_items_prove_and_refute() {
     let ws = Workspace::new("cli-invariant");
     let body = "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n\
@@ -411,7 +410,6 @@ fn a_step_bound_leaves_the_horizon_state_in_the_frontier() {
 /// FR-635-AC-3: an unregistered backend is an invalid request.
 #[trace("TC-1595", "FR-635-AC-3")]
 #[test]
-#[ignore = "QSL-2131: EN-7 is not registered in Engines::fsl() yet (FR-489-AC-5), and this criterion lists it"]
 fn an_unregistered_backend_is_refused() {
     let ws = Workspace::new("cli-backend");
     let run = analyze(&counter_request(
