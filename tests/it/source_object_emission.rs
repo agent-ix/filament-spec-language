@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-569 "Emission": the checked-package/v2 graph has no node for a source
-//! object type, so a unit that declares one is refused at emission and writes
-//! nothing; a unit that declares none emits as before.
+//! FR-569 "Emission": a unit that declares a source object type emits and
+//! writes its handoff directory; a unit that declares none emits as before.
 
-use fsl_command::checked_handoff::{write, Corpus, ErrorCode};
-use fsl_command::emit_checked_v2::{self, Error, Request};
-use fsl_foundation::diagnostic::Code;
+use fsl_command::checked_handoff::{write, Corpus};
+use fsl_command::emit_checked_v2::{self, Request};
 use ix_trace_rs::trace;
 
 use super::checked_handoff::request;
@@ -29,46 +27,31 @@ fn source_request(directory: &std::path::Path) -> Request {
     }
 }
 
-/// FR-569-AC-11: a unit that declares a source object type is refused with
-/// one `unsupported_construct`/`not-yet-implemented` naming
-/// `SourceObjectEmission`, and the handoff writer creates no directory.
+/// FR-569-AC-11: a unit that declares a source object type is not refused for
+/// declaring it; it emits.
 #[trace("FR-569-AC-11", "TC-1408")]
 #[test]
-fn a_unit_with_a_source_object_is_refused_at_emission_and_writes_nothing() {
+fn a_unit_with_a_source_object_emits() {
     let holder = tempfile::tempdir().unwrap();
     let source = source_request(holder.path());
-    let Err(Error::Producer(refusal)) = emit_checked_v2::emit(&source) else {
-        panic!("the source object is refused");
-    };
-    assert_eq!(refusal.code(), Code::UnsupportedConstruct);
-    assert_eq!(refusal.cause(), Some("not-yet-implemented"), "{refusal}");
-    assert!(
-        refusal.to_string().contains("SourceObjectEmission"),
-        "{refusal}"
-    );
+    let bytes = emit_checked_v2::emit(&source).unwrap_or_else(|error| panic!("{error}"));
+    assert!(!bytes.is_empty());
+}
 
-    // The diagnostic locates the refusal at the first `object` declaration.
-    let fsl_replay::ReplayRefusal::Recompile(inner) = &*refusal else {
-        panic!("a recompile refusal: {refusal:?}");
-    };
-    let region = inner.region().expect("the refusal has a region");
-    let at = UNIT.find("object Order").unwrap();
-    let end = at
-        + "object Order { total: Int[0, 9]; population orders; operation size(): Integer; }".len();
-    assert_eq!((region.start(), region.end()), (at as u64, end as u64));
-
+/// FR-569-AC-11: the handoff writer also creates the directory. The reader
+/// the writer runs over the package does not yet admit source
+/// `operation_bodies` rows.
+#[trace("FR-569-AC-11", "TC-1408")]
+#[test]
+#[ignore = "QSL-2347: the reader admits source operation_bodies rows; not implemented yet"]
+fn a_unit_with_a_source_object_writes_the_handoff() {
+    let holder = tempfile::tempdir().unwrap();
+    let source = source_request(holder.path());
     let out = holder.path().join("handoff");
     let mut handoff = request("event_position", Corpus::None);
     handoff.emit = source;
-    let error = write(&handoff, &out).unwrap_err();
-    assert_eq!(error.code(), ErrorCode::Compile);
-    assert!(!out.exists());
-    let mut entries: Vec<_> = std::fs::read_dir(holder.path())
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
-    entries.sort();
-    assert_eq!(entries, ["source.native"]);
+    write(&handoff, &out).unwrap_or_else(|error| panic!("{error}"));
+    assert!(out.join("identities.json").is_file());
 }
 
 /// A unit with no `object` declaration emits as before.

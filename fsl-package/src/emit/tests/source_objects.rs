@@ -341,6 +341,7 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
         rows.source_objects().to_vec(),
         rows.source_operations().to_vec(),
         emission.source_object_member_facts.clone(),
+        emission.source_object_operations.clone(),
     );
     assert_eq!(
         constructed
@@ -356,7 +357,16 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
         identity_json["format"],
         "filament.checked-handoff.identities/4"
     );
-    let object_json = &identity_json["source_objects"][0];
+    let objects_json = identity_json["source_objects"].as_array().expect("rows");
+    assert_eq!(objects_json.len(), 1);
+    let by_identity = |name: &str| {
+        objects_json
+            .iter()
+            .find(|row| row["source_identity"] == name)
+            .unwrap_or_else(|| panic!("row for {name}"))
+    };
+    assert_eq!(by_identity("Order")["operations"], json!([]));
+    let object_json = by_identity("Order");
     assert!(object_json.get("abstract").is_some());
     assert!(object_json.get("is_abstract").is_none());
     let members = object_json["members"].as_array().expect("member array");
@@ -397,7 +407,136 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
     assert_eq!(read, rows);
     assert_eq!(read.to_bytes(&package).unwrap(), bytes);
     assert_eq!(read.source_objects().len(), 1);
-    assert_eq!(read.source_objects()[0].source_identity.as_ref(), "Order");
+    assert!(read
+        .source_objects()
+        .iter()
+        .any(|row| row.source_identity.as_ref() == "Order"));
+    assert_eq!(
+        read.source_object_operations(),
+        emission.source_object_operations()
+    );
+}
+
+/// FR-569-AC-16 through the QC-30 intake: the reader does not yet admit
+/// source `operation_bodies` rows, so a unit with operations is refused
+/// before its identity rows can be joined.
+#[trace("FR-569-AC-16", "TC-1408")]
+#[test]
+#[ignore = "QSL-2347: the reader admits source operation_bodies rows; not implemented yet"]
+fn source_object_operations_roundtrip_through_qc30_intake() {
+    let source = format!(
+        "{HEADER}record Point {{ x: Integer; }}\nobject Order {{ point: Point; operation size(): Integer; operation bump(): Boolean modifies self.point; }}\nobject Sub extends Order {{ operation size(): Integer redefines Order::size; }}\n"
+    );
+    let packages =
+        fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
+    let declarations = assemble_with_models(source.as_bytes(), &packages).unwrap();
+    let graph = declarations
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("source object checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the source emits");
+    let wire = wire(&emission);
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    let read = CheckedPackageV2::read(
+        emission.package().bytes(),
+        CheckedPackageReadLimits::bounded(),
+        &evidence,
+    );
+    let CheckedPackageV2ReadResult::Admitted(package) = read else {
+        panic!("QC-30 intake admits source object package: {read:?}");
+    };
+    let rows = emission
+        .identity_rows(
+            &package,
+            &mut filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
+        )
+        .expect("source identity rows join");
+    let bytes = rows.to_bytes(&package).expect("identity rows encode");
+    let identity_json: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");
+    let objects = identity_json["source_objects"].as_array().expect("rows");
+    let row = |name: &str| {
+        objects
+            .iter()
+            .find(|row| row["source_identity"] == name)
+            .unwrap_or_else(|| panic!("row for {name}"))
+    };
+    assert_eq!(
+        row("Order")["operations"],
+        json!([
+            {"identity": "Order::size", "query": true},
+            {"identity": "Order::bump", "query": false},
+        ])
+    );
+    assert_eq!(
+        row("Sub")["operations"],
+        json!([{"identity": "Sub::size", "query": true}])
+    );
+    let read = crate::ReadIdentityRows::read(
+        &bytes,
+        &package,
+        &mut crate::V2ReadLimits::fixture().native_join_budget(),
+    )
+    .expect("QC-30 reads source identity rows");
+    assert_eq!(read, rows);
+    assert_eq!(
+        read.source_object_operations(),
+        emission.source_object_operations()
+    );
+}
+
+/// FR-569-AC-16: a row carries one `{identity, query}` entry per operation
+/// its type declares itself, none for an inherited one, and each entry has
+/// exactly one `operation_effects` row naming it.
+#[trace("FR-569-AC-16", "TC-1408")]
+#[test]
+fn source_object_rows_carry_their_own_operations_and_query_flag() {
+    let source = format!(
+        "{HEADER}record Point {{ x: Integer; }}\nobject Order {{ point: Point; operation size(): Integer; operation bump(): Boolean modifies self.point; }}\nobject Sub extends Order {{ operation size(): Integer redefines Order::size; }}\nabstract object Shape {{ }}\n"
+    );
+    let packages =
+        fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
+    let declarations = assemble_with_models(source.as_bytes(), &packages).unwrap();
+    let graph = declarations
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("source object checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the source emits");
+    let wire = wire(&emission);
+    let by_name = emission
+        .selected_source_object_rows()
+        .iter()
+        .zip(emission.source_object_operations())
+        .map(|(row, operations)| {
+            let entries = operations
+                .iter()
+                .map(|operation| (operation.identity.to_string(), operation.query))
+                .collect::<Vec<_>>();
+            (row.source_identity.to_string(), entries)
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(
+        by_name["Order"],
+        [
+            ("Order::size".to_owned(), true),
+            ("Order::bump".to_owned(), false)
+        ]
+    );
+    assert_eq!(by_name["Sub"], [("Sub::size".to_owned(), true)]);
+    assert!(by_name["Shape"].is_empty());
+    let effects = wire["operation_effects"].as_array().expect("effect rows");
+    for (identity, _) in by_name.values().flatten() {
+        let matching = effects
+            .iter()
+            .filter(|row| row["provenance"]["member"] == identity.as_str())
+            .count();
+        assert_eq!(matching, 1, "{identity}");
+    }
+    assert_eq!(
+        effects.len(),
+        by_name.values().map(Vec::len).sum::<usize>(),
+        "no operation_effects row lacks an entry"
+    );
 }
 
 #[trace("FR-088-AC-13", "FR-569-AC-6", "TC-2360")]

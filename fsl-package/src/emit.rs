@@ -172,16 +172,6 @@ pub enum EmitRefusal {
         /// The checked source locus of the first unsupported declaration.
         region: fsl_foundation::source::provenance::SourceRegion,
     },
-    /// The unit declares a source `object` type, which the checked-package/v2
-    /// graph has no node shape for yet: the emitter refuses at the first
-    /// declaration rather than write a package without it.
-    #[error(
-        "source object declarations cannot be written to a checked-package/v2 graph yet (SourceObjectEmission)"
-    )]
-    SourceObjectEmission {
-        /// The first `object` declaration's span.
-        span: fsl_foundation::Span,
-    },
     /// Interim fail-closed guard: this emission path does not yet map a
     /// checked time source into `timed_model` nodes, and it cannot omit one
     /// because the time source is part of the package's meaning.
@@ -494,9 +484,9 @@ impl EmitRefusal {
             Self::Abstraction(_) => Code::UnsupportedProjection,
             Self::StaleProtocolReference { .. } => Code::MissingDeclaration,
             Self::Cancelled { .. } => Code::Cancelled,
-            Self::ProbabilisticModelNotEmitted { .. }
-            | Self::TimedModelNotEmitted { .. }
-            | Self::SourceObjectEmission { .. } => Code::UnsupportedConstruct,
+            Self::ProbabilisticModelNotEmitted { .. } | Self::TimedModelNotEmitted { .. } => {
+                Code::UnsupportedConstruct
+            }
             Self::FloatEqualityScheduleNotEmitted => Code::UnsupportedConstruct,
             Self::NativeLiteralNotEmitted { .. } => Code::UnsupportedConstruct,
             Self::MonitorPlanAmbiguous { .. } => Code::InvalidProjectionCorrespondence,
@@ -532,9 +522,9 @@ impl EmitRefusal {
             Self::MonitorBaseRefused(_) => None,
             Self::ClockSelection(refusal) => Some(refusal.cause.as_str()),
             Self::PerTraceClockConfigurations { .. } => Some("not-yet-implemented"),
-            Self::ProbabilisticModelNotEmitted { .. }
-            | Self::TimedModelNotEmitted { .. }
-            | Self::SourceObjectEmission { .. } => Some("not-yet-implemented"),
+            Self::ProbabilisticModelNotEmitted { .. } | Self::TimedModelNotEmitted { .. } => {
+                Some("not-yet-implemented")
+            }
             Self::RefinementNotEmitted => Some("not-yet-implemented"),
             Self::NothingToEmit { .. }
             | Self::ProtocolResultsRequired
@@ -666,6 +656,18 @@ pub struct SourceObjectMemberFacts {
     pub value_type: filament_exact::ValueType,
 }
 
+/// One operation a source object type itself declares, as its FR-569
+/// "Source-object identity rows" `operations` entry carries it. The IR row
+/// type has no operations member, so these ride beside the rows, aligned
+/// one-for-one with them.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceObjectOperationFacts {
+    /// The operation's source identity, `<type>::<operation>`.
+    pub identity: Box<str>,
+    /// Whether the operation is a query: it has a result and an empty effect.
+    pub query: bool,
+}
+
 /// One model-owned enum (a variant type of a selected domain model)'s checked
 /// variant shape, joined to the final emitted declaration and case nodes
 /// (FR-092 "Model enum shape rows"). It carries the checker's
@@ -770,6 +772,9 @@ pub struct Emission {
     /// Full FR-531 source-record-shaped member witnesses aligned with source
     /// object rows and their members.
     pub(crate) source_object_member_facts: Vec<Vec<SourceObjectMemberFacts>>,
+    /// The operations each source-object row's type declares, aligned with
+    /// `selected_source_object_rows`.
+    pub(crate) source_object_operations: Vec<Vec<SourceObjectOperationFacts>>,
     /// FSL-stage source-operation witnesses joined to emitted anchors
     /// (FR-390).
     pub(crate) selected_source_operation_rows:
@@ -1030,6 +1035,7 @@ impl DebugWith for Emission {
             selected_source_record_rows,
             selected_source_object_rows,
             source_object_member_facts,
+            source_object_operations,
             selected_source_operation_rows,
             selected_source_tuple_rows,
             selected_model_enum_shape_rows,
@@ -1075,6 +1081,7 @@ impl DebugWith for Emission {
             .field("selected_source_record_rows", selected_source_record_rows)
             .field("selected_source_object_rows", selected_source_object_rows)
             .field("source_object_member_facts", source_object_member_facts)
+            .field("source_object_operations", source_object_operations)
             .field(
                 "selected_source_operation_rows",
                 selected_source_operation_rows,
@@ -1405,6 +1412,13 @@ impl Emission {
     /// [`crate::ReadIdentityRows`] directly.
     pub fn source_object_member_facts(&self) -> &[Vec<SourceObjectMemberFacts>] {
         &self.source_object_member_facts
+    }
+
+    /// The operations each selected source-object row's type declares itself,
+    /// aligned with [`Self::selected_source_object_rows`]. Needed when callers
+    /// construct [`crate::ReadIdentityRows`] directly.
+    pub fn source_object_operations(&self) -> &[Vec<SourceObjectOperationFacts>] {
+        &self.source_object_operations
     }
 
     /// Source-owned operation rows carried by this emission.
@@ -6101,6 +6115,7 @@ pub fn emit_timed_models(
         selected_source_record_rows: Vec::new(),
         selected_source_object_rows: Vec::new(),
         source_object_member_facts: Vec::new(),
+        source_object_operations: Vec::new(),
         selected_source_operation_rows: Vec::new(),
         selected_source_tuple_rows: Vec::new(),
         selected_model_enum_shape_rows: Vec::new(),
@@ -7142,7 +7157,7 @@ fn emit_package_inner(
     let selected_model_enum_shape_rows = model_enum_shape_rows(graph, &emitted_node_ids)?;
     let selected_source_union_rows = source_union_rows(graph, &emitted_node_ids)?;
     let selected_source_record_rows = source_record_rows(graph, &emitted_node_ids)?;
-    let (selected_source_object_rows, source_object_member_facts) =
+    let (selected_source_object_rows, source_object_member_facts, source_object_operations) =
         source_object_rows(graph, &emitted_node_ids)?;
     let selected_source_operation_rows = source_operation_rows(graph, &emitted_node_ids)?;
     let selected_source_tuple_rows = source_tuple_rows(graph, &emitted_node_ids)?;
@@ -7210,6 +7225,7 @@ fn emit_package_inner(
         selected_source_record_rows,
         selected_source_object_rows,
         source_object_member_facts,
+        source_object_operations,
         selected_source_operation_rows,
         selected_source_tuple_rows,
         selected_model_enum_shape_rows,
@@ -7441,19 +7457,21 @@ fn source_record_rows_over<'d>(
     Ok(rows.into_iter().map(|(_, row)| row).collect())
 }
 
+/// The source-object rows, the checked member facts and the own-operation
+/// entries of each, aligned one-for-one.
+type SourceObjectRows = (
+    Vec<filament_contract_model::SelectedSourceObjectRow>,
+    Vec<Vec<SourceObjectMemberFacts>>,
+    Vec<Vec<SourceObjectOperationFacts>>,
+);
+
 /// FR-569 "Source-object identity rows": one row for each emitted source
 /// object node, joined to its checked declaration, effective body bindings,
 /// normalized supertypes and populations.
 fn source_object_rows(
     graph: &CheckedGraph,
     emitted: &HashMap<NodeKey, CheckedNodeId>,
-) -> Result<
-    (
-        Vec<filament_contract_model::SelectedSourceObjectRow>,
-        Vec<Vec<SourceObjectMemberFacts>>,
-    ),
-    EmitRefusal,
-> {
+) -> Result<SourceObjectRows, EmitRefusal> {
     use filament_contract_model::{SelectedSourceObjectMember, SelectedSourcePopulation};
 
     let semantic = graph.semantic_graph();
@@ -7580,6 +7598,27 @@ fn source_object_rows(
                 _ => None,
             })
             .collect();
+        let operations = graph
+            .source_packages()
+            .iter()
+            .flat_map(|package| &package.records)
+            .filter_map(|record| match record {
+                fsl_semantics::model::domain_package::DomainPackageRecord::OperationMember(
+                    operation,
+                ) if operation.owner == object.key => {
+                    let name = operation
+                        .key
+                        .node
+                        .strip_prefix(&format!("{}/", operation.owner.node))
+                        .filter(|name| !name.is_empty() && !name.contains('/'))?;
+                    Some(SourceObjectOperationFacts {
+                        identity: format!("{}::{name}", source_identity.as_str()).into(),
+                        query: operation.result.is_some() && operation.effect.is_empty(),
+                    })
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         rows.push((
             filament_contract_model::SelectedSourceObjectRow {
                 structural_node: structural_node.clone(),
@@ -7595,11 +7634,19 @@ fn source_object_rows(
                 populations,
             },
             member_facts,
+            operations,
         ));
     }
     rows.sort_by(|left, right| left.0.structural_node.cmp(&right.0.structural_node));
-    let (rows, member_facts) = rows.into_iter().unzip();
-    Ok((rows, member_facts))
+    let mut selected = Vec::with_capacity(rows.len());
+    let mut member_facts = Vec::with_capacity(rows.len());
+    let mut operations = Vec::with_capacity(rows.len());
+    for (row, members, own_operations) in rows {
+        selected.push(row);
+        member_facts.push(members);
+        operations.push(own_operations);
+    }
+    Ok((selected, member_facts, operations))
 }
 
 fn source_node_for_declaration<'a>(

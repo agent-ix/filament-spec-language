@@ -169,6 +169,21 @@ impl Emission {
                     .collect::<Result<Vec<_>, NativeRowError>>()?,
             );
         }
+        let mut source_object_operations = Vec::with_capacity(self.source_object_operations.len());
+        charge::items(budget, locus, self.source_object_operations.len())?;
+        for (index, own) in self.source_object_operations.iter().enumerate() {
+            let locus = adapter_locus(index, "identity_object_operation_output");
+            charge::items(budget, locus, own.len())?;
+            source_object_operations.push(
+                own.iter()
+                    .map(|operation| {
+                        charge::work(budget, locus, 1)?;
+                        charge::text(budget, locus, &operation.identity)?;
+                        Ok(operation.clone())
+                    })
+                    .collect::<Result<Vec<_>, NativeRowError>>()?,
+            );
+        }
         for (index, row) in self.selected_source_object_rows.iter().enumerate() {
             objects.push(copy_source_object(
                 row,
@@ -200,6 +215,7 @@ impl Emission {
             objects,
             operations,
             source_object_member_facts,
+            source_object_operations,
         ))
     }
 }

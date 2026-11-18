@@ -23,7 +23,7 @@ supertypes, populations and operations; that they resolve, refuse
 collisions, check and evaluate on the source route as a domain package's
 object types do; that S4 emits such a unit per FR-995 and FR-996 (the target emission: source-owned `model`/`object_type` nodes,
 clause functions, effects, dispatch tables and identity rows, source declaration keys, the clock-place join and source operation_bodies rows). Scope:
-FR-569-AC-1 to FR-569-AC-11, FR-105-AC-18, FR-218-AC-39, FR-383-AC-67 and the
+FR-569-AC-1 to FR-569-AC-11, FR-569-AC-16, FR-105-AC-18, FR-218-AC-39, FR-383-AC-67 and the
 fixture-S parts of FR-390-AC-70 and FR-390-AC-72. Steps 1 to 4 and 7 to 9 run
 and pass now; steps 5 and 6 wait on QC-30.
 
@@ -104,7 +104,9 @@ Variants, each one change to S (or D):
 6. **waits on QC-30.** Read the `source_objects` and `source_operations` rows
    of S's and D's emissions and of `identities.json`; run the refusal
    suppliers of FR-569-AC-8 and the fixture-S suppliers of FR-390-AC-72.
-   (FR-569-AC-8, FR-390-AC-70, FR-390-AC-72)
+   Read each row's `operations` and check them against the
+   `operation_effects` rows. (FR-569-AC-8, FR-569-AC-16, FR-390-AC-70,
+   FR-390-AC-72)
 7. Admit the snapshots of AC-9 over S and over S-M. (FR-569-AC-9)
 8. Evaluate vectors V1 to V6 over S and D on the source route, with the
    current snapshot `orders` = {`o1` (`Order`, `total` 3), `o2` (`Sub`,
@@ -147,7 +149,7 @@ Tag each test with the criteria it asserts and `TC-1408`, for example
   changed by the rename of `Order`; S's and D's `Order` ids differ; IR's
   strict reader admits every package.
 - Step 6: three source-object rows over S with the members, identity fields
-  and populations AC-8 states, and none over D; one source-operation row
+  and populations AC-8 states and the operations AC-16 states, and none over D; one source-operation row
   (`Order::bump`) over S and none over D; the file round-trips equal; each
   refusal supplier gives the reason FR-569-AC-8 or FR-390-AC-72 states at the
   `Package` locus, with no view and no charge.

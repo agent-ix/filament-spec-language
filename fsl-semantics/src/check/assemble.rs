@@ -6038,13 +6038,6 @@ impl PackageDeclarations {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        package.first_source_object = unit.objects.first().map(|object| {
-            let declaring = package
-                .source_owners
-                .get(&object.name.name)
-                .unwrap_or(&package.source);
-            (declaring.clone(), object.span)
-        });
         package.protocols = unit.protocols;
         package.temporal_clauses = unit.temporal_clauses;
         package.timed_forms = unit.timed;
