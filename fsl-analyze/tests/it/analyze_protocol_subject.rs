@@ -14,7 +14,9 @@ fn binding() -> Value {
 }
 
 fn sb_subject() -> Value {
-    json!({"protocol": {"protocol": "SB", "roles": {"w": binding(), "c": binding()}}})
+    json!({"protocol": {"protocol": "SB",
+        "over": {"reference": {"population": "ix://test/litmus/cores", "key": "core"}},
+        "roles": {"w": binding(), "c": binding()}}})
 }
 
 /// FR-1033-AC-1: the claim holds over `SB` under `sc` and is refuted under a
@@ -62,11 +64,20 @@ fn a_race_freedom_item_over_a_parallel_is_refuted() {
     let run = analyze(&litmus_request(
         &ws,
         &body,
-        json!({"items": [{"claim": "SB::Both", "temporal": {"item_kind": "race-freedom"}}]}),
+        json!({"subject": sb_subject(),
+            "items": [{"claim": "SB::Both", "temporal": {"item_kind": "race-freedom"}}]}),
     ));
     assert_eq!(label(&run.item(0)), "refuted", "{}", run.document());
     let race = &run.item(0)["counterexample"]["counterexample"]["kind"];
     assert!(race.to_string().contains("race"), "{}", run.document());
+    let ws = Workspace::new("protocol-race-default-items");
+    let defaults = analyze(&litmus_request(&ws, &body, json!({"subject": sb_subject()})));
+    let items = defaults.document()["items"].as_array().cloned().unwrap_or_default();
+    assert!(
+        items.iter().any(|item| item["request"]["temporal"]["item_kind"] == "race-freedom"),
+        "{}",
+        defaults.document()
+    );
 }
 
 /// FR-1033-AC-4 (negative): an unknown model and a selection naming no

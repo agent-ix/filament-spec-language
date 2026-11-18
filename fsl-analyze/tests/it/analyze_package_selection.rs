@@ -257,12 +257,23 @@ fn the_package_route_reaches_the_source_checked_evaluators() {
     assert_eq!(run.item(1)["replay"]["reproduced"], true);
 }
 
-/// FR-940-AC-6 (negative): a package the strict reader refuses settles no
+/// FR-940-AC-6: every item family settles equally on both routes, and a
+/// package the strict reader refuses settles no
 /// item and is never analyzed from source instead.
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 #[ignore = "QSL-2271: the package route without a source fallback is not implemented yet"]
 fn a_refused_package_never_falls_back_to_source() {
+    let families = format!("{}{}{}", bounded(), at_most_two(), not_above_three());
+    let all = json!([{"claim": "Bounded"}, {"claim": "AtMostTwo"}, {"claim": "NotAboveThree"}]);
+    let ws = Workspace::new("package-equal-families");
+    let source = analyze(&counter_request(&ws, &families, all.clone()));
+    let (members, _) = package_request(&ws, &families, all);
+    let package = analyze_members(&ws, "analyze-families.json", &members);
+    assert_eq!(package.document()["items"], source.document()["items"]);
+    for index in 0..3 {
+        assert_ne!(label(&package.item(index)), "unsupported", "{}", package.document());
+    }
     let body = format!("{}{}", bounded(), not_above_three());
     let items = json!([{"claim": "NotAboveThree"}]);
     let ws = Workspace::new("package-no-fallback");

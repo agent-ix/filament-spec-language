@@ -20,6 +20,7 @@ fn unit() -> String {
          profile i = \"{INFINITE}\";\n\
          type Zero = Int[0, 0];\n\
          function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure {{ xs }}\n\
+         function k using v(x: Integer): Integer pure {{ 3 mod x }}\n\
          record Reading {{ level: Int[0, 9]; stopped: Boolean; }}\n\
          temporal Fast using e over (r: Reading) clock \"events\" on origin \
          {{ capture startFast: Boolean = r.level > 3; eventually[0,3] holds(r.stopped or not startFast) }}\n\
@@ -32,9 +33,9 @@ fn unit() -> String {
          temporal Each using e over (r: Reading) clock \"events\" on each (q: Reading) \
          {{ capture start: Int[0, 9] = q.level; always[0,0] holds(r.level = start) }}\n\
          temporal Div using e over (r: Reading) clock \"events\" on origin \
-         {{ capture m: Integer = 3 mod (2 - r.level); always[0,1] holds(m >= 0) }}\n\
+         {{ capture m: Integer = k(2 - r.level); always[0,1] holds(m >= 0) }}\n\
          temporal DivEach using e over (r: Reading) clock \"events\" on each (q: Reading) \
-         {{ capture m: Integer = 3 mod (2 - r.level); always[0,1] holds(m >= 0) }}\n\
+         {{ capture m: Integer = k(2 - r.level); always[0,1] holds(m >= 0) }}\n\
          temporal Refused using e over (r: Reading) clock \"events\" on origin \
          {{ capture z: Zero = count<Zero>(m in ints(sequence[r.level]): m > 0); always[0,1] holds(z = 0) }}\n"
     )
@@ -165,7 +166,7 @@ fn each_activation_reads_its_own_capture() {
 /// an internal failure.
 #[test]
 #[trace("TC-2440", "FR-860-AC-4")]
-#[ignore = "QSL-2001: a capture fault is reported as runtime_invariant (exit 30), not at the capture"]
+#[ignore = "QSL-2001: the fixture must be checked under CheckMode::Kernel and selected as a package (FR-860-AC-4); a capture fault through `k` is reported as runtime_invariant (exit 30), not at the capture"]
 fn a_capture_fault_is_reported_at_the_capture() {
     let directory = tempfile::tempdir().unwrap();
     let output = run(directory.path(), "Div", json!({"finite": moving(&[2, 0])}));

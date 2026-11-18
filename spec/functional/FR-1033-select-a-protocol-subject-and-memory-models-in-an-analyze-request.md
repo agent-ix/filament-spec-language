@@ -64,10 +64,8 @@ FR-219 already states its resolution and refusals.
   `protocol` is required and names a protocol clause of the checked package.
   `over` is the clause-run request's `over` spelling,
   `{"reference": {"population": "<population identity>", "key": "<object key>"}}`;
-  it is required when the clause's `over` parameter is reference-typed and its
-  population universe holds more than one object, defaults to that one object
-  when the universe holds exactly one, and is absent when the parameter's type
-  is a finite non-reference type, whose domain the stepper ranges over.
+  it is required: the subject binds the clause's `over` parameter to exactly
+  one object of its population universe (FR-205, FSpec FR-425, FR-433).
   `roles` (default empty) binds each static role on a model type to
   `{"type": "model-binding", "selection": "<domain package identity>"}`;
   a role on a whole model is bound by construction and takes no entry.
@@ -83,7 +81,7 @@ FR-219 already states its resolution and refusals.
 
 FR-621's outcome document. An item over a protocol subject echoes its
 `temporal.subject` with the `protocol` member and every default made explicit
-(the defaulted `over`, and each outermost `parallel`'s effective model in the
+(the role bindings, and each outermost `parallel`'s effective model in the
 item's FSpec FR-331 `memory`), so it can be re-requested exactly.
 
 ## Behavior
@@ -99,9 +97,10 @@ item's FSpec FR-331 `memory`), so it can be re-requested exactly.
   the model subject, as FR-625 states.
 - A race-freedom item whose `claim` is the scoped path of an outermost
   `parallel` SHALL be decided over the protocol its path names. When the
-  item's subject carries no `protocol`, the subject is that protocol with its
-  `over` defaulted as above and no role or capacity binding; when it carries a
-  `protocol` naming another clause, the item SHALL settle `invalid-request`
+  item's subject carries no `protocol`, the item SHALL settle `declined`
+  `invalid-input` with `invalid_runtime_input`/`missing-member` naming
+  `temporal.subject.protocol`; when it carries a `protocol` naming another
+  clause, the item SHALL settle `invalid-request`
   with `invalid_capability`/`unknown-claim` naming the path.
 - The derived race-freedom item of FR-224 SHALL be added for each distinct
   protocol subject among the request's items whose resolved model is weak and
@@ -140,8 +139,7 @@ item's FSpec FR-331 `memory`), so it can be re-requested exactly.
   repeated, `duplicate-member`) SHALL settle each item over that subject
   `declined` `invalid-input` with that code, naming the member, as FR-625
   settles a refused subject admission; the request's other items run.
-- A `protocol` member whose `over` is absent where it is required SHALL
-  settle the item the same way with `invalid_runtime_input`/`missing-member`
+- A `protocol` member with no `over` SHALL settle the item the same way with `invalid_runtime_input`/`missing-member`
   naming `over`.
 - An unknown member of the binding SHALL refuse the whole request at the
   request stage, `invalid-request`, exit 20, naming it (FR-620 closure).
@@ -154,8 +152,8 @@ both return 0.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-1033-AC-1 | Through `fsl_command::command::analyze`, a request whose `subject.protocol` is `{"protocol": "SB", "roles": {"w": B, "c": B}}`, `B` the binding `{"type": "model-binding", "selection": "test/litmus"}` and `over` defaulted to the one `Core` object, with the item `{"claim": "NoBothZero"}` and no `memory` settles `proved`; the same request with `memory` `[{"parallel": "SB::Both", "model": "tso"}]` settles `refuted` with a counterexample carrying both pending stores and `replay.reproduced` `true`, exit 10; each item's echoed `temporal.subject` carries `protocol` `SB` and its effective model, and the two request identities differ. | Test (TC-2959) |
-| FR-1033-AC-2 | Over a variant of `SB` whose branches each make an unsynchronised non-atomic write to `x`, under `tso`, the item `{"claim": "SB::Both", "temporal": {"item_kind": "race-freedom"}}` with no `subject.protocol` settles `refuted` with a `Race` counterexample naming both writes; the request with no `items` holds the derived race-freedom item after the claim items; the same item with `subject.protocol` naming another clause settles `invalid-request` with `invalid_capability`/`unknown-claim` naming `SB::Both`. | Test (TC-2959) |
+| FR-1033-AC-1 | Through `fsl_command::command::analyze`, a request whose `subject.protocol` is `{"protocol": "SB", "over": O, "roles": {"w": B, "c": B}}`, `B` the binding `{"type": "model-binding", "selection": "test/litmus"}` and `O` the `over` binding `{"reference": {"population": "ix://test/litmus/cores", "key": "core"}}`, with the item `{"claim": "NoBothZero"}` and no `memory` settles `proved`; the same request with `memory` `[{"parallel": "SB::Both", "model": "tso"}]` settles `refuted` with a counterexample carrying both pending stores and `replay.reproduced` `true`, exit 10; each item's echoed `temporal.subject` carries `protocol` `SB` and its effective model, and the two request identities differ. | Test (TC-2959) |
+| FR-1033-AC-2 | Over a variant of `SB` whose branches each make an unsynchronised non-atomic write to `x`, under `tso`, with AC-1's `subject.protocol` over the variant, the item `{"claim": "SB::Both", "temporal": {"item_kind": "race-freedom"}}` settles `refuted` with a `Race` counterexample naming both writes; the same request with no `items` and that `subject.protocol` holds the derived race-freedom item after the claim items; the item with no `subject.protocol` settles `declined` `invalid-input` with `invalid_runtime_input`/`missing-member` naming `temporal.subject.protocol`; the same item with `subject.protocol` naming another clause settles `invalid-request` with `invalid_capability`/`unknown-claim` naming `SB::Both`. | Test (TC-2959) |
 | FR-1033-AC-3 | The item `NoBothZero` with no `subject.protocol` is decided over the model subject, as FR-625 states, and its record names no memory bound. | Test (TC-2959) |
 | FR-1033-AC-4 | A `memory` entry with `model` `pso` refuses the whole request `invalid-request`, exit 20, naming `/memory/0/model`; entries naming `SB::Both::left::L::Inner` (nested), `SB::Both::Sx` (an attempt) and `Nope::Both` (no such protocol), and two entries naming `SB::Both`, each refuse the whole request `invalid-request` with `invalid_runtime_input`/`invalid-value` naming the entry, or both entries, exit 20, with no item run. | Test (TC-2959) |
 | FR-1033-AC-5 | `subject.protocol` `{"protocol": "Missing"}` settles the item `declined` `invalid-input` with `invalid_runtime_input`/`invalid-value` naming `Missing`; a `roles` entry for a role on a whole model settles it `declined` with `invalid_runtime_input`/`wrong-role-mapping` naming the role; an unknown member `extra` of the binding refuses the whole request `invalid-request`, exit 20, naming it. | Test (TC-2959) |

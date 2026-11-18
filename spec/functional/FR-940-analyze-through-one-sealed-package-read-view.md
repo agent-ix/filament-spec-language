@@ -144,11 +144,10 @@ and `FR-621`'s outcome document is unchanged.
   read from bytes into a `CheckedPackage` or a `CheckedGraph` (FR-087 R-10).
 - A fact an engine needs that FR-531's table does not list SHALL be added to
   that table, with the row of the v2 package that carries it, before an engine
-  reads it on the package route. Until an evaluator's package form or a fact
-  row exists, a package-route item whose engine needs it SHALL settle
-  `unsupported` with `unsupported_projection`/`unsupported-requested-capability`
-  naming the evaluator or the fact; the same item over source settles its
-  verdict.
+  reads it on the package route, so the package route settles every item
+  with the verdict, record, counterexample and replay the source route gives
+  (FR-850 "Equality with the source route"). No package-route item SHALL
+  settle `unsupported` for a fact or an evaluator the source route reads.
 
 ## Acceptance Criteria
 
@@ -159,7 +158,7 @@ and `FR-621`'s outcome document is unchanged.
 | FR-940-AC-3 | `fsl analyze` with a `package` selection no longer refuses `package` as not implemented: FR-850-AC-1's request completes with FR-850's outcome, exit 0. | Test (TC-2620) |
 | FR-940-AC-4 | Over source, the Counter request with the items `Bounded`, `AtMostTwo` and the `invariant` state clause `NotAboveThree` (`self.value <= 3`, FR-625-AC-4) settles `proved`, `refuted` with `replay.reproduced` `true`, and `proved` basis `exhaustive` respectively, and the store-buffering litmus claim over `SB` with `memory` `tso` settles `refuted` (FR-629-AC-1); no record of either request is `unsupported` and no diagnostic names a package fact. | Test (TC-2958) |
 | FR-940-AC-5 | The `package` request over the bytes of AC-4's compiled Counter unit gives, for `NotAboveThree` and `AtMostTwo`, item records equal to the source route's, `AtMostTwo` with the same counterexample, replay target and `reproduced` `true`. | Test (TC-2958) |
-| FR-940-AC-6 | A `program` request and a `package` request over the same claims, where the package route lacks an evaluator's package form, differ only in that item: the package item settles `unsupported` with `unsupported_projection`/`unsupported-requested-capability` naming the evaluator, and the source item settles its verdict; a `package` file the strict reader refuses settles no item on either route and compiles no source (FR-850-AC-3). | Test (TC-2958) |
+| FR-940-AC-6 | For each item family whose evaluator FR-531's inventory lists as taking a source-checked value (the temporal clauses `Bounded` and `AtMostTwo`, the invariant `NotAboveThree`, the deadlock-freedom item and the `SB` litmus claim under `tso`), a `program` request and a `package` request over the bytes of the same compiled unit give equal item records, counterexamples and replays, and no package-route record is `unsupported`; a `package` file the strict reader refuses settles no item and compiles no source (FR-850-AC-3). | Test (TC-2958) |
 
 ## Dependencies
 
