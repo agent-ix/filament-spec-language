@@ -18,10 +18,13 @@ use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::statistical::SubjectLimits;
 use fsl_replay::{
     check_probability_certificate_document, claim_binding, probability_proof_document,
-    write_probability_proof_document, ExactBinding, ExactProbBuildIssue, ExactProbBuildRecord,
+    write_probability_certificate, write_probability_proof_document, ExactBinding,
+    ExactProbBuildIssue, ExactProbBuildRecord,
     ExactProbabilityCertificate, ExactProbabilityCertificateCheck, ExactProbabilityGraphError,
     ExactProbabilityValue, Extremum, ModelCheckLimit, ProbabilityBoundSide,
-    ProbabilityDocumentError, ProbabilityDocumentLimits, ProbabilityProductKey, TerminalRecord,
+    ProbabilityCertificateDocument, ProbabilityDocumentError, ProbabilityDocumentLimits,
+    ProbabilityObjective, ProbabilityProductKey, TerminalRecord, TimedProbabilityForm,
+    TimedProbabilityObjective, TimedProbabilityRoute,
 };
 use fsl_replay::{
     replay_probabilistic_witness, ProbabilisticCounterexample, ProbabilityWitnessError,
@@ -237,12 +240,178 @@ fn settled(issue: &ExactProbBuildIssue, subject: SubjectLimits<'_>) -> EngineRep
     )))
 }
 
+fn run_timed(
+    request: ProductRequest<'_>,
+    cancel: &Cancel,
+    tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
+) -> EngineReport {
+    let claim = request.claim;
+    let simulation = request.subject.simulation.clone();
+    let limits = request.limits;
+    let meter = simulation.meter;
+    let subject = SubjectLimits {
+        expansion: simulation.expansion,
+        meter: &meter,
+    };
+    let bound = match &claim.form {
+        ProbForm::Probability {
+            bound,
+            event:
+                Event::Formula {
+                    timed_horizon: Some(_),
+                    ..
+                },
+        } => bound,
+        _ => return not_yet(),
+    };
+    let document_limits = ProbabilityDocumentLimits {
+        bytes: limits.document.bytes,
+        storage_bytes: limits.document.storage_bytes,
+        states: limits.model.limits.max_states,
+        edges: limits.model.limits.max_transitions,
+        scalar_bits: limits.max_rational_bits,
+        accounting: meter,
+    };
+    let admitted = ModelSystem::new_with_cancel(simulation.clone(), cancel);
+    if let Some(cause) = cancel.tripped() {
+        return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
+    }
+    let system = match admitted {
+        Ok(system) => system,
+        Err(failure) => return build_refusal(ProductRefusal::Admission(failure), subject),
+    };
+    let timed = match fsl_eval::simulation::model::TimedSystem::new(
+        &system,
+        claim.subject.alias.as_str(),
+    ) {
+        Ok(timed) => timed,
+        Err(_) => return not_yet(),
+    };
+    let route = if crate::exact_probabilistic::timed_region_route(&timed, claim) {
+        TimedProbabilityRoute::Region
+    } else {
+        TimedProbabilityRoute::Digital
+    };
+    let certificate_scale = match crate::exact_probabilistic::timed_certificate_scale(
+        &system, &timed, claim,
+    ) {
+        Ok(scale) => scale,
+        Err(refusal) => return build_refusal(refusal, subject),
+    };
+    let product_request = ProductRequest {
+        subject: request.subject,
+        claim,
+        limits,
+    };
+    let built = match build_retaining_monitor(product_request, cancel) {
+        Ok((built, _)) => built,
+        Err(refusal) => return build_refusal(refusal, subject),
+    };
+    let ProbBuild::Built(product) = built else {
+        return not_yet();
+    };
+    let [(_, _, _)] = product.initial.as_slice() else {
+        return not_yet();
+    };
+    let outcome = match decide_bounded_event(&product, bound, &limits) {
+        Ok(FhResult::Exact { values, .. }) => values,
+        Ok(FhResult::Bounds { .. } | FhResult::PrecisionBudget { .. }) => return not_yet(),
+        Err(_) => return broken(),
+    };
+    let values = outcome.into_iter().map(ExtRational::Finite).collect::<Vec<_>>();
+    let mut certificate = match certificate_of(
+        &product,
+        None,
+        &values,
+        fsl_replay::ProbabilityDocumentIoLimits {
+            bytes: document_limits.bytes,
+            storage_bytes: document_limits.storage_bytes,
+        },
+        cancel,
+    ) {
+        Ok(certificate) => certificate,
+        Err(error) => return document_failure(error, subject),
+    };
+    if let Some(tamper) = tamper {
+        tamper(&mut certificate);
+    }
+    let identity = match fsl_replay::probabilistic_claim_identity(claim) {
+        Ok(identity) => identity,
+        Err(_) => return not_yet(),
+    };
+    let targets = product
+        .decided
+        .iter()
+        .filter(|(_, verdict)| *verdict == crate::exact_probabilistic::MonitorVerdict::Accept)
+        .filter_map(|(state, _)| {
+            product.states[state.index()]
+                .certificate_state
+                .clone()
+        })
+        .collect::<Vec<_>>();
+    let optimization = match (&claim.scheduler, bound) {
+        (ProbScheduler::Every, Bound::AtLeast(_)) => ProbabilityObjective::Minimum,
+        (ProbScheduler::Every, Bound::AtMost(_)) => ProbabilityObjective::Maximum,
+        (ProbScheduler::Workload(_), _) => ProbabilityObjective::Workload,
+    };
+    let document = ProbabilityCertificateDocument {
+        cyclic_dtmc: false,
+        identity: identity.clone(),
+        targets,
+        event: None,
+        failures: Vec::new(),
+        reward: None,
+        optimization,
+        timed: Some(TimedProbabilityObjective {
+            route,
+            unit: timed.source().unit_node.clone(),
+            scale: certificate_scale,
+            form: TimedProbabilityForm::Deadline,
+        }),
+        values: certificate.values.clone(),
+        ranking: Vec::new(),
+    };
+    let checked = (|| {
+        let bytes = write_probability_certificate(&document, document_limits, cancel)?;
+        check_probability_certificate_document(
+            &system,
+            simulation.package.graph().probabilistic_model().claims(),
+            &identity,
+            &bytes,
+            document_limits,
+            cancel,
+        )
+    })();
+    let binding = match claim_binding(&system, claim) {
+        Ok(binding) => binding,
+        Err(_) => return not_yet(),
+    };
+    let extremum = match optimization {
+        ProbabilityObjective::Minimum => Some(Extremum::Min),
+        ProbabilityObjective::Maximum => Some(Extremum::Max),
+        ProbabilityObjective::Workload => None,
+    };
+    checked_report(checked, certificate, binding, extremum, subject)
+}
+
 fn run(
     request: ProductRequest<'_>,
     cancel: &Cancel,
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
+    if matches!(
+        &request.claim.form,
+        ProbForm::Probability {
+            event: Event::Formula {
+                timed_horizon: Some(_),
+                ..
+            },
+            ..
+        }
+    ) {
+        return run_timed(request, cancel, tamper);
+    }
     if matches!(request.claim.form, ProbForm::LongRunFraction { .. }) {
         return long_run::run(request, cancel, tamper);
     }
@@ -923,15 +1092,18 @@ fn certificate_of(
         let ExtRational::Finite(value) = value else {
             return Err(ExactProbabilityGraphError::ExpansionRefused.into());
         };
-        let key = ProbabilityProductKey::for_model_state_with_limits(
-            binding,
-            &state.model,
-            fsl_replay::ProbabilityDocumentIoLimits {
-                storage_bytes: io.storage_bytes.saturating_sub(storage),
-                ..io
-            },
-            cancel,
-        )?;
+        let key = match &state.certificate_state {
+            Some(key) => key.clone(),
+            None => ProbabilityProductKey::for_model_state_with_limits(
+                binding,
+                &state.model,
+                fsl_replay::ProbabilityDocumentIoLimits {
+                    storage_bytes: io.storage_bytes.saturating_sub(storage),
+                    ..io
+                },
+                cancel,
+            )?,
+        };
         reserve_certificate_storage(&mut storage, io.storage_bytes, key.as_bytes().len() as u64)?;
         entries.push(ExactProbabilityValue {
             state: key,

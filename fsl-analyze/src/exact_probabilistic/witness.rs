@@ -917,6 +917,7 @@ mod tests {
                 monitor: None,
                 accumulator: None,
                 pending: None,
+                certificate_state: None,
             }],
             kind: ProductKind::Dtmc,
             edges: vec![ProbEdge {

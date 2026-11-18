@@ -67,6 +67,21 @@ pub use witness::{
 };
 pub(crate) use witness::{produce_witness_stopping, WitnessWork};
 
+pub(crate) fn timed_region_route(
+    timed: &fsl_eval::simulation::model::TimedSystem<'_, '_>,
+    claim: &CheckedProbabilisticClaim,
+) -> bool {
+    digital::region_route(timed, claim)
+}
+
+pub(crate) fn timed_certificate_scale(
+    system: &fsl_eval::simulation::model::ModelSystem<'_>,
+    timed: &fsl_eval::simulation::model::TimedSystem<'_, '_>,
+    claim: &CheckedProbabilisticClaim,
+) -> Result<u64, ProductRefusal> {
+    digital::certificate_scale(system, timed, claim)
+}
+
 use filament_exact::{CancelCause, Rational, Value};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{AutomatonError, StateId};
@@ -79,7 +94,7 @@ use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::Span;
 pub use fsl_replay::ExactProbLimits;
-use fsl_replay::ModelCheckLimit;
+use fsl_replay::{ModelCheckLimit, ProbabilityProductKey};
 use fsl_semantics::check::{CheckedProbabilisticClaim, FormulaNodeId};
 use fsl_semantics::model::observation::AdmissionFailure;
 use std::cmp::Ordering;
@@ -311,6 +326,9 @@ pub struct ProbKey {
     pub accumulator: Option<Accumulator>,
     /// The draw awaiting resolution; `None` at a model-position state.
     pub pending: Option<Pending>,
+    /// The independently checkable canonical timed key, when this is a timed
+    /// digital or region product state.
+    pub certificate_state: Option<ProbabilityProductKey>,
 }
 
 impl ProbKey {

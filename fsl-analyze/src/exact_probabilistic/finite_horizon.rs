@@ -592,6 +592,7 @@ mod tests {
             monitor: None,
             accumulator: None,
             pending: None,
+            certificate_state: None,
         };
         ProbProduct {
             states: vec![key(0), key(1), key(2)],
@@ -631,6 +632,7 @@ mod tests {
             monitor: None,
             accumulator: None,
             pending: None,
+            certificate_state: None,
         };
         let target_one = key(1);
         let target_zero = key(2);

@@ -20,6 +20,7 @@ fn key(id: u8) -> ProbKey {
         monitor: None,
         accumulator: None,
         pending: None,
+        certificate_state: None,
     }
 }
 

@@ -456,6 +456,7 @@ impl Builder<'_, '_, '_, '_> {
                             monitor,
                             accumulator,
                             pending: None,
+                            certificate_state: None,
                         };
                         return Err(self.undefined(None, None, None, at, key, hit));
                     }
@@ -655,6 +656,7 @@ impl Builder<'_, '_, '_, '_> {
             monitor,
             accumulator,
             pending,
+            certificate_state: None,
         })
     }
 

@@ -279,7 +279,6 @@ fn digital_document_names_route_scale_and_clocks() {
 #[trace("TC-2489", "FR-920-AC-2")]
 #[trace("FSpec-TC-1767", "FSpec-FR-725-AC-2")]
 #[test]
-#[ignore = "QSL-2156: region keys in timed-product certificates not implemented yet"]
 fn region_document_keeps_fraction_order() {
     let world = retx(STRICT, true, "", &every_deadlines());
     let doc = document(&settle(&world, "Deadline"));
@@ -384,7 +383,6 @@ fn timed_rows_cover_exactly_the_rebuilt_product() {
 #[trace("TC-2491", "FR-922-AC-1")]
 #[trace("FSpec-TC-1769", "FSpec-FR-752-AC-1")]
 #[test]
-#[ignore = "QSL-2156: the region MDP and its certificate not implemented yet"]
 fn strict_guard_is_certified_over_regions() {
     let world = retx(STRICT, true, "", &every_deadlines());
     for (claim, value) in [("Deadline", ratio(99, 100)), ("Max", ratio(999, 1000))] {

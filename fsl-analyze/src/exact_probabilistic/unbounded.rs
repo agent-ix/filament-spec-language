@@ -2447,6 +2447,7 @@ mod tests {
                     monitor: None,
                     accumulator: None,
                     pending: None,
+                    certificate_state: None,
                 })
                 .collect(),
             kind,
@@ -2479,6 +2480,7 @@ mod tests {
             monitor: None,
             accumulator: None,
             pending: None,
+            certificate_state: None,
         }));
         edge
     }

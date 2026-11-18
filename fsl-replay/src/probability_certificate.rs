@@ -10,12 +10,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::ObjectReference;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_semantics::check::{
     CheckedProbabilisticClaim, ProbForm, ProbScheduler, ReachTarget, StatePredicate, Workload,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use fsl_package::ObligationIdentity;
 
@@ -190,6 +190,66 @@ pub struct DigitalDeadlineKey {
     pub elapsed: u64,
 }
 
+/// One timed clock in a region or boundary-region product key.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegionClockKey {
+    /// The checked declaring type, field and receiver tuple.
+    pub identity: Value,
+    /// The clock value in refined integer units.
+    pub value: u64,
+    /// The checker-derived saturation cap in refined integer units.
+    pub cap: u64,
+}
+
+/// The deadline clock in a region or boundary-region product key.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RegionDeadlineKey {
+    /// The deadline bound in refined integer units.
+    pub limit: u64,
+    /// The elapsed deadline value in refined integer units.
+    pub elapsed: u64,
+}
+
+/// Whether a region key names an interior valuation or its boundary corner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RegionKeyKind {
+    /// The state is a canonical clock region.
+    Region,
+    /// The state is a corner of the region closure for elapsed-time evidence.
+    BoundaryRegion,
+}
+
+/// The checked semantic components used to encode one region ProductKey.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegionProductKeyInput {
+    /// The checked claim's `over` binding, or `None` when there is no binding.
+    pub binding: Option<Value>,
+    /// The complete non-clock simulation-state form.
+    pub discrete: Value,
+    /// FR-196's closed time-unit form.
+    pub unit: Value,
+    /// The unrefined canonical time scale.
+    pub scale: u64,
+    /// The region representative's subdivision count.
+    pub subdivisions: u64,
+    /// Every admitted clock with its checked identity and refined value/cap.
+    pub clocks: Vec<RegionClockKey>,
+    /// The timed deadline clock, when the checked claim has a deadline.
+    pub deadline: Option<RegionDeadlineKey>,
+    /// TS-5 tail control for the state.
+    pub tail: DigitalTail,
+    /// The checked claim's monitor state, or `None` when it has no monitor.
+    pub monitor: Option<Value>,
+    /// The checked claim's exact measure accumulator, if present.
+    pub accumulator: Option<Value>,
+    /// The actual pending draw control, if present.
+    pub pending: Option<Value>,
+    /// Region encoding kind.
+    pub kind: RegionKeyKind,
+    /// The corner coordinates in clock-entry order, including the deadline.
+    pub corner: Option<Vec<String>>,
+}
+
 /// The checked semantic components used to encode one digital ProductKey.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DigitalProductKeyInput {
@@ -291,6 +351,150 @@ pub fn digital_probability_product_key(
             tail.tag()
         ]
     ]);
+    let product = json!([
+        "filament.probability-product-key/v1",
+        binding,
+        model,
+        monitor,
+        accumulator,
+        pending
+    ]);
+    canonical_json(&product).map(ProbabilityProductKey)
+}
+
+/// Encode the FR-920 canonical ProductKey for a region or boundary-region state.
+pub fn region_probability_product_key(
+    input: RegionProductKeyInput,
+) -> Result<ProbabilityProductKey, ExactProbabilityGraphError> {
+    let RegionProductKeyInput {
+        binding,
+        discrete,
+        unit,
+        scale,
+        subdivisions,
+        clocks,
+        deadline,
+        tail,
+        monitor,
+        accumulator,
+        pending,
+        kind,
+        corner,
+    } = input;
+    if scale == 0 || subdivisions < 2 {
+        return Err(ExactProbabilityGraphError::InvalidDigitalKey);
+    }
+    let mut keyed_clocks = clocks
+        .into_iter()
+        .map(|clock| {
+            if clock
+                .identity
+                .as_array()
+                .is_none_or(|parts| parts.len() != 3)
+                || clock.value > clock.cap
+            {
+                return Err(ExactProbabilityGraphError::InvalidDigitalKey);
+            }
+            let identity_bytes = canonical_json(&clock.identity)?;
+            Ok((identity_bytes, clock.identity, clock.value, clock.cap))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    keyed_clocks.sort_by(|left, right| left.0.cmp(&right.0));
+    if keyed_clocks.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+        return Err(ExactProbabilityGraphError::InvalidDigitalKey);
+    }
+    let clock_count = keyed_clocks.len();
+    let deadline_values = match deadline {
+        Some(deadline)
+            if deadline
+                .limit
+                .checked_add(subdivisions)
+                .is_some_and(|cap| deadline.elapsed <= cap) =>
+        {
+            Some((deadline.limit, deadline.elapsed))
+        }
+        Some(_) => return Err(ExactProbabilityGraphError::InvalidDigitalKey),
+        None => None,
+    };
+    let mut fractions = keyed_clocks
+        .iter()
+        .filter_map(|(_, _, value, cap)| {
+            (*value < *cap)
+                .then_some(*value % subdivisions)
+                .filter(|fraction| *fraction > 0)
+        })
+        .collect::<BTreeSet<_>>();
+    if let Some((limit, elapsed)) = deadline_values {
+        if elapsed < limit.saturating_add(subdivisions) {
+            let fraction = elapsed % subdivisions;
+            if fraction > 0 {
+                fractions.insert(fraction);
+            }
+        }
+    }
+    let fraction_rank = |value: u64, cap: u64| -> String {
+        if value >= cap {
+            return "0".to_owned();
+        }
+        let fraction = value % subdivisions;
+        if fraction == 0 {
+            return "0".to_owned();
+        }
+        fractions
+            .iter()
+            .position(|candidate| *candidate == fraction)
+            .and_then(|position| u64::try_from(position + 1).ok())
+            .map(|rank| rank.to_string())
+            .unwrap_or_else(|| "0".to_owned())
+    };
+    let clocks = keyed_clocks
+        .into_iter()
+        .map(|(_, identity, value, cap)| {
+            json!([
+                identity,
+                (value / subdivisions).to_string(),
+                (cap / subdivisions).to_string(),
+                fraction_rank(value, cap)
+            ])
+        })
+        .collect::<Vec<_>>();
+    let deadline = match deadline_values {
+        Some((limit, elapsed)) => json!([
+            "deadline",
+            (limit / subdivisions).to_string(),
+            (elapsed / subdivisions).to_string(),
+            fraction_rank(elapsed, limit.saturating_add(subdivisions))
+        ]),
+        None => Value::Null,
+    };
+    let tag = match kind {
+        RegionKeyKind::Region => "region",
+        RegionKeyKind::BoundaryRegion => "boundary-region",
+    };
+    let mut model = vec![
+        Value::String("filament.simulation.state-key/v1".to_owned()),
+        json!([
+            tag,
+            discrete,
+            unit,
+            scale.to_string(),
+            clocks,
+            deadline,
+            tail.tag()
+        ]),
+    ];
+    if kind == RegionKeyKind::BoundaryRegion {
+        let corner = corner.ok_or(ExactProbabilityGraphError::InvalidDigitalKey)?;
+        if corner.len() != clock_count + usize::from(deadline_values.is_some()) {
+            return Err(ExactProbabilityGraphError::InvalidDigitalKey);
+        }
+        model[1][1]
+            .as_array_mut()
+            .ok_or(ExactProbabilityGraphError::InvalidDigitalKey)?
+            .push(json!(corner));
+    } else if corner.is_some() {
+        return Err(ExactProbabilityGraphError::InvalidDigitalKey);
+    }
     let product = json!([
         "filament.probability-product-key/v1",
         binding,
@@ -948,10 +1152,12 @@ fn workload_distribution(
             Err(ExactProbabilityGraphError::UnsupportedDraw)
         };
     }
-    Ok(vec![steps
-        .into_iter()
-        .map(|step| (step.probability, step.post))
-        .collect()])
+    Ok(vec![
+        steps
+            .into_iter()
+            .map(|step| (step.probability, step.post))
+            .collect(),
+    ])
 }
 
 fn action_distributions(
@@ -1208,7 +1414,7 @@ fn check_exact_reachability(
     let values = match certificate_values(graph, certificate, cancel)? {
         CertificateValues::Complete(values) => values,
         CertificateValues::Rejected(rejection) => {
-            return Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
+            return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
     };
     let order = topological_order(graph, cancel)?;
@@ -1222,11 +1428,7 @@ fn check_exact_reachability(
             return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
         };
         let actual = if let Some(target) = state.terminal {
-            if target {
-                one.clone()
-            } else {
-                zero.clone()
-            }
+            if target { one.clone() } else { zero.clone() }
         } else {
             if state.choices.is_empty()
                 || (objective == ProbabilityObjective::Workload && state.choices.len() != 1)

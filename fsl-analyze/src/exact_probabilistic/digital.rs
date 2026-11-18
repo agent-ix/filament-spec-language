@@ -24,12 +24,16 @@ use filament_exact::{
 };
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{
-    same_rewards, Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov,
-    PlaceConstraint, PredicateReading, ScheduledIdentity, TimedStop, TimedSystem,
-};
 use fsl_eval::simulation::StateKey;
-use fsl_replay::ModelCheckLimit;
+use fsl_eval::simulation::model::{
+    Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov, PlaceConstraint,
+    PredicateReading, ScheduledIdentity, TimedStop, TimedSystem, same_rewards,
+};
+use fsl_replay::{
+    DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail,
+    ModelCheckLimit, ProbabilityProductKey, RegionClockKey, RegionDeadlineKey, RegionKeyKind,
+    RegionProductKeyInput, digital_probability_product_key, region_probability_product_key,
+};
 use fsl_semantics::check::{
     BinaryTemporal, CheckedInterval, CheckedPredicate, CheckedProbabilisticClaim, ClockOp,
     ConvexPart, DelayDistribution, Event, FormulaNode, ProbForm, ProbScheduler, UnaryTemporal,
@@ -38,6 +42,7 @@ use fsl_semantics::check::{
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive, Zero};
+use serde_json::{Value as JsonValue, json};
 
 use super::{
     DeadlineKind, DeadlinePhase, ExactProbLimits, FreeDelayRow, MonitorState, MonitorVerdict,
@@ -73,8 +78,11 @@ pub(super) fn build<'s, 'a>(
         ProbScheduler::Every => None,
     };
     let form = Form::of(claim)?;
-    admit(system, &timed, claim, workload, &form)?;
-    let scale = scale_of(system, &timed, &form)?;
+    admit(system, claim, workload)?;
+    let (base_scale, subdivisions) = scale_of(system, &timed, claim, &form)?;
+    let scale = base_scale
+        .checked_mul(subdivisions)
+        .ok_or_else(|| fault("region-scale-fits-u64"))?;
     let caps = caps_of(&timed, &scale)?;
     let bindings = match &claim.over {
         None => vec![(None, None)],
@@ -101,6 +109,8 @@ pub(super) fn build<'s, 'a>(
         workload,
         form,
         scale,
+        base_scale,
+        subdivisions,
         caps,
         bindings,
         max_states: limits.model.limits.max_states,
@@ -279,44 +289,13 @@ pub(crate) fn model_constraints<'m>(
     found
 }
 
-/// FR-204 "Admission": the closed condition, the delay distributions and the
-/// form shape.
+/// FR-204 "Admission": the delay distributions and the form shape.
 fn admit(
     system: &ModelSystem<'_>,
-    timed: &TimedSystem<'_, '_>,
     claim: &CheckedProbabilisticClaim,
     workload: Option<&Workload>,
-    form: &Form<'_>,
 ) -> Result<(), ProductRefusal> {
-    let strict = model_constraints(timed)
-        .into_iter()
-        .filter(|constraint| matches!(constraint.op(), ClockOp::Less | ClockOp::Greater))
-        .map(|constraint| constraint.span())
-        .min_by_key(|span| span.start);
-    if let Some(span) = strict {
-        return Err(ProductRefusal::StrictClockConstraint { span });
-    }
-    if let ProbForm::Probability {
-        event: Event::Formula { formula, .. },
-        ..
-    } = &claim.form
-    {
-        let open = formula.formula().nodes().iter().any(|node| match node {
-            FormulaNode::Unary {
-                interval: Some(CheckedInterval::Timed(interval)),
-                ..
-            }
-            | FormulaNode::Binary {
-                interval: Some(CheckedInterval::Timed(interval)),
-                ..
-            } => !interval.upper_closed() || !interval.lower_closed(),
-            _ => false,
-        });
-        if open && matches!(form, Form::Deadline { .. }) {
-            return Err(ProductRefusal::StrictClockConstraint { span: claim.span });
-        }
-    }
-    let delays = system.input().probabilistic.delays();
+    let delays = system.package().graph().probabilistic_model().delays();
     for delay in delays
         .iter()
         .filter(|delay| delay.operation().model() == claim.subject.alias.as_str())
@@ -380,8 +359,9 @@ fn add_rewards(
 fn scale_of(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
+    claim: &CheckedProbabilisticClaim,
     form: &Form<'_>,
-) -> Result<u64, ProductRefusal> {
+) -> Result<(u64, u64), ProductRefusal> {
     let mut denominators: Vec<BigInt> = Vec::new();
     let mut note = |value: &Rational| denominators.push(value.denominator().as_big().clone());
     for constraint in model_constraints(timed) {
@@ -405,10 +385,61 @@ fn scale_of(
     let scale = denominators
         .iter()
         .fold(BigInt::one(), |factor, denominator| factor.lcm(denominator));
-    scale
+    let scale = scale
         .to_u64()
         .filter(|scale| *scale > 0)
-        .ok_or_else(|| fault("digital-scale-fits-u64"))
+        .ok_or_else(|| fault("digital-scale-fits-u64"))?;
+    if region_route(timed, claim) {
+        // For n model clocks plus the optional deadline clock, the standard
+        // region partition has at most n+1 distinct fractional ranks. This
+        // refinement gives each rank a representative on the integer grid,
+        // while preserving every integral boundary exactly.
+        let clocks = timed
+            .places()
+            .len()
+            .checked_add(usize::from(matches!(form, Form::Deadline { .. })))
+            .and_then(|count| count.checked_add(1))
+            .and_then(|count| u64::try_from(count).ok())
+            .ok_or_else(|| fault("region-clock-rank-count-fits-u64"))?;
+        return Ok((scale, clocks));
+    }
+    Ok((scale, 1))
+}
+
+/// Whether FR-922 requires a region graph for this subject and claim.
+pub(super) fn region_route(timed: &TimedSystem<'_, '_>, claim: &CheckedProbabilisticClaim) -> bool {
+    model_constraints(timed)
+        .into_iter()
+        .any(|constraint| matches!(constraint.op(), ClockOp::Less | ClockOp::Greater))
+        || matches!(
+            &claim.form,
+            ProbForm::Probability {
+                event: Event::Formula { formula, .. },
+                ..
+            } if formula.formula().nodes().iter().any(|node| match node {
+                FormulaNode::Unary {
+                    interval: Some(CheckedInterval::Timed(interval)),
+                    ..
+                }
+                | FormulaNode::Binary {
+                    interval: Some(CheckedInterval::Timed(interval)),
+                    ..
+                } => !interval.upper_closed() || !interval.lower_closed(),
+                _ => false,
+            })
+        )
+}
+
+/// The lattice denominator written in an FR-920 product certificate.
+pub(super) fn certificate_scale(
+    system: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    claim: &CheckedProbabilisticClaim,
+) -> Result<u64, ProductRefusal> {
+    let form = Form::of(claim)?;
+    let (base, subdivisions) = scale_of(system, timed, claim, &form)?;
+    base.checked_mul(subdivisions)
+        .ok_or_else(|| fault("region-scale-fits-u64"))
 }
 
 /// A rational time constant as a count of digital units.
@@ -447,16 +478,6 @@ enum Tail {
     Running,
     IdleReady,
     IdleDelayed,
-}
-
-impl Tail {
-    fn tag(self) -> &'static str {
-        match self {
-            Self::Running => "running",
-            Self::IdleReady => "idle-ready",
-            Self::IdleDelayed => "idle-delayed",
-        }
-    }
 }
 
 /// A digital timed state.
@@ -527,6 +548,16 @@ struct Planned {
     rewards: Vec<(Identifier, Value)>,
     step: Option<TraceStep>,
     zero_delay: bool,
+}
+
+enum ClockKey {
+    Digital(DigitalClockKey),
+    Region(RegionClockKey),
+}
+
+enum DeadlineKey {
+    Digital(DigitalDeadlineKey),
+    Region(RegionDeadlineKey),
 }
 
 enum Halt {
@@ -669,6 +700,8 @@ struct Builder<'r, 'a, 'c> {
     workload: Option<&'r Workload>,
     form: Form<'c>,
     scale: u64,
+    base_scale: u64,
+    subdivisions: u64,
     caps: Vec<u64>,
     bindings: Vec<(Option<ModelInstance>, Option<ObjectReference>)>,
     max_states: usize,
@@ -875,31 +908,6 @@ impl<'c> Builder<'_, '_, 'c> {
 
     // -- keys and truths ---------------------------------------------------
 
-    fn encode(&self, state: &DState) -> Step<Vec<u8>> {
-        let (model, _) = self
-            .system
-            .state_key(&state.model)
-            .map_err(|_| fault("state-key-encodes"))?;
-        let mut bytes = b"filament.simulation.state-key/v1/digital\n".to_vec();
-        bytes.extend((model.len() as u64).to_be_bytes());
-        bytes.extend(model);
-        bytes.extend(self.scale.to_be_bytes());
-        bytes.extend((state.clocks.len() as u64).to_be_bytes());
-        for (value, cap) in state.clocks.iter().zip(&self.caps) {
-            bytes.extend(value.to_be_bytes());
-            bytes.extend(cap.to_be_bytes());
-        }
-        match state.deadline {
-            Some(deadline) => {
-                bytes.push(1);
-                bytes.extend(deadline.to_be_bytes());
-            }
-            None => bytes.push(0),
-        }
-        bytes.extend(state.tail.tag().as_bytes());
-        Ok(bytes)
-    }
-
     fn key_of(
         &self,
         state: &DState,
@@ -907,13 +915,175 @@ impl<'c> Builder<'_, '_, 'c> {
         monitor: Option<MonitorState>,
         pending: Option<Pending>,
     ) -> Step<ProbKey> {
+        let certificate_state = self.certificate_key(state, binding, monitor, pending.as_ref())?;
         Ok(ProbKey {
             binding: self.bindings[binding].0.clone(),
-            model: self.encode(state)?,
+            model: certificate_state.as_bytes().to_vec(),
             monitor,
             accumulator: None,
             pending,
+            certificate_state: Some(certificate_state),
         })
+    }
+
+    fn certificate_key(
+        &self,
+        state: &DState,
+        binding: usize,
+        monitor: Option<MonitorState>,
+        pending: Option<&Pending>,
+    ) -> Step<ProbabilityProductKey> {
+        if pending.is_some() {
+            return Err(fault("pending-draw-certificate-key-is-not-admitted").into());
+        }
+        let (discrete, _) = self
+            .system
+            .state_key(&state.model)
+            .map_err(|_| fault("certificate-discrete-state-key-encodes"))?;
+        let discrete: JsonValue = serde_json::from_slice(&discrete)
+            .map_err(|_| fault("certificate-discrete-state-key-is-json"))?;
+        let binding = self.bindings[binding]
+            .1
+            .as_ref()
+            .map(|reference| {
+                let text = fsl_eval::simulation::model::reference_canonical_text(reference)
+                    .map_err(|_| fault("certificate-binding-encodes"))?;
+                serde_json::from_str(&text)
+                    .map_err(|_| fault("certificate-binding-is-json"))
+            })
+            .transpose()?;
+        let unit = json!([
+            "declared",
+            fsl_foundation::node_wire::node_key_to_json(&self.timed.source().unit_node)
+                .map_err(|_| fault("certificate-time-unit-encodes"))?
+        ]);
+        let clocks = self
+            .timed
+            .places()
+            .iter()
+            .zip(&state.clocks)
+            .zip(&self.caps)
+            .map(|((place, value), cap)| {
+                let field = self
+                    .timed
+                    .model()
+                    .clock(place.clock())
+                    .ok_or_else(|| fault("certificate-clock-field-exists"))?;
+                let owner = field.owner();
+                let owner = owner.original();
+                let declaring = fsl_semantics::model::key::model_node_key(
+                    owner.package(),
+                    "model",
+                    "object_type",
+                    owner.node(),
+                )
+                .map_err(|_| fault("certificate-clock-type-encodes"))?;
+                let declaring = fsl_foundation::node_wire::node_key_to_json(&declaring)
+                    .map_err(|_| fault("certificate-clock-type-encodes"))?;
+                let receiver = fsl_eval::simulation::model::reference_canonical_text(place.object())
+                    .map_err(|_| fault("certificate-clock-receiver-encodes"))?;
+                let receiver: JsonValue = serde_json::from_str(&receiver)
+                    .map_err(|_| fault("certificate-clock-receiver-is-json"))?;
+                let identity = json!([declaring, field.name(), receiver]);
+                Ok(if self.subdivisions == 1 {
+                    ClockKey::Digital(DigitalClockKey {
+                        identity,
+                        value: *value,
+                        cap: *cap,
+                    })
+                } else {
+                    ClockKey::Region(RegionClockKey {
+                        identity,
+                        value: *value,
+                        cap: *cap,
+                    })
+                })
+            })
+            .collect::<Result<Vec<_>, ProductRefusal>>()?;
+        let deadline = match state.deadline {
+            Some(elapsed) => {
+                let limit = self
+                    .deadline_bound()?
+                    .ok_or_else(|| fault("certificate-deadline-bound-exists"))?;
+                Some(if self.subdivisions == 1 {
+                    DeadlineKey::Digital(DigitalDeadlineKey { limit, elapsed })
+                } else {
+                    DeadlineKey::Region(RegionDeadlineKey { limit, elapsed })
+                })
+            }
+            None => None,
+        };
+        let monitor = monitor.map(|monitor| match monitor {
+            MonitorState::Deadline { kind, phase } => json!([
+                "deadline",
+                match kind {
+                    DeadlineKind::Eventually => "eventually",
+                    DeadlineKind::Always => "always",
+                    DeadlineKind::Until => "until",
+                },
+                match phase {
+                    DeadlinePhase::Pending => "pending",
+                    DeadlinePhase::Accept => "accept",
+                    DeadlinePhase::Reject => "reject",
+                }
+            ]),
+            _ => JsonValue::Null,
+        });
+        let tail = match state.tail {
+            Tail::Running => DigitalTail::Running,
+            Tail::IdleReady => DigitalTail::IdleReady,
+            Tail::IdleDelayed => DigitalTail::IdleDelayed,
+        };
+        let key = if self.subdivisions == 1 {
+            digital_probability_product_key(DigitalProductKeyInput {
+                binding,
+                discrete,
+                unit,
+                scale: self.base_scale,
+                clocks: clocks
+                    .into_iter()
+                    .map(|clock| match clock {
+                        ClockKey::Digital(clock) => clock,
+                        ClockKey::Region(_) => unreachable!(),
+                    })
+                    .collect(),
+                deadline: deadline.map(|deadline| match deadline {
+                    DeadlineKey::Digital(deadline) => deadline,
+                    DeadlineKey::Region(_) => unreachable!(),
+                }),
+                tail,
+                monitor,
+                accumulator: None,
+                pending: None,
+            })
+        } else {
+            region_probability_product_key(RegionProductKeyInput {
+                binding,
+                discrete,
+                unit,
+                scale: self.base_scale,
+                subdivisions: self.subdivisions,
+                clocks: clocks
+                    .into_iter()
+                    .map(|clock| match clock {
+                        ClockKey::Region(clock) => clock,
+                        ClockKey::Digital(_) => unreachable!(),
+                    })
+                    .collect(),
+                deadline: deadline.map(|deadline| match deadline {
+                    DeadlineKey::Region(deadline) => deadline,
+                    DeadlineKey::Digital(_) => unreachable!(),
+                }),
+                tail,
+                monitor,
+                accumulator: None,
+                pending: None,
+                kind: RegionKeyKind::Region,
+                corner: None,
+            })
+        }
+        .map_err(|_| fault("certificate-timed-product-key-encodes"))?;
+        Ok(key)
     }
 
     fn truths(&mut self, state: &ModelSimState, binding: usize) -> Step<Result<Vec<bool>, Hit>> {
