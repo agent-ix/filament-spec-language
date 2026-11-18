@@ -51,3 +51,5 @@ The updated matrix reports FR-031-AC-7 as tagged, with `the_request_reader_produ
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-001 | still-open | The runtime behavior test remains unbound. The new matrix binder is a source-inspection test, not evidence that the invalid-context producer is exercised. |
+| FND-001 | fixed | after_excerpt: `#[trace("TC-109", "FR-031-AC-7")] #[test] fn quire_context_refusal_preserves_its_diagnostics()` |
+| FND-002 | fixed | after_excerpt: `#[trace("TC-109", "FR-031-AC-6")]` |

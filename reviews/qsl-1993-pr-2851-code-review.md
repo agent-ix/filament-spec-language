@@ -46,3 +46,5 @@ The canonical trace marker now makes the matrix report FR-031-AC-7 as tagged, bu
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-001 | still-open | The canonical tag was added to a different test. `quire_context_refusal_preserves_its_diagnostics` still has no matrix-recognized binding. |
+| FND-001 | fixed | after_excerpt: `#[trace("TC-109", "FR-031-AC-7")] #[test] fn quire_context_refusal_preserves_its_diagnostics()` |
+| FND-002 | fixed | after_excerpt: `#[trace("TC-109", "FR-031-AC-6")]` |
