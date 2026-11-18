@@ -2,13 +2,14 @@
 //! FR-280's in-process provider boundary over the same admitted analyze request.
 
 use crate::analyze::{
-    analyze_bound, AnalyzeLimits, AnalyzeRefusal, Engines, ItemCounterexample, NegotiatedItem,
-    SourceProvision, SubjectBinding,
+    AnalyzeLimits, AnalyzeRefusal, Engines, ItemCounterexample, NegotiatedItem, SourceProvision,
+    SubjectBinding, analyze_bound,
 };
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_package::CheckedPackage;
+use fsl_replay::ToolFailure;
 use fsl_replay::{DeclineCode, ProofRefusalCause, TerminalRecord};
 use std::collections::BTreeMap;
 
@@ -22,15 +23,15 @@ use fsl_replay::value_check::{Selection, ValueTarget};
 use fsl_replay::{Certification, InconclusiveCause, Value};
 use fsl_route::request::{ExtentClassification, ItemKind, RequirementItem};
 use fsl_route::{BackendDescriptor, CandidateOutcome, ProviderOrigin, Registry};
-use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::Capability;
+use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::PackageInput;
 
 use crate::analyze::{AnalyzeItem, Engine, EngineReport, Refusal};
 use crate::claim_family::claim_family;
 use crate::value_check::{
-    confirm_reported, manifest, ValueCounterexample, ValueRefusal, ValueReport,
+    ValueCounterexample, ValueRefusal, ValueReport, confirm_reported, manifest,
 };
 
 /// Records and reproduced counterexamples for one provider request.
@@ -355,7 +356,7 @@ fn proof_bound_wire(
         FiniteBound::Variants { .. } => {
             return Err(serde_json::Error::custom(
                 "a variants bound is a harness bound, never an FR-331 substitution",
-            ))
+            ));
         }
     };
     Ok(serde_json::json!({
@@ -450,8 +451,42 @@ pub enum ProviderVerdict {
         /// The reported assignment.
         counterexample: Vec<Value>,
     },
+    /// The provider transport exceeded one of FR-287's byte limits.
+    Failed {
+        /// The FR-287 transport setting that was exceeded.
+        limit: ProviderLimit,
+        /// The typed FR-331/FR-462 failure cause.
+        cause: ToolFailure,
+    },
     /// The provider neither proved nor refuted the claim.
     Unknown,
+}
+
+/// The FR-287 provider transport byte limits that settle an item as failed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProviderLimit {
+    /// `max_frame_bytes`.
+    MaxFrameBytes,
+    /// `max_total_bytes`.
+    MaxTotalBytes,
+}
+
+impl ProviderLimit {
+    /// The FR-287 setting name reported by this limit.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MaxFrameBytes => "max_frame_bytes",
+            Self::MaxTotalBytes => "max_total_bytes",
+        }
+    }
+
+    fn matches(self, cause: ToolFailure) -> bool {
+        matches!(
+            (self, cause),
+            (Self::MaxFrameBytes, ToolFailure::FrameLength { .. })
+                | (Self::MaxTotalBytes, ToolFailure::TotalBytes { .. })
+        )
+    }
 }
 
 /// A decision procedure outside FSL that decides `value-validity` items over
@@ -479,6 +514,8 @@ pub(crate) enum ProviderReport {
     Proved,
     /// The provider could not decide the claim.
     Unknown,
+    /// The provider transport failed while enforcing a typed byte limit.
+    Failed(ToolFailure),
     /// The provider's counterexample, confirmed by replay or not.
     Replayed(ValueReport),
 }
@@ -718,10 +755,10 @@ pub(crate) fn finish(
         Ok(target) => target,
         Err(Selection::NoForm) => return EngineReport::Refused(crate::value_check::invalid_input()),
         Err(Selection::MissingNode) => {
-            return EngineReport::Refused(crate::value_check::incomplete_input())
+            return EngineReport::Refused(crate::value_check::incomplete_input());
         }
         Err(Selection::Fault(fault)) => {
-            return EngineReport::Refused(Refusal::Failed(fault.catalog_code()))
+            return EngineReport::Refused(Refusal::Failed(fault.catalog_code()));
         }
     };
     let verdict = match settled {
@@ -730,7 +767,7 @@ pub(crate) fn finish(
         None => {
             return EngineReport::Refused(Refusal::Failed(
                 InternalFault::new("external-provider", "engine-holds-provider").catalog_code(),
-            ))
+            ));
         }
     };
     let budget = engine
@@ -751,7 +788,15 @@ fn report(
     let counterexample = match verdict {
         ProviderVerdict::Proved => return EngineReport::Provider(Box::new(ProviderReport::Proved)),
         ProviderVerdict::Unknown => {
-            return EngineReport::Provider(Box::new(ProviderReport::Unknown))
+            return EngineReport::Provider(Box::new(ProviderReport::Unknown));
+        }
+        ProviderVerdict::Failed { limit, cause } => {
+            if !limit.matches(cause) {
+                return EngineReport::Refused(Refusal::Failed(
+                    InternalFault::new("external-provider", "limit-cause-mismatch").catalog_code(),
+                ));
+            }
+            return EngineReport::Provider(Box::new(ProviderReport::Failed(cause)));
         }
         ProviderVerdict::Refuted { counterexample } => counterexample,
     };
@@ -807,6 +852,7 @@ pub(crate) fn settle_record(
             ),
             None,
         ),
+        ProviderReport::Failed(cause) => (TerminalRecord::tool_failed(index, backend, cause), None),
         ProviderReport::Replayed(report) => crate::value_check::settle(report, index, backend),
     }
 }

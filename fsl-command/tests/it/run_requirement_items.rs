@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::negotiation::Fr290;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const SQ: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile v = \"filament.value.complete/v1\";\n\
@@ -410,6 +410,26 @@ fn run_with_providers(request: &Path, scenario: Scenario) -> Option<ProviderRun>
                 ))],
             },
         )],
+        Scenario::FrameFailure => vec![recording_provider(
+            &seen,
+            ProviderVerdict::Failed {
+                limit: fsl_analyze::provider::ProviderLimit::MaxFrameBytes,
+                cause: fsl_replay::ToolFailure::FrameLength {
+                    limit: 1_048_576,
+                    value: 1_048_577,
+                },
+            },
+        )],
+        Scenario::TotalBytesFailure => vec![recording_provider(
+            &seen,
+            ProviderVerdict::Failed {
+                limit: fsl_analyze::provider::ProviderLimit::MaxTotalBytes,
+                cause: fsl_replay::ToolFailure::TotalBytes {
+                    limit: 2_097_152,
+                    value: 2_097_153,
+                },
+            },
+        )],
         Scenario::Cancelled => {
             cancel.cancel(filament_exact::CancelCause::Requested);
             vec![recording_provider(&seen, ProviderVerdict::Proved)]
@@ -450,6 +470,10 @@ enum Scenario {
     RepeatedProvider,
     /// The provider reports `refuted` at `n = 4`, which the evaluator does not violate.
     UnreproducedRefutation,
+    /// The provider reports an oversize transport frame.
+    FrameFailure,
+    /// The provider reports an oversize transport run total.
+    TotalBytesFailure,
     /// The handle is cancelled before the run.
     Cancelled,
     /// The provider's manifest publishes the option `depth`.
@@ -515,6 +539,140 @@ fn run_with_providers_settles_the_call_s_items_after_negotiation() {
     assert_eq!((run.negotiations, run.settle_calls), (0, 0));
 }
 
+/// FR-950 / QSL-2375: the provider-backed entry uses caller-selected byte
+/// ceilings and applies the same request overrides as plain `run`.
+#[trace("TC-2701", "FR-950-AC-5")]
+#[test]
+fn provider_run_accepts_run_limits_and_request_overrides() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = write(
+        directory.path(),
+        "Even",
+        json!([{"parameter": "n", "value": 4}]),
+        Some(json!({"backend": PROVIDER})),
+    );
+    let request_bytes = std::fs::metadata(&request).unwrap().len() as usize;
+    let dependent_bytes = std::fs::metadata(directory.path().join("unit.native"))
+        .unwrap()
+        .len() as usize;
+    let limits = command::RunLimits {
+        request_bytes,
+        dependent_bytes,
+    };
+    let clocks = serde_json::value::RawValue::from_string("{}".to_owned()).unwrap();
+    let overrides = command::RequestOverrides {
+        clocks: Some(&clocks),
+        ..command::RequestOverrides::default()
+    };
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let options = fsl_analyze::provider::ProviderOptions::default();
+    let cancel = filament_exact::Cancel::new();
+    let result = command::run_with_providers_and_limits_and_overrides(
+        &request,
+        limits,
+        &overrides,
+        &Fr290,
+        vec![recording_provider(
+            &seen,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+        &options,
+        &cancel,
+    )
+    .expect("the exact request and dependent-file ceilings admit the provider run");
+    assert_eq!(
+        documents(&result).0["outcome"]["value"],
+        json!({"boolean": true})
+    );
+    assert_eq!(seen.lock().unwrap().settle_calls, 1);
+
+    let below_request_size = command::RunLimits {
+        request_bytes: request_bytes - 1,
+        dependent_bytes,
+    };
+    let error = command::run_with_providers_and_limits_and_overrides(
+        &request,
+        below_request_size,
+        &overrides,
+        &Fr290,
+        vec![recording_provider(
+            &seen,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+        &options,
+        &cancel,
+    )
+    .expect_err("the provider run enforces the caller's request byte ceiling");
+    assert!(error.to_string().contains("request_bytes"), "{error}");
+    assert_eq!(
+        seen.lock().unwrap().settle_calls,
+        1,
+        "refusal sends no request"
+    );
+
+    let below_dependent_size = command::RunLimits {
+        request_bytes,
+        dependent_bytes: dependent_bytes - 1,
+    };
+    let error = command::run_with_providers_and_limits_and_overrides(
+        &request,
+        below_dependent_size,
+        &overrides,
+        &Fr290,
+        vec![recording_provider(
+            &seen,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+        &options,
+        &cancel,
+    )
+    .expect_err("the provider run enforces the caller's dependent-file byte ceiling");
+    assert!(matches!(
+        error.cause,
+        command::RunCause::Limit(command::LimitKind::DependentBytes { maximum })
+            if maximum == dependent_bytes - 1
+    ));
+    assert_eq!(
+        seen.lock().unwrap().settle_calls,
+        1,
+        "a dependent-file limit refusal sends no request"
+    );
+
+    let unused_clock = serde_json::value::RawValue::from_string(
+        json!({"spare": {"kind": "event_position", "sequence_authority": "spare"}})
+            .to_string(),
+    )
+    .unwrap();
+    let clock_override = command::RequestOverrides {
+        clocks: Some(&unused_clock),
+        ..command::RequestOverrides::default()
+    };
+    let error = command::run_with_providers_and_limits_and_overrides(
+        &request,
+        limits,
+        &clock_override,
+        &Fr290,
+        vec![recording_provider(
+            &seen,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+        &options,
+        &cancel,
+    )
+    .expect_err("the non-default clock override is applied to the provider run");
+    assert!(
+        error
+            .to_string()
+            .contains("names a clock no temporal declaration uses"),
+        "{error}"
+    );
+    assert_eq!(
+        seen.lock().unwrap().settle_calls,
+        1,
+        "the unused clock refuses before provider settlement"
+    );
+}
+
 /// FR-961-AC-4, FR-961-AC-5: negative cases of the run-side entry: a repeated
 /// provider identity, a refused compile, a counterexample replay does not
 /// reproduce, and a cancelled handle.
@@ -545,6 +703,15 @@ fn run_with_providers_refuses_and_settles_the_negative_cases() {
         assert!(item.to_string().contains("replay-parity"), "{item}");
     }
 
+    let failed = run_with_providers(&request, Scenario::FrameFailure).expect("the run-side entry");
+    for item in entries(&failed.document) {
+        assert_eq!(item["record"]["result"], "failed", "{item}");
+        assert_eq!(item["record"]["cause"]["kind"], "tool-failure", "{item}");
+        assert_eq!(item["record"]["cause"]["defect"], "frame-length", "{item}");
+        assert_eq!(item["record"]["cause"]["limit"], 1_048_576, "{item}");
+        assert_eq!(item["record"]["cause"]["value"], 1_048_577, "{item}");
+    }
+
     let cancelled = run_with_providers(&request, Scenario::Cancelled).expect("the run-side entry");
     assert_eq!(cancelled.settle_calls, 0, "no request after cancellation");
     for item in entries(&cancelled.document) {
@@ -566,6 +733,38 @@ fn run_with_providers_refuses_and_settles_the_negative_cases() {
         (0, 0),
         "a refused compile settles no item"
     );
+}
+
+/// FR-287-AC-12: a provider's over-limit run total settles as `failed` with
+/// the exact typed `total-bytes` transport cause.
+#[trace("TC-2701", "FR-291-AC-1")]
+#[test]
+fn provider_total_byte_limit_settles_failed_with_typed_cause() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = write(
+        directory.path(),
+        "Even",
+        json!([{"parameter": "n", "value": 4}]),
+        Some(json!({"backend": PROVIDER})),
+    );
+    let result = run_with_providers(&request, Scenario::TotalBytesFailure)
+        .expect("the provider-backed run returns a settled result");
+    let items = entries(&result.document);
+    assert!(!items.is_empty(), "the call has requirement items");
+    for item in items {
+        assert_eq!(item["record"]["result"], "failed", "{item}");
+        assert_eq!(
+            item["record"]["cause"],
+            json!({
+                "kind": "tool-failure",
+                "defect": "total-bytes",
+                "limit": 2_097_152,
+                "value": 2_097_153
+            }),
+            "{item}"
+        );
+    }
+    assert_eq!(result.settle_calls, 1);
 }
 
 /// FR-962-AC-4: with the recording provider (advertising `value-validity`)

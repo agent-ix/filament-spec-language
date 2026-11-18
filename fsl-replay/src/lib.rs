@@ -109,8 +109,9 @@ pub use build_inventory::{
 pub use call_replay_context::{run_with_replay_context, CallReplayContext, RunWithReplayContext};
 pub use call_requirements::{
     call_requirements_for, run_with_requirements, run_with_requirements_reading,
-    run_with_requirements_reading_and_profile_catalog, CallRequirement, CallRequirements,
-    RequirementsRun, RunWithRequirements,
+    run_with_requirements_reading_and_profile_catalog,
+    run_with_requirements_reading_and_profile_catalog_and_integer_division, CallRequirement,
+    CallRequirements, RequirementsRun, RunWithRequirements,
 };
 pub use call_site::{
     call_site, CallSite, CallSiteRefusal, CallSiteSelection, ClauseName, ClauseSite, FieldName,

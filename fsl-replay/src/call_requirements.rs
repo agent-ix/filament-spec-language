@@ -9,7 +9,7 @@
 //! reaches [`run_with_requirements`] and its result types through the
 //! `fsl_replay` root and never names [`crate::spine`] (FR-060 T12-A).
 
-use filament_exact::{planned_equality, Cancel, Meter, Outcome, Value};
+use filament_exact::{Cancel, Meter, Outcome, Value, planned_equality};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{RequestIndex, SourceIdentity};
@@ -18,8 +18,8 @@ use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use crate::spine::{
-    default_accounting, run_reading, Call, CallArgument, CallOutcome, DependencyInput,
-    ProfileCatalogInput, RunRefusal, SpineLimits,
+    Call, CallArgument, CallOutcome, DependencyInput, ProfileCatalogInput, RunRefusal, SpineLimits,
+    default_accounting,
 };
 
 /// One requirement item of the selected call: the record's occurrence key and
@@ -234,8 +234,24 @@ pub fn run_with_requirements_reading_and_profile_catalog<T>(
     profile_catalog: Option<ProfileCatalogInput<'_>>,
     read: impl FnOnce(&crate::spine::CheckedUnit, &CallRequirements) -> T,
 ) -> Result<(RunWithRequirements, T), Box<RunRefusal>> {
+    run_with_requirements_reading_and_profile_catalog_and_integer_division(
+        run,
+        profile_catalog,
+        None,
+        read,
+    )
+}
+
+/// [`run_with_requirements_reading_and_profile_catalog`] with an optional
+/// caller-selected integer-division law for the program unit (FR-767).
+pub fn run_with_requirements_reading_and_profile_catalog_and_integer_division<T>(
+    run: &RequirementsRun<'_>,
+    profile_catalog: Option<ProfileCatalogInput<'_>>,
+    integer_division: Option<crate::AdmittedIntegerDivision>,
+    read: impl FnOnce(&crate::spine::CheckedUnit, &CallRequirements) -> T,
+) -> Result<(RunWithRequirements, T), Box<RunRefusal>> {
     let library_name = package_name_of(&run.package_name)?;
-    let (outcome, (requirements, read)) = run_reading(
+    let (outcome, (requirements, read)) = crate::spine::run_reading_with_integer_division(
         run.source.clone(),
         run.package_name.clone(),
         run.path,
@@ -248,6 +264,7 @@ pub fn run_with_requirements_reading_and_profile_catalog<T>(
         &fsl_eval::execution::SuppliedBackends::default(),
         &fsl_eval::execution::PrepareLimits::default(),
         profile_catalog,
+        integer_division,
         run.cancel,
         |checked, _, _| {
             let graph = checked.package().graph();
