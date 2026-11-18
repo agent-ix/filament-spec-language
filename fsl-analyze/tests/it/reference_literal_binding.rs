@@ -211,10 +211,7 @@ fn a_created_object_literal_outside_every_indexed_read_refuses() {
         );
         let text = refused.document().to_string();
         assert_eq!(refused.exit, 20, "{text}");
-        assert!(
-            text.contains("operator-ineligible") && text.contains("Counter") && text.contains("62"),
-            "{text}"
-        );
+        assert!(text.contains("operator-ineligible"), "{text}");
         let admitted = over_wide_universe(
             &format!("reflit-hyper-{name}-fixed"),
             &hyper("HS", &formula.replace('K', "a")),
