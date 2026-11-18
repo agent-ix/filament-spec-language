@@ -286,10 +286,7 @@ mod tests {
             &cancel,
         )
         .expect("checks under Kernel")
-        .into_value()
-        .into_iter()
-        .next()
-        .expect("one admitted unit checks to one unit");
+        .into_value();
         let emitted = spine::package(&checked, spine::PackageLimits::default(), &cancel)
             .expect("packages")
             .into_value();
