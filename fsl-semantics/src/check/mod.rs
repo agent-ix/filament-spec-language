@@ -908,11 +908,6 @@ pub struct CheckedGraph {
     /// Authored identity-field names for each checked source object type,
     /// keyed by the source model's declaration key.
     source_object_identity_fields: BTreeMap<filament_checked::key::DeclarationKey, Vec<String>>,
-    /// The span of the unit's first source `object` declaration.
-    first_source_object: Option<(
-        fsl_foundation::source::provenance::RawSourceRef,
-        fsl_foundation::Span,
-    )>,
     /// FR-110 "Extension selection": the extension definitions the unit
     /// selects, ascending by `(authority, identity)`.
     extension_selections: Vec<fsl_foundation::selection::DefinitionRef>,
@@ -1113,7 +1108,6 @@ impl DebugWith for CheckedGraph {
             protocol_population_types,
             model_roots,
             header_layers,
-            first_source_object,
             source_packages,
             source_object_identity_fields,
             extension_selections,
@@ -1236,7 +1230,6 @@ impl DebugWith for CheckedGraph {
             )
             .field("model_roots", &NodeList(model_roots.iter(), table))
             .field("header_layers", &header_layers)
-            .field("first_source_object", &first_source_object)
             .field("source_packages", &source_packages)
             .field(
                 "source_object_identity_fields",
@@ -2906,7 +2899,6 @@ impl PackageDeclarations {
             .collect();
         let protocol_profile = self.protocol_profile;
         let header_layers = self.header_layers;
-        let first_source_object = self.first_source_object;
         let source_object_identity_fields = self.source_object_identity_fields;
         let source_packages: Vec<_> = self
             .models
@@ -7743,7 +7735,6 @@ impl PackageDeclarations {
             protocol_population_types,
             model_roots,
             header_layers,
-            first_source_object,
             source_packages,
             source_object_identity_fields,
             extension_selections,
@@ -8779,19 +8770,6 @@ impl CheckedGraph {
     /// `requires` closure of these.
     pub fn header_layers(&self) -> &[crate::value::layer::HeaderLayer] {
         &self.header_layers
-    }
-
-    /// The span of the unit's first source `object` declaration, if it
-    /// declares one.
-    pub fn first_source_object(
-        &self,
-    ) -> Option<(
-        &fsl_foundation::source::provenance::RawSourceRef,
-        fsl_foundation::Span,
-    )> {
-        self.first_source_object
-            .as_ref()
-            .map(|(source, span)| (source, *span))
     }
 
     /// FR-110 "Extension selection": the extension definitions the unit

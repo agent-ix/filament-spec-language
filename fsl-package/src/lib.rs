@@ -119,7 +119,8 @@ pub use emit::{
     Emission, EmitRefusal, MonitorPlanWire, OmissionCause, OmittedNode, ProtocolEmission,
     ProtocolEmissionAggregate, ProtocolEmissionResult, SelectedSourceCollectionRow,
     SelectedSourceRecordMemberRow, SelectedSourceRecordRow, SourceObjectMemberFacts,
-    TemporalBindingRows, TemporalClauseRef, TemporalClockSelection, TemporalRows, TimedOrderFault,
+    SourceObjectOperationFacts, TemporalBindingRows, TemporalClauseRef, TemporalClockSelection,
+    TemporalRows, TimedOrderFault,
 };
 #[cfg(feature = "std")]
 pub use equality_file::{

@@ -2696,7 +2696,7 @@ pub fn package_with_temporal_selections(
                     limits.emit(),
                 )
             })
-            .map_err(|refusal| emit_refusal(refusal, &checked.package))?;
+            .map_err(emit_refusal)?;
             let results = merge_emission_results(
                 &checked.protocol_results,
                 lifecycle_emission_results(&protocol_emission, &checked.source),
@@ -3521,23 +3521,9 @@ fn parse_operation_clauses(
 
 /// The compile refusal for an emit refusal; a reached `emit.output_bytes`
 /// ceiling is the stage limit outcome (FR-264 Behavior 5).
-fn emit_refusal(
-    refusal: fsl_package::EmitRefusal,
-    package: &pkg::CheckedPackage,
-) -> Box<CompileRefusal> {
+fn emit_refusal(refusal: fsl_package::EmitRefusal) -> Box<CompileRefusal> {
     Box::new(match refusal {
         fsl_package::EmitRefusal::OutputLimit(limit) => CompileRefusal::Limit(limit),
-        fsl_package::EmitRefusal::SourceObjectEmission { span } => {
-            // The declaration's own unit locates it.
-            let region = package
-                .graph()
-                .first_source_object()
-                .and_then(|(source, _)| region(source, span));
-            CompileRefusal::Emit(
-                fsl_package::EmitRefusal::SourceObjectEmission { span },
-                region,
-            )
-        }
         fsl_package::EmitRefusal::MissingTemporalClockSelection {
             source_ref,
             span,
@@ -3586,7 +3572,7 @@ fn emit_unit(
         cancel,
         limits.emit(),
     )
-    .map_err(|refusal| emit_refusal(refusal, package))?;
+    .map_err(emit_refusal)?;
     if !emission.omitted().is_empty() {
         return Err(Box::new(CompileRefusal::Omitted(
             emission.omitted().to_vec(),

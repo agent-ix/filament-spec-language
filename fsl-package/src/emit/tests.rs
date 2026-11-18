@@ -2022,9 +2022,6 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             Err(EmitRefusal::PerTraceClockConfigurations { .. }) => {
                 panic!("the emitter never derives clock configurations")
             }
-            Err(EmitRefusal::SourceObjectEmission { .. }) => {
-                panic!("the fixture set declares no source object type")
-            }
             Err(EmitRefusal::ProtocolResultInvariant) => Seen::ProtocolResultInvariant,
             Err(EmitRefusal::ProtocolResultsRequired) => Seen::ProtocolResultsRequired,
             Err(EmitRefusal::FloatEqualityScheduleNotEmitted) => {
