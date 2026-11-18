@@ -11,6 +11,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-155
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-120
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-107
+    type: references
   - target: ix://agent-ix/filament-spec-language/FR-150
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-185
@@ -54,11 +58,13 @@ or admitting a created-object read.
 ## Outputs
 
 - S1 and S2: one `ReferenceLiteral{type_name, key}` node.
-- S3: the literal typed `Reference<M::T>`, holding `{T, identity bytes}`
-  unresolved, with its pending marks.
+- S3: the literal typed `Reference<M::T>`, held in the checked graph as the
+  checked node `NodeKind::ReferenceLiteral{object_type, identity}`
+  (`filament-checked`), `object_type` the effective identity of `T` and
+  `identity` the key's UTF-8 bytes, unresolved, with its pending marks.
 - S4: FSpec FR-480's `literal` term of `value_kind` `reference`.
-- Binding: the resolution table, the resolved footprints, or a located
-  refusal before any state is explored.
+- Binding: the admitted subject's resolution table `ReferenceBindings`, the
+  resolved footprints, or a located refusal before any state is explored.
 
 ## Behavior
 
@@ -114,7 +120,13 @@ or admitting a created-object read.
   symmetric, FR-150 refuses the literal.
 - The checker SHALL type the literal `Reference<M::T>`, the type node a
   `Reference<M::T>` reference names, and keep `{T, identity bytes}` (the
-  UTF-8 bytes of `key`) unresolved.
+  UTF-8 bytes of `key`) unresolved, as the checked node
+  `NodeKind::ReferenceLiteral{object_type, identity}` that
+  `filament_checked::construct::reference_literal` builds. That node is
+  distinct from a resolved `ObjectReference` value, so no checked value
+  holds an object reference before a subject is bound. The constructor
+  refuses an empty or non-UTF-8 identity; the checker refuses the empty key
+  first, so the constructor's refusal is never the reported one.
 - Each occurrence in a slot that bars model state (FSpec FR-464 "Slots that
   bar model state") SHALL be marked `pending-reference`, and S3 SHALL NOT
   refuse it there. Each read footprint (FR-155) that holds a literal,
@@ -131,8 +143,29 @@ or admitting a created-object read.
 
 ### Resolution at subject binding
 
-- When a subject is bound, before any state is explored or any clause is
-  evaluated, the resolver SHALL build one table from each `(T, identity)` of
+- Subject binding SHALL be FR-120's subject admission: `fsl-eval`'s
+  `ModelSystem` admission (`ModelSystem::new` and its siblings) resolves the
+  package's literals after it has checked the universes and admitted the
+  initial states, and before it returns the system, so no expansion,
+  exploration or clause evaluation can see an unresolved literal. Admission
+  is the one stage that holds both inputs of the decision, the admitted
+  initial member records and the universe key sets, and every analysis path
+  over a subject reaches its states through an admitted `ModelSystem`.
+  `fsl-analyze` admits the request's subject once before it runs any item,
+  so a resolution refusal is the request's binding refusal
+  (`AnalyzeRefusal::Binding`) and no item runs.
+- The resolution table SHALL be data the admitted `ModelSystem` holds beside
+  the checked package, `ReferenceBindings`, keyed by the checked node's
+  `(object_type, identity)` and mapping each key to
+  `ReferenceBinding::Fixed(r)` or `ReferenceBinding::CreatedObject`.
+  Resolution SHALL NOT change the checked package: its graph keeps every
+  literal pending, so one checked package is admitted under many subjects,
+  each with its own table. A system admitted over one model of a package
+  that selects several (a refinement's two subjects) resolves the literals
+  whose `T` that model declares; the whole-subject admission above has
+  already decided the refusals for the rest.
+- Before any state is explored or any clause is evaluated, the resolver
+  SHALL build one table from each `(T, identity)` of
   the checked package's literals to `Fixed(r)`, `r` the FSpec FR-181
   reference of the object an initial member record admits, or to
   `CreatedObject`, for a key that occurs in an overlapping population's
@@ -143,22 +176,33 @@ or admitting a created-object read.
   A fixed key whose record's type does not conform to `T` refuses the same.
 - A `CreatedObject` literal at an occurrence marked `pending-reference` in a
   barred slot SHALL refuse `ill_typed`/`operator-ineligible` at the literal.
-  A `Fixed` literal there is admitted as a constant.
+  A `Fixed` literal there is admitted as a constant. The check runs in the
+  same admission, over every S3 `pending-reference` mark of the package's
+  barred slots, once the table exists; S3 never runs it.
 - Each footprint marked `pending-reference` SHALL be resolved: a
   `CreatedObject` literal adds the membership of the populations that
-  overlap `T`, and a `Fixed` literal adds nothing. Every footprint consumer
-  (FR-155's frame and independence checks, state-space reduction) SHALL read
-  the resolved footprint, never the pending one.
+  overlap `T`, and a `Fixed` literal adds nothing. The admitted
+  `ModelSystem`'s footprints are the resolved ones, and every footprint
+  consumer (FR-155's frame and independence checks, state-space reduction)
+  SHALL read them, never the pending S3 footprint.
 
 ### Evaluation
 
+- The clause evaluator (FR-107, `fsl-eval`) SHALL evaluate a
+  `NodeKind::ReferenceLiteral` node by reading the admitted system's
+  `ReferenceBindings`, which every evaluation over that subject receives
+  with the state's object environment. The node is a lookup in the table,
+  never a value the graph holds.
 - A `Fixed(r)` literal evaluates to `r` at every state of every behaviour.
   A dereference through it whose object is not a member of the state follows
   the rules for an absent target.
 - A `CreatedObject` literal evaluates at each state by a key lookup of the
   state's member with that key in the overlapping populations: that member's
   FSpec FR-181 reference when it is present and its type conforms to `T`,
-  and otherwise the undefined value with reason `absent-key`.
+  and otherwise the undefined value with reason `absent-key`. The lookup is
+  the evaluator's own `lookup` query with undefined absence over the
+  state's object environment, so the undefined value is the one that query
+  gives a key with no member.
 
 ## Acceptance Criteria
 
@@ -167,8 +211,8 @@ or admitting a created-object read.
 | FR-1000-AC-1 | `M::T#"s1"` in a clause body parses as one `ReferenceLiteral` node spanning the literal, renders back byte for byte and formats idempotently with its token stream unchanged; `M::T#s1`, `M::T#` and `#"s1"` each refuse `invalid_syntax`/`unexpected-token` at the token after `#`, at the token after `#` and at `#`. | Test (TC-2833) |
 | FR-1000-AC-2 | Over TC-1076's `Counter` unit, `invariant R using v on M::Counter at current { self = M::Counter#"a" }` checks with the literal typed `Reference<M::Counter>`; `M::Nothing#"a"` refuses `missing_declaration`/`missing-name` at `Nothing`, `M::Level#"a"` refuses `ill_typed`/`type-mismatch` at `M::Level` with expected `object type`, and `M::Counter#""` refuses `invalid_package`/`invalid-value` at the string. A protocol `choice` guard comparing a `receive` record's reference field `got.target` (record `Pick { target: Reference<M::Counter>; }`, received before the choice) to `M::Counter#"z"` checks at S3 with no refusal: the occurrence is pending, not refused. | Test (TC-2834) |
 | FR-1000-AC-3 | `M::Counter#"a"` lowers to one `literal` term of `value_kind` `reference` whose `value` is `61`; two occurrences, one through a second alias of the package, share the term. | Test (TC-2834) |
-| FR-1000-AC-4 | Over the analyze Counter subject (the `test/counter` domain package whose `Counter` has the field `value`) whose initial state holds counter `a` and whose universe holds `a` and `b`: a clause reading `M::Counter#"a"` resolves `Fixed` and is decided; `M::Counter#"zz"` refuses `missing_declaration`/`missing-name` at the literal naming `Counter` and `7a7a` before any state is explored; and a protocol `choice` guard comparing a `receive` record's reference field `got.target` (record `Pick { target: Reference<M::Counter>; }`, received before the choice) to the created-object `M::Counter#"b"` refuses `ill_typed`/`operator-ineligible` at the literal when the subject is bound, while the same guard over `M::Counter#"a"` is admitted. | Test (TC-2835) |
-| FR-1000-AC-5 | Over the AC-4 subject, a clause `always holds(deref(M::Counter#"b").value = 0)` is undefined with reason `absent-key` at every state, since no state holds `b`, and its footprint holds the membership of `counters`; `always holds(deref(M::Counter#"a").value <= 3)` is decided with a footprint that holds no membership location for the literal. | Test (TC-2835) |
+| FR-1000-AC-4 | Over the analyze Counter subject (the `test/counter` domain package whose `Counter` has the field `value`) whose initial state holds counter `a` and whose universe holds `a` and `b`: a clause reading `M::Counter#"a"` resolves `Fixed` and is decided; `M::Counter#"zz"` refuses `missing_declaration`/`missing-name` at the literal naming `Counter` and `7a7a` as the request's binding refusal at subject admission, before any item runs or any state is explored; and a protocol `choice` guard comparing a `receive` record's reference field `got.target` (record `Pick { target: Reference<M::Counter>; }`, received before the choice) to the created-object `M::Counter#"b"` refuses `ill_typed`/`operator-ineligible` at the literal at subject admission, while the same guard over `M::Counter#"a"` is admitted. | Test (TC-2835) |
+| FR-1000-AC-5 | Over the AC-4 subject, a clause `always holds(deref(M::Counter#"b").value = 0)` is undefined with reason `absent-key` at every state, since the per-state lookup finds no `b`, and its footprint holds the membership of `counters`; `always holds(deref(M::Counter#"a").value <= 3)` is decided with a footprint that holds no membership location for the literal. | Test (TC-2835) |
 | FR-1000-AC-6 | In a clause body, `M::T #"s1"`, `(x)#"s1"`, `f(x)#"s1"` and `M::T#"a"#"b"` refuse `invalid_syntax`/`unexpected-token` at the first, first, first and second `#`; `M::T# "s1"`, `M::T#1` and `M::T#)` refuse `invalid_syntax`/`unexpected-token` at `"s1"`, `1` and `)`; a source ending in `M::T#` refuses `invalid_syntax`/`unexpected-end`; `M::T#"\q"` refuses `invalid_syntax`/`invalid-escape` at the string; `"a#b"` and `// a#b` parse as a string and a comment; `M::T#""` parses. The admitted `M::T#"s1"`'s `ReferenceLiteral` node has the children `QualifiedName` (`M::T`), the `#` token and the string token, in that order. | Test (TC-2952) |
 | FR-1000-AC-7 | S2 builds the body `M::T#"s1"` of a function as the one value form `ReferenceLiteral{type_name: "M::T", key: "s1"}` whose span is the literal's source span, and `M::T#"é"` as the key `é` (one scalar, no normalization). | Test (TC-2953) |
 
@@ -179,7 +223,9 @@ or admitting a created-object read.
   states), FR-181 (references).
 - [FR-091](FR-091-produce-value-forms-and-assemble-package-declarations.md)
   (value forms), [FR-093](FR-093-lower-checked-value-expressions-to-fr-322-terms.md)
-  (lowering), [FR-155](FR-155-derive-and-enforce-read-and-write-footprints.md)
+  (lowering), [FR-120](FR-120-simulate-a-checked-package-s-state-family.md)
+  (subject admission), [FR-107](FR-107-evaluate-state-clauses-at-s6a.md)
+  (clause evaluation), [FR-155](FR-155-derive-and-enforce-read-and-write-footprints.md)
   (footprints), [FR-150](FR-150-check-the-symmetric-population-annotation.md)
   (symmetric populations) and
   [FR-185](FR-185-declare-random-parameters-workloads-and-rewards.md)-AC-9,
