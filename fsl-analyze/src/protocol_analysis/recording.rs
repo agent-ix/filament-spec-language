@@ -1304,6 +1304,7 @@ fn assess_obligations(
                 kind: "enabledness".to_owned(),
                 node: Some(observation.node.clone()),
                 instance: observation.instance.clone(),
+                role_instance: None,
             },
             verdict: match enabled {
                 Some(true) => RecordingVerdict::Satisfied,
@@ -1326,6 +1327,7 @@ fn assess_obligations(
                 kind: "causal-order".to_owned(),
                 node: Some(format!("{} -> {}", send.node, receive.node)),
                 instance: send.instance.clone().or_else(|| receive.instance.clone()),
+                role_instance: None,
             },
             verdict: if !correctly_correlated || misordered {
                 RecordingVerdict::Violated
@@ -1430,6 +1432,7 @@ fn assess_obligations(
                         kind: "causal-edge".to_owned(),
                         node: Some(format!("{source_name} -> {target_name}")),
                         instance: instance.clone(),
+                        role_instance: None,
                     },
                     verdict,
                     cause,
@@ -1450,6 +1453,7 @@ fn assess_obligations(
                         kind: "causal-edge".to_owned(),
                         node: Some(format!("{source_name} -> {target_name}")),
                         instance: instance.clone(),
+                        role_instance: None,
                     },
                     verdict: if send_receive_mismatch || misordered {
                         RecordingVerdict::Violated
@@ -1856,6 +1860,7 @@ fn assess_obligations(
                     .to_owned(),
                     node: Some(qualified.clone()),
                     instance: instance.clone(),
+                    role_instance: None,
                 },
                 verdict,
                 cause,
@@ -1895,6 +1900,7 @@ fn assess_obligations(
                     kind: "window".to_owned(),
                     node: Some(effect_name.clone()),
                     instance: observation.instance.clone(),
+                    role_instance: None,
                 },
                 verdict,
                 cause,
@@ -1925,6 +1931,7 @@ fn assess_obligations(
                         kind: "window".to_owned(),
                         node: Some(node.clone()),
                         instance: instance.clone(),
+                        role_instance: None,
                     },
                     verdict: if closure_closed && path_enabled == Some(true) {
                         RecordingVerdict::Violated
@@ -1959,6 +1966,7 @@ fn assess_obligations(
                         kind: "window".to_owned(),
                         node: Some(node.clone()),
                         instance: observation.instance.clone(),
+                        role_instance: None,
                     },
                     verdict,
                     cause,
@@ -2087,6 +2095,7 @@ fn assess_obligations(
                     kind: "compensation".to_owned(),
                     node: Some(effect_name.clone()),
                     instance,
+                    role_instance: None,
                 },
                 verdict: if valid && settled {
                     RecordingVerdict::Satisfied
@@ -2189,6 +2198,7 @@ fn assess_obligations(
                 kind: "requirement".to_owned(),
                 node: Some(format!("temporal:{}", requirement.temporal)),
                 instance: None,
+                role_instance: None,
             },
             verdict,
             cause,
@@ -2451,6 +2461,7 @@ fn assess_obligations(
                 kind: "channel-premise".to_owned(),
                 node: Some(channel.name.clone()),
                 instance: None,
+                role_instance: None,
             },
             verdict,
             cause,
@@ -2485,6 +2496,7 @@ fn assess_obligations(
                         kind: "constraint".to_owned(),
                         node: Some(node.clone()),
                         instance: instance.clone(),
+                        role_instance: None,
                     },
                     verdict,
                     cause,
@@ -2513,6 +2525,7 @@ fn assess_obligations(
                         kind: "constraint".to_owned(),
                         node: Some(node.clone()),
                         instance: instance.clone(),
+                        role_instance: None,
                     },
                     verdict,
                     cause,
@@ -2559,6 +2572,7 @@ fn assess_obligations(
                 kind: "closure".to_owned(),
                 node: None,
                 instance,
+                role_instance: None,
             },
             verdict,
             cause,
@@ -2629,7 +2643,9 @@ fn add_fanout_control_obligations(
                         })
                         .map(|(position, _)| position)
                         .collect::<Vec<_>>();
-                    let (verdict, cause) = if !observed.is_empty() {
+                    let (verdict, cause) = if population.is_none() {
+                        (RecordingVerdict::Pending, None)
+                    } else if !observed.is_empty() {
                         (RecordingVerdict::Satisfied, None)
                     } else if document.closure.state == "closed" && population.is_some() {
                         (RecordingVerdict::Violated, Some(RecordingCause::Missing))

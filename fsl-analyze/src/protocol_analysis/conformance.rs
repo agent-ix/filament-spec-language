@@ -1115,6 +1115,7 @@ mod tests {
                         kind: "enabledness".to_owned(),
                         node: Some("Flow::Main::Ship".to_owned()),
                         instance: Some("w-1".to_owned()),
+                        role_instance: None,
                     },
                     verdict: super::super::recording::RecordingVerdict::Violated,
                     cause: Some(super::super::recording::RecordingCause::Unexpected),
