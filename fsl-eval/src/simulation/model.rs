@@ -71,7 +71,9 @@ use crate::simulation::reduction::{
     ConstraintValue, OfferedReductions, Permutation, SymmetryGroup,
 };
 use crate::simulation::sample::{sample_request, sample_request_until, SampleRequest};
-use crate::simulation::trace::{replay, ReplayError, Trace};
+use crate::simulation::trace::{
+    replay, ReplayError, SampleProvenance, StateFindings, Step, StopReason, Trace,
+};
 use crate::value::QualifiedName;
 
 pub(crate) use application::{FirstApplication, Observed, ObservedIdentities, OperationRef};
@@ -1769,13 +1771,16 @@ pub fn sample_model(
     Ok(ModelTrace { trace, effects })
 }
 
-/// Shrink a model trace by removing its suffix while preserving a caller's
+/// Shrink a model trace through single-invocation deletion and immediate
+/// decreases in canonical invocation order while preserving a caller's
 /// native failure oracle.
 ///
-/// Each candidate is replayed against `system` before `fails` is called. The
-/// returned trace is the shortest prefix reached by this ordered pass that
-/// still satisfies the oracle. The oracle should evaluate the same claim and
-/// disposition against the candidate trace using the native evaluator.
+/// Each candidate is reconstructed from enabled model transitions and
+/// replayed against `system` before `fails` is called. Deletion strictly
+/// reduces the trace length; invocation decreases use canonical transition
+/// identity bytes as a deterministic finite order. The result is 1-minimal
+/// under those one-step reductions. The oracle should evaluate the same claim
+/// and disposition against the candidate trace using the native evaluator.
 ///
 /// # Errors
 ///
@@ -1797,29 +1802,205 @@ pub fn shrink_model_trace(
     }
 
     let mut smallest = trace.clone();
-    while !smallest.trace.steps.is_empty() {
-        let length = smallest.trace.steps.len() - 1;
-        let mut candidate = smallest.clone();
-        candidate.trace.steps.truncate(length);
-        candidate
-            .trace
-            .findings
-            .retain(|finding| finding.depth <= length);
-        if let Some(provenance) = candidate.trace.provenance.as_mut() {
-            provenance.stopped = StopReason::StepLimit;
-        }
-        replay(system, &candidate.trace, identity_limits()).map_err(|error| match error {
-            ReplayError::KeyEncoding(refusal) => {
-                ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+    loop {
+        let (replayed, states) = rebuild_model_trace(
+            system,
+            &smallest.trace.initial,
+            &smallest.trace.steps,
+            smallest.trace.provenance.as_ref(),
+        )?
+        .ok_or(ModelShrinkError::NotCounterexample)?;
+        let mut accepted = None;
+
+        // First try deleting each invocation, from left to right. Rebuilding
+        // the candidate recomputes state keys and findings at every position.
+        for index in 0..replayed.trace.steps.len() {
+            let mut steps = replayed.trace.steps.clone();
+            steps.remove(index);
+            let Some((candidate, _)) = rebuild_model_trace(
+                system,
+                &replayed.trace.initial,
+                &steps,
+                replayed.trace.provenance.as_ref(),
+            )?
+            else {
+                continue;
+            };
+            if fails(&candidate) {
+                accepted = Some(candidate);
+                break;
             }
-            other => ModelShrinkError::Replay(other),
-        })?;
-        candidate.effects.truncate(length);
-        if fails(&candidate) {
+        }
+        if let Some(candidate) = accepted {
             smallest = candidate;
+            continue;
+        }
+
+        // Then try the immediate lower enabled invocation with the same
+        // operation and receiver at each position. Invocation order is the
+        // canonical transition-identity byte order used by simulation.
+        for (index, current) in replayed.trace.steps.iter().enumerate() {
+            let current_key = system
+                .transition_key(&current.transition)
+                .map_err(|refusal| {
+                    ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+                })?;
+            let expansion =
+                expand(system, &states[index], identity_limits()).map_err(|refusal| {
+                    ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+                })?;
+            let Expanded::Successors { successors, .. } = expansion else {
+                continue;
+            };
+            let mut predecessor: Option<(Vec<u8>, ModelTransition)> = None;
+            for successor in successors {
+                let transition = successor.transition;
+                if transition.operation() != current.transition.operation()
+                    || transition.receiver() != current.transition.receiver()
+                {
+                    continue;
+                }
+                let key = system.transition_key(&transition).map_err(|refusal| {
+                    ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+                })?;
+                let is_closer = match predecessor.as_ref() {
+                    Some((previous, _)) => key.as_slice() > previous.as_slice(),
+                    None => true,
+                };
+                if key.as_slice() < current_key.as_slice() && is_closer {
+                    predecessor = Some((key, transition));
+                }
+            }
+            let Some((_, transition)) = predecessor else {
+                continue;
+            };
+            let mut steps = replayed.trace.steps.clone();
+            steps[index] = Step {
+                transition,
+                ordinal: 0,
+                key: current.key.clone(),
+            };
+            let Some((candidate, _)) = rebuild_model_trace(
+                system,
+                &replayed.trace.initial,
+                &steps,
+                replayed.trace.provenance.as_ref(),
+            )?
+            else {
+                continue;
+            };
+            if fails(&candidate) {
+                accepted = Some(candidate);
+                break;
+            }
+        }
+        if let Some(candidate) = accepted {
+            smallest = candidate;
+        } else {
+            return Ok(replayed);
         }
     }
-    Ok(smallest)
+}
+
+/// Rebuild a candidate from enabled transitions, recomputing canonical keys,
+/// findings, effects and its terminal reason. An unavailable transition makes
+/// the candidate invalid rather than an error in the shrink run.
+fn rebuild_model_trace(
+    system: &ModelSystem<'_>,
+    initial_key: &crate::simulation::StateKey,
+    requested: &[Step<ModelTransition>],
+    provenance: Option<&SampleProvenance>,
+) -> Result<Option<(ModelTrace, Vec<ModelSimState>)>, ModelShrinkError> {
+    let mut current = sorted_initial(system, identity_limits())
+        .map_err(|refusal| ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal)))?
+        .into_iter()
+        .find(|initial| initial.key == *initial_key)
+        .map(|initial| initial.state);
+    let Some(mut current) = current.take() else {
+        return Err(ModelShrinkError::Replay(ReplayError::UnknownInitial {
+            expected: initial_key.clone(),
+        }));
+    };
+
+    let mut steps = Vec::with_capacity(requested.len());
+    let mut findings = Vec::new();
+    let mut states = Vec::with_capacity(requested.len() + 1);
+    states.push(current.clone());
+    let mut stopped = None;
+
+    for index in 0..=requested.len() {
+        let (successors, at_state) = match expand(system, &current, identity_limits())
+            .map_err(|refusal| ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal)))?
+        {
+            Expanded::Successors {
+                successors,
+                findings,
+            } => (successors, findings),
+            Expanded::Stopped(stop) => {
+                if index < requested.len() {
+                    return Ok(None);
+                }
+                stopped = Some(StopReason::Stopped(stop.cause));
+                break;
+            }
+        };
+        if !at_state.is_empty() {
+            let (_, state_key) = system.state_key(&current).map_err(|refusal| {
+                ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+            })?;
+            findings.push(StateFindings {
+                state: state_key,
+                depth: index,
+                findings: at_state,
+            });
+        }
+        if index == requested.len() {
+            stopped = Some(if successors.is_empty() {
+                StopReason::NoSuccessors
+            } else {
+                StopReason::StepLimit
+            });
+            break;
+        }
+
+        let wanted = &requested[index];
+        let Some(chosen) = successors
+            .into_iter()
+            .filter(|successor| successor.transition == wanted.transition)
+            .nth(wanted.ordinal)
+        else {
+            return Ok(None);
+        };
+        steps.push(Step {
+            transition: wanted.transition.clone(),
+            ordinal: wanted.ordinal,
+            key: chosen.key,
+        });
+        current = chosen.state;
+        states.push(current.clone());
+    }
+
+    let mut provenance = provenance.cloned();
+    if let Some(provenance) = provenance.as_mut() {
+        provenance.stopped = stopped.unwrap_or(StopReason::StepLimit);
+    }
+    let trace = Trace {
+        initial: initial_key.clone(),
+        steps,
+        findings,
+        provenance,
+    };
+    replay(system, &trace, identity_limits()).map_err(|error| match error {
+        ReplayError::KeyEncoding(refusal) => {
+            ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+        }
+        other => ModelShrinkError::Replay(other),
+    })?;
+    let effects = effects_of(system, &trace).map_err(|error| match error {
+        ModelSampleError::NotSimulated(cause) => ModelShrinkError::NotSimulated(cause),
+        ModelSampleError::Replay(cause) => ModelShrinkError::Replay(cause),
+    })?;
+    Ok(Some((ModelTrace { trace, effects }, states)))
 }
 
 /// The expansions of one run's sampled walks, kept so that a state the walks
