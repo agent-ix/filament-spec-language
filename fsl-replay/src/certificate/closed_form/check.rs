@@ -8,8 +8,8 @@ use fsl_semantics::check::{self as checked, ScheduleClaim as CheckedScheduleClai
 
 use crate::execute::{self, ReplayRefusal};
 use crate::{
-    ClosedFormCheck, ClosedFormOutcome, ReplayRequest, ScheduleClaim, ScheduleSubject,
-    Task, TaskSet, TaskSetRefusal,
+    ClosedFormCheck, ClosedFormOutcome, ReplayRequest, ScheduleClaim, ScheduleSubject, Task,
+    TaskSet, TaskSetRefusal,
 };
 
 /// The claim occurrence selected by FR-454: `[node, "claim", ordinal]`.
@@ -55,10 +55,9 @@ pub fn check_closed_form(
         request.limits(),
     )
     .map_err(CertificateRefusal::Recompile)?;
-    let checked = execute::recompile(&request, &caller)
-        .map_err(CertificateRefusal::Recompile)?
-        .checked
-        .package();
+    let recompiled =
+        execute::recompile(&request, &caller).map_err(CertificateRefusal::Recompile)?;
+    let checked = recompiled.checked.package();
     let model = checked.graph().task_sets();
     let checked_claim = model
         .claims()
@@ -71,8 +70,13 @@ pub fn check_closed_form(
     let name = Identifier::new(&source_set.name)
         .map_err(|_| CertificateRefusal::InvalidIdentifier(source_set.name.clone()))?;
     let task_set = TaskSet::new(
-        crate::QualifiedName::new(vec![name]).map_err(|_| CertificateRefusal::ClaimRootUnresolved)?,
-        source_set.tasks.iter().map(convert_task).collect::<Result<Vec<_>, _>>()?,
+        crate::QualifiedName::new(vec![name])
+            .map_err(|_| CertificateRefusal::ClaimRootUnresolved)?,
+        source_set
+            .tasks
+            .iter()
+            .map(convert_task)
+            .collect::<Result<Vec<_>, _>>()?,
     )
     .map_err(CertificateRefusal::TaskSet)?;
     let claim = match &checked_claim.claim {
