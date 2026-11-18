@@ -17,7 +17,7 @@ FR-1034-AC-4.
 
 ## Test Procedure
 
-1. Translate `always (holds(c.level = 1) implies eventually[1 ms, *] holds(c.level = 1))` and run its automaton and the timed evaluator on the lasso stamped 0 ms, 1 ms at levels 1, 1, re-entering position 0 2 ms after it.
+1. Translate `always (holds(c.level = 1) implies eventually[1 ms, *] holds(c.level = 1))` and run its automaton and the timed evaluator on the lasso stamped 0 ms, 0.5 ms at levels 1, 1, re-entering position 0 1 ms after it, so each gap is below the 1 ms lower bound.
 2. Translate `always (holds(c.level = 1) implies eventually[1 ms, *] holds(c.level = 2))` and run its automaton and the evaluator on the same lasso.
 
 Test: `fsl-eval/tests/it/timed_trace.rs`.

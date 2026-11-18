@@ -1544,9 +1544,10 @@ fn an_open_upper_interval_takes_one_clock_with_its_lower_bound() {
 #[test]
 #[ignore = "QSL-2408: until[q, *] acceptance fulfilled when kept pending at a position holding psi and chi not implemented yet"]
 fn an_open_upper_until_kept_pending_with_its_witness_is_fulfilled() {
-    // Stamps 0 ms and 1 ms (in quarters), both level 1, re-entering
-    // position 0 2 ms after it.
-    let (stamps, levels, loop_start, period) = ([0_u64, 4], [1_i64, 1], 0, 8);
+    // Stamps 0 ms and 0.5 ms (in quarters), both level 1, re-entering
+    // position 0 1 ms after it: every gap is below 1 ms, so the claim is
+    // fulfilled only where the operator is kept pending with its witness.
+    let (stamps, levels, loop_start, period) = ([0_u64, 2], [1_i64, 1], 0, 4);
     for (body, refuted) in [
         (
             "always (holds(c.level = 1) implies eventually[1 ms, *] holds(c.level = 1))",
