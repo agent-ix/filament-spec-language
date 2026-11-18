@@ -2623,7 +2623,8 @@ fn fixture_chain() -> Chain {
 
 fn refusal(failure: FrontEndFailure) -> Box<CompileRefusal> {
     match failure {
-        StageFailure::Refused(refusal) | StageFailure::RefusedWithPayload(refusal, _) => refusal,
+        StageFailure::Refused(refusal) => refusal,
+        StageFailure::RefusedWithPayload(refusal, _) => *refusal,
         other => panic!("expected a refusal, got {other:?}"),
     }
 }
