@@ -4,7 +4,7 @@
 //! objective, into a `Synthesis` form, on real complete-V1 source through
 //! `fsl_cst::parse` and `build_unit`.
 
-use fsl_forms::build_unit;
+use fsl_forms::{DeclarationForm, SynthesisDirectionForm, SynthesisForm, build_unit};
 use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
 
@@ -23,6 +23,8 @@ const PICK: &str =
 
 const PICK_MIN: &str = "synthesis Pick using p grammar Digit domain Digit \
      minimize Pick satisfies { Pick >= 3 };";
+const PICK_MAX: &str = "synthesis Pick using p grammar Digit domain Digit \
+     maximize Pick satisfies { Pick <= 7 };";
 
 /// The one declaration form S2 builds for `declaration`, rendered by its
 /// `Debug` form, or the S1/S2 refusal rendered the same way.
@@ -43,6 +45,28 @@ fn built(declaration: &str) -> Result<String, String> {
         return Err(format!("not one form: {:?}", unit.forms()));
     };
     Ok(format!("{:?}", form.form()))
+}
+
+fn synthesis_form(declaration: &str) -> Result<SynthesisForm, String> {
+    let text = format!("{HEADER}{declaration}\n");
+    let parsed = fsl_cst::parse(
+        SourceIdentity::new("a", "u"),
+        "unit.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the unit");
+    if !parsed.is_admissible() {
+        return Err(format!("S1: {:?}", parsed.diagnostics()));
+    }
+    let unit = build_unit(&parsed).map_err(|refusal| format!("S2: {refusal:?}"))?;
+    let [form] = unit.forms() else {
+        return Err(format!("not one form: {:?}", unit.forms()));
+    };
+    match form.form() {
+        DeclarationForm::Synthesis(form) => Ok(form.as_ref().clone()),
+        other => Err(format!("not a synthesis form: {other:?}")),
+    }
 }
 
 /// FR-753-AC-1: `Release` builds one `VerificationPlan` form holding its
@@ -73,13 +97,15 @@ fn release_builds_a_verification_plan_form_with_three_steps() {
 #[trace("TC-2104", "FR-754-AC-1")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-6")]
 #[test]
-#[ignore = "QSL-2235: S2 Synthesis form for `synthesis` not implemented yet"]
 fn pick_builds_a_synthesis_form() {
-    let form = built(PICK).unwrap_or_else(|refusal| panic!("S2 builds `synthesis`: {refusal}"));
-    assert!(form.starts_with("Synthesis("), "{form}");
-    for word in ["Pick", "Digit"] {
-        assert!(form.contains(word), "{word} in {form}");
-    }
+    let form =
+        synthesis_form(PICK).unwrap_or_else(|refusal| panic!("S2 builds `synthesis`: {refusal}"));
+    assert_eq!(form.name.name, "Pick");
+    assert_eq!(form.grammar.name, "Digit");
+    assert_eq!(form.domain.name, "Digit");
+    assert!(form.objective.is_none());
+    assert!(form.satisfies_span.start < form.satisfies_span.end);
+    assert!(format!("{:?}", form.satisfies.expression).contains("Multiply"));
 }
 
 /// FR-754-AC-1: `minimize Pick` parses at S1 and the `Synthesis` form holds
@@ -87,10 +113,21 @@ fn pick_builds_a_synthesis_form() {
 #[trace("TC-2104", "FR-754-AC-1")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-7")]
 #[test]
-#[ignore = "QSL-2235: synthesis objective (`minimize`/`maximize`) not implemented yet"]
 fn pick_with_minimize_builds_a_synthesis_form_holding_its_objective() {
-    let form = built(PICK_MIN)
+    let form = synthesis_form(PICK_MIN)
         .unwrap_or_else(|refusal| panic!("S1 and S2 build the objective: {refusal}"));
-    assert!(form.starts_with("Synthesis("), "{form}");
-    assert!(form.contains("Minimize"), "{form}");
+    let objective = form.objective.expect("minimize is retained");
+    assert_eq!(objective.direction, SynthesisDirectionForm::Minimize);
+    assert!(format!("{:?}", objective.expression.expression).contains("Pick"));
+    assert!(objective.span.start < objective.span.end);
+}
+
+/// FR-754-AC-1: `maximize Pick` parses and its objective direction is retained.
+#[trace("TC-2104", "FR-754-AC-1")]
+#[test]
+fn pick_with_maximize_builds_a_synthesis_form_holding_its_objective() {
+    let form = synthesis_form(PICK_MAX)
+        .unwrap_or_else(|refusal| panic!("S1 and S2 build the objective: {refusal}"));
+    let objective = form.objective.expect("maximize is retained");
+    assert_eq!(objective.direction, SynthesisDirectionForm::Maximize);
 }

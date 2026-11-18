@@ -74,15 +74,15 @@ pub use abstraction_declaration::{
     AbstractionBindingForm, AbstractionDeclarationForm, FieldBindingForm, FrameBindingForm,
     ObjectBindingForm, ParameterBindingForm, PopulationBindingForm, RustSpelling,
 };
-pub use clause_text::{parse_clause_text, parse_type_text, ClauseTextRefusal};
+pub use clause_text::{ClauseTextRefusal, parse_clause_text, parse_type_text};
 pub use composition_declaration::{
     ComponentClauseForm, CompositionComponentForm, CompositionDeclarationForm,
     CompositionGuaranteeForm, CompositionMemberForm, CompositionPremiseForm, CompositionRuleForm,
     CompositionSuppliesForm,
 };
 pub use dispatch::{
-    build_unit, build_unit_with_protocol_results, leading_keywords, ConstructKind, FormsCause,
-    FormsRefusal, LeadingTokenKind, ParsedForm, ParsedUnit, ProtocolFormsRefusal,
+    ConstructKind, FormsCause, FormsRefusal, LeadingTokenKind, ParsedForm, ParsedUnit,
+    ProtocolFormsRefusal, build_unit, build_unit_with_protocol_results, leading_keywords,
 };
 pub use guarantee_declaration::{
     GuaranteeDeclarationForm, GuaranteeEnvironmentForm, GuaranteeInitialForm, GuaranteeMeasureForm,
@@ -129,15 +129,14 @@ pub use syntax::{
     RewardForm, RoleForm, RoleLifetime, SchedulableForm, SchedulerForm, ScopeEntry, ScopeId,
     ScopeName, ScopedAnchorForm, ShapeChanged, SignedQuantityForm, SignificantContent, Spellings,
     StateClauseForm, StateClauseKind, StateGraphClaimForm, StateGraphClaimKind,
-    StateGraphPredicateForm, StepLabelForm, StringLiteral, SynthesisForm, TaskForm, TasksetForm,
-    TemporalClauseForm, TemporalFormulaForm, TemporalNodeForm, TemporalNodeId, TemporalOperator,
-    TemporalOperatorForm, TemporalOperatorUse, TermOperator, TerminalDeclarationForm,
-    TerminalDeclarationKind, TimeInvariantBoundForm, TimeInvariantForm, TimeSourceForm,
-    TimeSourceSyntax, TimedIntervalForm, TimedUpper, TransitionForm, TreeRefusal, TupleForm,
-    TypeForm, TypeFormHead, UnionForm, UnionMemberForm, UnitForm, UnitTermForm, UrgentForm,
-    UrgentTarget, UsingAlias, VerificationPlanForm, VerificationStepForm, WeightedDelayForm,
-    WeightedValueForm,
-    WeightingForm, WorkloadForm, WorkloadWeightForm,
+    StateGraphPredicateForm, StepLabelForm, StringLiteral, SynthesisDirectionForm, SynthesisForm,
+    SynthesisObjectiveForm, TaskForm, TasksetForm, TemporalClauseForm, TemporalFormulaForm,
+    TemporalNodeForm, TemporalNodeId, TemporalOperator, TemporalOperatorForm, TemporalOperatorUse,
+    TermOperator, TerminalDeclarationForm, TerminalDeclarationKind, TimeInvariantBoundForm,
+    TimeInvariantForm, TimeSourceForm, TimeSourceSyntax, TimedIntervalForm, TimedUpper,
+    TransitionForm, TreeRefusal, TupleForm, TypeForm, TypeFormHead, UnionForm, UnionMemberForm,
+    UnitForm, UnitTermForm, UrgentForm, UrgentTarget, UsingAlias, VerificationPlanForm,
+    WeightedDelayForm, WeightedValueForm, WeightingForm, WorkloadForm, WorkloadWeightForm,
 };
 
 /// Each explicit heap stack S2 and the form traits keep grows by at most a
@@ -145,7 +144,7 @@ pub use syntax::{
 #[cfg(test)]
 mod stack_charge_tests {
     use super::syntax::stack_peak::take;
-    use super::{build_unit, DeclarationForm, ParsedUnit};
+    use super::{DeclarationForm, ParsedUnit, build_unit};
     use fsl_foundation::SourceIdentity;
     use ix_trace_rs::trace;
 

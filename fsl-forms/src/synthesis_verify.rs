@@ -2,23 +2,47 @@
 //! S2 dispatch for declarations whose detailed check/run forms are owned by
 //! FR-753 and FR-754. Keep their source identity and complete spelling intact.
 
-use fsl_cst::TokenKind;
-
 use crate::dispatch::{Construct, FormsRefusal};
 use crate::syntax::{
-    DeclarationForm, DeclaredName, SynthesisForm, UsingAlias, VerificationPlanForm,
-    VerificationStepForm,
+    DeclarationForm, DeclaredName, ExpressionForm, SynthesisDirectionForm, SynthesisForm,
+    SynthesisObjectiveForm, UsingAlias, VerificationPlanForm, VerificationStepForm,
 };
 use crate::value::{
-    items, name_form, nodes_of, production_node, significant_tokens, text, tokens_of, unexpected,
+    Item, expression, items, name_form, nodes_of, only, production_node, significant_tokens, text,
+    tokens_of, unexpected,
 };
+use fsl_cst::{CstNode, LosslessCst, Production, TokenKind};
+use fsl_foundation::Span;
 
 /// Build the source-bearing S2 form for `synthesis` (FR-754).
 pub(crate) fn synthesis(construct: Construct<'_>) -> Result<DeclarationForm, FormsRefusal> {
     let (name, profile, source, span) = identity(construct)?;
+    let cst = construct.cst;
+    let node = production_node(construct)?;
+    let children = items(cst, node);
+    let names = nodes_of(&children, Production::QualifiedName);
+    let [grammar, domain] = names.as_slice() else {
+        return Err(unexpected(node));
+    };
+    let blocks = nodes_of(&children, Production::Block);
+    let [block] = blocks.as_slice() else {
+        return Err(unexpected(node));
+    };
+    let block_children = items(cst, block);
+    let predicate = only(&block_children, Production::Expression, block)?;
+    let (predicate, predicate_spans) = expression(cst, predicate)?;
+    let objective = objective(cst, &children, node)?;
     Ok(DeclarationForm::Synthesis(Box::new(SynthesisForm {
         name,
         profile,
+        grammar: name_form(cst, grammar)?,
+        domain: name_form(cst, domain)?,
+        objective,
+        satisfies: ExpressionForm {
+            expression: predicate,
+            spans: predicate_spans,
+        },
+        satisfies_span: block.span(),
         source,
         span,
     })))
@@ -128,4 +152,37 @@ fn identity(
         .ok_or_else(|| unexpected(node))?
         .to_owned();
     Ok((name, profile, source, node.span()))
+}
+
+fn objective(
+    cst: &LosslessCst,
+    children: &[Item<'_>],
+    node: &CstNode,
+) -> Result<Option<SynthesisObjectiveForm>, FormsRefusal> {
+    let direction = children.iter().find_map(|item| match item {
+        Item::Token(token) if token.spelling() == b"minimize" => {
+            Some((SynthesisDirectionForm::Minimize, token.span()))
+        }
+        Item::Token(token) if token.spelling() == b"maximize" => {
+            Some((SynthesisDirectionForm::Maximize, token.span()))
+        }
+        Item::Token(_) | Item::Node(_) => None,
+    });
+    let expressions = nodes_of(children, Production::Expression);
+    match (direction, expressions.as_slice()) {
+        (None, []) => Ok(None),
+        (Some((direction, direction_span)), [expression_node]) => {
+            let (expression, spans) = expression(cst, expression_node)?;
+            let span = Span {
+                start: direction_span.start,
+                end: expression_node.span().end,
+            };
+            Ok(Some(SynthesisObjectiveForm {
+                direction,
+                expression: ExpressionForm { expression, spans },
+                span,
+            }))
+        }
+        _ => Err(unexpected(node)),
+    }
 }
