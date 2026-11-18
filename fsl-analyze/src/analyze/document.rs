@@ -359,6 +359,7 @@ count_members! {
     read_max_walk_steps => "temporal.limits.max_walk_steps",
     read_max_witness_set => "temporal.limits.max_witness_set",
     read_max_relation_tuples => "temporal.limits.max_relation_tuples",
+    read_max_candidates => "temporal.limits.max_candidates",
     read_max_clocks => "temporal.limits.max_clocks",
     read_max_task_product_work => "temporal.limits.max_task_product_work",
     read_max_store_buffer => "temporal.limits.max_store_buffer",
@@ -395,6 +396,9 @@ pub struct TemporalLimitsSelection {
     /// `max_relation_tuples`.
     #[serde(default, deserialize_with = "read_max_relation_tuples")]
     pub max_relation_tuples: Option<NonZeroU64>,
+    /// `max_candidates` (FR-625): the most successor candidates one expansion enumerates.
+    #[serde(default, deserialize_with = "read_max_candidates")]
+    pub max_candidates: Option<NonZeroU64>,
     /// `max_clocks` (FSpec FR-415).
     #[serde(default, deserialize_with = "read_max_clocks")]
     pub max_clocks: Option<NonZeroU64>,
@@ -1668,6 +1672,7 @@ fn temporal_item(
             limits.max_relation_tuples,
             &mut item.limits.max_relation_tuples,
         );
+        set(limits.max_candidates, &mut item.max_candidates);
     }
     item
 }

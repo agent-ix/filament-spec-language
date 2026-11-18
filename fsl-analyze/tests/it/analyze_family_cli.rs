@@ -970,43 +970,42 @@ fn default_initial_item(claim: &str, max_candidates: Option<u64>) -> Value {
     item
 }
 
-/// FR-630-AC-5: with no `abstract_subject`, a field the mapping does not fix
-/// ranges over its type (`Int[0, 3]`, four completions), the enumeration is
-/// charged to one `max_candidates` total across every concrete initial
-/// state, and an image outside the unit bound is `InitialNotAbstract` at
-/// position 0, never a refusal.
+/// FR-630-AC-5 (completions and cap): with no `abstract_subject`, a field the
+/// mapping does not fix ranges over its type (`Int[0, 3]`, four completions)
+/// and the enumeration is charged to one `max_candidates` total across every
+/// concrete initial state.
 #[trace("TC-2964", "FR-630-AC-5")]
 #[test]
-#[ignore = "QSL-2127: wire refuses temporal.limits.max_candidates (FR-625)"]
 fn default_abstract_initial_states_are_every_admissible_completion() {
-    let hidden = "refinement Hidden using t0 abstract Spec concrete M {\n\
+    let body = "refinement Hidden using t0 abstract Spec concrete M {\n\
         population Spec::counters from M::counters;\n\
         object Spec::Counter from M::Counter { }\n\
         step M::Counter::inc -> stutter;\n}\n";
-    let shifted = refinement_stepping("Shifted", "self.value + 3", "stutter", "");
-    let body = format!("{hidden}{shifted}");
 
     let ws = Workspace::new("family-refinement-default-initial");
     let run = analyze(&refinement_request_without_abstract(
         &ws,
-        &body,
+        body,
         json!([
             default_initial_item("Hidden", None),
-            default_initial_item("Hidden", Some(4)),
             default_initial_item("Hidden", Some(3)),
         ]),
         &[0],
     ));
-    assert_eq!(results(&run, 3), ["proved", "proved", "incomplete"]);
-    let stopped = run.item(2);
-    assert_eq!(stopped["record"]["execution"], "resource-incomplete", "{stopped}");
+    assert_eq!(results(&run, 2), ["proved", "incomplete"]);
+    let stopped = run.item(1);
+    assert_eq!(stopped["category"], "incomplete", "{stopped}");
     assert_eq!(stopped["record"]["cause"]["kind"], "limit-reached", "{stopped}");
     assert_eq!(stopped["record"]["cause"]["limit"], "max_candidates", "{stopped}");
+    assert_eq!(
+        stopped["record"]["cause"]["setting"], "expansion.max_candidates",
+        "{stopped}"
+    );
 
     let ws = Workspace::new("family-refinement-default-initial-two");
     let run = analyze(&refinement_request_without_abstract(
         &ws,
-        &body,
+        body,
         json!([
             default_initial_item("Hidden", Some(4)),
             default_initial_item("Hidden", Some(8)),
@@ -1015,7 +1014,20 @@ fn default_abstract_initial_states_are_every_admissible_completion() {
     ));
     assert_eq!(results(&run, 2), ["incomplete", "proved"]);
     assert_eq!(run.item(0)["record"]["cause"]["limit"], "max_candidates");
+}
 
+/// FR-630-AC-5 (empty completion set): an image outside the abstract unit
+/// bound is `InitialNotAbstract` at position 0, never a refusal.
+///
+/// The refinement row `value = self.value + 3` is refused `ill_typed` by the
+/// row rule that an expression conforms to the type it defines and is never
+/// range-checked into it (ADR-016 SC-2), so the item cannot be built; the spec
+/// gives no mapping that type-checks and has an image outside `Int[0, 3]`.
+#[trace("TC-2964", "FR-630-AC-5")]
+#[test]
+#[ignore = "QSL-2407: spec gap - FR-630-AC-5 Shifted row is ill_typed under ADR-016 SC-2"]
+fn an_image_outside_the_unit_bound_is_initial_not_abstract() {
+    let body = refinement_stepping("Shifted", "self.value + 3", "stutter", "");
     let ws = Workspace::new("family-refinement-default-initial-empty");
     let run = analyze(&refinement_request_without_abstract(
         &ws,
