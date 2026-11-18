@@ -11,6 +11,7 @@
 
 use std::collections::BTreeSet;
 
+use filament_contract_model::ClockConfiguration;
 use filament_exact::{Cancel, FieldValue, Value};
 use fsl_analyze::model_check::{check_protocol, ModelCheckRefusal, ProtocolCheckRequest};
 use fsl_eval::simulation::protocol::{
@@ -19,7 +20,11 @@ use fsl_eval::simulation::protocol::{
 };
 use fsl_eval::simulation::{independent, Footprint, Location, SubjectSystem};
 use fsl_foundation::bound::{DomainKey, DomainKind};
-use fsl_replay::{ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ResultLabel};
+use fsl_package::TemporalClockSelection;
+use fsl_replay::{
+    CounterexampleKind, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelStep,
+    ModelTraceSettlement, ResultLabel, TemporalCounterexample,
+};
 use ix_trace_rs::trace;
 use serde_json::{json, Value as Json};
 
@@ -27,7 +32,7 @@ use crate::fill::{
     contracts, json_of, key, package_with, protocol, reachable, sc_system, Reached,
     PROTOCOL_PROFILE,
 };
-use crate::protocol_system::{violated, Case};
+use crate::protocol_system::Case;
 
 /// `dec`'s contracts: the refund.
 pub(crate) const REFUND: &str = "pre DecPre using v on M::Cell::dec { self.v >= 1 }\n\
@@ -35,6 +40,8 @@ pub(crate) const REFUND: &str = "pre DecPre using v on M::Cell::dec { self.v >= 
 
 /// The template's qualified name.
 const TEMPLATE: &str = "Pay::Refund";
+const PAY_STATES: usize = 17;
+const PAY_TRANSITIONS: usize = 22;
 
 /// A `Refund` template for the effect `effect`, of operation `operation`,
 /// with `attempts`, retry relation `retry`, commit `commit` and recovery
@@ -352,8 +359,8 @@ fn compensations(
         .collect()
 }
 
-/// FR-207-AC-1 (TC-652): ADR-027 §7.1's `Pay` reaches exactly t0 to t8 with
-/// the enabled steps of its table, nine states and eight transitions.
+/// FR-207-AC-1 (TC-652): ADR-027 §7.1's `Pay` reaches t0 to t8 and the
+/// failure, timeout and expiration states, 17 states and 22 transitions.
 /// `event(Paid)` registers `Refund` in its own step; `event(Fail)` with
 /// `failed` true activates it in its own step and creates the compensation
 /// thread `(0, Refund, 0)` at its compensation attempt with count 0; with
@@ -361,12 +368,12 @@ fn compensations(
 /// removes the instance with its registration.
 #[trace("TC-652", "FR-207-AC-1")]
 #[test]
-fn pay_reaches_the_nine_states_of_its_table() {
+fn pay_reaches_the_states_of_its_table_and_compensation_outcomes() {
     explore(&pay("true"), |system, explored| {
         let reached = &explored.reached;
-        assert_eq!(reached.len(), 9);
+        assert_eq!(reached.len(), PAY_STATES);
         let transitions: usize = reached.iter().map(|state| state.steps.len()).sum();
-        assert_eq!(transitions, 8);
+        assert_eq!(transitions, PAY_TRANSITIONS);
         let status = |at: usize| statuses(&key_json(system, &reached[at]));
 
         let t0 = 0;
@@ -398,10 +405,18 @@ fn pay_reaches_the_nine_states_of_its_table() {
             .expect("the compensation thread");
         assert_eq!(view.rest_point.kind, RestKind::Node);
         assert_eq!(view.rest_point.node.as_deref(), Some(TEMPLATE));
-        assert_eq!(kinds(reached, t4), [StepKind::CAttempt]);
+        assert_eq!(
+            kinds(reached, t4),
+            [
+                StepKind::CAttempt,
+                StepKind::CFail,
+                StepKind::CTimeout,
+                StepKind::CExpire
+            ]
+        );
         let t6 = after(reached, t4, StepKind::CAttempt);
         assert_eq!(crate::fill::v(reached[t6].state.model(), "c"), 0);
-        assert_eq!(kinds(reached, t6), [StepKind::CEnd]);
+        assert_eq!(kinds(reached, t6), [StepKind::CEnd, StepKind::CExpire]);
         let t7 = after(reached, t6, StepKind::CEnd);
         assert_eq!(status(t7), ["recovered"]);
         assert!(compensations(system, reached, t7).is_empty());
@@ -433,7 +448,7 @@ fn pay_reaches_the_nine_states_of_its_table() {
 
 /// Part of FR-207-AC-2: in §7.1 `finish` is not enabled at t4 or t6 while
 /// the compensation thread is `running`; at t6 the count has reached
-/// `attempts 1`, so `cend` is the only step; a recovery predicate that is
+/// `attempts 1`, so `cend` and `cexpire` are the only steps; a recovery predicate that is
 /// false leaves the registration `unrecovered`.
 #[test]
 fn finish_waits_for_the_compensation_thread_and_cend_records_its_status() {
@@ -447,7 +462,7 @@ fn finish_waits_for_the_compensation_thread_and_cend_records_its_status() {
         let (_, t4) = fail(system, reached, t2, true);
         let t6 = after(reached, t4, StepKind::CAttempt);
         assert!(!kinds(reached, t4).contains(&StepKind::Finish));
-        assert_eq!(kinds(reached, t6), [StepKind::CEnd]);
+        assert_eq!(kinds(reached, t6), [StepKind::CEnd, StepKind::CExpire]);
         assert_eq!(
             count(&key_json(system, &reached[t6]), &compensation(0)).as_deref(),
             Some("1")
@@ -458,10 +473,10 @@ fn finish_waits_for_the_compensation_thread_and_cend_records_its_status() {
 }
 
 /// FR-207-AC-3 (TC-652): with `attempts 2` and the retry relation `true`,
-/// `cattempt(Refund)` and `cend(Refund)` are both enabled at the retry point
-/// after the first attempt, and only `cend` after the second; with the
-/// relation `false`, only `cend` after the first. The refund is `touch`,
-/// which is always enabled, so only the count and the relation decide.
+/// a successful, failed or timed-out retry is enabled after the first
+/// attempt alongside `cend` and `cexpire`. After the second attempt, or
+/// after the first with retry relation `false`, only the ending steps
+/// remain. The refund is `touch`, whose precondition is always true.
 #[trace("TC-652", "FR-207-AC-3")]
 #[test]
 fn the_retry_relation_and_the_count_decide_a_retry() {
@@ -487,15 +502,24 @@ fn the_retry_relation_and_the_count_decide_a_retry() {
                 .expect("the compensation thread");
             assert_eq!(view.rest_point.kind, RestKind::RetryPoint);
             if retries {
-                assert_eq!(kinds(reached, first), [StepKind::CAttempt, StepKind::CEnd]);
+                assert_eq!(
+                    kinds(reached, first),
+                    [
+                        StepKind::CAttempt,
+                        StepKind::CFail,
+                        StepKind::CTimeout,
+                        StepKind::CEnd,
+                        StepKind::CExpire,
+                    ]
+                );
                 let second = after(reached, first, StepKind::CAttempt);
                 assert_eq!(
                     count(&key_json(system, &reached[second]), &compensation(0)).as_deref(),
                     Some("2")
                 );
-                assert_eq!(kinds(reached, second), [StepKind::CEnd]);
+                assert_eq!(kinds(reached, second), [StepKind::CEnd, StepKind::CExpire]);
             } else {
-                assert_eq!(kinds(reached, first), [StepKind::CEnd]);
+                assert_eq!(kinds(reached, first), [StepKind::CEnd, StepKind::CExpire]);
             }
         });
     }
@@ -755,7 +779,7 @@ fn compensation_steps_read_and_write_their_registrations() {
         assert!(footprint.reads.contains(&registrations()));
         assert!(footprint.writes.contains(&registrations()));
         assert!(footprint.writes.contains(&ctl(&compensation(0))));
-        assert!(assert_changes_are_written(system, reached) == 8);
+        assert_eq!(assert_changes_are_written(system, reached), PAY_TRANSITIONS);
 
         let (cattempt, _) = &reached[t4].steps[0];
         let footprint = footprint_at(system, reached, t4, cattempt);
@@ -888,82 +912,132 @@ fn a_branching_compensated_choreography_runs_end_to_end() {
     assert_eq!(settled.label, ResultLabel::Proved, "{settled:?}");
 }
 
-/// Part of FR-211-AC-5 (TC-656, ADR-027 PD-4): §7.1's `Pay` with its
-/// template committing at `Committed` and its `run` a `parallel Both`
-/// joined `all` of branch `pay` (the charge, `Paid` and `Fail`) and branch
-/// `settle`, which takes `Committed`, deadlocks once `Fail` with `failed`
-/// true has created `(0, Refund, 0)` and `settle` takes `Committed` while
-/// that thread is still at its first compensation attempt: the thread waits
-/// with `CommitClosed{Refund}` and the root at `finish` with
-/// `FinishWaiting{[(0, Refund, 0)]}`. Replay recomputes the list.
+/// FR-211-AC-5 (TC-656): committing before the first compensation attempt
+/// leaves expiration enabled. The root waits for the compensation thread
+/// until it expires, after which the protocol can finish.
+#[trace("TC-656", "FR-211-AC-5")]
 #[test]
-fn a_closed_compensation_attempt_waits_with_commit_closed() {
+fn a_closed_compensation_attempt_can_expire() {
     let body = settled("");
+    explore(&body, |system, explored| {
+        let reached = &explored.reached;
+        let at = reached
+            .iter()
+            .position(|state| {
+                let key = key_json(system, state);
+                !commit_entries(&key).is_empty()
+                    && count(&key, &compensation(0)).as_deref() == Some("0")
+                    && system
+                        .threads(&state.state)
+                        .expect("threads")
+                        .iter()
+                        .any(|thread| {
+                            thread.path == ThreadPath::root(0)
+                                && thread.rest_point.node.as_deref() == Some("Done")
+                        })
+            })
+            .expect("the root joins after the commit while compensation is at its first attempt");
+        assert_eq!(kinds(reached, at), [StepKind::CExpire]);
+        let blocked =
+            SubjectSystem::blocked(system, &reached[at].state, &[]).expect("blocked threads");
+        let [root] = blocked.as_slice() else {
+            panic!("the root alone waits, got {blocked:?}");
+        };
+        assert_eq!(root.path, ThreadPath::root(0));
+        assert_eq!(
+            root.cause,
+            WaitCause::FinishWaiting {
+                threads: vec![compensation(0)]
+            }
+        );
+        let expired = after(reached, at, StepKind::CExpire);
+        assert_eq!(
+            statuses(&key_json(system, &reached[expired])),
+            ["timed-out"]
+        );
+        assert_eq!(kinds(reached, expired), [StepKind::Finish]);
+    });
     let case = Case::new(&body, &[0]);
     let outcome = case.deadlock("Pay");
-    let counterexample = violated(&outcome);
-    let causes: Vec<(ThreadPath, WaitCause)> = counterexample
-        .blocked
-        .iter()
-        .map(|thread| (thread.path.clone(), thread.cause.clone()))
-        .collect();
-    assert_eq!(
-        causes,
-        [
-            (
-                ThreadPath::root(0),
-                WaitCause::FinishWaiting {
-                    threads: vec![compensation(0)]
-                }
-            ),
-            (
-                compensation(0),
-                WaitCause::CommitClosed {
-                    template: TEMPLATE.to_owned()
-                }
-            ),
-        ]
-    );
-    assert!(matches!(outcome, ModelCheckOutcome::Violated { .. }));
+    assert!(matches!(outcome, ModelCheckOutcome::Holds { .. }));
     let record = case.settle("Pay", &outcome);
-    assert_eq!(record.label, ResultLabel::Refuted, "{record:?}");
+    assert_eq!(record.label, ResultLabel::Proved, "{record:?}");
 }
 
 /// ADR-027 PX-2: a deadlock counterexample whose prefix takes `cattempt`
-/// and `cend` replays through the protocol system. Every `Fail` activates
-/// the refund, and the root then waits at a false `check` after the
-/// compensation thread has ended.
+/// and `cend` replays through the protocol system. The root waits at a
+/// false `check` after the compensation thread has ended.
 #[test]
 fn a_prefix_through_a_compensation_replays() {
     let body = unit(
         &refund("Main::Paid", "dec", 1, "false", "never", "true")
-            .replace("when { f }", "when { true }"),
+            .replace(" using t0 clock ", " using tb clock "),
         &pay_run("").replace(FAIL, &format!("{FAIL} check Never using v {{ false }};")),
     );
     let case = Case::new(&body, &[0]);
-    let outcome = case.deadlock("Pay");
-    let counterexample = violated(&outcome);
-    let kinds: Vec<StepKind> = counterexample
-        .prefix
-        .iter()
-        .map(|step| step.transition.kind())
+    let subject = case.subject("Pay");
+    let system = sc_system(&subject);
+    let reached = reachable(&system);
+    let charged = after(&reached, 0, StepKind::Attempt);
+    let paid = after(&reached, charged, StepKind::Event);
+    let (_, activated) = fail(&system, &reached, paid, true);
+    let attempted = after(&reached, activated, StepKind::CAttempt);
+    let ended = after(&reached, attempted, StepKind::CEnd);
+    let path = [0, charged, paid, activated, attempted, ended];
+    let prefix: Vec<ModelStep<ProtocolTransition>> = path
+        .windows(2)
+        .map(|edge| {
+            let (transition, _) = reached[edge[0]]
+                .steps
+                .iter()
+                .find(|(_, next)| *next == edge[1])
+                .expect("the selected step");
+            ModelStep {
+                transition: transition.clone(),
+                post_state: reached[edge[1]].key.clone(),
+                delay: None,
+            }
+        })
         .collect();
-    assert_eq!(
-        kinds,
-        [
-            StepKind::Attempt,
-            StepKind::Event,
-            StepKind::Event,
-            StepKind::CAttempt,
-            StepKind::CEnd
-        ]
-    );
-    let [blocked] = &counterexample.blocked[..] else {
-        panic!("{:?}", counterexample.blocked);
+    assert!(kinds(&reached, ended).is_empty());
+    let transitions: Vec<_> = prefix.iter().map(|step| &step.transition).collect();
+    let blocked = SubjectSystem::blocked(&system, &reached[ended].state, &transitions)
+        .expect("blocked threads");
+    let [root] = blocked.as_slice() else {
+        panic!("the root alone waits, got {blocked:?}");
     };
-    assert!(matches!(blocked.cause, WaitCause::CheckFalse { .. }));
-    let record = case.settle("Pay", &outcome);
-    assert_eq!(record.label, ResultLabel::Refuted, "{record:?}");
+    assert_eq!(root.path, ThreadPath::root(0));
+    assert!(matches!(root.cause, WaitCause::CheckFalse { .. }));
+    let counterexample = TemporalCounterexample {
+        initial_state: 0,
+        prefix,
+        over_binding: None,
+        fairness: Vec::new(),
+        kind: CounterexampleKind::Deadlock,
+        lasso: None,
+        blocked,
+        refinement: None,
+        final_delay: None,
+    };
+    let graph = subject.model.simulation.package.graph();
+    let pay = graph.protocol("Pay").expect("the checked protocol");
+    let [refund] = pay.obligations.compensations.as_slice() else {
+        panic!("one Refund template");
+    };
+    let selection = TemporalClockSelection::new(
+        graph.source().clone(),
+        refund.span,
+        ClockConfiguration::EventPosition {
+            sequence_authority: "compensation-events".into(),
+        },
+    );
+    let replayed = case
+        .replay_with_clock_selections("Pay", counterexample, &[selection])
+        .expect("the prefix replays");
+    assert!(
+        matches!(replayed.settlement, ModelTraceSettlement::Reproduced { .. }),
+        "{replayed:?}"
+    );
 }
 
 /// ADR-027 CP-1 and CP-2: a registration capture is evaluated over the
@@ -1155,7 +1229,7 @@ fn an_effect_waits_for_its_attempts_binder() {
 
     let chosen = format!(
         "sequence Main {{ event X by w as (x: Boolean) {{ true }}; \
-         choice Pick by w visible (x and true) {{ case yes when {{ x and true }} {CHARGE} case no when {{ not (x and true) }} {} }} \
+         choice Pick by w visible (x) {{ case yes when {{ x }} {CHARGE} case no when {{ not x }} {} }} \
          {} {FAIL} }}",
         crate::protocol_system::touch("TN"),
         paid("Main::Pick::yes::C"),
@@ -1232,7 +1306,7 @@ fn a_location_outside_the_reads_changes_no_step() {
                 .collect()
         })
         .collect();
-    assert_eq!(explored[0].len(), 9);
+    assert_eq!(explored[0].len(), PAY_STATES);
     assert_eq!(explored[0], explored[1]);
 }
 
@@ -1426,9 +1500,10 @@ fn a_cattempt_takes_one_step_per_attempt_record_the_retry_relation_admits() {
 /// is absent after the second `cattempt`, after `cend` and in the post-state
 /// of the step of `Committed` taken while the thread rests at its retry point
 /// holding one. With the relation `l.ok`, which does not read `e`, no state
-/// holds a record and the two first `cattempt` steps reach one state. The
-/// commit entry is in the key after the step of `Committed` and absent once
-/// the instance has finished.
+/// holds a retry record, but each dispatched record remains in the
+/// registration's outcome history and distinguishes the two post-states.
+/// The commit entry is in the key after `Committed` and absent once the
+/// instance has finished.
 fn the_attempt_record_is_keyed_while_a_retry_can_read_it() {
     explore(
         &attempt_unit("2 of M::RefundAttempt", "not e.ok", true),
@@ -1495,7 +1570,22 @@ fn the_attempt_record_is_keyed_while_a_retry_can_read_it() {
             let (_, t4) = fail(system, reached, t2, true);
             let first = cattempts(system, reached, t4);
             assert_eq!(first.len(), 2);
-            assert_eq!(first[0].1, first[1].1);
+            assert_ne!(first[0].1, first[1].1);
+            for (ok, next, _) in first {
+                let key = key_json(system, &reached[next]);
+                let (_, registration) = entries(&key, "control")
+                    .into_iter()
+                    .find(|(key, _)| key["type"] == "registration")
+                    .expect("the registration");
+                let attempts = registration["attempts"]
+                    .as_array()
+                    .expect("attempt history");
+                let [attempt] = attempts.as_slice() else {
+                    panic!("one attempt, got {attempts:?}");
+                };
+                assert_eq!(attempt["outcome"], "successful");
+                assert_eq!(first_bool(&attempt["record"]), Some(ok));
+            }
         },
     );
 }
@@ -1940,7 +2030,6 @@ fn a_thread_names_its_registration_and_the_commit_and_attempt_records_are_keyed(
     "FSpec-FR-736-AC-2"
 )]
 #[test]
-#[ignore = "QSL-2207: the stepper has no cfail, ctimeout or cexpire step, so failed and timed-out outcomes are unreachable"]
 fn every_compensation_outcome_is_reached() {
     explore(&pay("false"), |system, explored| {
         let reached = &explored.reached;

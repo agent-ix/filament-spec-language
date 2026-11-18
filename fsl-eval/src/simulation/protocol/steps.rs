@@ -316,7 +316,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     self.by_owner(
                         instance,
                         self.program.template(index)?.role,
-                        Some(StepKind::CAttempt),
+                        Some(&[StepKind::CAttempt, StepKind::CFail, StepKind::CTimeout]),
                         &mut gathered,
                         |gathered| self.compensation(state, ordinal, path, thread.rest, gathered),
                     )?;

@@ -140,13 +140,13 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
 
     /// The steps `step` gathers for a node owned by the replicated role
     /// `owner`, each given to every live instance of the role as its actor
-    /// (ADR-027 RR-2). With `only`, only the steps of that kind are the
+    /// (ADR-027 RR-2). With `only`, only steps of those kinds are the
     /// role's; the others are kept as they are.
     pub(super) fn by_owner(
         &self,
         instance: &Instance,
         owner: Option<usize>,
-        only: Option<StepKind>,
+        only: Option<&[StepKind]>,
         gathered: &mut Gathered<M>,
         step: impl FnOnce(&mut Gathered<M>) -> Result<(), ExpansionStop>,
     ) -> Result<(), ExpansionStop> {
@@ -161,7 +161,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         };
         let fresh: Vec<_> = gathered.successors.drain(from..).collect();
         for (transition, next) in fresh {
-            if only.is_some_and(|kind| transition.kind() != kind) {
+            if only.is_some_and(|kinds| !kinds.contains(&transition.kind())) {
                 gathered.successors.push((transition, next));
                 continue;
             }
