@@ -2668,3 +2668,410 @@ fn a_map_keyed_by_an_unbounded_package_rational_is_refused() {
         )
         .is_ok());
 }
+
+// ---- FR-056 "Float model members": Float32/Float64 model members ----
+
+mod float_members {
+    use filament_checked::key::DeclarationKey;
+    use filament_exact::{EffectiveId, FloatType, IeeeWidth, RoundingMode, ValueType};
+    use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    use filament_semantic_value::declaration::CompositeShape;
+    use fsl_foundation::Code;
+    use fsl_semantics::check::{AssemblyRefusal, PackageDeclarations};
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+    use fsl_semantics::model::intake::{admit_unit, meaning};
+    use ix_trace_rs::trace;
+    use serde_json::{json, Value};
+
+    use crate::model_operations::{
+        admit_and_assemble, admit_and_assemble_with_body, config_unit, config_version_document,
+        empty_frame, operation, operation_parameter, parse_and_build, wire_construct,
+        wire_envelope, wire_field, wire_type, PACKAGE_IDENTITY,
+    };
+
+    const FLOAT32: &str = "ix://filament/native/Float32";
+    const FLOAT64: &str = "ix://filament/native/Float64";
+
+    fn identity(path: &str) -> String {
+        format!("ix://{PACKAGE_IDENTITY}/{path}")
+    }
+
+    /// The strict `exact` float type of `width`, the type a model member of a
+    /// native float spelling assembles to (FSpec FR-322 "Model-owned members").
+    fn exact(width: IeeeWidth) -> ValueType {
+        ValueType::Float(FloatType::new(width, RoundingMode::Exact))
+    }
+
+    fn sourced(line: u64) -> Value {
+        json!({"source": {
+            "sourceIdentity": identity("spec"),
+            "path": "spec.fspec",
+            "startLine": line,
+            "startColumn": 3,
+        }})
+    }
+
+    /// A construct of this package's module with an explicit `shape`.
+    fn shaped_construct(name: &str, meaning: &str, shape: &str, members: Value) -> Value {
+        let mut construct = wire_construct(name, meaning, members);
+        construct["construct"]["shape"] = json!(shape);
+        construct
+    }
+
+    /// `Gauge` with the one field `reading` typed `type_ref`, multiplicity
+    /// `[lower, upper]`.
+    fn gauge_document(type_ref: &str, lower: u64, upper: u64) -> Vec<u8> {
+        let gauge = identity("Gauge");
+        let mut field = wire_field(
+            &format!("{gauge}/reading"),
+            "reading",
+            type_ref,
+            "required",
+            lower,
+        );
+        field["multiplicity"]["upper"] = json!(upper);
+        wire_envelope(
+            json!([wire_construct(
+                "object_type",
+                meaning::OBJECT_TYPE,
+                json!({})
+            )]),
+            json!([wire_type(
+                &gauge,
+                "object_type",
+                json!({
+                    "supertypes": [],
+                    "operations": [],
+                    "relationships": [],
+                    "fields": [field],
+                }),
+            )]),
+            json!([]),
+        )
+        .to_string()
+        .into_bytes()
+    }
+
+    /// The `ConfigVersion` fixture with `operation`, the extra declarations
+    /// and the extra `ConfigVersion` fields `(name, typeRef)`.
+    fn config_document(
+        operation: Value,
+        extra_constructs: Vec<Value>,
+        extra_types: Vec<Value>,
+        fields: &[(&str, &str)],
+    ) -> Vec<u8> {
+        let base = config_version_document(operation, extra_constructs, extra_types, json!([]));
+        let mut document: Value = serde_json::from_slice(&base).expect("fixture JSON");
+        let owner = document["types"]
+            .as_array_mut()
+            .expect("types")
+            .iter_mut()
+            .find(|ty| ty["identity"] == identity("ConfigVersion"))
+            .expect("ConfigVersion");
+        for (name, type_ref) in fields {
+            owner["fields"]
+                .as_array_mut()
+                .expect("fields")
+                .push(wire_field(
+                    &identity(&format!("ConfigVersion/{name}")),
+                    name,
+                    type_ref,
+                    "required",
+                    1,
+                ));
+        }
+        serde_json::to_vec(&document).expect("fixture encoding")
+    }
+
+    fn unused_operation() -> Value {
+        operation("unused", json!([]), None, empty_frame())
+    }
+
+    /// The effective identity of `object` in the unit `config_unit` writes.
+    fn effective(document: &[u8], object: &str) -> EffectiveId {
+        let (unit, packages) = config_unit(document);
+        let built = parse_and_build(&unit);
+        let views = admit_unit(
+            &built.selections().models,
+            &packages,
+            ModelNormalizationLimits::default(),
+        )
+        .expect("the package admits");
+        let key = DeclarationKey {
+            package: PACKAGE_IDENTITY.to_owned(),
+            node: identity(object),
+        };
+        views[0].view.type_identities()[&key].clone()
+    }
+
+    fn field_type(
+        declarations: &PackageDeclarations,
+        document: &[u8],
+        object: &str,
+        name: &str,
+    ) -> ValueType {
+        declarations
+            .types
+            .object_type(effective(document, object))
+            .expect("the object type is declared")
+            .attributes()
+            .iter()
+            .find(|field| field.name() == name)
+            .unwrap_or_else(|| panic!("{object}.{name} is an attribute"))
+            .value_type()
+            .clone()
+    }
+
+    fn composite_shape(
+        declarations: &PackageDeclarations,
+        value_type: &ValueType,
+    ) -> CompositeShape {
+        let ValueType::Composite(key) = value_type else {
+            panic!("a composite field type, not {value_type:?}");
+        };
+        declarations
+            .types
+            .composite(key.clone())
+            .expect("the composite is declared")
+            .shape()
+            .clone()
+    }
+
+    #[trace("TC-3004", "TC-405", "FR-056-AC-20")]
+    #[test]
+    #[ignore = "QSL-2176: a domain-package Float64 field admitted as strict exact Float64 not implemented yet"]
+    fn a_domain_package_float64_field_is_admitted() {
+        let document = gauge_document(FLOAT64, 1, 1);
+        let declarations =
+            admit_and_assemble(&document).expect("a Float64 model field admits and assembles");
+        assert_eq!(
+            field_type(&declarations, &document, "Gauge", "reading"),
+            exact(IeeeWidth::Binary64)
+        );
+
+        let collection = gauge_document(FLOAT64, 0, 3);
+        let declarations =
+            admit_and_assemble(&collection).expect("a [0, 3] Float64 model field assembles");
+        let reading = field_type(&declarations, &collection, "Gauge", "reading");
+        let ValueType::Collection(set) = &reading else {
+            panic!("a [0, 3] unique unordered field is a collection");
+        };
+        assert_eq!(set.element(), &exact(IeeeWidth::Binary64));
+    }
+
+    #[trace("TC-3004", "FR-056-AC-53")]
+    #[test]
+    #[ignore = "QSL-2176: a domain-package Float32 field admitted as strict exact Float32 not implemented yet"]
+    fn a_domain_package_float32_field_is_admitted() {
+        let document = gauge_document(FLOAT32, 1, 1);
+        let declarations =
+            admit_and_assemble(&document).expect("a Float32 model field admits and assembles");
+        assert_eq!(
+            field_type(&declarations, &document, "Gauge", "reading"),
+            exact(IeeeWidth::Binary32)
+        );
+    }
+
+    #[trace("TC-3004", "FR-056-AC-54")]
+    #[test]
+    #[ignore = "QSL-2176: a Float64 operation parameter and result admitted as strict exact Float64 not implemented yet"]
+    fn a_domain_package_float_operation_parameter_is_admitted() {
+        let document = config_document(
+            operation(
+                "calibrate",
+                json!([operation_parameter("calibrate", "offset", FLOAT64)]),
+                Some(FLOAT64),
+                empty_frame(),
+            ),
+            Vec::new(),
+            Vec::new(),
+            &[],
+        );
+        let declarations =
+            admit_and_assemble(&document).expect("a Float64 parameter and result assemble");
+        let calibrate = declarations
+            .operations
+            .declared_by(effective(&document, "ConfigVersion"))
+            .iter()
+            .find(|operation| operation.name() == "calibrate")
+            .expect("calibrate is declared on ConfigVersion");
+        assert_eq!(
+            calibrate.parameters(),
+            &[("offset".to_owned(), exact(IeeeWidth::Binary64))]
+        );
+        assert_eq!(calibrate.result(), Some(&exact(IeeeWidth::Binary64)));
+    }
+
+    #[trace("TC-3004", "FR-056-AC-55")]
+    #[test]
+    #[ignore = "QSL-2176: a Float64 tuple position admitted as strict exact Float64 not implemented yet"]
+    fn a_domain_package_float_tuple_position_is_admitted() {
+        let pair = wire_type(
+            &identity("Pair"),
+            "tuple_type",
+            json!({"positions": [
+                {"identity": identity("Pair/p0"), "typeRef": FLOAT64, "origin": sourced(5)},
+                {"identity": identity("Pair/p1"), "typeRef": "ix://filament/native/Integer",
+                 "origin": sourced(6)},
+            ]}),
+        );
+        let document = config_document(
+            unused_operation(),
+            vec![shaped_construct(
+                "tuple_type",
+                meaning::TUPLE_VALUE_TYPE,
+                "tuple",
+                json!({"positions": "required"}),
+            )],
+            vec![pair],
+            &[("pair", &identity("Pair"))],
+        );
+        let declarations =
+            admit_and_assemble(&document).expect("a Float64 tuple position assembles");
+        let pair = field_type(&declarations, &document, "ConfigVersion", "pair");
+        let CompositeShape::Tuple(positions) = composite_shape(&declarations, &pair) else {
+            panic!("Pair is a tuple");
+        };
+        assert_eq!(positions.first(), Some(&exact(IeeeWidth::Binary64)));
+        assert_eq!(positions.len(), 2);
+    }
+
+    #[trace("TC-3004", "FR-056-AC-56")]
+    #[test]
+    #[ignore = "QSL-2176: a Float32 union payload admitted as strict exact Float32 not implemented yet"]
+    fn a_domain_package_float_union_payload_is_admitted() {
+        let sample = wire_type(
+            &identity("Sample"),
+            "variant_type",
+            json!({"variants": [
+                {"identity": identity("variant/Sample-Read"), "name": "Read",
+                 "origin": sourced(7), "payloadType": FLOAT32},
+                {"identity": identity("variant/Sample-Missing"), "name": "Missing",
+                 "origin": sourced(8)},
+            ]}),
+        );
+        let document = config_document(
+            unused_operation(),
+            vec![shaped_construct(
+                "variant_type",
+                meaning::VARIANT_TYPE,
+                "enumeration",
+                json!({"variants": "required"}),
+            )],
+            vec![sample],
+            &[("sample", &identity("Sample"))],
+        );
+        let declarations =
+            admit_and_assemble(&document).expect("a Float32 union payload assembles");
+        let sample = field_type(&declarations, &document, "ConfigVersion", "sample");
+        let CompositeShape::Union(members) = composite_shape(&declarations, &sample) else {
+            panic!("Sample is a union");
+        };
+        let mut payloads: Vec<_> = members
+            .iter()
+            .map(|member| member.positions().to_vec())
+            .collect();
+        payloads.sort_by_key(Vec::len);
+        assert_eq!(payloads, vec![Vec::new(), vec![exact(IeeeWidth::Binary32)]]);
+    }
+
+    /// `ConfigVersion` with the float rule fixture's fields (TC-3005).
+    fn rule_document() -> Vec<u8> {
+        config_document(
+            unused_operation(),
+            Vec::new(),
+            Vec::new(),
+            &[
+                ("reading", FLOAT64),
+                ("limit", FLOAT64),
+                ("a", FLOAT64),
+                ("b", FLOAT64),
+                ("f32", FLOAT32),
+                ("count", "ix://filament/native/Integer"),
+            ],
+        )
+    }
+
+    /// Assembles and checks `clause` as an invariant over `ConfigVersion`,
+    /// returning every refusal's code and cause.
+    fn check_clause(clause: &str) -> Result<(), Vec<(Code, Option<String>)>> {
+        let body =
+            format!("invariant I using v on Config::ConfigVersion at current {{ {clause} }}\n");
+        let declarations = admit_and_assemble_with_body(&rule_document(), &body).map_err(
+            |AssemblyRefusal { errors, .. }| {
+                errors
+                    .iter()
+                    .map(|error| {
+                        (
+                            error.cause.code(),
+                            Some(error.cause.catalog_code().cause().to_owned()),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            },
+        )?;
+        declarations
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .map(|_| ())
+            .map_err(|refusals| {
+                refusals
+                    .iter()
+                    .map(|refusal| {
+                        (
+                            refusal.cause.code(),
+                            refusal.cause.cause().map(str::to_owned),
+                        )
+                    })
+                    .collect()
+            })
+    }
+
+    #[trace("TC-3005", "FR-056-AC-57")]
+    #[test]
+    #[ignore = "QSL-2176: rules over a float model field checked under the IEEE profile not implemented yet"]
+    fn a_rule_over_a_float_field_checks_with_the_ieee_profile() {
+        for clause in [
+            "self.reading <= self.limit",
+            "self.reading + self.limit = self.limit",
+            "convert<Float64[nearest-even]>(self.reading) + convert<Float64[nearest-even]>(self.limit) \
+             <= convert<Float64[nearest-even]>(self.limit)",
+        ] {
+            assert_eq!(check_clause(clause), Ok(()), "{clause}");
+        }
+    }
+
+    #[trace("TC-3005", "FR-056-AC-58")]
+    #[test]
+    #[ignore = "QSL-2176: IEEE equality and comparison over float model fields not implemented yet"]
+    fn a_float_field_equality_follows_the_ieee_rules() {
+        for clause in [
+            "self.a = self.b",
+            "self.a != self.b",
+            "self.a < self.b",
+            "self.a <= self.b",
+            "self.a = float64(bits: 0x0000000000000000)",
+        ] {
+            assert_eq!(check_clause(clause), Ok(()), "{clause}");
+        }
+    }
+
+    #[trace("TC-3005", "FR-056-AC-59")]
+    #[test]
+    #[ignore = "QSL-2176: float model fields reach the checker, where an exact or unlike operand refuses type-mismatch, not implemented yet"]
+    fn a_float_field_against_an_exact_type_is_refused() {
+        for clause in [
+            "self.a = 0",
+            "self.a = self.versionNumber",
+            "self.a < self.count",
+            "self.a = self.f32",
+            "self.a + 1 = self.a",
+            "self.a = convert<Float64[nearest-even]>(self.a)",
+        ] {
+            assert_eq!(
+                check_clause(clause),
+                Err(vec![(Code::IllTyped, Some("type-mismatch".to_owned()))]),
+                "{clause}"
+            );
+        }
+    }
+}

@@ -312,3 +312,114 @@ fn the_type_ok_comment_names_the_bound_region() {
         "{comment} names {region}"
     );
 }
+
+/// The `test/float-export` package: object type `Gauge` (population
+/// `gauges`) with the `Float64` field `a` and the operation `flip()`
+/// (`modifies a`).
+fn float_model() -> Value {
+    let id = |suffix: &str| format!("ix://test/float-export/{suffix}");
+    let origin = |identity: &str| {
+        json!({"generated": {"generatorIdentity": identity, "generatorVersion": "1.0.0",
+            "inputIdentities": [identity]}})
+    };
+    let construct = |name: &str, meaning: &str| {
+        json!({"kind": {"module": "test/float-export", "name": name}, "moduleVersion": "1.0.0",
+            "construct": {"identity": "none", "shape": "record", "members": {},
+                "meaning": meaning}})
+    };
+    let gauge = id("Gauge");
+    let field = id("Gauge/a");
+    let flip = id("Gauge/flip");
+    let population = id("gauges");
+    json!({
+        "contractVersion": "2.0.0",
+        "canonicalization": {"algorithm": "rfc8785-v1"},
+        "source": {"identity": id("spec"), "version": "1.0.0", "dialect": "spec-bundle"},
+        "package": {"identity": "test/float-export", "version": "1.0.0",
+            "mappingVersions": [], "profileVersions": []},
+        "occurrences": [], "extensions": [],
+        "constructs": [
+            construct("object_type", "filament.meaning.model.object-type/v1"),
+            construct("population", "filament.meaning.model.population/v1"),
+        ],
+        "types": [{
+            "identity": gauge, "displayName": "Gauge",
+            "kind": {"module": "test/float-export", "name": "object_type"},
+            "roles": [], "origin": origin(&gauge), "constraints": [], "extensions": [],
+            "unknownPolicy": "reject", "supertypes": [], "relationships": [],
+            "fields": [{
+                "identity": field, "name": "a", "typeRef": "ix://filament/native/Float64",
+                "presence": "required", "nullable": false, "defaultKind": "none",
+                "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+                "origin": origin(&field),
+            }],
+            "operations": [{
+                "identity": flip, "name": "flip", "params": [], "pre": [], "post": [],
+                "origin": {"source": {"sourceIdentity": id("spec"), "path": "spec.fspec",
+                    "startLine": 1, "startColumn": 1}},
+                "frame": {"modifies": [field], "creates": [], "deletes": []},
+            }],
+        }],
+        "populations": [{
+            "identity": population, "displayName": population,
+            "kind": {"module": "test/float-export", "name": "population"},
+            "members": [gauge], "extent": "closed", "origin": origin(&population),
+        }],
+    })
+}
+
+/// FR-056-AC-62 and FSpec FR-812-AC-8: a `Float64` model field exports
+/// through the tagged binary floating point mapping, its `-` through the
+/// generated negation, and a NaN constant as the `nan` tag carrying its exact
+/// bits, so no rational or decimal value stands for the field.
+#[test]
+#[trace("TC-3006", "FR-056-AC-62")]
+#[trace("FSpec-TC-1971", "FSpec-FR-812-AC-8")]
+#[ignore = "QSL-2176: float model fields exported through the FR-812 float mapping, with NaN bits kept, not implemented yet"]
+fn a_float_model_field_exports_its_exact_bits() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("float-model.semantic-ir.json"),
+        serde_json::to_vec(&float_model()).unwrap(),
+    )
+    .unwrap();
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model Config = \"test/float-export\";\n\
+         post Flip using v on Config::Gauge::flip { self.a = -pre(self.a) }\n\
+         invariant NotPayload using v on Config::Gauge at current \
+         { self.a != float64(bits: 0x7ff8000000000001) }\n";
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0",
+            "source": source("float-model.semantic-ir.json")}],
+        "program": {"source": source("unit.native")},
+        "export": tla(json!(["NotPayload"]))}});
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let (exit, value) = match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
+        Ok(result) => (
+            result.exit_code,
+            serde_json::from_str::<Value>(&result.value.to_string()).expect("a JSON document"),
+        ),
+        Err(error) => (error.category().exit_code(), error.value().unwrap()),
+    };
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(
+        value["export"]["records"][0]["disposition"], "preserved",
+        "{value}"
+    );
+    let target = text(&value);
+    assert!(
+        target.contains("[tag |-> \"nan\", bits |-> \"7ff8000000000001\"]"),
+        "the NaN constant keeps its payload bits: {target}"
+    );
+    assert!(
+        target.contains("\"finite\""),
+        "a finite float tag: {target}"
+    );
+    assert!(
+        !target.contains("[num |->"),
+        "no rational stands for the float field: {target}"
+    );
+}

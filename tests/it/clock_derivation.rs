@@ -579,3 +579,84 @@ fn a_finite_domain_hyper_clause_emits_one_row_per_trace_on_its_domain_binder() {
         assert!(output.stdout.is_empty(), "no package for {refused:?}");
     }
 }
+
+/// FR-488-AC-27 and FSpec FR-402-AC-10: two quantifier Groups with one
+/// `variable` text refuse at FR-402's Shape step with
+/// `ambiguous_declaration`/`ambiguous-name` at the later Group's `variable`
+/// binding, so each Group keys exactly one clock row.
+#[trace("TC-3007", "FR-488-AC-27")]
+#[trace("FSpec-TC-346", "FSpec-FR-402-AC-10")]
+#[test]
+#[ignore = "QSL-2400: a repeated quantifier variable refused at the hyperproperty Shape step not implemented yet"]
+fn a_repeated_quantifier_variable_is_refused_at_the_hyperproperty_shape() {
+    use filament_contract_model::{
+        CheckedPackageEvidence, CheckedPackageReadLimits, CheckedPackageRefusalCause,
+        CheckedPackageRefusalCode, CheckedPackageV2, CheckedPackageV2ReadResult, JsonPointer,
+    };
+
+    let directory = tempfile::tempdir().unwrap();
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile i = \"filament.temporal.infinite-trace/v1\";\n\
+         model Config = \"example/config-version\";\n\
+         hyper Same using i over behaviours (c: Config::ConfigVersion) \
+         forall trace a of Config forall trace b of Config \
+         { always holds(c.versionNumber @ a = c.versionNumber @ b) }\n";
+    let output = compile_over_models(directory.path(), unit, &["example/config-version"]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let model = model_as("example/config-version");
+    let read = |bytes: &[u8]| {
+        let wire: Value = serde_json::from_slice(bytes).expect("package JSON");
+        let mut evidence = CheckedPackageEvidence::new();
+        for feature in wire["lock"]["required_features"].as_array().unwrap() {
+            evidence.support_feature(feature.as_str().unwrap());
+        }
+        for (identity, document) in
+            fsl_semantics::model::intake::package_input([model.as_slice()]).unwrap()
+        {
+            evidence
+                .insert_domain_package_document(identity.as_str(), document)
+                .expect("a fresh evidence key");
+        }
+        CheckedPackageV2::read(bytes, CheckedPackageReadLimits::bounded(), &evidence)
+    };
+    assert!(matches!(
+        read(&output.stdout),
+        CheckedPackageV2ReadResult::Admitted(_)
+    ));
+
+    let mut package: Value = serde_json::from_slice(&output.stdout).expect("package JSON");
+    let nodes = package["semantic_graph"]["nodes"]
+        .as_array_mut()
+        .expect("graph nodes");
+    let n = nodes
+        .iter()
+        .position(|node| node["semantic_form"] == "hyperproperty")
+        .expect("one hyperproperty node");
+    let variable = &mut nodes[n]["body"]["members"][3]["value"]["members"][1]["members"][0];
+    assert_eq!(variable["name"], "variable", "{variable}");
+    variable["value"]["value"] = json!("a");
+    let edited = serde_json::to_vec(&package).unwrap();
+
+    let CheckedPackageV2ReadResult::Refused(refusal) = read(&edited) else {
+        panic!("a repeated quantifier variable is refused");
+    };
+    assert_eq!(
+        refusal.code,
+        CheckedPackageRefusalCode::AmbiguousDeclaration
+    );
+    assert_eq!(
+        refusal.cause,
+        Some(CheckedPackageRefusalCause::AmbiguousName)
+    );
+    assert_eq!(
+        refusal.loci[0].path,
+        JsonPointer::parse(&format!(
+            "/semantic_graph/nodes/{n}/body/members/3/value/members/1/members/0"
+        ))
+    );
+}

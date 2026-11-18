@@ -41,7 +41,7 @@ FR-322 terms (FR-093) and its evaluation under FSpec FR-148.
 
 A float value in a body comes from a declared parameter or field, from a bit
 constructor, from an IEEE arithmetic or intrinsic result, or from a conversion
-into a float. Model float fields are refused at intake (FR-091).
+into a float. A float model member of a selected domain package (a field, an operation parameter or result, a tuple position or a union payload) is a float form of the unit, typed strict `exact` (FR-056 "Float model members").
 
 ## Outputs
 
@@ -59,7 +59,7 @@ into a float. Model float fields are refused at intake (FR-091).
 - **The profile in use.**
   - The checker SHALL build the unit's IEEE profile from the layer table's row of the role.
   - The profile is admitted for a unit by a float form in it: a parameter,
-    field or result typed `Float32[m]` or `Float64[m]`, or a bit constructor.
+    field or result typed `Float32[m]` or `Float64[m]`, a float model member of a selected domain package, or a bit constructor.
     A unit with no float form has no admitted profile. A float operation or an
     intrinsic call (`filament::value::ieee::*`) in such a unit refuses
     `invalid_package` with the typed cause `IeeeProfileNotAdmitted` (it has no
