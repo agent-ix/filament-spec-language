@@ -1269,7 +1269,11 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     .collect::<Result<Vec<_>, _>>()?;
                 let body = match body {
                     CheckedTerm::Reference { target } => target.clone(),
-                    _ => return Err(fault("reader-function-body-has-checked-identity")),
+                    _ => {
+                        return Err(BuildError::Fault(fault(
+                            "reader-function-body-has-checked-identity",
+                        )))
+                    }
                 };
                 let name = node
                     .declaration
