@@ -39,7 +39,7 @@ fn run(world: &RingWorld, work: u64) -> SafetyOutcome {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -87,7 +87,7 @@ fn certified(world: &RingWorld, work: u64) -> SimulationCertificateRequest<'_> {
         refinement: world.refinement(),
         concrete: world.concrete_request(meter(work)),
         abstract_package: world.package(),
-        abstract_initial: vec![world.abstract_initial()],
+        abstract_initial: vec![world.abstract_initial()].into(),
     }
 }
 

@@ -270,3 +270,31 @@ fn reading(outcome: &FamilyOutcome<Value>) -> Result<RowReading, ExpansionStop> 
     // The probe-only variant is never built by a real evaluation.
     Err(stop(BROKEN))
 }
+
+impl<'a> ModelSystem<'a> {
+    /// This system with `states` as its initial states, in the order given,
+    /// each anchored as its paired anchor says. A refinement whose abstract
+    /// subject names no initial snapshots builds its abstract system this
+    /// way, from the states its mapping gives the concrete initial states
+    /// (FSL FR-630 "Request item"), not from snapshot documents.
+    #[must_use]
+    pub fn with_initial_states(
+        mut self,
+        states: impl IntoIterator<
+            Item = (
+                ModelState,
+                fsl_semantics::model::observation::SelectedAnchor,
+            ),
+        >,
+    ) -> Self {
+        self.initial = states
+            .into_iter()
+            .map(|(state, anchor)| ModelSimState {
+                state,
+                anchor,
+                reached_by: None,
+            })
+            .collect();
+        self
+    }
+}

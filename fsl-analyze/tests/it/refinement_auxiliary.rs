@@ -33,7 +33,7 @@ fn run(world: &World<'_>) -> SafetyOutcome {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -70,7 +70,7 @@ fn settle(world: &World<'_>, outcome: &SafetyOutcome) -> ModelCheckRecord {
         refinement: world.refinement(),
         concrete: world.concrete_request(UNLIMITED),
         abstract_package: world.package(),
-        abstract_initial: vec![world.abstract_initial()],
+        abstract_initial: vec![world.abstract_initial()].into(),
     };
     settle_refinement_safety(
         outcome,
@@ -367,7 +367,7 @@ fn the_product_key_holds_the_candidate_set() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: None,
             max_depth: Some(1),
             limits: ModelCheckLimits::default(),
@@ -397,7 +397,7 @@ fn a_certificate_position_carries_its_history() {
         refinement: world.refinement(),
         concrete: world.concrete_request(UNLIMITED),
         abstract_package: world.package(),
-        abstract_initial: vec![world.abstract_initial()],
+        abstract_initial: vec![world.abstract_initial()].into(),
     };
     let check = |certificate: &fsl_replay::SimulationCertificate| {
         check_simulation_certificate(

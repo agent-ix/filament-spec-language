@@ -60,7 +60,6 @@ use fsl_replay::{
     Undetermined,
 };
 use fsl_semantics::check::CheckedRefinement;
-use fsl_semantics::model::observation::DocumentRef;
 
 use super::check::{fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS};
 use super::fair_walk::{fairness_constraints, FairModel};
@@ -74,8 +73,9 @@ pub struct RefinementCheckRequest<'a> {
     /// The package that holds the abstract model: the declaring package, or
     /// a dependency (ADR-020 RM-1).
     pub abstract_package: &'a CheckedPackage,
-    /// The abstract subject's FR-106 initial snapshots.
-    pub abstract_initial: Vec<DocumentRef>,
+    /// The abstract subject's initial states: its FR-106 snapshots, or the
+    /// mapping's image of the concrete initial states.
+    pub abstract_initial: fsl_replay::AbstractInitial,
     /// Bindings for an abstract protocol subject. The clause and static
     /// roles remain owned by `abstract_package`; the request supplies the
     /// model instance bound to its `over` parameter and the capacity binding
@@ -2654,7 +2654,7 @@ mod tests {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),

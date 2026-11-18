@@ -89,7 +89,7 @@ fn outcome(subject: &Subject<'_>) -> RefinementOutcome {
                 proof_bounds: Vec::new(),
             },
             abstract_package: subject.package,
-            abstract_initial: vec![subject.abstract_initial.clone()],
+            abstract_initial: vec![subject.abstract_initial.clone()].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -135,7 +135,7 @@ fn certified<'w>(subject: &Subject<'w>) -> SimulationCertificateRequest<'w> {
         refinement: subject.refinement,
         concrete: subject.concrete.clone(),
         abstract_package: subject.package,
-        abstract_initial: vec![subject.abstract_initial.clone()],
+        abstract_initial: vec![subject.abstract_initial.clone()].into(),
     }
 }
 

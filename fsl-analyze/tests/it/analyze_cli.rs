@@ -7,11 +7,11 @@
 //! text mode is tested in the driver repository.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    Workspace, analyze, below_three, bounded, clause, counter_request, label, litmus_request,
-    order_protocol,
+    analyze, below_three, bounded, clause, counter_request, label, litmus_request, order_protocol,
+    Workspace,
 };
 
 const DONE: &str = "terminal Done using v on M when { self.value = 3 };\n";
@@ -435,7 +435,10 @@ fn an_enumeration_over_the_result_budget_stops_incomplete() {
         .as_str()
         .and_then(|count| count.parse().ok())
         .expect("a decimal count");
-    assert!(states < 4, "the store stopped before the walk ended: {stopped}");
+    assert!(
+        states < 4,
+        "the store stopped before the walk ended: {stopped}"
+    );
     assert!(
         !stopped["frontier"].as_array().expect("frontier").is_empty(),
         "{stopped}"
@@ -791,12 +794,10 @@ fn recording_item_references_require_a_provisioned_recording_document() {
         let document = run.document();
         assert_eq!(document["category"], "refusal");
         assert_eq!(document["diagnostics"][0]["code"], "invalid-request");
-        assert!(
-            document["diagnostics"][0]["message"]
-                .as_str()
-                .expect("diagnostic message")
-                .contains("/items/0/recording")
-        );
+        assert!(document["diagnostics"][0]["message"]
+            .as_str()
+            .expect("diagnostic message")
+            .contains("/items/0/recording"));
     };
 
     let missing_ws = Workspace::new("cli-recording-reference-missing");
@@ -836,7 +837,6 @@ fn recording_item_references_require_a_provisioned_recording_document() {
 /// sample-only member in enumerate mode refuse before any state is explored.
 #[trace("FSpec-TC-2008", "FSpec-FR-181-AC-32")]
 #[test]
-#[ignore = "QSL-2296 (from QSL-2132): simulation items have no in-process route yet"]
 fn simulation_bounds_take_their_published_defaults() {
     let ws = Workspace::new("cli-simulation-defaults");
     let run = analyze(&counter_request(
@@ -849,7 +849,7 @@ fn simulation_bounds_take_their_published_defaults() {
     assert_eq!(settings["max_steps"], 16_777_216, "{settings}");
     assert_eq!(settings["max_state_key_bytes"], 16_777_216, "{settings}");
     assert_eq!(settings["samples"], 1, "{settings}");
-    assert_eq!(settings["seed"], 0, "{settings}");
+    assert_eq!(settings["seed"], "0", "{settings}");
     for (n, simulation) in [
         json!({"mode": "sample", "max_steps": 0}),
         json!({"mode": "enumerate", "samples": 2}),

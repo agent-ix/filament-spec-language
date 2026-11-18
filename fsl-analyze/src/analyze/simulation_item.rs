@@ -144,10 +144,10 @@ impl SimulationSelection {
                 SimulationMode::Sample => "sample",
             }),
         );
-        if let Some(seed) = self.seed {
-            members.insert("seed".to_owned(), json!(seed.to_string()));
-        }
         if self.mode == SimulationMode::Sample {
+            // FSpec FR-181-AC-32: a `sample` run without a seed reports seed 0.
+            let seed = self.seed.unwrap_or_default();
+            members.insert("seed".to_owned(), json!(seed.to_string()));
             members.insert("samples".to_owned(), json!(self.samples()));
         }
         members.insert("max_steps".to_owned(), json!(self.max_steps()));
