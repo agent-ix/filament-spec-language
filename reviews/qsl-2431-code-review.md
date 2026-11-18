@@ -39,6 +39,7 @@ Reviewed PR #2918 at `feca9ae47770cc0d4f6447e8313f79d29298ad86` against the chan
 | FND-001 | fixed | The bounded scan now returns the concrete candidate immediately when it finds the pending-delivery/finish condition, so an unrelated cut elsewhere cannot erase it. |
 | FND-002 | still-open | When `pending_finish_counterexample` finds a candidate, `every_behavior_result` still replaces the bounded check outcome with `Violated { stats: Default::default() }`. That drops `message_bound_limited`; `behavior_report` therefore still reports `max_messages.reached` false for this counterexample path when a different explored state was cut. |
 | FND-003 | fixed | The active bound-1 test now carries the FR-636-AC-4 trace tag; the recomputed matrix lists the active test as a binder. |
+| FND-002 | fixed | The candidate override now retains `outcome.stats()`, so the terminal record keeps the original `message_bound_limited` count. |
 
 ## New findings (disposition pass 1)
 

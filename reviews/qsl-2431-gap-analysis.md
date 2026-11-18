@@ -47,3 +47,4 @@ Changed production behavior maps to FR-225's channel-bound decision and FR-225-A
 | FND-001 | fixed | The active bound-1 test now carries the FR-636-AC-4 trace tag; the recomputed matrix lists the active test as a binder. |
 | FND-002 | still-open | When `pending_finish_counterexample` finds a candidate, `every_behavior_result` still replaces the bounded check outcome with `Violated { stats: Default::default() }`. That drops `message_bound_limited`; `behavior_report` therefore still reports `max_messages.reached` false for this counterexample path when a different explored state was cut. |
 | FND-003 | fixed | `RunStats` now keeps channel-cut counts separate, and the bound serializer reads `message_bound_limited` without treating it as `max_store_buffer` reached. |
+| FND-002 | fixed | The candidate override now retains `outcome.stats()`, so the terminal record keeps the original `message_bound_limited` count. |
