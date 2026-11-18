@@ -37,7 +37,6 @@ fn cover(clock: ClockCover, reading: u64, shift: i128) -> EventTimeInterval {
 
 #[test]
 #[trace("TC-2624", "FR-944-AC-1")]
-#[ignore = "QSL-2145: fsl-eval does not take its interval order and bound comparison from the observation owner yet"]
 fn half_tick_intervals_give_the_counter_cover_answers() {
     let limits = Limits::owner_max();
     for clock in [ClockCover::Exact, ClockCover::Counter { uncertainty: 1 }] {

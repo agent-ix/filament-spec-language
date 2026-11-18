@@ -3,6 +3,8 @@
 //! activation and repair authority rules from `filament-observation` and
 //! holds no second implementation of them.
 
+use fsl_eval::completeness::{revise_complete_through, CompleteThroughRefusal};
+use fsl_eval::temporal::{CoveredList, ObservedPosition, ProgressCompleteness};
 use ix_trace_rs::trace;
 use std::path::{Path, PathBuf};
 
@@ -53,4 +55,70 @@ fn fsl_eval_calls_the_observation_owner_for_its_four_authority_rule_sets() {
             });
         assert!(named, "fsl-eval calls the owner's `{module}` module");
     }
+}
+
+fn at(identity: &str, stamp: u64) -> ObservedPosition {
+    ObservedPosition {
+        identity: identity.to_owned(),
+        stamp,
+        fingerprint: None,
+    }
+}
+
+#[test]
+#[trace("TC-2442", "FR-861-AC-4")]
+fn the_complete_through_rule_accepts_and_refuses_as_fr_944_states() {
+    let held = [at("a", 0), at("b", 50), at("c", 100)];
+    let covered: CoveredList = held.iter().cloned().collect();
+    let retained = ProgressCompleteness::Complete { through: 100 };
+    for through in [100, 140] {
+        assert_eq!(
+            revise_complete_through(
+                retained,
+                ProgressCompleteness::Complete { through },
+                &covered,
+                &held
+            ),
+            Ok(()),
+            "Complete through {through} after Complete through 100"
+        );
+    }
+    assert_eq!(
+        revise_complete_through(
+            retained,
+            ProgressCompleteness::Complete { through: 60 },
+            &covered,
+            &held
+        ),
+        Err(CompleteThroughRefusal::Retreat),
+        "Complete through 60"
+    );
+    assert_eq!(
+        revise_complete_through(retained, ProgressCompleteness::Incomplete, &covered, &held),
+        Err(CompleteThroughRefusal::Retreat),
+        "Incomplete"
+    );
+    let uncovered = at("d", 80);
+    assert_eq!(
+        revise_complete_through(
+            retained,
+            ProgressCompleteness::Complete { through: 100 },
+            &covered,
+            std::slice::from_ref(&uncovered)
+        ),
+        Err(CompleteThroughRefusal::UncoveredPosition(Box::new(
+            uncovered
+        ))),
+        "an uncovered position stamped 80"
+    );
+    assert_eq!(
+        revise_complete_through(
+            ProgressCompleteness::Incomplete,
+            ProgressCompleteness::Incomplete,
+            &covered,
+            &held
+        ),
+        Ok(()),
+        "a retained Incomplete refuses nothing"
+    );
 }

@@ -14,6 +14,10 @@
 //! [`StampInterval`] overrides the cover for it (FR-501 "Bounded cover and
 //! interval stamps"): every comparison reads the two observations' extents.
 
+use filament_observation::authority::partial::EventTimeInterval;
+use filament_observation::authority::Limits;
+use filament_observation::Identity;
+
 /// What a clock binding declares a stamp to cover (FR-501 Inputs).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ClockCover {
@@ -169,18 +173,65 @@ impl ClockCover {
         (extent.lo, extent.hi)
     }
 
+    /// The closed half-tick interval of the reading `stamp`, shifted by
+    /// `shift` half-ticks (FR-944 "Partial values and interval order"):
+    /// `[2k, 2k]` under `Exact`, `[2(k-u), 2(k+1+u) - 1]` under `Counter` and
+    /// `[2(k-u), 2(k+u)]` under `Bounded`. The owner compares these
+    /// intervals and nothing writes them into a document.
+    fn half_tick_interval(self, stamp: u64, shift: i128) -> EventTimeInterval {
+        let k = i128::from(stamp);
+        let (earliest, latest) = match self {
+            Self::Exact => (2 * k, 2 * k),
+            Self::Counter { uncertainty } => {
+                let u = i128::from(uncertainty);
+                (2 * (k - u), 2 * (k + 1 + u) - 1)
+            }
+            Self::Bounded { uncertainty } => {
+                let u = i128::from(uncertainty);
+                (2 * (k - u), 2 * (k + u))
+            }
+        };
+        // The identities are non-empty literals and the endpoints are
+        // ordered and below the owner's string bound for every `u64`
+        // reading, so the owner accepts the interval.
+        EventTimeInterval::new(
+            Identity::new("clock"),
+            Identity::new("cover"),
+            Identity::new("tick/2"),
+            earliest + shift,
+            latest + shift,
+            Limits::owner_max(),
+        )
+        .expect("a half-tick interval of a u64 reading is a valid owner interval")
+    }
+
     /// FSpec FR-160's `within_bound`: whether `ack - request <= bound` holds
     /// for every pair of instants in the covers of the readings `request_tick`
-    /// and `ack_tick`, for none, or for some.
+    /// and `ack_tick`, for none, or for some. It reads the owner's order of
+    /// `ack` against `request` shifted by the bound (FR-944).
     pub fn within_bound(self, bound: i64, request_tick: u64, ack_tick: u64) -> Containment {
-        Extent::difference(self.extent(request_tick), self.extent(ack_tick))
-            .at_most(i128::from(bound))
+        let ack = self.half_tick_interval(ack_tick, 0);
+        let request = self.half_tick_interval(request_tick, 2 * i128::from(bound));
+        let order = ack
+            .relation_to(&request, Limits::owner_max())
+            .expect("two half-tick intervals of one cover share a domain");
+        if !order.after() {
+            Containment::True
+        } else if !order.before() && !order.equal() {
+            Containment::False
+        } else {
+            Containment::Indeterminate
+        }
     }
 
     /// FSpec FR-160's `definitely_before`: whether every instant in the cover
-    /// of the reading `a` lies below every instant in the cover of `b`.
+    /// of the reading `a` lies below every instant in the cover of `b`,
+    /// as the owner's `relation_to` answers it (FR-944).
     pub fn definitely_before(self, a: u64, b: u64) -> bool {
-        self.extent(a).before(self.extent(b))
+        self.half_tick_interval(a, 0)
+            .relation_to(&self.half_tick_interval(b, 0), Limits::owner_max())
+            .expect("two half-tick intervals of one cover share a domain")
+            .definitely_before()
     }
 }
 
