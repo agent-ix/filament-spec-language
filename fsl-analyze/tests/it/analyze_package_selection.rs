@@ -214,7 +214,7 @@ fn not_above_three() -> &'static str {
 /// FR-940-AC-4: analysis from source decides the temporal, refuted and
 /// invariant items over its compiled package, and no record is `unsupported`
 /// for a fact the package bytes lack.
-#[trace("TC-2957", "FR-940-AC-4")]
+#[trace("TC-2958", "FR-940-AC-4")]
 #[test]
 #[ignore = "QSL-2271: source-route engines reading the CheckedGraph beside the view is not implemented yet"]
 fn source_analysis_decides_every_family_over_its_checked_graph() {
@@ -240,7 +240,7 @@ fn source_analysis_decides_every_family_over_its_checked_graph() {
 
 /// FR-940-AC-5: the package route reaches the invariant and model-check
 /// evaluators through their package forms with the source route's records.
-#[trace("TC-2957", "FR-940-AC-5")]
+#[trace("TC-2958", "FR-940-AC-5")]
 #[test]
 #[ignore = "QSL-2271: package forms of the source-checked evaluators are not implemented yet"]
 fn the_package_route_reaches_the_source_checked_evaluators() {
@@ -259,7 +259,7 @@ fn the_package_route_reaches_the_source_checked_evaluators() {
 
 /// FR-940-AC-6 (negative): a package the strict reader refuses settles no
 /// item and is never analyzed from source instead.
-#[trace("TC-2957", "FR-940-AC-6")]
+#[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 #[ignore = "QSL-2271: the package route without a source fallback is not implemented yet"]
 fn a_refused_package_never_falls_back_to_source() {

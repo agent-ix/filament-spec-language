@@ -1,12 +1,12 @@
 ---
-id: TC-2959
+id: TC-2960
 title: "A refuted schedulability item carries its miss as its counterexample"
 type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-621
     type: verifies
 ---
-# TC-2959: A refuted schedulability item carries its miss as its counterexample
+# TC-2960: A refuted schedulability item carries its miss as its counterexample
 
 ## Description
 

@@ -1,12 +1,12 @@
 ---
-id: TC-2958
+id: TC-2959
 title: "Analyze items over a selected protocol subject and memory model"
 type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-1033
     type: verifies
 ---
-# TC-2958: Analyze items over a selected protocol subject and memory model
+# TC-2959: Analyze items over a selected protocol subject and memory model
 
 ## Description
 

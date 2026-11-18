@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-1033 (TC-2958): a `native-analyze/1` request selects a protocol
+//! FR-1033 (TC-2959): a `native-analyze/1` request selects a protocol
 //! subject through `subject.protocol`, reads the `memory` member, requests
 //! race freedom over a `parallel`, and refuses bad selections and bindings.
 
@@ -19,7 +19,7 @@ fn sb_subject() -> Value {
 
 /// FR-1033-AC-1: the claim holds over `SB` under `sc` and is refuted under a
 /// `tso` selection, the counterexample replayed.
-#[trace("TC-2958", "FR-1033-AC-1")]
+#[trace("TC-2959", "FR-1033-AC-1")]
 #[trace("FSpec-TC-2005", "FSpec-FR-520-AC-6")]
 #[test]
 #[ignore = "QSL-2126: subject.protocol and the memory member are not read by fsl analyze yet"]
@@ -53,7 +53,7 @@ fn a_protocol_subject_is_decided_under_the_selected_memory_model() {
 
 /// FR-1033-AC-2: a race-freedom item over two unsynchronised non-atomic
 /// writes is refuted naming both; naming another protocol is unknown-claim.
-#[trace("TC-2958", "FR-1033-AC-2")]
+#[trace("TC-2959", "FR-1033-AC-2")]
 #[test]
 #[ignore = "QSL-2126: race-freedom items are not reachable through fsl analyze yet"]
 fn a_race_freedom_item_over_a_parallel_is_refuted() {
@@ -71,7 +71,7 @@ fn a_race_freedom_item_over_a_parallel_is_refuted() {
 
 /// FR-1033-AC-4 (negative): an unknown model and a selection naming no
 /// outermost `parallel` refuse the whole request.
-#[trace("TC-2958", "FR-1033-AC-4")]
+#[trace("TC-2959", "FR-1033-AC-4")]
 #[test]
 #[ignore = "QSL-2126: the memory member is refused as unread by fsl analyze today"]
 fn bad_memory_selections_refuse_the_request() {
@@ -107,7 +107,7 @@ fn bad_memory_selections_refuse_the_request() {
 
 /// FR-1033-AC-5 (negative): a protocol the package does not declare
 /// declines the item; an unknown binding member refuses the request.
-#[trace("TC-2958", "FR-1033-AC-5")]
+#[trace("TC-2959", "FR-1033-AC-5")]
 #[test]
 #[ignore = "QSL-2126: subject.protocol is not read by fsl analyze yet"]
 fn bad_protocol_bindings_decline_or_refuse() {
@@ -133,7 +133,7 @@ fn bad_protocol_bindings_decline_or_refuse() {
 /// `tso` with `max_store_buffer` 2 and the state constraint `Zero` settle
 /// `ConstraintReached` with no counterexample, stating the store-buffer
 /// bound as reached; without `Zero` they settle `MemoryBoundReached`.
-#[trace("TC-2958", "FR-1033-AC-6")]
+#[trace("TC-2959", "FR-1033-AC-6")]
 #[trace("TC-670", "FR-225-AC-4")]
 #[test]
 #[ignore = "QSL-2126: constrained weak-memory items are not reachable through fsl analyze yet"]

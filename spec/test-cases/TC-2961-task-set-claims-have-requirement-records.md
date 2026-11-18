@@ -1,12 +1,12 @@
 ---
-id: TC-2960
+id: TC-2961
 title: "Task-set claims have requirement records that route to EN-7"
 type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-246
     type: verifies
 ---
-# TC-2960: Task-set claims have requirement records that route to EN-7
+# TC-2961: Task-set claims have requirement records that route to EN-7
 
 ## Description
 

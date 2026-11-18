@@ -1326,7 +1326,7 @@ fn only_fsl_command_names_the_tl_crates() {
 /// the snapshot's universe and reads each behaviour of 1 to `max_steps`
 /// steps as its own closed trace, so the trace count grows with `max_steps`.
 #[test]
-#[trace("TC-2961", "FR-931-AC-6")]
+#[trace("TC-2962", "FR-931-AC-6")]
 #[ignore = "QSL-2147: cross_evaluate.initial instance enumeration and closed-trace reading are not implemented yet"]
 fn tl_cross_evaluation_reads_each_behaviour_as_a_closed_trace() {
     let unit = low(EVENT_POSITION, LOW_BODY);
@@ -1356,7 +1356,7 @@ fn tl_cross_evaluation_reads_each_behaviour_as_a_closed_trace() {
 
 /// FR-931-AC-7 (negative): `over` beside `initial` refuses naming it.
 #[test]
-#[trace("TC-2961", "FR-931-AC-7")]
+#[trace("TC-2962", "FR-931-AC-7")]
 #[ignore = "QSL-2147: cross_evaluate.initial refusals are not implemented yet"]
 fn tl_cross_evaluation_refuses_over_beside_initial() {
     let unit = low(EVENT_POSITION, LOW_BODY);

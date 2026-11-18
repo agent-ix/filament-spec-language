@@ -1,12 +1,12 @@
 ---
-id: TC-2961
+id: TC-2962
 title: "Cross-evaluation from a snapshot enumerates instances and closed traces"
 type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-931
     type: verifies
 ---
-# TC-2961: Cross-evaluation from a snapshot enumerates instances and closed traces
+# TC-2962: Cross-evaluation from a snapshot enumerates instances and closed traces
 
 ## Description
 

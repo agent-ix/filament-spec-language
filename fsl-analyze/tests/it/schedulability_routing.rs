@@ -424,7 +424,7 @@ fn without_en7_a_schedulability_claim_has_no_engine() {
 /// FR-246-AC-4: S3 writes one `schedulability` requirement record per
 /// task-set claim, so FR-075's request builder routes each to EN-7.
 #[test]
-#[trace("TC-2960", "FR-246-AC-4")]
+#[trace("TC-2961", "FR-246-AC-4")]
 #[ignore = "QSL-2131: the checked graph writes no requirement record for a task-set claim yet"]
 fn task_set_claims_have_requirement_records_that_route_to_en_7() {
     let world = World::new();
@@ -471,7 +471,7 @@ fn rational(numerator: i64, denominator: i64) -> serde_json::Value {
 /// FR-621-AC-13, FSpec FR-419-AC-13: a refuted EN-7 item carries its miss as
 /// the FSpec FR-419 `schedulability-miss` counterexample, with no replay.
 #[test]
-#[trace("TC-2959", "FR-621-AC-13")]
+#[trace("TC-2960", "FR-621-AC-13")]
 #[trace("FSpec-TC-2006", "FSpec-FR-419-AC-13")]
 #[ignore = "QSL-2131: a refuted EN-7 item fails the document with MissingCounterexample today"]
 fn a_refuted_schedulability_item_carries_its_miss_as_its_counterexample() {
