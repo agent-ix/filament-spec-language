@@ -191,7 +191,6 @@ fn a_relation_that_changes_nothing_or_has_no_ledger_is_refused_uncharged() {
 /// naming the superseded `r1` is refused `predecessor-not-latest`.
 #[trace("FR-526-AC-8", "TC-1321")]
 #[test]
-#[ignore = "QSL-2339: superseded list and predecessor-unknown for an identity the ledger does not hold not implemented yet"]
 fn a_predecessor_the_ledger_does_not_hold_is_unknown_not_stale() {
     let (env, p) = setup();
     let r1 = run(&env, &asking(&env, p, Valuation::True)).expect("a result");
@@ -346,7 +345,9 @@ fn two_occurrences_of_one_body_keep_separate_instances_results_and_progress() {
     let mut correcting = asking(&second, p, Valuation::False);
     correcting.relation = Relation::Superseding(r1.result_identity.clone());
     correcting.ledger = Some(r2.ledger.clone());
-    expect_refusal(run(&second, &correcting), "predecessor-not-latest");
+    // FR-526-AC-9, AC-25: occurrence 1's entry holds neither `r1` nor a
+    // chain through it, so `r1` is another obligation instance's result.
+    expect_refusal(run(&second, &correcting), "predecessor-unknown");
 }
 
 /// FR-526-AC-24 (TC-1321 row 24): a result `r1` and a result `r1'` of a
@@ -357,7 +358,6 @@ fn two_occurrences_of_one_body_keep_separate_instances_results_and_progress() {
 /// ledger is accepted.
 #[trace("FR-526-AC-24", "TC-1321")]
 #[test]
-#[ignore = "QSL-2339: predecessor-unknown for a predecessor the ledger does not hold not implemented yet"]
 fn only_the_ledger_entry_the_evaluator_wrote_for_the_predecessor_grants_authority() {
     let (env, p) = setup();
     let r1 = run(&env, &asking(&env, p, Valuation::True)).expect("a result");

@@ -5,7 +5,7 @@
 //! <corpus>` / `cargo xtask refinement layering <corpus>`: refinement gates.
 //! `cargo xtask
 //! canonical-types [<workspace>]` runs on demand, over this workspace or the
-//! one named.
+//! one named. `cargo xtask pin-check` checks Agent-IX git dependency pins.
 #![forbid(unsafe_code)]
 
 use std::ffi::OsString;
@@ -14,20 +14,23 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use xtask::{
-    canonical_types, checked_input, conformance,
+    canonical_types, checked_input, conformance, consumer_facades,
     error::{Error, Result},
-    examples_check, qualification, refinement, route_lint, seam_probe, string_edge, test_suites,
-    Outcome,
+    examples_check, facade_tests, pin_check, qualification, refinement, route_lint, seam_probe,
+    string_edge, test_suites, Outcome,
 };
 
 const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-edge\n       \
                      cargo xtask route-lint\n       cargo xtask checked-input\n       \
                      cargo xtask test-suites <lane> [<cargo test args>]\n       \
-                     cargo xtask conformance-input\n       cargo xtask conformance\n       \
+                     cargo xtask conformance\n       \
                      cargo xtask ci\n       cargo xtask examples-check\n       cargo xtask refinement versioning <corpus>\n       \
+                     cargo xtask pin-check [--manifest <Cargo.toml-or-directory>]\n       cargo xtask refinement layering <corpus>\n       \
                      cargo xtask refinement layering <corpus>\n       \
-                     cargo xtask qualify --corpus <dir> [--capability <id>]... [--limit <setting>=<value>]... [--text]\n       \\
-                     cargo xtask canonical-types [<workspace>]";
+                     cargo xtask qualify --corpus <dir> [--capability <id>]... [--limit <setting>=<value>]... [--text]\n       \
+                     cargo xtask canonical-types [<workspace>]\n       \
+                     cargo xtask facade-tests [--tests <dir>] [--inventory <file>]\n       \
+                     cargo xtask consumer-facades [--bindings <file>] [--inventory <file>]";
 
 #[ix_trace_rs::string_edge]
 fn run(arguments: &[OsString]) -> Result<Outcome> {
@@ -42,11 +45,20 @@ fn run(arguments: &[OsString]) -> Result<Outcome> {
     if command == "test-suites" {
         return test_suites::run(&workspace_root, operands).map(Outcome::success);
     }
+    if command == "facade-tests" {
+        return facade_tests::run(&workspace_root, operands);
+    }
     if command == "refinement" {
         return refinement::run(&workspace_root, operands);
     }
     if command == "qualify" {
         return qualification::run(&workspace_root, operands);
+    }
+    if command == "pin-check" {
+        return pin_check::run(&workspace_root, operands);
+    }
+    if command == "consumer-facades" {
+        return consumer_facades::run(&workspace_root, operands);
     }
     let workspace_operand = match (command, operands) {
         (_, []) => None,
@@ -61,7 +73,6 @@ fn run(arguments: &[OsString]) -> Result<Outcome> {
         "canonical-types" => {
             canonical_types::run(workspace_operand.as_deref().unwrap_or(&workspace_root))
         }
-        "conformance-input" => conformance::check_input(&workspace_root),
         "conformance" => conformance::run(&workspace_root),
         "ci" => conformance::run_ci(&workspace_root),
         "examples-check" => examples_check::run(&workspace_root),

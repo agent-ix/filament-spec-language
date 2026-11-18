@@ -9,15 +9,7 @@ use serde_json::Value;
 use xtask::qualify::{self, QualifyInputs};
 
 fn fspec_dir() -> PathBuf {
-    std::env::var_os("FSPEC_DIR")
-        .map(PathBuf::from)
-        .or_else(|| {
-            let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .expect("xtask is under the workspace root");
-            Some(workspace.parent()?.join("filament-specification"))
-        })
-        .expect("FSpec checkout path")
+    xtask::published_fspec::directory("proposals/")
 }
 
 fn inputs() -> QualifyInputs {

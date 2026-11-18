@@ -10,14 +10,16 @@ relationships:
 
 ## Description
 
-Verify the six published planning examples. Scope: FR-1014-AC-1.
+Verify the six published planning examples. Scope: FR-1014-AC-1 and AC-2.
 
 ## Test Procedure
 
-1. Run each example under `examples/planning/`.
+1. Materialize each case's published fixture files from `filament_specification::published_files("proposals/planning-v1/fixtures/<case>/")` beside its `examples/planning/<case>/request.json` and run it.
 2. Evaluate every returned state against its rules.
+3. List each example directory and compare its `synthesis` member with the published `plan.json`.
 
 ## Expected Results
 
 - Step 1: each FSpec FR-810 result and exact objective.
 - Step 2: every rule holds.
+- Step 3: only `request.json` present; the members equal.

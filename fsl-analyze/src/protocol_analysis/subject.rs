@@ -17,10 +17,12 @@ use fsl_semantics::model::observation::{DocumentProvision, DocumentRef, Observat
 
 /// The package a protocol subject is over: the checked package, FR-056's
 /// package input and FR-106's snapshot provision.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct SubjectPackage<'a> {
     /// The in-process checked package.
     pub package: &'a CheckedPackage,
+    /// What the subject's model check reads of the package (FR-531, FR-940).
+    pub input: fsl_eval::simulation::model::ModelCheckInput<'a>,
     /// The domain package documents by the identity each declares.
     pub packages: &'a PackageInput,
     /// The snapshot documents the initial states name.
@@ -106,7 +108,7 @@ pub fn protocol_subject(
     Ok(ProtocolSubject {
         model: ModelSubject {
             simulation: ModelSimulationRequest {
-                package: package.package,
+                input: package.input,
                 packages: package.packages,
                 normalization,
                 snapshots: package.snapshots,

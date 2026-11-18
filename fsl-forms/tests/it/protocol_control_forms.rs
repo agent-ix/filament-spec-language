@@ -390,15 +390,18 @@ fn a_parallel_builds_its_join_policy_and_outstanding_rule() {
     assert_eq!(parallel.quorum_count, None);
     assert_eq!(parallel.outstanding, None);
 
-    let run = format!("parallel P {PARALLEL_BRANCHES} join any [] outstanding continue;");
+    let run = format!("parallel P {PARALLEL_BRANCHES} join any [a] outstanding continue;");
     let text = source("", &run);
     let unit = build(&text);
     let [parallel] = &protocol(&unit).parallels[..] else {
         panic!("one parallel");
     };
     assert_eq!(parallel.join.value, JoinPolicy::Any);
-    assert!(parallel.labels.is_empty());
-    assert_eq!(slice(&text, parallel.labels_span), "[]");
+    let [label] = &parallel.labels[..] else {
+        panic!("one join label, got {:?}", parallel.labels);
+    };
+    assert_eq!(label.name, "a");
+    assert_eq!(slice(&text, parallel.labels_span), "[a]");
     assert_eq!(
         parallel.outstanding.as_ref().map(|rule| rule.value),
         Some(Outstanding::Continue)
@@ -856,4 +859,28 @@ fn a_memory_word_outside_its_position_is_an_identifier_and_a_relaxed_fence_refus
 
     let again = build(&text);
     assert_eq!(protocol(&unit), protocol(&again));
+}
+
+/// FR-218-AC-23 (TC-1065 row 6): a `join` member list is non-empty in the
+/// grammar (FSpec FR-501 §8), so `join any []` and `join all []` fail at the
+/// parser with `invalid_syntax` at the closing `]` and build no form.
+#[trace("TC-1065", "FR-218-AC-23", "FSpec-FR-501-AC-8")]
+#[test]
+#[ignore = "QSL-2411: an empty join member list refused at parse time at `]` not implemented yet"]
+fn an_empty_join_list_fails_at_the_parser() {
+    for policy in ["any [] outstanding cancel", "all []"] {
+        let run = format!("parallel P {PARALLEL_BRANCHES} join {policy};");
+        let text = source("", &run);
+        let parsed = parse(&text);
+        assert!(!parsed.is_admissible(), "{policy}");
+        let diagnostic = &parsed.diagnostics()[0];
+        assert_eq!(diagnostic.code, Code::InvalidSyntax, "{policy}");
+        let at = diagnostic.byte_span().expect("the diagnostic is located");
+        assert_eq!(
+            at.start,
+            text.find("[]").expect("the list") + 1,
+            "{policy}: at `]`"
+        );
+        assert!(build_unit(&parsed).is_err(), "{policy}");
+    }
 }

@@ -22,42 +22,254 @@ fn results(run: &crate::analyze_cli_support::Run, count: usize) -> Vec<String> {
 /// A refinement of the Counter by an abstract Counter selected as `Spec`,
 /// with the extra rows `rows` and the abstract value given by `mapped`.
 fn refinement(name: &str, mapped: &str, rows: &str) -> String {
+    refinement_stepping(name, mapped, "Spec::Counter::inc(self)", rows)
+}
+
+/// [`refinement`] with the concrete `inc` mapped to the abstract `step`.
+fn refinement_stepping(name: &str, mapped: &str, step: &str, rows: &str) -> String {
     format!(
-        "refinement {name} using v of M as Spec {{\n\
+        "refinement {name} using t0 abstract Spec concrete M {{\n\
+         population Spec::counters from M::counters;\n\
          object Spec::Counter from M::Counter {{ value = {mapped}; }}\n\
-         step M::Counter::inc as Spec::Counter::inc;\n{rows}}}\n"
+         step M::Counter::inc -> {step};\n{rows}}}\n"
     )
 }
 
-/// The Counter request with the abstract `Spec` model (the same domain
-/// package under alias `Spec`) declared in the unit.
+/// The abstract Counter package: the Counter domain package under its own
+/// identity, which the unit selects as `Spec`.
+const SPEC: &str = "test/counter-spec";
+
+/// FSpec FR-368's `abstract_subject` starting at the [`SPEC`] snapshot
+/// `identity`: `spec-start` holds counter `a` at 0, `spec-start-one` at 1.
+fn abstract_start(identity: &str) -> Value {
+    json!({"identity": SPEC, "initial_states": [{"authority": "test", "identity": identity}]})
+}
+
+/// The Counter request with the abstract `Spec` model, a copy of the Counter
+/// domain package under [`SPEC`], selected in the unit header. The concrete
+/// subject is counter `a` at 0; each item's `abstract_subject` (FSpec
+/// FR-368) names the abstract snapshot, `spec-start` unless the item names
+/// one.
 fn refinement_request(ws: &Workspace, body: &str, items: Value) -> std::path::PathBuf {
-    counter_request(
-        ws,
-        &format!("model Spec = \"test/counter\";\n{body}"),
-        items,
-    )
+    // The abstract `inc` carries the concrete one's contract.
+    let contract = crate::counter::CONTRACT
+        .replace("M::", "Spec::")
+        .replace("CanInc", "SpecCanInc")
+        .replace("post Inc", "post SpecInc");
+    let unit = crate::counter::unit_text(&format!("{}{contract}{body}", crate::counter::CONTRACT))
+        .replacen(
+            "model M = \"test/counter\";\n",
+            &format!("model M = \"test/counter\";\nmodel Spec = \"{SPEC}\";\n"),
+            1,
+        );
+    let spec = |bytes: Vec<u8>| -> Vec<u8> {
+        String::from_utf8(bytes)
+            .expect("the fixture is UTF-8")
+            .replace("test/counter", SPEC)
+            .into_bytes()
+    };
+    let snapshot = crate::analyze_cli_support::counter_snapshot(&[("a", 0)]);
+    let spec_snapshot = |value: i64, identity: &str| -> Vec<u8> {
+        String::from_utf8(spec(crate::analyze_cli_support::counter_snapshot(&[(
+            "a", value,
+        )])))
+        .expect("the fixture is UTF-8")
+        .replace(
+            "\"identity\":\"start\"",
+            &format!("\"identity\":\"{identity}\""),
+        )
+        .into_bytes()
+    };
+    ws.write("program.fsl", unit.as_bytes());
+    ws.write("model.json", &crate::counter::document(false));
+    ws.write("spec.json", &spec(crate::counter::document(false)));
+    ws.write("start.json", &snapshot);
+    ws.write("spec-start.json", &spec_snapshot(0, "spec-start"));
+    ws.write("spec-start-one.json", &spec_snapshot(1, "spec-start-one"));
+    let mut items = items;
+    for item in items.as_array_mut().expect("items") {
+        // An item whose `abstract_subject` is JSON null names none, which
+        // FR-630 defaults to the mapping's image of the concrete initial states.
+        match item["temporal"].get("abstract_subject") {
+            None => item["temporal"]["abstract_subject"] = abstract_start("spec-start"),
+            Some(Value::Null) => {
+                item["temporal"]
+                    .as_object_mut()
+                    .expect("temporal")
+                    .remove("abstract_subject");
+            }
+            Some(_) => {}
+        }
+    }
+    let mut request = request_members(Some(items));
+    request["models"].as_array_mut().expect("models").push(
+        json!({"format": "semantic-ir/2.0.0", "source": {"file": "spec.json",
+            "authority": "test", "identity": "counter-spec-model", "document": "Counter",
+            "formal_revision": 1}}),
+    );
+    request["documents"] = json!([{"file": "start.json"}, {"file": "spec-start.json"},
+        {"file": "spec-start-one.json"}]);
+    let start = json!([{"authority": "test", "identity": "start"}]);
+    request["subject"] = json!({"initial_states": start, "universes": start, "proof_bounds": []});
+    let document = json!({"format": "native-analyze/1", "request": request});
+    ws.write("analyze.json", document.to_string().as_bytes())
 }
 
 /// FR-630-AC-1: a correct mapping proves and a wrong one refutes with a
-/// replayed counterexample carrying per-step records.
+/// replayed counterexample carrying per-step records. The wrong mapping
+/// sends the empty counter (`value = 0`) to a non-empty one (`value = 1`);
+/// its abstract subject starts at that image, as FR-630's default does, so
+/// the first concrete `inc` maps to an abstract `inc` the abstract contract
+/// rejects: `abstract-step-disabled` (RS-4, `AbstractStepRejected`).
 #[trace("TC-1590", "FR-630-AC-1")]
 #[test]
-#[ignore = "QSL-2127: refinement items are not reachable through fsl analyze yet"]
 fn a_refinement_proves_and_a_wrong_mapping_refutes() {
-    let body = refinement("Same", "self.value", "") + &refinement("Off", "3 - self.value", "");
+    let body = refinement("Same", "self.value", "")
+        + &refinement("Off", "if self.value = 0 then 1 else self.value", "");
     let ws = Workspace::new("family-refinement");
     let run = analyze(&refinement_request(
         &ws,
         &body,
         json!([{"claim": "Same", "kind": "refinement", "temporal": {"item_kind": "refinement"}},
-            {"claim": "Off", "kind": "refinement", "temporal": {"item_kind": "refinement"}}]),
+            {"claim": "Off", "kind": "refinement", "temporal": {"item_kind": "refinement",
+                "abstract_subject": abstract_start("spec-start-one")}}]),
     ));
     assert_eq!(results(&run, 2), ["proved", "refuted"]);
     assert_eq!(run.item(0)["record"]["certification"], "certified");
     let refuted = run.item(1);
     assert_eq!(refuted["replay"]["reproduced"], true);
     assert!(refuted["counterexample"]["steps"].is_array(), "{refuted}");
+    assert_eq!(
+        refuted["counterexample"]["refinement_failure"]["kind"], "AbstractStepRejected",
+        "{refuted}"
+    );
+}
+
+/// FR-630 "Request item", FR-144: with no `abstract_subject` the abstract
+/// initial states are the states the mapping gives the concrete initial
+/// states, so the wrong mapping of the test above refutes the same way
+/// without naming the abstract snapshot (`value = 1`), which the concrete
+/// subject's snapshot (`value = 0`) is not.
+#[trace("TC-1590", "FR-630")]
+#[test]
+fn an_absent_abstract_subject_starts_at_the_mapped_concrete_initial_states() {
+    let body = refinement("Same", "self.value", "")
+        + &refinement("Off", "if self.value = 0 then 1 else self.value", "");
+    let ws = Workspace::new("family-refinement-mapped-initial");
+    let run = analyze(&refinement_request(
+        &ws,
+        &body,
+        json!([{"claim": "Same", "kind": "refinement", "temporal": {"item_kind": "refinement", "abstract_subject": null}},
+            {"claim": "Off", "kind": "refinement", "temporal": {"item_kind": "refinement",
+                "abstract_subject": null}}]),
+    ));
+    assert_eq!(results(&run, 2), ["proved", "refuted"]);
+    assert_eq!(run.item(0)["record"]["certification"], "certified");
+    let refuted = run.item(1);
+    assert_eq!(refuted["replay"]["reproduced"], true, "{refuted}");
+    assert_eq!(
+        refuted["counterexample"]["refinement_failure"]["kind"], "AbstractStepRejected",
+        "{refuted}"
+    );
+}
+
+/// FR-630 "Outputs": the refuted item's counterexample carries the abstract
+/// image of each position, from the initial state to the first failing
+/// edge, and the refinement's FR-146 step records; it is refuted at that
+/// first edge, the concrete `inc` the wrong row maps to a stutter.
+#[trace("TC-1590", "FR-630-AC-1")]
+#[test]
+fn a_refuted_refinement_names_its_first_failing_edge_and_abstract_images() {
+    let ws = Workspace::new("family-refinement-images");
+    let run = analyze(&refinement_request(
+        &ws,
+        &refinement_stepping("Off", "self.value", "stutter", ""),
+        json!([{"claim": "Off", "kind": "refinement", "temporal": {"item_kind": "refinement"}}]),
+    ));
+    let refuted = run.item(0);
+    assert_eq!(label(&refuted), "refuted", "{refuted}");
+    let counterexample = &refuted["counterexample"];
+    assert_eq!(
+        counterexample["prefix"].as_array().map(Vec::len),
+        Some(1),
+        "the first edge fails: {counterexample}"
+    );
+    let steps = counterexample["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 2, "positions 0 and 1: {counterexample}");
+    for (position, step) in steps.iter().enumerate() {
+        assert_eq!(step["position"], position, "{step}");
+        assert_eq!(step["abstract_state"]["type"], "simulation-state", "{step}");
+    }
+    assert!(
+        counterexample["step_simulations"].is_array(),
+        "{counterexample}"
+    );
+}
+
+/// FR-630 "Budgets" (FR-625): a refinement item whose product reaches
+/// `max_states` 1 settles `incomplete` naming the limit, never `proved`.
+#[trace("TC-1590", "FR-630")]
+#[test]
+fn a_refinement_budget_of_one_state_is_incomplete() {
+    let ws = Workspace::new("family-refinement-budget");
+    let run = analyze(&refinement_request(
+        &ws,
+        &refinement("Same", "self.value", ""),
+        json!([{"claim": "Same", "kind": "refinement",
+            "temporal": {"item_kind": "refinement", "limits": {"max_states": 1}}}]),
+    ));
+    let item = run.item(0);
+    assert_eq!(label(&item), "incomplete", "{item}");
+    assert!(item["record"].to_string().contains("max_states"), "{item}");
+}
+
+/// FR-630, FR-143: a strong abstract fairness constraint gives the
+/// liveness half the typed result the library gives it, through the wire;
+/// the item is never `proved` (QSL-2243 decides the strong reading).
+#[trace("TC-1590", "FR-630")]
+#[test]
+fn a_strong_abstract_fairness_refinement_settles_the_library_result() {
+    let ws = Workspace::new("family-refinement-strong");
+    let run = analyze(&refinement_request(
+        &ws,
+        &refinement(
+            "Strong",
+            "self.value",
+            "ensure fair strong each Spec::Counter::inc;\n",
+        ),
+        json!([{"claim": "Strong", "kind": "refinement",
+            "temporal": {"item_kind": "refinement"}}]),
+    ));
+    let item = run.item(0);
+    assert_ne!(label(&item), "proved", "{item}");
+    assert_eq!(label(&item), "unsupported", "{item}");
+}
+
+/// FR-630, FSpec FR-368: an `abstract_subject` whose `identity` is not the
+/// refinement's abstract model package settles `invalid-request`.
+#[trace("TC-1590", "FR-630")]
+#[test]
+fn an_abstract_subject_of_another_package_is_an_invalid_request() {
+    let ws = Workspace::new("family-refinement-identity");
+    let path = refinement_request(
+        &ws,
+        &refinement("Same", "self.value", ""),
+        json!([{"claim": "Same", "kind": "refinement", "temporal": {"item_kind": "refinement"}}]),
+    );
+    let mut request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the request reads"))
+            .expect("the request is JSON");
+    request["request"]["items"][0]["temporal"]["abstract_subject"]["identity"] =
+        json!("test/counter");
+    let path = ws.write("analyze.json", request.to_string().as_bytes());
+    let run = analyze(&path);
+    let item = run.item(0);
+    assert_eq!(item["category"], "refusal", "{item}");
+    assert_eq!(item["record"]["settled_by"], "disposition", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["member"], "temporal.abstract_subject.identity",
+        "{item}"
+    );
 }
 
 /// FR-630-AC-2: `refinement_internals` reaches compilation.
@@ -172,7 +384,7 @@ fn non_interference_proves_and_refutes() {
 /// FR-631-AC-4: a hyper clause with no object parameter is analyzable.
 #[trace("TC-1591", "FR-631-AC-4")]
 #[test]
-#[ignore = "QSL-2248: a hyper clause with no object parameter is checked but not emitted"]
+#[ignore = "QSL-2128: hyperproperty items are not reachable through fsl analyze yet"]
 fn an_object_free_hyper_clause_is_analyzed() {
     use crate::hyper_world::{request_files, Vault};
     let declaration = "hyper Whole using inf over behaviours () \
@@ -281,7 +493,6 @@ fn ctl_body(c: u32, claims: &str) -> String {
 #[trace("TC-1593", "FR-633-AC-1")]
 #[trace("TC-1593", "FR-633-AC-2")]
 #[test]
-#[ignore = "QSL-2131: schedulability items are not reachable through fsl analyze yet"]
 fn schedulability_proves_on_en7_and_a_tight_response_refutes() {
     let claims = "schedulable CtlFp on Ctl under fixed_priority;\n\
                   response Twelve on Ctl.c <= 12 ms under fixed_priority;\n\
@@ -306,30 +517,37 @@ fn schedulability_proves_on_en7_and_a_tight_response_refutes() {
     assert_eq!(proved["record"]["basis"]["analysis"], "fixed-priority");
     assert_eq!(proved["record"]["backend"], "en-7");
     assert!(proved.get("axes").is_none());
-    let miss = &run.item(2)["counterexample"];
-    assert_eq!(miss["task"], "c");
-    assert_eq!(miss["response"], "12");
-    assert_eq!(miss["deadline"], "11");
+    let miss = &run.item(2)["counterexample"]["counterexample"];
+    assert_eq!(miss["type"], "schedulability-miss", "{miss}");
+    assert_eq!(miss["miss"]["task"], "c", "{miss}");
+    assert_eq!(miss["miss"]["response"]["numerator"], "12", "{miss}");
+    assert_eq!(miss["miss"]["bound"]["numerator"], "11", "{miss}");
 }
 
-/// FR-635-AC-1, AC-2: an item naming a registered external provider settles
-/// on it, the registry lists it, and another item is unchanged by it.
+/// FR-635-AC-1, AC-2: an item naming a process provider handed to
+/// `analyze_with_providers` settles on it, the registry lists it, and another
+/// item is unchanged by it. The provider stands where the driver passes a
+/// started plugin session (FR-635 "One rule for every provider-routing
+/// entry"); starting the plugin process is the driver's transport.
 #[trace("TC-1595", "FR-635-AC-1")]
 #[trace("TC-1595", "FR-635-AC-2")]
 #[test]
-#[ignore = "QSL-2296 (from QSL-2132): FR-635 says the driver loads providers from their manifests but no requirement states where manifests are found or how a process provider is run; FR-489 forbids test-only registrations in the production registry (spec question open)"]
 fn an_item_naming_a_registered_provider_settles_on_it() {
-    let provider =
-        std::env::var("FSL_TEST_PROVIDER").unwrap_or_else(|_| "test-value-provider".to_owned());
+    use fsl_analyze::provider::ProviderVerdict;
+    let provider = PROCESS_PROVIDER.to_owned();
     let body = "function Even using v(n: Integer): Boolean pure { n * 2 - n = n }\n".to_owned()
         + &crate::analyze_cli_support::bounded();
     let ws = Workspace::new("family-provider");
-    let run = analyze(&counter_request(
+    let request = counter_request(
         &ws,
         &body,
         json!([{"claim": "Even", "kind": "value-validity", "backend": provider},
             {"claim": "Bounded"}]),
-    ));
+    );
+    let run = crate::analyze_cli_support::analyze_with_providers(
+        &request,
+        vec![process_provider(PROCESS_PROVIDER, ProviderVerdict::Proved)],
+    );
     let item = run.item(0);
     assert_eq!(label(&item), "proved");
     assert_eq!(item["record"]["backend"], provider.as_str());
@@ -359,7 +577,7 @@ fn an_item_naming_a_registered_provider_settles_on_it() {
 /// answers `verdict`. It stands where the driver passes a started plugin
 /// session; the real plugin process is the driver's test (QSL-2283).
 #[derive(Debug)]
-struct AnsweringProvider(fsl_analyze::provider::ProviderVerdict);
+pub(crate) struct AnsweringProvider(pub(crate) fsl_analyze::provider::ProviderVerdict);
 
 impl fsl_analyze::provider::ExternalProvider for AnsweringProvider {
     fn settle(
@@ -375,9 +593,9 @@ impl fsl_analyze::provider::ExternalProvider for AnsweringProvider {
     }
 }
 
-const PROCESS_PROVIDER: &str = "fsl.test-process-provider";
+pub(crate) const PROCESS_PROVIDER: &str = "fsl.test-process-provider";
 
-fn process_descriptor(backend: &str) -> fsl_route::BackendDescriptor {
+pub(crate) fn process_descriptor(backend: &str) -> fsl_route::BackendDescriptor {
     use fsl_semantics::check::Capability;
     fsl_route::descriptor_from_manifest(
         fsl_route::Candidate::new(fsl_foundation::BackendId::new(backend)),
@@ -397,7 +615,7 @@ fn process_descriptor(backend: &str) -> fsl_route::BackendDescriptor {
     .expect("the descriptor advertises the external value arm")
 }
 
-fn process_provider(
+pub(crate) fn process_provider(
     backend: &str,
     verdict: fsl_analyze::provider::ProviderVerdict,
 ) -> fsl_analyze::analyze::Engine {
@@ -504,18 +722,10 @@ impl fsl_analyze::provider::ExternalProvider for RecordingProvider {
     }
 }
 
-/// FSpec FR-331's `Request` definition, read in place from `$FSPEC_DIR`
-/// with the checked-package schema it refers to.
+/// FSpec FR-331's `Request` definition with the checked-package schema it refers to.
 fn fr331_request_schema() -> jsonschema::JSONSchema {
-    let fspec = std::env::var_os("FSPEC_DIR")
-        .expect("FSPEC_DIR names the FSpec checkout whose schema this reads");
-    let read = |relative: &str| -> Value {
-        let path = std::path::PathBuf::from(&fspec).join(relative);
-        serde_json::from_slice(&std::fs::read(&path).expect("the schema reads"))
-            .expect("the schema is JSON")
-    };
-    let schema = read("proposals/backend-provider-v1/schema.json");
-    let package = read("proposals/checked-package-v2/schema.json");
+    let schema = crate::published_fspec::json("proposals/backend-provider-v1/schema.json");
+    let package = crate::published_fspec::json("proposals/checked-package-v2/schema.json");
     let request = json!({
         "$schema": schema["$schema"],
         "$defs": schema["$defs"],
@@ -698,5 +908,259 @@ fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
     assert!(matches!(verdict, "proved" | "refuted"), "{item}");
     if verdict == "refuted" {
         assert_eq!(item["replay"]["reproduced"], true, "{item}");
+    }
+}
+
+/// [`refinement_request`] with every item's `abstract_subject` removed, so
+/// the item takes FR-630's default abstract initial states, over the concrete
+/// snapshots of counter `a` at each of `values`.
+fn refinement_request_without_abstract(
+    ws: &Workspace,
+    body: &str,
+    items: Value,
+    values: &[i64],
+) -> std::path::PathBuf {
+    let path = refinement_request(ws, body, items);
+    let mut document: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("json");
+    let request = &mut document["request"];
+    for item in request["items"].as_array_mut().expect("items") {
+        item["temporal"]
+            .as_object_mut()
+            .expect("temporal")
+            .remove("abstract_subject");
+    }
+    let mut starts = Vec::new();
+    for value in values {
+        let identity = format!("start-{value}");
+        let snapshot = String::from_utf8(crate::analyze_cli_support::counter_snapshot(&[(
+            "a", *value,
+        )]))
+        .expect("the fixture is UTF-8")
+        .replace(
+            "\"identity\":\"start\"",
+            &format!("\"identity\":\"{identity}\""),
+        );
+        ws.write(&format!("{identity}.json"), snapshot.as_bytes());
+        request["documents"]
+            .as_array_mut()
+            .expect("documents")
+            .push(json!({"file": format!("{identity}.json")}));
+        starts.push(json!({"authority": "test", "identity": identity}));
+    }
+    request["subject"]["initial_states"] = json!(starts);
+    request["subject"]["universes"] = json!(starts);
+    ws.write("analyze.json", document.to_string().as_bytes())
+}
+
+/// The refinement item for `claim` with no `abstract_subject`, under
+/// `max_candidates` when given.
+fn default_initial_item(claim: &str, max_candidates: Option<u64>) -> Value {
+    let mut item = json!({"claim": claim, "kind": "refinement",
+        "temporal": {"item_kind": "refinement"}});
+    if let Some(cap) = max_candidates {
+        item["temporal"]["limits"] = json!({"max_candidates": cap});
+    }
+    item
+}
+
+/// FR-630-AC-5 (completions and cap): with no `abstract_subject`, a field the
+/// mapping does not fix ranges over its type (`Int[0, 3]`, four completions)
+/// and the enumeration is charged to one `max_candidates` total across every
+/// concrete initial state.
+#[trace("TC-2964", "FR-630-AC-5")]
+#[test]
+fn default_abstract_initial_states_are_every_admissible_completion() {
+    let body = "refinement Hidden using t0 abstract Spec concrete M {\n\
+        population Spec::counters from M::counters;\n\
+        object Spec::Counter from M::Counter { }\n\
+        step M::Counter::inc -> stutter;\n}\n";
+
+    let ws = Workspace::new("family-refinement-default-initial");
+    let run = analyze(&refinement_request_without_abstract(
+        &ws,
+        body,
+        json!([
+            default_initial_item("Hidden", None),
+            default_initial_item("Hidden", Some(3)),
+        ]),
+        &[0],
+    ));
+    assert_eq!(results(&run, 2), ["proved", "incomplete"]);
+    let stopped = run.item(1);
+    assert_eq!(stopped["category"], "incomplete", "{stopped}");
+    assert_eq!(
+        stopped["record"]["cause"]["kind"], "limit-reached",
+        "{stopped}"
+    );
+    assert_eq!(
+        stopped["record"]["cause"]["limit"], "max_candidates",
+        "{stopped}"
+    );
+    assert_eq!(
+        stopped["record"]["cause"]["setting"], "expansion.max_candidates",
+        "{stopped}"
+    );
+
+    let ws = Workspace::new("family-refinement-default-initial-two");
+    let run = analyze(&refinement_request_without_abstract(
+        &ws,
+        body,
+        json!([
+            default_initial_item("Hidden", Some(4)),
+            default_initial_item("Hidden", Some(8)),
+        ]),
+        &[0, 1],
+    ));
+    assert_eq!(results(&run, 2), ["incomplete", "proved"]);
+    assert_eq!(run.item(0)["record"]["cause"]["limit"], "max_candidates");
+}
+
+/// FR-630-AC-5 (empty completion set): an image outside the abstract unit
+/// bound is `InitialNotAbstract` at position 0, never a refusal.
+///
+/// The refinement row `value = self.value + 3` is refused `ill_typed` by the
+/// row rule that an expression conforms to the type it defines and is never
+/// range-checked into it (ADR-016 SC-2), so the item cannot be built; the spec
+/// gives no mapping that type-checks and has an image outside `Int[0, 3]`.
+#[trace("TC-2964", "FR-630-AC-5")]
+#[test]
+#[ignore = "QSL-2407: spec gap - FR-630-AC-5 Shifted row is ill_typed under ADR-016 SC-2"]
+fn an_image_outside_the_unit_bound_is_initial_not_abstract() {
+    let body = refinement_stepping("Shifted", "self.value + 3", "stutter", "");
+    let ws = Workspace::new("family-refinement-default-initial-empty");
+    let run = analyze(&refinement_request_without_abstract(
+        &ws,
+        &body,
+        json!([default_initial_item("Shifted", None)]),
+        &[1],
+    ));
+    let refuted = run.item(0);
+    assert_eq!(label(&refuted), "refuted", "{refuted}");
+    assert_eq!(
+        refuted["counterexample"]["refinement_failure"],
+        json!({"kind": "InitialNotAbstract", "initial": "0"}),
+        "{refuted}"
+    );
+    assert_eq!(refuted["replay"]["reproduced"], true, "{refuted}");
+}
+
+/// FR-630-AC-5 (TC-2964): the refinement row `value = self.value + 3` types
+/// `Int[3, 6]`, which does not conform to the abstract field type `Int[0, 3]`
+/// (ADR-016 SC-2), so S3 refuses it `ill_typed`/`type-mismatch` and no item
+/// is analyzed.
+#[trace("TC-2964", "FR-630-AC-5")]
+#[test]
+#[ignore = "QSL-2407: the Shifted row refused at S3 type-mismatch as FR-630-AC-5 decides not yet asserted by the suite"]
+fn a_mapping_that_does_not_conform_to_the_abstract_field_is_refused() {
+    let body = refinement_stepping("Shifted", "self.value + 3", "stutter", "");
+    let ws = Workspace::new("family-refinement-shifted-refused");
+    let run = analyze(&refinement_request_without_abstract(
+        &ws,
+        &body,
+        json!([default_initial_item("Shifted", None)]),
+        &[1],
+    ));
+    let document = run.document();
+    let diagnostic = &document["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "ill_typed", "{document}");
+    assert_eq!(diagnostic["cause"], "type-mismatch", "{document}");
+    assert_eq!(document["items"], json!([]), "{document}");
+}
+
+/// Add the field `elapsed: Quantity<ms>` to the Counter document at `path`,
+/// under the unit bound `max 3` when `bounded`.
+fn add_elapsed(ws: &Workspace, path: &str, package: &str, bounded: bool) {
+    let file = ws.path(path);
+    let mut document: Value =
+        serde_json::from_slice(&std::fs::read(&file).expect("the model document")).expect("JSON");
+    let counter = format!("ix://{package}/Counter");
+    let elapsed = format!("{counter}/elapsed");
+    let origin = json!({"generated": {"generatorIdentity": elapsed, "generatorVersion": "1.0.0",
+        "inputIdentities": [elapsed]}});
+    for node in document["types"].as_array_mut().expect("types") {
+        if node["identity"] != json!(counter) {
+            continue;
+        }
+        node["fields"].as_array_mut().expect("fields").push(json!({
+            "identity": elapsed, "name": "elapsed", "typeRef": "ix://filament/unit/ms",
+            "presence": "required", "nullable": false, "defaultKind": "none",
+            "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+            "origin": origin,
+        }));
+        if bounded {
+            node["constraints"]
+                .as_array_mut()
+                .expect("constraints")
+                .push(json!({
+                    "identity": format!("{counter}/constraints/elapsedMax"), "keyword": "max",
+                    "operands": {"value": "3"}, "appliesTo": "ix://filament/unit/ms",
+                    "diagnosticCode": "bound.elapsed", "origin": origin,
+                }));
+        }
+    }
+    std::fs::write(&file, document.to_string()).expect("write");
+}
+
+/// Set `elapsed` to `ms` milliseconds in each Counter object of the snapshot
+/// at `path`.
+fn set_elapsed(ws: &Workspace, path: &str, ms: i64) {
+    let file = ws.path(path);
+    let mut snapshot: Value =
+        serde_json::from_slice(&std::fs::read(&file).expect("the snapshot")).expect("JSON");
+    for population in snapshot["populations"].as_array_mut().expect("populations") {
+        for object in population["objects"].as_array_mut().expect("objects") {
+            object["fields"]["elapsed"] = json!({"rational": {"numerator": ms.to_string(),
+                "denominator": "1"}, "unit": "ms"});
+        }
+    }
+    std::fs::write(&file, snapshot.to_string()).expect("write");
+}
+
+/// FR-630-AC-6 (TC-2971): a well-typed mapping whose image violates an
+/// abstract unit bound has no admissible completion: `Late` over `elapsed`
+/// 2 ms maps to 4 ms above the bound `max 3` and is `InitialNotAbstract` at
+/// position 0, a replayed one-state counterexample; over `elapsed` 1 ms (3 ms,
+/// the bound itself) it is proved.
+#[trace("TC-2971", "FR-630-AC-6")]
+#[test]
+#[ignore = "QSL-2407: an image outside an abstract unit bound settled InitialNotAbstract not implemented yet"]
+fn an_image_outside_an_abstract_unit_bound_is_initial_not_abstract() {
+    let body = "dimension Time;\nunit s : Time = rational(1, 1);\nunit ms : Time = rational(1, 1000) * s;\n\
+         refinement Late using t0 abstract Spec concrete M {\n\
+         population Spec::counters from M::counters;\n\
+         object Spec::Counter from M::Counter { value = self.value; elapsed = self.elapsed + 2 ms; }\n\
+         step M::Counter::inc -> stutter;\n}\n";
+    for (elapsed, expected) in [(2, "refuted"), (1, "proved")] {
+        let ws = Workspace::new(&format!("family-refinement-unit-bound-{elapsed}"));
+        let request = refinement_request_without_abstract(
+            &ws,
+            body,
+            json!([default_initial_item("Late", None)]),
+            &[0],
+        );
+        add_elapsed(&ws, "model.json", "test/counter", false);
+        add_elapsed(&ws, "spec.json", SPEC, true);
+        for snapshot in [
+            "start.json",
+            "start-0.json",
+            "spec-start.json",
+            "spec-start-one.json",
+        ] {
+            if ws.path(snapshot).exists() {
+                set_elapsed(&ws, snapshot, elapsed);
+            }
+        }
+        let run = analyze(&request);
+        let item = run.item(0);
+        assert_eq!(label(&item), expected, "{}", run.document());
+        if expected == "refuted" {
+            assert_eq!(
+                item["counterexample"]["refinement_failure"],
+                json!({"kind": "InitialNotAbstract", "initial": "0"}),
+                "{item}"
+            );
+            assert_eq!(item["replay"]["reproduced"], true, "{item}");
+        }
     }
 }

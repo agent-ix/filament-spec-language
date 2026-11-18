@@ -1727,7 +1727,7 @@ fn native_integer_capacity_breach_becomes_a_typed_internal_fault() {
     assert!(fsl_semantics::check::received_kernel_causes().contains(&cause));
     let refusal = Refusal::CheckedInvariant { cause };
     assert_eq!(kernel_refusal_record(&refusal, None), None);
-    let fault = CheckedMachine::stopped(Stop::Refused(refusal), None).unwrap_err();
+    let fault = CheckedMachine::stopped_at_depth(Stop::Refused(refusal), None, 0).unwrap_err();
     assert_eq!(fault.stage(), "S6a");
     assert_eq!(fault.invariant(), "checked-program-invariant");
     assert_eq!(fault.kernel_cause(), Some(cause));
@@ -1748,7 +1748,8 @@ fn every_received_kernel_payload_survives_stop_and_public_fault_conversion() {
         let before = meter.admitted_charges().to_vec();
         for location in [None, Some(&location)] {
             let fault =
-                CheckedMachine::stopped(Stop::Refused(refusal.clone()), location).unwrap_err();
+                CheckedMachine::stopped_at_depth(Stop::Refused(refusal.clone()), location, 0)
+                    .unwrap_err();
             assert_eq!(fault.stage(), "S6a");
             assert_eq!(fault.invariant(), "checked-program-invariant");
             assert_eq!(fault.kernel_cause(), Some(cause));
@@ -1768,7 +1769,8 @@ fn every_received_kernel_payload_survives_stop_and_public_fault_conversion() {
         }
     }
     let evaluation =
-        CheckedMachine::stopped(Stop::Undefined(Undefined::NoneValue), Some(&location)).unwrap();
+        CheckedMachine::stopped_at_depth(Stop::Undefined(Undefined::NoneValue), Some(&location), 0)
+            .unwrap();
     assert!(matches!(
         evaluation.outcome,
         FamilyOutcome::Evaluated(Outcome::Undefined(Undefined::NoneValue))

@@ -14,6 +14,7 @@
 mod ample;
 mod check;
 mod concretise;
+pub mod digital;
 pub(crate) mod fair_walk;
 pub(crate) mod false_extension;
 mod graph;
@@ -24,13 +25,15 @@ mod product;
 mod quotient;
 mod reduce;
 mod refine;
+mod relation;
 mod request;
 mod scc;
 mod state_graph;
 
 pub use ample::{Atoms, Por};
 pub use check::{
-    check_model, check_protocol, ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
+    check_model, check_protocol, check_protocol_constrained, ModelCheckRefusal, ModelCheckRequest,
+    ProtocolCheckRequest,
 };
 pub use fsl_replay::SubjectIdentity;
 pub use graph::{
@@ -50,6 +53,10 @@ pub use reduce::{
     ClosureRefusal, InstanceGroup, TableForm,
 };
 pub use refine::{check_refinement, AbstractProtocolBinding, RefinementCheckRequest};
+pub use relation::{
+    check_model_relation, ModelRelationCheckRequest, ModelRelationOutcome, ModelRelationRefusal,
+    ModelRelationStats,
+};
 pub use request::{RequestRefusal, SubjectContext};
 pub use scc::Component;
 pub use state_graph::{

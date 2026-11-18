@@ -600,7 +600,9 @@ fn graph_witness(
 
 /// FSpec FR-393's spelling of the state-graph `evidence` of the instance
 /// bound to `over` (the claim's `over` parameter `parameter`), with
-/// `sampled` the witnesses phase 0 found per initial state (FR-628).
+/// `sampled` the witnesses phase 0 found per initial state (FR-628), and
+/// `claim` the claim occurrence, the `locus` of an `undefined` arm's
+/// expression (FR-628 "Evidence encoding").
 ///
 /// # Errors
 ///
@@ -612,6 +614,7 @@ pub fn graph_evidence_wire(
     parameter: Option<&str>,
     over: Option<&ObjectReference>,
     sampled: &[Option<crate::model_check::state_graph::GraphWitness>],
+    claim: Option<&OccurrenceKey>,
 ) -> Result<Json, CounterexampleWireError> {
     use crate::model_check::state_graph::{GraphEvidence, StateGraphPropertyForm};
     let key = match over {
@@ -676,6 +679,7 @@ pub fn graph_evidence_wire(
             let mut at = json!({
                 "position": stem.steps.len(),
                 "state_key": key_text(&undefined.state_key)?,
+                "locus": locus(claim)?,
             });
             if let Some(role) = role {
                 at["predicate"] = json!(role);

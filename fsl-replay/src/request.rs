@@ -16,8 +16,9 @@ use filament_exact::ScalarLimits;
 
 use crate::bounds::{BoundExceeded, ReplayLimits};
 use crate::identity::{
-    DeclaredDomain, DefinitionSourceRef, ObligationIdentity, ProfileSelection, SourceRefWire,
+    DeclaredDomain, DefinitionSourceRef, ProfileSelection, SourceRefWire,
 };
+use fsl_package::ObligationIdentity;
 use crate::object_environment::ObjectEnvironmentRef;
 use crate::target::{
     ReplayOverBinding, ReplayTarget, RequestTargetWire, TargetMember, TargetSelectionRefusal,
@@ -307,12 +308,19 @@ pub struct ReplayRequest {
     object_environment: Option<ObjectEnvironmentRef>,
     declared_domains: Vec<DeclaredDomain>,
     byte_provision: ByteProvision,
+    replay_limits: ReplayLimits,
 }
 
 impl ReplayRequest {
     /// The complete raw package retained for native admission before evaluation.
     pub fn package(&self) -> &ReplayPackage {
         &self.package
+    }
+
+    /// The request's input-size limit, retained from decode for every later
+    /// recompilation of this request.
+    pub fn limits(&self) -> ReplayLimits {
+        self.replay_limits
     }
 
     /// The proved package lock's supplied internal-step lists.
@@ -813,15 +821,43 @@ fn measured_encoded_bytes(wire: &ReplayRequestWire) -> usize {
     bytes
 }
 
+/// Which sources a decoded request's byte provision must cover.
+#[derive(Clone, Copy)]
+enum Provision {
+    /// Every source the package and its dependencies name (FR-071-AC-5).
+    Sources,
+    /// None: the replay reads the package bytes alone (FR-850).
+    Documents,
+}
+
 impl ReplayRequest {
     /// Decode a request from `wire`. The size-bound and semantic-profile
     /// checks happen before the byte provision or package reference is read
     /// at all: no package lookup or byte-provision access is observed
     /// before either refusal.
-    #[ix_trace_rs::string_edge]
     pub fn decode(
+        wire: ReplayRequestWire,
+        limits: ReplayLimits,
+    ) -> Result<Self, ReplayRequestRefusal> {
+        Self::decode_with(wire, limits, Provision::Sources)
+    }
+
+    /// FR-850, FR-940: [`Self::decode`] for a replay over the package bytes
+    /// alone. The package is the replay's whole input, so no source the
+    /// package names needs an entry: the request's documents are admitted
+    /// and its source entries, if any, are never read.
+    pub fn decode_package_route(
+        wire: ReplayRequestWire,
+        limits: ReplayLimits,
+    ) -> Result<Self, ReplayRequestRefusal> {
+        Self::decode_with(wire, limits, Provision::Documents)
+    }
+
+    #[ix_trace_rs::string_edge]
+    fn decode_with(
         mut wire: ReplayRequestWire,
         limits: ReplayLimits,
+        provision: Provision,
     ) -> Result<Self, ReplayRequestRefusal> {
         BoundExceeded::check(measured_encoded_bytes(&wire), limits)?;
         // FSpec FR-323 decode rule 1: before any byte-provision rule.
@@ -919,7 +955,12 @@ impl ReplayRequest {
                     )
                 })
             }));
-        let byte_provision = ByteProvision::admit(wire.byte_provision, wire.documents, named)?;
+        let byte_provision = match provision {
+            Provision::Sources => ByteProvision::admit(wire.byte_provision, wire.documents, named)?,
+            Provision::Documents => {
+                ByteProvision::admit(Vec::new(), wire.documents, std::iter::empty())?
+            }
+        };
 
         Ok(Self {
             package: wire.package,
@@ -940,6 +981,7 @@ impl ReplayRequest {
             object_environment: wire.object_environment,
             declared_domains: wire.declared_domains,
             byte_provision,
+            replay_limits: limits,
         })
     }
 

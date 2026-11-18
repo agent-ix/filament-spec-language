@@ -1,6 +1,6 @@
 [package]
 name = "fsl-replay"
-version = "0.1.0"
+version = "0.3.0"
 publish = false
 edition = "2021"
 rust-version = "1.98"
@@ -22,7 +22,7 @@ quire-extraction = ["dep:fsl-source", "fsl-source/quire-extraction"]
 test-support = []
 
 [dependencies]
-ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 fsl-cst = { path = "../fsl-cst" }
 fsl-eval = { path = "../fsl-eval" }
 fsl-forms = { path = "../fsl-forms" }
@@ -59,6 +59,7 @@ serde_json = { version = "1.0.151", features = ["raw_value", "unbounded_depth"] 
 serde_path_to_error = "0.1.20"
 
 [dev-dependencies]
+filament-specification = { workspace = true }
 # FR-400-AC-9: `filament-checked`'s `test-support` (`DeclarationKey::fixture`, ...). Only this
 # dev-dependency enables it; the root crate's `no_shipped_dependency_enables_test_support`
 # refuses a normal or build dependency that does.

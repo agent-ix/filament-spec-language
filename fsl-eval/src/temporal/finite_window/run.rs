@@ -1014,8 +1014,10 @@ impl<L: TemporalLetters> Run<'_, L> {
         };
         let uncertain = bounded || interval(before.position) || interval(after.position);
         let tied = if uncertain {
-            self.extent(before.position)?
-                .overlaps(self.extent(after.position)?)
+            self.extent(before.position)?.overlaps(
+                self.extent(after.position)?,
+                super::cover::Domain::of(&self.trace.clock),
+            )
         } else {
             self.stamp(before.position)? == self.stamp(after.position)?
         };

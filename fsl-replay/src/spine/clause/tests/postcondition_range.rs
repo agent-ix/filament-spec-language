@@ -460,6 +460,18 @@ fn an_unbounded_operand_is_refused_with_infinite_ends() {
     assert!(message.contains("[-inf, +inf]"), "{message}");
 }
 
+#[trace("FSpec-FR-149-AC-29")]
+#[test]
+fn equality_sum_compile_refusal_keeps_its_range_context() {
+    let unit = format!(
+        "{HEADER}function f using v(a: Int[0, 10], b: Int[0, 10], c: Int[0, 10]): Boolean pure {{ c = a + b }}\n"
+    );
+    let message = refusal(function_site(&unit, "f"));
+    for detail in ["a + b", "[0, 20]", "Int[0, 10]", "peer operand c"] {
+        assert!(message.contains(detail), "missing `{detail}` in {message}");
+    }
+}
+
 #[trace("TC-1416", "FR-577-AC-6")]
 #[test]
 fn a_strict_precondition_discharges_a_tighter_postcondition() {
@@ -821,7 +833,7 @@ fn bank_snapshot(label: &DocumentRef, observation: &str, balance: i64) -> Vec<u8
         "format": "filament.state.snapshot/v1",
         "identity": document_identity_json(label),
         "observation": observation,
-        "model": {"identity": BANK, "version": "1.0.0"},
+        "model": {"identity": BANK},
         "populations": [{
             "population": id("accounts"),
             "complete": true,
@@ -856,7 +868,7 @@ fn bank_invocation() -> (
         json!({
             "format": "filament.state.invocation/v1",
             "identity": document_identity_json(label),
-            "model": {"identity": BANK, "version": "1.0.0"},
+            "model": {"identity": BANK},
             "context": id("Account"),
             "operation": "withdraw",
             "self": {"population": id("accounts"), "key": "a"},
@@ -1009,7 +1021,7 @@ fn an_attempt_outside_the_precondition_records_one_finding_per_candidate_post_st
     )]);
     let simulation = ModelSimulationRequest {
         emit: fsl_package::EmitLimits::fixture(),
-        package: &package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(&package),
         packages: &packages,
         normalization: fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
         snapshots: &snapshots,
@@ -1052,6 +1064,7 @@ fn an_attempt_outside_the_precondition_records_one_finding_per_candidate_post_st
             role: "w".to_owned(),
             model: BANK.to_owned(),
         }],
+        capacities: Vec::new(),
         memory: package
             .graph()
             .protocol("P")
@@ -1148,14 +1161,13 @@ fn a_bound_refines_neither_a_sum_nor_a_difference_written_backwards() {
     }
 }
 
-/// The documented node-meter order (FR-577 Outputs): the `s3.nodes` meter is
-/// cumulative over the package and preconditions are checked first, so `Big`
-/// uses the ceiling up and the earlier, small `Credit` is the first clause to
-/// trip it. Source-order checking would trip only at `Big`; the difference is
-/// accepted.
-#[trace("TC-1416", "FR-577")]
+/// FR-577 "Node-meter order": the `s3.nodes` meter is one running count and
+/// the `pre` clauses are charged before the `post` clauses, so `Big`, declared
+/// after `Credit`, is charged first; its nodes alone pass the limit, so the
+/// refusal is inside `Big` at count 161 and `Credit` is never charged.
+#[trace("TC-1416", "FR-577-AC-36")]
 #[test]
-fn the_cumulative_node_meter_trips_at_the_earlier_postcondition() {
+fn the_node_meter_trips_at_a_later_declared_precondition_before_any_postcondition() {
     let credit = "post Credit using v on Bank::Account::deposit \
                   { self.balance = pre(self.balance) - amount }\n";
     let big = clause(
@@ -1193,9 +1205,15 @@ fn the_cumulative_node_meter_trips_at_the_earlier_postcondition() {
     let Some(fsl_foundation::diagnostic::Locus::Region(region)) = limit.locus() else {
         panic!("the limit is located: {refused:?}");
     };
-    // The first refusal is inside `Credit`, which precedes `Big` in the unit.
     assert!(
-        (region.start() as usize) < text.find("pre Big").unwrap(),
+        format!("{limit:?}").contains("configured_bound: 160, actual: 161"),
+        "{limit:?}"
+    );
+    // The refusal is inside `Big`, which follows `Credit` in the unit.
+    let big_start = text.find("pre Big").unwrap();
+    assert!((region.start() as usize) >= big_start, "{refused:?}");
+    assert!(
+        (region.end() as usize) <= big_start + big.len(),
         "{refused:?}"
     );
 }

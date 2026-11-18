@@ -22,25 +22,28 @@ use std::rc::Rc;
 
 use filament_checked::key::DeclarationKey;
 use filament_eval::FamilyOutcome;
-use filament_exact::{EffectiveId, Meter, ObjectReference, Outcome, Value, ValueType};
+use filament_exact::{EffectiveId, Meter, NodeKey, ObjectReference, Outcome, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_semantics::check::footprint::{FootprintRefusal, SymbolicLocation};
-use fsl_semantics::check::{CheckedNode, FormulaNodeId, StatePredicate, TemporalClauseNode};
+use fsl_semantics::check::{
+    CheckedNode, CheckedTemporalClause, FormulaNodeId, StatePredicate, TemporalClauseNode,
+};
 use fsl_semantics::model::observation::Observation;
 
-use super::contracts::{verdict, Verdict};
-use super::walk::{rows_of, stop, Row};
-use super::{state_document, ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
+use super::contracts::{Verdict, verdict};
+use super::reference_bindings::ReferenceBinding;
+use super::walk::{Row, rows_of, stop};
+use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem, state_document};
 use crate::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use crate::simulation::StateKey;
 use crate::temporal::{AtomReading, CaptureReading};
 use crate::value::{
-    evaluate_activation_guard, evaluate_activation_guard_at_absent_key, evaluate_capture,
-    evaluate_state_predicate, evaluate_state_predicate_at_absent_key,
+    evaluate_state_predicate_at_absent_key_with_reference_bindings,
+    evaluate_state_predicate_with_reference_bindings,
 };
 
 /// Why a clause has no [`ClauseLetters`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum LettersRefusal {
     /// The clause's `over` parameter is not an object reference, so the
     /// clause has no instance (FR-125 Instancing).
@@ -54,6 +57,25 @@ pub enum LettersRefusal {
     /// the clause's trace variables (FR-487).
     #[error("a hyper clause needs one model system for each of its trace variables")]
     ComponentsMismatch,
+    /// A hyper clause's components resolve at least one reference literal
+    /// differently at subject admission (FR-1000-AC-11).
+    #[error(
+        "hyper components {components:?} disagree on reference literal {object_type}#{identity}: {bindings:?}"
+    )]
+    ReferenceBindingsDisagree {
+        /// The effective object type named by the literal.
+        object_type: String,
+        /// The UTF-8 identity bytes, rendered as lowercase hexadecimal.
+        identity: String,
+        /// The first component and the component with a differing binding.
+        components: Vec<usize>,
+        /// The resolved binding for each reported component.
+        bindings: Vec<String>,
+    },
+    /// A separately checked hyper clause contains a literal that the
+    /// component subject cannot admit.
+    #[error("hyper reference literal admission failed: {0}")]
+    ReferenceBindingsAdmission(fsl_semantics::model::observation::AdmissionFailure),
 }
 
 /// The `holds` atoms of one checked temporal clause, read at the states of a
@@ -70,7 +92,10 @@ pub enum LettersRefusal {
 /// as `state_predicates` does not charge it; charging it needs a ruling.
 pub struct ClauseLetters<'s, 'a> {
     system: &'s ModelSystem<'a>,
-    node: &'s TemporalClauseNode,
+    node: ClauseSource<'s>,
+    /// Base package bindings extended with literals from this separately
+    /// checked temporal clause.
+    reference_bindings: super::reference_bindings::ReferenceBindings,
     parameter: EffectiveId,
     /// The declaration key of the parameter's object type.
     type_key: DeclarationKey,
@@ -79,6 +104,26 @@ pub struct ClauseLetters<'s, 'a> {
     observed: RefCell<Option<(StateKey, Rc<Observed>)>>,
     /// How many states have been observed (not read from `observed`).
     observations: Cell<u64>,
+}
+
+/// The clause a [`ClauseLetters`] reads: the source route's checked node, or
+/// the package route's package form keyed by its node (FR-940).
+#[derive(Clone, Copy)]
+enum ClauseSource<'s> {
+    Source(&'s TemporalClauseNode),
+    Package {
+        clause: &'s CheckedTemporalClause,
+        key: &'s NodeKey,
+    },
+}
+
+impl<'s> ClauseSource<'s> {
+    fn clause(self) -> &'s CheckedTemporalClause {
+        match self {
+            Self::Source(node) => node.clause(),
+            Self::Package { clause, .. } => clause,
+        }
+    }
 }
 
 /// A model state observed for the decisive atom of a violation.
@@ -113,6 +158,31 @@ impl<'a> ModelSystem<'a> {
         &'s self,
         node: &'s TemporalClauseNode,
     ) -> Result<ClauseLetters<'s, 'a>, LettersRefusal> {
+        self.letters(ClauseSource::Source(node))
+    }
+
+    /// FR-940: the [`ModelLetters`] of the package form `clause` of the
+    /// temporal clause whose node key is `key`, over this system: each `holds`
+    /// atom and the activation guard read through the input's evaluator keyed
+    /// by node ([`super::ModelEvaluator::evaluate_holds`],
+    /// [`super::ModelEvaluator::evaluate_guard`]). The package form lists each
+    /// formula node once, so an atom's arena index is its use position.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::clause_letters`].
+    pub fn package_clause_letters<'s>(
+        &'s self,
+        clause: &'s CheckedTemporalClause,
+        key: &'s NodeKey,
+    ) -> Result<ClauseLetters<'s, 'a>, LettersRefusal> {
+        self.letters(ClauseSource::Package { clause, key })
+    }
+
+    fn letters<'s>(
+        &'s self,
+        node: ClauseSource<'s>,
+    ) -> Result<ClauseLetters<'s, 'a>, LettersRefusal> {
         let ValueType::Reference(ref parameter) = node.clause().over().1 else {
             return Err(LettersRefusal::OverNotReference);
         };
@@ -121,9 +191,26 @@ impl<'a> ModelSystem<'a> {
             .type_key(parameter.clone())
             .cloned()
             .ok_or(LettersRefusal::OverTypeUndeclared)?;
+        let reference_bindings = match (node, self.source_package()) {
+            (ClauseSource::Source(source_node), Some(package)) => {
+                super::reference_bindings::ReferenceBindings::with_temporal_clause(
+                    &self.reference_bindings,
+                    package.graph(),
+                    source_node,
+                    &self.model,
+                    self.types,
+                    &self.populations,
+                    &self.universes,
+                    &self.initial,
+                )
+                .map_err(LettersRefusal::ReferenceBindingsAdmission)?
+            }
+            _ => self.reference_bindings.clone(),
+        };
         Ok(ClauseLetters {
             system: self,
             node,
+            reference_bindings,
             parameter: parameter.clone(),
             type_key,
             overlapping: self
@@ -169,6 +256,34 @@ impl ClauseLetters<'_, '_> {
                         .conforms(row.reference.object_type().clone(), self.parameter.clone())
             })
             .map(|row| row.reference.clone())
+    }
+
+    /// Add the subject-dependent membership reads of CreatedObject literals
+    /// from a separately checked temporal expression. The model evaluator's
+    /// graph-only footprint cannot see these literals in the base package.
+    fn add_reference_literal_reads(
+        &self,
+        root: CheckedNode<'_>,
+        reads: &mut BTreeSet<SymbolicLocation>,
+    ) {
+        let Some(package) = self.system.source_package() else {
+            return;
+        };
+        let mut literals = BTreeSet::new();
+        super::reference_bindings::collect_literals(package.graph(), root, &mut literals);
+        for literal in literals {
+            if let Some(ReferenceBinding::CreatedObject { populations, .. }) = self
+                .reference_bindings
+                .get(&literal.object_type, &literal.identity)
+            {
+                reads.extend(
+                    populations
+                        .iter()
+                        .cloned()
+                        .map(|population| SymbolicLocation::AnyMembership { population }),
+                );
+            }
+        }
     }
 }
 
@@ -256,6 +371,23 @@ impl ClauseLetters<'_, '_> {
     }
 }
 
+/// The footprint refusal of a package-form clause: its reads are derived
+/// from source checked bodies the package route does not hold, so a reduction
+/// that needs them is not applied to it.
+const PACKAGE_FOOTPRINT: FootprintRefusal = FootprintRefusal::Unresolved {
+    what: "package-form clause footprint",
+};
+
+/// A package-form evaluation that did not evaluate: a fault stays a fault, a
+/// refused call is a broken invariant of the letters, which read only atoms
+/// and guards the clause holds over a bound instance.
+fn call_stop(failure: filament_eval::CallFailure) -> AtomStop {
+    match failure {
+        filament_eval::CallFailure::Fault(fault) => AtomStop::Fault(fault),
+        _ => fault("package-form-call-refused"),
+    }
+}
+
 /// A broken invariant of the letters.
 fn fault(invariant: &'static str) -> AtomStop {
     AtomStop::Fault(InternalFault::new("model-letters", invariant))
@@ -293,28 +425,78 @@ impl ModelLetters for ClauseLetters<'_, '_> {
         state: &ModelSimState,
         meter: &mut Meter,
     ) -> Result<AtomReading, AtomStop> {
-        let (body, slots) = self
-            .node
+        let node = match self.node {
+            ClauseSource::Source(node) => node,
+            ClauseSource::Package { key, .. } => {
+                let observed = self.observe(state)?;
+                let bound = self
+                    .bound(&observed.rows, instance)
+                    .ok_or_else(|| fault("package-form-reads-a-bound-instance"))?;
+                return reading(
+                    &self
+                        .system
+                        .evaluator()
+                        .evaluate_holds(
+                            &crate::value::HoldsAtom {
+                                clause: key.clone(),
+                                position: atom.index(),
+                            },
+                            Value::Reference(bound),
+                            &[],
+                            &observed.observation.environment,
+                            meter,
+                        )
+                        .map_err(call_stop)?
+                        .outcome,
+                );
+            }
+        };
+        let (body, slots) = node
             .condition(atom)
             .ok_or_else(|| fault("engine-reads-only-holds-atoms"))?;
         let observed = self.observe(state)?;
         let condition = Condition { body, slots };
-        let evaluation = match self.bound(&observed.rows, instance) {
-            Some(bound) => evaluate_state_predicate(
-                self.system.package,
-                &condition,
-                &observed.observation.environment,
-                Some(bound),
-                meter,
-            ),
-            None => evaluate_state_predicate_at_absent_key(
-                self.system.package,
-                &condition,
-                &observed.observation.environment,
-                self.key_reference(instance)?,
-                instance.population.node.clone(),
-                meter,
-            ),
+        let evaluation = if let Some(package) = self.system.source_package() {
+            match self.bound(&observed.rows, instance) {
+                Some(bound) => evaluate_state_predicate_with_reference_bindings(
+                    package,
+                    &condition,
+                    &observed.observation.environment,
+                    Some(bound),
+                    Vec::new(),
+                    Some(&self.reference_bindings),
+                    meter,
+                ),
+                None => evaluate_state_predicate_at_absent_key_with_reference_bindings(
+                    package,
+                    &condition,
+                    &observed.observation.environment,
+                    self.key_reference(instance)?,
+                    instance.population.node.clone(),
+                    Some(&self.reference_bindings),
+                    meter,
+                ),
+            }
+        } else {
+            match self.bound(&observed.rows, instance) {
+                Some(bound) => self.system.evaluator().evaluate_state_predicate(
+                    &condition,
+                    &observed.observation.environment,
+                    Some(bound),
+                    Vec::new(),
+                    meter,
+                ),
+                None => self
+                    .system
+                    .evaluator()
+                    .evaluate_state_predicate_at_absent_key(
+                        &condition,
+                        &observed.observation.environment,
+                        self.key_reference(instance)?,
+                        instance.population.node.clone(),
+                        meter,
+                    ),
+            }
         }
         .map_err(AtomStop::Fault)?;
         reading(&evaluation.outcome)
@@ -335,28 +517,50 @@ impl ModelLetters for ClauseLetters<'_, '_> {
         state: &ModelSimState,
         meter: &mut Meter,
     ) -> Result<AtomReading, AtomStop> {
-        let (body, slots) = self
-            .node
+        let node = match self.node {
+            ClauseSource::Source(node) => node,
+            ClauseSource::Package { key, .. } => {
+                let observed = self.observe(state)?;
+                let bound = self
+                    .bound(&observed.rows, instance)
+                    .ok_or_else(|| fault("package-form-reads-a-bound-instance"))?;
+                return reading(
+                    &self
+                        .system
+                        .evaluator()
+                        .evaluate_guard(
+                            key,
+                            Value::Reference(bound),
+                            &observed.observation.environment,
+                            meter,
+                        )
+                        .map_err(call_stop)?
+                        .outcome,
+                );
+            }
+        };
+        let (body, slots) = node
             .guard()
             .ok_or_else(|| fault("engine-reads-the-guard-of-a-guarded-clause"))?;
         let observed = self.observe(state)?;
         let condition = Condition { body, slots };
         let evaluation = match self.bound(&observed.rows, instance) {
-            Some(bound) => evaluate_activation_guard(
-                self.system.package,
+            Some(bound) => self.system.evaluator().evaluate_activation_guard(
                 &condition,
                 &observed.observation.environment,
                 bound,
                 meter,
             ),
-            None => evaluate_activation_guard_at_absent_key(
-                self.system.package,
-                &condition,
-                &observed.observation.environment,
-                self.key_reference(instance)?,
-                instance.population.node.clone(),
-                meter,
-            ),
+            None => self
+                .system
+                .evaluator()
+                .evaluate_activation_guard_at_absent_key(
+                    &condition,
+                    &observed.observation.environment,
+                    self.key_reference(instance)?,
+                    instance.population.node.clone(),
+                    meter,
+                ),
         }
         .map_err(AtomStop::Fault)?;
         reading(&evaluation.outcome)
@@ -381,6 +585,9 @@ impl ModelLetters for ClauseLetters<'_, '_> {
         if clause.captures().len() == 0 {
             return Ok(CaptureReading::Fixed);
         }
+        let ClauseSource::Source(node) = self.node else {
+            return Err(fault("package-form-reads-no-capture-yet"));
+        };
         let observed = self.observe(state)?;
         let binders = 1 + usize::from(clause.trigger().is_some());
         let bound = self.bound(&observed.rows, instance);
@@ -390,8 +597,7 @@ impl ModelLetters for ClauseLetters<'_, '_> {
         };
         let mut values: Vec<Value> = Vec::new();
         for (index, (name, _)) in clause.captures().enumerate() {
-            let (body, slots) = self
-                .node
+            let (body, slots) = node
                 .capture(index)
                 .ok_or_else(|| fault("engine-reads-the-typed-captures-of-a-clause"))?;
             let capture = Condition { body, slots };
@@ -400,15 +606,17 @@ impl ModelLetters for ClauseLetters<'_, '_> {
             let absent = bound
                 .is_none()
                 .then(|| ((0..binders).collect(), instance.population.node.clone()));
-            let evaluation = evaluate_capture(
-                self.system.package,
-                &capture,
-                &observed.observation.environment,
-                arguments,
-                absent,
-                meter,
-            )
-            .map_err(AtomStop::Fault)?;
+            let evaluation = self
+                .system
+                .evaluator()
+                .evaluate_capture(
+                    &capture,
+                    &observed.observation.environment,
+                    arguments,
+                    absent,
+                    meter,
+                )
+                .map_err(AtomStop::Fault)?;
             if let FamilyOutcome::Evaluated(Outcome::Completed(value)) = &evaluation.outcome {
                 values.push(value.clone());
                 continue;
@@ -435,11 +643,17 @@ impl ModelLetters for ClauseLetters<'_, '_> {
     }
 
     fn captured_read(&self) -> Option<usize> {
-        self.node.captured_read()
+        match self.node {
+            ClauseSource::Source(node) => node.captured_read(),
+            ClauseSource::Package { .. } => None,
+        }
     }
 
     fn activation_reads(&self) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-        let clause = self.node.clause();
+        let ClauseSource::Source(node) = self.node else {
+            return Err(PACKAGE_FOOTPRINT);
+        };
+        let clause = node.clause();
         let mut reads = BTreeSet::new();
         let mut binders = vec![clause.over().clone()];
         binders.extend(
@@ -447,25 +661,32 @@ impl ModelLetters for ClauseLetters<'_, '_> {
                 .trigger()
                 .map(|(name, value_type)| (name.to_owned(), value_type.clone())),
         );
-        if let Some((guard, _)) = self.node.guard() {
+        if let Some((guard, _)) = node.guard() {
             reads.extend(self.system.guard_reads(guard, &binders)?);
+            self.add_reference_literal_reads(guard, &mut reads);
         }
         for (index, (name, declared)) in clause.captures().enumerate() {
-            let (initializer, _) = self
-                .node
+            let (initializer, _) = node
                 .capture(index)
                 .ok_or(FootprintRefusal::Unresolved { what: "capture" })?;
             reads.extend(self.system.guard_reads(initializer, &binders)?);
+            self.add_reference_literal_reads(initializer, &mut reads);
             binders.push((name.to_owned(), declared.clone()));
         }
         Ok(reads)
     }
 
     fn reads(&self, atom: FormulaNodeId) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-        let (condition, _) = self
-            .node
+        let ClauseSource::Source(node) = self.node else {
+            return Err(PACKAGE_FOOTPRINT);
+        };
+        let (condition, _) = node
             .condition(atom)
             .ok_or(FootprintRefusal::Unresolved { what: "holds atom" })?;
-        self.system.atom_reads(self.node.clause().over(), condition)
+        let mut reads = self
+            .system
+            .atom_reads(node.clause().over(), condition)?;
+        self.add_reference_literal_reads(condition, &mut reads);
+        Ok(reads)
     }
 }

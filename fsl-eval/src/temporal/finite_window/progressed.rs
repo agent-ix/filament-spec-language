@@ -93,6 +93,8 @@ impl TimestampedTrace {
         Self::open(
             clause.name(),
             WindowClock {
+                name: clause.clock().to_owned(),
+                profile: clause.profile().identity().to_string(),
                 unit: clause.clock().to_owned(),
                 cover: ClockCover::Exact,
             },

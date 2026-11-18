@@ -86,6 +86,10 @@ struct Package {
     names: PackageNames,
     /// The package's units by member name, as the unit graph holds them.
     units: BTreeMap<String, filament_exact::UnitId>,
+    /// The member names of the package's Rational value types with no
+    /// constraints: the unbounded `Rational`, which has no checked type
+    /// (FR-505-AC-6) and no canonical-key row (FSpec FR-144-AC-33).
+    unbounded_rationals: BTreeSet<String>,
 }
 
 /// Each selected package's type names and each source unit's model aliases.
@@ -127,6 +131,7 @@ impl ModelSpellings {
             selection,
             names: PackageNames::new(),
             units: BTreeMap::new(),
+            unbounded_rationals: BTreeSet::new(),
         });
         self.packages.len() - 1
     }
@@ -147,6 +152,28 @@ impl ModelSpellings {
         if let Some(slot) = self.packages.get_mut(package) {
             slot.units = units;
         }
+    }
+
+    /// Give the package at `package` the member names of its unbounded
+    /// Rational value types.
+    pub(crate) fn set_unbounded_rationals(&mut self, package: usize, names: BTreeSet<String>) {
+        if let Some(slot) = self.packages.get_mut(package) {
+            slot.unbounded_rationals = names;
+        }
+    }
+
+    /// Whether `name` (`Alias::Type`), written in `unit` (the primary unit
+    /// when `None`), names an unbounded package Rational value type through
+    /// the unit's model alias.
+    #[ix_trace_rs::string_edge]
+    pub(crate) fn unbounded_rational(&self, unit: Option<&RawSourceRef>, name: &str) -> bool {
+        let Some((alias, member)) = name.split_once("::") else {
+            return false;
+        };
+        matches!(self.spelled(unit, name), Spelled::Model(_))
+            && self
+                .package(unit, alias)
+                .is_some_and(|package| package.unbounded_rationals.contains(member))
     }
 
     /// The package unit `name` (`Alias::unit`), written in `unit` (the

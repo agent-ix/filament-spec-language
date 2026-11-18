@@ -183,13 +183,6 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                     limit: kind.as_str(),
                     maximum: *maximum,
                 },
-                LimitKind::ObservationDocumentBytes { maximum } => {
-                    types::Details::ConfiguredBytes {
-                        limit: kind.as_str(),
-                        maximum: *maximum,
-                        option: "observation_limits.document_bytes",
-                    }
-                }
                 LimitKind::SelectedFiles {
                     category,
                     requested,
@@ -207,10 +200,35 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         RunCause::ClauseRequest { .. }
         | RunCause::ClocksGivenTwice
         | RunCause::OutputGivenTwice
-        | RunCause::OutputExists { .. } => (types::Stage::Request, types::Details::None),
+        | RunCause::OutputExists { .. }
+        | RunCause::ExtractionRequiresRun => (types::Stage::Request, types::Details::None),
         RunCause::ExtensionCatalog(_) => (
             types::Stage::Spine(fsl_replay::spine::SpineStage::Forms),
             types::Details::None,
+        ),
+        RunCause::ExtractionPackageConflict => (types::Stage::Request, types::Details::None),
+        RunCause::ExtractionClauseCount { actual } => (
+            types::Stage::Request,
+            types::Details::Object(serde_json::Map::from_iter([(
+                "actual".to_owned(),
+                serde_json::json!(actual),
+            )])),
+        ),
+        #[cfg(feature = "quire-extraction")]
+        RunCause::InvalidQuireContext { diagnostics } => (
+            types::Stage::QuireContext,
+            types::Details::Object(serde_json::Map::from_iter([(
+                "diagnostics".to_owned(),
+                serde_json::json!(diagnostics),
+            )])),
+        ),
+        #[cfg(feature = "quire-extraction")]
+        RunCause::ExtractionFailure { stage, details, .. } => (
+            match stage {
+                super::ExtractionFailureStage::Quire => types::Stage::Quire,
+                super::ExtractionFailureStage::Selection => types::Stage::ExtractionSelection,
+            },
+            types::Details::Object(details.clone()),
         ),
         RunCause::ClauseOutput(_) => (types::Stage::Output, types::Details::None),
         RunCause::Identifier { diagnostic, .. } => (
@@ -228,17 +246,18 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         RunCause::CompleteSelection(_)
         | RunCause::Libraries(_)
         | RunCause::CompleteRunSelection(_)
-        | RunCause::ExtractionRequiresRun
         | RunCause::EmptyCompileProgram
         | RunCause::AnalyzeRequest { .. }
+        | RunCause::AnalyzeMemory { .. }
         | RunCause::AnalyzeUniverse(_)
         | RunCause::AnalyzePackage { .. }
         | RunCause::AnalyzeNotYetImplemented { .. }
         | RunCause::AnalyzeRefused(_)
         | RunCause::MonitorRefused(_)
         | RunCause::TlCorrespondence { .. }
+        | RunCause::IntegerDivisionLaw { .. }
         | RunCause::TlClause { .. }
-        | RunCause::TlNotYetImplemented { .. } => (types::Stage::Request, types::Details::None),
+        | RunCause::TlSubject(_) => (types::Stage::Request, types::Details::None),
         RunCause::TlFault(_) => (types::Stage::Output, types::Details::None),
         RunCause::AnalyzeFault | RunCause::MonitorFault | RunCause::MonitorCancelled => {
             (types::Stage::Output, types::Details::None)
@@ -348,9 +367,11 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 _ => None,
             },
             RunCause::TemporalCorrection(_) => Some("invalid-value"),
-            RunCause::TlCorrespondence { .. } => Some("unsupported-selection"),
+            RunCause::TlCorrespondence { .. } | RunCause::IntegerDivisionLaw { .. } => {
+                Some("unsupported-selection")
+            }
             RunCause::TlClause { .. } => Some("missing-name"),
-            RunCause::TlNotYetImplemented { .. } => Some("not-yet-implemented"),
+            RunCause::TlSubject(record) => Some(record.catalog.cause()),
             _ => None,
         },
         message: error.to_string(),
@@ -393,13 +414,43 @@ pub(super) fn clause_report(
     mut report: fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
 ) -> super::Result<RunResult> {
+    clause_report_with_record(&mut report, selection, None)
+}
+
+#[cfg(feature = "quire-extraction")]
+pub(super) fn clause_report_with_extraction(
+    mut report: fsl_replay::spine::ClauseRunReport,
+    selection: &fsl_replay::spine::ClauseRunSelection,
+    extraction: serde_json::Value,
+    map: &fsl_foundation::source_map::SourceMap,
+) -> super::Result<RunResult> {
+    clause_report_with_record(&mut report, selection, Some((extraction, map)))
+}
+
+fn clause_report_with_record(
+    report: &mut fsl_replay::spine::ClauseRunReport,
+    selection: &fsl_replay::spine::ClauseRunSelection,
+    extraction: Option<(serde_json::Value, &fsl_foundation::source_map::SourceMap)>,
+) -> super::Result<RunResult> {
     // FR-526: a timestamped run settles its correction relation before any
     // result document is written; a refused relation writes none.
-    fsl_replay::spine::settle_run_correction(&mut report, selection)
+    fsl_replay::spine::settle_run_correction(report, selection)
         .map_err(RunCause::TemporalCorrection)?;
-    let report = &report;
-    let bytes = fsl_replay::spine::write_clause_run_result_for(report, Some(selection))
-        .map_err(RunCause::ClauseOutput)?;
+    let report = &*report;
+    let extraction = extraction
+        .map(|(mut record, map)| {
+            if let Some(regions) = extraction_original_regions(report, selection, &record, map)? {
+                record["original_regions"] = Value::Array(regions);
+            }
+            Ok::<_, RunCause>(record)
+        })
+        .transpose()?;
+    let bytes = fsl_replay::spine::write_clause_run_result_for_with_extraction(
+        report,
+        Some(selection),
+        extraction,
+    )
+    .map_err(RunCause::ClauseOutput)?;
     let outcome = monitor_outcome(std::iter::once((&selection.clause_name()[..], report)));
     let value = serde_json::from_slice(&bytes).map_err(RunCause::Output)?;
     Ok(RunResult {
@@ -410,6 +461,100 @@ pub(super) fn clause_report(
         requirements: None,
         sources: crate::Sources::default(),
     })
+}
+
+#[cfg(feature = "quire-extraction")]
+fn extraction_original_regions(
+    report: &fsl_replay::spine::ClauseRunReport,
+    selection: &fsl_replay::spine::ClauseRunSelection,
+    record: &Value,
+    map: &fsl_foundation::source_map::SourceMap,
+) -> super::Result<Option<Vec<Value>>> {
+    let bytes = fsl_replay::spine::write_clause_run_result_for(report, Some(selection))
+        .map_err(RunCause::ClauseOutput)?;
+    let document: Value = serde_json::from_slice(&bytes).map_err(RunCause::Output)?;
+    let Some(locus) = document.pointer("/disposition/refusal/locus").cloned() else {
+        return Ok(None);
+    };
+    extraction_regions_for_locus(locus, record, map)
+}
+
+#[cfg(feature = "quire-extraction")]
+fn extraction_regions_for_locus(
+    locus: Value,
+    record: &Value,
+    map: &fsl_foundation::source_map::SourceMap,
+) -> super::Result<Option<Vec<Value>>> {
+    use fsl_replay::spine::RefusalLocusRead;
+
+    let decoded: RefusalLocusRead =
+        serde_json::from_value(locus.clone()).map_err(RunCause::Output)?;
+    let body = map.body();
+    let span = match decoded {
+        RefusalLocusRead::Region { source, start, end }
+            if source.authority == body.identity().authority
+                && source.identity == body.identity().identity =>
+        {
+            let (Ok(start), Ok(end)) = (usize::try_from(start), usize::try_from(end)) else {
+                return Err(invalid_extraction_source_map(record, locus));
+            };
+            fsl_foundation::Span { start, end }
+        }
+        RefusalLocusRead::Located { file, span } if file == body.path() => fsl_foundation::Span {
+            start: span.start.byte,
+            end: span.end.byte,
+        },
+        _ => return Ok(None),
+    };
+    let Some(regions) = map.map_regions(body, span) else {
+        return Err(invalid_extraction_source_map(record, locus));
+    };
+    let original = map.original();
+    let mapped = regions
+        .into_iter()
+        .map(|region| {
+            let start = usize::try_from(region.start()).ok()?;
+            let end = usize::try_from(region.end()).ok()?;
+            let span = original.locate(fsl_foundation::Span { start, end })?;
+            Some(serde_json::json!({"start": span.start, "end": span.end}))
+        })
+        .collect::<Option<Vec<_>>>();
+    match mapped.filter(|regions| !regions.is_empty()) {
+        Some(regions) => Ok(Some(regions)),
+        None => Err(invalid_extraction_source_map(record, locus)),
+    }
+}
+
+#[cfg(feature = "quire-extraction")]
+fn invalid_extraction_source_map(record: &Value, locus: Value) -> RunCause {
+    let mut details = serde_json::Map::from_iter([
+        (
+            "original".to_owned(),
+            serde_json::json!({
+                "authority": record["original"]["authority"],
+                "identity": record["original"]["identity"],
+            }),
+        ),
+        ("path".to_owned(), record["original"]["path"].clone()),
+        (
+            "body".to_owned(),
+            serde_json::json!({
+                "authority": record["body"]["authority"],
+                "identity": record["body"]["identity"],
+            }),
+        ),
+        ("binding".to_owned(), record["binding"].clone()),
+        ("locus".to_owned(), locus),
+    ]);
+    if let Some(outcome) = record.get("outcome") {
+        details.insert("outcome".to_owned(), outcome.clone());
+    }
+    RunCause::ExtractionFailure {
+        code: fsl_foundation::Code::InvalidSourceMap,
+        stage: super::ExtractionFailureStage::Selection,
+        details,
+        message: "a body refusal span is outside the verified source map".to_owned(),
+    }
 }
 
 /// FR-096/FR-100: `Evaluation.location`'s `origin`, rendered by kind.
@@ -458,6 +603,98 @@ fn spine_origin(origin: &filament_semantic_value::location::ExpressionOwner) -> 
             },
             position: *position,
         },
+    }
+}
+
+#[cfg(all(test, feature = "quire-extraction"))]
+mod extraction_tests {
+    use super::{RunCause, extraction_regions_for_locus};
+    use crate::command::ExtractionFailureStage;
+    use fsl_foundation::{Source, SourceIdentity};
+    use serde_json::{Value, json};
+
+    fn verified_map() -> fsl_foundation::source_map::SourceMap {
+        let markdown = "# Doc\n\n## Invariants\n\n### valid_clause\n```ix:native\nopaque\n```\n";
+        let original = Source::read(
+            SourceIdentity::new("agent-ix", "ix://agent-ix/spec"),
+            "spec.md",
+            markdown.as_bytes(),
+            markdown.len(),
+        )
+        .unwrap();
+        let context = fsl_source::clause_context("agent-ix/spec", &original).unwrap();
+        fsl_source::extract(
+            original,
+            &context,
+            fsl_source::Selection {
+                clause_id: "valid_clause".to_owned(),
+                package: "agent-ix/spec".to_owned(),
+                body: SourceIdentity::new("agent-ix", "body"),
+            },
+            fsl_source::Limits::default(),
+        )
+        .unwrap()
+        .map()
+        .clone()
+    }
+
+    fn record() -> Value {
+        json!({
+            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md"},
+            "body": {"authority": "agent-ix", "identity": "body"},
+            "binding": {"clause": "valid_clause", "package": "agent-ix/spec"},
+            "outcome": {"availability": {"state": "available"}}
+        })
+    }
+
+    #[test]
+    fn unmappable_body_locus_fails_closed_and_foreign_loci_remain_unmapped() {
+        let map = verified_map();
+        let record = record();
+        let start = map.body().text().len() + 1;
+        let body_locus = json!({
+            "kind": "region",
+            "source": {"authority": "agent-ix", "identity": "body"},
+            "start": start,
+            "end": start + 1
+        });
+        let error = extraction_regions_for_locus(body_locus.clone(), &record, &map)
+            .expect_err("an out-of-map body span refuses");
+        let RunCause::ExtractionFailure {
+            code,
+            stage,
+            details,
+            ..
+        } = error
+        else {
+            panic!("expected extraction failure");
+        };
+        assert_eq!(code.as_str(), "invalid_source_map");
+        assert!(matches!(stage, ExtractionFailureStage::Selection));
+        assert_eq!(details["locus"], body_locus);
+
+        let dependency_locus = json!({
+            "kind": "region",
+            "source": {"authority": "agent-ix", "identity": "ix://agent-ix/dependency"},
+            "start": start,
+            "end": start + 1
+        });
+        assert_eq!(
+            extraction_regions_for_locus(dependency_locus, &record, &map).unwrap(),
+            None
+        );
+        let dependency_path_locus = json!({
+            "kind": "located",
+            "file": "dependency.native",
+            "span": {
+                "start": {"byte": 0, "line": 1, "column": 1},
+                "end": {"byte": 1, "line": 1, "column": 2}
+            }
+        });
+        assert_eq!(
+            extraction_regions_for_locus(dependency_path_locus, &record, &map).unwrap(),
+            None
+        );
     }
 }
 

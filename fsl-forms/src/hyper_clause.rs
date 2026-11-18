@@ -89,6 +89,8 @@ pub struct TraceDomainForm {
     pub population: NameForm,
     /// The bound `N`, as written.
     pub bound: u64,
+    /// The span of `N` alone.
+    pub bound_span: Span,
     /// The span of the whole domain.
     pub span: Span,
 }
@@ -253,6 +255,7 @@ fn trace_domain_form(cst: &LosslessCst, node: &CstNode) -> Result<TraceDomainFor
         variable: declared_name(&domain_items, node)?,
         population: name_form(cst, only(&domain_items, Production::QualifiedName, node)?)?,
         bound: text(bound, node)?.parse().map_err(|_| unexpected(node))?,
+        bound_span: bound.span(),
         span: node.span(),
     })
 }

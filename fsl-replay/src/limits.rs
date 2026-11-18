@@ -65,6 +65,19 @@ impl AccountingLimits {
             Counter::ValueOccurrences => AccountingSetting::ValueOccurrences,
             Counter::WorkUnits => AccountingSetting::WorkUnits,
             Counter::ResultUnits => AccountingSetting::ResultUnits,
+            Counter::LiveOccurrences => {
+                panic!("LiveOccurrences is configured outside AccountingSetting")
+            }
+        }
+    }
+
+    /// The public setting name for an incomplete evaluation record, including
+    /// the evaluation-session limit that is outside `ScalarLimits`.
+    #[must_use]
+    pub const fn setting_name(counter: Counter) -> &'static str {
+        match counter {
+            Counter::LiveOccurrences => "evaluation.live_occurrences",
+            _ => Self::setting_of(counter).name(),
         }
     }
 

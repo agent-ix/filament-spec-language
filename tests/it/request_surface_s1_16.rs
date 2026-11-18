@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Request-surface stubs for model-based testing (FR-752), hybrid
-//! certificates (FR-751), the planner (FR-755), TLA+ and Lean export
+//! Request-surface stubs for model-based testing (FR-752), the planner
+//! (FR-755), TLA+ and Lean export
 //! (FR-756), the TL lowering (FR-757) and the layering CI gate (FR-345).
 //! Each feeds source and a `native-run/1` request through the command
 //! adapter (`fsl_command::command::run`) and asserts on the output document,
 //! because the engines' own entry points do not exist yet.
 
-use crate::support::config_version_spine::{Case, spine};
+use crate::support::config_version_spine::{spine, Case};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::Path;
 
 const MODEL_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -158,72 +158,15 @@ fn a_passing_run_records_tested_and_never_proved() {
     );
 }
 
-// ---- FR-751: hybrid certificates --------------------------------------
-
-fn certified_entry(moving_v_upper: u32) -> Value {
-    let interval =
-        |lower: u32, upper: u32| json!({"lower": lower.to_string(), "upper": upper.to_string()});
-    json!({"request_index": 0, "result": "proved", "certification": "uncertified",
-        "basis": {"type": "inductive-solver", "method": "inductive-enclosure"},
-        "certificate": {"type": "inductive-enclosure", "boxes": {
-            "Moving": {"v": interval(0, moving_v_upper), "a": interval(1, 2)},
-            "Stopped": {"v": interval(0, 0), "a": interval(1, 2)}}}})
-}
-
-/// FR-751-AC-1: an accepted `inductive-enclosure` settles the proof
-/// `certified`; one whose `Moving` box excludes the initial `v = 20` is
-/// rejected at rule (a) and the proof stays `uncertified`.
-#[test]
-#[trace("TC-2101", "FR-751-AC-1")]
-#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-1")]
-#[ignore = "QSL-2234: core check of hybrid provider certificates not implemented yet"]
-fn an_inductive_enclosure_certificate_is_checked_in_the_core() {
-    let (_, accepted) = run(
-        BRAKING,
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "SlowEnough", "entry": certified_entry(20)}),
-        ),
-    );
-    assert_eq!(accepted["hybrid_result"]["value"], "proved", "{accepted}");
-    assert_eq!(
-        accepted["hybrid_result"]["certification"], "certified",
-        "{accepted}"
-    );
-    let (_, rejected) = run(
-        BRAKING,
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "SlowEnough", "entry": certified_entry(19)}),
-        ),
-    );
-    assert_eq!(
-        rejected["hybrid_result"]["certification"], "uncertified",
-        "{rejected}"
-    );
-    assert_eq!(
-        rejected["hybrid_result"]["certificate"]["outcome"], "rejected",
-        "{rejected}"
-    );
-    assert_eq!(
-        rejected["hybrid_result"]["certificate"]["rule"], "a",
-        "{rejected}"
-    );
-}
-
 // ---- FR-755: planner ---------------------------------------------------
 
-/// FR-755-AC-1/AC-2: minimizing length to reach `length >= 1` gives an
-/// `optimal` one-step plan with an accepted `potential` certificate; plan
-/// lengths `Int[0, 0]` make the goal `infeasible` with a closure certificate.
+/// FR-1010-AC-3 and FSpec FR-805-AC-6: minimizing length to reach
+/// `length >= 1` gives an `optimal` one-step plan whose objective value is
+/// `{"type": "integer", "value": "1"}`; plan lengths `Int[0, 0]` make the goal `infeasible`
+/// with a closure certificate and every no-plan member present and `null`.
 #[test]
-#[trace("TC-2105", "FR-755-AC-1")]
-#[trace("TC-2105", "FR-755-AC-2")]
-#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-1")]
+#[trace("TC-2860", "FR-1010-AC-3")]
+#[trace("FSpec-TC-1955", "FSpec-FR-805-AC-6")]
 #[ignore = "QSL-1978: planner and optimizer not implemented yet"]
 fn the_planner_returns_optimal_and_infeasible_with_certificates() {
     let unit = |lengths: &str| {
@@ -244,7 +187,11 @@ fn the_planner_returns_optimal_and_infeasible_with_certificates() {
     );
     let result = &value["synthesis"];
     assert_eq!(result["status"], "optimal", "{value}");
-    assert_eq!(result["objective"], 1, "{value}");
+    assert_eq!(
+        result["objective"]["value"],
+        json!({"type": "integer", "value": "1"}),
+        "{value}"
+    );
     assert_eq!(result["certificate"]["type"], "potential", "{value}");
     assert_eq!(result["certification"], "certified", "{value}");
     let (_, value) = run(
@@ -261,33 +208,33 @@ fn the_planner_returns_optimal_and_infeasible_with_certificates() {
         value["synthesis"]["certificate"]["type"], "closure",
         "{value}"
     );
+    let infeasible = &value["synthesis"];
+    for member in ["plan", "replay", "bound"] {
+        assert!(
+            infeasible.get(member).is_some_and(Value::is_null),
+            "{member}: {value}"
+        );
+    }
+    assert!(infeasible["objective"]["value"].is_null(), "{value}");
+    assert_eq!(infeasible["objective"]["expression"], "length", "{value}");
 }
 
 // ---- FR-756: TLA+ and Lean export --------------------------------------
 
 /// FR-756-AC-1: each profile echoes its id and family and classifies the
-/// finite invariant `preserved`; two exports are byte-equal.
+/// counter's state clause `value <= 5` `preserved`; two exports are byte-equal.
 #[test]
 #[trace("TC-2106", "FR-756-AC-1")]
 #[trace("FSpec-TC-1604", "FSpec-FR-651-AC-1")]
 #[ignore = "QSL-1979: TLA+ and Lean output profiles not implemented yet"]
 fn tla_and_lean_exports_echo_their_profile_and_preserve_a_finite_invariant() {
-    let unit = format!(
-        "{MODEL_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n"
-    );
     for (profile, family) in [
         ("filament.output.tla2/v1", "tla"),
         ("filament.output.lean4/v1", "lean"),
     ] {
         let export = || {
-            run(
-                &unit,
-                true,
-                (
-                    "export",
-                    json!({
-            "profile": profile, "obligations": ["Low"]}),
-                ),
+            crate::plan_export_surface::counter_export(
+                json!({"profile": profile, "obligations": ["Bounded"]}),
             )
         };
         let (_, first) = export();
@@ -296,7 +243,7 @@ fn tla_and_lean_exports_echo_their_profile_and_preserve_a_finite_invariant() {
         assert_eq!(first["export"]["mapping_profile_id"], profile, "{first}");
         assert_eq!(first["export"]["target_family"], family, "{first}");
         assert_eq!(
-            first["export"]["records"][0]["obligation"], "Low",
+            first["export"]["records"][0]["obligation"], "Bounded",
             "{first}"
         );
         assert_eq!(
@@ -381,255 +328,10 @@ fn ci_checks_include_the_layering_gate() {
 const VALUE_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n";
 
-/// `SlowEnough10` over `Braking` without `t`: horizon 10 seconds.
-fn braking_with_horizon() -> String {
-    BRAKING.replace("always holds(h.v < 30)", "always [0, 10] holds(h.v < 30)")
-}
-
 fn refusal_names(value: &Value, member: &str) {
     assert!(
         value.to_string().contains(member),
         "names {member}: {value}"
-    );
-}
-
-/// FR-750-AC-1: a provider's `delta-complete` `unsat` covering horizon 10
-/// settles `proved`, `bounded-solver`, `uncertified`, naming the provider.
-#[test]
-#[trace("TC-2100", "FR-750-AC-1")]
-#[ignore = "QSL-2234: analyze dispatch of a hybrid item to its provider not implemented yet"]
-fn a_covering_delta_complete_proof_settles_proved_bounded_solver() {
-    let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
-        "basis": {"type": "bounded-solver", "method": "delta-complete",
-            "horizon": "10", "jumps": 1, "exhaustive": ["time"]}});
-    let (_, value) = run(
-        &braking_with_horizon(),
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "SlowEnough", "backend": "hybrid-fixture", "entry": entry}),
-        ),
-    );
-    let result = &value["hybrid_result"];
-    assert_eq!(result["value"], "proved", "{value}");
-    assert_eq!(result["basis"]["type"], "bounded-solver", "{value}");
-    assert_eq!(result["certification"], "uncertified", "{value}");
-    assert_eq!(result["backend"], "hybrid-fixture", "{value}");
-}
-
-/// FR-750-AC-2: a hybrid provider registration whose `dynamics` lacks
-/// `hybrid` is refused naming the backend, and no provider is made.
-#[test]
-#[trace("TC-2100", "FR-750-AC-2")]
-#[ignore = "QSL-2234: hybrid provider registration (`Engine::hybrid`) not implemented yet"]
-fn a_hybrid_provider_without_hybrid_dynamics_is_refused() {
-    let (exit, value) = run(
-        &braking_with_horizon(),
-        false,
-        (
-            "hybrid_providers",
-            json!([{
-        "backend": "discrete-only", "dynamics": ["discrete"],
-        "advertises": [{"kind": "temporal-satisfaction", "mode": "bounded"}]}]),
-        ),
-    );
-    assert_eq!(exit, 20, "{value}");
-    refusal_names(&value, "discrete-only");
-    refusal_names(&value, "invalid-dynamics");
-}
-
-fn point_trace(before_v: u32) -> Value {
-    let state = |mode: &str, time: &str, v: u32| {
-        json!({"mode": mode,
-        "time": {"lower": time, "upper": time},
-        "enclosure": {"v": {"lower": v.to_string(), "upper": v.to_string()},
-            "a": {"lower": "2", "upper": "2"}}})
-    };
-    json!({"start": state("Moving", "0", 20), "jumps": [{"transition": 0,
-        "before": {"time": {"lower": "10", "upper": "10"},
-            "enclosure": {"v": {"lower": before_v.to_string(), "upper": before_v.to_string()},
-                "a": {"lower": "2", "upper": "2"}}},
-        "state": state("Stopped", "10", 0)}]})
-}
-
-/// FR-750-AC-5: a process provider's `refuted` point trace that exact
-/// replay reproduces settles `refuted` with one `HybridCounterexample`; one
-/// that does not reproduce settles `inconclusive`, `replay-parity`.
-#[test]
-#[trace("TC-2100", "FR-750-AC-5")]
-#[ignore = "QSL-2234: process-provider composition for hybrid clause requests not implemented yet"]
-fn a_process_provider_refutation_settles_by_exact_replay() {
-    let unit = BRAKING.replace("always holds(h.v < 30)", "always [0, 12] holds(h.v > 0)");
-    let entry = |before_v: u32| {
-        json!({"request_index": 0, "result": "refuted",
-        "counterexample": 0, "counterexamples": [{"type": "hybrid-counterexample",
-            "kind": "formula", "trace": point_trace(before_v)}]})
-    };
-    let (_, value) = run(
-        &unit,
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "SlowEnough", "provider": "process", "entry": entry(0)}),
-        ),
-    );
-    assert_eq!(value["hybrid_result"]["value"], "refuted", "{value}");
-    assert_eq!(
-        value["hybrid_result"]["counterexamples"]
-            .as_array()
-            .map(Vec::len),
-        Some(1),
-        "{value}"
-    );
-    let (_, value) = run(
-        &unit,
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "SlowEnough", "provider": "process", "entry": entry(1)}),
-        ),
-    );
-    assert_eq!(value["hybrid_result"]["value"], "inconclusive", "{value}");
-    assert_eq!(
-        value["hybrid_result"]["cause"]["type"], "replay-parity",
-        "{value}"
-    );
-}
-
-/// FR-751-AC-2: a `flowpipe` step violating the Picard condition is
-/// rejected at that step's pointer and the proof stays `uncertified`.
-#[test]
-#[trace("TC-2101", "FR-751-AC-2")]
-#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-2")]
-#[ignore = "QSL-2234: core check of flowpipe certificates not implemented yet"]
-fn a_flowpipe_step_violating_picard_is_rejected() {
-    let interval = |lower: &str, upper: &str| json!({"lower": lower, "upper": upper});
-    let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
-        "basis": {"type": "bounded-solver", "method": "flowpipe-outward-rounded",
-            "horizon": "10", "jumps": 1, "exhaustive": ["time"]},
-        "certificate": {"type": "flowpipe", "steps": [{"mode": "Moving",
-            "time": interval("0", "10"), "step": "10",
-            "box": {"v": interval("0", "20"), "a": interval("1", "2")},
-            "apriori": {"v": interval("19", "20"), "a": interval("1", "2")}}]}});
-    let (_, value) = run(
-        &braking_with_horizon(),
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "SlowEnough", "entry": entry}),
-        ),
-    );
-    let result = &value["hybrid_result"];
-    assert_eq!(result["certification"], "uncertified", "{value}");
-    assert_eq!(result["certificate"]["outcome"], "rejected", "{value}");
-    assert_eq!(
-        result["certificate"]["at"], "/certificate/steps/0",
-        "{value}"
-    );
-}
-
-/// FR-751-AC-3: a certificate check given a work limit of one box
-/// evaluation is rejected `work-limit`, never accepted.
-#[test]
-#[trace("TC-2101", "FR-751-AC-3")]
-#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-4")]
-#[ignore = "QSL-2234: work-limited certificate check not implemented yet"]
-fn a_work_limited_certificate_check_is_rejected() {
-    let (_, value) = run(
-        BRAKING,
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "SlowEnough", "entry": certified_entry(20), "limits": {"work": 1}}),
-        ),
-    );
-    assert_eq!(
-        value["hybrid_result"]["certificate"]["outcome"], "rejected",
-        "{value}"
-    );
-    assert_eq!(
-        value["hybrid_result"]["certificate"]["rule"], "work-limit",
-        "{value}"
-    );
-}
-
-/// FSpec FR-652-AC-4: a `flowpipe` certificate on an `inductive-solver`
-/// entry refuses `invalid_result`/`invalid-value` at `/certificate`.
-#[test]
-#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-4")]
-#[ignore = "QSL-2234: certificate form check not implemented yet"]
-fn a_mismatched_certificate_form_refuses_at_certificate() {
-    let mut entry = certified_entry(20);
-    entry["certificate"] = json!({"type": "flowpipe", "steps": []});
-    let (_, value) = run(
-        BRAKING,
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "SlowEnough", "entry": entry}),
-        ),
-    );
-    refusal_names(&value, "invalid_result");
-    refusal_names(&value, "/certificate");
-}
-
-/// FSpec FR-652-AC-3 and FR-193-AC-22: a point trace through a mode whose
-/// flow is not polynomial refutes with an accepted `validated-witness`, and
-/// without one stays `inconclusive`.
-#[test]
-#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-3")]
-#[trace("FSpec-TC-1605", "FSpec-FR-193-AC-22")]
-#[ignore = "QSL-2234: validated-witness refutation not implemented yet"]
-fn a_validated_witness_refutes_through_a_non_polynomial_flow() {
-    let unit = "language \"ix:native\" edition \"1-draft\";\n\
-         profile p = \"filament.temporal.infinite-trace/v1\";\n\
-         hybrid Grow using p {\n\
-           mode Up invariant { v >= 1 and v <= 100 } flow { v' = v * v / (1 + v * v); }\n\
-         }\n\
-         temporal Below using p over (h: Grow) clock \"model-time\" \
-         on origin { always [0, 40] holds(h.v < 30) }\n";
-    let trace = json!({"start": {"mode": "Up", "time": {"lower": "0", "upper": "0"},
-        "enclosure": {"v": {"lower": "1", "upper": "1"}}}, "jumps": []});
-    let witness = json!({"type": "validated-witness", "dwells": [[{"mode": "Up",
-        "time": {"lower": "0", "upper": "40"}, "step": "40",
-        "box": {"v": {"lower": "1", "upper": "1"}},
-        "apriori": {"v": {"lower": "1", "upper": "41"}}}]]});
-    let entry = |certificate: Option<Value>| {
-        let mut entry = json!({"request_index": 0, "result": "inconclusive",
-            "cause": {"type": "solver-inconclusive", "trace": trace.clone()}});
-        if let Some(certificate) = certificate {
-            entry["certificate"] = certificate;
-        }
-        entry
-    };
-    let (_, with) = run(
-        unit,
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "Below", "entry": entry(Some(witness))}),
-        ),
-    );
-    assert_eq!(with["hybrid_result"]["value"], "refuted", "{with}");
-    let (_, without) = run(
-        unit,
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "Below", "entry": entry(None)}),
-        ),
-    );
-    assert_eq!(
-        without["hybrid_result"]["value"], "inconclusive",
-        "{without}"
     );
 }
 
@@ -818,18 +520,21 @@ fn the_planner_keeps_plans_within_policy() {
 fn the_planner_minimizes_a_per_step_cost_sum() {
     let value = reach("minimize Reach.steps.sum(s => 2)", json!([]));
     assert_eq!(value["synthesis"]["status"], "optimal", "{value}");
-    assert_eq!(value["synthesis"]["objective"], 2, "{value}");
+    assert_eq!(
+        value["synthesis"]["objective"]["value"],
+        json!({"type": "integer", "value": "2"}),
+        "{value}"
+    );
     assert_eq!(
         value["synthesis"]["certificate"]["type"], "potential",
         "{value}"
     );
 }
 
-/// FSpec FR-650-AC-3 and AC-5: plan lengths admitting no goal give
-/// `infeasible`; a run stopped by its work limit is `incomplete` naming it.
+/// FSpec FR-650-AC-3: plan lengths admitting no goal give `infeasible`; a
+/// run stopped by its work limit is `incomplete` naming it.
 #[test]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-3")]
-#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-5")]
 #[ignore = "QSL-1978: planner infeasibility and work limits not implemented yet"]
 fn the_planner_reports_infeasible_and_incomplete() {
     let unit = format!(
@@ -860,29 +565,35 @@ fn the_planner_reports_infeasible_and_incomplete() {
     assert_eq!(value["synthesis"]["status"], "incomplete", "{value}");
 }
 
-/// FSpec FR-650-AC-6: a supplied plan with a disabled invocation is never
-/// reported; replaying it is a method failure naming that step.
+/// FR-755-AC-4 and FSpec FR-650-AC-7: the planner's test seams are library
+/// parameters, never request members, so a `synthesis` member naming one
+/// refuses `unknown-member` at its `/synthesis` pointer before any search.
+/// The replay failure itself runs through the plan substitution seam in
+/// `plan_export_surface.rs`.
 #[test]
-#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-6")]
-#[ignore = "QSL-1978: native replay of planner plans not implemented yet"]
-fn a_plan_with_a_disabled_invocation_is_a_method_failure() {
+#[trace("TC-2105", "FR-755-AC-4")]
+#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-7")]
+#[ignore = "QSL-1978: the closed synthesis member list is not implemented yet"]
+fn a_test_seam_named_on_the_wire_is_an_unknown_member() {
     let unit = format!(
         "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
          synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
          satisfies {{ Reach.length >= 1 }};\n"
     );
-    let (_, value) = run(
+    let (exit, value) = run(
         &unit,
         true,
         (
             "synthesis",
             json!({"declaration": "Reach",
         "initial": "spine-snapshot.json",
-        "replay_plan": [{"operation": "noSuchOperation"}]}),
+        "replay_plan": [{"operation": "double"}]}),
         ),
     );
-    refusal_names(&value, "method-failure");
-    refusal_names(&value, "noSuchOperation");
+    assert_eq!(exit, 20, "{value}");
+    refusal_names(&value, "unknown-member");
+    refusal_names(&value, "/synthesis/replay_plan");
+    assert!(value["synthesis"].get("status").is_none(), "{value}");
 }
 
 /// FSpec FR-651-AC-2, AC-4 and FR-297-AC-5: the Lean export preserves the
@@ -937,34 +648,18 @@ fn lean_export_refusals_and_family_check() {
 }
 
 /// FSpec FR-651-AC-5: TLC's reachable state count and verdict over the
-/// TLA+ export equal FSL's exploration of the same model.
+/// counter's TLA+ export equal FSL's exploration of the same model, six
+/// states with `Bounded` holding; the export reports no native count.
 #[test]
 #[trace("FSpec-TC-1604", "FSpec-FR-651-AC-5")]
 #[ignore = "QSL-1979: TLA+ export conformance with an observer not implemented yet"]
 fn tla_export_agrees_with_fsl_exploration() {
-    let unit = format!(
-        "{MODEL_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n"
-    );
-    let (_, value) = run(
-        &unit,
-        true,
-        (
-            "export",
-            json!({
-        "profile": "filament.output.tla2/v1", "obligations": ["Low"], "observer": "tlc",
-        "initial": "spine-snapshot.json"}),
-        ),
-    );
+    let (_, value) = crate::plan_export_surface::counter_export(json!({
+        "profile": "filament.output.tla2/v1", "obligations": ["Bounded"], "observer": "tlc"}));
     let export = &value["export"];
-    assert!(export["observer"]["reachable_states"].is_u64(), "{value}");
-    assert_eq!(
-        export["observer"]["reachable_states"], export["native"]["reachable_states"],
-        "{value}"
-    );
-    assert_eq!(
-        export["observer"]["verdict"], export["native"]["verdict"],
-        "{value}"
-    );
+    assert!(export.get("native").is_none(), "{value}");
+    assert_eq!(export["observer"]["reachable_states"], 6, "{value}");
+    assert_eq!(export["observer"]["verdict"], "holds", "{value}");
 }
 
 /// FR-757-AC-2 and AC-3: native and `tl-mltl` verdicts agree at every
@@ -972,21 +667,17 @@ fn tla_export_agrees_with_fsl_exploration() {
 #[test]
 #[trace("TC-2107", "FR-757-AC-2")]
 #[trace("TC-2107", "FR-757-AC-3")]
-#[ignore = "QSL-2147: cross_evaluate.initial (behaviour enumeration) is not implemented yet"]
 fn tl_cross_evaluation_agrees_and_timed_clauses_do_not_lower() {
-    let unit = "language \"ix:native\" edition \"1-draft\";\n\
-         profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
-         model Config = \"example/config-version\";\n\
-         temporal Low using t over (c: Config::ConfigVersion) clock \"model-steps\" \
-         on origin { always [0, 3] holds(c.versionNumber <= 2) }\n";
-    let (_, value) = run(
-        unit,
-        true,
-        (
-            "tl_lowering",
-            json!({"clause": "Low",
-        "cross_evaluate": {"initial": "spine-snapshot.json", "max_steps": 4}}),
-        ),
+    // The corpus is every behaviour of up to 4 steps of FR-931-AC-6's
+    // two-object `bump` snapshot: `Low` holds on some and is violated on
+    // those that reach `versionNumber` 3. The spine snapshot is anchored at
+    // the handler `validate`, which FR-120 refuses as an initial state.
+    let (code, value) = cross_from(&bump_low(), &["a", "b"], true, 4);
+    assert_eq!(code, 0, "{value}");
+    let cross = &value["tl_lowering"]["cross_evaluation"];
+    assert!(
+        cross["traces"].as_u64().expect("a trace count") > 1,
+        "{value}"
     );
     assert_eq!(
         value["tl_lowering"]["cross_evaluation"]["faults"],
@@ -1264,25 +955,15 @@ fn a_malformed_tl_lowering_member_is_refused() {
     refusal_names(&value, "tl_lowering.clause");
 }
 
-/// FR-931-AC-4: cross-evaluation agrees on the spine's behaviours.
+/// FR-931-AC-4: cross-evaluation agrees on the behaviours of AC-6's snapshot.
 #[test]
 #[trace("TC-2603", "FR-931-AC-4")]
-#[ignore = "QSL-2147: cross_evaluate.initial (behaviour enumeration from a snapshot) is not implemented yet"]
-fn tl_cross_evaluation_agrees_on_the_spine_behaviours() {
-    let unit = low(EVENT_POSITION, LOW_BODY);
-    let (code, value) = run(
-        &unit,
-        true,
-        (
-            "tl_lowering",
-            json!({"clause": "Low",
-                "cross_evaluate": {"initial": "spine-snapshot.json", "max_steps": 4}}),
-        ),
-    );
+fn tl_cross_evaluation_agrees_on_the_snapshot_behaviours() {
+    let (code, value) = cross_from(&bump_low(), &["a", "b"], true, 2);
     assert_eq!(code, 0, "{value}");
     let cross = &value["tl_lowering"]["cross_evaluation"];
     let traces = cross["traces"].as_u64().expect("a trace count");
-    assert!(traces >= 1, "{value}");
+    assert!(traces >= 2, "{value}");
     assert!(cross["positions"].as_u64().expect("a position count") >= traces);
     assert_eq!(cross["agree"], true);
     assert_eq!(cross["faults"], json!([]));
@@ -1320,4 +1001,269 @@ fn only_fsl_command_names_the_tl_crates() {
             "{other} names no TL crate"
         );
     }
+}
+
+/// FR-931-AC-6: `cross_evaluate.initial` evaluates every `over` instance of
+/// the snapshot's universe and reads each behaviour of 1 to `max_steps`
+/// steps as its own closed trace, so the trace count grows with `max_steps`.
+#[test]
+#[trace("TC-2962", "FR-931-AC-6")]
+fn tl_cross_evaluation_reads_each_behaviour_as_a_closed_trace() {
+    // FR-931-AC-6's snapshot `S` (objects `a` and `b`, the model stepping
+    // `bump`), not the spine snapshot: that one is anchored at the handler
+    // `validate`, which FR-120 refuses as an initial state.
+    let unit = bump_low();
+    let traces = |max_steps: u64| {
+        let (code, value) = cross_from(&unit, &["a", "b"], true, max_steps);
+        assert_eq!(code, 0, "{value}");
+        let cross = &value["tl_lowering"]["cross_evaluation"];
+        assert_eq!(cross["agree"], true, "{value}");
+        cross["traces"].as_u64().expect("a trace count")
+    };
+    let one = traces(1);
+    let two = traces(2);
+    assert!(one >= 1);
+    assert!(
+        two > one,
+        "the 1-step behaviours are traces of their own beside the 2-step ones"
+    );
+}
+
+/// FR-931-AC-7 (negative): `over` beside `initial` refuses naming it.
+#[test]
+#[trace("TC-2962", "FR-931-AC-7")]
+fn tl_cross_evaluation_refuses_over_beside_initial() {
+    let unit = low(EVENT_POSITION, LOW_BODY);
+    let (code, value) = run(
+        &unit,
+        true,
+        (
+            "tl_lowering",
+            json!({"clause": "Low", "cross_evaluate": {"initial": "spine-snapshot.json",
+                "max_steps": 2, "over": {"reference": {"population": "P", "key": "c1"}}}}),
+        ),
+    );
+    assert_eq!(code, 20, "{value}");
+    refusal_names(&value, "tl_lowering.cross_evaluate.over");
+}
+
+/// FR-931-AC-6's unit: `Low` beside a postcondition that makes the model's
+/// one operation step `versionNumber + 1` (`bump`) up to its bound 3.
+fn bump_low() -> String {
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         profile t = \"{EVENT_POSITION}\";\n\
+         model Config = \"example/config-version\";\n\
+         post Bump using v on Config::ConfigVersion::attemptUpdate {{ \
+         pre(self.versionNumber) < 3 and self.versionNumber = pre(self.versionNumber) + 1 }}\n\
+         temporal Low using t over (c: Config::ConfigVersion) clock \"model-steps\" \
+         on origin {{ {LOW_BODY} }}\n"
+    )
+}
+
+/// The spine snapshot with the population `complete` as given and holding
+/// one object of `versionNumber` 0 and no parent per key of `keys`.
+fn snapshot_of(directory: &Path, keys: &[&str], complete: bool) -> Value {
+    let bytes = std::fs::read(directory.join("spine-snapshot.json")).unwrap();
+    let mut snapshot: Value = serde_json::from_slice(&bytes).unwrap();
+    // FR-120: an initial state is a snapshot anchored at an initialization.
+    snapshot["anchor"] = json!({"kind": "initialization", "name": "start"});
+    let population = &mut snapshot["populations"][0];
+    let template = population["objects"][0].clone();
+    population["complete"] = json!(complete);
+    population["objects"] = keys
+        .iter()
+        .map(|key| {
+            let mut object = template.clone();
+            object["key"] = json!(key);
+            object["fields"]["versionNumber"] = json!({"type": "integer", "value": "0"});
+            object["fields"]["parent"] = json!({"absent": {}});
+            object
+        })
+        .collect();
+    snapshot
+}
+
+/// Cross-evaluates `unit`'s `Low` from the snapshot `snapshot_of(keys,
+/// complete)` written as `s.json`, with `max_steps`. The ConfigVersion model
+/// is narrowed to `versionNumber: Int[0, 3]`: FR-120 enumerates every
+/// object's modified field, so two objects over `Int[0, 1000]` give 1001^2
+/// candidates per application, past the default `max_candidates`.
+fn cross_from(unit: &str, keys: &[&str], complete: bool, max_steps: u64) -> (u8, Value) {
+    let directory = bump_directory(unit, keys, complete);
+    write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0",
+                "source": source("spine-model.semantic-ir.json")}],
+            "program": {"source": source("unit.native")},
+            "tl_lowering": {"clause": "Low",
+                "cross_evaluate": {"initial": "s.json", "max_steps": max_steps}}}}),
+    )
+}
+
+/// The spine files with the model narrowed to `versionNumber: Int[0, 3]`,
+/// `unit` as `unit.native` and `snapshot_of(keys, complete)` as `s.json`.
+fn bump_directory(unit: &str, keys: &[&str], complete: bool) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let model = directory.path().join("spine-model.semantic-ir.json");
+    let narrowed = std::fs::read_to_string(&model)
+        .unwrap()
+        .replace("\"value\": \"1000\"", "\"value\": \"3\"");
+    assert!(!narrowed.contains("\"1000\""), "the bound is narrowed");
+    std::fs::write(&model, narrowed).unwrap();
+    let snapshot = snapshot_of(directory.path(), keys, complete);
+    std::fs::write(
+        directory.path().join("s.json"),
+        serde_json::to_vec(&snapshot).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    directory
+}
+
+/// FR-931 "Cross-evaluation": a work-budget stop during enumeration reports
+/// the counts reached and exits 22, never a correspondence loss (exit 30),
+/// wherever the budget runs out: at an expansion, inside the subject's own
+/// clause evaluation, or inside the native evaluator of a trace. The
+/// request has no budget member, so the run is driven through the library
+/// entry (`run_temporal_behaviours`, `tl_record`) under each `work_units`
+/// bound from 1 to 200; an unbounded run completes.
+#[test]
+#[trace("TC-2962", "FR-931-AC-6")]
+fn a_work_budget_stop_during_enumeration_exits_incomplete() {
+    // `on each`: the last activation is evaluated after the last row is read,
+    // so a budget can run out inside the evaluator there.
+    let unit = bump_low().replace("on origin", "on each (d: Config::ConfigVersion)");
+    let directory = bump_directory(&unit, &["a", "b"], true);
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0",
+            "source": source("spine-model.semantic-ir.json")}],
+        "program": {"source": source("unit.native")},
+        "clause": {"selection": {"temporal": {"name": "Low", "trace": {"finite": []}}},
+            "observations": {"initial": "s.json"}}}});
+    let path = directory.path().join("budget.json");
+    std::fs::write(&path, request.to_string()).unwrap();
+    let run = |work_units: u64| {
+        let mut clause_run =
+            fsl_command::command::read_clause_run_request(&path).expect("a clause run");
+        clause_run.accounting.work_units = work_units;
+        let initial = clause_run
+            .snapshots
+            .keys()
+            .next()
+            .expect("the snapshot")
+            .clone();
+        let report =
+            fsl_replay::spine::run_temporal_behaviours(clause_run, &initial, 2).expect("a report");
+        let fsl_replay::spine::ClauseDisposition::TemporalValuation(valuation) =
+            &report.disposition
+        else {
+            panic!("a valuation: {:?}", report.disposition);
+        };
+        fsl_command::command::tl_record(
+            valuation,
+            &unit,
+            None,
+            &fsl_command::command::AtomMapping::default(),
+        )
+        .expect("the clause lowers")
+    };
+    let full = run(u64::MAX);
+    assert_eq!(full.exit_code, 0, "{}", full.record);
+    let complete = full.record["cross_evaluation"]["traces"].clone();
+    // Every bound from 1 up: the low ones stop at the subject's own clause
+    // evaluation, then at the trace reads, then inside the evaluator at an
+    // `on each` activation, each an incomplete run.
+    for work_units in 1..=200 {
+        let record = run(work_units);
+        let cross = &record.record["cross_evaluation"];
+        assert_ne!(record.exit_code, 30, "{work_units}: {}", record.record);
+        assert_eq!(
+            cross["faults"],
+            json!([]),
+            "{work_units}: {}",
+            record.record
+        );
+        assert_eq!(record.exit_code, 22, "{work_units}: {}", record.record);
+        assert!(
+            cross["traces"].as_u64() < complete.as_u64(),
+            "{}",
+            record.record
+        );
+    }
+}
+
+/// FR-931-AC-6: from a snapshot of `a` and `b` whose model steps `bump`, the
+/// run evaluates both instances and each behaviour of 1 and of 2 steps as its
+/// own closed trace: `traces` is 2 (the instances) times the 1- and 2-step
+/// paths, and every trace compares at least its activation position.
+#[test]
+#[trace("TC-2962", "FR-931-AC-6")]
+fn tl_cross_evaluation_enumerates_instances_and_behaviours_of_a_snapshot() {
+    let unit = bump_low();
+    let cross = |max_steps: u64| {
+        let (code, value) = cross_from(&unit, &["a", "b"], true, max_steps);
+        assert_eq!(code, 0, "{value}");
+        let cross = value["tl_lowering"]["cross_evaluation"].clone();
+        assert_eq!(cross["agree"], true, "{value}");
+        assert_eq!(cross["faults"], json!([]), "{value}");
+        cross
+    };
+    // FR-120's successors of `(a, b)`: for each receiver below 3, the
+    // receiver bumped and the other object's `versionNumber` (in the frame
+    // `modifies [versionNumber]`, unconstrained by `Bump`) each of 0 to 3.
+    let successors = |(a, b): (u64, u64)| {
+        let mut next = Vec::new();
+        for other in 0..=3 {
+            if a < 3 {
+                next.push((a + 1, other));
+            }
+            if b < 3 {
+                next.push((other, b + 1));
+            }
+        }
+        next
+    };
+    let one_step = successors((0, 0));
+    let two_step: usize = one_step.iter().map(|state| successors(*state).len()).sum();
+    let paths = |steps: u64| match steps {
+        1 => one_step.len(),
+        _ => one_step.len() + two_step,
+    };
+    for max_steps in [1, 2] {
+        let cross = cross(max_steps);
+        let traces = cross["traces"].as_u64().expect("a trace count");
+        // Two instances, `a` then `b`, each reading every path; a 1-step
+        // behaviour is a trace of its own beside its 2-step extensions.
+        assert_eq!(
+            traces,
+            2 * u64::try_from(paths(max_steps)).unwrap(),
+            "{cross}"
+        );
+        assert!(cross["positions"].as_u64().expect("a position count") >= traces);
+    }
+}
+
+/// FR-931-AC-7: an incomplete population refuses `incomplete_population`
+/// naming it, exit 20; an empty population gives zero traces and zero
+/// positions, exit 0.
+#[test]
+#[trace("TC-2962", "FR-931-AC-7")]
+fn tl_cross_evaluation_refuses_an_incomplete_universe_and_counts_an_empty_one() {
+    let unit = bump_low();
+    let (code, value) = cross_from(&unit, &["a"], false, 2);
+    // `incomplete_population` is the incomplete row, exit 22 (ADR-029 CB-4).
+    assert_eq!(code, 22, "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    refusal_names(&value, "incomplete_population");
+    refusal_names(&value, "config_history");
+    let (code, value) = cross_from(&unit, &[], true, 2);
+    assert_eq!(code, 0, "{value}");
+    let cross = &value["tl_lowering"]["cross_evaluation"];
+    assert_eq!(cross["traces"], 0, "{value}");
+    assert_eq!(cross["positions"], 0, "{value}");
+    assert_eq!(cross["agree"], true, "{value}");
 }

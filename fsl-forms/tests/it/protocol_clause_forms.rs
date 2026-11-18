@@ -5,10 +5,10 @@
 //! `fsl_cst::parse` and `build_unit` (TC-456, TC-457).
 
 use fsl_forms::{
-    AnchorSite, BinderForm, BinderKind, BuiltinType, DeclarationForm, ExprNode, ExprRef,
-    ExpressionSpans, FormsCause, OperationBodyForm, ParsedUnit, ProtocolConstructKind,
+    build_unit, AnchorSite, BinderForm, BinderKind, BuiltinType, DeclarationForm, ExprNode,
+    ExprRef, ExpressionSpans, FormsCause, OperationBodyForm, ParsedUnit, ProtocolConstructKind,
     ProtocolDeclarationForm, ProtocolNodeDeclaration, ProtocolNodeKind, ScopedAnchorForm, SpanId,
-    StateClauseForm, StateClauseKind, TypeFormHead, build_unit,
+    StateClauseForm, StateClauseKind, TypeFormHead,
 };
 use fsl_foundation::{SourceIdentity, Span};
 use ix_trace_rs::trace;
@@ -701,11 +701,10 @@ fn a_reference_in_a_nested_control_records_every_enclosing_named_control() {
     // `commit never;` builds no `compensate-commit` anchor.
     let (_, unit) = build(&recovery_flow("never", true, parallel));
     let form = protocol_form(unit.forms()[0].form());
-    assert!(
-        form.scoped_anchors
-            .iter()
-            .all(|anchor| anchor.site != AnchorSite::CompensateCommit)
-    );
+    assert!(form
+        .scoped_anchors
+        .iter()
+        .all(|anchor| anchor.site != AnchorSite::CompensateCommit));
 }
 
 #[trace("TC-510", "FR-112-AC-3")]

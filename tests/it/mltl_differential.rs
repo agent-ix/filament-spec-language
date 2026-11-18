@@ -225,3 +225,136 @@ fn a_mis_mapped_atom_is_a_correspondence_loss() {
             "native": true, "tl": false}])
     );
 }
+
+/// FR-931-AC-8: each supported lowering of the corpus carries the
+/// classification read from its lowered formula, equal to the clause's own
+/// (its default correspondence and its operators' direction); a named
+/// online-prefix correspondence is carried as named; the mixed case has none.
+#[test]
+#[trace("TC-2979", "FR-931-AC-8")]
+fn lowering_preserves_the_classification() {
+    for (cases, correspondence, fragment) in [
+        (PAST, "mltl.origin-complete-history/v1", "bounded-past"),
+        (FUTURE, "mltl.closed-trace/v1", "bounded-future"),
+    ] {
+        for body in cases {
+            for values in traces() {
+                let (code, value) = run(body, &values, true);
+                let record = &value["tl_lowering"];
+                assert_eq!(code, 0, "{body} over {values:?}: {value}");
+                assert_eq!(
+                    record["classification"],
+                    json!({"correspondence": correspondence, "fragment": fragment}),
+                    "{body} over {values:?}"
+                );
+                assert_eq!(
+                    record["classification"]["correspondence"], record["correspondence"],
+                    "{body}"
+                );
+                assert_eq!(record["classification_fault"], Value::Null, "{body}");
+            }
+        }
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile e = \"filament.temporal.event-position.false-extension/v1\";\n\
+         record Counter { level: Int[0, 9]; }\n\
+         temporal C using e over (c: Counter) clock \"events\" on origin \
+         { always[0,3] holds(c.level <= 2) }\n";
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [],
+        "program": {"source": {"file": "unit.native", "authority": "agent-ix",
+            "identity": "test:mltl-classification", "document": "Mltl", "formal_revision": 1}},
+        "clocks": {"events": {"kind": "event_position", "sequence_authority": "events"}},
+        "tl_lowering": {"clause": "C", "correspondence": "mltl.online-prefix/v1"}}});
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, request.to_string()).unwrap();
+    let output = run_file(&path);
+    assert_eq!(output.status.code(), Some(0));
+    let value: Value = serde_json::from_slice(&output.stdout).expect("a JSON document");
+    assert_eq!(
+        value["tl_lowering"]["classification"],
+        json!({"correspondence": "mltl.online-prefix/v1", "fragment": "bounded-future"}),
+        "{value}"
+    );
+
+    let (code, value) = run(MIXED, &[0, 1], true);
+    assert_eq!(code, 21, "{value}");
+    assert_eq!(value["tl_lowering"]["disposition"], "unsupported");
+    assert_eq!(
+        value["tl_lowering"]["classification"],
+        Value::Null,
+        "{value}"
+    );
+}
+
+/// FR-931-AC-8, negative half: a lowered formula stamped with the wrong
+/// correspondence at the `fsl-command` library entry (never through the
+/// request) is a classification loss naming the clause and both
+/// classifications, with no `classification`, and the run's exit is 30; the
+/// faithful lowering carries the native classification.
+#[test]
+#[trace("TC-2979", "FR-931-AC-8")]
+fn a_wrong_lowered_profile_is_a_classification_loss() {
+    let directory = tempfile::tempdir().unwrap();
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile e = \"filament.temporal.event-position.false-extension/v1\";\n\
+         record Counter { level: Int[0, 9]; }\n\
+         temporal C using e over (c: Counter) clock \"events\" on origin \
+         { always[0,2] holds(c.level = 1) }\n";
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    let samples: Vec<Value> = [1, 1, 1]
+        .iter()
+        .map(|level: &i64| json!({"sample": {"level": {"integer": level.to_string()}}}))
+        .collect();
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [],
+        "program": {"source": {"file": "unit.native", "authority": "agent-ix",
+            "identity": "test:mltl-classification-loss", "document": "Mltl", "formal_revision": 1}},
+        "clocks": {"events": {"kind": "event_position", "sequence_authority": "events"}},
+        "clause": {"selection": {"temporal": {"name": "C", "trace": {"finite": samples}}},
+            "observations": {}}}});
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, request.to_string()).unwrap();
+    let clause_run = fsl_command::command::read_clause_run_request(&path).expect("a clause run");
+    let report = fsl_replay::spine::run_temporal_valuation(clause_run).expect("a report");
+    let fsl_replay::spine::ClauseDisposition::TemporalValuation(valuation) = &report.disposition
+    else {
+        panic!("a valuation: {:?}", report.disposition);
+    };
+    let native = json!({"correspondence": "mltl.closed-trace/v1", "fragment": "bounded-future"});
+
+    let faithful = fsl_command::command::tl_record(
+        valuation,
+        unit,
+        None,
+        &fsl_command::command::AtomMapping::default(),
+    )
+    .expect("the clause lowers");
+    assert_eq!(faithful.exit_code, 0, "{}", faithful.record);
+    assert_eq!(faithful.record["classification"], native);
+
+    let mapping = fsl_command::command::AtomMapping {
+        lowered_correspondence: Some("mltl.origin-complete-history/v1".to_owned()),
+        ..fsl_command::command::AtomMapping::default()
+    };
+    let lost = fsl_command::command::tl_record(valuation, unit, None, &mapping)
+        .expect("the clause lowers");
+    assert_eq!(lost.exit_code, 30, "{}", lost.record);
+    assert_eq!(
+        lost.record["classification"],
+        Value::Null,
+        "{}",
+        lost.record
+    );
+    assert_eq!(
+        lost.record["classification_fault"],
+        json!({"kind": "classification-loss", "clause": "C", "native": native,
+            "lowered": {"correspondence": "mltl.origin-complete-history/v1",
+                "fragment": "bounded-future"}})
+    );
+}

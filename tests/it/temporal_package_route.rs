@@ -1115,3 +1115,61 @@ fn each_clause_pairs_with_its_own_clock_row_over_the_bytes_only_route() {
         }
     }
 }
+
+/// FR-850-AC-8, FSpec FR-322-AC-460 and FR-322-AC-461 (TC-2983): each
+/// `temporal_clause_names` row carries the whole declaration's region, so a
+/// package-route clause carries the source route's span; the reader refuses a
+/// row without it or with a region that does not contain the name token.
+#[trace("TC-2983", "FR-850-AC-8")]
+#[trace("FSpec-TC-2015", "FSpec-FR-322-AC-460")]
+#[trace("FSpec-TC-2015", "FSpec-FR-322-AC-461")]
+#[test]
+#[ignore = "QSL-2425: the clause name rows' declaration_region and the package-route clause span are not implemented yet"]
+fn clause_name_rows_carry_the_whole_declaration_region() {
+    for kind in KINDS {
+        let source_path = handoff_request(kind, Corpus::None).emit.source;
+        let source = std::fs::read_to_string(&source_path).expect("the recipe source");
+        let built = recipe(kind);
+        let wire = crate::support::resolved_package(built.emission.package().bytes());
+        let rows = wire["temporal_clause_names"]
+            .as_array()
+            .expect("the recipe has temporal clauses");
+        for row in rows {
+            let region = &row["declaration_region"];
+            let start = region["start"].as_u64().expect("a region start") as usize;
+            let end = region["end"].as_u64().expect("a region end") as usize;
+            let text = &source[start..end];
+            let name = row["name"].as_str().expect("a name");
+            assert!(
+                text.starts_with(&format!("temporal {name}")),
+                "{kind}: {text}"
+            );
+            assert!(text.trim_end().ends_with('}'), "{kind}: {text}");
+        }
+
+        let removed = edited(recipe(kind), |wire| {
+            let row = &mut wire["temporal_clause_names"][0];
+            row.as_object_mut().unwrap().remove("declaration_region");
+        });
+        let refused = removed
+            .try_read(&removed.emission)
+            .expect_err("a row without declaration_region is refused");
+        assert!(
+            format!("{refused:?}").contains("declaration_region"),
+            "{refused:?}"
+        );
+
+        let shrunk = edited(recipe(kind), |wire| {
+            let region = &mut wire["temporal_clause_names"][0]["declaration_region"];
+            let start = region["start"].as_u64().unwrap();
+            region["end"] = Value::from(start + 1);
+        });
+        let refused = shrunk
+            .try_read(&shrunk.emission)
+            .expect_err("a region without the name token is refused");
+        assert!(
+            format!("{refused:?}").contains("/temporal_clause_names/0/declaration_region"),
+            "{refused:?}"
+        );
+    }
+}

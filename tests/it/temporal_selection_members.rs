@@ -74,7 +74,6 @@ fn expect_request_refusal(output: &Output, member: &str) {
 /// stage `request` naming the member.
 #[trace("TC-2781", "FR-985-AC-2")]
 #[test]
-#[ignore = "QSL-2339: the closed temporal selection's correction-member refusals are not locked yet"]
 fn malformed_correction_members_refuse_at_the_request() {
     let directory = tempfile::tempdir().unwrap();
     for (member, value) in [
@@ -95,7 +94,6 @@ fn malformed_correction_members_refuse_at_the_request() {
 /// reads as `original` and is accepted.
 #[trace("TC-2781", "FR-985-AC-1")]
 #[test]
-#[ignore = "QSL-2339: the seven-member temporal selection is not locked yet"]
 fn an_absent_relation_reads_as_original() {
     let directory = tempfile::tempdir().unwrap();
     let absent = run(
@@ -113,7 +111,6 @@ fn an_absent_relation_reads_as_original() {
 /// FR-985-AC-3: the correction members are refused off a timestamped trace.
 #[trace("TC-2782", "FR-985-AC-3")]
 #[test]
-#[ignore = "QSL-2339: the off-timestamped correction-member refusals are not locked yet"]
 fn correction_members_are_refused_off_a_timestamped_trace() {
     let directory = tempfile::tempdir().unwrap();
     for (member, value) in [
@@ -130,7 +127,6 @@ fn correction_members_are_refused_off_a_timestamped_trace() {
 /// FR-985-AC-4: a correction without a ledger refuses at `evaluate`.
 #[trace("TC-2782", "FR-985-AC-4")]
 #[test]
-#[ignore = "QSL-2339: the ledger-less correction refusal through a run is not locked yet"]
 fn a_correction_without_a_ledger_refuses_at_evaluate() {
     let directory = tempfile::tempdir().unwrap();
     let output = run(

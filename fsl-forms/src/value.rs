@@ -131,7 +131,7 @@ pub(crate) fn unrepresented(
         FormsCause::UnrepresentedConstruct {
             production,
             construct,
-            text,
+            text: text.into(),
             declaration: None,
             profile: None,
         },
@@ -810,6 +810,7 @@ enum Shape {
     Decimal(Integer, u32, DecimalSpellingKind),
     Quantity(QuantityForm),
     String(StringLiteral),
+    ReferenceLiteral(NameForm, StringLiteral, Span),
     Name(NameForm),
     Let {
         name: String,
@@ -950,6 +951,14 @@ impl Shape {
             Self::String(text) => {
                 arity(0)?;
                 ExprNode::String(text)
+            }
+            Self::ReferenceLiteral(type_name, key, key_span) => {
+                arity(0)?;
+                ExprNode::ReferenceLiteral {
+                    type_name,
+                    key,
+                    key_span,
+                }
             }
             Self::Name(name) => {
                 arity(0)?;
@@ -1419,6 +1428,7 @@ impl<'c> Mapping<'c> {
             | Production::Block
             | Production::ExactNumber
             | Production::FloatValue
+            | Production::ReferenceLiteral
             | Production::Hex32
             | Production::Hex64
             | Production::HexDigit
@@ -2106,6 +2116,20 @@ impl<'c> Mapping<'c> {
             Production::QuantityLiteral => {
                 let quantity = quantity_form(self.cst, child)?;
                 self.leaf(Shape::Quantity(quantity), &task)
+            }
+            Production::ReferenceLiteral => {
+                let type_name =
+                    name_form(self.cst, only(&items, Production::QualifiedName, child)?)?;
+                let key_token = tokens_of(&items, TokenKind::Text)
+                    .first()
+                    .copied()
+                    .ok_or_else(|| unexpected(child))?;
+                let key = StringLiteral::from_spelling(text(key_token, child)?)
+                    .ok_or_else(|| unexpected(child))?;
+                self.leaf(
+                    Shape::ReferenceLiteral(type_name, key, key_token.span()),
+                    &task,
+                )
             }
             Production::CollectionValue => {
                 let kind = match items.first() {

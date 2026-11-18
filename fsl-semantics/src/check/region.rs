@@ -361,6 +361,12 @@ impl DeclarationRegions {
             CheckCause::LayerEquality {
                 span: Some(span), ..
             } => region(&self.source, self.embedding.as_deref(), *span),
+            CheckCause::ReferenceLiteralTypeMismatch { name, .. } => {
+                region(&self.source, self.embedding.as_deref(), name.span)
+            }
+            CheckCause::EmptyReferenceLiteralKey { span } => {
+                region(&self.source, self.embedding.as_deref(), *span)
+            }
             CheckCause::ResourceExhausted(limit) if limit.region.is_some() => limit.region.clone(),
             CheckCause::ProtocolAnchor(cause) => {
                 region(&self.source, self.embedding.as_deref(), cause.span())

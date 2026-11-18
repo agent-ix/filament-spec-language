@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Sealed union declarations for evaluator and replay tests (FR-321, FR-322).
 //!
-//! No checked package can hold a union until the FR-319 lowering exists, so
-//! the S6a evaluator and the replay argument conversion are tested over a
+//! A checked package can hold a source union (FR-319, FR-320), but the S6a
+//! evaluator and the replay argument conversion are tested over a
 //! hand-built [`TypeEnvironment`] that declares these unions and seals each
 //! one with its FR-441 member keys, minted by `UnionMember::from_admitted`. A
 //! union's declaration handle is the key a static type and a checked node

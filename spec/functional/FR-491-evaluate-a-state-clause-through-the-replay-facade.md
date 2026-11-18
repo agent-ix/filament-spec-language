@@ -81,7 +81,7 @@ beside `replay_state_clause` (FR-122). It runs FR-109's `Clause` selection
 | FR-491-AC-5 | A clause name the unit does not declare returns `Refused(MissingClause)`; bytes that are not a snapshot document return `Refused(UnreadableObservation)`; accounting `work_units = 0` returns `Incomplete(Accounting)`. | Test (TC-1274) |
 | FR-491-AC-6 | A consumer reaches the entry and every type of its request and result through the `fsl_replay` root alone: a test that names only `fsl_replay` root items compiles and runs the entry. | Test (TC-1274) |
 | FR-491-AC-7 | A refusal of the evaluation's own inputs (a dangling reference, a value of the wrong kind) returns `Refused(Coded)` with its catalog code at stage `admit`; one that is a resource stop or cancel returns `Incomplete(Stopped)`. These arise only from S6a's supplied-value, storage and unsupported-helper stops, which the facade has no limit knob to provoke, so this criterion is verified on the disposition mapping (unit test), not end to end. | Test (TC-1274) |
-| FR-491-AC-8 | A snapshot longer than the request's `observation_limits.document_bytes` returns `Incomplete(Observation)` (`resource_exhausted`, `observation-input-bytes`) before it is read; at the limit it evaluates. | Test (TC-1274) |
+| FR-491-AC-8 | A snapshot longer than the request's `observation_limits.document_bytes` returns `Incomplete(Observation)` carrying FR-255 Behavior 1's `stage_limit_exceeded` record (`kind` `input bytes`, `bound` the ceiling, `actual` the snapshot's byte count, `setting` `observation.input_bytes`, the one shape FR-312 gives this limit at every entry point) before it is read; at the limit it evaluates. | Test (TC-1274, TC-2982) |
 
 ## Dependencies
 

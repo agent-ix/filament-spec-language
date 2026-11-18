@@ -10,8 +10,8 @@
 //! counterexample (FR-237, through `replay_model_trace`'s timed reading).
 
 use fsl_eval::simulation::model::{
-    ExpansionLimits, ModelSimulationRequest, ModelSystem, TimedSubjectRefusal, TimedSystem,
-    DEFAULT_MAX_CLOCKS,
+    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, TimedSubjectRefusal,
+    TimedSystem, DEFAULT_MAX_CLOCKS,
 };
 use fsl_eval::simulation::NotSimulated;
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -42,7 +42,7 @@ use crate::zone_check::{manifest as en6, ZoneCheckItem, ZoneCheckLimits, ZoneChe
 
 /// The alias of the model whose time source the package declares, which the
 /// timed subject is read under (FR-230); `None` for an untimed package.
-fn timed_model(package: &CheckedPackage) -> Option<String> {
+pub(super) fn timed_model(package: &CheckedPackage) -> Option<String> {
     package
         .graph()
         .time_sources()
@@ -54,7 +54,7 @@ fn timed_model(package: &CheckedPackage) -> Option<String> {
 /// subject of `package`, or `None` when the package holds no such clause or
 /// no timed model.
 pub(super) fn zone_clause_item<'a>(
-    package: &'a CheckedPackage,
+    analysis: &super::RunInput<'a>,
     binding: &SubjectBinding<'a>,
     limits: AnalyzeLimits,
     provision: &'a SourceProvision,
@@ -62,6 +62,7 @@ pub(super) fn zone_clause_item<'a>(
     index: RequestIndex,
     form: &TemporalItem,
 ) -> Option<AnalyzeItem<'a>> {
+    let (package, input) = (analysis.package, &analysis.model);
     let node = package
         .graph()
         .temporal_clauses()
@@ -69,7 +70,7 @@ pub(super) fn zone_clause_item<'a>(
         .find(|node| node.identity() == *key.node() && node.claim() == key.origin())?;
     let model = timed_model(package)?;
     clause_name(node).ok()?;
-    let (binding, form) = (binding.clone(), form.clone());
+    let (binding, form, input) = (binding.clone(), form.clone(), input.clone());
     Some(
         AnalyzeItem::new(
             index,
@@ -81,6 +82,7 @@ pub(super) fn zone_clause_item<'a>(
                 run(
                     &Run {
                         package,
+                        input: &input,
                         binding: &binding,
                         limits,
                         provision,
@@ -100,6 +102,7 @@ pub(super) fn zone_clause_item<'a>(
 #[derive(Clone, Copy)]
 struct Run<'r, 'a> {
     package: &'a CheckedPackage,
+    input: &'r ModelCheckInput<'a>,
     binding: &'r SubjectBinding<'a>,
     limits: AnalyzeLimits,
     provision: &'r SourceProvision,
@@ -111,6 +114,7 @@ struct Run<'r, 'a> {
 fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
     let Run {
         package,
+        input,
         binding,
         limits,
         provision,
@@ -119,7 +123,7 @@ fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
         form,
     } = *read;
     let simulation = ModelSimulationRequest {
-        package,
+        input: input.clone(),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,
@@ -177,7 +181,7 @@ fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
             reductions: &reductions,
         },
         certificate: ZoneCertificateRequest {
-            simulation: certificate_simulation(package, binding, limits, form),
+            simulation: certificate_simulation(input, binding, limits, form),
             model,
             max_clocks,
             item: CertifiedItem::Clause {
@@ -211,7 +215,7 @@ fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
 /// limit is a resource stop (`incomplete`). Only the refusals the package and the
 /// checker rule out (a missing timed model, a broken extent check) stay an
 /// engine fault.
-fn subject_refusal(refusal: &TimedSubjectRefusal) -> Refusal {
+pub(super) fn subject_refusal(refusal: &TimedSubjectRefusal) -> Refusal {
     match refusal {
         TimedSubjectRefusal::NotSimulated(NotSimulated::RequiresBound(_)) => Refusal::RequiresBound,
         TimedSubjectRefusal::Unbounded { .. } => Refusal::Failed(INVALID_VALUE),
@@ -239,14 +243,14 @@ fn zone_limits(form: &TemporalItem) -> ZoneCheckLimits {
     limits
 }
 
-fn certificate_simulation<'a>(
-    package: &'a CheckedPackage,
+pub(super) fn certificate_simulation<'a>(
+    input: &ModelCheckInput<'a>,
     binding: &SubjectBinding<'a>,
     limits: AnalyzeLimits,
     form: &TemporalItem,
 ) -> ModelSimulationRequest<'a> {
     ModelSimulationRequest {
-        package,
+        input: input.clone(),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,
@@ -268,7 +272,7 @@ fn certificate_simulation<'a>(
 /// is a symbolic run concretised with exact rational delays (FR-241), and a
 /// Zeno behaviour is reported by it (FR-240).
 pub(super) fn zone_derived_item<'a>(
-    package: &'a CheckedPackage,
+    analysis: &super::RunInput<'a>,
     binding: &SubjectBinding<'a>,
     limits: AnalyzeLimits,
     provision: &'a SourceProvision,
@@ -276,6 +280,7 @@ pub(super) fn zone_derived_item<'a>(
     index: RequestIndex,
     form: &TemporalItem,
 ) -> Option<AnalyzeItem<'a>> {
+    let (package, input) = (analysis.package, &analysis.model);
     let model = timed_model(package)?;
     let kind = form.item_kind;
     if !matches!(kind, ItemKind::DeadlockFreedom | ItemKind::TimeLockFreedom) {
@@ -283,7 +288,8 @@ pub(super) fn zone_derived_item<'a>(
     }
     let target = derived_target()?;
     let claimed = claim.clone();
-    let (binding, form, claim) = (binding.clone(), form.clone(), claim.clone());
+    let (binding, form, claim, input) =
+        (binding.clone(), form.clone(), claim.clone(), input.clone());
     let family = crate::claim_family::claim_family(package, kind, &claim);
     Some(
         AnalyzeItem::new(
@@ -293,7 +299,7 @@ pub(super) fn zone_derived_item<'a>(
             Mode::Bounded,
             en6::BACKEND_ID,
             move |cancel| {
-                let simulation = certificate_simulation(package, &binding, limits, &form);
+                let simulation = certificate_simulation(&input, &binding, limits, &form);
                 let system = match ModelSystem::new(simulation) {
                     Ok(system) => system,
                     Err(failure) => return EngineReport::Refused(admission(&failure)),
@@ -342,7 +348,7 @@ pub(super) fn zone_derived_item<'a>(
                         reductions: &reductions,
                     },
                     certificate: ZoneCertificateRequest {
-                        simulation: certificate_simulation(package, &binding, limits, &form),
+                        simulation: certificate_simulation(&input, &binding, limits, &form),
                         model: &model,
                         max_clocks,
                         item: certified,

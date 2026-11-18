@@ -397,7 +397,7 @@ fn a_formula_product_embeds_the_real_complete_monitor_without_inner_transport() 
         reward: None,
         event: None,
         failures: Vec::new(),
-        identity: fsl_replay::ObligationIdentity::new(
+        identity: fsl_package::ObligationIdentity::new(
             filament_exact::NodeKey::new(
                 "fixture",
                 vec![filament_exact::PathSegment::Text("formula".to_owned())],

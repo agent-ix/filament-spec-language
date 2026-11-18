@@ -8,7 +8,7 @@
 
 use crate::command_harness::{compile_file, run_file};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 const VALUE: &str = "filament.value.complete/v1";
@@ -725,7 +725,9 @@ fn a_timed_clause_over_untimed_samples_refuses_with_profile_and_kinds() {
 /// FR-644-AC-5, FR-643-AC-1 (TC-1668, TC-1666): a `native-monitor/1`
 /// request over a record file gives, after each observation, the status a
 /// clause run over the samples received so far gives, and a summary equal
-/// to the run over all of them.
+/// to the run over all of them. Both clauses settle at record 2: `Never`
+/// `violation` and `Reaches` `success` at its witness (FR-643-AC-6,
+/// FR-330-AC-2; FR-644-AC-5's "stays pending" is stale, amended by W45).
 #[test]
 #[trace(
     "TC-1668",
@@ -773,18 +775,26 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
             {
                 status = event["disposition"].clone();
                 decided = record;
-                // Only `Never` settles, at record 2 (FR-644-AC-5).
+                // Both clauses settle at record 2 (FR-643-AC-6).
                 assert_eq!(
                     event["settled"],
-                    clause == "Never" && record >= 2,
+                    record >= 2,
                     "{clause} settled at record {record}"
                 );
                 // `settlement` is present exactly when `settled` is true.
-                if clause == "Never" && record >= 2 {
+                if record >= 2 {
+                    // `Never` fails at its activation, position 0; the
+                    // infinite-trace `Reaches` success has no FR-501 decision
+                    // support, so its position is `null` (FR-643 "Settlement").
+                    let position = if clause == "Never" {
+                        json!("0")
+                    } else {
+                        Value::Null
+                    };
                     assert_eq!(
                         event["settlement"],
                         json!({"step": "3", "trigger": "decided",
-                            "basis": batch_of(2)["basis"], "horizon": "2", "position": "0"}),
+                            "basis": batch_of(2)["basis"], "horizon": "2", "position": position}),
                         "{event}"
                     );
                 } else {
@@ -810,21 +820,9 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
             .and_then(|clauses| clauses.iter().find(|entry| entry["clause"] == clause))
             .expect("a summary entry");
         assert_eq!(summary["disposition"], status, "{clause} summary");
-        assert_eq!(
-            summary["settled"],
-            clause == "Never",
-            "{clause} settled in the summary"
-        );
-        if clause == "Never" {
-            assert_eq!(summary["settlement"]["step"], "3", "{summary}");
-            assert_eq!(summary["settlement"]["trigger"], "decided", "{summary}");
-        } else {
-            assert_eq!(
-                summary["settlement"],
-                json!({"step": "4", "trigger": "finish"}),
-                "{summary}"
-            );
-        }
+        assert_eq!(summary["settled"], true, "{clause} settled in the summary");
+        assert_eq!(summary["settlement"]["step"], "3", "{summary}");
+        assert_eq!(summary["settlement"]["trigger"], "decided", "{summary}");
         assert!(
             run["summary"]["ledger"].is_null(),
             "a finite summary has no ledger: {run}"
@@ -1390,7 +1388,7 @@ fn a_timed_trace_answers_a_timed_clause() {
 #[test]
 #[trace("TC-1668", "FR-644-AC-1", "TC-1669", "FR-644-AC-4")]
 fn command_monitor_streams_events_to_its_sink() {
-    use fsl_command::command::{MonitorEvent, RunLimits, monitor};
+    use fsl_command::command::{monitor, MonitorEvent, RunLimits};
 
     let directory = tempfile::tempdir().unwrap();
     let request = monitor_request(
@@ -1418,6 +1416,11 @@ fn command_monitor_streams_events_to_its_sink() {
         &mut |event| {
             handed.set(handed.get() + 1);
             seen.push(event.clone());
+        },
+        fsl_command::command::MonitorProviders {
+            negotiate: &crate::negotiation::Fr290,
+            providers: Vec::new(),
+            options: &fsl_analyze::provider::ProviderOptions::default(),
         },
         RunLimits::default(),
         &filament_exact::Cancel::new(),
@@ -1448,6 +1451,11 @@ fn command_monitor_streams_events_to_its_sink() {
         &missing,
         lines.iter().map(|line| Ok(line.clone().into_bytes())),
         &mut |_| nothing += 1,
+        fsl_command::command::MonitorProviders {
+            negotiate: &crate::negotiation::Fr290,
+            providers: Vec::new(),
+            options: &fsl_analyze::provider::ProviderOptions::default(),
+        },
         RunLimits::default(),
         &filament_exact::Cancel::new(),
     );
@@ -1455,6 +1463,110 @@ fn command_monitor_streams_events_to_its_sink() {
     assert_eq!(error.category().exit_code(), 20);
     assert!(error.to_string().contains("Absent"), "{error}");
     assert_eq!(nothing, 0);
+}
+
+/// A process provider that answers no item; `command::monitor` only
+/// registers it.
+#[derive(Debug)]
+struct Silent;
+
+impl fsl_analyze::provider::ExternalProvider for Silent {
+    fn settle(
+        &self,
+        request: &fsl_analyze::provider::ProviderRequest<'_>,
+        _cancel: &filament_exact::Cancel,
+    ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
+        panic!("monitor sent the provider {} items", request.items().len())
+    }
+}
+
+/// The `Silent` process provider under `backend`, advertising
+/// `value-validity` `unbounded`.
+fn silent_provider(backend: &str) -> fsl_analyze::analyze::Engine {
+    let descriptor = fsl_route::descriptor_from_manifest(
+        fsl_route::Candidate::new(fsl_foundation::BackendId::new(backend)),
+        fsl_route::ProviderOrigin::Process,
+        vec![(
+            Some(fsl_semantics::check::Capability::ValueValidity.to_wire()),
+            Some(fsl_route::Mode::Unbounded.to_wire()),
+        )],
+        fsl_route::ManifestMembers {
+            domains: Some(&[fsl_foundation::bound::DomainKind::Integer.to_wire()]),
+            fairness_kinds: None,
+            evidence_kinds: None,
+            memory_models: None,
+            reductions: None,
+        },
+    )
+    .expect("the descriptor advertises the external value arm");
+    fsl_analyze::analyze::Engine::external(
+        descriptor,
+        fsl_analyze::analyze::BackendTool::new("silent-provider", "1").expect("a tool"),
+        Box::new(Silent),
+    )
+    .expect("the descriptor is unbounded")
+}
+
+/// FR-635 "One rule for every provider-routing entry", FR-644: `command::monitor`
+/// takes the started process providers and builds the registry from
+/// `Engines::fsl()` and them before the request is read. A configured
+/// provider leaves the events and summary of the stream with none, and a
+/// provider repeating a registered `BackendId` refuses `invalid-request`
+/// naming `providers`, exit 20, before any record is read.
+#[test]
+#[trace("FR-635", "FR-644")]
+fn command_monitor_takes_the_started_providers() {
+    use fsl_command::command::{monitor, MonitorEvent, RunLimits};
+
+    let directory = tempfile::tempdir().unwrap();
+    let request = monitor_request(
+        json!([{"name": "Reaches"}, {"name": "Never"}]),
+        json!({"kind": "finite"}),
+    );
+    let path = write_trace(directory.path(), "stream.json", &request);
+    let mut lines: Vec<String> = observations(&[0, 1, 2, 1, 0])
+        .iter()
+        .map(Value::to_string)
+        .collect();
+    lines.push(json!({"end": true}).to_string());
+    let run = |providers: Vec<fsl_analyze::analyze::Engine>| {
+        let mut seen: Vec<Value> = Vec::new();
+        let read = std::cell::Cell::new(0_usize);
+        let summary = monitor(
+            &path,
+            lines.iter().map(|line| {
+                read.set(read.get() + 1);
+                Ok(line.clone().into_bytes())
+            }),
+            &mut |event: &MonitorEvent| seen.push(event.as_value().clone()),
+            fsl_command::command::MonitorProviders {
+                negotiate: &crate::negotiation::Fr290,
+                providers,
+                options: &fsl_analyze::provider::ProviderOptions::default(),
+            },
+            RunLimits::default(),
+            &filament_exact::Cancel::new(),
+        );
+        (summary, seen, read.get())
+    };
+    let (without, events_without, _) = run(Vec::new());
+    let without = without.expect("the stream runs with no provider");
+    let (with, events_with, _) = run(vec![silent_provider("monitor-plugin")]);
+    let with = with.expect("the stream runs with a started provider");
+    assert_eq!(events_with, events_without);
+    assert_eq!(with.as_value(), without.as_value());
+    assert_eq!(with.exit_code, 10);
+
+    let (repeated, events, read) = run(vec![
+        silent_provider("monitor-plugin"),
+        silent_provider("monitor-plugin"),
+    ]);
+    let error = repeated.expect_err("a repeated BackendId refuses");
+    assert_eq!(error.category().exit_code(), 20);
+    let value = error.value().expect("a refusal envelope");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    assert!(value.to_string().contains("providers"), "{value}");
+    assert_eq!((events.len(), read), (0, 0), "refused before any record");
 }
 
 /// Run `command::monitor` over the `levels` observations of `clauses`,
@@ -1469,31 +1581,58 @@ fn cancelled_monitor(
     Vec<fsl_command::command::MonitorEvent>,
     fsl_command::command::MonitorSummary,
 ) {
-    use fsl_command::command::{RunLimits, monitor};
+    let (seen, summary, _) = monitor_records(clauses, observations(levels), cause, cancel);
+    (
+        seen,
+        summary.expect("a cancelled stream returns its summary"),
+    )
+}
+
+/// Run `command::monitor` over `records` of `clauses`, tripping `cancel` with
+/// `cause` when the stream asks for the record after the last one; the
+/// iterator then ends. Also returns the number of records the stream pulled.
+fn monitor_records(
+    clauses: Value,
+    records: Vec<Value>,
+    cause: Option<filament_exact::CancelCause>,
+    cancel: &filament_exact::Cancel,
+) -> (
+    Vec<fsl_command::command::MonitorEvent>,
+    Result<fsl_command::command::MonitorSummary, Box<fsl_command::command::RunError>>,
+    usize,
+) {
+    use fsl_command::command::{monitor, RunLimits};
 
     let directory = tempfile::tempdir().unwrap();
     let request = monitor_request(clauses, json!({"kind": "finite"}));
     let path = write_trace(directory.path(), "cancelled.json", &request);
-    let lines: Vec<String> = observations(levels).iter().map(Value::to_string).collect();
-    let total = lines.len();
-    let records = lines.into_iter().enumerate().map(move |(index, line)| {
-        if index + 1 == total {
+    let pulled = std::cell::Cell::new(0_usize);
+    let lines = records
+        .iter()
+        .map(|record| {
+            pulled.set(pulled.get() + 1);
+            Ok(record.to_string().into_bytes())
+        })
+        .chain(std::iter::from_fn(|| {
             if let Some(cause) = cause {
                 cancel.cancel(cause);
             }
-        }
-        Ok(line.into_bytes())
-    });
+            None
+        }));
     let mut seen = Vec::new();
     let summary = monitor(
         &path,
-        records,
+        lines,
         &mut |event| seen.push(event.clone()),
+        fsl_command::command::MonitorProviders {
+            negotiate: &crate::negotiation::Fr290,
+            providers: Vec::new(),
+            options: &fsl_analyze::provider::ProviderOptions::default(),
+        },
         RunLimits::default(),
         cancel,
-    )
-    .expect("a cancelled stream returns its summary");
-    (seen, summary)
+    );
+    (seen, summary, pulled.get())
 }
 
 /// FR-853-AC-1 (TC-2413): a stream cancelled with `Requested` after two
@@ -1501,7 +1640,6 @@ fn cancelled_monitor(
 /// settlement, makes no `finish`, and exits 22.
 #[test]
 #[trace("TC-2413", "FR-853-AC-1")]
-#[ignore = "QSL-2284: a cancelled monitor stream returns a refusal, not a summary of cancelled clauses"]
 fn a_cancelled_stream_reports_its_open_clauses_incomplete() {
     let cancel = filament_exact::Cancel::new();
     let (_, summary) = cancelled_monitor(
@@ -1520,17 +1658,39 @@ fn a_cancelled_stream_reports_its_open_clauses_incomplete() {
             json!({"step": "2", "trigger": "cancelled", "cause": "requested"}),
             "{value}"
         );
+        assert_eq!(clause["basis"], "unsettled", "{value}");
+        assert_eq!(
+            clause["disposition"]["temporal"]["kind"], "incomplete",
+            "{value}"
+        );
     }
     assert_eq!(value["cancelled"], "requested", "{value}");
     assert_eq!(value["records"], 2, "{value}");
     assert_eq!(summary.exit_code, 22);
+
+    let mut ended = observations(&[0, 1]);
+    ended.push(json!({"end": true}));
+    let (_, finished, _) = monitor_records(
+        json!([{"name": "Reaches"}, {"name": "Never"}]),
+        ended,
+        None,
+        &filament_exact::Cancel::new(),
+    );
+    let finished = finished.expect("an ended stream returns its summary");
+    let value = finished.as_value();
+    for index in 0..2 {
+        assert_eq!(
+            value["clauses"][index]["settlement"]["trigger"], "finish",
+            "{value}"
+        );
+    }
+    assert!(value.get("cancelled").is_none(), "{value}");
 }
 
 /// FR-853-AC-2 (TC-2413): clauses settled before a `Deadline` cancellation
 /// keep their settlements; an open one is cancelled with cause `deadline`.
 #[test]
 #[trace("TC-2413", "FR-853-AC-2")]
-#[ignore = "QSL-2284: a cancelled monitor stream returns a refusal, not a summary of cancelled clauses"]
 fn a_deadline_cancellation_keeps_settled_clauses() {
     let cancel = filament_exact::Cancel::new();
     let (_, settled) = cancelled_monitor(
@@ -1568,16 +1728,40 @@ fn a_deadline_cancellation_keeps_settled_clauses() {
 /// hands the sink no event; every clause is cancelled at step 0.
 #[test]
 #[trace("TC-2413", "FR-853-AC-3")]
-#[ignore = "QSL-2284: a cancelled monitor stream returns a refusal, not a summary of cancelled clauses"]
 fn an_already_cancelled_stream_reads_no_record() {
     let cancel = filament_exact::Cancel::new();
     cancel.cancel(filament_exact::CancelCause::Requested);
-    let (seen, summary) = cancelled_monitor(json!([{"name": "Reaches"}]), &[0, 1], None, &cancel);
+    let (seen, summary, pulled) = monitor_records(
+        json!([{"name": "Reaches"}]),
+        observations(&[0, 1]),
+        None,
+        &cancel,
+    );
+    let summary = summary.expect("a cancelled stream returns its summary");
     let value = summary.as_value();
+    assert_eq!(pulled, 0, "{value}");
     assert!(seen.is_empty(), "{seen:?}");
     assert_eq!(value["records"], 0, "{value}");
-    assert_eq!(value["clauses"][0]["settlement"]["step"], "0", "{value}");
+    assert_eq!(
+        value["clauses"][0]["settlement"],
+        json!({"step": "0", "trigger": "cancelled", "cause": "requested"}),
+        "{value}"
+    );
+    assert_eq!(value["cancelled"], "requested", "{value}");
     assert_eq!(summary.exit_code, 22);
+
+    // FR-644-AC-4's refusal still wins over the tripped handle.
+    let (seen, refused, pulled) = monitor_records(
+        json!([{"name": "Absent"}]),
+        observations(&[0, 1]),
+        None,
+        &cancel,
+    );
+    let error = refused.expect_err("an unknown clause refuses");
+    assert_eq!(error.category().exit_code(), 20);
+    let envelope = error.value().expect("a refusal envelope");
+    assert!(envelope.to_string().contains("Absent"), "{envelope}");
+    assert_eq!((seen.len(), pulled), (0, 0));
 }
 
 /// FR-644-AC-6 (TC-2324), refusal half: `{"end": "closed"}`, `{"end": "open"}`
@@ -1787,4 +1971,614 @@ fn a_record_sample_ledger_file_carries_each_covered_fingerprint() {
         assert_eq!(envelope["code"], "invalid-request", "{envelope}");
         assert!(envelope.to_string().contains("ledger"), "{envelope}");
     }
+}
+
+/// A process provider that counts its `settle` calls, the items it is sent,
+/// and the events handed to the sink before its first call, and answers
+/// every item `verdict`.
+#[derive(Debug)]
+struct CountingProvider {
+    verdict: fsl_analyze::provider::ProviderVerdict,
+    /// How long each `settle` call takes before it answers.
+    delay: std::time::Duration,
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    items: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    events_before: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    events: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl fsl_analyze::provider::ExternalProvider for CountingProvider {
+    fn settle(
+        &self,
+        request: &fsl_analyze::provider::ProviderRequest<'_>,
+        _cancel: &filament_exact::Cancel,
+    ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
+        use std::sync::atomic::Ordering;
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            self.events_before
+                .store(self.events.load(Ordering::SeqCst), Ordering::SeqCst);
+        }
+        self.items
+            .fetch_add(request.items().len(), Ordering::SeqCst);
+        std::thread::sleep(self.delay);
+        vec![self.verdict.clone(); request.items().len()]
+    }
+}
+
+/// The recording provider FR-644-AC-8 names.
+const RECORDING: &str = "fsl.test-recording-provider";
+
+/// The counters one monitor run's recording provider reports.
+#[derive(Default)]
+struct Recorded {
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    items: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    events_before: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    events: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Recorded {
+    fn new() -> Self {
+        let recorded = Self::default();
+        recorded
+            .events_before
+            .store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
+        recorded
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn items(&self) -> usize {
+        self.items.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn events_before(&self) -> usize {
+        self.events_before.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The recording provider, advertising `value-validity` `unbounded`
+    /// over integers and answering every item `verdict`.
+    fn provider(
+        &self,
+        verdict: fsl_analyze::provider::ProviderVerdict,
+    ) -> fsl_analyze::analyze::Engine {
+        self.slow_provider(verdict, std::time::Duration::ZERO)
+    }
+
+    /// [`Self::provider`] taking `delay` to answer each request.
+    fn slow_provider(
+        &self,
+        verdict: fsl_analyze::provider::ProviderVerdict,
+        delay: std::time::Duration,
+    ) -> fsl_analyze::analyze::Engine {
+        let descriptor = fsl_route::descriptor_from_manifest(
+            fsl_route::Candidate::new(fsl_foundation::BackendId::new(RECORDING)),
+            fsl_route::ProviderOrigin::Process,
+            vec![(
+                Some(fsl_semantics::check::Capability::ValueValidity.to_wire()),
+                Some(fsl_route::Mode::Unbounded.to_wire()),
+            )],
+            fsl_route::ManifestMembers {
+                domains: Some(&[fsl_foundation::bound::DomainKind::Integer.to_wire()]),
+                fairness_kinds: None,
+                evidence_kinds: None,
+                memory_models: None,
+                reductions: None,
+            },
+        )
+        .expect("the descriptor advertises the external value arm");
+        fsl_analyze::analyze::Engine::external(
+            descriptor,
+            fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+            Box::new(CountingProvider {
+                verdict,
+                delay,
+                calls: std::sync::Arc::clone(&self.calls),
+                items: std::sync::Arc::clone(&self.items),
+                events_before: std::sync::Arc::clone(&self.events_before),
+                events: std::sync::Arc::clone(&self.events),
+            }),
+        )
+        .expect("the descriptor is unbounded")
+    }
+}
+
+/// The unit of FR-644-AC-8: the trace unit with `Even`. AC-8 states `n` as
+/// `Int[0, 9]`, which the checker refuses (`n * 2 - n` is proved only
+/// within [-9, 18]); `Integer` is the type the driver's analyze tests give it.
+fn even_unit() -> String {
+    trace_unit() + "function Even using v(n: Integer): Boolean pure { n * 2 - n = n }\n"
+}
+
+/// FR-644-AC-1's stream: levels 0, 1, 2, 1, 0 then `{"end": true}`.
+fn ac1_lines() -> Vec<String> {
+    let mut lines: Vec<String> = observations(&[0, 1, 2, 1, 0])
+        .iter()
+        .map(Value::to_string)
+        .collect();
+    lines.push(json!({"end": true}).to_string());
+    lines
+}
+
+/// One `command::monitor` run of `clauses` over AC-1's stream with `items`
+/// (none when `None`), the unit [`even_unit`], `providers` and `cancel`:
+/// the summary or refusal, and every event handed to the sink.
+fn monitor_with_items(
+    clauses: Value,
+    items: Option<Value>,
+    providers: Vec<fsl_analyze::analyze::Engine>,
+    recorded: &Recorded,
+    cancel: &filament_exact::Cancel,
+) -> (
+    Result<fsl_command::command::MonitorSummary, Box<fsl_command::command::RunError>>,
+    Vec<Value>,
+) {
+    let members = items.map_or_else(|| json!({}), |items| json!({"items": items}));
+    monitor_with_members(clauses, members, providers, recorded, cancel)
+}
+
+/// [`monitor_with_items`] with the request members `members` (`items` and
+/// what is read beside it) added to the request.
+fn monitor_with_members(
+    clauses: Value,
+    members: Value,
+    providers: Vec<fsl_analyze::analyze::Engine>,
+    recorded: &Recorded,
+    cancel: &filament_exact::Cancel,
+) -> (
+    Result<fsl_command::command::MonitorSummary, Box<fsl_command::command::RunError>>,
+    Vec<Value>,
+) {
+    use fsl_command::command::{monitor, MonitorEvent, MonitorProviders, RunLimits};
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut request = monitor_request(clauses, json!({"kind": "finite"}));
+    for (name, value) in members.as_object().into_iter().flatten() {
+        request["request"][name] = value.clone();
+    }
+    let path = write_trace(directory.path(), "items.json", &request);
+    std::fs::write(directory.path().join("unit.native"), even_unit()).unwrap();
+    let lines = ac1_lines();
+    let mut seen: Vec<Value> = Vec::new();
+    let summary = monitor(
+        &path,
+        lines.iter().map(|line| Ok(line.clone().into_bytes())),
+        &mut |event: &MonitorEvent| {
+            recorded
+                .events
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            seen.push(event.as_value().clone());
+        },
+        MonitorProviders {
+            negotiate: &crate::negotiation::Fr290,
+            providers,
+            options: &fsl_analyze::provider::ProviderOptions::default(),
+        },
+        RunLimits::default(),
+        cancel,
+    );
+    (summary, seen)
+}
+
+/// `analyze_with_providers` over the `native-analyze/1` request equivalent
+/// to FR-644-AC-8's monitor request: its `models`, `program` and `items`.
+/// A `native-analyze/1` request has no `clocks` member (FR-620), so its
+/// program is the monitor unit's value profile and `Even` without the
+/// clock-bound temporal clauses, which no item names.
+fn equivalent_analyze(items: Value, providers: Vec<fsl_analyze::analyze::Engine>) -> Value {
+    let directory = tempfile::tempdir().unwrap();
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"{VALUE}\";\n{}",
+        even_unit().lines().last().unwrap_or_default()
+    );
+    std::fs::write(directory.path().join("unit.native"), unit + "\n").unwrap();
+    let path = directory.path().join("analyze.json");
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&json!({"format": "native-analyze/1", "request": {
+            "models": [], "program": program(), "items": items}}))
+        .unwrap(),
+    )
+    .unwrap();
+    let result = fsl_command::command::analyze_with_providers(
+        &path,
+        &crate::negotiation::Fr290,
+        providers,
+        &fsl_analyze::provider::ProviderOptions::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the equivalent analyze request runs");
+    result.value.as_value().clone()
+}
+
+/// `analyze_with_providers` over the `package` request equivalent to
+/// FR-644-AC-8's clocked monitor request (FR-644 "Provider-routed items"):
+/// the handoff directory of the `native-compile/1` request with the monitor
+/// request's `models`, `program` and `clocks`, selected as `package`.
+fn equivalent_package_analyze(items: Value, providers: Vec<fsl_analyze::analyze::Engine>) -> Value {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("unit.native"), even_unit()).unwrap();
+    let compile = json!({"format": "native-compile/1", "request": {
+        "models": [], "program": program(), "clocks": trace_clocks(),
+        "handoff": {"directory": "handoff", "package_name": "monitor-unit",
+            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}});
+    let compile_path = directory.path().join("compile.json");
+    std::fs::write(&compile_path, serde_json::to_vec(&compile).unwrap()).unwrap();
+    fsl_command::command::compile(&compile_path).expect("the monitor program compiles");
+    let path = directory.path().join("analyze.json");
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&json!({"format": "native-analyze/1", "request": {
+            "models": [], "package": {"directory": "handoff"}, "items": items}}))
+        .unwrap(),
+    )
+    .unwrap();
+    let result = fsl_command::command::analyze_with_providers(
+        &path,
+        &crate::negotiation::Fr290,
+        providers,
+        &fsl_analyze::provider::ProviderOptions::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the equivalent package request runs");
+    result.value.as_value().clone()
+}
+
+/// FR-644-AC-8 (TC-2984): a monitor request carrying `clocks` settles its
+/// `items` as the equivalent `package` analyze request over the handoff of
+/// the same clocked compile settles them, the item `Even` well typed over
+/// `Integer` and of kind `value-validity`.
+#[test]
+#[trace("TC-2984", "FR-644-AC-8")]
+#[ignore = "QSL-2132: a clocked monitor's items equal to the package-route analyze over its own compile not implemented yet"]
+fn command_monitor_items_equal_the_package_route_of_its_clocked_compile() {
+    use fsl_analyze::provider::ProviderVerdict;
+
+    let clauses = json!([{"name": "Reaches"}, {"name": "Never"}]);
+    let items = json!([{"claim": "Even", "kind": "value-validity", "backend": RECORDING}]);
+    let recorded = Recorded::new();
+    let (summary, _) = monitor_with_items(
+        clauses,
+        Some(items.clone()),
+        vec![recorded.provider(ProviderVerdict::Proved)],
+        &recorded,
+        &filament_exact::Cancel::new(),
+    );
+    let summary = summary.expect("the stream runs");
+    let value = summary.as_value();
+    let analyzed = Recorded::new();
+    let document =
+        equivalent_package_analyze(items, vec![analyzed.provider(ProviderVerdict::Proved)]);
+    assert_eq!(
+        analyzed.calls(),
+        1,
+        "the package route sends Even's items once"
+    );
+    assert_eq!(value["items"], document["items"], "{document}");
+    assert_eq!(value["registry"], document["registry"], "{document}");
+    assert_eq!(summary.exit_code, 10);
+}
+
+/// The summary with the members `items` adds removed.
+fn clause_summary(summary: &Value) -> Value {
+    let mut summary = summary.clone();
+    if let Some(members) = summary.as_object_mut() {
+        members.remove("items");
+        members.remove("registry");
+    }
+    summary
+}
+
+/// FR-644-AC-8, FR-635-AC-5 (TC-2984): a monitor request's `items` settle
+/// through the started providers before the first record, the summary
+/// reports them and the registry as the equivalent analyze request does,
+/// and the monitored clauses stay with the session.
+#[test]
+#[trace("TC-2984", "FR-644-AC-8")]
+#[trace("TC-2984", "FR-635-AC-5")]
+fn command_monitor_settles_its_items_through_the_started_providers() {
+    use fsl_analyze::provider::ProviderVerdict;
+
+    let clauses = json!([{"name": "Reaches"}, {"name": "Never"}]);
+    let items = json!([{"claim": "Even", "kind": "value-validity", "backend": RECORDING}]);
+    let recorded = Recorded::new();
+    let (summary, seen) = monitor_with_items(
+        clauses.clone(),
+        Some(items.clone()),
+        vec![recorded.provider(ProviderVerdict::Proved)],
+        &recorded,
+        &filament_exact::Cancel::new(),
+    );
+    let summary = summary.expect("the stream runs");
+    assert_eq!(recorded.calls(), 1, "one settle call");
+    assert!(recorded.items() > 0, "the items of Even are sent");
+    assert_eq!(
+        recorded.events_before(),
+        0,
+        "the items settle before the first event"
+    );
+    let value = summary.as_value();
+    let settled = value["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a summary `items` member: {value}"));
+    assert!(!settled.is_empty(), "{value}");
+    for item in settled {
+        assert_eq!(item["record"]["result"], "proved", "{item}");
+        assert_eq!(item["record"]["backend"], RECORDING, "{item}");
+        assert_eq!(item["record"]["certification"], "trusted", "{item}");
+    }
+    // FR-635-AC-5: only `Even`'s items reach the provider, never a clause.
+    assert_eq!(recorded.items(), settled.len(), "{value}");
+    let registry = value["registry"].as_array().expect("a summary registry");
+    for backend in ["en-1", "en-7", RECORDING] {
+        assert!(
+            registry.iter().any(|row| row["backend"] == backend),
+            "{backend}: {value}"
+        );
+    }
+    let analyzed = Recorded::new();
+    let document = equivalent_analyze(items, vec![analyzed.provider(ProviderVerdict::Proved)]);
+    assert_eq!(value["items"], document["items"], "{document}");
+    assert_eq!(value["registry"], document["registry"], "{document}");
+    assert!(
+        seen.iter()
+            .any(|event| event["clause"] == "Never" && event["category"] == "violation"),
+        "{seen:?}"
+    );
+    let plain = Recorded::new();
+    let (without, events_without) = monitor_with_items(
+        clauses,
+        None,
+        Vec::new(),
+        &plain,
+        &filament_exact::Cancel::new(),
+    );
+    let without = without.expect("the stream runs without items");
+    assert_eq!(seen, events_without);
+    assert_eq!(clause_summary(value), *without.as_value());
+    assert_eq!(summary.exit_code, 10);
+}
+
+/// FR-644-AC-9 (TC-2984): a provider registered and no `items` calls no
+/// provider, and the events and summary are byte-equal to the run with no
+/// provider.
+#[test]
+#[trace("TC-2984", "FR-644-AC-9")]
+fn command_monitor_without_items_calls_no_provider() {
+    let clauses = json!([{"name": "Reaches"}, {"name": "Never"}]);
+    let recorded = Recorded::new();
+    let (with, events_with) = monitor_with_items(
+        clauses.clone(),
+        None,
+        vec![recorded.provider(fsl_analyze::provider::ProviderVerdict::Proved)],
+        &recorded,
+        &filament_exact::Cancel::new(),
+    );
+    let plain = Recorded::new();
+    let (without, events_without) = monitor_with_items(
+        clauses,
+        None,
+        Vec::new(),
+        &plain,
+        &filament_exact::Cancel::new(),
+    );
+    let (with, without) = (with.expect("runs"), without.expect("runs"));
+    assert_eq!(recorded.calls(), 0);
+    assert!(
+        with.as_value().get("items").is_none(),
+        "{}",
+        with.as_value()
+    );
+    assert!(with.as_value().get("registry").is_none());
+    assert_eq!(
+        serde_json::to_vec(&events_with).unwrap(),
+        serde_json::to_vec(&events_without).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_vec(with.as_value()).unwrap(),
+        serde_json::to_vec(without.as_value()).unwrap()
+    );
+}
+
+/// FR-644-AC-10 (TC-2984): an unregistered backend settles its item
+/// `invalid-request` `unknown-backend` with no provider call and exit 20,
+/// while every record still streams; an `unknown` answer settles
+/// `inconclusive` `solver-inconclusive`, outranked by the violation (exit
+/// 10) and exiting 22 when every clause succeeds; two providers of one
+/// `BackendId` refuse before any record.
+#[test]
+#[trace("TC-2984", "FR-644-AC-10")]
+fn command_monitor_settles_unknown_backends_and_unknown_answers() {
+    use fsl_analyze::provider::ProviderVerdict;
+
+    let clauses = json!([{"name": "Reaches"}, {"name": "Never"}]);
+    let plain = Recorded::new();
+    let (_, ac1_events) = monitor_with_items(
+        clauses.clone(),
+        None,
+        Vec::new(),
+        &plain,
+        &filament_exact::Cancel::new(),
+    );
+
+    let absent = Recorded::new();
+    let (summary, seen) = monitor_with_items(
+        clauses.clone(),
+        Some(json!([{"claim": "Even", "kind": "value-validity", "backend": "fsl.absent"}])),
+        vec![absent.provider(ProviderVerdict::Proved)],
+        &absent,
+        &filament_exact::Cancel::new(),
+    );
+    let summary = summary.expect("the stream runs");
+    let value = summary.as_value();
+    assert_eq!(absent.calls(), 0, "{value}");
+    assert_eq!(seen, ac1_events);
+    let item = &value["items"][0];
+    assert_eq!(item["category"], "refusal", "{value}");
+    assert!(item.to_string().contains("unknown-backend"), "{item}");
+    assert_eq!(summary.exit_code, 20);
+
+    let items = json!([{"claim": "Even", "kind": "value-validity", "backend": RECORDING}]);
+    let unknown = Recorded::new();
+    let (summary, _) = monitor_with_items(
+        clauses,
+        Some(items.clone()),
+        vec![unknown.provider(ProviderVerdict::Unknown)],
+        &unknown,
+        &filament_exact::Cancel::new(),
+    );
+    let summary = summary.expect("the stream runs");
+    let value = summary.as_value();
+    for item in value["items"].as_array().expect("items") {
+        assert_eq!(item["record"]["result"], "inconclusive", "{item}");
+        assert!(item.to_string().contains("solver-inconclusive"), "{item}");
+    }
+    assert_eq!(summary.exit_code, 10);
+
+    let successful = Recorded::new();
+    let (summary, _) = monitor_with_items(
+        json!([{"name": "Reaches"}]),
+        Some(items.clone()),
+        vec![successful.provider(ProviderVerdict::Unknown)],
+        &successful,
+        &filament_exact::Cancel::new(),
+    );
+    let summary = summary.expect("the stream runs");
+    assert_eq!(
+        summary.as_value()["clauses"][0]["category"],
+        "success",
+        "{}",
+        summary.as_value()
+    );
+    assert_eq!(summary.exit_code, 22, "{}", summary.as_value());
+
+    let repeated = Recorded::new();
+    let (refused, seen) = monitor_with_items(
+        json!([{"name": "Never"}]),
+        Some(items),
+        vec![
+            repeated.provider(ProviderVerdict::Proved),
+            repeated.provider(ProviderVerdict::Proved),
+        ],
+        &repeated,
+        &filament_exact::Cancel::new(),
+    );
+    let error = refused.expect_err("a repeated BackendId refuses");
+    assert_eq!(error.category().exit_code(), 20);
+    let envelope = error.value().expect("a refusal envelope");
+    assert_eq!(envelope["code"], "invalid-request", "{envelope}");
+    assert!(envelope.to_string().contains("providers"), "{envelope}");
+    assert!(seen.is_empty());
+    assert_eq!(repeated.calls(), 0);
+}
+
+/// FR-644-AC-11 (TC-2984), library half: `cancel` fired before `monitor` is
+/// called settles the item `incomplete` `cancelled{requested}` and sends no
+/// provider request.
+#[test]
+#[trace("TC-2984", "FR-644-AC-11")]
+fn a_cancelled_monitor_settles_its_items_incomplete() {
+    let cancel = filament_exact::Cancel::new();
+    cancel.cancel(filament_exact::CancelCause::Requested);
+    let recorded = Recorded::new();
+    let (summary, _) = monitor_with_items(
+        json!([{"name": "Reaches"}, {"name": "Never"}]),
+        Some(json!([{"claim": "Even", "kind": "value-validity", "backend": RECORDING}])),
+        vec![recorded.provider(fsl_analyze::provider::ProviderVerdict::Proved)],
+        &recorded,
+        &cancel,
+    );
+    assert_eq!(recorded.calls(), 0);
+    let summary = summary.expect("a cancelled stream returns its summary");
+    let value = summary.as_value();
+    for item in value["items"].as_array().expect("items") {
+        assert_eq!(item["category"], "incomplete", "{item}");
+        assert!(item.to_string().contains("requested"), "{item}");
+    }
+}
+
+/// FR-644 "Provider-routed items" (TC-2984): the items' `deadline_ms` stops
+/// the items alone. With `deadline_ms` 0 every item settles `incomplete`,
+/// cancelled by its deadline, no provider request is sent, and the events and
+/// clause entries equal the stream's without `items`.
+#[test]
+#[trace("TC-2984", "FR-644-AC-8")]
+fn an_expired_items_deadline_leaves_the_stream_unchanged() {
+    let clauses = json!([{"name": "Reaches"}, {"name": "Never"}]);
+    let plain = Recorded::new();
+    let (without, events_without) = monitor_with_items(
+        clauses.clone(),
+        None,
+        Vec::new(),
+        &plain,
+        &filament_exact::Cancel::new(),
+    );
+    let without = without.expect("the stream runs without items");
+
+    let recorded = Recorded::new();
+    let (summary, seen) = monitor_with_members(
+        clauses,
+        json!({"items": [{"claim": "Even", "kind": "value-validity", "backend": RECORDING}],
+            "deadline_ms": 0}),
+        vec![recorded.provider(fsl_analyze::provider::ProviderVerdict::Proved)],
+        &recorded,
+        &filament_exact::Cancel::new(),
+    );
+    let summary = summary.expect("an expired items deadline still streams");
+    let value = summary.as_value();
+    assert_eq!(recorded.calls(), 0, "{value}");
+    assert_eq!(seen, events_without);
+    assert_eq!(clause_summary(value), *without.as_value());
+    let items = value["items"].as_array().expect("items");
+    assert!(!items.is_empty(), "{value}");
+    for item in items {
+        assert_eq!(item["category"], "incomplete", "{item}");
+        assert!(item.to_string().contains("deadline"), "{item}");
+    }
+    assert_eq!(summary.exit_code, 10);
+}
+
+/// FR-644 "Provider-routed items" (TC-2984): a short items deadline that
+/// runs out while the provider is answering stops the items alone; the
+/// stream still gives the events and clause entries of the stream without
+/// `items`.
+#[test]
+#[trace("TC-2984", "FR-644-AC-8")]
+fn an_items_deadline_expiring_mid_settlement_leaves_the_stream_unchanged() {
+    let clauses = json!([{"name": "Reaches"}, {"name": "Never"}]);
+    let plain = Recorded::new();
+    let (without, events_without) = monitor_with_items(
+        clauses.clone(),
+        None,
+        Vec::new(),
+        &plain,
+        &filament_exact::Cancel::new(),
+    );
+    let without = without.expect("the stream runs without items");
+
+    let recorded = Recorded::new();
+    let (summary, seen) = monitor_with_members(
+        clauses,
+        json!({"items": [{"claim": "Even", "kind": "value-validity", "backend": RECORDING}],
+            "deadline_ms": 20}),
+        vec![recorded.slow_provider(
+            fsl_analyze::provider::ProviderVerdict::Proved,
+            std::time::Duration::from_millis(200),
+        )],
+        &recorded,
+        &filament_exact::Cancel::new(),
+    );
+    let summary = summary.expect("an items deadline expiring mid-settlement still streams");
+    let value = summary.as_value();
+    assert_eq!(recorded.calls(), 1, "the provider request was in flight");
+    assert_eq!(seen, events_without);
+    assert_eq!(clause_summary(value), *without.as_value());
+    assert!(
+        value["items"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()),
+        "{value}"
+    );
 }

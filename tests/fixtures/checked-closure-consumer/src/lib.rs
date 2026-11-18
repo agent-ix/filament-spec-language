@@ -31,6 +31,7 @@ impl Body for GeneratedCall {
                 ))),
                 location: None,
                 losses: vec![],
+                frame_depth: 0,
             })),
             Resume::Again | Resume::Child(_) => {
                 unreachable!("the generated body finishes on Start")

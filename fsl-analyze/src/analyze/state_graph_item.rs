@@ -14,12 +14,14 @@
 use filament_exact::{Cancel, ObjectReference, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
-use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
+use fsl_eval::simulation::model::{
+    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
+};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
-use fsl_package::CheckedPackage;
+use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
-    GraphEvidence, GraphEvidenceEnvelope, GraphReplayResult, ModelTraceSubject, ObligationIdentity,
+    GraphEvidence, GraphEvidenceEnvelope, GraphReplayResult, ModelTraceSubject,
     ProfileSelection, ReplayLimits, ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplayResult,
     ReplaySource, RequestTargetWire, StateGraphInstanceOutcome, StateGraphOutcome,
     StateGraphPropertyForm, StateGraphRecord, TerminalValue, TrapClosure, WitnessPath,
@@ -50,7 +52,7 @@ fn property_form(form: &StateGraphForm) -> StateGraphPropertyForm {
 /// binding, with the item's budgets, or `None` when the package holds no
 /// such claim.
 pub(super) fn state_graph_item<'a>(
-    package: &'a CheckedPackage,
+    analysis: &super::RunInput<'a>,
     binding: &SubjectBinding<'a>,
     limits: AnalyzeLimits,
     provision: &'a SourceProvision,
@@ -58,12 +60,13 @@ pub(super) fn state_graph_item<'a>(
     index: RequestIndex,
     form: &TemporalItem,
 ) -> Option<AnalyzeItem<'a>> {
+    let (package, input) = (analysis.package, &analysis.model);
     let claim = package
         .graph()
         .state_graph_claims()
         .iter()
         .find(|claim| claim.occurrence() == Some(key))?;
-    let (binding, form) = (binding.clone(), form.clone());
+    let (binding, form, input) = (binding.clone(), form.clone(), input.clone());
     let family =
         crate::claim_family::claim_family(package, fsl_route::request::ItemKind::Formula, key);
     Some(
@@ -77,6 +80,7 @@ pub(super) fn state_graph_item<'a>(
                 run(
                     &Run {
                         package,
+                        input: &input,
                         binding: &binding,
                         limits,
                         provision,
@@ -95,6 +99,7 @@ pub(super) fn state_graph_item<'a>(
 #[derive(Clone, Copy)]
 struct Run<'r, 'a> {
     package: &'a CheckedPackage,
+    input: &'r ModelCheckInput<'a>,
     binding: &'r SubjectBinding<'a>,
     limits: AnalyzeLimits,
     provision: &'r SourceProvision,
@@ -105,7 +110,7 @@ struct Run<'r, 'a> {
 impl<'a> Run<'_, 'a> {
     fn simulation(&self) -> ModelSimulationRequest<'a> {
         ModelSimulationRequest {
-            package: self.package,
+            input: self.input.clone(),
             packages: self.binding.packages,
             normalization: self.limits.normalization,
             snapshots: self.binding.snapshots,
@@ -176,6 +181,7 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             parameter,
             instance.over.as_ref(),
             &instance.sampled,
+            claim.occurrence(),
         )
     });
     let refuted = matches!(record.value, TerminalValue::Refuted);

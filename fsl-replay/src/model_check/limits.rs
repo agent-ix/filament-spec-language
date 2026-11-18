@@ -252,6 +252,11 @@ pub enum ModelCheckLimit {
     MaxWitnessSet,
     /// `ModelCheckLimits::max_relation_tuples` (FR-184).
     MaxRelationTuples,
+    /// FR-636's per-channel `temporal.limits.max_messages` bound.
+    ProtocolMaxMessages,
+    /// FR-194: the values a window aggregate of a required clause may hold
+    /// (FR-941); setting `monitor.max_window_values`.
+    MaxWindowValues,
     /// An EN-4 budget (FR-191, FR-192).
     Statistical(StatisticalLimit),
     /// EN-6's `max_symbolic_states` (FR-239); setting
@@ -314,6 +319,7 @@ impl ModelCheckLimit {
                 LimitKind::ValueOccurrences => "value_occurrences",
                 LimitKind::WorkUnits => "work_units",
                 LimitKind::ResultUnits => "result_units",
+                LimitKind::LiveOccurrences => "live_occurrences",
             },
             Self::MaxCandidates => "max_candidates",
             Self::SolverSteps => "max_solver_steps",
@@ -329,6 +335,8 @@ impl ModelCheckLimit {
             Self::MaxWalkSteps => "max_walk_steps",
             Self::MaxWitnessSet => "max_witness_set",
             Self::MaxRelationTuples => "max_relation_tuples",
+            Self::ProtocolMaxMessages => "max_messages",
+            Self::MaxWindowValues => "max_window_values",
             Self::Statistical(limit) => limit.as_str(),
             Self::ZoneMaxSymbolicStates => "max_symbolic_states",
             Self::ZoneMaxSymbolicTransitions => "max_symbolic_transitions",
@@ -361,7 +369,7 @@ impl ModelCheckLimit {
             Self::ExactProbMaxPolicyIterations => "exact_prob.max_policy_iterations",
             Self::ExactProbMaxWitnessPaths => "exact_prob.max_witness_paths",
             Self::EvaluationMeter { counter } => {
-                crate::limits::AccountingLimits::setting_of(counter).name()
+                crate::limits::AccountingLimits::setting_name(counter)
             }
             Self::MaxCandidates => "expansion.max_candidates",
             Self::SolverSteps => "hybrid.max_solver_steps",
@@ -377,6 +385,8 @@ impl ModelCheckLimit {
             Self::MaxWalkSteps => "model_check.max_walk_steps",
             Self::MaxWitnessSet => "model_check.max_witness_set",
             Self::MaxRelationTuples => "model_check.max_relation_tuples",
+            Self::ProtocolMaxMessages => "temporal.limits.max_messages",
+            Self::MaxWindowValues => "monitor.max_window_values",
             Self::Statistical(limit) => limit.setting(),
             Self::ZoneMaxSymbolicStates => "zone_check.max_symbolic_states",
             Self::ZoneMaxSymbolicTransitions => "zone_check.max_symbolic_transitions",
@@ -407,6 +417,8 @@ pub fn meter_bound(limits: &ScalarLimits, counter: LimitKind) -> u64 {
         LimitKind::ValueOccurrences => limits.value_occurrences,
         LimitKind::WorkUnits => limits.work_units,
         LimitKind::ResultUnits => limits.result_units,
+        // The live-occurrence cap is session-level and is not in ScalarLimits.
+        LimitKind::LiveOccurrences => 1_048_576,
     }
 }
 
@@ -573,6 +585,7 @@ mod tests {
                 }
                 LimitKind::WorkUnits => ("work_units", "accounting.work_units"),
                 LimitKind::ResultUnits => ("result_units", "accounting.result_units"),
+                LimitKind::LiveOccurrences => ("live_occurrences", "evaluation.live_occurrences"),
             },
             ModelCheckLimit::MaxCandidates => ("max_candidates", "expansion.max_candidates"),
             ModelCheckLimit::ValueCheckMaxCases => ("max_cases", "value_check.max_cases"),
@@ -604,6 +617,10 @@ mod tests {
             ModelCheckLimit::MaxRelationTuples => {
                 ("max_relation_tuples", "model_check.max_relation_tuples")
             }
+            ModelCheckLimit::ProtocolMaxMessages => {
+                ("max_messages", "temporal.limits.max_messages")
+            }
+            ModelCheckLimit::MaxWindowValues => ("max_window_values", "monitor.max_window_values"),
             ModelCheckLimit::Statistical(budget) => match budget {
                 StatisticalLimit::MaxSamples => ("max_samples", "statistical.max_samples"),
                 StatisticalLimit::MaxDraws => ("max_draws", "statistical.max_draws"),
@@ -670,6 +687,7 @@ mod tests {
             ModelCheckLimit::MaxWalkSteps,
             ModelCheckLimit::MaxWitnessSet,
             ModelCheckLimit::MaxRelationTuples,
+            ModelCheckLimit::MaxWindowValues,
             ModelCheckLimit::Statistical(StatisticalLimit::MaxSamples),
             ModelCheckLimit::Statistical(StatisticalLimit::MaxDraws),
             ModelCheckLimit::Statistical(StatisticalLimit::MaxCycleSteps),

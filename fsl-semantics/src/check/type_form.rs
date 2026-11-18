@@ -52,6 +52,13 @@ pub(crate) trait TypeNames {
         Vec::new()
     }
 
+    /// Whether `name` names a selected package's Rational value type with
+    /// no constraints (FR-505-AC-6), which has no checked type and no
+    /// canonical-key row (FSpec FR-144-AC-33).
+    fn unbounded_rational(&self, _name: &str) -> bool {
+        false
+    }
+
     /// Admitted units available to source type expressions.
     fn unit_value(&self, _id: UnitId) -> Option<filament_semantic_value::quantity::QuantityUnit> {
         None
@@ -85,6 +92,10 @@ impl TypeNames for SourceScope<'_> {
 
     fn unit_packages(&self, name: &str) -> Vec<String> {
         SourceScope::unit_packages(self, name)
+    }
+
+    fn unbounded_rational(&self, name: &str) -> bool {
+        SourceScope::unbounded_rational(self, name)
     }
 }
 
@@ -465,6 +476,13 @@ fn resolve_builtin<'f>(
             let [key, values] = form.arguments.as_slice() else {
                 return Err(malformed(form));
             };
+            // FSpec FR-144-AC-33: the unbounded `Rational` has no
+            // canonical-key row, so it is no key, refused at the key type.
+            if let TypeFormHead::Name(name) = &key.head {
+                if names.unbounded_rational(&name.name) {
+                    return Err(fault(key, TypeFormFault::IneligibleMapKey));
+                }
+            }
             return Ok(Step::Map { form, key, values });
         }
         BuiltinType::Clock => Err(fault(form, TypeFormFault::ClockNotChecked)),

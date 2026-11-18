@@ -11,7 +11,8 @@ relationships:
 ## Description
 
 Verify that a finite prefix under infinite-trace yields a violation only
-for a bad prefix of a safety-fragment formula, pending otherwise, and never
+for a bad prefix of a safety-fragment formula, holds for a good prefix,
+pending otherwise, and never
 a proof.
 
 Scope: FR-328-AC-1 to FR-328-AC-4.
@@ -29,7 +30,7 @@ Tag the tests `#[trace("TC-838", "FR-328-AC-n")]`.
 
 ## Expected Results
 
-- Step 1: `false` at 0; `Pending`; `Pending`; `Pending`.
+- Step 1: `false` at 0; `Pending`; `Completed(true)`; `Pending`.
 - Step 2: `false` at 0; `Pending`.
 - Step 3: `false` at 0.
-- Step 4: violation or pending only; no `tested`, no `proved`.
+- Step 4: no `tested`; each `Pending` is pending and the `Completed(true)` is success with truth `true`.

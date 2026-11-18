@@ -45,6 +45,8 @@ pub struct ReaderProtocolProjection {
     nodes: Vec<ReaderProjectedNode>,
     functions: Vec<ReaderFunction>,
     root: usize,
+    selected_function: Option<usize>,
+    selected_function_node: Option<NodeKey>,
     frame_slots: usize,
     locals: BTreeMap<NodeKey, usize>,
 }
@@ -94,13 +96,110 @@ impl ReaderProtocolProjection {
             name: &function.name,
             body: function.body,
             slots: function.slots,
+            parameters: &function.parameters,
+            result_type: function.result_type.as_ref()?,
         })
+    }
+
+    /// The selected entry function when this projection was built for a
+    /// top-level function call. Protocol-slot projections have no selected
+    /// entry function.
+    pub fn selected_function(&self) -> Option<ReaderProtocolFunction<'_>> {
+        self.function(self.selected_function?)
+    }
+
+    /// Structural key of the selected top-level function, when present.
+    pub fn selected_function_node(&self) -> Option<&NodeKey> {
+        self.selected_function_node.as_ref()
     }
 
     /// The number of frame slots the slot's root context uses: its binders
     /// and the binders of every `case` it holds outside a function.
     pub fn frame_slots(&self) -> usize {
         self.frame_slots
+    }
+
+    /// Locate every node of the root context under `owner`, by its
+    /// child-index path from the root: a clause term is checked as its own
+    /// expression rooted at the term, owned by its clause site (FR-337), so
+    /// this is the location the source route's checked term gives each node.
+    /// A node reached twice keeps the location of its first walk position.
+    fn locate_under(&mut self, owner: Origin) {
+        self.locate_from(self.root, owner);
+    }
+
+    /// Locate each called function's body under its own `Body` owner, its
+    /// declaration index the one `indices` gives its name: the location the
+    /// source route's checked body gives each of its nodes.
+    fn locate_functions(&mut self, indices: &BTreeMap<String, usize>) {
+        let bodies: Vec<(usize, Origin)> = self
+            .functions
+            .iter()
+            .filter_map(|function| {
+                let index = *indices.get(&function.name)?;
+                Some((
+                    function.body,
+                    Origin::Body {
+                        function: function.name.clone(),
+                        index,
+                    },
+                ))
+            })
+            .collect();
+        for (body, owner) in bodies {
+            self.locate_from(body, owner);
+        }
+    }
+
+    fn locate_from(&mut self, root: usize, owner: Origin) {
+        let mut pending = vec![(root, Location::root(owner))];
+        while let Some((index, location)) = pending.pop() {
+            let Some(node) = self.nodes.get_mut(index) else {
+                continue;
+            };
+            if node.location.is_some() {
+                continue;
+            }
+            let children = node.children.clone();
+            let coerced = matches!(node.kind, NodeKind::Coerce(..));
+            node.location = Some(location.clone());
+            if coerced {
+                // The checker locates an implicit coercion at its operand's
+                // position, so the operand shares the coercion's location.
+                pending.extend(children.into_iter().map(|child| (child, location.clone())));
+                continue;
+            }
+            pending.extend(
+                children
+                    .into_iter()
+                    .enumerate()
+                    .rev()
+                    .map(|(position, child)| (child, location.child(position))),
+            );
+        }
+    }
+
+    /// The location of every node of the root context a `pre(..)` reads
+    /// (FR-104): each node below a `Pre` node, which observes the pre
+    /// snapshot. Empty for a projection with no location.
+    pub fn pre_read_locations(&self) -> Vec<Location> {
+        let mut found = Vec::new();
+        let mut pending = vec![(self.root, false)];
+        let mut seen = BTreeSet::new();
+        while let Some((index, under_pre)) = pending.pop() {
+            if !seen.insert((index, under_pre)) {
+                continue;
+            }
+            let Some(node) = self.nodes.get(index) else {
+                continue;
+            };
+            if under_pre {
+                found.extend(node.location.clone());
+            }
+            let below = under_pre || matches!(node.kind, NodeKind::Pre(_));
+            pending.extend(node.children.iter().map(|child| (*child, below)));
+        }
+        found
     }
 
     /// The local slot a supplied binder is read through.
@@ -129,6 +228,20 @@ pub struct ReaderProtocolFunction<'a> {
     pub body: usize,
     /// Number of checked parameter slots.
     pub slots: usize,
+    /// The checked parameters, in declaration order.
+    pub parameters: &'a [ReaderProtocolParameter],
+    /// The checked result type.
+    pub result_type: &'a ValueType,
+}
+
+/// One checked parameter of a reader-projected pure function.
+pub struct ReaderProtocolParameter {
+    /// Parameter name admitted from its declaration.
+    pub name: String,
+    /// Structural key of the parameter declaration.
+    pub node: NodeKey,
+    /// Parameter type admitted from its checked type node.
+    pub value_type: ValueType,
 }
 
 /// The projection of one slot, or why it has none.
@@ -770,8 +883,49 @@ impl<'wire> WireIndex<'wire> {
             nodes: builder.nodes,
             functions: builder.functions,
             root: root_index,
+            selected_function: None,
+            selected_function_node: None,
             frame_slots: builder.root_slots,
             locals: local_keys,
+        })
+    }
+
+    fn project_function(
+        &self,
+        root: &CheckedNodeId,
+    ) -> Result<ReaderProtocolProjection, BuildError> {
+        let selected_function_node = Some(self.key(root).map_err(BuildError::Fault)?);
+        let mut builder = ReaderBuilder {
+            index: self,
+            nodes: Vec::new(),
+            functions: Vec::new(),
+            function_indexes: BTreeMap::new(),
+            memo: BTreeMap::new(),
+            binders: BTreeMap::new(),
+            root_slots: 0,
+            active: None,
+            suspended: Vec::new(),
+            ordinal: 0,
+        };
+        builder.read_functions(root)?;
+        let selected = *builder
+            .function_indexes
+            .get(root)
+            .ok_or_else(|| fault("reader-selected-function-is-in-function-table"))?;
+        let function = builder
+            .functions
+            .get(selected)
+            .ok_or_else(|| fault("reader-selected-function-index-is-retained"))?;
+        let root = function.body;
+        let frame_slots = function.slots;
+        Ok(ReaderProtocolProjection {
+            nodes: builder.nodes,
+            functions: builder.functions,
+            root,
+            selected_function: Some(selected),
+            selected_function_node,
+            frame_slots,
+            locals: BTreeMap::new(),
         })
     }
 }
@@ -907,10 +1061,39 @@ impl<'wire> OriginRows<'wire> {
 pub(crate) enum WalkFailure {
     /// An admitted form, operation or type without a projection.
     Unsupported(UnsupportedView),
+    /// A function parameter's type has no native run value form.
+    FunctionParameterType {
+        position: usize,
+        view: Box<UnsupportedView>,
+    },
+    /// A function result's type has no native run value form.
+    FunctionResultType {
+        function: String,
+        view: Box<UnsupportedView>,
+    },
     /// The equality rows do not give an application its decision.
     Equality(EqualityWitnessRefusal),
     /// The admitted package broke a projection invariant.
     Fault(InternalFault),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FunctionTypePosition {
+    Parameter(usize),
+    Result,
+}
+
+fn function_type_position(
+    reason: &UnsupportedReason,
+    parameter_position: Option<usize>,
+    body_is_node: bool,
+) -> Option<FunctionTypePosition> {
+    if !matches!(reason, UnsupportedReason::MissingTypeRepresentation) {
+        return None;
+    }
+    parameter_position
+        .map(FunctionTypePosition::Parameter)
+        .or_else(|| body_is_node.then_some(FunctionTypePosition::Result))
 }
 
 /// The slot walks of a package read from its bytes alone (FR-533 "Slot
@@ -935,6 +1118,130 @@ impl<'wire> BareWalker<'wire> {
                 std::borrow::Cow::Borrowed(projections),
             )?,
         })
+    }
+
+    /// Read the checked result type of a named pure function without
+    /// projecting its body. This lets callers reject an unrepresentable
+    /// result before a body operation can produce an earlier refusal.
+    pub(crate) fn function_result_type(
+        &self,
+        name: &str,
+    ) -> Result<Option<ReaderFunctionResultType>, WalkFailure> {
+        let selected = self.index.nodes.values().find(|node| {
+            has_form(node, WireTag::Function, WireForm::PureFunction)
+                && node.declaration.as_ref().is_some_and(|declaration| {
+                    declaration.qualified_name.len() == 1
+                        && declaration.qualified_name[0].as_ref() == name
+                })
+        });
+        let Some(selected) = selected else {
+            return Ok(None);
+        };
+        let function = selected
+            .declaration
+            .as_ref()
+            .and_then(|declaration| declaration.qualified_name.last())
+            .map(|name| name.to_string())
+            .ok_or_else(|| WalkFailure::Fault(fault("reader-function-name-is-admitted")))?;
+        let (_, body) = function_parts(&selected.body)
+            .ok_or_else(|| WalkFailure::Fault(fault("reader-pure-function-has-checked-body")))?;
+        let CheckedTerm::Reference { target } = body else {
+            return Err(WalkFailure::Fault(fault(
+                "reader-function-body-has-checked-identity",
+            )));
+        };
+        let result_node = self.index.key(target).map_err(WalkFailure::Fault)?;
+        let value_type =
+            node_value_type(&self.index.types(), target).map_err(|error| match error {
+                TypeError::Unsupported => WalkFailure::FunctionResultType {
+                    function,
+                    view: Box::new(UnsupportedView {
+                        package: self.index.admitted.name().to_owned(),
+                        locus: ViewLocus::node(result_node),
+                        reason: UnsupportedReason::MissingTypeRepresentation,
+                    }),
+                },
+                TypeError::Fault(fault) => WalkFailure::Fault(fault),
+            })?;
+        Ok(Some(ReaderFunctionResultType {
+            function_node: self
+                .index
+                .key(&selected.node_id)
+                .map_err(WalkFailure::Fault)?,
+            value_type,
+        }))
+    }
+
+    /// Project the named pure function and every function its body reaches.
+    /// The function's body has no protocol-origin location rows, so this
+    /// route retains the admitted node types and evaluator operations only.
+    pub(crate) fn project_function(
+        &self,
+        name: &str,
+    ) -> Result<Option<ReaderProtocolProjection>, WalkFailure> {
+        let selected = self.index.nodes.values().find(|node| {
+            has_form(node, WireTag::Function, WireForm::PureFunction)
+                && node.declaration.as_ref().is_some_and(|declaration| {
+                    declaration.qualified_name.len() == 1
+                        && declaration.qualified_name[0].as_ref() == name
+                })
+        });
+        let Some(selected) = selected else {
+            return Ok(None);
+        };
+        let failure = match self.index.project_function(&selected.node_id) {
+            Ok(projection) => return Ok(Some(projection)),
+            Err(BuildError::Fault(fault)) => return Err(WalkFailure::Fault(fault)),
+            Err(failure) => failure,
+        };
+        if let Some(refusal) = self.index.equality_refusal(&selected.node_id) {
+            return Err(WalkFailure::Equality(refusal));
+        }
+        match failure {
+            BuildError::Equality(refusal) => Err(WalkFailure::Equality(refusal)),
+            BuildError::Unsupported { reason, node } => {
+                let view = UnsupportedView {
+                    package: self.index.admitted.name().to_owned(),
+                    locus: ViewLocus::node(self.index.key(&node).map_err(WalkFailure::Fault)?),
+                    reason,
+                };
+                let (parameters, body) = function_parts(&selected.body).ok_or_else(|| {
+                    WalkFailure::Fault(fault("reader-pure-function-has-checked-body"))
+                })?;
+                let parameter_position = parameters.iter().position(|parameter| {
+                    matches!(parameter, CheckedTerm::Reference { target } if target == &node)
+                });
+                let body_is_node =
+                    matches!(body, CheckedTerm::Reference { target } if target == &node);
+                match function_type_position(&view.reason, parameter_position, body_is_node) {
+                    Some(FunctionTypePosition::Parameter(position)) => {
+                        Err(WalkFailure::FunctionParameterType {
+                            position,
+                            view: Box::new(view),
+                        })
+                    }
+                    Some(FunctionTypePosition::Result) => {
+                        let function = selected
+                            .declaration
+                            .as_ref()
+                            .and_then(|declaration| declaration.qualified_name.last())
+                            .map(|name| name.to_string())
+                            .ok_or_else(|| {
+                                WalkFailure::Fault(fault("reader-function-name-is-admitted"))
+                            })?;
+                        Err(WalkFailure::FunctionResultType {
+                            function,
+                            view: Box::new(view),
+                        })
+                    }
+                    None => Err(WalkFailure::Unsupported(view)),
+                }
+            }
+            BuildError::Fault(fault) => Err(WalkFailure::Fault(fault)),
+            BuildError::Suspended => Err(WalkFailure::Fault(fault(
+                "reader-function-projection-resolves-its-suspensions",
+            ))),
+        }
     }
 
     /// `project_slot`, reporting the first refusal of the whole walk by
@@ -1021,6 +1328,67 @@ impl<'wire> BareWalker<'wire> {
         }
     }
 
+    /// The projection of the clause term rooted at `root` over `binders`
+    /// (FR-940 "Package forms of the source-checked evaluators"): a temporal
+    /// clause's `holds` condition or activation guard. The package writes no
+    /// `protocol_locations` row for a clause term (FR-383 rows are written for
+    /// protocol slots only), so each node is located under `owner`, the
+    /// term's clause site.
+    pub(crate) fn project_term(
+        &self,
+        root: &NodeKey,
+        binders: &[NodeKey],
+        owner: Origin,
+    ) -> Result<ReaderProtocolProjection, WalkFailure> {
+        let mut projection = self.slot(&SlotRequest {
+            root: root.clone(),
+            origin: String::new(),
+            binders: binders.to_vec(),
+        })?;
+        projection.locate_under(owner);
+        projection.locate_functions(&self.function_indices());
+        Ok(projection)
+    }
+
+    /// Each pure function's declaration index among the package's functions
+    /// in source order, by its name: the rank of its `declaration`
+    /// occurrence among every pure function's, by the start of their
+    /// source-map regions.
+    fn function_indices(&self) -> BTreeMap<String, usize> {
+        let admitted = self.index.admitted;
+        let mut declared: Vec<(u64, String)> = admitted
+            .resolved_graph()
+            .nodes
+            .iter()
+            .filter(|node| has_form(node, WireTag::Function, WireForm::PureFunction))
+            .filter_map(|node| {
+                let name = node
+                    .declaration
+                    .as_ref()?
+                    .qualified_name
+                    .last()?
+                    .to_string();
+                let start = admitted
+                    .source_map()
+                    .iter()
+                    .filter(|entry| {
+                        entry.node_id == node.node_id
+                            && entry.role
+                                == filament_contract_model::CheckedOccurrenceRole::Declaration
+                    })
+                    .filter_map(|entry| entry.regions.first().map(|region| region.start))
+                    .min()?;
+                Some((start, name))
+            })
+            .collect();
+        declared.sort();
+        declared
+            .into_iter()
+            .enumerate()
+            .map(|(index, (_, name))| (name, index))
+            .collect()
+    }
+
     /// The number of rows each type-declaration origin holds for each
     /// application, by origin name.
     pub(crate) fn origin_rows(&self) -> BTreeMap<&'wire str, BTreeMap<CheckedNodeId, usize>> {
@@ -1043,6 +1411,11 @@ impl<'wire> BareWalker<'wire> {
     pub(crate) fn key(&self, application: &CheckedNodeId) -> Result<NodeKey, InternalFault> {
         self.index.key(application)
     }
+}
+
+pub(crate) struct ReaderFunctionResultType {
+    pub(crate) function_node: NodeKey,
+    pub(crate) value_type: ValueType,
 }
 
 /// The positions of a slot in FR-383's walk order: pre-order, children in
@@ -1145,10 +1518,10 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             .iter()
             .filter_map(|id| self.index.node(id))
             .filter(|node| has_form(node, WireTag::Function, WireForm::PureFunction))
-            .map(|node| {
+            .map(|node| -> Result<_, BuildError> {
                 let (parameters, body) = function_parts(&node.body)
                     .ok_or_else(|| fault("reader-pure-function-has-checked-body"))?;
-                let parameters = parameters
+                let parameter_ids = parameters
                     .iter()
                     .map(|parameter| match parameter {
                         CheckedTerm::Reference { target } => Ok(target.clone()),
@@ -1157,7 +1530,11 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     .collect::<Result<Vec<_>, _>>()?;
                 let body = match body {
                     CheckedTerm::Reference { target } => target.clone(),
-                    _ => return Err(fault("reader-function-body-has-checked-identity")),
+                    _ => {
+                        return Err(BuildError::Fault(fault(
+                            "reader-function-body-has-checked-identity",
+                        )))
+                    }
                 };
                 let name = node
                     .declaration
@@ -1165,21 +1542,48 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     .and_then(|declaration| declaration.qualified_name.last())
                     .map(|name| name.to_string())
                     .ok_or_else(|| fault("reader-function-name-is-admitted"))?;
-                Ok((node.node_id.clone(), name, parameters, body))
+                let parameters = parameter_ids
+                    .iter()
+                    .map(|id| {
+                        let parameter = self
+                            .index
+                            .node(id)
+                            .ok_or_else(|| fault("reader-function-parameter-is-admitted"))?;
+                        let name = parameter_name(&parameter.body)
+                            .map(str::to_owned)
+                            .ok_or_else(|| fault("reader-function-parameter-name-is-admitted"))?;
+                        let value_type = self.value_type(id)?;
+                        Ok(ReaderProtocolParameter {
+                            name,
+                            node: self.index.key(id)?,
+                            value_type,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, BuildError>>()?;
+                Ok((node.node_id.clone(), name, parameter_ids, parameters, body))
             })
-            .collect::<Result<Vec<_>, InternalFault>>()?;
+            .collect::<Result<Vec<_>, BuildError>>()?;
 
-        for (node, name, parameters, _) in &declarations {
+        for (node, name, parameter_ids, parameters, _) in &declarations {
             let index = self.functions.len();
             self.function_indexes.insert(node.clone(), index);
             self.functions.push(ReaderFunction {
                 name: name.clone(),
                 body: usize::MAX,
-                slots: parameters.len(),
+                slots: parameter_ids.len(),
+                parameters: parameters
+                    .iter()
+                    .map(|parameter| ReaderProtocolParameter {
+                        name: parameter.name.clone(),
+                        node: parameter.node.clone(),
+                        value_type: parameter.value_type.clone(),
+                    })
+                    .collect(),
+                result_type: None,
             });
         }
-        for (index, (_, _, parameters, body)) in declarations.iter().enumerate() {
-            let locals = parameters
+        for (index, (_, _, parameter_ids, _, body)) in declarations.iter().enumerate() {
+            let locals = parameter_ids
                 .iter()
                 .enumerate()
                 .map(|(slot, id)| (id.clone(), slot))
@@ -1190,6 +1594,13 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 locals: std::rc::Rc::new(locals),
             })?;
             self.functions[index].body = body;
+            self.functions[index].result_type = Some(
+                self.nodes
+                    .get(body)
+                    .ok_or_else(|| fault("reader-function-body-is-projected"))?
+                    .value_type
+                    .clone(),
+            );
         }
         Ok(())
     }
@@ -1866,6 +2277,15 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     return Err(fault("reader-decimal-negation-has-decimal-result").into());
                 };
                 Ok((NodeKind::DecimalNegate(*operand, target.clone()), children))
+            }
+            Some("filament.op.state.pre") => {
+                // FR-104: `pre(e)` reads `e` at the pre observation; its
+                // value is the operand's own.
+                let children = self.project_arguments(id, Some(arguments), context, locals)?;
+                let [operand] = children.as_slice() else {
+                    return Err(fault("reader-pre-read-has-one-operand").into());
+                };
+                Ok((NodeKind::Pre(*operand), children))
             }
             Some("filament.op.option.present") => {
                 let children = self.project_arguments(id, Some(arguments), context, locals)?;
@@ -3124,6 +3544,8 @@ struct ReaderFunction {
     name: String,
     body: usize,
     slots: usize,
+    parameters: Vec<ReaderProtocolParameter>,
+    result_type: Option<ValueType>,
 }
 
 fn fault(invariant: &'static str) -> InternalFault {
@@ -3191,6 +3613,8 @@ mod order_tests {
             )],
             functions: Vec::new(),
             root: 0,
+            selected_function: None,
+            selected_function_node: None,
             frame_slots: 2,
             locals: BTreeMap::new(),
         };
@@ -3218,6 +3642,30 @@ mod order_tests {
 
     fn witness(reason: impl Into<UnsupportedReason>) -> UnsupportedView {
         UnsupportedView::witness("pkg", reason.into())
+    }
+
+    /// Only a missing type representation can be attributed to a function's
+    /// parameter or result type; an unsupported body operation stays generic.
+    #[trace("FR-945", "TC-1333")]
+    #[test]
+    fn unsupported_root_operation_is_not_a_function_result_type() {
+        let operation = UnsupportedReason::MissingOperationProjection {
+            operation: "future-operation".to_owned(),
+        };
+        assert_eq!(
+            function_type_position(&operation, None, true),
+            None,
+            "a body-root operation refusal must not carry function-result details"
+        );
+        assert_eq!(
+            function_type_position(&UnsupportedReason::MissingTypeRepresentation, None, true),
+            Some(FunctionTypePosition::Result)
+        );
+        assert_eq!(
+            function_type_position(&operation, Some(0), false),
+            None,
+            "an operation refusal must not be attributed to a parameter type"
+        );
     }
 
     fn first(views: Vec<UnsupportedView>) -> String {

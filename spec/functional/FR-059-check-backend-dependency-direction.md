@@ -18,7 +18,9 @@ ADR-011 §3 fixes two forbidden bypasses over the four-repository ecosystem
 (FSL, filament-contract-ir, filament-contract-runtime, filament-contract-codegen):
 
 - **FB-05**: no backend (IR, RT or CG) depends on FSL, except CG's normal
-  dependency on the FSL layer-6 `replay` facade, the package `fsl-replay`.
+  dependency on the FSL layer-6 `replay` facade, the package `fsl-replay`,
+  and its normal dependency on `fsl-package` for the types that layer owns,
+  such as `ObligationIdentity`.
 - **FB-11**: no dependency edge, normal or dev, closes a cycle among the four
   repositories.
 
@@ -36,7 +38,7 @@ violating FB-11, and passes only when neither set of findings is non-empty.
 ## Outputs
 
 - An FB-05 report: the list of edges into FSL that are not CG's normal
-  dependency on `fsl-replay`.
+  dependency on `fsl-replay` or `fsl-package`.
 - An FB-11 report: the list of simple cycles over the combined normal+dev
   edge graph of the four repositories, each reported once regardless of which
   repository the cycle is discovered from.
@@ -60,11 +62,15 @@ classifies an FSL-sourced shared leaf as FSL.
 The check SHALL treat a `build`-kind dependency as a normal edge for FB-05/
 FB-11 purposes, and a `dev`-kind dependency as a dev edge.
 
-The check SHALL treat CG's normal dependency on the FSL package
-`fsl-replay` as the one FB-05 exception. This is the rule
+The check SHALL treat CG's normal dependencies on the FSL packages
+`fsl-replay` and `fsl-package` as the FB-05 exception. CG takes
+`ObligationIdentity`, which `fsl-package` owns (QSL-1109, CF-IR-04), from
+`fsl-package` directly, because `fsl-replay` does not re-export it; since
+`fsl-replay` already depends on `fsl-package`, the second edge adds no crate
+to CG's graph (QSL-2166). This is the rule
 [FR-356](FR-356-walk-nested-structures-through-one-iterative-walker-toolkit.md)-AC-1
 states for the same direction check ("refuses one to any `fsl-*` crate
-other than CG's normal edge to `fsl-replay`"), which
+other than CG's normal edges to `fsl-replay` and `fsl-package`"), which
 `tc_arch_lint_direction_004` (`tools/arch-lint/graph.rs`) tests; FR-059-AC-10
 and FR-059-AC-1 are read with it as one rule.
 
@@ -81,8 +87,8 @@ FB-05 edge. CG names the types FR-401 moves to those leaves, such as
 `Category`, from the leaves directly
 ([FR-401](FR-401-host-the-evaluation-interface-in-the-filament-eval-leaf.md));
 `fsl-replay` does not re-export the types FR-401 moves. Among CG's
-FSL-owned dependencies, the allowed set is `fsl-replay`, the one FSL crate,
-plus the shared leaves `filament-semantic-value` and the `agent-ix/filament-eval`
+FSL-owned dependencies, the allowed set is the FSL crates `fsl-replay` and
+`fsl-package`, plus the shared leaves `filament-semantic-value` and the `agent-ix/filament-eval`
 crates, and no other FSL-owned crate (FR-060, "T12-A and the evaluator
 differential corpus"). CG's edges to the other shared leaves, such as
 `filament-exact` and `filament-walk`, are not FSL-owned and remain as ADR-011
@@ -117,7 +123,7 @@ all, not that the edge's caller code stays inside the layer-6 `replay` facade.
 | FR-059-AC-8 | A resolved RT dependency on the git-sourced `filament-exact` yields no edge and no finding; a resolved RT dependency on another crate sourced from the FSL repository, such as `fsl-eval`, yields an RT → FSL edge reported as an FB-05 violation. | Test (TC-156) |
 | FR-059-AC-9 | A resolved RT dependency on the git-sourced `filament-semantic-value` yields no edge and no finding; resolved RT dependencies on `fsl-eval` and on `fsl-semantics`, from the same FSL source, each yield an RT → FSL edge reported as an FB-05 violation. | Test (TC-156) |
 | FR-059-AC-10 | A graph in which CG has normal dependencies on `fsl-replay` and on `fsl-eval`, both sourced from the FSL repository, on `filament-semantic-value` sourced from `agent-ix/filament-semantic-value`, and on `filament-eval` and `filament-eval-corpus` sourced from `agent-ix/filament-eval`, reports exactly one FB-05 violation, the CG → FSL edge via `fsl-eval`; the same graph without the `fsl-eval` dependency reports FB-05 clean. | Test (TC-156) |
-| FR-059-AC-11 | Run against the real, current-head resolution of filament-contract-codegen's manifest, every CG normal dependency sourced from the FSL repository, `agent-ix/filament-semantic-value` or `agent-ix/filament-eval` is `fsl-replay`, `filament-semantic-value` or a crate of `agent-ix/filament-eval`; its only CG → FSL normal edge is via `fsl-replay`, and the check reports no FB-05 edge from CG. | Test (TC-156) |
+| FR-059-AC-11 | Run against the real, current-head resolution of filament-contract-codegen's manifest, every CG normal dependency sourced from the FSL repository, `agent-ix/filament-semantic-value` or `agent-ix/filament-eval` is `fsl-replay`, `fsl-package`, `filament-semantic-value` or a crate of `agent-ix/filament-eval`; its only CG → FSL normal edges are via `fsl-replay` and `fsl-package`, and the check reports no FB-05 edge from CG. | Test (TC-156) |
 
 ## Dependencies
 
@@ -126,4 +132,5 @@ all, not that the edge's caller code stays inside the layer-6 `replay` facade.
 - [FR-060](FR-060-check-fsl-api-surface-boundary.md) checks the FB-05
   exception's call-site boundary.
 - [FR-356](FR-356-walk-nested-structures-through-one-iterative-walker-toolkit.md)-AC-1
-  states the same `fsl-replay`-only FB-05 exception for the direction check.
+  states the same `fsl-replay` and `fsl-package` FB-05 exception for the
+  direction check.

@@ -10,7 +10,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use filament_exact::{Cancel, Meter};
+use filament_exact::{Cancel, Meter, Value};
+use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::location::ExpressionOwner;
 use fsl_analyze::model_check::{
     check_protocol, ProtocolCheckRequest, SubjectContext, SubjectIdentity,
@@ -23,20 +24,21 @@ use fsl_eval::simulation::model::{
 };
 use fsl_eval::simulation::protocol::{
     visible, AnchorName, BlockedThread, ClaimReads, ProtocolLocation, ProtocolRefusal,
-    ProtocolSystem, ProtocolTransition, RestKind, RestPoint, Sc, StepKind, ThreadPath, Unsupported,
-    WaitCause,
+    ProtocolSystem, ProtocolTransition, RestKind, RestPoint, Sc, StepKind, ThreadPath, Tso,
+    Unsupported, WaitCause,
 };
 use fsl_eval::simulation::{Location, SubjectSystem, TransitionSystem};
 use fsl_eval::temporal::AtomReading;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::MemoryModelName;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    node_occurrence, replay_protocol_trace, settle_protocol_check, InconclusiveCause,
-    InstanceBound, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord,
-    ModelTraceReplayResult, ModelTraceSubject, ProtocolCertificateRequest, ProtocolTraceSubject,
-    ReplayLimits, ReplayRefusal, ResultLabel, StatedInstanceBound, TemporalCounterexample,
-    TerminalValue, UndecidedCause,
+    node_occurrence, replay_protocol_trace, settle_protocol_check, CounterexampleKind, Execution,
+    InconclusiveCause, InstanceBound, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome,
+    ModelCheckRecord, ModelTraceReplayResult, ModelTraceSubject, ProtocolCertificateRequest,
+    ProtocolTraceSubject, ReplayLimits, ReplayRefusal, ResultLabel, StatedInstanceBound,
+    TemporalCounterexample, TerminalValue, Truth, UndecidedCause, UndefinedLocus,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::model_request::ModelRequest;
@@ -49,7 +51,7 @@ use crate::fill::{
     attempt, check_refusals, class_of, contracts, document, instance, json_of, model_subject,
     package_with, reachable, sc_system, source_memory, universe, v, Documents, Reached, PACKAGE,
 };
-use crate::model_settle::{envelope_at, request};
+use crate::model_settle::{envelope_at, protocol_anchor, request};
 use crate::protocol_compensation::{pay_run, refund, REFUND};
 use crate::protocol_system::touch;
 
@@ -102,6 +104,16 @@ impl World {
 
     /// [`Self::new`] with the further header `profiles` lines.
     fn with_profiles(profiles: &str, body: &str, keys: &[&'static str], starts: &[i64]) -> Self {
+        Self::with_profiles_mode(profiles, body, keys, starts, CheckMode::Linked)
+    }
+
+    fn with_profiles_mode(
+        profiles: &str,
+        body: &str,
+        keys: &[&'static str],
+        starts: &[i64],
+        mode: CheckMode,
+    ) -> Self {
         let mut documents = Documents::new();
         let initial = starts
             .iter()
@@ -115,9 +127,13 @@ impl World {
             body: body.to_owned(),
             documents,
             initial,
-            checked: package_with(profiles, body),
+            checked: crate::fill::package_with_mode(profiles, body, mode),
             keys: keys.to_vec(),
         }
+    }
+
+    fn with_kernel_functions(body: &str, keys: &[&'static str], starts: &[i64]) -> Self {
+        Self::with_profiles_mode("", body, keys, starts, CheckMode::Kernel)
     }
 
     /// The subject of protocol `R` with `k` bound to `c`.
@@ -159,8 +175,13 @@ impl World {
         max_live_instances: Option<u64>,
     ) -> ModelCheckOutcome<ProtocolTransition> {
         let subject = self.subject();
-        let temporal_clock_selections =
-            crate::fill::tcb_01_event_position_selection(subject.model.simulation.package);
+        let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(
+            subject
+                .model
+                .simulation
+                .source_package()
+                .expect("a source-route subject"),
+        );
         check_protocol(
             ProtocolCheckRequest {
                 temporal_clock_selections: &temporal_clock_selections,
@@ -200,6 +221,83 @@ impl World {
             },
             &Cancel::new(),
             |payload| self.replay(payload.clone(), letters, max_live_instances),
+        )
+    }
+
+    /// EN-1's deadlock-freedom outcome over protocol `R`.
+    fn deadlock(&self) -> ModelCheckOutcome<ProtocolTransition> {
+        check_protocol(
+            ProtocolCheckRequest {
+                temporal_clock_selections: &[],
+                subject: self.subject(),
+                item: ModelCheckItem::DeadlockFreedom,
+                max_depth: None,
+                max_store_buffer: None,
+                max_messages: None,
+                max_live_instances: None,
+                limits: ModelCheckLimits::default(),
+                ignore_memory_constraints: false,
+            },
+            &Cancel::new(),
+        )
+        .expect("the deadlock-freedom item checks")
+    }
+
+    /// FR-217 replay and FR-127 settlement for the deadlock-freedom item.
+    fn settle_deadlock(
+        &self,
+        outcome: &ModelCheckOutcome<ProtocolTransition>,
+    ) -> ModelCheckRecord<ProtocolTransition> {
+        let subject = self.subject();
+        let trace_roles = subject.roles.clone();
+        let trace_memory = subject.memory.clone();
+        settle_protocol_check(
+            outcome,
+            &ModelCheckLimits::default(),
+            &ProtocolCertificateRequest {
+                temporal_clock_selections: &[],
+                subject,
+                item: ModelCheckItem::DeadlockFreedom,
+                max_store_buffer: None,
+                max_messages: None,
+                max_live_instances: None,
+            },
+            &Cancel::new(),
+            |payload| {
+                let (node, occurrence) = protocol_anchor(&self.checked, "R");
+                let unit = crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &self.body)
+                    .into_bytes();
+                replay_protocol_trace(
+                    request(
+                        &self.checked,
+                        &[],
+                        &document(),
+                        self.documents.snapshots.iter(),
+                        &unit,
+                    ),
+                    &ProtocolTraceSubject {
+                        model: ModelTraceSubject {
+                            timed: None,
+                            initial: self.initial.clone(),
+                            universes: universe(&self.keys),
+                            expansion: ExpansionLimits {
+                                max_candidates: 1_000_000,
+                            },
+                        },
+                        protocol: "R".to_owned(),
+                        over: instance("c"),
+                        roles: trace_roles.clone(),
+                        capacities: Vec::new(),
+                        memory: trace_memory.clone(),
+                        max_store_buffer: None,
+                        max_messages: None,
+                        max_live_instances: None,
+                    },
+                    &envelope_at(payload.clone(), node, occurrence),
+                    &crate::counter::Letters { atom: |_| None },
+                    ReplayLimits::default(),
+                )
+            },
         )
     }
 
@@ -726,26 +824,35 @@ fn refund_thread() -> ThreadPath {
     ThreadPath::compensation(0, "R::Refund", 0)
 }
 
-/// Part of FR-211-AC-5 (TC-656), the role part at a compensation attempt: a
-/// template taken `by r`, whose compensation thread is created when `r` has
-/// no live instance and no `spawn` is enabled, deadlocks with the thread
-/// `NoRoleInstance{r}`.
+/// FR-211-AC-5 (TC-656): retiring the last instance prevents a refund
+/// attempt from dispatching, while the compensation thread can expire.
+#[trace("TC-656", "FR-211-AC-5")]
 #[test]
-fn a_compensation_attempt_owned_by_a_role_with_no_instance_gives_no_role_instance() {
+fn a_compensation_attempt_owned_by_a_role_with_no_instance_can_expire() {
     let world = World::new(&pay_by_role("until(r.v >= 0)"), &["c"], &[0]);
     let subject = world.subject();
     let system = sc_system(&subject);
     let reached = reachable(&system);
-    let waits: Vec<WaitCause> = reached
+    let retired = reached
         .iter()
-        .filter(|state| state.steps.is_empty() && state.state.has_live_instance())
-        .flat_map(|state| {
-            SubjectSystem::blocked(&system, &state.state, &[]).expect("the blocked threads")
+        .find(|state| {
+            statuses(&system, state)
+                .get("c")
+                .is_some_and(|status| status == "retired")
+                && system
+                    .threads(&state.state)
+                    .expect("threads")
+                    .iter()
+                    .any(|thread| thread.path == refund_thread())
         })
-        .filter(|thread| thread.path == refund_thread())
-        .map(|thread| thread.cause)
-        .collect();
-    assert_eq!(waits, [no_role_instance()]);
+        .expect("the refund is active after the only role instance retires");
+    let [(expiration, next)] = retired.steps.as_slice() else {
+        panic!("one expiration, got {:?}", retired.steps);
+    };
+    assert_eq!(expiration.thread(), Some(&refund_thread()));
+    assert_eq!(expiration.kind(), StepKind::CExpire);
+    assert!(expiration.actor().is_none());
+    assert_eq!(kinds(&reached, *next), [StepKind::Finish]);
 }
 
 /// ADR-027 RR-4: a `scope` role owning only the template's compensation
@@ -758,10 +865,18 @@ fn a_scope_role_stays_live_for_the_compensation_attempt_it_owns() {
     let subject = world.subject();
     let system = sc_system(&subject);
     let reached = reachable(&system);
-    assert!(reached.iter().any(|state| state
-        .steps
-        .iter()
-        .any(|(step, _)| step.kind() == StepKind::CAttempt)));
+    for kind in [StepKind::CAttempt, StepKind::CFail, StepKind::CTimeout] {
+        let dispatch = reached
+            .iter()
+            .flat_map(|state| &state.steps)
+            .map(|(step, _)| step)
+            .find(|step| step.kind() == kind)
+            .unwrap_or_else(|| panic!("{kind:?} dispatches while the scope role is live"));
+        assert_eq!(
+            dispatch.actor().expect("the dispatch has an actor").role,
+            "r"
+        );
+    }
     for state in reached
         .iter()
         .filter(|state| state.steps.is_empty() && state.state.has_live_instance())
@@ -2084,14 +2199,12 @@ fn a_retire_predicate_reads_a_named_population() {
 /// other route reaches this path: a meter stop is an `ExpansionStop`, not an
 /// undecided evaluation. Replace the initializer once QSL-1903 lands.
 ///
-/// An undecided protocol capture (`6 mod (1 - 1)` is undefined): under `on
-/// each` no `activate` step starts an instance and each trigger records a
-/// `ProtocolExpressionUndetermined` finding naming the capture; under `on
-/// origin` the system refuses at its initial state with
-/// `Unsupported::UndecidedInitialGuard`.
+/// Under `on each`, an undecided protocol capture records a finding for each
+/// trigger and no `activate` step starts an instance.
 #[trace("TC-654")]
 #[test]
-fn an_undecided_protocol_capture_is_a_finding_on_each_and_a_refusal_on_origin() {
+#[ignore = "QSL-1903: the legacy inline mod capture is refused by S3 before the stepper; AC-2 uses the Kernel-function fixture below"]
+fn an_undecided_protocol_capture_is_a_finding_on_each() {
     let capture = "capture z: Boolean = 6 mod (1 - 1) >= 0;";
     let run = "sequence Main { attempt T by w on M::Cell::inc contracts [IncPre, IncPost] \
                as (t: Boolean) { true }; }";
@@ -2118,42 +2231,27 @@ fn an_undecided_protocol_capture_is_a_finding_on_each_and_a_refusal_on_origin() 
         )),
         "{findings:?}"
     );
-
-    let origin = World::new(
-        &with_captures(&unit(ORIGIN, "", "", run), capture),
-        &["c"],
-        &[0],
-    );
-    let subject = origin.subject();
-    let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
-    let refusal = ProtocolSystem::new(model, &subject, Sc)
-        .err()
-        .expect("refuses");
-    assert!(
-        matches!(
-            refusal,
-            ProtocolRefusal::Unsupported(Unsupported::UndecidedInitialGuard)
-        ),
-        "{refusal:?}"
-    );
 }
 
-/// FR-882-AC-2 (TC-2505): an undecided protocol capture under `on origin`
-/// is an undefined value at the instance's first state, settled as a
-/// refutation by the undefined rule; the system is built and explores, it
-/// never refuses `Unsupported::UndecidedInitialGuard`.
+/// FR-882-AC-2 (TC-2505): a choice guard that calls a Kernel-checked
+/// function whose `mod` divisor is zero settles deadlock freedom as refuted:
+/// `on origin` has an empty prefix and `on each` has only its activation.
 #[trace("TC-2505", "FR-882-AC-2")]
 #[test]
-#[ignore = "QSL-2221: an undecided initial capture refuses Unsupported::UndecidedInitialGuard instead of a refutation"]
-fn an_undecided_initial_capture_is_a_refutation_on_origin() {
-    let capture = "capture z: Boolean = 6 mod (1 - 1) >= 0;";
-    let run = "sequence Main { attempt T by w on M::Cell::inc contracts [IncPre, IncPost] \
-               as (t: Boolean) { true }; }";
-    let origin = World::new(
-        &with_captures(&unit(ORIGIN, "", "", run), capture),
-        &["c"],
-        &[0],
-    );
+fn an_undecided_initial_choice_guard_is_a_finding_on_origin_and_each() {
+    let kernel_function = "function q using v(x: Integer): Integer pure { 6 mod x }\n";
+    let run = "sequence Main { choice Pick by w visible (q(c) = 0) { \
+               case yes when { q(c) = 0 } sequence Zero { } \
+               case no when { not (q(c) = 0) } sequence Other { } } }";
+    let protocol = |activation: &str| {
+        format!(
+            "{}{kernel_function}protocol R using p over (k: M::Cell) {activation} {{ \
+             capture c: Integer = 0; role w on M::Cell;\nrun {run}\n\
+             finish Done as (d: Boolean) {{ true }}; }}",
+            contracts("true"),
+        )
+    };
+    let origin = World::with_kernel_functions(&protocol(ORIGIN), &["c"], &[0]);
     let subject = origin.subject();
     let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
     let system = ProtocolSystem::new(model, &subject, Sc)
@@ -2166,20 +2264,74 @@ fn an_undecided_initial_capture_is_a_refutation_on_origin() {
     assert!(
         findings.iter().any(|finding| matches!(
             finding,
-            ModelFinding::ProtocolExpressionUndetermined { node, .. } if node.ends_with("::z")
+            ModelFinding::ProtocolExpressionUndetermined { node, .. } if node.contains("Pick")
         )),
         "{findings:?}"
     );
+    let outcome = origin.deadlock();
+    let record = origin.settle_deadlock(&outcome);
+    assert_eq!(record.label, ResultLabel::Refuted);
+    assert_eq!(record.value, TerminalValue::Refuted);
+    assert_eq!(record.execution, Execution::Completed);
+    assert_eq!(record.truth, Truth::Violated);
+    assert_ne!(record.label, ResultLabel::Unsupported);
+    let counterexample = record.counterexample.expect("a replayed counterexample");
+    assert!(counterexample.prefix.is_empty(), "{counterexample:?}");
+    let CounterexampleKind::UndefinedEvaluation(undefined) = counterexample.kind else {
+        panic!("{counterexample:?}");
+    };
+    assert!(matches!(
+        undefined.site.locus,
+        UndefinedLocus::Protocol(ref node) if node.contains("Pick")
+    ));
+
+    let each = World::with_kernel_functions(&protocol(EACH), &["c"], &[0]);
+    let subject = each.subject();
+    let system = sc_system(&subject).with_max_live_instances(1);
+    let reached = reachable(&system);
+    let findings = reached
+        .iter()
+        .flat_map(|state| system.successors(&state.state).expect("expands").findings)
+        .collect::<Vec<_>>();
+    assert!(
+        findings.iter().any(|finding| matches!(
+            finding,
+            ModelFinding::ProtocolExpressionUndetermined { node, .. } if node.contains("Pick")
+        )),
+        "{findings:?}"
+    );
+    let outcome = each.deadlock();
+    let record = each.settle_deadlock(&outcome);
+    assert_eq!(record.label, ResultLabel::Refuted);
+    assert_eq!(record.value, TerminalValue::Refuted);
+    assert_eq!(record.execution, Execution::Completed);
+    assert_eq!(record.truth, Truth::Violated);
+    assert_ne!(record.label, ResultLabel::Unsupported);
+    let counterexample = record.counterexample.expect("a replayed counterexample");
+    assert_eq!(
+        counterexample
+            .prefix
+            .iter()
+            .map(|step| step.transition.kind())
+            .collect::<Vec<_>>(),
+        [StepKind::Activate],
+        "{counterexample:?}"
+    );
+    let CounterexampleKind::UndefinedEvaluation(undefined) = counterexample.kind else {
+        panic!("{counterexample:?}");
+    };
+    assert!(matches!(
+        undefined.site.locus,
+        UndefinedLocus::Protocol(ref node) if node.contains("Pick")
+    ));
 }
 
 /// FR-882-AC-3 (TC-2506): an `over` input that is not an object reference
 /// ranges over its type's finite domain, one `origin` instance per value.
 #[trace("TC-2506", "FR-882-AC-3")]
 #[test]
-#[ignore = "QSL-2221: an over input that is not an object refuses Unsupported::OverNotAnObject instead of ranging over its domain"]
-fn a_non_object_over_has_one_origin_instance_per_value() {
-    let run = "sequence Main { attempt T by w on M::Cell::inc contracts [IncPre, IncPost] \
-               as (t: Boolean) { true }; }";
+fn a_non_object_over_ranges_over_each_finite_value() {
+    let run = "sequence Main { check Gate using v { k > 1 }; }";
     let text = unit(ORIGIN, "", "", run).replace("over (k: M::Cell)", "over (k: Int[0, 3])");
     let world = World::new(&text, &["c"], &[0]);
     let subject = world.subject();
@@ -2187,4 +2339,217 @@ fn a_non_object_over_has_one_origin_instance_per_value() {
     let system = ProtocolSystem::new(model, &subject, Sc)
         .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
     assert_eq!(system.initial().len(), 4);
+    let outcomes = system
+        .initial()
+        .iter()
+        .map(|state| {
+            let Value::Integer(value) = state.over() else {
+                panic!("integer over value: {:?}", state.over());
+            };
+            let value = value
+                .to_string()
+                .parse::<i64>()
+                .expect("the small bounded value fits i64");
+            let blocked = system
+                .successors(state)
+                .expect("expands")
+                .successors
+                .is_empty();
+            (value, blocked)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(outcomes, [(0, true), (1, true), (2, false), (3, false)]);
+    let first_blocked = outcomes
+        .iter()
+        .find(|(_, blocked)| *blocked)
+        .expect("the guard blocks at least one over value");
+    assert_eq!(first_blocked.0, 0, "the first counterexample is n = 0");
+
+    let run = "sequence Main { check Gate using v { true }; }";
+    let text = unit(ORIGIN, "", "", run).replace("over (k: M::Cell)", "over (k: Boolean)");
+    let world = World::new(&text, &["c"], &[0]);
+    let subject = world.subject();
+    let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
+    let system = ProtocolSystem::new(model, &subject, Sc)
+        .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
+    assert_eq!(system.initial().len(), 2);
+    let mut booleans = system
+        .initial()
+        .iter()
+        .map(|state| {
+            let Value::Boolean(value) = state.over() else {
+                panic!("Boolean over value: {:?}", state.over());
+            };
+            *value
+        })
+        .collect::<Vec<_>>();
+    booleans.sort_unstable();
+    assert_eq!(booleans, [false, true]);
+    assert!(system.initial().iter().all(|state| {
+        !system
+            .successors(state)
+            .expect("expands")
+            .successors
+            .is_empty()
+    }));
+}
+
+/// FR-882-AC-4 (TC-2506): a checked Boolean attempt binder is present while
+/// a following check reads it.
+#[trace("TC-2506", "FR-882-AC-4")]
+#[test]
+fn an_attempt_binder_is_bound() {
+    let run = "sequence Main { attempt T by w on M::Cell::flag contracts [FlagPre, FlagPost] \
+               as (t: Boolean) { true }; check Gate using v { t }; }";
+    let text = unit(ORIGIN, "", "", run).replace(
+        "post FlagPost using v on M::Cell::flag { self.v - pre(self.v) = 1 }",
+        "post FlagPost using v on M::Cell::flag { self.v - pre(self.v) = 1 and result = true }",
+    );
+    let world = World::new(&text, &["c"], &[0]);
+    let subject = world.subject();
+    let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
+    let system = ProtocolSystem::new(model, &subject, Sc)
+        .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
+    let reached = reachable(&system);
+    // Placement advances through the check immediately, so the binder has
+    // already been consumed by the time a reached state is exposed.
+    assert!(reached.iter().any(|state| {
+        state.steps.iter().any(|(transition, _)| {
+            transition.kind() == StepKind::Finish && transition.node() == Some("Done")
+        })
+    }));
+    assert!(reached.iter().all(|state| {
+        system
+            .successors(&state.state)
+            .expect("expands")
+            .findings
+            .iter()
+            .all(|finding| {
+                !matches!(
+                    finding,
+                    ModelFinding::ProtocolExpressionUndetermined { node, .. }
+                        if node.rsplit('/').next() == Some("t")
+                )
+            })
+    }));
+}
+
+/// FR-882-AC-4 (TC-2506): an attempt binder is bound to the attempt's
+/// application record whatever its declared type, so the effect of an
+/// attempt over a void operation, and of one whose binder type differs from
+/// the operation's result type, enables and the run finishes (ADR-027 ST-1,
+/// ST-2).
+#[trace("TC-2506", "FR-882-AC-4")]
+#[test]
+fn an_effect_enables_whatever_the_binder_type() {
+    for run in [
+        // A void operation under a Boolean binder.
+        "sequence Main { attempt T by w on M::Cell::bump contracts [BumpPost] \
+         as (t: Boolean) { true }; effect Fx of T as (e: Boolean) { true }; }",
+        // A Boolean-returning operation under an Integer binder.
+        "sequence Main { attempt T by w on M::Cell::flag contracts [FlagPre, FlagPost] \
+         as (t: Integer) { true }; effect Fx of T as (e: Boolean) { true }; }",
+    ] {
+        let world = World::new(&unit(ORIGIN, "", "", run), &["c"], &[0]);
+        let subject = world.subject();
+        let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
+        let system = ProtocolSystem::new(model, &subject, Sc)
+            .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
+        assert!(
+            reachable(&system).iter().any(|state| {
+                state.steps.iter().any(|(transition, _)| {
+                    transition.kind() == StepKind::Finish && transition.node() == Some("Done")
+                })
+            }),
+            "{run}: the effect enables and the run finishes"
+        );
+    }
+}
+
+/// FR-882-AC-7 (TC-2505): every remaining `Unsupported` variant has an
+/// exercised, non-refusing counterpart for the supported path in its area.
+#[trace("TC-2505", "FR-882-AC-7")]
+#[test]
+fn no_required_construct_settles_unsupported() {
+    fn has_non_refusing_case(variant: Unsupported) -> bool {
+        match variant {
+            Unsupported::WeakMemory => {
+                let run = "parallel Both { branch left sequence L { \
+                            event Left by w as (left: Boolean) { true }; } \
+                            branch right sequence R { \
+                            event Right by w as (right: Boolean) { true }; } } \
+                            join all [left, right];";
+                let text = crate::litmus::contracts()
+                    + &crate::litmus::protocol("SB", run)
+                    + crate::litmus::NO_BOTH_ZERO;
+                let case = crate::weak_memory::Case::new(&text);
+                let selection = [crate::weak_memory::select("SB::Both", MemoryModelName::Tso)];
+                let refused = case.system(&selection, Sc).err();
+                assert!(matches!(
+                    refused,
+                    Some(ProtocolRefusal::Unsupported(Unsupported::WeakMemory))
+                ));
+                case.system(&selection, Tso::default()).is_ok()
+            }
+            Unsupported::UnenumerableRecord => {
+                let run = "sequence Main { attempt T by w on M::Cell::flag contracts \
+                            [FlagPre, FlagPost] as (t: Boolean) { true }; }";
+                let world = World::new(&unit(ORIGIN, "", "", run), &["c"], &[0]);
+                let subject = world.subject();
+                let model =
+                    ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
+                ProtocolSystem::new(model, &subject, Sc).is_ok()
+            }
+        }
+    }
+
+    let variants = [Unsupported::WeakMemory, Unsupported::UnenumerableRecord];
+    assert!(variants.into_iter().all(has_non_refusing_case));
+}
+
+/// FR-218-AC-44 (TC-2972): an attempt binder of any declared type checks;
+/// a read gets the result when the binder type is the operation's result
+/// type, and otherwise each read is refused `ill_typed`/`type-mismatch` at
+/// the read, never at the binder declaration.
+#[trace("TC-2972", "FR-218-AC-44")]
+#[test]
+fn an_attempt_binder_read_is_checked_against_the_record() {
+    let flag = |binder: &str, gate: &str| {
+        format!(
+            "sequence Main {{ attempt T by w on M::Cell::flag contracts [FlagPre, FlagPost] \
+             as (t: {binder}) {{ true }};{gate} }}"
+        )
+    };
+    let touch = |gate: &str| {
+        format!(
+            "sequence Main {{ attempt T by w on M::Cell::touch contracts [TouchPre] \
+             as (t: Boolean) {{ true }};{gate} }}"
+        )
+    };
+    for run in [
+        flag("Boolean", " check Gate using v { t };"),
+        flag("Integer", ""),
+        touch(""),
+    ] {
+        let _ = World::new(&unit(ORIGIN, "", "", &run), &["c"], &[0]);
+    }
+    for (run, reads) in [
+        (flag("Integer", " check Gate using v { t = 1 };"), 1),
+        (touch(" check Gate using v { t };"), 1),
+        (
+            flag("Integer", " check Gate using v { t = 1 and t = 2 };"),
+            2,
+        ),
+    ] {
+        let refusals = check_refusals(&unit(ORIGIN, "", "", &run));
+        assert_eq!(refusals.len(), reads, "{run}: {refusals:?}");
+        for (refusal, at) in &refusals {
+            assert_eq!(
+                (refusal.cause.code(), refusal.cause.cause()),
+                (Code::IllTyped, Some("type-mismatch")),
+                "{run}"
+            );
+            assert_eq!(at.as_deref(), Some("t"), "{run}: at the read");
+        }
+    }
 }

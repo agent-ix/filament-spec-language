@@ -607,3 +607,20 @@ impl PlanRoot {
         })
     }
 }
+
+/// Admit an independently validated progress view against `root` and the
+/// caller's complete authority selections.
+///
+/// This public handoff preserves the observation owner's validated view and
+/// the caller's shared native budget while delegating the same-emission
+/// checks to [`PlanRoot::admit_authority`].
+pub fn admit_progress_view(
+    root: PlanRoot,
+    selection: PlanAuthoritySelection<'_>,
+    progress: Option<progress::View>,
+    validation: PlanAuthorityValidationCaps,
+    budget: &mut NativeJoinBudget,
+    locus: NativeJoinLocus,
+) -> Result<AdmittedPlanAuthority, PlanAuthorityRefusal> {
+    root.admit_authority(selection, progress, validation, budget, locus)
+}

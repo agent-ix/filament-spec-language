@@ -23,18 +23,18 @@ use filament_exact::ScalarLimits;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, PopulationUniverse};
-use fsl_foundation::bound::ProofBound;
 use fsl_foundation::SourceIdentity;
+use fsl_foundation::bound::ProofBound;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
-    check_clauses, check_hyper_clauses, CheckedHyper, CheckedHyperClause, CheckedTemporalClause,
-    PackageDeclarations,
+    CheckedHyper, CheckedHyperClause, CheckedTemporalClause, PackageDeclarations, check_clauses,
+    check_hyper_clauses,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use fsl_semantics::value::{admit_integer_division, DefinitionRole};
-use serde_json::{json, Value as Json};
+use fsl_semantics::value::{DefinitionRole, admit_integer_division};
+use serde_json::{Value as Json, json};
 
 const PACKAGE: &str = "test/vault";
 const OTHER: &str = "test/vault-other";
@@ -95,8 +95,7 @@ pub const EQUAL_INPUTS: &str =
     "match { a.step.op = b.step.op and a.step.Vault::step.i = b.step.Vault::step.i }";
 
 /// ADR-023 section 1's `SavesPower`, over two models.
-pub const SAVES_POWER: &str =
-    "hyper SavesPower using inf over behaviours (d: V::Vault, e: N::Vault) \
+pub const SAVES_POWER: &str = "hyper SavesPower using inf over behaviours (d: V::Vault, e: N::Vault) \
      forall trace s of V forall trace n of N \
      match { s.step.Vault::step.i = n.step.Vault::step.i } \
      { always holds(d.l @ s = e.l @ n) }";
@@ -561,7 +560,7 @@ impl World {
         ModelSubject {
             simulation: ModelSimulationRequest {
                 emit: fsl_package::EmitLimits::fixture(),
-                package,
+                input: fsl_eval::simulation::model::ModelCheckInput::source(package),
                 packages: &self.packages,
                 normalization: ModelNormalizationLimits::default(),
                 snapshots: &self.snapshots,
@@ -600,6 +599,48 @@ impl World {
     }
 }
 
+/// FR-1000: replay identities retain the checked source occurrence when a
+/// called function body contains a reference literal that I2 cannot encode.
+#[test]
+fn called_function_reference_literals_keep_temporal_and_hyper_identities() {
+    use filament_exact::Cancel;
+    use fsl_replay::{ClauseIdentity, HyperIdentity};
+
+    let function = "function reference using v(): Reference<V::Vault> pure { V::Vault#\"v\" }";
+    let temporal = "temporal Literal using inf over (v: V::Vault) clock \"model-steps\" on origin { always holds(reference() = reference()) }";
+    let hyper = with_body("", "", "always holds(reference() = reference())");
+    let build = Build {
+        reset: true,
+        extra: function,
+        ..SECURE
+    };
+    let world = World::build(&["v"], false, &format!("{hyper}\n{temporal}"), &build);
+    let subject = world.subject();
+    let temporal_clause = world
+        .temporal_clause
+        .as_ref()
+        .expect("the temporal clause checks");
+    ClauseIdentity::resolve(
+        world.package(),
+        subject.simulation.packages,
+        temporal_clause,
+        &[],
+        &Cancel::new(),
+        fsl_package::EmitLimits::fixture(),
+    )
+    .expect("the temporal source identity bypasses unsupported I2 function literals");
+
+    HyperIdentity::resolve(
+        world.package(),
+        &world.packages,
+        world.clause(),
+        &[],
+        &Cancel::new(),
+        fsl_package::EmitLimits::fixture(),
+    )
+    .expect("HyperIdentity::resolve preserves the checked source occurrence");
+}
+
 /// The TP-4 closure replay fixtures (FR-338-AC-24, FR-338-AC-25).
 mod tp4 {
     use std::collections::{BTreeMap, BTreeSet};
@@ -607,7 +648,7 @@ mod tp4 {
     use filament_exact::ValueType;
     use filament_exact::{Cancel, Meter, Origin, Role};
     use fsl_eval::automaton::{
-        translate, BuchiState, BuchiStates, ContextBinding, Letter, StateContext, SubjectKind,
+        BuchiState, BuchiStates, ContextBinding, Letter, StateContext, SubjectKind, translate,
     };
     use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
     use fsl_eval::simulation::model::ModelSimState;
@@ -616,14 +657,14 @@ mod tp4 {
     use fsl_foundation::source::provenance::OccurrenceKey;
     use fsl_replay::ClauseIdentity;
     use fsl_replay::{
-        check_components, CertificateLocus, CertificateRequest, CertificateRule,
-        ClosureCertificate, ComponentCertificate, ModelCheckItem, ModelCheckLimits,
-        TemporalCertificateCheck,
+        CertificateLocus, CertificateRequest, CertificateRule, ClosureCertificate,
+        ComponentCertificate, ModelCheckItem, ModelCheckLimits, TemporalCertificateCheck,
+        check_components,
     };
     use fsl_semantics::check::footprint::{FootprintRefusal, SymbolicLocation};
     use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId};
 
-    use super::{World, FORALL_EXISTS};
+    use super::{FORALL_EXISTS, World};
 
     /// Every `holds` atom is true at every position, so the engine walks a
     /// path whose states differ by the past history it has retained.
@@ -770,7 +811,10 @@ mod tp4 {
         fn context(&self) -> StateContext {
             let subject = self.world.subject();
             let identity = ClauseIdentity::resolve(
-                subject.simulation.package,
+                subject
+                    .simulation
+                    .source_package()
+                    .expect("a source-route subject"),
                 subject.simulation.packages,
                 self.clause(),
                 &[],

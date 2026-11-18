@@ -39,8 +39,11 @@ Tag the tests `#[trace("TC-741", "FR-266-AC-n")]`.
   record; `success`, exit 0, `decisive-witness`, FR-265-AC-2's record;
   `success`, `closed-scope`, no `witness`; the repeated request's report
   equals the first.
-- Step 2: the FR-109 dispositions and exit codes unchanged; `closed-scope`
-  with no `witness` for the three evaluated requests; `unavailable` with no
+- Step 2: the FR-109 dispositions and exit codes unchanged;
+  `decisive-witness` for healthy-parent and `decisive-counterexample` for
+  violating-parent and changed-version, each with FR-266-AC-2's comparison
+  record;
+  `unavailable` with no
   `witness` for the four others; `closed-scope` with no `witness` for the
   `sameIdentity` violation; `unavailable` for the `ghost` admission
   refusal.

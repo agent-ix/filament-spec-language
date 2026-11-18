@@ -7,7 +7,6 @@
 //! selected reduction.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 
 use fsl_analyze::model_check::manifest as en1;
 use fsl_analyze::zone_check::manifest as en6;
@@ -212,24 +211,16 @@ fn en1_entry(reductions: &[&str]) -> Json {
 
 /// FR-159-AC-5: EN-1's manifest entry, carrying `reductions` `["symmetry",
 /// "partial-order", "constraint"]`, validates against FSpec's
-/// backend-provider schema, read in place from `$FSPEC_DIR` (which the
-/// test requires) with the
+/// backend-provider schema, read from the pinned FSpec package with the
 /// checked-package schema it refers to; the same
 /// entry with `state-constraint` in place of `constraint` fails it.
 #[trace("TC-583", "FR-159-AC-5")]
 #[test]
 fn en1_manifest_entry_validates_against_the_backend_provider_schema() {
-    let fspec = std::env::var_os("FSPEC_DIR")
-        .expect("FSPEC_DIR names the FSpec checkout whose schema this reads");
-    let read = |relative: &str| -> Json {
-        let path = PathBuf::from(&fspec).join(relative);
-        serde_json::from_slice(&std::fs::read(&path).expect("the schema reads"))
-            .expect("the schema is JSON")
-    };
-    let schema = read("proposals/backend-provider-v1/schema.json");
+    let schema = crate::published_fspec::json("proposals/backend-provider-v1/schema.json");
     // The backend-provider schema refers to the checked-package schema by
     // its `$id`.
-    let package = read("proposals/checked-package-v2/schema.json");
+    let package = crate::published_fspec::json("proposals/checked-package-v2/schema.json");
     let descriptor = json!({
         "$schema": schema["$schema"],
         "$defs": schema["$defs"],

@@ -399,6 +399,7 @@ impl Totals {
             automaton_states: self.automaton_states,
             depth: self.depth,
             bound_limited: 0,
+            message_bound_limited: 0,
             instance_limited: 0,
         }
     }
@@ -1776,6 +1777,7 @@ impl<'a> Run<'_, 'a> {
                 alias,
                 initial,
                 steps,
+                results: Vec::new(),
                 marks,
             });
         }

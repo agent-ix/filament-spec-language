@@ -27,13 +27,13 @@ use fsl_foundation::bound::DomainKey;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::MemoryModelName;
-use fsl_package::CheckedPackage;
+use fsl_package::{CheckedPackage, TemporalClockSelection};
 use fsl_replay::{
-    replay_protocol_trace, settle_protocol_check, CounterexampleKind, InconclusiveCause,
-    ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord, ModelStep,
-    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject, ProofBasis,
-    ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits, ReplayRefusal, ResultLabel,
-    TemporalCounterexample, TerminalValue, UndefinedLocus,
+    replay_protocol_trace_with_temporal_selections, settle_protocol_check, CounterexampleKind,
+    InconclusiveCause, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord,
+    ModelStep, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject,
+    ProofBasis, ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits, ReplayRefusal,
+    ResultLabel, TemporalCounterexample, TerminalValue, UndefinedLocus,
 };
 use fsl_route::deadlock::ProtocolTemporalItem;
 use fsl_route::request::ItemKind;
@@ -160,12 +160,22 @@ impl Case {
         protocol: &str,
         payload: TemporalCounterexample<ProtocolTransition>,
     ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+        self.replay_with_clock_selections(protocol, payload, &[])
+    }
+
+    /// Replays a counterexample whose protocol uses an explicit clock.
+    pub(crate) fn replay_with_clock_selections(
+        &self,
+        protocol: &str,
+        payload: TemporalCounterexample<ProtocolTransition>,
+        selections: &[TemporalClockSelection],
+    ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
         let unit = unit_text_with(PROTOCOL_PROFILE, &self.body).into_bytes();
         let (node, occurrence) = protocol_anchor(&self.checked, protocol);
-        replay_protocol_trace(
+        replay_protocol_trace_with_temporal_selections(
             request(
                 &self.checked,
-                &[],
+                selections,
                 &document(),
                 self.documents.snapshots.iter(),
                 &unit,
@@ -190,6 +200,7 @@ impl Case {
             },
             &envelope_at(payload, node, occurrence),
             &NO_ATOMS,
+            selections,
             ReplayLimits::default(),
         )
     }

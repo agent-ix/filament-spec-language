@@ -217,21 +217,24 @@ fn always_possible_refutes_and_witnesses_repeat() {
     );
 }
 
-/// FR-629-AC-2, AC-3, AC-5: release/acquire message passing, a race, and a
-/// selection naming no weak parallel.
+/// FR-629-AC-2, AC-3, AC-5 through FR-1033: release/acquire message passing,
+/// a race, and a selection naming no weak parallel.
 #[trace("TC-1589", "FR-629-AC-2")]
 #[trace("TC-1589", "FR-629-AC-3")]
 #[trace("TC-1589", "FR-629-AC-5")]
 #[test]
-#[ignore = "QSL-2126: weak-memory items are not reachable through fsl analyze yet"]
 fn release_acquire_races_and_selections() {
+    let binding = json!({"type": "model-binding", "selection": "test/litmus"});
+    let subject = json!({"protocol": {"protocol": "SB",
+        "over": {"reference": {"population": "ix://test/litmus/cores", "key": "core"}},
+        "roles": {"w": binding, "c": binding}}});
     let body = crate::litmus::sb_unit(&crate::litmus::sb_run("memory ra", "release", "acquire"));
     let ws = Workspace::new("cov-ra");
     let run = analyze(&litmus_request(
         &ws,
         &body,
-        json!({"items": [{"claim": "NoBothZero"},
-            {"claim": "Both", "temporal": {"item_kind": "race-freedom"}}]}),
+        json!({"subject": subject, "items": [{"claim": "NoBothZero"},
+            {"claim": "SB::Both", "temporal": {"item_kind": "race-freedom"}}]}),
     ));
     assert!(matches!(label(&run.item(0)), "proved" | "refuted"));
     assert!(matches!(label(&run.item(1)), "proved" | "refuted"));
@@ -239,11 +242,14 @@ fn release_acquire_races_and_selections() {
     let run = analyze(&litmus_request(
         &ws,
         &body,
-        json!({"memory": [{"parallel": "Nowhere", "model": "tso"}],
+        json!({"subject": subject, "memory": [{"parallel": "Nowhere", "model": "tso"}],
             "items": [{"claim": "NoBothZero"}]}),
     ));
     assert_eq!(run.exit, 20);
-    assert_eq!(run.document()["diagnostics"][0]["code"], "invalid-request");
+    assert_eq!(
+        run.document()["diagnostics"][0]["code"],
+        "invalid_runtime_input"
+    );
 }
 
 /// FR-631-AC-2, AC-3: copy-swap reduction and the witness-set budget.
@@ -277,7 +283,6 @@ fn copy_swap_and_witness_budget() {
 #[trace("TC-1592", "FR-632-AC-2")]
 #[trace("TC-1592", "FR-632-AC-3")]
 #[test]
-#[ignore = "QSL-2296 (from QSL-2129): FR-632-AC-2 selects digital-clocks for a temporal item but FR-243 routes temporal-satisfaction to EN-6 by kind alone; FR-632-AC-3 sets max_clocks 0 but FR-625 makes limits positive counts (spec question open)"]
 fn digital_clocks_agree_and_the_clock_budget_stops() {
     let claim = "temporal Bound using tt over (c: M::Call) clock \"model-time\" on origin \
                  { always holds(not c.late) }\n";
@@ -329,7 +334,6 @@ fn digital_clocks_agree_and_the_clock_budget_stops() {
 /// FR-633-AC-3: EDF proves `Ctl` in closed form.
 #[trace("TC-1593", "FR-633-AC-3")]
 #[test]
-#[ignore = "QSL-2131: schedulability items are not reachable through fsl analyze yet"]
 fn edf_proves_ctl() {
     let ws = Workspace::new("cov-edf");
     let run = analyze(&crate::analyze_family_cli::ctl_request(
@@ -346,7 +350,6 @@ fn edf_proves_ctl() {
 #[trace("TC-1594", "FR-634-AC-2")]
 #[trace("TC-1594", "FR-634-AC-3")]
 #[test]
-#[ignore = "QSL-2296 (from QSL-2132): FR-634 does not say which traces an enumerate item reports nor what coverage.choices counts, and fsl-eval exploration returns no traces (spec question open)"]
 fn simulation_budget_and_seeded_sampling() {
     let ws = Workspace::new("cov-simulation");
     let request = request_members(Some(json!([
@@ -357,6 +360,10 @@ fn simulation_budget_and_seeded_sampling() {
     let first = analyze(&path);
     let stopped = first.item(0);
     assert_eq!(stopped["category"], "incomplete");
+    // FSpec FR-181-AC-32: the stopped bound names its FR-461 setting and value.
+    assert_eq!(stopped["cause"]["limit"], "max_states");
+    assert_eq!(stopped["cause"]["setting"], "explore.states");
+    assert_eq!(stopped["cause"]["value"], 2);
     assert!(stopped["frontier"]
         .as_array()
         .is_some_and(|frontier| !frontier.is_empty()));

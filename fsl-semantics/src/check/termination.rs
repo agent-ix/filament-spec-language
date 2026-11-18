@@ -792,6 +792,7 @@ mod tests {
             equality_producer: None,
             ordering_part: false,
             field_population: None,
+            equality_range_context: None,
         }
     }
 
@@ -828,6 +829,7 @@ mod tests {
                                 equality_producer: None,
                                 ordering_part: false,
                                 field_population: None,
+                                equality_range_context: None,
                             }),
                         )
                     }

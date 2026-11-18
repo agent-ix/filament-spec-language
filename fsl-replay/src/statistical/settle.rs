@@ -276,7 +276,9 @@ fn predicate_refused(outcome: &ClauseOutcome) -> StatisticalRecord {
             (Some(code), Some(cause)) => StatisticalRecord::failed(CatalogCode::new(code, cause)),
             _ => StatisticalRecord::failed(BROKEN),
         },
-        ClauseOutcome::FamilyRefused(code) => StatisticalRecord::failed(*code),
+        ClauseOutcome::FamilyRefused(code) | ClauseOutcome::Stopped(code) => {
+            StatisticalRecord::failed(*code)
+        }
         ClauseOutcome::Incomplete(incomplete) => {
             StatisticalRecord::of(TerminalValue::Incomplete(IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::EvaluationMeter {

@@ -58,6 +58,9 @@ FR-489's rule selects.
 
 ## Behavior
 
+- For an unnamed `operation-contract` item whose claim is not an `invariant`
+  state clause in a request naming a model subject, `en-1` SHALL be excluded
+  from the matching set before any row is applied.
 - The rule SHALL apply only to an item that names no backend and whose
   matching set has more than one member.
 - A row SHALL decide the item exactly when the item's kind is the row's kind
@@ -88,6 +91,7 @@ FR-489's rule selects.
 | FR-962-AC-2 | The FR-331 request item written for AC-1's first item has no `backend` member and `candidates` `{"type": "set", "backends": ["en-1"]}`; two runs registering the linked descriptors in two orders write equal request items. | Test (TC-2702) |
 | FR-962-AC-3 | Negative: with a process provider advertising `operation-contract` registered beside `Engines::fsl()`, AC-1's first unnamed item has candidates `[contract-checker, en-1, <provider>]` in candidate order and settles `invalid-request` `invalid_capability`/`ambiguous-backend` naming all three; naming `en-1` settles it on `en-1`. | Test (TC-2702) |
 | FR-962-AC-4 | Negative: with a process provider advertising `value-validity` `unbounded` registered, an unnamed run requirement item of `sq` whose matching set is `value-checker` and the provider settles `invalid-request` `ambiguous-backend` naming both; the same item with `call.requirements` `{"backend": "value-checker"}` settles on `value-checker`. | Test (TC-2702) |
+| FR-962-AC-5 | Over a registry holding `en-1` and an SMT backend advertising `operation-contract` in `bounded` mode, each FR-146 per-step simulation record item of the `cas_refines_counter` refinement matches exactly `[smt]`; an unnamed `operation-contract` item for the `invariant` state clause `self.value <= 3` in a request naming a model subject still matches `en-1`. | Test (TC-2702) |
 
 ## Dependencies
 

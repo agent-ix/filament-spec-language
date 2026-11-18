@@ -13,7 +13,6 @@ use super::walk::{exhausted, stop, walk_of};
 use super::{ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::simulation::reduction::ConstraintValue;
-use crate::value::CheckedPackageEvaluation;
 use filament_exact::Meter;
 
 impl ModelSystem<'_> {
@@ -62,7 +61,7 @@ impl ModelSystem<'_> {
             }
             let observations = invariant_observations(&walk, clause, row);
             let evaluation = self
-                .package
+                .evaluator()
                 .evaluate_clause(
                     &clause.qualified,
                     &observations,
@@ -83,7 +82,9 @@ impl ModelSystem<'_> {
                         ClauseOutcome::Incomplete(incomplete) => {
                             exhausted(ExpansionLimit::EvaluationMeter(incomplete.limit_kind))
                         }
-                        ClauseOutcome::FamilyRefused(code) => stop(code),
+                        ClauseOutcome::FamilyRefused(code) | ClauseOutcome::Stopped(code) => {
+                            stop(code)
+                        }
                         ClauseOutcome::KernelRefused(_)
                         | ClauseOutcome::NotBoolean
                         | ClauseOutcome::KernelUndefined(_)

@@ -10,12 +10,12 @@ use filament_checked::node::NodeKind;
 use filament_exact::{NodeKey, PathSegment};
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
-use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_foundation::Span;
+use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_semantics::check::{
-    check_hyper_clauses, Capability, CheckCause, CheckRefusal, CheckedHyper, CheckedHyperClause,
-    CheckedModelRelation, HyperCause, HyperForm, HyperTraceFamily, HyperUnsupported,
-    PackageDeclarations, StepRead, TemporalCause, TemporalProfile,
+    Capability, CheckCause, CheckRefusal, CheckedHyper, CheckedHyperClause, CheckedModelRelation,
+    HyperCause, HyperForm, HyperTraceFamily, HyperUnsupported, PackageDeclarations, StepRead,
+    TemporalCause, TemporalProfile, check_hyper_clauses,
 };
 use fsl_semantics::family::{ClaimExtent, FamilyContract};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -243,8 +243,7 @@ const OPAQUE: &str = "hyper Opaque using inf over behaviours (v: V::ConfigVersio
      { holds(v.versionNumber @ a != v.versionNumber @ b) and \
      always holds(v.versionNumber @ a = v.versionNumber @ b) }";
 
-const DET: &str =
-    "relation Det using v over (x: V::ConfigVersion::step, y: V::ConfigVersion::step) \
+const DET: &str = "relation Det using v over (x: V::ConfigVersion::step, y: V::ConfigVersion::step) \
      { x.i = y.i and pre(x.self.versionNumber) = pre(y.self.versionNumber) \
      implies x.self.versionNumber = y.self.versionNumber }";
 
@@ -896,10 +895,12 @@ fn an_examined_body_refuses_by_its_own_fault_under_either_profile() {
             let refusals = package
                 .check(CheckMode::Linked, CheckingLimits::default())
                 .expect_err("an ill-typed body refuses");
-            let [CheckRefusal {
-                cause: CheckCause::Hyper(cause),
-                ..
-            }] = &refusals[..]
+            let [
+                CheckRefusal {
+                    cause: CheckCause::Hyper(cause),
+                    ..
+                },
+            ] = &refusals[..]
             else {
                 panic!("{layer}: {declaration}: one body fault, not {refusals:?}");
             };
@@ -1458,6 +1459,34 @@ fn an_atom_lowers_to_a_condition_over_per_trace_parameter_slots() {
     assert_eq!(reads.get(right.location()), Some(&1));
 }
 
+/// FR-487-AC-1/W38: an indexed reference literal resolves against the subject
+/// belonging to its innermost trace component.
+#[trace("FR-487-AC-1")]
+#[test]
+fn reference_literals_are_assigned_to_their_indexed_components() {
+    let declaration = "hyper References using inf over behaviours \
+        (v: V::ConfigVersion) forall trace a of V forall trace b of V \
+        { holds(V::ConfigVersion#\"s1\" @ a = V::ConfigVersion#\"s1\" @ b) }";
+    let clause = clause(&["V"], declaration);
+    let atom = the_atom(&clause);
+    let (condition, _) = clause.condition(atom).expect("the holds condition");
+    let components = clause.component_reads(atom).expect("component mapping");
+    let mut literals = Vec::new();
+    let mut pending = vec![condition];
+    while let Some(node) = pending.pop() {
+        pending.extend(node.children());
+        if matches!(node.kind(), NodeKind::ReferenceLiteral { .. }) {
+            literals.push(node.location());
+        }
+    }
+    assert_eq!(literals.len(), 2);
+    let assigned: std::collections::BTreeSet<_> = literals
+        .iter()
+        .map(|location| *components.get(location).expect("literal's trace component"))
+        .collect();
+    assert_eq!(assigned, [0, 1].into());
+}
+
 /// FR-487 "Lowering a match conjunct": a conjunct's slots are its step reads, and a label misused
 /// by the form around it refuses `ill_typed`/`type-mismatch`.
 #[trace("TC-1264")]
@@ -1664,10 +1693,12 @@ fn a_conjunct_s_slots_have_the_types_of_their_labels() {
     let [operations, inputs] = checked.mu_universal() else {
         panic!("two conjuncts");
     };
-    assert!(operations
-        .slots()
-        .iter()
-        .all(|slot| matches!(slot, StepRead::Operation { .. })));
+    assert!(
+        operations
+            .slots()
+            .iter()
+            .all(|slot| matches!(slot, StepRead::Operation { .. }))
+    );
     for slot in inputs.slots() {
         let StepRead::Argument(read) = slot else {
             panic!("an argument read, not {slot:?}");
@@ -1978,14 +2009,13 @@ fn a_relation_body_reading_a_member_of_no_checked_type_refuses_operator_ineligib
 /// state, and the traces come with the request.
 const FINITE_DET: &str = "record Obs { inp: Int[0, 3]; out: Int[0, 3]; }\n\
     hyper Det using inf over t in Obs bounded 3 forall trace a forall trace b \
-    { (a.inp = b.inp) -> (a.out = b.out) }";
+    { (a.inp = b.inp) implies (a.out = b.out) }";
 
 /// FR-898-AC-1 (TC-2534): a `hyper` clause over a declared finite trace
 /// domain checks under a finite-trace profile; S3 never answers it with the
 /// blanket `FiniteDomain` refusal.
 #[trace("TC-2534", "FR-898-AC-1")]
 #[test]
-#[ignore = "QSL-2239: a hyper clause over a finite trace domain refuses FiniteDomain instead of checking"]
 fn a_finite_trace_set_hyperproperty_checks() {
     let (_, outcome) = check_under(&[], EVENT, FINITE_DET);
     assert!(outcome.is_ok(), "the finite clause checks: {outcome:?}");
@@ -1995,7 +2025,6 @@ fn a_finite_trace_set_hyperproperty_checks() {
 /// own named cause at its own span, never `FiniteDomain`.
 #[trace("TC-2534", "FR-898-AC-2")]
 #[test]
-#[ignore = "QSL-2239: finite trace-set clause defects refuse FiniteDomain instead of their named causes"]
 fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
     let cases = [
         (
@@ -2009,9 +2038,26 @@ fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
             "Nowhere",
         ),
         (
+            FINITE_DET
+                .replace("hyper Det", "tuple NotRecord(Int[0, 3]);\nhyper Det")
+                .replace("in Obs", "in NotRecord"),
+            Code::InvalidModelBinding,
+            "NotRecord",
+        ),
+        (
+            FINITE_DET.replace("forall trace b", "forall trace a"),
+            Code::AmbiguousDeclaration,
+            "trace a",
+        ),
+        (
             FINITE_DET.replace("b.out)", "c.out)"),
             Code::MissingDeclaration,
             "c.out",
+        ),
+        (
+            FINITE_DET.replace("(a.inp = b.inp) implies (a.out = b.out)", "a.out"),
+            Code::IllTyped,
+            "a.out",
         ),
     ];
     for (declaration, code, at) in cases {

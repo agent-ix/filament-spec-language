@@ -80,6 +80,10 @@ pub struct Unit {
     /// The keys of the population's universe, and those present initially.
     keys: Vec<&'static str>,
     present: Vec<&'static str>,
+    /// Whether the unit is checked under `CheckMode::Kernel`, for a function
+    /// body that divides where `Linked` demands a proved nonzero divisor
+    /// (FR-495-AC-3).
+    kernel: bool,
 }
 
 /// How the concrete `Register` differs from the plain one.
@@ -129,6 +133,12 @@ fn integer_field(value: i64) -> Json {
 }
 
 impl Unit {
+    /// This unit checked under `CheckMode::Kernel` (FR-495-AC-3).
+    pub fn kernel(mut self) -> Self {
+        self.kernel = true;
+        self
+    }
+
     /// FR-138's `Register`: the abstract register keeps `value` and the
     /// `prev` the concrete register does not; `write(x)` of either.
     pub fn register() -> Self {
@@ -204,6 +214,7 @@ impl Unit {
             )
         };
         Self {
+            kernel: false,
             keys: keys.to_vec(),
             present: present.to_vec(),
             abstract_package: REGISTER_SPEC,
@@ -242,6 +253,7 @@ impl Unit {
             )
         };
         Self {
+            kernel: false,
             keys: vec!["c"],
             present: vec!["c"],
             abstract_package: COUNTER_SPEC,
@@ -295,6 +307,7 @@ impl Unit {
             )
         };
         Self {
+            kernel: false,
             keys: vec!["p"],
             present: vec!["p"],
             abstract_package: PAIR_SPEC,
@@ -342,6 +355,7 @@ impl Unit {
         };
         let fields = |(a, b): &(i64, i64)| json!({"a": integer_field(*a), "b": integer_field(*b)});
         Self {
+            kernel: false,
             keys: vec!["r"],
             present: vec!["r"],
             abstract_package: PAIR_SPEC,
@@ -460,6 +474,7 @@ impl Unit {
             ""
         };
         Self {
+            kernel: false,
             keys: vec!["r"],
             present: vec!["r"],
             abstract_package: COIN_SPEC,
@@ -518,15 +533,6 @@ impl Unit {
     ///
     /// Every refusal, each with the text at its region.
     pub fn check(&self, body: &str) -> Result<CheckedGraph, Vec<Refused>> {
-        self.check_with_mode(body, CheckMode::Linked)
-    }
-
-    /// The checked graph under `mode`, or the located refusals.
-    pub fn check_with_mode(
-        &self,
-        body: &str,
-        mode: CheckMode,
-    ) -> Result<CheckedGraph, Vec<Refused>> {
         let packages = self.packages();
         let text = self.text(&packages, body);
         let parsed = fsl_cst::parse(
@@ -559,7 +565,14 @@ impl Unit {
         .with_unwritten_refinements();
         let regions = declarations.regions();
         declarations
-            .check(mode, CheckingLimits::default())
+            .check(
+                if self.kernel {
+                    CheckMode::Kernel
+                } else {
+                    CheckMode::Linked
+                },
+                CheckingLimits::default(),
+            )
             .map_err(|refusals| {
                 refusals
                     .into_iter()
@@ -591,14 +604,6 @@ impl Unit {
     /// The world of the unit with `body`, which must check.
     pub fn world(&self, body: &str) -> World<'_> {
         let graph = self.check(body).unwrap_or_else(|refusals| {
-            panic!("{body}: the unit checks: {refusals:?}");
-        });
-        World::new(self, graph)
-    }
-
-    /// The world checked under `mode`.
-    pub fn world_with_mode(&self, body: &str, mode: CheckMode) -> World<'_> {
-        let graph = self.check_with_mode(body, mode).unwrap_or_else(|refusals| {
             panic!("{body}: the unit checks: {refusals:?}");
         });
         World::new(self, graph)
@@ -738,7 +743,7 @@ impl<'u> World<'u> {
     ) -> ModelSimulationRequest<'_> {
         ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
-            package: &self.package,
+            input: fsl_eval::simulation::model::ModelCheckInput::source(&self.package),
             packages: &self.packages,
             normalization: ModelNormalizationLimits::default(),
             snapshots: &self.snapshots,

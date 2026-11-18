@@ -755,6 +755,8 @@ fn spelling(value_type: &ValueType) -> String {
         ValueType::String => "Text".to_owned(),
         ValueType::Uuid => "UUID".to_owned(),
         ValueType::Timestamp => "Timestamp".to_owned(),
+        ValueType::Bytes => "Bytes".to_owned(),
+        ValueType::JsonObject => "JsonObject".to_owned(),
         ValueType::Map(_) => "Map".to_owned(),
         ValueType::Enum(_) => "Enum".to_owned(),
         ValueType::Option(payload) => format!("Option<{}>", spelling(payload)),

@@ -5,7 +5,7 @@
 //! pair. Every package goes through the real compile, emission and IR's I2
 //! strict read (`Verified`), and the transition's body is compared with the
 //! shape of FSpec's published `positive-state-transition.json` read in place
-//! from `$FSPEC_DIR` (nothing of FSpec is copied here).
+//! from `$pinned FSpec fixture view` (nothing of FSpec is copied here).
 
 use filament_semantic_value::checking::CheckMode;
 use fsl_semantics::model::intake::meaning;
@@ -708,17 +708,19 @@ fn masked(value: &Value) -> Value {
 }
 
 /// The golden source: FSpec's `positive-state-transition.json` under
-/// `$FSPEC_DIR`, read in place. The emitted transition, anchor and
+/// `$pinned FSpec fixture view`, read in place. The emitted transition, anchor and
 /// `state_clause` nodes have the same keys and values as the vector's, with
 /// node references masked.
 #[trace("TC-1271", "FR-105-AC-13")]
 #[test]
 fn the_emitted_nodes_have_the_published_vector_shape() {
-    let fspec = std::env::var_os("FSPEC_DIR").expect("FSPEC_DIR names the FSpec checkout");
-    let path = std::path::Path::new(&fspec)
-        .join("proposals/checked-package-v2/fixtures/positive-state-transition.json");
-    let vector: Value = serde_json::from_slice(&std::fs::read(&path).expect("the vector"))
-        .expect("the vector parses");
+    let vector: Value = serde_json::from_slice(
+        filament_specification::published_file(
+            "proposals/checked-package-v2/fixtures/positive-state-transition.json",
+        )
+        .expect("pinned FSpec publishes the state-transition vector"),
+    )
+    .expect("the vector parses");
     let vector_nodes = vector["semantic_graph"]["nodes"].as_array().unwrap();
     let published = |form: &str| -> Vec<&Value> {
         vector_nodes

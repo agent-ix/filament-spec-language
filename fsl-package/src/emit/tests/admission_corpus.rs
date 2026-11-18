@@ -116,11 +116,16 @@ enum Fixture {
     /// TC-1021: a record with `Map<Text, T>` fields, built as the checker
     /// declares it because source text spells no map.
     MapRecord,
+    /// TC-2062: a random parameter over the abstraction fixture's domain
+    /// package.
+    RandomParameter,
+    /// TC-2062: a workload over the ConfigVersion domain package.
+    Workload,
 }
 
 impl Fixture {
     /// Every fixture; each must back at least one row.
-    const ALL: [Self; 31] = [
+    const ALL: [Self; 33] = [
         Self::Tc416Functions,
         Self::RecursiveF,
         Self::Tree,
@@ -152,6 +157,8 @@ impl Fixture {
         Self::StepRelation,
         Self::Schedulability,
         Self::MapRecord,
+        Self::RandomParameter,
+        Self::Workload,
     ];
 }
 
@@ -443,6 +450,14 @@ impl Fixture {
                 let unit = config_version_unit::unit_text();
                 Emitted::placed(modelled(&unit, document, Vec::new()), vec![document])
             }
+            Self::RandomParameter => {
+                let (document, package) = super::probabilistic::random_parameter_package();
+                Emitted::placed_owned(package, vec![document])
+            }
+            Self::Workload => Emitted::placed(
+                super::probabilistic::workload_package("weight ConfigVersion::attemptUpdate = 1;"),
+                vec![config_version_unit::DOMAIN_PACKAGE.as_bytes()],
+            ),
             Self::ExtentRecords => whole(package_declaring(
                 TypeEnvironment::new(records(), []).expect("FR-143 admits the records"),
             )),
@@ -717,6 +732,11 @@ fn rows() -> Vec<Row> {
         row(K::Hybrid(HybridForm::Model), F::Hybrid),
         row(K::Hybrid(HybridForm::Mode), F::Hybrid),
         row(K::Hybrid(HybridForm::Transition), F::Hybrid),
+        row(
+            K::Probabilistic(ProbabilisticForm::RandomParameter),
+            F::RandomParameter,
+        ),
+        row(K::Probabilistic(ProbabilisticForm::Workload), F::Workload),
     ]
 }
 
@@ -779,20 +799,12 @@ const NOT_EMITTED_BY_QSL: &[(CheckedNodeKind, &str)] = {
             "lowering builds no probabilistic claim node yet",
         ),
         (
-            K::Probabilistic(ProbabilisticForm::RandomParameter),
-            "FSL's emitter refuses checked random parameters as ProbabilisticModelNotEmitted",
-        ),
-        (
-            K::Probabilistic(ProbabilisticForm::Workload),
-            "FSL's emitter refuses checked workloads as ProbabilisticModelNotEmitted",
-        ),
-        (
             K::Probabilistic(ProbabilisticForm::Reward),
-            "FSL's emitter refuses checked rewards as ProbabilisticModelNotEmitted",
+            "FSL's emitter refuses checked rewards as ProbabilisticModelNotEmitted (QSL-2440)",
         ),
         (
             K::Probabilistic(ProbabilisticForm::DelayDistribution),
-            "FSL's emitter refuses checked delay distributions as ProbabilisticModelNotEmitted",
+            "FSL's emitter refuses checked delay distributions as ProbabilisticModelNotEmitted (QSL-2439)",
         ),
         (
             K::ScalarType(ScalarTypeForm::CarriedQuantity),

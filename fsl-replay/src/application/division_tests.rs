@@ -381,3 +381,187 @@ fn a_law_header_without_div_or_rem_leaves_the_package_identity_unchanged() {
     // header was inserted; they are outside semantic identity.
     assert_ne!(headed.source_map(), plain.source_map());
 }
+
+const CONFIG_VERSION: &[u8] =
+    include_bytes!("../../../examples/config-version/model.semantic-ir.json");
+
+/// `body` under the selected `ConfigVersion` model, compiled and read back
+/// by Contract IR's independent reader with the package's own required
+/// features and the model document as evidence. The wire is returned with
+/// the read, which must admit.
+fn emit_and_read_back(body: &str, law: Option<&AdmittedIntegerDivision>) -> serde_json::Value {
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model Config = \"example/config-version\";\n{body}\n"
+    );
+    let packages = [CONFIG_VERSION];
+    let compiled = match law {
+        Some(law) => compile_package_with_integer_division(
+            unit(&source),
+            packages,
+            &DependencyInput::default(),
+            law,
+            StageLimits::default(),
+            ReplayLimits::default(),
+        ),
+        None => compile_package(
+            unit(&source),
+            packages,
+            &DependencyInput::default(),
+            StageLimits::default(),
+            ReplayLimits::default(),
+        ),
+    }
+    .unwrap_or_else(|refusal| panic!("{body}: the package must emit: {refusal:?}"));
+    let wire: serde_json::Value = serde_json::from_slice(compiled.bytes()).expect("a JSON wire");
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    evidence
+        .insert_domain_package_document("example/config-version", CONFIG_VERSION.to_vec())
+        .expect("the model document is evidence");
+    match CheckedPackageV2::read(
+        compiled.bytes(),
+        CheckedPackageReadLimits::bounded(),
+        &evidence,
+    ) {
+        CheckedPackageV2ReadResult::Admitted(_) => wire,
+        other => panic!("{body}: the reader must admit what FSL emitted: {other:?}"),
+    }
+}
+
+/// How many emitted `bounded_domain` nodes have an identity path ending in
+/// `maximum`, the interval maximum an `if`'s checked hull would carry.
+fn bounded_domains_ending(wire: &serde_json::Value, maximum: &str) -> usize {
+    wire["semantic_graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|node| node["node_tag"] == "bounded_domain")
+        .filter(|node| {
+            node["node_id"]["path"]
+                .as_array()
+                .and_then(|path| path.last())
+                .is_some_and(|last| last == maximum)
+        })
+        .count()
+}
+
+/// The equality of `wire` has one decision, and the decision at the position
+/// of its integer division operand names the builtin `Integer` node as that
+/// operand's source type, which is also the division application's own type.
+fn assert_division_operand_compared_at_integer(body: &str, wire: &serde_json::Value) {
+    let mut wire = wire.clone();
+    fsl_semantics::check::wire_id::resolve_operand_slots(&mut wire)
+        .expect("every operand slot names a row entry");
+    let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
+    let integer = nodes
+        .iter()
+        .find(|node| node["node_tag"] == "scalar_type" && node["semantic_form"] == "integer")
+        .map(|node| node["node_id"].clone())
+        .expect("the builtin Integer node");
+    let equality = nodes
+        .iter()
+        .find(|node| {
+            node["body"]["operation"]["identity"]
+                .as_str()
+                .is_some_and(|id| id.ends_with(".eq") || id.ends_with(".ne"))
+        })
+        .expect("the emitted equality application");
+    let position = equality["body"]["arguments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|argument| {
+            nodes.iter().any(|node| {
+                node["node_id"] == argument["target"]
+                    && node["body"]["operation"]["identity"]
+                        .as_str()
+                        .is_some_and(|id| {
+                            ["mod", "div", "rem"]
+                                .iter()
+                                .any(|op| id == format!("filament.op.integer.{op}"))
+                        })
+            })
+        })
+        .unwrap_or_else(|| panic!("{body}: a division operand of the equality"));
+    let division = nodes
+        .iter()
+        .find(|node| node["node_id"] == equality["body"]["arguments"][position]["target"])
+        .unwrap();
+    assert_eq!(division["semantic_type"], integer, "{body}: division type");
+    let decisions = wire["checked_term_data"]["equality_decisions"]
+        .as_array()
+        .expect("equality decisions");
+    assert_eq!(decisions.len(), 1, "{body}");
+    let side = if position == 0 { "left" } else { "right" };
+    assert_eq!(decisions[0][side]["operand"], position, "{body}");
+    assert_eq!(
+        decisions[0][side]["source_type"], integer,
+        "{body}: source type of the division operand"
+    );
+}
+
+/// QSL-2361 A: an equality over a `mod` application emits and reads back.
+/// The `mod` application lowers at `Integer`, so the equality decision names
+/// the builtin `Integer` node as that operand's source type, never the
+/// remainder's checked interval.
+#[trace("TC-2873", "FR-495-AC-24")]
+#[test]
+fn an_equality_over_a_mod_application_emits_and_reads_back() {
+    for body in [
+        "invariant Even using v on Config::ConfigVersion at current { self.versionNumber mod 2 = 0 }",
+        "invariant Flipped using v on Config::ConfigVersion at current { 0 = self.versionNumber mod 2 }",
+        "invariant Unequal using v on Config::ConfigVersion at current { self.versionNumber mod 2 != 1 }",
+        "function f1 using v(n: Int[0, 100]): Boolean pure { n mod 2 = 0 }",
+        "function f2 using v(n: Integer, a: Int[1, 3]): Boolean pure { n mod a = 0 }",
+        "function f3 using v(n: Int[0, 100], a: Int[1, 3]): Boolean pure { n mod a = 1 }",
+    ] {
+        assert_division_operand_compared_at_integer(body, &emit_and_read_back(body, None));
+    }
+    let law = selection(DefinitionRole::IntegerDivisionEuclidean);
+    for body in [
+        "function d using v(n: Int[0, 100], a: Int[1, 3]): Boolean pure { n div a = 0 }",
+        "function r using v(n: Int[0, 100], a: Int[1, 3]): Boolean pure { n rem a = 0 }",
+    ] {
+        assert_division_operand_compared_at_integer(body, &emit_and_read_back(body, Some(&law)));
+    }
+}
+
+/// QSL-2361 B: an `if` whose branches are integer arithmetic emits and reads
+/// back. A control node lowers at `Integer` when a leaf does, so its checked
+/// interval is named by no edge and no occurrence; the emitter builds no such
+/// interval type node. The shapes are the `if` clauses of codegen's
+/// FR-015-AC-168 and AC-169 fixtures.
+#[trace("TC-2874", "FR-495-AC-25")]
+#[test]
+fn an_if_over_integer_arithmetic_emits_and_reads_back_without_an_orphan_interval() {
+    let cases = [
+        (
+            "function lazy using v(amount: Int[0, 999]): Boolean pure { (if amount < 1000 then amount else amount + 1000) >= 0 }",
+            "1999",
+        ),
+        (
+            "function selected using v(amount: Int[0, 1000]): Boolean pure { (if amount < 1000 then amount else amount + 1) >= 0 }",
+            "1001",
+        ),
+        (
+            "invariant Lazy using v on Config::ConfigVersion at current { (if self.versionNumber < 1000 then self.versionNumber else self.versionNumber + 1000) >= 0 }",
+            "2000",
+        ),
+        (
+            "invariant Selected using v on Config::ConfigVersion at current { (if self.versionNumber < 1000 then self.versionNumber else self.versionNumber + 1) >= 0 }",
+            "1001",
+        ),
+    ];
+    for (body, hull_maximum) in cases {
+        let wire = emit_and_read_back(body, None);
+        assert_eq!(
+            bounded_domains_ending(&wire, hull_maximum),
+            0,
+            "{body}: the if's checked hull interval is not a node of the package"
+        );
+    }
+}

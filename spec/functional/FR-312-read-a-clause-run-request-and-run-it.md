@@ -3,6 +3,8 @@ id: FR-312
 title: "Read a clause-run request and run it through run_clause"
 type: FR
 relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-255
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/US-014
     type: implements
   - target: ix://agent-ix/filament-spec-language/FR-109
@@ -176,6 +178,40 @@ package and dependency inputs.
   outcome carrying FR-267's command-error envelope as its refusal envelope
   and no result document, with the refusal code's exit code.
 
+### The observation size limit has one name and one result shape
+
+FR-255 names the observation document byte ceiling `observation.input_bytes`
+(`ObservationLimits::document_bytes`). A caller sets it in two places, and
+both are the same setting:
+
+- the request member `clause.observation_limits.document_bytes`;
+- the run command's caller limits: the `observation` member of the
+  `CallerLimits` that FR-255's settings operation returns for the driver's
+  `fsl run --limit observation.input_bytes=<n>` operand, passed to the run
+  entry as `RequestOverrides::observation` beside the request file, as
+  `clocks` and `limits` are (FR-640, FR-869).
+
+The two SHALL give the same run. A run in which either sets the ceiling to
+`B` SHALL produce the same outcome document, byte for byte, as the run in
+which the other sets it to `B`. A request that sets
+`clause.observation_limits.document_bytes` while the caller also supplies
+`RequestOverrides::observation` SHALL refuse `invalid-request` at stage
+`request` naming `observation_limits`, as `clocks` given twice is refused, so
+no run depends on which of two bounds wins.
+
+An observation file longer than the ceiling SHALL settle the clause item
+`incomplete` with FR-255 Behavior 1's `stage_limit_exceeded` record: `kind`
+`input bytes`, `bound` the configured ceiling, `actual` the file's byte count,
+and `setting` `observation.input_bytes`, exit 22. The file is not read past
+the ceiling. This is the one shape of the limit at every entry point: the
+request member, the caller limits and the default ceiling all produce it,
+and none produces a top-level `resource_exhausted` diagnostic or a refusal
+envelope instead. The rendered hint SHALL name the setting the `--limit`
+option accepts, `--limit observation.input_bytes=<n>`, and the request
+member `clause.observation_limits.document_bytes`, and SHALL never name
+`observation.document_bytes`, which is no setting name and which the
+settings operation refuses as an unknown setting.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -188,6 +224,8 @@ package and dependency inputs.
 | FR-312-AC-6 | A clause request's `accounting` object accepts all ten counter names and passes their values unchanged to `ClauseRunRequest.accounting`; omitted `accounting` uses the FR-100 defaults. A direct `work_units` member of `clause` refuses `invalid-request` at stage `request`, exit 20, no result document. | Test (TC-891) |
 | FR-312-AC-7 | Through `run`, a request selecting `{"temporal": {"name": "Reaches", "trace": {"lasso": {"prefix": [], "loop": ["s0", "s1"]}}, "over": {"reference": {"population": P, "key": "c1"}}}}` over FR-330-AC-2's `Counter` snapshots `s0` (`c.value` 0), `s1` (1) and `s2` (2) returns the `/2` document FR-267-AC-13 states, exit 10; with loop `["s0", "s1", "s2"]` it returns `success`, exit 0, byte-identical to the report of the same `ClauseRunRequest` built in process. A trace key naming an invocation document or a pre snapshot, a `trace` of `{"model": {}}`, a `trace` holding both `finite` and `lasso`, and an unknown member in `temporal` each refuse `invalid-request` at stage `request`, exit 20, no result document, naming `trace` or the member. A `finite` array of zero keys reaches FR-330 and reports stage `evaluate`, `refusal`, `invalid_runtime_input`/`invalid-value`. | Test (TC-1160) |
 | FR-312-AC-8 | Through `run`, a request whose `temporal.trace` is `{"timestamped": {}}` refuses `invalid-request` at stage `request`, exit 20, naming the missing `observations` member of `trace.timestamped`, and no result document is written; a complete `timestamped` trace is read as FR-641 states (FR-641-AC-1). | Test (TC-1160) |
+| FR-312-AC-9 | Through `run`, FR-108's healthy-parent clause-run request whose snapshot file is `n` bytes, with `clause.observation_limits.document_bytes` `n - 1` and a `dependent_bytes` above `n`, exits 22 with one clause item settled `incomplete` whose cause is `stage_limit_exceeded` with `kind` `input bytes`, `bound` `n - 1`, `actual` `n` and `setting` `observation.input_bytes`; the document carries no `resource_exhausted` diagnostic and no refusal envelope; the rendered hint contains `--limit observation.input_bytes=` and not `observation.document_bytes`; at `document_bytes` `n` the clause runs and exits 0. | Test (TC-2982) |
+| FR-312-AC-10 | The AC-9 request without `observation_limits`, run with `RequestOverrides::observation` carrying `document_bytes` `n - 1` (the `observation` member of `CallerLimits::from_operands(["observation.input_bytes=<n - 1>"])`), gives an outcome document byte-equal to AC-9's; the AC-9 request run with that override as well refuses `invalid-request` at stage `request` naming `observation_limits`, exit 20, before any observation file is read. | Test (TC-2982) |
 
 The existing AC-1 through AC-5 test-case association remains TC-891;
 method-only Verification cells do not replace the existing trace tags.

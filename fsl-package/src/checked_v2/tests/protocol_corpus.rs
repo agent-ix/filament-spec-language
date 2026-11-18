@@ -8,8 +8,7 @@ use super::*;
 #[trace("FR-383-AC-19", "FR-383-AC-20", "TC-1063")]
 #[test]
 fn conformance_protocol_vector_positive_packages_are_admitted() {
-    let directory =
-        fspec_directory().expect("FSPEC_DIR must name a filament-specification checkout");
+    let directory = fspec_directory().expect("pinned FSpec publishes protocol fixtures");
     let fixtures = directory.join("proposals/checked-package-v2/fixtures");
     let vectors = read_fixture(&fixtures.join("protocol-node-vectors.json"));
     let positives = vectors["positive"]

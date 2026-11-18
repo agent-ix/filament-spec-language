@@ -46,6 +46,7 @@ mod check_mode;
 mod checked_views;
 mod child_composite;
 mod clock_places;
+mod collection_if;
 mod composition;
 mod control_node;
 mod converted_equality;
@@ -67,6 +68,7 @@ mod navigation;
 mod one_occurrence;
 mod operation_bodies;
 mod operation_effects;
+mod option_nesting;
 mod option_value;
 mod output_limit;
 mod owner_model;
@@ -81,6 +83,7 @@ mod protocol_compensation;
 mod protocol_controls;
 mod protocol_function_bodies;
 mod protocol_graph;
+mod protocol_observe;
 mod protocol_locations;
 mod protocol_occurrence;
 mod protocol_recursion;
@@ -1974,6 +1977,7 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
         ProtocolResultInvariant,
         ProtocolResultsRequired,
         FloatEqualityScheduleNotEmitted,
+        NativeLiteralNotEmitted(&'static str),
     }
     fn classify(result: Result<Emission, EmitRefusal>) -> Seen {
         match result {
@@ -2020,13 +2024,13 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             Err(EmitRefusal::PerTraceClockConfigurations { .. }) => {
                 panic!("the emitter never derives clock configurations")
             }
-            Err(EmitRefusal::SourceObjectEmission { .. }) => {
-                panic!("the fixture set declares no source object type")
-            }
             Err(EmitRefusal::ProtocolResultInvariant) => Seen::ProtocolResultInvariant,
             Err(EmitRefusal::ProtocolResultsRequired) => Seen::ProtocolResultsRequired,
             Err(EmitRefusal::FloatEqualityScheduleNotEmitted) => {
                 Seen::FloatEqualityScheduleNotEmitted
+            }
+            Err(EmitRefusal::NativeLiteralNotEmitted { construct }) => {
+                Seen::NativeLiteralNotEmitted(construct)
             }
             Err(EmitRefusal::OutputLimit(_)) => {
                 panic!("the fixture set emits under a ceiling no fixture reaches")
@@ -2812,15 +2816,13 @@ fn explicit_text_literal_emits_and_reads_back_as_a_typed_text_value() {
 /// The FSpec checked-package v2 Text-literal vectors (FR-322-AC-304,
 /// TX-01..TX-14), read from the specification checkout.
 fn text_literal_vectors() -> Value {
-    let root = std::env::var_os("FSPEC_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../filament-specification")
-        });
-    let path = root.join("proposals/checked-package-v2/text-literal-vectors.json");
-    let bytes = std::fs::read(&path)
-        .unwrap_or_else(|error| panic!("FSPEC_DIR vectors {}: {error}", path.display()));
-    serde_json::from_slice(&bytes).expect("the vectors are JSON")
+    serde_json::from_slice(
+        filament_specification::published_file(
+            "proposals/checked-package-v2/text-literal-vectors.json",
+        )
+        .expect("pinned FSpec publishes Text-literal vectors"),
+    )
+    .expect("the vectors are JSON")
 }
 
 /// `Text[min, max; profile]` for one vector type.
@@ -3833,9 +3835,9 @@ fn e4_refuses_a_conflicting_diamond() {
         matches!(
             &unplaced,
             crate::LinkRefusal::DependencyEmission {
-                refusal: Some(EmitRefusal::UnlocatedOccurrence { .. }),
+                refusal: Some(refusal),
                 ..
-            }
+            } if matches!(**refusal, EmitRefusal::UnlocatedOccurrence { .. })
         ),
         "{unplaced:?}"
     );

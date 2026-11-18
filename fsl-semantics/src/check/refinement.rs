@@ -1130,8 +1130,11 @@ fn leaf_checked_term(
                 LiteralValue::Quantity(value) => ("quantity", json!(spelled(value))),
                 LiteralValue::Text(value) => ("text", json!(value)),
                 LiteralValue::String(value) => ("string", json!(value)),
+                LiteralValue::Reference(value) => ("reference", json!(value)),
                 LiteralValue::Uuid(value) => ("uuid", json!(value.to_string())),
                 LiteralValue::Timestamp(value) => ("timestamp", json!(value.to_string())),
+                LiteralValue::Bytes(value) => ("bytes", json!(value)),
+                LiteralValue::JsonObject(value) => ("json_object", json!(value)),
                 LiteralValue::None => ("none", Value::Null),
                 LiteralValue::Enum(case) => ("enum", json!(case)),
             };
@@ -2230,6 +2233,8 @@ fn holds_reference(
         | ValueType::String
         | ValueType::Uuid
         | ValueType::Timestamp
+        | ValueType::Bytes
+        | ValueType::JsonObject
         | ValueType::Enum(_)
         | ValueType::Population(_) => Ok(false),
     }
@@ -2272,6 +2277,8 @@ fn lift(lifting: &BTreeMap<EffectiveId, EffectiveId>, value_type: &ValueType) ->
         | ValueType::String
         | ValueType::Uuid
         | ValueType::Timestamp
+        | ValueType::Bytes
+        | ValueType::JsonObject
         | ValueType::Enum(_)
         | ValueType::Composite(_)
         | ValueType::Population(_)) => other.clone(),

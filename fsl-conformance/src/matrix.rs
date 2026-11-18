@@ -261,6 +261,12 @@ pub enum EngineItem {
         /// The claim's declared name.
         claim: &'static str,
     },
+    /// An EN-7 schedulability claim over a checked task set, by its declared
+    /// name (FR-633).
+    Schedulability {
+        /// The claim's declared name.
+        claim: &'static str,
+    },
 }
 
 /// The inputs of an `analyze` case.

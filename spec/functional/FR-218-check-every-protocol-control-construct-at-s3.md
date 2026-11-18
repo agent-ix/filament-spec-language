@@ -39,6 +39,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-466
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-822
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-086
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-088
@@ -95,8 +97,9 @@ protocol system only ever runs a protocol whose meaning is fixed.
   `requires temporal` requirements, each bound to the temporal clause it names
   by that clause's position among the unit's `temporal` clauses in declaration
   order; the owner and visible facts of each `choice` and `repeat`; the owner of each `send` (its channel's `from` role) and each `receive` (its channel's `to` role);
-  the compensation templates and the activation (FR-381); and the protocol's
-  `terminal` and `scheduling` members (FR-211, FR-212).
+  the compensation templates and the activation (FR-381); the protocol's
+  `terminal` and `scheduling` members (FR-211, FR-212); and each observe-only
+  role and control and each `recommend` (Observe-only boundaries).
 - A typed `CheckRefusal` with a span on refusal, and no checked clause.
   Every refusal in this requirement holds the S3 stage, the `ProtocolClause`
   family, the code and cause named at it, the located span named at it and the
@@ -194,6 +197,46 @@ protocol system only ever runs a protocol whose meaning is fixed.
   size, and the partition proof of a `choice` charges `s3.work_units`
   (Choice and repeat decisions).
 
+### Attempts
+
+An `attempt N by R on T::op contracts [...] as (b: B) { constraint }` applies
+`op` once per step, and its binder `b` names that step's **application
+record** (ADR-027 ST-1, PS-5): the receiver, the argument vector in parameter
+order and, when `op` declares a result, the result. An operation with no
+parameter and no result has the receiver alone as its record (FR-147-AC-14),
+and FSpec FR-432's binder record of an abstract attempt node is the same
+record.
+
+- **Any declared binder type is admitted.** S3 SHALL admit an attempt binder
+  whatever its declared type `B`, and SHALL NOT refuse the declaration for a
+  `B` that differs from `op`'s result type or for an `op` that has no result.
+  The binder is bound by ST-1 to the record, which exists for every
+  application, so its declaration is never ill typed; refusing it at the
+  declaration would refuse attempts the protocol semantics steps.
+- **Every attempt step binds the binder.** Each `attempt` step SHALL bind `b`
+  to the record of the application it takes (ST-1), and the binder enters the
+  thread's binder environment as PS-5 states. The stepper SHALL never read a
+  binder that no step has bound: a read is admitted only where S3's
+  readable-binder scope (Scopes) places a binding step before it.
+- **A read gets the result when `B` is the result type.** When `op` declares
+  a result and `B` is that result's type (the same checked type, with no
+  conversion), a read of `b` SHALL have type `B` and SHALL evaluate to the
+  record's result. This is the reading of FR-218-AC-33's
+  `attempt Load by c as (loaded: Boolean)` over a `Load` that returns
+  `Boolean`: `while { not loaded }` and `visible (loaded)` read the result.
+  A field read of such a binder reads the field of the result.
+- **Otherwise every read is refused at the read.** When `op` declares no
+  result, or `B` is not its result type, S3 SHALL refuse each read of `b`
+  (every original use, in a guard, a `check`, a `visible` entry, a constraint
+  or any other expression, a field read of `b` included) with
+  `ill_typed`/`type-mismatch` at that read, retaining `expected`, the result
+  type (or no result), and `actual`, `B`. The declaration itself stays
+  admitted, so a binder that nothing reads checks and is bound by each step,
+  and a refusal never moves to the declaration. A read is where a value of
+  type `B` would be consumed, and no value of type `B` exists there: the
+  record's result has another type or there is none, so the rule refuses
+  exactly the reads that could not be well typed and nothing else.
+
 ### Admission for emission
 
 The FSpec protocol node contract (FSpec FR-464, FR-465, FR-466) refuses the
@@ -208,10 +251,13 @@ reaches S4 (FR-383).
   branches are not in the grammar and fail at the parser with its syntax
   diagnostic, before any form is built (FR-308).
 - S3 SHALL refuse `join all` whose list omits a branch, a `quorum(n)` whose
-  `n` is below one or above the number of distinct labels joined, and a
-  `join any` or `join predicate` that lists no label, with
+  `n` is below one or above the number of distinct labels joined, with
   `invalid_package`/`invalid-value` at the list (the count for `quorum`). A
-  label listed twice is one joined label.
+  label listed twice is one joined label. A `join` member list is non-empty in
+  the grammar (FSpec FR-501 §8), so a `join` of any policy that lists no label
+  (`join any []`, `join all []`) fails at the parser with
+  `invalid_syntax`/`unexpected-token` at the closing `]`, before any form is
+  built, and never reaches S3.
 - S3 SHALL refuse a `join` of a `parallel` that declares no `outstanding`
   rule when its policy is not `all`, with `invalid_package`/`invalid-value` at
   the join (FSpec FR-171: each join declares). A checked protocol therefore
@@ -503,6 +549,14 @@ capture enclosed within a composite expression remains permitted.
   command-line diagnostic and the language server) shows for it is that
   span, never the enclosing guard, the decision or the protocol declaration,
   and a guard that reads `over` twice reports two refusals, one at each read.
+  Every refusal of this section names its offending item by its typed
+  cause, which carries the item's declared name: the decision node that
+  holds the read and the slot (`guard`, `visible` or FIFO `key`) it sits in,
+  or the undeclared name itself. Its locus is the item's span, and FR-865's
+  text form shows that name and the span's path, line and column. The cause
+  and the message need not quote the read's source text: the name and the
+  location identify the item, and a reader opens the source at the location
+  to see it.
 
 - Each `visible` entry and each guard (a `case when`, a `repeat while`) SHALL
   read decision facts of eligible binders, protocol captures and constants
@@ -559,6 +613,54 @@ capture enclosed within a composite expression remains permitted.
   (ADR-030): the caller's `s3.work_units` is its only bound, raised by
   FR-255's setting at every entry point. Atom collection and comparison add
   no charge beyond the checked guard-term node charges.
+
+### Observe-only boundaries
+
+A role member or a control written with the leading word `observe` is
+observe-only (FSpec FR-822, shared grammar `role` and `control`): `observe
+role Auditor on M::Actor;` marks every action the role performs, and `observe
+sequence Review { ... }` marks the control and every control nested in it.
+`observe` is a keyword only as the first word of a role member or a control,
+so a capture, binder or type named `observe` keeps its meaning. The parser
+SHALL refuse `observe observe` with `invalid_syntax`/`unexpected-token` at the
+second `observe`, and the formatter SHALL print `observe` and one space before
+the role or control keyword (FR-003). The boundary is written in the source,
+not inferred from a run, so S3 proves it once for every consumer.
+
+- An action is behind an observe-only boundary when an observe-only control
+  holds it, at any depth (cases, branches, bodies, `exhausted`, and an
+  `await`'s `match` event, `then` and `timeout` controls included), or an
+  observe-only role performs it: an `attempt`, `event`, `commit` or
+  `recommend` `by` the role, a `send` on a channel whose `from` is the role, a
+  `receive` on a channel whose `to` is the role, and a compensation template
+  `by` the role.
+- S3 SHALL refuse, behind an observe-only boundary, each `attempt`, `effect`,
+  `send`, `commit`, `event` with a `for` target and compensation template with
+  `ill_typed`/`operator-ineligible` located at the offending action's own
+  declaration (its keyword through its `;`), retaining `action` (`attempt`,
+  `effect`, `send`, `commit`, `event-for` or `compensate`) and `boundary`
+  (the innermost observe-only control above the action, else the role). Each
+  offending action refuses once, in source order, and no refusal is placed at
+  the role or the observe-only control. These are the actions that change the
+  model state, a queue another role takes from, or a compensation
+  registration.
+- S3 SHALL admit `receive`, a domain `event` with no `for`, `check`, `choice`,
+  `repeat`, `sequence`, `parallel`, `await`, `fence` and `recommend` behind the
+  boundary, with the captures and guards they read. A clause with no offending
+  action checks to the checked clause it has with every `observe` removed,
+  plus the recorded marks.
+- **Recommend.** `recommend N by R on T::op contracts [...] as (r: B)
+  { constraint };` is admitted anywhere an event node is. S3 SHALL resolve
+  `R`, `T::op` and the `contracts` as it does for an `attempt` (FR-114), and
+  SHALL admit any declared `B`. A recommendation applies no operation and has
+  no result, so S3 SHALL refuse every read of `r` with `ill_typed`/
+  `type-mismatch` at the read, retaining `expected` (no result) and `actual`
+  (`B`), as for an attempt over an operation with no result; a recommend
+  binder is eligible as a decision fact for no role.
+- S3 SHALL record on the checked clause each observe-only role and each
+  observe-only control as written, and each `recommend` with its role,
+  operation, contracts and binder; S4 emits them as FSpec FR-465's and
+  FR-466's `boundary` argument and `recommend` operator (FR-383).
 
 ### Scopes
 
@@ -635,13 +737,13 @@ one protocol declared in the same unit. It carries no package selector.
 | FR-218-AC-14 | `relationship Pipe = M::pipe;` over an exported relationship binds the checked relationship to the export's key and the types of its two ends; `M::nothing` refuses `missing_declaration`/`missing-name` at the name; `M::out`, a port, and `M::Node`, an object type, each refuse `invalid_model_binding`/`wrong-export` at the name retaining required kind `relationship`, the actual kind and the export's declaration key; two relationships `Pipe` refuse `ambiguous_declaration`/`ambiguous-name` at both. | Test |
 | FR-218-AC-15 | `related by Pipe (a, b)` checks when `a` and `b` have the types of the relationship's first and second ends, and the node holds the clause; `related by Absent (a, b)` refuses `missing_declaration`/`missing-name` at `Absent`; swapped ends, or an end of another type, refuse `ill_typed`/`type-mismatch` at that end, retaining relationship, `end`, expected and actual. A node with `related by Pipe (a, b)` and `related by Owns (c, d)` holds two checked clauses in source order. | Test |
 | FR-218-AC-16 | `requires temporal Due;` over a temporal clause `Due` binds the requirement to `Due`'s position among the unit's temporal clauses, from which S4 mints its node key, the same for a clause with an `on each` activation and a capture (S4 emits such a clause, FR-337-AC-8 to FR-337-AC-10, and the requirement is carried by the emitted clause node of `Due`'s position, so its key is that clause node's key, captures included); `requires temporal Nothing;` and a clause offered only through an import alias each refuse `missing_declaration`/`missing-name` at the name; `requires temporal Accept;` naming a predicate refuses `ill_typed`/`operator-ineligible` at the name, naming the kind; `Due` required twice is recorded once. Each refusal produces no package. | Test |
-| FR-218-AC-17 | A `choice` or `repeat` owned by an undeclared role refuses `missing_declaration`/`missing-name` at the owner. An owner that is the channel's `to` role decides on its `receive` record's Boolean field listed individually in `visible`; the other role, a `send` binder, an `effect` record, a `commit` record, the protocol's activation binder, an unlisted fact and a fact reachable only inside a composite entry each refuse `wrong_snapshot`/`wrong-observation` at the read, retaining node, owner, read and `reason` `other-role`, `ineligible-kind` (for the four binder kinds), `unlisted`; a `finish` record read by a decision refuses `missing_declaration`/`missing-name` as an out-of-scope read, because no decision reaches it, and a read that is out of scope and also unlisted reports the scope refusal only. A discarded `let` that reads a fact still needs the fact listed. A read of the `over` input refuses `ill_typed`/`operator-ineligible` at the read, naming the guard; a read of a protocol capture checks without listing. | Test |
+| FR-218-AC-17 | A `choice` or `repeat` owned by an undeclared role refuses `missing_declaration`/`missing-name` at the owner. An owner that is the channel's `to` role decides on its `receive` record's Boolean field listed individually in `visible`; the other role, a `send` binder, an `effect` record, a `commit` record, the protocol's activation binder, an unlisted fact and a fact reachable only inside a composite entry each refuse `wrong_snapshot`/`wrong-observation` at the read, retaining node, owner, read and `reason` `other-role`, `ineligible-kind` (for the four binder kinds), `unlisted`; a `finish` record read by a decision refuses `missing_declaration`/`missing-name` as an out-of-scope read, because no decision reaches it, and a read that is out of scope and also unlisted reports the scope refusal only. A discarded `let` that reads a fact still needs the fact listed. A read of the `over` input refuses `ill_typed`/`operator-ineligible` at the read, naming the guard; a read of a protocol capture checks without listing. Each of these refusals names its offending item by its typed cause: the cause carries the item's declared name (the `choice` or `repeat` node whose guard or `visible` entry holds the read, with the slot, `guard` or `visible`; the undeclared owner's name) and its locus is the item's span, so the FR-865 text line of the refusal shows that name and the `<path>:<line>:<column>` of that span. Neither the cause nor the rendered message has to carry the item's source expression text. | Test (TC-2978) |
 | FR-218-AC-18 | A sibling branch's record before its join, an optional choice branch's record, and an `await` match read after the `await` each refuse `missing_declaration`/`missing-name` at every original use, retaining `name`. A repeat's own visible entry and guard may read its body attempt binders from the most recently completed iteration, subject to owner-role eligibility. | Test (TC-1056, TC-1268) |
 | FR-218-AC-19 | Over two visible facts, guards that leave both facts true uncovered, that overlap on both true, that leave one fact out, and constant guards `true`/`not false` or `false`/`not true` each refuse `undefined_expression`/`unproved-exhaustiveness` at the choice, retaining `failed` (`[missing-arm]`, `[duplicate-arm]` or `[missing-arm, duplicate-arm]`) and the case names; complementary guards over the individually listed facts check. | Test |
 | FR-218-AC-20 | A FIFO key of type `Boolean`, and a key of a record type, check because the clause checker admits `=` over them; a key of a type over which it admits no `=` refuses `ill_typed`/`operator-ineligible` at the key, retaining `operator` `=` and the type. | Test |
 | FR-218-AC-21 | Channels written `overflow reject`, `overflow block`, `overflow loss head`, `overflow loss tail` and `overflow loss new` record `Reject`, `Block`, `Loss(Head)`, `Loss(Tail)` and `Loss(New)`; no other overflow policy records a selector, and a delivery policy never changes the recorded overflow policy. | Test (TC-1065) |
 | FR-218-AC-22 | A `choice` with cases `shipped` and `shipped` and a `parallel` with branches `east` and `east` each refuse `ambiguous_declaration`/`ambiguous-name` at both labels, in source order, naming the label; a `choice` with one case and a `parallel` with one branch each fail at the parser with a syntax diagnostic and build no form; two cases and two branches check. | Test (TC-1065) |
-| FR-218-AC-23 | Over branches `east` and `west`, `join all [east]` and `join quorum(0) [east, west] outstanding cancel` and `join quorum(3) [east, west] outstanding cancel` and `join any [] outstanding cancel` each refuse `invalid_package`/`invalid-value` at the list (the count for `quorum`); `join all [east, west]`, `join quorum(2) [east, west] outstanding cancel`, `join any [east] outstanding cancel` and `join all [east, west, east]` check, the last joining each label once. | Test (TC-1065) |
+| FR-218-AC-23 | Over branches `east` and `west`, `join all [east]` and `join quorum(0) [east, west] outstanding cancel` and `join quorum(3) [east, west] outstanding cancel` each refuse `invalid_package`/`invalid-value` at the list (the count for `quorum`); `join any [] outstanding cancel` refuses at parse time `invalid_syntax`/`unexpected-token` at `]` (FSpec FR-501-AC-8), with no form built and no S3 refusal; `join all [east, west]`, `join quorum(2) [east, west] outstanding cancel`, `join any [east] outstanding cancel` and `join all [east, west, east]` check, the last joining each label once. | Test (TC-1065) |
 | FR-218-AC-24 | A role `on M::Pt` where `Pt` is a record type refuses `invalid_model_binding`/`malformed-declaration` at `M::Pt`; a role on an object type, a process and a state machine checks; in ADR-027 §7's `Fill` unit (alias `M`, `over (k: M::Cell)`), `role w on M` checks as a role on the whole model recording the identity of the package `M` selects, and so do `role w on M` beside `role u on N` in one clause over two aliases and `role w on M` in a clause whose `over` type is a scalar, a record and a `Set<M::Cell>` (Role on a model alias), while the replicated `role r each M from cells` refuses `invalid_model_binding`/`malformed-declaration` at `M` with no `pop` refusal and no package; a channel `carries M::Node` where `Node` is an object type refuses the same at `M::Node`, and a channel carrying a record, an event type, a variant type and a scalar type checks. | Test (TC-1065) |
 | FR-218-AC-25 | `requires temporal Due;` where `Due`'s formula holds `protocol Fill` and the requiring protocol is `Fill`, and the same through a second temporal clause that names `Fill`, each refuse `invalid_package`/`definition-cycle` at the requirement, naming `Fill` and the clause; the same requirement from a protocol `Drain` that no clause names checks. Each refusal produces no package. | Test (TC-1065) |
 | FR-218-AC-26 | A choice guard and a `visible` entry that read a field of an object-typed attempt binder, and a FIFO key that reads a field through a reference-typed field of its record binder, each refuse `ill_typed`/`operator-ineligible` at the read, naming the guard, the `visible` entry or the key; the same reads over a record binder's own fields check. A channel that carries an object type refuses once, at the type, and gives no refusal at its `send`, `receive` or FIFO binders. | Test (TC-1056, TC-1065) |
@@ -662,6 +764,10 @@ one protocol declared in the same unit. It carries no package selector.
 | FR-218-AC-41 | In a protocol over `(input: M::Actor)`, `role W on M` beside `role R on M::Actor` checks, `W` recording the identity of the package `M` selects; `role r each M from pop max 2 lifetime workflow` refuses `invalid_model_binding`/`malformed-declaration` with a refusal region whose text is exactly `M`, and gives no refusal for `pop`. | Test (TC-2020) |
 | FR-218-AC-42 | With `capture ready: Boolean = input.ready;`, a `choice` by `R` with `visible ()` whose guards are `ready` and `not ready` checks, and its guards read the capture. The same `choice` with guards `input.ready` and `not input.ready` refuses twice with `ill_typed`/`operator-ineligible`, naming the guard slot, and each refusal region's text is exactly `input.ready`; no refusal region covers the guard block, the `choice` or the protocol declaration. | Test (TC-2021) |
 | FR-218-AC-43 | A `repeat` with `invariant { true } variant { n }` checks when `n` has an integer type and when the variant is a tuple of two integer-typed terms; a variant of type `Boolean` and a variant of a record type each refuse `ill_typed`/`type-mismatch` at the variant, retaining `expected` and `actual`. | Test (TC-2022) |
+| FR-218-AC-44 | Over the Cell fixture, whose `flag` returns `Boolean` and whose `touch` returns nothing: `attempt T by w on M::Cell::flag contracts [FlagPre, FlagPost] as (t: Boolean) { true }` followed by `check Gate using v { t }` checks and the check reads the result; the same attempt with `as (t: Integer)` and no read of `t`, and the `touch` attempt with `as (t: Boolean)` and no read, each check; with `as (t: Integer)` and `check Gate using v { t = 1 }`, and with the `touch` attempt and `check Gate using v { t }`, each unit refuses exactly once, `ill_typed`/`type-mismatch` at the read `t` inside the check, never at the binder declaration, retaining `expected` `Boolean` (or no result for `touch`) and `actual` the binder's type; two reads of a mismatched binder refuse twice, once at each read. | Test (TC-2972) |
+| FR-218-AC-45 | `observe role Auditor on M::Actor;` with a `receive` to `Auditor`, a `choice by Auditor`, a `check` and `recommend Advise by Auditor on M::Actor::op contracts [] as (r: Boolean) { true };` checks, and `run observe sequence Review { check Gate using v { true }; recommend Advise by R on M::Actor::op contracts [] as (r: Boolean) { true }; }` checks; each checked clause records the observe-only role or control, and the same clauses without `observe` check to clauses equal except for those marks. `observe observe sequence ...` fails at the parser with `invalid_syntax`/`unexpected-token` at the second `observe`, and a capture named `observe` checks. | Test (TC-2989) |
+| FR-218-AC-46 | Inside `observe sequence Review`, each of `attempt Tried by R on M::Actor::op ...`, an `effect` of an attempt outside `Review`, a `send`, a `commit` and an `event ... for` a compensation refuses `ill_typed`/`operator-ineligible` whose refusal region's text is exactly that action's declaration, retaining `action` (`attempt`, `effect`, `send`, `commit`, `event-for`) and `boundary` `Review`; the same action outside `Review` checks. Under `observe role R`, `attempt Tried by R ...` refuses with `boundary` `R`, and a compensation template `by R` refuses with `action` `compensate` at the template. A nested `choice` in `Review` holding the attempt in one case refuses at the attempt. Two offending actions give two refusals in source order and none whose region is the role or the `Review` header. | Test (TC-2989) |
+| FR-218-AC-47 | A `recommend` over an unknown operation refuses as an `attempt` over it does; a `recommend` whose `contracts` names a clause of another operation refuses as for an attempt; a `while` guard or `visible` entry reading the recommend binder `r` refuses `ill_typed`/`type-mismatch` at the read with `expected` no result. | Test (TC-2989) |
 
 ## Dependencies
 

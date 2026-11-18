@@ -327,6 +327,55 @@ pub struct StateModel {
 }
 
 impl StateModel {
+    /// Whether a selected domain package declares an operation member.
+    pub fn declares_operations(&self) -> bool {
+        self.views.iter().any(|view| {
+            view.view
+                .domain_package()
+                .records
+                .iter()
+                .any(|record| matches!(record, DomainPackageRecord::OperationMember(_)))
+        })
+    }
+
+    /// FR-940: the operations the selected domain packages declare, typed as
+    /// S3's assembly types them ([`crate::check::model_operation_table`]),
+    /// each type naming a unit of `units`. The unit's own source package
+    /// (FR-569) is not a domain package and contributes none.
+    ///
+    /// # Errors
+    ///
+    /// As [`crate::check::model_operation_table`].
+    pub fn operation_table(
+        &self,
+        units: &BTreeMap<String, filament_exact::UnitId>,
+    ) -> Result<crate::model::operation::OperationTable, crate::check::AssemblyRefusal> {
+        crate::check::model_operation_table(
+            self.views
+                .iter()
+                .filter(|view| !view.is_source())
+                .map(|view| &view.view),
+            units,
+        )
+    }
+
+    /// FR-940: the population domains of the selected domain packages whose
+    /// member types overlap `object`, as S3 reads them for a temporal
+    /// clause's claim over `object` (FR-336), before the unit's authored
+    /// bounds (FR-380) are applied.
+    pub fn overlapping_populations(
+        &self,
+        object: filament_exact::EffectiveId,
+    ) -> Vec<crate::check::PopulationDomain> {
+        let models: Vec<crate::check::lowering::AdmittedModel> = self
+            .views
+            .iter()
+            .filter(|view| !view.is_source())
+            .map(|view| crate::check::lowering::AdmittedModel::from_view(&view.view))
+            .collect();
+        crate::check::state_clause::populations_overlapping(&models, object, &self.types)
+    }
+
     /// Re-admit and re-normalize the domain packages `model_selections` name
     /// against `packages`, as FR-106 admission does.
     ///

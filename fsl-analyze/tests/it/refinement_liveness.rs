@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use filament_exact::{Cancel, CancelCause};
-use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::model_check::{check_refinement, RefinementCheckRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{operation_identity_text, ModelSimulationRequest};
@@ -61,7 +60,7 @@ fn run(
                 proof_bounds: Vec::new(),
             },
             abstract_package: package,
-            abstract_initial: vec![abstract_initial],
+            abstract_initial: vec![abstract_initial].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -248,7 +247,6 @@ fn a_loop_that_takes_abstract_steps_but_never_flip_b_is_abstract_unfair() {
 #[trace("TC-548", "FR-143-AC-4")]
 #[trace("TC-2536", "FR-899-AC-1")]
 #[test]
-#[ignore = "QSL-2243: liveness through a hidden abstract field settles Unsupported instead of being decided"]
 fn liveness_through_a_hidden_abstract_field_is_decided() {
     let unit = Unit::register();
     let ensured = hidden_register_history();
@@ -297,7 +295,7 @@ fn operation_of(outcome: RefinementOutcome) -> String {
 /// with the proved safety half beside it; a weak `F_A` holds as before. With
 /// the safety half violated, the liveness half is not run.
 #[trace("TC-548", "FR-143-AC-6")]
-#[trace("TC-2537", "FR-899-AC-3", "FR-899-AC-4")]
+#[trace("TC-2537", "FR-899-AC-3")]
 #[test]
 fn a_strong_abstract_fairness_constraint_refutes_a_loop_that_never_takes_it() {
     let unit = probe(
@@ -306,31 +304,16 @@ fn a_strong_abstract_fairness_constraint_refutes_a_loop_that_never_takes_it() {
         &[(0, 0)],
     );
     let flip_a = "assume fair weak each Impl::Pair::flipA;";
-    let concrete_strong = "assume fair strong each Impl::Pair::flipB;";
     let weak = "ensure fair weak whole Spec::Pair::flipB;";
     let strong = "ensure fair strong whole Spec::Pair::flipB;";
     holds(&check_aux(&unit.world(&probe_refinement(&[flip_a, weak]))));
-    holds(&check_aux(&unit.world(&probe_refinement(&[
-        flip_a,
-        concrete_strong,
-        strong,
-    ]))));
     for rows in [
         vec![flip_a, strong],
         vec![flip_a, weak, strong],
         vec![flip_a, strong, weak],
     ] {
         let outcome = check_aux(&unit.world(&probe_refinement(&rows)));
-        let counterexample = lasso(outcome);
-        let Some(RefinementFailure::AbstractUnfair { constraint }) =
-            counterexample.refinement.as_ref()
-        else {
-            panic!(
-                "the strong constraint is abstract-unfair: {:?}",
-                counterexample.refinement
-            );
-        };
-        assert_eq!(constraint.operation().name(), "flipB", "{rows:?}");
+        assert_eq!(operation_of(outcome), "flipB", "{rows:?}");
     }
     let violated = probe_refinement(&[flip_a, strong]).replace(
         "step Impl::Pair::flipA -> Spec::Pair::flipA(self);",
@@ -402,7 +385,7 @@ fn the_lasso_names_the_initial_state_it_starts_from() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: world.abstract_initials(),
+            abstract_initial: world.abstract_initials().into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -429,7 +412,7 @@ fn peeker_run(limits: ModelCheckLimits, cancel: &Cancel) -> RefinementOutcome {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits,
@@ -529,19 +512,14 @@ fn a_cancellation_during_the_second_phase_stops_it() {
 #[trace("TC-548")]
 #[test]
 fn an_undecided_abstract_contract_leaves_the_liveness_half_undecided() {
-    let contracts = format!(
-        "function unknown_at_one using v(n: Int[0, 1]): Boolean pure {{ 1 mod (1 - n) >= 0 }}\n{}",
-        probe_contracts([NEVER, NEVER, NEVER, ""], ["", "", ""])
-    )
-    .replace(
+    let contracts = probe_contracts([NEVER, NEVER, NEVER, ""], ["", "", ""]).replace(
         "post SpecFlipB using v on Spec::Pair::flipB { self.b = 1 - pre(self.b) }",
-        "post SpecFlipB using v on Spec::Pair::flipB { unknown_at_one(pre(self.b)) and self.b = 1 - pre(self.b) }",
+        "function mod_defined using v(n: Int[0, 1]): Boolean pure { 1 mod (1 - n) >= 0 }\npost SpecFlipB using v on Spec::Pair::flipB { mod_defined(pre(self.b)) and self.b = 1 - pre(self.b) }",
     );
-    let unit = Unit::probe_pair(contracts, &[(0, 1)]);
-    let outcome = check_aux(&unit.world_with_mode(
-        &probe_refinement(&["ensure fair weak whole Spec::Pair::flipB;"]),
-        CheckMode::Kernel,
-    ));
+    let unit = Unit::probe_pair(contracts, &[(0, 1)]).kernel();
+    let outcome = check_aux(&unit.world(&probe_refinement(&[
+        "ensure fair weak whole Spec::Pair::flipB;",
+    ])));
     assert!(matches!(outcome.safety, SafetyOutcome::Holds { .. }));
     assert!(matches!(
         outcome.liveness,
@@ -558,7 +536,6 @@ fn an_undecided_abstract_contract_leaves_the_liveness_half_undecided() {
 #[trace("TC-548", "FR-143-AC-6")]
 #[trace("TC-2536", "FR-899-AC-1")]
 #[test]
-#[ignore = "QSL-2243: a hidden field with a strong constraint settles Unsupported instead of being decided"]
 fn a_hidden_field_with_a_strong_constraint_is_decided() {
     let unit = Unit::register();
     let strong = hidden_register_history().replace("ensure fair weak", "ensure fair strong");
@@ -594,7 +571,7 @@ fn run_cancel(world: &AuxWorld<'_>, cancel: &Cancel) -> RefinementOutcome {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),

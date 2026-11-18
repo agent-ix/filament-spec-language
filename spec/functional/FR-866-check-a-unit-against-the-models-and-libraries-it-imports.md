@@ -47,7 +47,8 @@ same two selections and hands them to the same intake.
 ### The options
 
 - `--model <identity>=<file>`, repeatable: `<file>` is a `semantic-ir/2.0.0`
-  domain package document supplied under `<identity>`, read and admitted
+  domain package document, or a model unit recognized by content and
+  compiled to its document (FR-710), supplied under `<identity>`, read and admitted
   exactly as one entry of a compile request's `models` member (FR-027,
   FR-056, FSpec FR-154). The unit's `model` declarations select it by
   identity.
@@ -77,6 +78,22 @@ bounded intake, admits the models through `select` and checks the unit
 through `check` with the libraries as its dependency input, the same
 composition a compile request runs up to `package` (FR-278). The driver
 calls it and reads no model or library file itself.
+
+### The checked source's identity
+
+`check_outcome` SHALL name the checked source by the labels the driver's
+`fsl check` gives the file it was handed: authority `filament` and identity
+the source path exactly as the caller supplied it, the same two FR-001
+labels `fsl check` passes to `parse` for a source it checks with no
+selection. Every diagnostic locus, the admitted `sources` and the rendered
+text of the outcome then name that file, on every path through
+`check_outcome`, a source that does not parse included. The labels are the
+caller's labelling of its input, not an FSL derivation from the path
+(FR-001): `check_outcome` is the command-layer caller. A command-layer
+authority such as the crate's own name would locate the diagnostic in a
+source the user never wrote, and would make the refusal of a malformed
+source differ between the `fsl` binary and the library entry it calls,
+which must give equal documents.
 
 ### Refusals
 
@@ -135,6 +152,7 @@ FR-286's `check` outcome document, in the format `--format` selects
 | FR-866-AC-3 | A compile request over FR-108's unit with `models` `[]`, and `check_outcome` with no model selection, each refuse `missing_import`/`missing-selection` at stage I1 with a message naming `example/config-version`, `--model` and `models`. | Test (TC-2457) |
 | FR-866-AC-4 | `check_outcome` with a model selection under `example/other` over FR-108's unit, and with any model selection over `tests/fixtures/spine-compile.native` (no `model` line), each refuse `invalid-request` naming `--model` and the identity, and read no model file; a library selection the unit does not import refuses the same way naming `--library`. | Test (TC-2457) |
 | FR-866-AC-5 | `fsl check im.fsl --model example/config-version=m.json` over the unit `model Config = "example/config-version"; invariant NoCycle using v on Config::ConfigVersion at current { not reaches(self, self, parent) }` exits 0; without `--model` it exits 20 with `missing_import` naming the identity and `--model`; `--model example/config-version=m.json` given twice, `--model m.json` (no `=`) and `--model =m.json` each exit 20 `invalid-request` naming `--model` before reading `m.json`. | Driver test (TC-2458): the `fsl` binary parses the options, so the code ticket adds the test in the filament-driver repository. |
+| FR-866-AC-6 | `check_outcome` over a source at path `P` that does not parse (`function f using v(: Boolean pure { true }`) returns a `check` refusal whose every diagnostic locus names the source `{"authority": "filament", "identity": P}`, with `P` byte-equal to the path given, whose admitted `sources` hold that identity, and whose document contains neither `fsl-command` nor `check-source`; the document is byte-equal to the one `parse` and `check` give for the same bytes under that identity. A source that parses and refuses at S3 names the same identity. | Test (TC-2977) |
 
 ## Dependencies
 
@@ -145,6 +163,7 @@ FR-286's `check` outcome document, in the format `--format` selects
 - [FR-099](FR-099-compile-against-supplied-libraries.md): the dependency
   input.
 - [FR-287](FR-287-reach-fsl-through-the-driver-cli.md): the driver's verbs.
+- [FR-001](FR-001-read-exact-source.md): the two source labels.
 - [FR-869](FR-869-raise-every-limit-of-parse-check-and-compile-from-the-command-line.md):
   `--limit` on `check`.
 - FSpec FR-719: the CLI's half.

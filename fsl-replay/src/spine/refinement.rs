@@ -300,6 +300,7 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
             Some(ReachedLimit::of_setting(denial.setting(), denial.limit()))
         }
         CheckCause::TypeAdmission { limit, .. } => limit.as_deref().map(ReachedLimit::of),
+        CheckCause::EmptyPackage { .. } => None,
         // A type invariant's wrapper classifies as the cause it wraps.
         CheckCause::TypeInvariant(refusal) => check_limit(&refusal.cause),
         CheckCause::Terminal(refusal) => check_limit(&refusal.cause),
@@ -339,7 +340,10 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::PopulationFormNotChecked { .. }
         | CheckCause::ModelConformance(_)
         | CheckCause::IllTyped(_)
+        | CheckCause::UndeclaredVariantCase { .. }
         | CheckCause::OperandTypeMismatch { .. }
+        | CheckCause::ReferenceLiteralTypeMismatch { .. }
+        | CheckCause::EmptyReferenceLiteralKey { .. }
         | CheckCause::IdentityObservingForm(_)
         | CheckCause::WrongSnapshot(_)
         | CheckCause::MissingName(_)
@@ -643,7 +647,7 @@ fn classify_outcome(outcome: &CallOutcome) -> Classification {
 
 fn accounting_limit(incomplete: &CallIncomplete) -> ReachedLimit {
     ReachedLimit {
-        name: incomplete.setting().name(),
+        name: incomplete.setting_name(),
         bound: incomplete.record.limit,
     }
 }

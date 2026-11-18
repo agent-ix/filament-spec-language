@@ -157,7 +157,7 @@ fn predicate(
             (Some(code), Some(cause)) => failed(CatalogCode::new(code, cause)),
             _ => failed(BROKEN),
         },
-        ClauseOutcome::FamilyRefused(code) => failed(*code),
+        ClauseOutcome::FamilyRefused(code) | ClauseOutcome::Stopped(code) => failed(*code),
         ClauseOutcome::Incomplete(value) => incomplete(
             ModelCheckLimit::EvaluationMeter {
                 counter: value.limit_kind,

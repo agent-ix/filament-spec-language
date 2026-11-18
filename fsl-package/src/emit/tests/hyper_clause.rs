@@ -17,6 +17,8 @@ use crate::checked_v2::{
 
 const INFINITE: &str = "filament.temporal.infinite-trace/v1";
 const EVENT: &str = "filament.temporal.event-position.false-extension/v1";
+const FINITE_DET: &str = "hyper Det using inf over t in Obs bounded 3 forall trace a forall trace b \
+    { (a.inp = b.inp) implies (a.out = b.out) }";
 
 /// `a` and `b` read the same version number.
 const READ_A_B: &str = "always holds(c.versionNumber @ a = c.versionNumber @ b)";
@@ -77,6 +79,67 @@ fn compile(unit: &str) -> Compiled {
         emission,
         wire,
     }
+}
+
+/// FR-898-AC-1: S4 emits the finite trace population domain and source-order
+/// quantifiers as one admitted hyperproperty node.
+#[trace("TC-2534", "FR-898-AC-1")]
+#[test]
+fn a_finite_trace_set_hyperproperty_emits_its_finite_domain() {
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile t = \"{EVENT}\";\n\
+         record Obs {{ inp: Int[0, 3]; out: Int[0, 3]; }}\n\
+        {FINITE_DET}"
+    );
+    let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+        .expect("no selected model packages");
+    let graph = assemble_with_models(source.as_bytes(), &packages)
+        .expect("the finite unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the finite clause checks: {refusals:?}\n{source}"));
+    assert_eq!(graph.finite_hyper_clauses().len(), 1);
+    let package = CheckedPackage::link(graph);
+    let emission = emit_checked(&package).expect("the finite clause emits");
+    assert!(emission.omitted.is_empty());
+    let wire = wire(&emission);
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    crate::checked_v2::read_checked_package_v2(
+        emission.package.bytes(),
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence,
+    )
+    .unwrap_or_else(|failure| panic!("the I2 reader admits the finite clause: {failure:?}"));
+    let clause = hyper_node(&wire);
+    let body = &clause["body"];
+    let domain = node_via(&wire, binding(body, "domain"));
+    assert_eq!(domain["node_tag"], "bounded_domain");
+    assert_eq!(domain["semantic_form"], "finite_trace_population");
+    assert_eq!(target(binding(body, "domain")), &domain["node_id"]);
+    assert_eq!(domain["body"]["members"][0]["name"], "bound");
+    assert_eq!(domain["body"]["members"][0]["value"]["value"], "3");
+    assert_eq!(
+        node_via(&wire, &domain["semantic_type"])["semantic_form"],
+        "record"
+    );
+    for member in ["subjects", "parameters", "match", "align_skip"] {
+        assert_eq!(binding(body, member)["members"], json!([]));
+    }
+    let quantifiers = binding(body, "quantifiers")["members"].as_array().unwrap();
+    assert_eq!(quantifiers.len(), 2);
+    for (group, variable) in quantifiers.iter().zip(["a", "b"]) {
+        assert_eq!(group["members"][0]["name"], "variable");
+        assert_eq!(text(&group["members"][0]["value"]), variable);
+        assert_eq!(group["members"][1]["name"], "quantifier");
+        assert_eq!(text(&group["members"][1]["value"]), "forall");
+    }
+    let expression = node_via(&wire, binding(body, "body"));
+    assert_eq!(expression["node_tag"], "expression");
 }
 
 /// The refusals of `unit`'s check.
@@ -270,6 +333,31 @@ fn a_hyper_clause_emits_the_hyperproperty_node_with_its_seven_bindings() {
         1
     );
     assert_eq!(binding(body, "align_skip")["members"], json!([]));
+}
+
+/// FR-631-AC-4: a temporal whose body reads no object slots still emits a
+/// hyperproperty, anchored to its selected model subject.
+#[trace("TC-1591", "FR-631-AC-4")]
+#[test]
+fn an_object_free_hyper_temporal_emits() {
+    let declaration = "hyper Whole using t over behaviours \
+                       forall trace a of Config forall trace b of Config \
+                       { always holds(true) }";
+    let compiled = compile(&unit(INFINITE, declaration));
+    let node = hyper_node(&compiled.wire);
+    assert_eq!(text(binding(&node["body"], "domain")), "behaviours");
+    assert!(binding(&node["body"], "parameters")["members"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        binding(&node["body"], "subjects")["members"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    admit(&compiled);
 }
 
 /// FR-488-AC-4, AC-5: the `body` binding references a

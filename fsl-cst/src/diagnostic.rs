@@ -4,7 +4,7 @@
 use fsl_foundation::diagnostic::LimitKind;
 use fsl_foundation::source::provenance::SourceRegion;
 use fsl_foundation::source::{
-    BLANK_LABEL_TAG, EMPTY_PATH_TAG, SourceLabel, SourceReadCause, SourceReadRefusal,
+    SourceLabel, SourceReadCause, SourceReadRefusal, BLANK_LABEL_TAG, EMPTY_PATH_TAG,
 };
 use fsl_foundation::{Phase, Source, SourceIdentity, SyntaxLimit};
 
@@ -485,7 +485,10 @@ mod tests {
             (CompleteCause::InvalidToken, CompleteCode::InvalidSyntax),
             // TC-2153 exercises this cut marker when the retained list reaches
             // its bound; it remains an invalid-syntax diagnostic.
-            (CompleteCause::DiagnosticListCut, CompleteCode::InvalidSyntax),
+            (
+                CompleteCause::DiagnosticListCut,
+                CompleteCode::InvalidSyntax,
+            ),
             (CompleteCause::InvalidEscape, CompleteCode::InvalidSyntax),
             (
                 CompleteCause::DeclarationForm,

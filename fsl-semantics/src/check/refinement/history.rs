@@ -88,6 +88,8 @@ fn bounded(declared: &ValueType) -> bool {
         | ValueType::String
         | ValueType::Uuid
         | ValueType::Timestamp
+        | ValueType::Bytes
+        | ValueType::JsonObject
         | ValueType::Composite(_)
         | ValueType::Collection(_)
         | ValueType::Map(_)

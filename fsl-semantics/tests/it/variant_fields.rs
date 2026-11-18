@@ -938,8 +938,8 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
     assert_eq!(
         record.cause,
         CheckCause::UnknownField {
-            owner: "Config::Settings".to_owned(),
-            field: "paid".to_owned(),
+            owner: "Config::Settings".into(),
+            field: "paid".into(),
             span: Some(fsl_foundation::Span {
                 start: record_start,
                 end: record_start + "paid".len(),
@@ -952,16 +952,19 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
         .iter()
         .find(|refusal| matches!(&refusal.cause, CheckCause::StateModel(cause) if matches!(cause.cause, CheckCause::UnknownField { .. })))
         .unwrap_or_else(|| panic!("the absent model field is refused: {refusals:?}"));
-    assert!(matches!(
-        &object.cause,
-        CheckCause::StateModel(cause)
-            if matches!(&cause.cause, CheckCause::UnknownField { owner, field, span }
-                if owner == "Account" && field == "paid"
-                    && *span == Some(fsl_foundation::Span {
-                        start: model_start,
-                        end: model_start + "paid".len(),
-                    }))
-    ), "{object:?}");
+    assert!(
+        matches!(
+            &object.cause,
+            CheckCause::StateModel(cause)
+                if matches!(&cause.cause, CheckCause::UnknownField { owner, field, span }
+                    if &**owner == "Account" && &**field == "paid"
+                        && *span == Some(fsl_foundation::Span {
+                            start: model_start,
+                            end: model_start + "paid".len(),
+                        }))
+        ),
+        "{object:?}"
+    );
     assert!(object.location.path().is_empty());
 
     assert!(
@@ -971,6 +974,47 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
         }),
         "1 + \"a\" remains ill_typed/type-mismatch: {refusals:?}"
     );
+}
+
+/// An undeclared case of a model variant retains the FR-360 mismatch code;
+/// an undeclared case of a source enum remains an unknown name.
+#[trace("FR-360-AC-5")]
+#[test]
+fn undeclared_variant_cases_name_the_declared_owner_and_keep_source_enum_names_missing() {
+    let refusals = check_refusals(
+        "enum Status { Open, Closed }\n\
+         function model_case using v(): Config::Tier pure { Config::Tier::Lost }\n\
+         function source_case using v(): Boolean pure { Status::Unknown = Status::Open }",
+    );
+
+    let model_case = refusals
+        .iter()
+        .find(|refusal| {
+            matches!(
+                &refusal.cause,
+                CheckCause::UndeclaredVariantCase { owner, case }
+                    if owner == "Tier" && case == "Lost"
+            )
+        })
+        .expect("the undeclared model variant case is identified");
+    assert_eq!(model_case.cause.code(), fsl_foundation::Code::IllTyped);
+    assert_eq!(model_case.cause.cause(), Some("type-mismatch"));
+    assert!(model_case.location.path().is_empty(), "{model_case:?}");
+
+    let source_case = refusals
+        .iter()
+        .find(|refusal| {
+            matches!(
+                &refusal.cause,
+                CheckCause::MissingQualifiedName(name) if name.name == "Status::Unknown"
+            )
+        })
+        .expect("the undeclared source enum member remains a missing name");
+    assert_eq!(
+        source_case.cause.code(),
+        fsl_foundation::Code::MissingDeclaration
+    );
+    assert_eq!(source_case.cause.cause(), Some("missing-name"));
 }
 
 /// TC-1007 step 6 (FR-360-AC-5): a variant type name in a type position that
@@ -2178,4 +2222,78 @@ fn the_encoder_writes_set_and_bag_elements_in_canonical_form() {
         ordered.to_json().expect("encodes"),
         json!({"ordered-set": written(&["9", "10"])})
     );
+}
+
+/// The FR-360 package with the payload-bearing variant type `Shape` (`Empty`;
+/// `Circle` carrying an `Integer`) and `Account.describe(s: Shape, t: Tier):
+/// Boolean`.
+fn payload_variant_document() -> Value {
+    let mut shape = fixture::variant_type("Shape", &["Empty", "Circle"]);
+    shape["variants"][1]["payloadType"] = json!("ix://filament/native/Integer");
+    let mut document = fixture::with_types(vec![shape]);
+    let account = document["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|ty| ty["displayName"] == "Account")
+        .expect("Account");
+    account["operations"]
+        .as_array_mut()
+        .expect("operations")
+        .push(fixture::operation_with(
+            "Account",
+            "describe",
+            &[("s", fixture::id("Shape")), ("t", fixture::id("Tier"))],
+            "ix://filament/native/Boolean",
+        ));
+    document
+}
+
+/// The refusals `clause` is checked with over [`payload_variant_document`].
+fn describe_refusals(clause: &str) -> Vec<CheckRefusal> {
+    let (declarations, _packages) = declarations_of(
+        &payload_variant_document(),
+        "Config",
+        &format!("post D using v on Config::Account::describe {{ {clause} }}"),
+    );
+    declarations
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .map(|_| Vec::new())
+        .unwrap_or_else(|refusals| refusals)
+}
+
+/// TC-1009 step 5 (FR-360-AC-12): a variant type with a payload-bearing case is
+/// a union, so an operation parameter of it is the scrutinee of a `case` in a
+/// state clause and checks; the parameter of a variant type with no payload is
+/// an enum, whose `case` refuses `ill_typed`/`type-mismatch` at the scrutinee,
+/// so no arity-0 union is declarable through a domain package.
+#[trace("TC-1009", "FR-360-AC-12")]
+#[test]
+fn a_payload_variant_parameter_is_a_union_scrutinee_and_a_nullary_one_is_not() {
+    assert_eq!(
+        describe_refusals("case s { Empty: true; Circle(r): r > 0; }"),
+        vec![],
+        "the union parameter is cased"
+    );
+    let missing = describe_refusals("case s { Circle(r): r > 0; }");
+    let found: Vec<_> = missing
+        .iter()
+        .map(|refusal| (refusal.cause.code(), refusal.cause.cause()))
+        .collect();
+    assert_eq!(
+        found,
+        [(
+            fsl_foundation::diagnostic::Code::UndefinedExpression,
+            Some("unproved-exhaustiveness")
+        )],
+        "an arm set missing `Empty` refuses exhaustiveness and nothing else"
+    );
+    let nullary = describe_refusals("case t { Gold: true; Standard: false; }");
+    assert_eq!(nullary.len(), 1, "{nullary:?}");
+    assert_eq!(nullary[0].cause, mismatch());
+    assert_eq!(
+        nullary[0].cause.code(),
+        fsl_foundation::diagnostic::Code::IllTyped
+    );
+    assert_eq!(nullary[0].location.path(), &[0], "at the scrutinee");
 }

@@ -88,6 +88,8 @@ pub mod value_check;
 mod witness;
 mod witness_entry_name;
 
+use fsl_package::{ModelIdentity, ObligationIdentity};
+
 pub use admitted::{
     compile_admitted, compile_admitted_with_temporal_selections, AdmittedCompilation,
     AdmittedComposite, AdmittedCompositeForm, AdmittedContext, AdmittedDimension, AdmittedEnum,
@@ -109,8 +111,9 @@ pub use build_inventory::{
 pub use call_replay_context::{run_with_replay_context, CallReplayContext, RunWithReplayContext};
 pub use call_requirements::{
     call_requirements_for, run_with_requirements, run_with_requirements_reading,
-    run_with_requirements_reading_and_profile_catalog, CallRequirement, CallRequirements,
-    RequirementsRun, RunWithRequirements,
+    run_with_requirements_reading_and_profile_catalog,
+    run_with_requirements_reading_and_profile_catalog_and_integer_division, CallRequirement,
+    CallRequirements, RequirementsRun, RunWithRequirements,
 };
 pub use call_site::{
     call_site, CallSite, CallSiteRefusal, CallSiteSelection, ClauseName, ClauseSite, FieldName,
@@ -121,6 +124,7 @@ pub use certificate::closed_form::outcome::{
     AmcEvidence, ClosedFormAnalysis, ClosedFormEvidence, ClosedFormOutcome, DemandWitness,
     HighModeMiss, JobIterates, MissEvidence, ScheduleLimit, TaskFixpoint,
 };
+pub use certificate::closed_form::check::{check_closed_form, CertificateRefusal, ClaimTriple, ClosedFormResult};
 pub use certificate::closed_form::recompute::{recompute, ClosedFormCheck, ClosedFormDisagreement};
 pub use certificate::closed_form::settle::settle;
 pub use certificate::closed_form::task_set::{
@@ -204,8 +208,8 @@ pub use hybrid_replay::{
     TraceBefore, TraceFault, TraceJump, TraceRefusal, TraceState, UndefinedCause, UndefinedInstant,
 };
 pub use identity::{
-    DeclaredDomain, DefinitionSourceRef, EmptyQualifiedName, ModelIdentity, ObligationIdentity,
-    ProfileSelection, QualifiedName, TracePosition,
+    DeclaredDomain, DefinitionSourceRef, EmptyQualifiedName, ProfileSelection, QualifiedName,
+    TracePosition,
 };
 pub use limits::{AccountingLimits, CallerLimits, EngineLimits, RenderLimits};
 pub use model_check::counterexample::{
@@ -214,6 +218,7 @@ pub use model_check::counterexample::{
     TemporalCounterexample, TimedPoint, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 pub use model_check::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
+pub use model_check::finite_hyper_replay::replay_finite_hyper_refutation;
 pub use model_check::graph_replay::{
     replay_model_graph, replay_model_graph_with_cancel,
     replay_model_graph_with_cancel_and_temporal_selections,
@@ -228,7 +233,10 @@ pub use model_check::hyper_counterexample::{
     HyperUndefined, MatchWitness, MatchWitnessCheck, StepMark,
 };
 pub use model_check::hyper_outcome::{BoundCovers, HyperOutcome, HyperReductionCause};
-pub use model_check::hyper_replay::{check_match_witness, replay_hyper_trace_tuple, HyperReplay};
+pub use model_check::hyper_replay::{
+    check_match_witness, replay_hyper_trace_tuple, replay_model_relation_tuple, HyperReplay,
+    ModelRelationReplay,
+};
 pub use model_check::hyper_settle::{
     settle_hyper_check, settle_hyper_form, settle_hyper_smt, HyperRecord, HyperSettleRefusal,
     LimitOrigin, ProductMember, UsedLimit,
@@ -268,10 +276,14 @@ pub use model_check::refinement_settle::{
 #[doc(hidden)]
 pub use model_check::replay::replay_timed_counterexample;
 pub use model_check::replay::{
-    evaluate_model_trace, replay_model_trace, replay_model_trace_with_temporal_selections,
-    replay_protocol_trace, replay_protocol_trace_with_temporal_selections, DelayBar, ModelTraceEnd,
-    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceRun, ModelTraceSettlement,
-    ModelTraceSubject, ModelTraceValue, ProtocolTraceSubject, StrongFairnessHint, TimedReplay,
+    behaviour_valuations, evaluate_model_trace, evaluate_protocol_trace, replay_model_trace,
+    replay_checked_source_model_trace,
+    replay_model_trace_from_package, replay_model_trace_with_temporal_selections,
+    replay_protocol_trace, replay_protocol_trace_with_temporal_selections, BehaviourValuationEnd,
+    BehaviourValuations, DelayBar, HandoffSupply, ModelTraceEnd, ModelTraceRefusal,
+    ModelTraceReplayResult, ModelTraceRun, ModelTraceSettlement, ModelTraceSubject,
+    ModelTraceValue, ProtocolTraceEnd, ProtocolTraceRun, ProtocolTraceSubject, StrongFairnessHint,
+    TimedReplay,
 };
 pub use model_check::settle::{
     settle_model_check, settle_protocol_check, CertificateChecker, Execution, ModelCheckRecord,
@@ -313,17 +325,18 @@ pub use refinement::{
     abstract_classes, check_initial, check_protocol_initial, check_protocol_state_relations,
     check_protocol_step, check_step, initial_history, map_state, open_protocol_systems,
     open_systems, protocol_observation_label, protocol_transition_class, step_history,
-    step_view_over, AbstractClass, AbstractProtocolSystem, AssumptionIdentity, AssumptionOrigin,
-    AssumptionSelectedMember, AssumptionSide, AssumptionTarget, ConcreteStep, EvalFailure,
-    HiddenSlot, HistoryValues, LivenessHalf, MappedState, MappingFailure, MappingRowRef,
-    MappingUndetermined, ObjectKey, ObservationField, ObservationLabel, PairedAssumptionPath,
-    PairedAssumptionStep, ProtocolAssumptionFairness, ProtocolAssumptionReason,
-    ProtocolAssumptionWitness, ProtocolCandidate, ProtocolRelationError, ProtocolStateRelation,
-    ProtocolStep, ProtocolStepView, ProtocolSteps, ProtocolTrace, RefinementFailure,
-    RefinementOutcome, RefinementPosition, RefinementSystems, RefinementWitness,
-    RefinementWitnessError, RequiredTemporalFairness, SafetyOutcome, SafetyUndecided, StateIndex,
-    StepArgument, StepRejection, StepResult, StepVerdict, StepViewRefusal, SubjectRefusal, Taken,
-    TerminalSuccessDirection, Undetermined, UnsteppedConstruct,
+    step_view_over, AbstractClass, AbstractInitial, AbstractProtocolSystem, AssumptionIdentity,
+    AssumptionOrigin, AssumptionSelectedMember, AssumptionSide, AssumptionTarget, ConcreteStep,
+    EvalFailure, HiddenSlot, HistoryValues, LivenessHalf, MappedState, MappingFailure,
+    MappingRowRef, MappingUndetermined, ObjectKey, ObservationField, ObservationLabel,
+    PairedAssumptionPath, PairedAssumptionStep, ProtocolAssumptionFairness,
+    ProtocolAssumptionReason, ProtocolAssumptionWitness, ProtocolCandidate, ProtocolRelationError,
+    ProtocolStateRelation, ProtocolStep, ProtocolStepView, ProtocolSteps, ProtocolSystemsRefusal,
+    ProtocolTrace, RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems,
+    RefinementWitness, RefinementWitnessError, RequiredTemporalFairness, SafetyOutcome,
+    SafetyUndecided, StateIndex, StepArgument, StepRejection, StepResult, StepVerdict,
+    StepViewRefusal, SubjectRefusal, Taken, TerminalSuccessDirection, Undetermined,
+    UnsteppedConstruct,
 };
 // The equality operator a composite parity claim names (FR-358).
 pub use filament_semantic_value::declaration::EqualityOperator;
@@ -337,10 +350,11 @@ pub use outcome::undefined_reason;
 pub use outcome::{
     assignments_wire, certificate_identity_wire, claim_locus_wire, graph_evidence_wire,
     probabilistic_wire, protocol_temporal_wire, temporal_wire, ClauseRunNotAnItem,
-    CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel, Operation, OutcomeDiagnostic,
-    OutcomeDocument, OutcomeItem, OutcomeItemError, OutcomeLocus, OutcomeStage, OutcomeWriteError,
-    ParityReason, ProtocolConformanceOutput, ConformanceReplayOutput, ConformanceObligationOutput,
-    ConformanceClosureOutput, ConformanceGlobalOutput, ConformanceProjectionOutput, ProtocolWire,
+    ConformanceClosureOutput, ConformanceGlobalOutput, ConformanceMessageBoundOutput,
+    ConformanceObligationOutput, ConformanceProjectionOutput, ConformanceRecordingIdentity,
+    ConformanceReplayOutput, CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel,
+    Operation, OutcomeDiagnostic, OutcomeDocument, OutcomeItem, OutcomeItemError, OutcomeLocus,
+    OutcomeStage, OutcomeWriteError, ParityReason, ProtocolConformanceOutput, ProtocolWire,
     ResultLimit, ResultValue, OUTCOME_FORMAT,
 };
 pub use planner::{
@@ -450,11 +464,11 @@ pub use spine::{
 // FR-535: the bounded `native-run-result/2` consumer boundary, so CG reads and
 // writes the exact result bytes without naming `spine` (ADR-011 FB-05).
 pub use spine::{
-    read_native_run_result_bounded, write_clause_run_result, CallLocationRead, CallLocusRead,
-    CallOriginRead, ClauseDisposition, ClauseRunRecord, ClauseRunReport, ClauseRunUsage,
-    CommandErrorRecord, ConsequentSourceEvents, NativeRunLimits, NativeRunOutcome,
-    NativeRunReadError, NativeRunResult, NativeRunResultError, RefusalLocusRead, SourceRefRead,
-    SpanRead, TemporalRecord,
+    read_native_run_result_bounded, temporal_disposition_json, write_clause_run_result,
+    CallLocationRead, CallLocusRead, CallOriginRead, ClauseDisposition, ClauseRunRecord,
+    ClauseRunReport, ClauseRunUsage, CommandErrorRecord, ConsequentSourceEvents, NativeRunLimits,
+    NativeRunOutcome, NativeRunReadError, NativeRunResult, NativeRunResultError, RefusalLocusRead,
+    SourceRefRead, SpanRead, TemporalRecord,
 };
 // The input refusal a `ReplayRefusal::Input` and a value-parity
 // `ValueParityResult::RefusedInput` carry.

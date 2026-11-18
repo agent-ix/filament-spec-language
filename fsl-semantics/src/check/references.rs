@@ -71,6 +71,8 @@ pub(crate) fn read_object(node: CheckedNode<'_>) -> Option<EffectiveId> {
         | NodeKind::IeeeTotalOrder(..)
         | NodeKind::IeeeBitIdentical(..)
         | NodeKind::Quantity(..)
+        | NodeKind::QuantityScale { .. }
+        | NodeKind::QuantityScaleDiv { .. }
         | NodeKind::QuantityNegate(..)
         | NodeKind::QuantityPower(..)
         | NodeKind::ConvertDecimal(..)
@@ -80,6 +82,7 @@ pub(crate) fn read_object(node: CheckedNode<'_>) -> Option<EffectiveId> {
         | NodeKind::Equality(..)
         | NodeKind::IeeeNumericEquality(..)
         | NodeKind::Literal(_)
+        | NodeKind::ReferenceLiteral { .. }
         | NodeKind::Coerce(..)
         | NodeKind::Local(_)
         | NodeKind::Let { .. }
@@ -87,6 +90,8 @@ pub(crate) fn read_object(node: CheckedNode<'_>) -> Option<EffectiveId> {
         | NodeKind::Connective(..)
         | NodeKind::Not(_)
         | NodeKind::Field { .. }
+        | NodeKind::TupleProject { .. }
+        | NodeKind::Index { .. }
         | NodeKind::History { .. }
         | NodeKind::Present(_)
         | NodeKind::Value(_)
@@ -110,6 +115,7 @@ pub(crate) fn read_object(node: CheckedNode<'_>) -> Option<EffectiveId> {
         | NodeKind::Dispatch { .. }
         | NodeKind::Pre(_)
         | NodeKind::ProtocolReference { .. }
+        | NodeKind::ConvertText(..)
         | NodeKind::PopulationObjects { .. }
         | NodeKind::NamedPopulation { .. }
         | NodeKind::Seq { .. }
@@ -132,6 +138,8 @@ pub(crate) fn read_object(node: CheckedNode<'_>) -> Option<EffectiveId> {
         | ValueType::String
         | ValueType::Uuid
         | ValueType::Timestamp
+        | ValueType::Bytes
+        | ValueType::JsonObject
         | ValueType::Enum(_)
         | ValueType::Option(_)
         | ValueType::Composite(_)

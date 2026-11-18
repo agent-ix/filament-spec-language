@@ -16,12 +16,12 @@ Verify the `select` refusals of a `function` claim selection. Scope: FR-867-AC-1
 
 1. Run a clause request selecting `seven` (`Integer`) over FR-108's ConfigVersion snapshot.
 2. Run it selecting `yes` (`Boolean`) and the unknown name `nope`.
-3. Inspect the filament-examples function-selection cases and run the examples gate.
+3. Inspect the six filament-examples `shop` function-claim cases (`claim-function-holds`, `-false`, `-undefined`, `-integer`, `-bounded`, `-unknown`) and run the examples gate.
 
 ## Expected Results
 
 - Step 1: exit 20, stage `select`, `ill_typed`/`type-mismatch` with `function` `seven`, `expected` `Boolean`, `actual` `Integer`; the message names all three.
 - Step 2: `yes` exits 0 with `truth` true; `nope` exits 20 `missing_declaration`/`missing-name` naming `nope`.
-- Step 3: a Boolean case expecting exit 0 and an Integer case expecting exit 20, both run.
+- Step 3: each case runs through `run` and matches its record: `holds` exit 0 `tested`; `false` and `undefined` exit 10 `refuted` (the latter with `cause` `{"kind": "undefined-evaluation", "where": W, "cause": R}`, `R` its FR-100 undefined reason); `integer`, `bounded` and `unknown` exit 20 `declined` with the FR-867-AC-4 diagnostic.
 
 Test: `tests/it/function_claim_selection.rs`.

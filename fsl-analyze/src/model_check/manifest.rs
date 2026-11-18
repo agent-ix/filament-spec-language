@@ -22,16 +22,27 @@ use fsl_route::{
 use fsl_semantics::check::Capability;
 
 /// EN-1's backend identity, the identity its terminal records name.
-pub const BACKEND_ID: &str = "en-1";
+pub const BACKEND_ID: &str = fsl_route::tie::EN1;
 
-/// The (kind, mode) pairs EN-1 advertises: both temporal extent modes.
-pub const ADVERTISED: [(Option<&str>, Option<&str>); 2] = [
+/// The (kind, mode) pairs EN-1 advertises: both temporal extent modes, for
+/// `temporal-satisfaction` and for an invariant's `operation-contract`.
+pub const ADVERTISED: [(Option<&str>, Option<&str>); 4] = [
     (
         Some(Capability::TemporalSatisfaction.to_wire()),
         Some(Mode::Bounded.to_wire()),
     ),
     (
         Some(Capability::TemporalSatisfaction.to_wire()),
+        Some(Mode::Unbounded.to_wire()),
+    ),
+    // FR-489, FR-625: an `invariant` state clause over a model subject, in
+    // the modes `temporal-satisfaction` has.
+    (
+        Some(Capability::OperationContract.to_wire()),
+        Some(Mode::Bounded.to_wire()),
+    ),
+    (
+        Some(Capability::OperationContract.to_wire()),
         Some(Mode::Unbounded.to_wire()),
     ),
 ];
@@ -60,6 +71,10 @@ pub const REDUCTIONS: [&str; 3] = [
     ReductionKind::PartialOrder.as_str(),
     ReductionKind::StateConstraint.as_str(),
 ];
+
+/// EN-1's one `method` value: its digital-clock route over a closed timed
+/// subject's integer-clock reading (FR-243, FR-632).
+pub const METHOD_DIGITAL_CLOCKS: &str = "digital-clocks";
 
 /// The state-graph claim forms EN-1 decides (FSpec FR-331 `state_graph_forms`,
 /// FR-390): its explicit-state search over the explored graph (FR-168).
@@ -90,5 +105,12 @@ pub fn descriptor(origin: ProviderOrigin) -> Result<BackendDescriptor, Registrat
             reductions: Some(&REDUCTIONS),
         },
     )
-    .map(|descriptor| descriptor.with_state_graph_forms(STATE_GRAPH_FORMS))
+    .map(|descriptor| {
+        descriptor
+            .with_state_graph_forms(STATE_GRAPH_FORMS)
+            .with_option_values(
+                crate::zone_check::manifest::METHOD,
+                [METHOD_DIGITAL_CLOCKS.to_owned()],
+            )
+    })
 }

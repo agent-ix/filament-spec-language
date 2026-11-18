@@ -67,6 +67,8 @@ pub(crate) fn enumerable(value_type: &ValueType) -> bool {
         | ValueType::Map(_)
         | ValueType::Text(_)
         | ValueType::String
+        | ValueType::Bytes
+        | ValueType::JsonObject
         | ValueType::Uuid
         | ValueType::Timestamp
         | ValueType::Enum(_)

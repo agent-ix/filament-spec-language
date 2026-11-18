@@ -193,7 +193,7 @@ fn a_refuted_clause_returns_the_reproduced_counterexample_through_both_entries()
     assert_eq!(outcome.counterexamples[0].backend.as_str(), "en-1");
     let node = &world.package.graph().temporal_clauses()[0];
     let subject = fsl_analyze::analyze::ClauseSubject::new(
-        &world.package,
+        &fsl_analyze::analyze::RunInput::source(&world.package),
         world.binding(&["c"]),
         limits,
         &request.provision,

@@ -6,8 +6,8 @@ use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{
-    ProtocolRefusal, ProtocolSystem, ProtocolTransition, Ra, Sc, StepKind, SubjectMemory, Tso,
-    live_instance_bound,
+    live_instance_bound, ProtocolRefusal, ProtocolSystem, ProtocolTransition, Ra, Sc, StepKind,
+    SubjectMemory, Tso,
 };
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_replay::TemporalCounterexample;
@@ -35,64 +35,15 @@ fn recording_payload(bytes: &[u8]) -> Result<Vec<u8>, String> {
     serde_json::to_vec(&document).map_err(|error| format!("recording document: {error}"))
 }
 
-fn validate_recording_closure(
-    protocol: &fsl_semantics::check::CheckedProtocol,
-    recording: &[u8],
-    assessment: &super::recording::RecordingAssessment,
-) -> Result<(), String> {
-    use std::collections::BTreeSet;
-
-    let document: serde_json::Value = serde_json::from_slice(recording)
-        .map_err(|error| format!("recording document is not valid JSON: {error}"))?;
-    let instances: BTreeSet<String> = document["observations"]
-        .as_array()
-        .ok_or_else(|| "recording observations must be an array".to_owned())?
-        .iter()
-        .filter_map(|observation| observation["instance"].as_str().map(str::to_owned))
-        .collect();
-    let mut expected = BTreeSet::new();
-    for instance in &instances {
-        expected.insert(("execution".to_owned(), instance.clone()));
-        for control in &protocol.controls.controls {
-            if matches!(
-                control.kind,
-                fsl_forms::ProtocolNodeKind::Case | fsl_forms::ProtocolNodeKind::Branch
-            ) {
-                expected.insert((
-                    "branch".to_owned(),
-                    format!("{instance}/{}::{}", protocol.name, control.path.join("::")),
-                ));
-            }
-        }
-    }
-    let actual: Vec<_> = assessment
-        .closure
-        .premises
-        .iter()
-        .map(|premise| (premise.kind.clone(), premise.identity.clone()))
-        .collect();
-    let actual_set: BTreeSet<_> = actual.iter().cloned().collect();
-    if actual.len() != actual_set.len() {
-        return Err("closure premise set contains a duplicate premise".to_owned());
-    }
-    if actual_set != expected {
-        let missing: Vec<_> = expected.difference(&actual_set).cloned().collect();
-        let extra: Vec<_> = actual_set.difference(&expected).cloned().collect();
-        return Err(format!(
-            "closure premise set does not match the recording scope (missing: {missing:?}; extra: {extra:?})"
-        ));
-    }
-    Ok(())
-}
-
 /// Build the recording-mode `global-conformance` result from the checked
 /// protocol and its provisioned FR-737 bytes.
 fn recording_result(
     index: fsl_foundation::RequestIndex,
     package: &fsl_package::CheckedPackage,
-    protocol: &fsl_semantics::check::CheckedProtocol,
     subject: Option<&fsl_eval::model_subject::ProtocolSubject<'_>>,
+    recording_identity: Option<&fsl_semantics::model::observation::DocumentRef>,
     recording: &[u8],
+    population: Option<serde_json::Value>,
     cancel: &Cancel,
 ) -> crate::analyze::EngineReport {
     use base64::Engine as _;
@@ -120,7 +71,32 @@ fn recording_result(
             );
         }
     };
-    let assessment = match super::recording::assess_recording(package, &recording) {
+    let population = match population {
+        Some(population) => match serde_json::from_value::<
+            Vec<crate::analyze::document::ActivatedRolePopulation>,
+        >(population)
+        {
+            Ok(population) => Some(population),
+            Err(error) => {
+                return crate::analyze::EngineReport::Refused(
+                    crate::analyze::Refusal::DeclinedWithDetail(
+                        fsl_replay::ProofRefusalCause::InvalidInput,
+                        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                        CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                        [("detail".to_owned(), serde_json::json!(error.to_string()))]
+                            .into_iter()
+                            .collect(),
+                    ),
+                );
+            }
+        },
+        None => None,
+    };
+    let assessment = match super::recording::assess_recording_with_population(
+        package,
+        &recording,
+        population.as_deref(),
+    ) {
         Ok(assessment) => assessment,
         Err(refusal) => {
             let detail = [("detail".to_owned(), serde_json::json!(refusal.to_string()))]
@@ -141,27 +117,22 @@ fn recording_result(
             );
         }
     };
-    if let Err(detail) = validate_recording_closure(protocol, &recording, &assessment) {
+    let Some(recording_identity) = recording_identity else {
         return crate::analyze::EngineReport::Refused(crate::analyze::Refusal::DeclinedWithDetail(
             fsl_replay::ProofRefusalCause::InvalidInput,
             fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
-            CatalogCode::new("invalid_runtime_input", "invalid-value"),
-            [("detail".to_owned(), serde_json::json!(detail))]
-                .into_iter()
-                .collect(),
+            CatalogCode::new("invalid_runtime_input", "missing-member"),
+            [(
+                "detail".to_owned(),
+                serde_json::json!("recording has no provisioned identity"),
+            )]
+            .into_iter()
+            .collect(),
         ));
-    }
+    };
     let replayed = if assessment.global.label == "refuted" {
-        let Some(trace_position) = assessment.trace_position else {
-            return crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Failed(
-                filament_semantic_value::catalog::CatalogCode::new(
-                    "runtime_invariant",
-                    "established-invariant-broken",
-                ),
-            ));
-        };
-        match subject {
-            Some(subject) => match replay_counterexample(
+        match (subject, assessment.trace_position) {
+            (Some(subject), Some(trace_position)) => match replay_counterexample(
                 subject,
                 &ConformanceCounterexample::Recording {
                     recording: recording.to_vec(),
@@ -189,27 +160,12 @@ fn recording_result(
                     );
                 }
             },
-            None => match super::recording::assess_recording(package, &recording) {
-                Ok(replayed)
-                    if replayed.global.label == "refuted"
-                        && replayed.trace_position == Some(trace_position) =>
-                {
-                    true
-                }
-                _ => {
-                    return crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Failed(
-                        filament_semantic_value::catalog::CatalogCode::new(
-                            "runtime_invariant",
-                            "established-invariant-broken",
-                        ),
-                    ));
-                }
-            },
+            _ => false,
         }
     } else {
         false
     };
-    let mut output = recording_output(assessment.clone());
+    let mut output = recording_output(assessment.clone(), recording_identity);
     output.replay = replayed.then_some(fsl_replay::ConformanceReplayOutput { reproduced: true });
     let terminal = match assessment.global.label.as_str() {
         "proved" => TerminalRecord::of_protocol_analysis(
@@ -243,7 +199,7 @@ fn recording_result(
             InconclusiveCause::OpenHistory,
         ),
     };
-    crate::analyze::EngineReport::GlobalConformance(ConformanceReport {
+    crate::analyze::EngineReport::GlobalConformance(Box::new(ConformanceReport {
         terminal,
         output,
         counterexample: (assessment.global.label == "refuted").then(|| {
@@ -253,16 +209,17 @@ fn recording_result(
                 "trace_position": assessment.trace_position,
             })
         }),
-    })
+    }))
 }
 
 /// The recording arm of one global-conformance request.
 pub(crate) fn global_recording_item<'a>(
     index: fsl_foundation::RequestIndex,
     package: &'a fsl_package::CheckedPackage,
-    protocol: &'a fsl_semantics::check::CheckedProtocol,
     subject: Option<fsl_eval::model_subject::ProtocolSubject<'a>>,
+    recording_identity: Option<fsl_semantics::model::observation::DocumentRef>,
     recording: Option<&'a [u8]>,
+    population: Option<serde_json::Value>,
 ) -> crate::analyze::AnalyzeItem<'a> {
     crate::analyze::AnalyzeItem::new(
         index,
@@ -271,9 +228,15 @@ pub(crate) fn global_recording_item<'a>(
         fsl_route::Mode::Bounded,
         super::manifest::BACKEND_ID,
         move |cancel| match recording {
-            Some(recording) => {
-                recording_result(index, package, protocol, subject.as_ref(), recording, cancel)
-            }
+            Some(recording) => recording_result(
+                index,
+                package,
+                subject.as_ref(),
+                recording_identity.as_ref(),
+                recording,
+                population,
+                cancel,
+            ),
             None => crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Declined(
                 fsl_replay::ProofRefusalCause::InvalidInput,
                 fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
@@ -319,13 +282,15 @@ pub(crate) fn missing_role_item(
 /// The every-behavior arm of a global-conformance request.
 pub(crate) fn global_behavior_item<'a>(
     index: fsl_foundation::RequestIndex,
-    package: &'a fsl_package::CheckedPackage,
+    analysis: &crate::analyze::RunInput<'a>,
     binding: crate::analyze::SubjectBinding<'a>,
     limits: crate::analyze::AnalyzeLimits,
     protocol: &'a fsl_semantics::check::CheckedProtocol,
     form: &crate::analyze::TemporalItem,
 ) -> crate::analyze::AnalyzeItem<'a> {
+    let (package, input) = (analysis.package, &analysis.model);
     let form = form.clone();
+    let input = input.clone();
     crate::analyze::AnalyzeItem::new(
         index,
         fsl_semantics::check::Capability::GlobalConformance,
@@ -335,6 +300,7 @@ pub(crate) fn global_behavior_item<'a>(
         move |cancel| {
             let subject_builder = super::finite_replay::ReplaySubject {
                 package,
+                input: &input,
                 binding: &binding,
                 limits: &limits,
                 protocol,
@@ -360,6 +326,12 @@ pub(crate) fn global_behavior_item<'a>(
             };
             let subject = match subject_builder.subject(over.clone()) {
                 Ok(subject) => subject,
+                // FSpec FR-785: a symbolic capacity with no binding.
+                Err(super::finite_replay::ReplayFault::UnboundCapacity) => {
+                    return crate::analyze::EngineReport::Refused(
+                        crate::analyze::Refusal::RequiresBound,
+                    );
+                }
                 Err(_) => return internal_fault(),
             };
             let replay_subject = match subject_builder.subject(over.clone()) {
@@ -398,6 +370,7 @@ fn behavior_report(
     protocol: &fsl_semantics::check::CheckedProtocol,
     record: fsl_replay::ModelCheckRecord<ProtocolTransition>,
     reported_counterexample: Option<serde_json::Value>,
+    max_messages: Option<u64>,
 ) -> crate::analyze::EngineReport {
     use fsl_replay::{
         ConformanceClosureOutput, ConformanceGlobalOutput, ConformanceObligationOutput,
@@ -442,26 +415,32 @@ fn behavior_report(
             witness: witness.clone(),
         })
         .collect();
-    obligations.extend(protocol.controls.controls.iter().filter_map(|control| {
-        matches!(
-            control.kind,
-            fsl_forms::ProtocolNodeKind::Send
-                | fsl_forms::ProtocolNodeKind::Receive
-                | fsl_forms::ProtocolNodeKind::Attempt
-                | fsl_forms::ProtocolNodeKind::Effect
-                | fsl_forms::ProtocolNodeKind::Event
-        )
-        .then(|| ConformanceObligationOutput {
-            obligation: serde_json::json!({
-                "kind": "enabledness",
-                "node": format!("{}::{}", protocol.name, control.path.join("::")),
+    obligations.extend(
+        protocol
+            .controls
+            .controls
+            .iter()
+            .filter(|control| {
+                matches!(
+                    control.kind,
+                    fsl_forms::ProtocolNodeKind::Send
+                        | fsl_forms::ProtocolNodeKind::Receive
+                        | fsl_forms::ProtocolNodeKind::Attempt
+                        | fsl_forms::ProtocolNodeKind::Effect
+                        | fsl_forms::ProtocolNodeKind::Event
+                )
+            })
+            .map(|control| ConformanceObligationOutput {
+                obligation: serde_json::json!({
+                    "kind": "enabledness",
+                    "node": format!("{}::{}", protocol.name, control.path.join("::")),
+                }),
+                verdict: verdict.to_owned(),
+                cause: cause.clone(),
+                basis: "by-construction".to_owned(),
+                witness: witness.clone(),
             }),
-            verdict: verdict.to_owned(),
-            cause: cause.clone(),
-            basis: "by-construction".to_owned(),
-            witness: witness.clone(),
-        })
-    }));
+    );
     obligations.extend(
         protocol
             .channels
@@ -474,26 +453,32 @@ fn behavior_report(
                 witness: None,
             }),
     );
-    obligations.extend(protocol.controls.controls.iter().filter_map(|control| {
-        matches!(
-            control.kind,
-            fsl_forms::ProtocolNodeKind::Choice
-                | fsl_forms::ProtocolNodeKind::Parallel
-                | fsl_forms::ProtocolNodeKind::Repeat
-                | fsl_forms::ProtocolNodeKind::Await
-                | fsl_forms::ProtocolNodeKind::Check
-        )
-        .then(|| ConformanceObligationOutput {
-            obligation: serde_json::json!({
-                "kind": "control",
-                "node": format!("{}::{}", protocol.name, control.path.join("::")),
+    obligations.extend(
+        protocol
+            .controls
+            .controls
+            .iter()
+            .filter(|control| {
+                matches!(
+                    control.kind,
+                    fsl_forms::ProtocolNodeKind::Choice
+                        | fsl_forms::ProtocolNodeKind::Parallel
+                        | fsl_forms::ProtocolNodeKind::Repeat
+                        | fsl_forms::ProtocolNodeKind::Await
+                        | fsl_forms::ProtocolNodeKind::Check
+                )
+            })
+            .map(|control| ConformanceObligationOutput {
+                obligation: serde_json::json!({
+                    "kind": "control",
+                    "node": format!("{}::{}", protocol.name, control.path.join("::")),
+                }),
+                verdict: verdict.to_owned(),
+                cause: cause.clone(),
+                basis: "explored".to_owned(),
+                witness: witness.clone(),
             }),
-            verdict: verdict.to_owned(),
-            cause: cause.clone(),
-            basis: "explored".to_owned(),
-            witness: witness.clone(),
-        })
-    }));
+    );
     obligations.extend(
         protocol
             .awaits
@@ -571,16 +556,26 @@ fn behavior_report(
                 fsl_foundation::BackendId::new(super::manifest::BACKEND_ID),
             )
         });
-    crate::analyze::EngineReport::GlobalConformance(ConformanceReport {
+    crate::analyze::EngineReport::GlobalConformance(Box::new(ConformanceReport {
         terminal,
         output: ProtocolConformanceOutput {
             obligations,
             closure: ConformanceClosureOutput {
-                state: if closed { "closed" } else if incomplete { "incomplete" } else { "open" }
-                    .to_owned(),
+                state: if closed {
+                    "closed"
+                } else if incomplete {
+                    "incomplete"
+                } else {
+                    "open"
+                }
+                .to_owned(),
                 premises: std::iter::once(serde_json::json!({
                     "kind": "execution",
-                    "identity": "protocol"
+                    "node": protocol
+                        .finish
+                        .as_ref()
+                        .map(|(_, finish)| format!("{}::{finish}", protocol.name))
+                        .unwrap_or_else(|| protocol.name.clone())
                 }))
                 .chain(
                     protocol
@@ -588,12 +583,18 @@ fn behavior_report(
                         .controls
                         .iter()
                         .filter(|control| {
-                            matches!(control.kind, fsl_forms::ProtocolNodeKind::Case | fsl_forms::ProtocolNodeKind::Branch)
+                            matches!(
+                                control.kind,
+                                fsl_forms::ProtocolNodeKind::Case
+                                    | fsl_forms::ProtocolNodeKind::Branch
+                            )
                         })
-                        .map(|control| serde_json::json!({
-                            "kind": "branch",
-                            "identity": format!("{}/{}::{}", "protocol", protocol.name, control.path.join("::")),
-                        })),
+                        .map(|control| {
+                            serde_json::json!({
+                                "kind": "branch",
+                                "node": format!("{}::{}", protocol.name, control.path.join("::")),
+                            })
+                        }),
                 )
                 .collect(),
                 producer: "engine".to_owned(),
@@ -619,6 +620,29 @@ fn behavior_report(
                     None
                 },
             },
+            max_messages: record
+                .memory_bound
+                .filter(|bound| bound.bound.member == fsl_replay::MemoryBoundMember::MaxMessages)
+                .map(|bound| fsl_replay::ConformanceMessageBoundOutput {
+                    value: bound.bound.value,
+                    reached: bound.reached
+                        || record
+                            .exploration
+                            .is_some_and(|stats| stats.message_bound_limited > 0),
+                })
+                .or_else(|| {
+                    (!protocol.channels.is_empty()).then_some(
+                        fsl_replay::ConformanceMessageBoundOutput {
+                            value: max_messages
+                                .unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND),
+                            reached: record.limit_reached.is_some_and(|limit| {
+                                limit.limit == fsl_replay::ModelCheckLimit::ProtocolMaxMessages
+                            }) || record
+                                .exploration
+                                .is_some_and(|stats| stats.message_bound_limited > 0),
+                        },
+                    )
+                }),
             projections: Some(
                 protocol
                     .roles
@@ -630,10 +654,11 @@ fn behavior_report(
                     })
                     .collect(),
             ),
+            recording: None,
             replay: refuted.then_some(fsl_replay::ConformanceReplayOutput { reproduced: true }),
         },
         counterexample,
-    })
+    }))
 }
 
 fn internal_fault() -> crate::analyze::EngineReport {
@@ -648,19 +673,29 @@ fn internal_fault() -> crate::analyze::EngineReport {
 fn pending_finish_counterexample(
     subject: &ProtocolSubject<'_>,
     limits: fsl_replay::ModelCheckLimits,
+    max_messages: Option<u64>,
 ) -> Option<TemporalCounterexample<ProtocolTransition>> {
     let model = ModelSystem::new(subject.model.simulation.clone()).ok()?;
+    let message_bound =
+        max_messages.unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND);
     match SubjectMemory::of(&subject.memory, None, None) {
         SubjectMemory::Sc => {
-            let system = ProtocolSystem::new(model, subject, Sc).ok()?;
+            let system = ProtocolSystem::new(model, subject, Sc)
+                .ok()?
+                .with_channel_message_bound(message_bound);
             pending_finish_in::<Sc>(&system, limits)
         }
         SubjectMemory::Tso(memory) => {
-            let system = ProtocolSystem::new(model, subject, memory).ok()?;
+            let system = ProtocolSystem::new(model, subject, memory)
+                .ok()?
+                .with_channel_message_bound(message_bound);
             pending_finish_in::<Tso>(&system, limits)
         }
         SubjectMemory::Ra(memory) => {
-            let system = ProtocolSystem::new(model, subject, memory).ok()?;
+            let channel_bound = memory.max_messages();
+            let system = ProtocolSystem::new(model, subject, memory)
+                .ok()?
+                .with_channel_message_bound(channel_bound);
             pending_finish_in::<Ra>(&system, limits)
         }
     }
@@ -702,7 +737,7 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
             return None;
         }
         expanded += 1;
-        let expansion = system.successors(&state).ok()?;
+        let (expansion, _) = system.successors_bounded(&state).ok()?;
         if system.has_pending_exactly_once_delivery(&state)
             && expansion
                 .successors
@@ -745,6 +780,10 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
     None
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+)]
 fn every_behavior_result(
     index: fsl_foundation::RequestIndex,
     protocol: &fsl_semantics::check::CheckedProtocol,
@@ -774,8 +813,8 @@ fn every_behavior_result(
         temporal_clock_selections: &[],
         item,
         max_depth: form.max_depth,
-        max_store_buffer: None,
-        max_messages: None,
+        max_store_buffer: form.max_store_buffer,
+        max_messages: form.max_messages,
         ignore_memory_constraints: false,
         max_live_instances: None,
         limits: form.limits,
@@ -784,25 +823,26 @@ fn every_behavior_result(
         subject: certificate_subject,
         temporal_clock_selections: &[],
         item,
-        max_store_buffer: None,
-        max_messages: None,
+        max_store_buffer: form.max_store_buffer,
+        max_messages: form.max_messages,
         max_live_instances: None,
     };
     let outcome = match crate::model_check::check_protocol(request, cancel) {
         Ok(outcome) => outcome,
         Err(_) => return internal_fault(),
     };
-    let pending_delivery = pending_finish_counterexample(&scan_subject, form.limits);
+    let pending_delivery =
+        pending_finish_counterexample(&scan_subject, form.limits, form.max_messages);
     let outcome = match pending_delivery {
         Some(counterexample) => fsl_replay::ModelCheckOutcome::Violated {
             counterexample: Box::new(counterexample),
-            stats: Default::default(),
+            stats: outcome.stats(),
         },
         None => outcome,
     };
     let replay_limits = ReplayLimits::default();
     let replay = |counterexample: &TemporalCounterexample<ProtocolTransition>| {
-        let payload = ConformanceCounterexample::Protocol(counterexample.clone());
+        let payload = ConformanceCounterexample::Protocol(Box::new(counterexample.clone()));
         match replay_counterexample(&replay_subject, &payload, replay_limits, cancel) {
             Ok(ConformanceReplay::Reproduced) => Ok(fsl_replay::ModelTraceReplayResult {
                 settlement: fsl_replay::ModelTraceSettlement::Reproduced {
@@ -845,14 +885,14 @@ fn every_behavior_result(
         };
         fsl_replay::protocol_temporal_wire(counterexample, &subject, None).ok()
     });
-    behavior_report(index, protocol, record, counterexample)
+    behavior_report(index, protocol, record, counterexample, form.max_messages)
 }
 
 /// A global-conformance counterexample that can be replayed from a checked subject.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConformanceCounterexample {
     /// A protocol-system counterexample over every behaviour.
-    Protocol(TemporalCounterexample<ProtocolTransition>),
+    Protocol(Box<TemporalCounterexample<ProtocolTransition>>),
     /// The recording bytes and index of the first violating observation.
     Recording {
         /// The FSpec FR-737 recording document bytes.
@@ -891,6 +931,17 @@ impl ConformanceReplayRefusal {
             cause: "invalid-value".to_owned(),
             position,
             detail: detail.into(),
+        }
+    }
+
+    /// The subject is over a package read from its bytes, whose recording
+    /// assessment reads source forms the package route does not carry yet.
+    fn package_route() -> Self {
+        Self {
+            code: CatalogCode::new("unknown_required_feature", "unsupported-feature"),
+            cause: "unsupported-feature".to_owned(),
+            position: None,
+            detail: "the recording assessment reads source checked forms".to_owned(),
         }
     }
 
@@ -998,11 +1049,13 @@ pub fn replay_counterexample(
         } => {
             fsl_replay::BoundExceeded::check(recording.len(), limits)
                 .map_err(|error| ConformanceReplayRefusal::invalid(error.to_string(), None))?;
-            let assessment = super::recording::assess_recording(
-                subject.model.simulation.package,
-                recording,
-            )
-            .map_err(ConformanceReplayRefusal::recording)?;
+            let package = subject
+                .model
+                .simulation
+                .source_package()
+                .ok_or_else(ConformanceReplayRefusal::package_route)?;
+            let assessment = super::recording::assess_recording(package, recording)
+                .map_err(ConformanceReplayRefusal::recording)?;
             if assessment.global.label == "refuted"
                 && assessment.trace_position == Some(*trace_position)
             {
@@ -1062,12 +1115,12 @@ fn replay_pending_finish<M: fsl_eval::simulation::protocol::MemoryModel>(
 /// Convert a recording assessment to the shared FR-990 item representation.
 pub(crate) fn recording_output(
     assessment: super::recording::RecordingAssessment,
+    recording_identity: &fsl_semantics::model::observation::DocumentRef,
 ) -> ProtocolConformanceOutput {
     use fsl_replay::{
         ConformanceClosureOutput, ConformanceGlobalOutput, ConformanceObligationOutput,
     };
 
-    let replayed = assessment.global.label == "refuted";
     ProtocolConformanceOutput {
         obligations: assessment
             .obligations
@@ -1106,53 +1159,13 @@ pub(crate) fn recording_output(
             complete: assessment.global.complete,
             cause: assessment.global.cause,
         },
+        max_messages: None,
         projections: None,
-        replay: replayed.then_some(fsl_replay::ConformanceReplayOutput { reproduced: true }),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use ix_trace_rs::trace;
-
-    use super::*;
-
-    #[trace("TC-2805", "FR-990-AC-1")]
-    #[test]
-    fn recording_assessment_maps_to_the_shared_conformance_output() {
-        let output = recording_output(super::super::recording::RecordingAssessment {
-            obligations: vec![super::super::recording::RecordingObligation {
-                obligation: super::super::recording::RecordingObligationId {
-                    kind: "enabledness".to_owned(),
-                    node: Some("Flow::Main::Ship".to_owned()),
-                    instance: Some("w-1".to_owned()),
-                },
-                verdict: super::super::recording::RecordingVerdict::Violated,
-                cause: Some(super::super::recording::RecordingCause::Unexpected),
-                witness: vec![3],
-            }],
-            closure: super::super::recording::RecordingClosure {
-                state: "open".to_owned(),
-                premises: Vec::new(),
-                producer: "recording",
-            },
-            global: super::super::recording::RecordingGlobalResult {
-                label: "refuted".to_owned(),
-                basis: "violation".to_owned(),
-                complete: false,
-                cause: Some("violation".to_owned()),
-            },
-            trace_position: Some(3),
-        });
-
-        assert_eq!(output.obligations[0].verdict, "violated");
-        assert_eq!(output.obligations[0].cause.as_deref(), Some("unexpected"));
-        assert_eq!(output.obligations[0].witness, Some(serde_json::json!([3])));
-        assert_eq!(output.closure.state, "open");
-        assert_eq!(output.closure.producer, "recording");
-        assert_eq!(output.global.label, "refuted");
-        assert!(!output.global.complete);
-        assert!(output.projections.is_none());
+        recording: Some(fsl_replay::ConformanceRecordingIdentity {
+            authority: recording_identity.authority.clone(),
+            identity: recording_identity.identity.clone(),
+        }),
+        replay: None,
     }
 }
 
@@ -1226,4 +1239,65 @@ fn replay_protocol<M: fsl_eval::simulation::protocol::MemoryModel>(
     Ok(ConformanceReplay::ReplayParity {
         detail: "the counterexample refutation kind is not supported by this replay arm".to_owned(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use ix_trace_rs::trace;
+
+    use super::*;
+
+    #[trace("TC-2805", "FR-990-AC-1")]
+    #[test]
+    fn recording_assessment_maps_to_the_shared_conformance_output() {
+        let output = recording_output(
+            super::super::recording::RecordingAssessment {
+                obligations: vec![super::super::recording::RecordingObligation {
+                    obligation: super::super::recording::RecordingObligationId {
+                        kind: "enabledness".to_owned(),
+                        node: Some("Flow::Main::Ship".to_owned()),
+                        instance: Some("w-1".to_owned()),
+                        role_instance: None,
+                    },
+                    verdict: super::super::recording::RecordingVerdict::Violated,
+                    cause: Some(super::super::recording::RecordingCause::Unexpected),
+                    witness: vec![3],
+                }],
+                closure: super::super::recording::RecordingClosure {
+                    state: "open".to_owned(),
+                    premises: Vec::new(),
+                    producer: "recording",
+                },
+                facts: Vec::new(),
+                global: super::super::recording::RecordingGlobalResult {
+                    label: "refuted".to_owned(),
+                    basis: "violation".to_owned(),
+                    complete: false,
+                    cause: Some("violation".to_owned()),
+                },
+                trace_position: Some(3),
+            },
+            &fsl_semantics::model::observation::DocumentRef {
+                authority: "test".to_owned(),
+                identity: "recording".to_owned(),
+            },
+        );
+
+        assert_eq!(output.obligations[0].verdict, "violated");
+        assert_eq!(output.obligations[0].cause.as_deref(), Some("unexpected"));
+        assert_eq!(output.obligations[0].witness, Some(serde_json::json!([3])));
+        assert_eq!(output.closure.state, "open");
+        assert_eq!(output.closure.producer, "recording");
+        assert_eq!(output.global.label, "refuted");
+        assert!(!output.global.complete);
+        assert!(output.projections.is_none());
+        assert_eq!(
+            output
+                .recording
+                .as_ref()
+                .map(|identity| identity.identity.as_str()),
+            Some("recording")
+        );
+        assert!(output.replay.is_none());
+    }
 }

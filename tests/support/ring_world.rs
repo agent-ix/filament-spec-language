@@ -351,14 +351,15 @@ fn packages(variant: Variant) -> fsl_semantics::model::intake::PackageInput {
 
 /// The checked graph of the unit with `refinement`, or its refusals.
 pub fn check(variant: Variant, refinement: &str) -> Result<CheckedGraph, String> {
-    check_with_mode(variant, refinement, CheckMode::Linked)
+    check_in(CheckMode::Linked, variant, refinement)
 }
 
-/// The checked graph of the unit with `refinement` under `mode`.
-pub fn check_with_mode(
+/// The checked graph of the unit with `refinement` under `mode`, or its
+/// refusals.
+pub fn check_in(
+    mode: CheckMode,
     variant: Variant,
     refinement: &str,
-    mode: CheckMode,
 ) -> Result<CheckedGraph, String> {
     let documents = packages(variant);
     let text = unit_text(&documents, refinement, variant);
@@ -435,12 +436,13 @@ pub struct RingWorld {
 impl RingWorld {
     /// The world of the unit of `variant` with `refinement`.
     pub fn with(variant: Variant, refinement: &str) -> Self {
-        Self::with_mode(variant, refinement, CheckMode::Linked)
+        Self::with_mode(CheckMode::Linked, variant, refinement)
     }
 
-    /// The world of the unit checked under `mode`.
-    pub fn with_mode(variant: Variant, refinement: &str, mode: CheckMode) -> Self {
-        let graph = check_with_mode(variant, refinement, mode).unwrap_or_else(|refusals| {
+    /// The world of the unit checked under `mode` (FR-068); a Kernel unit
+    /// may divide where Linked would demand a proved nonzero divisor.
+    pub fn with_mode(mode: CheckMode, variant: Variant, refinement: &str) -> Self {
+        let graph = check_in(mode, variant, refinement).unwrap_or_else(|refusals| {
             panic!("{refinement}: the unit checks: {refusals}");
         });
         let mut snapshots = BTreeMap::new();
@@ -561,7 +563,7 @@ impl RingWorld {
         };
         ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
-            package: &self.package,
+            input: fsl_eval::simulation::model::ModelCheckInput::source(&self.package),
             packages: &self.packages,
             normalization: ModelNormalizationLimits::default(),
             snapshots: &self.snapshots,
@@ -763,7 +765,7 @@ impl MapWorld {
         ModelSystem::over_model(
             ModelSimulationRequest {
                 emit: fsl_package::EmitLimits::fixture(),
-                package: &self.package,
+                input: fsl_eval::simulation::model::ModelCheckInput::source(&self.package),
                 packages: &self.packages,
                 normalization: ModelNormalizationLimits::default(),
                 snapshots: &self.snapshots,

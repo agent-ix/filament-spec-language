@@ -92,6 +92,8 @@ pub(super) fn typed_equalities(
                 | ValueType::String
                 | ValueType::Uuid
                 | ValueType::Timestamp
+                | ValueType::Bytes
+                | ValueType::JsonObject
                 | ValueType::Enum(_)
                 | ValueType::Map(_)
                 | ValueType::Population(_) => {}
@@ -376,6 +378,7 @@ pub(super) fn expression_form(node: &ExprNode, predicates: &BTreeSet<&str>) -> O
         | ExprNode::DecimalValue { .. }
         | ExprNode::Quantity(_)
         | ExprNode::String(_)
+        | ExprNode::ReferenceLiteral { .. }
         | ExprNode::Name(_)
         | ExprNode::Let { .. }
         | ExprNode::If { .. }

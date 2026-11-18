@@ -164,6 +164,19 @@ impl<'a> ModelSystem<'a> {
         contracts::invariants(&walk_of(self, state, None)?)
     }
 
+    /// FR-634 "Invariant findings": the invariant findings of `state`
+    /// evaluated alone, a broken clause evaluation reported undetermined.
+    ///
+    /// # Errors
+    ///
+    /// An [`ExpansionStop`] when the state cannot be read.
+    pub(crate) fn invariant_findings_alone(
+        &self,
+        state: &ModelSimState,
+    ) -> Result<Vec<ModelFinding>, ExpansionStop> {
+        contracts::invariants_alone(&walk_of(self, state, None)?)
+    }
+
     /// The application `operation` names at `row`, by its declaring type
     /// and name in the row's effective view.
     pub(super) fn application_at(

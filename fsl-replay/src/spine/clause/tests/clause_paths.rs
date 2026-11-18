@@ -258,6 +258,126 @@ fn run_item(clause: &str, report: &ClauseRunReport) -> serde_json::Value {
     serde_json::to_value(&item).expect("the item serializes")
 }
 
+fn report(disposition: ClauseDisposition) -> ClauseRunReport {
+    ClauseRunReport {
+        disposition,
+        usage: Default::default(),
+        basis: crate::proof_result::SettlementBasis::Unavailable,
+        witness: None,
+        state_clause_counterexample: None,
+        frame_field_values: None,
+        consequent_source_events: Default::default(),
+        ledger: None,
+        finite_window: None,
+        counterexample: None,
+        decisive: None,
+        authenticated_temporal_selection: None,
+        refused_at: None,
+    }
+}
+
+fn sum_out_of_domain_report() -> ClauseRunReport {
+    let compiled = super::compiled();
+    let mapped = crate::spine::call::convert_outcome(
+        filament_eval::Evaluation {
+            outcome: FamilyOutcome::Evaluated(Outcome::Undefined(
+                filament_exact::Undefined::SumOutOfDomain,
+            )),
+            location: None,
+            losses: Vec::new(),
+            frame_depth: 0,
+        },
+        compiled.package.graph(),
+        std::slice::from_ref(&compiled.source),
+    )
+    .expect("a typed undefined outcome maps to a clause outcome");
+    report(ClauseDisposition::Evaluate(mapped))
+}
+
+/// TC-2830 step 1: the typed `sum-out-of-domain` outcome is
+/// a refuted claim in a clause run, with its cause retained on the item.
+#[trace("TC-2830", "FR-109-AC-14")]
+#[test]
+fn sum_out_of_domain_is_undefined_in_clause_run() {
+    let report = sum_out_of_domain_report();
+    assert_eq!(report.disposition.stage(), ClauseRunStage::Evaluate);
+    assert_eq!(
+        report.category(),
+        filament_semantic_value::catalog::Category::Violation
+    );
+    assert_eq!(report.disposition.truth(), Some(false));
+    assert_eq!(report.category().exit_code(), 10);
+
+    let item = run_item("S", &report);
+    assert_eq!(item["result"], "refuted", "{item}");
+    assert_eq!(item["cause"]["kind"], "undefined-evaluation", "{item}");
+    assert_eq!(item["cause"]["code"], "sum-out-of-domain", "{item}");
+}
+
+/// TC-2830: a typed evaluator halt always supplies an item
+/// cause, including the non-null cause for a kernel undefined result.
+#[trace("TC-2830", "FR-109-AC-14")]
+#[test]
+fn clause_item_cause_never_null_for_typed_halt() {
+    let item = run_item("S", &sum_out_of_domain_report());
+    assert!(
+        item["cause"].is_object(),
+        "typed halt must carry a cause: {item}"
+    );
+    assert_eq!(item["cause"]["code"], "sum-out-of-domain", "{item}");
+}
+
+fn run_sum_clause(domain: &str) -> ClauseRunReport {
+    let (mut unit, packages) = super::config_version_unit_and_packages();
+    unit.push_str(&format!(
+        "type SumDomain = {domain};\n\
+         invariant S using v on Config::ConfigVersion at current {{ \
+         sum<SumDomain>(x in seq(i in 0 .. 1: i): x) >= 1 }}\n"
+    ));
+    let label = super::config_version_document_ref("sum-domain");
+    let snapshot = super::config_version_snapshot(&label, 1, None);
+    let selection = super::config_version_current_selection("S", label, "root");
+    let mut request = super::config_version_request_for(
+        unit,
+        packages,
+        "sum-domain.native",
+        ClauseRunSelection::Clause(selection),
+    );
+    request.snapshots.insert(
+        fsl_semantics::model::observation::document_reference(&snapshot)
+            .expect("the snapshot names itself"),
+        snapshot,
+    );
+    run_clause(request).expect("a well-formed request reports")
+}
+
+/// TC-2830 steps 2 and 3: Linked refuses a sum whose prefix
+/// may leave its domain, while a domain that admits every prefix holds.
+#[trace("TC-2830", "FR-109-AC-14")]
+#[test]
+fn sum_domain_clause_refuses_unproved_prefix_and_accepts_in_domain_prefix() {
+    let outside = run_sum_clause("Int[1, 9]");
+    assert_eq!(outside.disposition.stage(), ClauseRunStage::Compile);
+    let ClauseDisposition::Compile(refusal) = &outside.disposition else {
+        panic!(
+            "an unproved sum prefix is refused at compile: {:?}",
+            outside.disposition
+        );
+    };
+    assert_eq!(refusal.code().as_str(), "undefined_expression");
+    assert_eq!(refusal.cause(), Some("unproved-range"));
+    assert_eq!(outside.category().exit_code(), 20);
+
+    let inside = run_sum_clause("Int[0, 9]");
+    assert_eq!(inside.disposition.stage(), ClauseRunStage::Evaluate);
+    assert_eq!(
+        inside.category(),
+        filament_semantic_value::catalog::Category::Success
+    );
+    assert_eq!(inside.disposition.truth(), Some(true));
+    assert_eq!(inside.category().exit_code(), 0);
+}
+
 /// FR-766-AC-5 (TC-2195): a clause run compiles its unit under
 /// `CheckMode::Linked`, so an invariant whose `count<One>` can exceed `One`
 /// is refused at compile with a named cause, never run to a null-cause

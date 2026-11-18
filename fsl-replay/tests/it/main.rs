@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration tests that reach `fsl-replay` through its public facade only.
 
+#[path = "../../../tests/support/published_fspec.rs"]
+pub(crate) mod published_fspec;
+
 mod admitted_record_chain;
 mod aggregate_dispatch;
 mod category_facade;
@@ -10,6 +13,7 @@ mod compile_protocol_profile;
 mod compile_text_literals;
 mod declaration_only_unit;
 mod format_outcome_facade;
+mod hyper_finite_replay;
 mod hyper_identity;
 mod hyper_query;
 mod hyper_smt_settle;
@@ -35,6 +39,7 @@ mod refinement_ring;
 mod refinement_smt;
 mod refinement_step;
 mod refinement_unmapped;
+mod replay_result_rows;
 #[path = "../../../tests/support/ring_world.rs"]
 mod ring_world;
 mod run_axes;
@@ -42,6 +47,7 @@ mod script_search;
 mod source_diagnostic_outcome;
 mod static_subject;
 mod tool_failure;
+mod undeclared_variant_case_message;
 mod value_family_end_to_end;
 mod vault_world;
 mod witness_entry_name;

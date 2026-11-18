@@ -796,8 +796,9 @@ fn an_undefined_atom_at_a_position_the_clause_reads_is_returned_with_its_cause()
 
 /// FR-328-AC-1: over the `Counter` prefix 0, 1, 2 under infinite-trace,
 /// `always holds(c.level <= 1)` is false at position 0, `always
-/// holds(c.level <= 5)` is pending, and `eventually` is pending whether its
-/// atom is reached or not.
+/// holds(c.level <= 5)` is pending, `eventually holds(c.level = 2)` holds (a
+/// good prefix: position 2 is a witness every extension keeps), and
+/// `eventually holds(c.level = 9)` is pending.
 #[trace("TC-838", "FR-328-AC-1")]
 #[test]
 fn a_prefix_reports_a_bad_prefix_of_a_safety_formula_and_pends_the_rest() {
@@ -808,7 +809,7 @@ fn a_prefix_reports_a_bad_prefix_of_a_safety_formula_and_pends_the_rest() {
     );
     assert_eq!(
         prefix("eventually holds(c.level = 2)"),
-        TemporalOutcome::Pending
+        TemporalOutcome::Holds
     );
     assert_eq!(
         prefix("eventually holds(c.level = 9)"),
@@ -843,8 +844,9 @@ fn a_past_operator_reads_atoms_as_false_before_position_zero() {
     );
 }
 
-/// FR-328-AC-4: none of the AC-1 to AC-3 clauses is `tested` or `proved`;
-/// each pending one is O-16 inconclusive and each violation is a violation.
+/// FR-328-AC-4: none of the AC-1 to AC-3 clauses is `tested`; each pending
+/// one is O-16 inconclusive, each violation is a violation, and AC-1's good
+/// prefix is success.
 #[trace("TC-838", "FR-328-AC-4")]
 #[test]
 fn a_prefix_never_settles_tested_and_pending_is_inconclusive() {
@@ -857,20 +859,13 @@ fn a_prefix_never_settles_tested_and_pending_is_inconclusive() {
         "always (holds(c.level = 2) implies eventually[0,1] holds(c.level = 3))",
         "always (holds(c.level = 0) implies once[1,1] holds(c.level = 9))",
     ];
-    let categories: Vec<Category> = clauses
-        .iter()
-        .map(|body| {
-            let settled = prefix(body);
-            assert_ne!(settled, TemporalOutcome::Holds, "{body}");
-            settled.category()
-        })
-        .collect();
+    let categories: Vec<Category> = clauses.iter().map(|body| prefix(body).category()).collect();
     assert_eq!(
         categories,
         [
             Category::Violation,
             Category::Inconclusive,
-            Category::Inconclusive,
+            Category::Success,
             Category::Inconclusive,
             Category::Violation,
             Category::Inconclusive,
@@ -1772,4 +1767,28 @@ fn a_refused_capture_is_a_refused_condition_at_its_position() {
     };
     assert_eq!(run(&[0, 0, 0]), refused_at(1));
     assert_eq!(run(&[2, 0, 0]), Ok(violated(0)));
+}
+
+/// FR-328-AC-7 (TC-2974): over the prefix 0, 1, 2 under infinite-trace, a
+/// good prefix settles holds whatever the fragment, and a prefix that settles
+/// nothing, or a bad prefix outside the safety fragment, stays pending.
+#[trace("TC-2974", "FR-328-AC-7")]
+#[test]
+fn a_good_prefix_holds_and_the_rest_pends() {
+    for formula in [
+        "eventually holds(c.level = 2)",
+        "eventually holds(c.level = 1)",
+        "holds(c.level <= 1) until holds(c.level = 2)",
+        "eventually[0,2] holds(c.level = 2)",
+    ] {
+        assert_eq!(prefix(formula), TemporalOutcome::Holds, "{formula}");
+    }
+    for formula in [
+        "always eventually holds(c.level = 2)",
+        "eventually always holds(c.level = 2)",
+        "eventually holds(c.level = 9) or always holds(c.level <= 1)",
+        "always holds(c.level <= 5)",
+    ] {
+        assert_eq!(prefix(formula), TemporalOutcome::Pending, "{formula}");
+    }
 }

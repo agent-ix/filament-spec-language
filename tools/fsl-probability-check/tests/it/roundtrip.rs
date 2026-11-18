@@ -15,10 +15,10 @@ use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
 use fsl_foundation::{RequestIndex, SourceIdentity};
+use fsl_package::ObligationIdentity;
 use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
 use fsl_replay::{
-    probability_certificate_document, write_probability_certificate, ObligationIdentity,
-    ProbabilityDocumentLimits,
+    probability_certificate_document, write_probability_certificate, ProbabilityDocumentLimits,
 };
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
@@ -126,7 +126,7 @@ fn proof_source_request(
         keys: vec!["m".to_owned()],
     }];
     let simulation = ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: &packages,
         normalization: limits.model,
         snapshots: &snapshots,

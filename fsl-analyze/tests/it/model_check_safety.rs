@@ -121,10 +121,15 @@ fn values(
         .collect()
 }
 
+/// The pure function whose divisor may be zero, which the Kernel checks
+/// (FR-495-AC-3).
+const DIVIDE: &str = "function q using v(x: Integer): Integer pure { 6 mod x }\n";
+
 fn counter_world(profile: &str, clauses: &[Clause<'_>]) -> World {
-    World::new(
+    World::with_kernel_functions(
         model_world::counter(),
         CONTRACT,
+        DIVIDE,
         profile,
         clauses,
         &[("c", json!({"value": {"integer": "0"}}))],
@@ -355,7 +360,7 @@ fn a_formula_violation_before_an_undefined_position_and_an_unread_position() {
         INFINITE,
         &[Clause {
             activation: ORIGIN,
-            formula: "always (holds(c.value <= 0) and holds(6 mod (2 - c.value) >= 0))",
+            formula: "always (holds(c.value <= 0) and holds(q(2 - c.value) >= 0))",
         }],
     );
     let outcome = checked(
@@ -375,7 +380,7 @@ fn a_formula_violation_before_an_undefined_position_and_an_unread_position() {
         BOUNDED,
         &[Clause {
             activation: ORIGIN,
-            formula: "eventually[0,1] holds(6 mod (2 - c.value) = 0 and c.value = 1)",
+            formula: "eventually[0,1] holds(q(2 - c.value) = 0 and c.value = 1)",
         }],
     );
     let outcome = checked(
@@ -417,7 +422,7 @@ fn a_discharged_infinite_trace_claim_still_reads_every_atom() {
         INFINITE,
         &[Clause {
             activation: ORIGIN,
-            formula: "holds(c.value >= 0) release holds(6 mod (2 - c.value) >= 0)",
+            formula: "holds(c.value >= 0) release holds(q(2 - c.value) >= 0)",
         }],
     );
     let outcome = checked(
@@ -444,7 +449,7 @@ fn a_decided_bounded_claim_still_reads_every_atom_up_to_its_horizon() {
         BOUNDED,
         &[Clause {
             activation: ORIGIN,
-            formula: "holds(c.value = 1) implies eventually[0,3] holds(6 mod (2 - c.value) = 0)",
+            formula: "holds(c.value = 1) implies eventually[0,3] holds(q(2 - c.value) = 0)",
         }],
     );
     let outcome = checked(
@@ -593,7 +598,7 @@ fn production_letters_decide_each_guard_row_and_include_guard_only_por_visibilit
     );
 
     let (undefined_world, undefined_outcome) =
-        run(INFINITE, "6 mod (2 - c.value) = 0", "always holds(true)");
+        run(INFINITE, "q(2 - c.value) = 0", "always holds(true)");
     assert_eq!(
         undefined(&undefined_world, &undefined_outcome),
         (2, vec![0, 1, 2])
@@ -723,10 +728,11 @@ fn a_liveness_clause_is_decided_with_or_without_a_guarded_activation() {
 #[trace("TC-521", "FR-126-AC-6")]
 #[test]
 fn an_undefined_precondition_at_the_initial_state_is_an_empty_prefix_violation() {
-    let world = World::new(
+    let world = World::with_kernel_functions(
         model_world::counter(),
-        "pre CanInc using v on M::Counter::inc { 6 mod (2 - self.value) >= 0 }\n\
+        "pre CanInc using v on M::Counter::inc { q(2 - self.value) >= 0 }\n\
          post Inc using v on M::Counter::inc { self.value - pre(self.value) = 1 }\n",
+        DIVIDE,
         INFINITE,
         &[Clause {
             activation: ORIGIN,

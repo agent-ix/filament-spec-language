@@ -271,6 +271,9 @@ pub struct Variant {
     pub inc: bool,
     /// Replace the CAS operations with the two-state tick/inc fairness model.
     pub fairness_toggle: bool,
+    /// Check the unit under `CheckMode::Kernel`, for a function body that
+    /// divides where `Linked` demands a proved nonzero divisor (FR-495-AC-3).
+    pub kernel: bool,
 }
 
 impl Variant {
@@ -286,6 +289,7 @@ impl Variant {
         tick: false,
         inc: false,
         fairness_toggle: false,
+        kernel: false,
     };
     /// The lost-update model.
     pub const LOST_UPDATE: Self = Self {
@@ -573,16 +577,6 @@ pub fn check_with_internals(
     refinement: &str,
     internals: Option<serde_json::Value>,
 ) -> Result<CheckedGraph, String> {
-    check_with_internals_mode(variant, refinement, internals, CheckMode::Linked)
-}
-
-/// The checked graph of the unit with `refinement` under `mode`.
-pub fn check_with_internals_mode(
-    variant: Variant,
-    refinement: &str,
-    internals: Option<serde_json::Value>,
-    mode: CheckMode,
-) -> Result<CheckedGraph, String> {
     let documents = packages(variant);
     let text = unit_text(&documents, refinement, variant);
     let parsed = fsl_cst::parse(
@@ -617,7 +611,14 @@ pub fn check_with_internals_mode(
         None => declarations.with_unwritten_refinements(),
     };
     declarations
-        .check(mode, CheckingLimits::default())
+        .check(
+            if variant.kernel {
+                CheckMode::Kernel
+            } else {
+                CheckMode::Linked
+            },
+            CheckingLimits::default(),
+        )
         .map_err(|refusals| format!("{refusals:?}"))
 }
 
@@ -678,11 +679,6 @@ impl World {
         Self::with_keys(variant, refinement, &["c"])
     }
 
-    /// The world of the unit checked under `mode`.
-    pub fn with_mode(variant: Variant, refinement: &str, mode: CheckMode) -> Self {
-        Self::with_keys_and_internals_mode(variant, refinement, &["c"], None, mode)
-    }
-
     /// The world of the compare-and-set unit with an authored refinement
     /// internal-class binding.
     pub fn with_internals(
@@ -691,16 +687,6 @@ impl World {
         internals: serde_json::Value,
     ) -> Self {
         Self::with_keys_and_internals(variant, refinement, &["c"], Some(internals))
-    }
-
-    /// The world of the unit with internals checked under `mode`.
-    pub fn with_internals_mode(
-        variant: Variant,
-        refinement: &str,
-        internals: serde_json::Value,
-        mode: CheckMode,
-    ) -> Self {
-        Self::with_keys_and_internals_mode(variant, refinement, &["c"], Some(internals), mode)
     }
 
     /// The world of the unit of `variant` with `refinement`, whose
@@ -716,22 +702,11 @@ impl World {
         keys: &[&str],
         internals: Option<serde_json::Value>,
     ) -> Self {
-        Self::with_keys_and_internals_mode(variant, refinement, keys, internals, CheckMode::Linked)
-    }
-
-    fn with_keys_and_internals_mode(
-        variant: Variant,
-        refinement: &str,
-        keys: &[&str],
-        internals: Option<serde_json::Value>,
-        mode: CheckMode,
-    ) -> Self {
         let keys: Vec<String> = keys.iter().map(|key| (*key).to_owned()).collect();
-        let graph = check_with_internals_mode(variant, refinement, internals, mode).unwrap_or_else(
-            |refusals| {
+        let graph =
+            check_with_internals(variant, refinement, internals).unwrap_or_else(|refusals| {
                 panic!("{refinement}: the unit checks: {refusals}");
-            },
-        );
+            });
         let mut snapshots = BTreeMap::new();
         let spec_initial_value = if variant.tick {
             json!({"value": {"integer": "0"}, "id": {"integer": "0"}})
@@ -842,7 +817,7 @@ impl World {
     ) -> ModelSimulationRequest<'_> {
         ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
-            package: &self.package,
+            input: fsl_eval::simulation::model::ModelCheckInput::source(&self.package),
             packages: &self.packages,
             normalization: ModelNormalizationLimits::default(),
             snapshots: &self.snapshots,

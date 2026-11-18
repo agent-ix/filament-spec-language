@@ -7,11 +7,11 @@
 //! text mode is tested in the driver repository.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    Workspace, analyze, below_three, bounded, clause, counter_request, label, litmus_request,
-    order_protocol,
+    analyze, below_three, bounded, clause, counter_request, label, litmus_request, order_protocol,
+    Workspace,
 };
 
 const DONE: &str = "terminal Done using v on M when { self.value = 3 };\n";
@@ -105,7 +105,6 @@ fn explicit_state_items_prove_and_refute() {
 /// FR-625-AC-4: an invariant state clause is an explicit-state item.
 #[trace("TC-1585", "FR-625-AC-4")]
 #[test]
-#[ignore = "QSL-2301: needs an EN-1 invariant item form (translation, closure certificate, replayed state-clause counterexample) and the record backend member FR-621 states"]
 fn invariant_items_prove_and_refute() {
     let ws = Workspace::new("cli-invariant");
     let body = "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n\
@@ -300,27 +299,32 @@ fn liveness_over_a_ra_parallel_is_settled_by_name() {
     }
 }
 
-/// FR-629-AC-1: the store-buffering claim holds under SC and fails under TSO.
+/// FR-629-AC-1 through FR-1033: the store-buffering claim holds under SC and
+/// fails under TSO, the protocol subject named by `subject.protocol` and the
+/// model by the request's `memory`.
 #[trace("TC-1589", "FR-629-AC-1")]
 #[test]
-#[ignore = "QSL-2126: weak-memory items are not reachable through fsl analyze yet"]
 fn store_buffering_separates_sc_and_tso() {
-    for (memory, expected) in [("memory sc", "proved"), ("memory tso", "refuted")] {
-        let body = crate::litmus::sb_unit(&crate::litmus::sb_run(memory, "release", "acquire"));
-        let ws = Workspace::new(&format!("cli-sb-{}", memory.replace(' ', "-")));
+    let binding = json!({"type": "model-binding", "selection": "test/litmus"});
+    let subject = json!({"protocol": {"protocol": "SB",
+        "over": {"reference": {"population": "ix://test/litmus/cores", "key": "core"}},
+        "roles": {"w": binding, "c": binding}}});
+    for (model, expected) in [("sc", "proved"), ("tso", "refuted")] {
+        let body = crate::litmus::sb_unit(&crate::litmus::sb_run("", "release", "acquire"));
+        let ws = Workspace::new(&format!("cli-sb-{model}"));
         let run = analyze(&litmus_request(
             &ws,
             &body,
-            json!({"items": [{"claim": "NoBothZero"}]}),
+            json!({"subject": subject, "memory": [{"parallel": "SB::Both", "model": model}],
+                "items": [{"claim": "NoBothZero"}]}),
         ));
-        assert_eq!(label(&run.item(0)), expected, "{memory}");
+        assert_eq!(label(&run.item(0)), expected, "{model}: {}", run.document());
     }
 }
 
 /// FR-634-AC-1: enumerating the Counter subject reports coverage and traces.
 #[trace("TC-1594", "FR-634-AC-1")]
 #[test]
-#[ignore = "QSL-2296 (from QSL-2132): FR-634 does not say which traces an enumerate item reports nor what coverage.choices counts, and fsl-eval exploration returns no traces (spec question open)"]
 fn simulation_enumerates_the_counter_subject() {
     let ws = Workspace::new("cli-simulation");
     let run = analyze(&counter_request(
@@ -338,10 +342,144 @@ fn simulation_enumerates_the_counter_subject() {
     assert!(item.get("record").is_none());
 }
 
+/// FR-634 "Inputs" and "Refusals": every simulation bound is a positive
+/// count, so `max_steps` 0 refuses the whole request `invalid-request`;
+/// `seed` on an `enumerate` item refuses it naming the member; and a
+/// `simulation` member on a claim item refuses it.
+#[trace("TC-1594", "FR-634")]
+#[test]
+fn simulation_refuses_a_zero_bound_a_misplaced_seed_and_a_claim() {
+    for (name, item, member) in [
+        (
+            "zero-steps",
+            json!({"kind": "simulation", "simulation": {"mode": "sample", "seed": 1,
+                "samples": 1, "max_steps": 0}}),
+            "max_steps",
+        ),
+        (
+            "enumerate-seed",
+            json!({"kind": "simulation", "simulation": {"mode": "enumerate", "seed": 1}}),
+            "/items/0/simulation/seed",
+        ),
+        (
+            "claim",
+            json!({"kind": "simulation", "claim": "Bounded",
+                "simulation": {"mode": "enumerate"}}),
+            "/items/0/claim",
+        ),
+    ] {
+        let ws = Workspace::new(&format!("cli-simulation-refused-{name}"));
+        let run = analyze(&counter_request(&ws, &bounded(), json!([item])));
+        assert_eq!(run.exit, 20, "{name}: {}", run.document());
+        assert_eq!(run.document()["category"], "refusal", "{name}");
+        assert!(
+            run.document().to_string().contains(member),
+            "{name} names {member}: {}",
+            run.document()
+        );
+    }
+}
+
+/// FR-634 "Outputs": an enumeration stopped by `max_steps` is `incomplete`
+/// `LimitReached{max_steps}`, its frontier holds the horizon state, and its
+/// one trace runs from `value = 0` along the discovery edges to it.
+#[trace("TC-1594", "FR-634")]
+#[test]
+fn a_step_bound_leaves_the_horizon_state_in_the_frontier() {
+    let ws = Workspace::new("cli-simulation-horizon");
+    let run = analyze(&counter_request(
+        &ws,
+        "",
+        json!([{"kind": "simulation", "simulation": {"mode": "enumerate", "max_steps": 2}}]),
+    ));
+    let item = run.item(0);
+    assert_eq!(item["category"], "incomplete", "{item}");
+    assert_eq!(item["cause"]["kind"], "limit-reached", "{item}");
+    assert_eq!(item["cause"]["limit"], "max_steps", "{item}");
+    assert_eq!(item["cause"]["setting"], "simulation.max_steps", "{item}");
+    assert_eq!(item["frontier"].as_array().map(Vec::len), Some(1), "{item}");
+    let traces = item["traces"].as_array().expect("traces");
+    assert_eq!(traces.len(), 1, "{item}");
+    assert_eq!(
+        traces[0]["states"].as_array().map(Vec::len),
+        Some(3),
+        "{item}"
+    );
+    assert_eq!(
+        traces[0]["steps"].as_array().map(Vec::len),
+        Some(2),
+        "{item}"
+    );
+    assert_eq!(item["coverage"]["states"], "3", "{item}");
+    assert_eq!(run.exit, 22, "an incomplete item ranks in the exit code");
+}
+
+/// The Counter request with `items` under the request's FR-109 accounting
+/// limit `result_units`.
+fn metered_counter_request(ws: &Workspace, items: Value, result_units: u64) -> std::path::PathBuf {
+    let mut request = crate::analyze_cli_support::request_members(Some(items));
+    request["limits"] = json!({"accounting": {"result_units": result_units}});
+    crate::analyze_cli_support::counter_request_with(ws, "", request)
+}
+
+/// FR-634, FR-109: an enumeration's store and its written traces are
+/// charged to the request's accounting limits, so a walk whose states and
+/// traces outgrow a small `result_units` stops `incomplete` with
+/// `limit-reached` naming the counter, writing only the traces admitted
+/// before it, and the same walk under the default limits completes.
+#[trace("TC-1594", "FR-634")]
+#[test]
+fn an_enumeration_over_the_result_budget_stops_incomplete() {
+    let item = json!([{"kind": "simulation", "simulation": {"mode": "enumerate"}}]);
+    let ws = Workspace::new("cli-simulation-metered");
+    let run = analyze(&metered_counter_request(&ws, item.clone(), 1_000));
+    let stopped = run.item(0);
+    assert_eq!(stopped["category"], "incomplete", "{stopped}");
+    assert_eq!(stopped["cause"]["kind"], "limit-reached", "{stopped}");
+    assert_eq!(stopped["cause"]["limit"], "result_units", "{stopped}");
+    assert_eq!(stopped["cause"]["value"], 1_000, "{stopped}");
+    let states: u64 = stopped["coverage"]["states"]
+        .as_str()
+        .and_then(|count| count.parse().ok())
+        .expect("a decimal count");
+    assert!(
+        states < 4,
+        "the store stopped before the walk ended: {stopped}"
+    );
+    assert!(
+        !stopped["frontier"].as_array().expect("frontier").is_empty(),
+        "{stopped}"
+    );
+    let ws = Workspace::new("cli-simulation-unmetered");
+    let run = analyze(&counter_request(&ws, "", item));
+    assert_eq!(run.item(0)["category"], "success", "{}", run.item(0));
+}
+
+/// FR-634, FR-109: sampled traces are charged per reached state and per
+/// retained trace, so many requested samples under a small `result_units`
+/// stop `incomplete` naming the counter after the traces it admitted,
+/// never holding every requested trace.
+#[trace("TC-1594", "FR-634")]
+#[test]
+fn sampling_over_the_result_budget_stops_incomplete() {
+    let ws = Workspace::new("cli-simulation-sample-metered");
+    let run = analyze(&metered_counter_request(
+        &ws,
+        json!([{"kind": "simulation",
+            "simulation": {"mode": "sample", "seed": 5, "samples": 1_000_000}}]),
+        5_000,
+    ));
+    let stopped = run.item(0);
+    assert_eq!(stopped["category"], "incomplete", "{stopped}");
+    assert_eq!(stopped["cause"]["kind"], "limit-reached", "{stopped}");
+    assert_eq!(stopped["cause"]["limit"], "result_units", "{stopped}");
+    let traces = stopped["traces"].as_array().expect("traces").len();
+    assert!(traces < 10, "{traces} traces of a million requested");
+}
+
 /// FR-635-AC-3: an unregistered backend is an invalid request.
 #[trace("TC-1595", "FR-635-AC-3")]
 #[test]
-#[ignore = "QSL-2132: backend selection is not reachable through fsl analyze yet"]
 fn an_unregistered_backend_is_refused() {
     let ws = Workspace::new("cli-backend");
     let run = analyze(&counter_request(
@@ -363,26 +501,120 @@ fn an_unregistered_backend_is_refused() {
     assert!(registry.contains(&json!("en-1")) && registry.contains(&json!("en-7")));
 }
 
-/// FR-636-AC-1: the order protocol's deadlock item proves, and refutes
-/// without the receive.
+/// FR-636-AC-1: the order protocol's deadlock item proves; a protocol that
+/// starts at a receive with no matching send refutes with its blocked thread.
 #[trace("TC-1596", "FR-636-AC-1")]
 #[test]
-#[ignore = "QSL-2224: protocol analysis items are not reachable through fsl analyze yet"]
 fn protocol_deadlock_proves_and_refutes() {
-    for (receive, expected) in [(true, "proved"), (false, "refuted")] {
-        let ws = Workspace::new(&format!("cli-protocol-{receive}"));
+    let binding = json!({"type": "model-binding", "selection": "test/litmus"});
+    let subject = json!({"protocol": {"protocol": "Flow",
+        "over": {"reference": {"population": "ix://test/litmus/cores", "key": "core"}},
+        "roles": {"Buyer": binding, "Seller": binding}}});
+    let blocked = order_protocol(true).replace(
+        "receive Got via Order of Placed as (got: Ack) { true }",
+        "receive Got via Order of Placed as (got: Ack) { false }",
+    );
+    for (name, body, expected) in [
+        ("complete", order_protocol(true), "proved"),
+        ("blocked", blocked, "refuted"),
+    ] {
+        let ws = Workspace::new(&format!("cli-protocol-{name}"));
         let run = analyze(&litmus_request(
             &ws,
-            &order_protocol(receive),
-            json!({"items": [{"claim": "Flow", "temporal": {"item_kind": "deadlock-freedom"}}]}),
+            &body,
+            json!({"items": [{"claim": "Flow", "kind": "global-conformance",
+                "temporal": {"item_kind": "deadlock-freedom", "subject": subject}}]}),
         ));
+        assert!(run.item(0).is_object(), "{}", run.document());
         let item = run.item(0);
-        assert_eq!(label(&item), expected, "receive {receive}");
-        if !receive {
-            assert!(item["counterexample"]["witness"].is_object(), "{item}");
+        assert_eq!(label(&item), expected, "{}", run.document());
+        if name == "blocked" {
+            assert!(
+                item["counterexample"]["blocked"]
+                    .as_array()
+                    .is_some_and(|blocked| !blocked.is_empty()),
+                "the counterexample names blocked threads: {item}"
+            );
             assert_eq!(item["replay"]["reproduced"], true);
+            assert_eq!(run.exit, 10);
         }
     }
+}
+
+/// FR-624-AC-4 and FR-636: a request naming no protocol refuses with that
+/// protocol name as its locus.
+#[trace("TC-1584", "FR-624-AC-4")]
+#[trace("TC-1596", "FR-636-AC-1")]
+#[test]
+fn an_unknown_protocol_name_is_refused_at_its_name() {
+    let ws = Workspace::new("cli-unknown-protocol");
+    let run = analyze(&litmus_request(
+        &ws,
+        &order_protocol(true),
+        json!({"items": [{"claim": "MissingFlow", "kind": "global-conformance"}]}),
+    ));
+    assert_eq!(run.exit, 20);
+    let item = run.item(0);
+    assert_eq!(item["category"], "refusal", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "unknown-claim",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["name"], "MissingFlow",
+        "{item}"
+    );
+}
+
+/// FR-636-AC-1/FR-212: scheduler fairness changes whether a protocol liveness
+/// clause can be refuted by starving an enabled role attempt.
+#[trace("TC-1596", "FR-636-AC-1")]
+#[test]
+fn protocol_liveness_follows_the_fairness_setting() {
+    let run = format!(
+        "parallel Both {{ branch s sequence Sender {{ {} }} \
+         branch r sequence Receiver {{ repeat Loop by w visible () while {{ true }} \
+         attempt Tick by w on M::Cell::touch contracts [TouchPre] as (tick: Boolean) {{ true }}; }} }} \
+         join all [s, r];",
+        crate::fill::attempt("Done", "set", "SetPost", "done", "true"),
+    );
+    let claim = "temporal Eventually using t0 over (k: M::Cell) clock \"model-steps\" \
+                 on origin { eventually holds(k.v = 1) }\n";
+    let subject = json!({"protocol": {"protocol": "Flow",
+    "over": {"reference": {"population": "ix://test/fill/cells", "key": "c"}},
+    "roles": {
+        "w": {"type": "model-binding", "selection": "test/fill"}
+    }}});
+    let run_with = |name: &str, scheduling: &str| {
+        let ws = Workspace::new(&format!("cli-protocol-liveness-{name}"));
+        let body = format!(
+            "{}{}{}",
+            crate::fill::contracts("self.v = 0"),
+            crate::fill::protocol("Flow", &format!("terminal any; {scheduling}"), &run, "d",),
+            claim
+        );
+        let unit = crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &body);
+        let mut documents = crate::fill::Documents::new();
+        documents.start("s0", &[("c", 0)]);
+        let snapshots: Vec<Vec<u8>> = documents.snapshots.values().cloned().collect();
+        let path = crate::analyze_cli_support::request_over(
+            &ws,
+            &unit,
+            &crate::fill::document(),
+            &snapshots,
+            json!({"subject": subject, "items": [{"claim": "Eventually", "temporal": {
+                "limits": {"max_states": 10000, "max_transitions": 100000,
+                    "max_automaton_states": 256, "max_walk_steps": 64}
+            }}]}),
+        );
+        analyze(&path)
+    };
+    let fair = run_with("fair", "");
+    assert!(fair.item(0).is_object(), "{}", fair.document());
+    assert_eq!(label(&fair.item(0)), "proved", "{}", fair.document());
+    let unfair = run_with("adversarial", "scheduling adversarial;");
+    assert_eq!(label(&unfair.item(0)), "refuted", "{}", unfair.document());
+    assert!(unfair.item(0)["counterexample"]["loop"].is_array());
 }
 
 /// FR-626-AC-1: the refuted deadlock item's counterexample is a finite prefix
@@ -442,5 +674,299 @@ fn global_conformance_is_decided_over_every_behaviour() {
             json!({"items": [{"claim": "Flow", "kind": "global-conformance"}]}),
         ));
         assert_eq!(label(&run.item(0)), expected, "receive {receive}");
+    }
+}
+
+/// FR-1032-AC-1: bind the recording under its request-level identity and
+/// echo that identity in the settled item without claiming independent replay.
+#[trace("TC-2922", "FR-1032-AC-1", "FR-1032-AC-2", "FR-990-AC-3")]
+#[test]
+fn a_recording_result_echoes_its_provisioned_identity_without_replay_subject() {
+    let ws = Workspace::new("cli-replay-mode");
+    let recording = json!({
+        "format": "filament.protocol-recording/1",
+        "protocol": "Flow",
+        "observations": [
+            {"kind": "send", "node": "Flow::Main::Placed", "role": "Buyer",
+             "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
+             "record": {"ok": true}},
+            {"kind": "receive", "node": "Flow::Main::Got", "role": "Seller",
+             "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
+             "record": {"ok": true}},
+            {"kind": "case", "node": "Flow::Main::Decide::yes", "role": "Seller",
+             "instance": "w-1", "keys": {}},
+            {"kind": "finish", "node": "Flow::Done", "role": "Seller",
+             "instance": "w-1", "keys": {}, "record": {"zz": true}}
+        ],
+        "local_order": {"Seller": [1, 2, 3], "Buyer": [0]},
+        "correlations": [{"send": 0, "receive": 1}],
+        "closure": {"state": "closed", "premises": [
+            {"kind":"execution", "node":"Flow::Done"},
+            {"kind":"branch", "node":"Flow::Main::Decide::no"},
+            {"kind":"branch", "node":"Flow::Main::Decide::yes"}
+        ]}
+    });
+    ws.write("recording.json", recording.to_string().as_bytes());
+    let run = analyze(&litmus_request(
+        &ws,
+        &order_protocol(true),
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance",
+                  "recording": {"authority": "test", "identity": "recording"}}],
+        "documents": [{"file": "recording.json", "identity": {
+            "authority": "test", "identity": "recording"
+        }}]}),
+    ));
+    let item = run.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
+    let verdicts = item["obligations"]
+        .as_array()
+        .expect("one verdict per obligation");
+    assert!(
+        verdicts
+            .iter()
+            .all(|verdict| verdict["verdict"] == "satisfied"),
+        "{item}"
+    );
+    assert_eq!(item["closure"]["state"], "closed");
+    assert_eq!(item["global"]["complete"], true);
+    assert!(
+        item.get("replay").is_none(),
+        "recording bytes are not an independent replay: {item}"
+    );
+    assert_eq!(
+        item["recording"],
+        json!({"authority":"test", "identity":"recording"})
+    );
+
+    let other_binding_recording = recording.clone();
+    let mut declared = recording;
+    declared["identity"] = json!({"authority":"test", "identity":"recording"});
+    let declared_ws = Workspace::new("cli-replay-mode-declared");
+    declared_ws.write("recording.json", declared.to_string().as_bytes());
+    let declared_run = analyze(&litmus_request(
+        &declared_ws,
+        &order_protocol(true),
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance",
+                   "recording": {"authority": "test", "identity": "recording"}}],
+         "documents": [{"file": "recording.json"}]}),
+    ));
+    let declared_item = declared_run.item(0);
+    assert_eq!(label(&declared_item), "proved", "{declared_item}");
+    assert_eq!(declared_item["obligations"], item["obligations"]);
+    assert_eq!(declared_item["closure"], item["closure"]);
+    assert_eq!(declared_item["global"], item["global"]);
+
+    let other_ws = Workspace::new("cli-replay-mode-other-identity");
+    other_ws.write(
+        "recording.json",
+        other_binding_recording.to_string().as_bytes(),
+    );
+    let other_run = analyze(&litmus_request(
+        &other_ws,
+        &order_protocol(true),
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance",
+                  "recording": {"authority": "test", "identity": "other"}}],
+        "documents": [{"file": "recording.json", "identity": {
+            "authority": "test", "identity": "other"
+        }}]}),
+    ));
+    let other_item = other_run.item(0);
+    assert_eq!(label(&other_item), "proved", "{other_item}");
+    assert_eq!(
+        other_item["recording"],
+        json!({"authority":"test", "identity":"other"})
+    );
+    assert_eq!(other_item["obligations"], item["obligations"]);
+    assert_eq!(
+        other_item["closure"]["premises"],
+        item["closure"]["premises"]
+    );
+    assert_eq!(other_item["global"], item["global"]);
+}
+
+/// FR-1032-AC-3: document identity errors point at the identity member (or
+/// the document when it is absent) and refuse before resolving any items.
+#[trace("TC-2922", "FR-1032-AC-3")]
+#[test]
+fn recording_document_identity_refusals_name_the_exact_request_pointer() {
+    let assert_refusal = |request: &std::path::Path, pointer: &str, fragments: &[&str]| {
+        let run = analyze(request);
+        assert_eq!(run.exit, 20, "{}", run.document());
+        let document = run.document();
+        assert_eq!(document["category"], "refusal");
+        assert_eq!(document["items"], json!([]));
+        assert_eq!(document["diagnostics"][0]["code"], "invalid-request");
+        let message = document["diagnostics"][0]["message"]
+            .as_str()
+            .expect("diagnostic message");
+        assert!(message.contains(pointer), "{message}");
+        for fragment in fragments {
+            assert!(
+                message.contains(fragment),
+                "missing {fragment:?} in {message}"
+            );
+        }
+    };
+
+    let malformed_ws = Workspace::new("cli-recording-identity-malformed");
+    malformed_ws.write(
+        "recording.json",
+        br#"{"format":"filament.protocol-recording/1"}"#,
+    );
+    let malformed = litmus_request(
+        &malformed_ws,
+        &order_protocol(true),
+        json!({"documents":[{"file":"recording.json", "identity":{"authority":"test"}}]}),
+    );
+    assert_refusal(&malformed, "/documents/0/identity", &["malformed"]);
+
+    let mismatch_ws = Workspace::new("cli-recording-identity-mismatch");
+    mismatch_ws.write(
+        "recording.json",
+        br#"{"format":"filament.protocol-recording/1","identity":{"authority":"test","identity":"declared"}}"#,
+    );
+    let mismatch = litmus_request(
+        &mismatch_ws,
+        &order_protocol(true),
+        json!({"documents":[{"file":"recording.json", "identity":{"authority":"test","identity":"stated"}}]}),
+    );
+    assert_refusal(
+        &mismatch,
+        "/documents/0/identity",
+        &["stated identity", "stated", "declared"],
+    );
+
+    let null_ws = Workspace::new("cli-recording-identity-null");
+    null_ws.write(
+        "recording.json",
+        br#"{"format":"filament.protocol-recording/1","identity":{"authority":"test","identity":"declared"}}"#,
+    );
+    let null_identity = litmus_request(
+        &null_ws,
+        &order_protocol(true),
+        json!({"documents":[{"file":"recording.json", "identity":null}]}),
+    );
+    assert_refusal(&null_identity, "/documents/0/identity", &["malformed"]);
+
+    let unidentified_ws = Workspace::new("cli-recording-identity-missing");
+    unidentified_ws.write(
+        "recording.json",
+        br#"{"format":"filament.protocol-recording/1"}"#,
+    );
+    let unidentified = litmus_request(
+        &unidentified_ws,
+        &order_protocol(true),
+        json!({"documents":[{"file":"recording.json"}]}),
+    );
+    assert_refusal(&unidentified, "/documents/0", &["declares no identity"]);
+
+    let snapshot_ws = Workspace::new("cli-recording-identity-snapshot");
+    snapshot_ws.write(
+        "snapshot.json",
+        br#"{"format":"filament.state.snapshot/v1","identity":{"authority":"test","identity":"start"}}"#,
+    );
+    snapshot_ws.write(
+        "recording.json",
+        br#"{"format":"filament.protocol-recording/1"}"#,
+    );
+    let snapshot = litmus_request(
+        &snapshot_ws,
+        &order_protocol(true),
+        json!({"documents":[
+            {"file":"snapshot.json"},
+            {"file":"recording.json", "identity":{"authority":"test","identity":"start"}}
+        ]}),
+    );
+    assert_refusal(
+        &snapshot,
+        "/documents/1",
+        &["repeats a provisioned document identity"],
+    );
+}
+
+/// FR-1032-AC-4: recording references must name provisioned recordings and
+/// may only appear on global-conformance items.
+#[trace("TC-2922", "FR-1032-AC-4")]
+#[test]
+fn recording_item_references_require_a_provisioned_recording_document() {
+    let assert_refusal = |request: &std::path::Path| {
+        let run = analyze(request);
+        assert_eq!(run.exit, 20, "{}", run.document());
+        let document = run.document();
+        assert_eq!(document["category"], "refusal");
+        assert_eq!(document["diagnostics"][0]["code"], "invalid-request");
+        assert!(
+            document["diagnostics"][0]["message"]
+                .as_str()
+                .expect("diagnostic message")
+                .contains("/items/0/recording")
+        );
+    };
+
+    let missing_ws = Workspace::new("cli-recording-reference-missing");
+    let missing = litmus_request(
+        &missing_ws,
+        &order_protocol(true),
+        json!({"items":[{"claim":"Flow", "kind":"global-conformance", "recording":{"authority":"test","identity":"missing"}}]}),
+    );
+    assert_refusal(&missing);
+
+    let snapshot_ws = Workspace::new("cli-recording-reference-snapshot");
+    snapshot_ws.write(
+        "snapshot.json",
+        br#"{"format":"filament.state.snapshot/v1","identity":{"authority":"test","identity":"start"}}"#,
+    );
+    let snapshot = litmus_request(
+        &snapshot_ws,
+        &order_protocol(true),
+        json!({
+            "documents":[{"file":"snapshot.json"}],
+            "items":[{"claim":"Flow", "kind":"global-conformance", "recording":{"authority":"test","identity":"start"}}]
+        }),
+    );
+    assert_refusal(&snapshot);
+
+    let wrong_kind_ws = Workspace::new("cli-recording-reference-wrong-kind");
+    let wrong_kind = litmus_request(
+        &wrong_kind_ws,
+        &order_protocol(true),
+        json!({"items":[{"claim":"Flow", "kind":"temporal-satisfaction", "recording":{"authority":"test","identity":"missing"}}]}),
+    );
+    assert_refusal(&wrong_kind);
+}
+
+/// FSpec FR-181-AC-32: a simulation item with no bounds runs under the
+/// published defaults and reports each with its setting; a zero bound and a
+/// sample-only member in enumerate mode refuse before any state is explored.
+#[trace("FSpec-TC-2008", "FSpec-FR-181-AC-32")]
+#[test]
+fn simulation_bounds_take_their_published_defaults() {
+    let ws = Workspace::new("cli-simulation-defaults");
+    let run = analyze(&counter_request(
+        &ws,
+        "",
+        json!([{"kind": "simulation", "simulation": {"mode": "sample"}}]),
+    ));
+    let settings = run.item(0)["simulation"].clone();
+    assert_eq!(settings["max_states"], 10_000_000, "{settings}");
+    assert_eq!(settings["max_steps"], 16_777_216, "{settings}");
+    assert_eq!(settings["max_state_key_bytes"], 16_777_216, "{settings}");
+    assert_eq!(settings["samples"], 1, "{settings}");
+    assert_eq!(settings["seed"], "0", "{settings}");
+    for (n, simulation) in [
+        json!({"mode": "sample", "max_steps": 0}),
+        json!({"mode": "enumerate", "samples": 2}),
+        json!({"mode": "enumerate", "bogus": 1}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let ws = Workspace::new(&format!("cli-simulation-refusal-{n}"));
+        let run = analyze(&counter_request(
+            &ws,
+            "",
+            json!([{"kind": "simulation", "simulation": simulation}]),
+        ));
+        assert_eq!(run.exit, 20, "{}", run.document());
     }
 }

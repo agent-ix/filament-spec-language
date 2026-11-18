@@ -17,6 +17,7 @@
 use std::collections::BTreeMap;
 
 use super::covered::CoveredList;
+use crate::completeness::{revise_complete_through, CompleteThroughRefusal};
 
 /// FR-255's setting that raises the covered-position capacity.
 pub const COVERED_POSITIONS_SETTING: &str = "progress.covered_positions";
@@ -353,28 +354,23 @@ fn check_progress(
             ProgressValue::Watermark(assertion.watermark),
         ));
     }
-    if let ProgressCompleteness::Complete { through } = retained.completeness {
-        let retreats = match assertion.completeness {
-            ProgressCompleteness::Complete { through: asserted } => asserted < through,
-            ProgressCompleteness::Incomplete => true,
+    if let Err(refusal) = revise_complete_through(
+        retained.completeness,
+        assertion.completeness,
+        &retained.covered,
+        positions,
+    ) {
+        let asserted = match refusal {
+            CompleteThroughRefusal::Retreat => ProgressValue::Completeness(assertion.completeness),
+            CompleteThroughRefusal::UncoveredPosition(position) => {
+                ProgressValue::Position(position)
+            }
         };
-        if retreats {
-            return Err(contradiction(
-                ContradictedDimension::Completeness,
-                ProgressValue::Completeness(retained.completeness),
-                ProgressValue::Completeness(assertion.completeness),
-            ));
-        }
-        if let Some(position) = positions
-            .iter()
-            .find(|position| position.stamp <= through && !retained.covered.contains(position))
-        {
-            return Err(contradiction(
-                ContradictedDimension::Completeness,
-                ProgressValue::Completeness(retained.completeness),
-                ProgressValue::Position(Box::new(position.clone())),
-            ));
-        }
+        return Err(contradiction(
+            ContradictedDimension::Completeness,
+            ProgressValue::Completeness(retained.completeness),
+            asserted,
+        ));
     }
     // FR-993 "Compared": a re-covered position whose content fingerprint
     // differs from the retained one is a changed sample at a covered index.

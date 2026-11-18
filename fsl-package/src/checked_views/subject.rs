@@ -7,7 +7,7 @@ use filament_contract_model::{
     CheckedBindingNameKind, CheckedLiteralValue, CheckedNodeId, CheckedNodeKind,
     CheckedOccurrenceRole, CheckedOperationInterval, CheckedOperationMember, CheckedPackageV2,
     CheckedSelection, CheckedSelectionRole, CheckedSemanticNodeV2, CheckedSourceMapEntry,
-    CheckedTerm, LawRole, TemporalBinding, TemporalForm, ValueForm,
+    CheckedTerm, LawRole, ModelForm, TemporalBinding, TemporalForm, ValueForm,
 };
 use filament_exact::{Origin, Role};
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -27,7 +27,7 @@ use crate::checked_v2::{resolve_clause_root, role_spelling, wire_graph};
 /// segments, a few hundred bytes), so a formula at the limit holds on the
 /// order of a hundred megabytes. The spec's `&[CheckedNodeId]` accessors need
 /// owned ids, so the per-visit cost is not reduced here.
-pub(super) const FORMULA_VISITS: u64 = CheckedPackageReadLimits::bounded().work;
+pub const FORMULA_VISITS: u64 = CheckedPackageReadLimits::bounded().work;
 
 /// The temporal operation a checked formula node applies (FR-337). A package
 /// spells it as an operation identity; [`FormulaOperation::of`] is the one
@@ -696,14 +696,16 @@ fn reference_position(graph: &Graph<'_>, term: &CheckedTerm) -> Result<usize, Vi
         .ok_or(ViewRefusal::UnresolvedClause)
 }
 
-/// The id of the `value`/`parameter` node `term` references.
+/// The id of the `value`/`parameter` node or object-free hyper clause's
+/// `model_root` anchor that `term` references.
 fn parameter_reference<'p>(
     graph: &Graph<'p>,
     term: &'p CheckedTerm,
 ) -> Result<&'p CheckedNodeId, ViewRefusal> {
     let at = reference_position(graph, term)?;
     match graph.kind(at) {
-        Some(CheckedNodeKind::Value(ValueForm::Parameter)) => graph
+        Some(CheckedNodeKind::Value(ValueForm::Parameter))
+        | Some(CheckedNodeKind::Model(ModelForm::ModelRoot)) => graph
             .node(at)
             .map(|node| &node.node_id)
             .ok_or(ViewRefusal::UnresolvedClause),
