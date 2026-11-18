@@ -246,10 +246,16 @@ mod code_generation {
     }
 
     #[test]
-    #[ignore = "QSL-1109"]
     #[trace("TC-2575", "FR-911-AC-2")]
     fn cf_cg_04_01_closed_form_check_exposes_the_checked_verdict() {
-        panic!("pending QSL-1109: CF-CG-04 check_closed_form consumer contract");
+        let _: fn(
+            fsl_replay::ReplayRequest,
+            &fsl_package::ObligationIdentity,
+            &fsl_replay::ClaimTriple,
+            &fsl_replay::ClosedFormResult,
+            &filament_exact::Cancel,
+        ) -> Result<fsl_replay::ClosedFormCheck, fsl_replay::CertificateRefusal> =
+            fsl_replay::check_closed_form;
     }
 }
 
