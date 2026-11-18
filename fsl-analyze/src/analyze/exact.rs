@@ -342,7 +342,7 @@ fn run_timed(
         Ok(identity) => identity,
         Err(_) => return not_yet(),
     };
-    let targets = product
+    let mut targets = product
         .decided
         .iter()
         .filter(|(_, verdict)| *verdict == crate::exact_probabilistic::MonitorVerdict::Accept)
@@ -352,6 +352,8 @@ fn run_timed(
                 .clone()
         })
         .collect::<Vec<_>>();
+    targets.sort();
+    targets.dedup();
     let optimization = match (&claim.scheduler, bound) {
         (ProbScheduler::Every, Bound::AtLeast(_)) => ProbabilityObjective::Minimum,
         (ProbScheduler::Every, Bound::AtMost(_)) => ProbabilityObjective::Maximum,
