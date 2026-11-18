@@ -25,7 +25,9 @@ object types do; that S4 emits such a unit per FR-995 and FR-996 (the target emi
 clause functions, effects, dispatch tables and identity rows, source declaration keys, the clock-place join and source operation_bodies rows). Scope:
 FR-569-AC-1 to FR-569-AC-11, FR-569-AC-16, FR-105-AC-18, FR-218-AC-39, FR-383-AC-67 and the
 fixture-S parts of FR-390-AC-70 and FR-390-AC-72. Steps 1 to 4 and 7 to 9 run
-and pass now; steps 5 and 6 wait on QC-30.
+and pass now; steps 5 and 6 wait on QC-30, except the part of FR-569-AC-16 that
+needs no intake (the emission's `operations` entries, their `operation_effects`
+rows, and the reader's refusal of a malformed `operations` member), which runs now.
 
 Catches a source type that silently resolves to a model type of the same
 name, a redefinition that skips conformance, a node id derived from member

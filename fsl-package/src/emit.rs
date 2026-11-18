@@ -7598,27 +7598,32 @@ fn source_object_rows(
                 _ => None,
             })
             .collect();
-        let operations = graph
+        let mut operations = Vec::new();
+        for record in graph
             .source_packages()
             .iter()
             .flat_map(|package| &package.records)
-            .filter_map(|record| match record {
-                fsl_semantics::model::domain_package::DomainPackageRecord::OperationMember(
-                    operation,
-                ) if operation.owner == object.key => {
-                    let name = operation
-                        .key
-                        .node
-                        .strip_prefix(&format!("{}/", operation.owner.node))
-                        .filter(|name| !name.is_empty() && !name.contains('/'))?;
-                    Some(SourceObjectOperationFacts {
-                        identity: format!("{}::{name}", source_identity.as_str()).into(),
-                        query: operation.result.is_some() && operation.effect.is_empty(),
-                    })
-                }
-                _ => None,
-            })
-            .collect::<Vec<_>>();
+        {
+            let fsl_semantics::model::domain_package::DomainPackageRecord::OperationMember(
+                operation,
+            ) = record
+            else {
+                continue;
+            };
+            if operation.owner != object.key {
+                continue;
+            }
+            let name = operation
+                .key
+                .node
+                .strip_prefix(&format!("{}/", operation.owner.node))
+                .filter(|name| !name.is_empty() && !name.contains('/'))
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            operations.push(SourceObjectOperationFacts {
+                identity: format!("{}::{name}", source_identity.as_str()).into(),
+                query: operation.result.is_some() && operation.effect.is_empty(),
+            });
+        }
         rows.push((
             filament_contract_model::SelectedSourceObjectRow {
                 structural_node: structural_node.clone(),

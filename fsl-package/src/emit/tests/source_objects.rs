@@ -300,7 +300,7 @@ fn fixture_s_emits_source_object_and_operation_rows_and_bodies() {
     );
 }
 
-#[trace("FR-569-AC-6", "FR-569-AC-8", "TC-1408")]
+#[trace("FR-569-AC-6", "FR-569-AC-8", "FR-569-AC-16", "TC-1408")]
 #[test]
 fn source_object_identity_rows_roundtrip_through_qc30_intake() {
     let source =
@@ -415,6 +415,48 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
         read.source_object_operations(),
         emission.source_object_operations()
     );
+
+    // FR-569-AC-16: the reader requires `operations` exactly once, holding
+    // `{identity, query}` entries and nothing else.
+    let text = String::from_utf8(bytes.clone()).expect("identity file is UTF-8");
+    let mut absent: Value = serde_json::from_str(&text).unwrap();
+    absent["source_objects"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("operations");
+    let mut extra: Value = serde_json::from_str(&text).unwrap();
+    extra["source_objects"][0]["operations"] =
+        json!([{"identity": "Order::size", "query": true, "extra": 1}]);
+    let mut misspelt: Value = serde_json::from_str(&text).unwrap();
+    misspelt["source_objects"][0]["operations"] = json!([{"identity": "Order::size"}]);
+    let repeated = text.replacen(
+        "\"operations\": []",
+        "\"operations\": [], \"operations\": []",
+        1,
+    );
+    assert_ne!(repeated, text, "the fixture row writes `operations`");
+    for forged in [
+        serde_json::to_vec(&absent).unwrap(),
+        serde_json::to_vec(&extra).unwrap(),
+        serde_json::to_vec(&misspelt).unwrap(),
+        repeated.into_bytes(),
+    ] {
+        let refusal = crate::ReadIdentityRows::read(
+            &forged,
+            &package,
+            &mut crate::V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect_err("a malformed `operations` member is refused");
+        assert!(
+            matches!(
+                refusal,
+                crate::IdentityFileRefusal::Malformed {
+                    member: crate::IdentityMember::SourceObjects
+                }
+            ),
+            "{refusal:?}"
+        );
+    }
 }
 
 /// FR-569-AC-16 through the QC-30 intake: the reader does not yet admit
@@ -486,14 +528,16 @@ fn source_object_operations_roundtrip_through_qc30_intake() {
     );
 }
 
-/// FR-569-AC-16: a row carries one `{identity, query}` entry per operation
-/// its type declares itself, none for an inherited one, and each entry has
-/// exactly one `operation_effects` row naming it.
+/// FR-569-AC-16 over fixture S's objects: a row carries one `{identity, query}` entry
+/// per operation its type declares itself, none for an inherited one, and
+/// each entry has exactly one `operation_effects` row naming it, declared on
+/// the row's own node.
 #[trace("FR-569-AC-16", "TC-1408")]
 #[test]
 fn source_object_rows_carry_their_own_operations_and_query_flag() {
+    // The object block of TC-1408 fixture S, whose operation names the AC states.
     let source = format!(
-        "{HEADER}record Point {{ x: Integer; }}\nobject Order {{ point: Point; operation size(): Integer; operation bump(): Boolean modifies self.point; }}\nobject Sub extends Order {{ operation size(): Integer redefines Order::size; }}\nabstract object Shape {{ }}\n"
+        "{HEADER}object Order identity (total) {{\n  total: Int[0, 9];\n  note: Text[0, 8; nfc]?;\n  population orders;\n  operation size(): Integer;\n  operation count(): Integer;\n  operation scaled(n: Integer): Integer;\n  operation bump(): Boolean modifies self.total;\n}}\nobject Sub extends Order {{\n  operation size(): Integer redefines Order::size;\n  operation scaled(m: Integer): Integer redefines Order::scaled;\n}}\nabstract object Shape {{ population shapes; }}\n"
     );
     let packages =
         fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
@@ -501,7 +545,7 @@ fn source_object_rows_carry_their_own_operations_and_query_flag() {
     let graph = declarations
         .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("source object checks: {refusals:?}"));
-    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the source emits");
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("S4 emits fixture S");
     let wire = wire(&emission);
     let by_name = emission
         .selected_source_object_rows()
@@ -512,29 +556,48 @@ fn source_object_rows_carry_their_own_operations_and_query_flag() {
                 .iter()
                 .map(|operation| (operation.identity.to_string(), operation.query))
                 .collect::<Vec<_>>();
-            (row.source_identity.to_string(), entries)
+            (row.source_identity.to_string(), (row, entries))
         })
         .collect::<std::collections::BTreeMap<_, _>>();
+    let entries = |name: &str| -> Vec<(&str, bool)> {
+        by_name[name]
+            .1
+            .iter()
+            .map(|(identity, query)| (identity.as_str(), *query))
+            .collect()
+    };
     assert_eq!(
-        by_name["Order"],
+        entries("Order"),
         [
-            ("Order::size".to_owned(), true),
-            ("Order::bump".to_owned(), false)
+            ("Order::size", true),
+            ("Order::count", true),
+            ("Order::scaled", true),
+            ("Order::bump", false),
         ]
     );
-    assert_eq!(by_name["Sub"], [("Sub::size".to_owned(), true)]);
-    assert!(by_name["Shape"].is_empty());
+    assert_eq!(
+        entries("Sub"),
+        [("Sub::size", true), ("Sub::scaled", true)],
+        "only the redefinitions the subtype declares itself"
+    );
+    assert!(entries("Shape").is_empty());
     let effects = wire["operation_effects"].as_array().expect("effect rows");
-    for (identity, _) in by_name.values().flatten() {
-        let matching = effects
-            .iter()
-            .filter(|row| row["provenance"]["member"] == identity.as_str())
-            .count();
-        assert_eq!(matching, 1, "{identity}");
+    for (row, own) in by_name.values() {
+        let node = serde_json::to_value(&row.structural_node).expect("node id serializes");
+        for (identity, _) in own {
+            let matching = effects
+                .iter()
+                .filter(|effect| {
+                    effect["provenance"]["member"] == identity.as_str()
+                        && effect["declaring"] == node
+                })
+                .count();
+            assert_eq!(matching, 1, "{identity}");
+        }
     }
     assert_eq!(
         effects.len(),
-        by_name.values().map(Vec::len).sum::<usize>(),
+        by_name.values().map(|(_, own)| own.len()).sum::<usize>(),
         "no operation_effects row lacks an entry"
     );
 }

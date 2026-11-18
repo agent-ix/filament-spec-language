@@ -78,7 +78,7 @@ fn checked_source_object(
 }
 
 /// The identity file the public constructor serializes for `source`.
-fn serialized_identities(source: &str) -> Value {
+fn serialized_identities(source: &str, objects: usize) -> Value {
     let (source_package, checked_package) = checked_source_object(source.as_bytes());
     let emission =
         emit_checked(&source_package, EmitLimits::new(10_000_000)).expect("the package emits");
@@ -98,7 +98,9 @@ fn serialized_identities(source: &str) -> Value {
         .iter()
         .map(Clone::clone)
         .collect();
-    assert_eq!(operations.len(), member_facts.len());
+    assert_eq!(member_facts.len(), objects);
+    assert!(member_facts.iter().all(|facts| facts.len() == 1));
+    assert_eq!(operations.len(), objects);
 
     let constructed = ReadIdentityRows::of_rows_with_source_rows(
         &checked_package,
@@ -121,7 +123,8 @@ fn serialized_identities(source: &str) -> Value {
 #[trace("FR-531-AC-8", "FR-569-AC-8", "TC-1408")]
 #[test]
 fn public_source_object_rows_constructor_serializes_nonempty_member_facts() {
-    let identities = serialized_identities(&format!("{HEADER}object Order {{ point: Point; }}\n"));
+    let identities =
+        serialized_identities(&format!("{HEADER}object Order {{ point: Point; }}\n"), 1);
     let member = &identities["source_objects"][0]["members"][0];
     assert_eq!(member["admitted_name"], "point");
     assert_eq!(member["presence"], "required");
@@ -138,9 +141,12 @@ fn public_source_object_rows_constructor_serializes_nonempty_member_facts() {
 #[test]
 #[ignore = "QSL-2347: the reader admits source operation_bodies rows; not implemented yet"]
 fn public_source_object_rows_constructor_serializes_own_operations() {
-    let identities = serialized_identities(&format!(
+    let identities = serialized_identities(
+        &format!(
         "{HEADER}object Order {{ point: Point; operation size(): Integer; operation bump(): Boolean modifies self.point; }}\nobject Sub extends Order {{ operation size(): Integer redefines Order::size; }}\n"
-    ));
+        ),
+        2,
+    );
     let objects = identities["source_objects"].as_array().expect("rows");
     let row = |name: &str| {
         objects

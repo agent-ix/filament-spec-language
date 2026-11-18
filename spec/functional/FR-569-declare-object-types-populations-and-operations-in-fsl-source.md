@@ -565,13 +565,17 @@ member encoding of FR-531) and `populations` (one `{name, symmetric}` entry
 per population the type itself declares, in source order) and `operations`
 (one `{identity, query}` entry per operation the type itself declares, in
 source order: `identity` the operation's source identity `<type>::<operation>`
-(`Order::bump`), the `source_identity` of its source-operation row (FR-390),
+(`Order::bump`), the `source_identity` of its source-operation row (FR-390) where one exists,
 and `query` a boolean, true exactly when the operation has a result and an
 empty effect frame, the rule "dispatch-eligible query" states; an operation
 the type only inherits has no entry, and a redefining operation has its own).
 Every entry of `operations` has exactly one `operation_effects` row whose
 `declaring` is the row's `structural_node` and whose `provenance.member` is
-the entry's `identity`, and no such row lacks an entry. The row's key is
+the entry's `identity`, and no such row lacks an entry. The reader checks
+only the member set and types of `operations` (present once, a list of
+`{identity, query}` objects with a string and a boolean); it does not join the
+entries to the package's `operation_effects` or source-operation rows, so the
+correspondence above is the writer's obligation. The row's key is
 (`source_authority`, `source_identity`). The rows are written to and read
 from the `source_objects` member of `identities.json` (FR-531 "The identity
 file", FR-517); none is derived from package bytes, decoded nodes, display
