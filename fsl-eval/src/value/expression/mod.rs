@@ -332,7 +332,7 @@ pub fn evaluate_state_predicate_with(
 /// literal is resolved against `current` at this state.
 pub(crate) fn evaluate_state_predicate_with_reference_bindings(
     package: &CheckedPackage,
-    predicate: &impl fsl_semantics::check::StatePredicate,
+    predicate: &(impl fsl_semantics::check::StatePredicate + ?Sized),
     current: &ObjectEnvironment,
     over: Option<filament_exact::ObjectReference>,
     further: Vec<Value>,
@@ -685,7 +685,7 @@ pub fn evaluate_state_predicate_at_absent_key(
 /// reference-literal decisions.
 pub(crate) fn evaluate_state_predicate_at_absent_key_with_reference_bindings(
     package: &CheckedPackage,
-    predicate: &impl fsl_semantics::check::StatePredicate,
+    predicate: &(impl fsl_semantics::check::StatePredicate + ?Sized),
     current: &ObjectEnvironment,
     key: filament_exact::ObjectReference,
     binding: String,

@@ -205,7 +205,7 @@ impl ReferenceBindings {
         for literal in literals {
             let text = std::str::from_utf8(&literal.identity)
                 .map_err(|_| super::fault("reference-literal-identity-is-utf8"))?;
-            let type_key = model
+            model
                 .type_key(literal.object_type.clone())
                 .ok_or_else(|| super::fault("reference-literal-type-is-selected"))?;
             let overlapping: Vec<&StatePopulation> = populations

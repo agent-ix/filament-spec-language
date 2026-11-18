@@ -863,8 +863,18 @@ impl<'a> ModelSystem<'a> {
             });
         }
 
-        let reference_bindings =
-            ReferenceBindings::bind(graph, &model, types, &populations, &universes, &initial)?;
+        let reference_bindings = if let Some(package) = input.source_package() {
+            ReferenceBindings::bind(
+                package.graph(),
+                &model,
+                types,
+                &populations,
+                &universes,
+                &initial,
+            )?
+        } else {
+            ReferenceBindings::default()
+        };
 
         let mut fields = BTreeMap::new();
         let mut applications = BTreeMap::new();
