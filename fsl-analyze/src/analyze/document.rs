@@ -1712,6 +1712,16 @@ fn resolve_one(
         None if protocol_analysis_kind => ExtentClassification::Unbounded {
             finite_bound_available: false,
         },
+        None if kind == Capability::ProbabilisticSatisfaction => package
+            .graph()
+            .probabilistic_model()
+            .claims()
+            .iter()
+            .find(|checked| checked.occurrence() == Some(&claim))
+            .map(|checked| {
+                ExtentClassification::of(checked.requirements(claim.node().clone()).extent())
+            })
+            .unwrap_or(ExtentClassification::Bounded),
         None if kind == Capability::ValueValidity => {
             value_clause_extent(package, name, &node, &claim)
         }
