@@ -102,6 +102,30 @@ pub struct ItemOptions {
     /// The named backend's options (FSpec FR-196, FR-331 `options`),
     /// each one the backend publishes (FR-967); empty when none are given.
     pub backend_options: std::collections::BTreeMap<String, String>,
+    /// Protocol-analysis request settings, for `local-projection` and
+    /// `realizability` (FR-636).
+    pub protocol_analysis: Option<ProtocolAnalysisSelection>,
+}
+
+/// The request members of one local-projection or realizability item.
+#[derive(Clone, Debug)]
+pub struct ProtocolAnalysisSelection {
+    /// The required profile word (FR-575).
+    pub profile: String,
+    /// The required path bound (ADR-036 PA-14).
+    pub max_depth: u64,
+    /// The required local-history bound, used by realizability (PA-14).
+    pub max_history: Option<u64>,
+    /// The role selected by `options.role`, for projection.
+    pub role: Option<String>,
+    /// The claim's explicitly supplied assessed root (FR-574).
+    pub assessed_root: Option<serde_json::Value>,
+    /// The validated checked-object root consumed by the engine.
+    pub assessed_root_draft: fsl_replay::protocol_analysis::AssessedRootDraft,
+    /// The protocol subject selected by `temporal.subject.protocol`.
+    pub protocol: Option<ProtocolBinding>,
+    /// The explicit realizability premise groups (FR-571, PA-8).
+    pub premises: Option<serde_json::Value>,
 }
 
 /// One claim occurrence and its kind-specific, subject-free settings.
@@ -502,8 +526,178 @@ pub(super) fn simulation<'a>(
     }
 }
 
+fn checked_v2_package(
+    package: &fsl_package::CheckedPackage,
+    binding: &super::SubjectBinding<'_>,
+    limits: &super::AnalyzeLimits,
+) -> Option<Box<filament_contract_model::CheckedPackageV2>> {
+    let identity = fsl_semantics::library::LibraryName::new(package.graph().package_name()).ok()?;
+    let admitted = fsl_package::read_evaluation_package(
+        package,
+        identity,
+        binding.packages,
+        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT),
+        limits.emit,
+    )
+    .ok()?;
+    Some(Box::new(admitted.admitted().clone()))
+}
+
+fn checked_node_named(
+    package: &filament_contract_model::CheckedPackageV2,
+    name: &str,
+) -> Option<filament_contract_model::CheckedNodeId> {
+    package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| {
+            node.declaration.as_ref().is_some_and(|declaration| {
+                declaration.qualified_name.last().map(|segment| &**segment) == Some(name)
+            })
+        })
+        .map(|node| node.node_id.clone())
+}
+
+fn protocol_analysis_work<'a>(
+    analysis: &'a super::RunInput<'a>,
+    binding: &super::SubjectBinding<'a>,
+    item: &super::ClaimItem,
+    limits: &super::AnalyzeLimits,
+) -> super::AnalyzeItem<'a> {
+    let Some(selection) = item.options.protocol_analysis.as_ref() else {
+        return super::AnalyzeItem::unadapted(
+            item.request_index,
+            item.kind,
+            Some(fsl_semantics::check::DeclarationFamily::Protocol),
+        );
+    };
+    let Some(protocol_binding) = selection.protocol.as_ref() else {
+        return super::AnalyzeItem::unadapted(
+            item.request_index,
+            item.kind,
+            Some(fsl_semantics::check::DeclarationFamily::Protocol),
+        );
+    };
+    let Some(over) = protocol_binding.over.as_ref() else {
+        return super::AnalyzeItem::unadapted(
+            item.request_index,
+            item.kind,
+            Some(fsl_semantics::check::DeclarationFamily::Protocol),
+        );
+    };
+    let Some(v2) = checked_v2_package(analysis.package, binding, limits) else {
+        return super::AnalyzeItem::unadapted(
+            item.request_index,
+            item.kind,
+            Some(fsl_semantics::check::DeclarationFamily::Protocol),
+        );
+    };
+    let Some(protocol_node) = v2
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| {
+            &*node.semantic_form == "protocol_clause"
+                && node.declaration.as_ref().is_some_and(|declaration| {
+                    declaration.qualified_name.last().map(|segment| &**segment)
+                        == Some(
+                            protocol_binding
+                                .protocol
+                                .rsplit("::")
+                                .next()
+                                .unwrap_or(&protocol_binding.protocol),
+                        )
+                })
+        })
+        .map(|node| node.node_id.clone())
+    else {
+        return super::AnalyzeItem::unadapted(
+            item.request_index,
+            item.kind,
+            Some(fsl_semantics::check::DeclarationFamily::Protocol),
+        );
+    };
+    let definition_key = Some(format!(
+        "ix://{}/{}",
+        analysis.package.graph().package_name(),
+        protocol_binding.protocol
+    ));
+    let root = selection.assessed_root_draft.clone();
+    if item.kind == Capability::LocalProjection {
+        let Some(role_name) = selection.role.as_deref() else {
+            return super::AnalyzeItem::unadapted(
+                item.request_index,
+                item.kind,
+                Some(fsl_semantics::check::DeclarationFamily::Protocol),
+            );
+        };
+        let Some(role) = checked_node_named(&v2, role_name) else {
+            return super::AnalyzeItem::unadapted(
+                item.request_index,
+                item.kind,
+                Some(fsl_semantics::check::DeclarationFamily::Protocol),
+            );
+        };
+        let request = crate::protocol_analysis::ProjectionRequest {
+            protocol: protocol_node,
+            definition_key,
+            role,
+            profile: Some(selection.profile.clone()),
+            bounds: Some(fsl_replay::protocol_analysis::ProjectionBoundsDraft {
+                max_depth: Some(selection.max_depth),
+            }),
+            assessed_root: Some(root),
+            budget: fsl_replay::protocol_analysis::RunBudget::default(),
+        };
+        return crate::protocol_analysis::projection_item_owned(item.request_index, v2, request);
+    }
+    let model_input = &analysis.model;
+    let over = super::protocol_item::over_instance(binding, over);
+    let Ok(subject) = super::protocol_item::subject_of(
+        analysis.package,
+        model_input,
+        binding,
+        limits,
+        super::clause_item::DEFAULT_MAX_CANDIDATES,
+        protocol_binding,
+        &over,
+    ) else {
+        return super::AnalyzeItem::unadapted(
+            item.request_index,
+            item.kind,
+            Some(fsl_semantics::check::DeclarationFamily::Protocol),
+        );
+    };
+    let premises = selection.premises.as_ref();
+    let parse_facts = |key: &str| -> Option<Option<std::collections::BTreeSet<String>>> {
+        let value = premises?.get(key)?;
+        let facts = value
+            .as_array()?
+            .iter()
+            .map(|fact| fact.as_str().map(str::to_owned))
+            .collect::<Option<std::collections::BTreeSet<_>>>()?;
+        Some(Some(facts))
+    };
+    let request = crate::protocol_analysis::RealizabilityRequest {
+        protocol: protocol_node,
+        subject,
+        definition_key,
+        strategy_profile: Some(selection.profile.clone()),
+        role_knowledge: parse_facts("role_knowledge"),
+        environment: parse_facts("environment"),
+        bounds: Some(fsl_replay::protocol_analysis::BoundsDraft {
+            max_depth: Some(selection.max_depth),
+            max_history: selection.max_history,
+        }),
+        assessed_root: Some(root),
+        budget: fsl_replay::protocol_analysis::RunBudget::default(),
+    };
+    crate::protocol_analysis::realizability_item_owned(item.request_index, v2, request)
+}
+
 fn work<'a>(
-    analysis: &super::RunInput<'a>,
+    analysis: &'a super::RunInput<'a>,
     binding: &super::SubjectBinding<'a>,
     provision: &'a SourceProvision,
     negotiated: &'a NegotiatedItem,
@@ -546,6 +740,14 @@ fn work<'a>(
         .get(crate::zone_check::manifest::METHOD)
         .is_some_and(|method| method == crate::model_check::manifest::METHOD_DIGITAL_CLOCKS);
     let mut built = match &item.form {
+        Some(ItemForm::Temporal(_))
+            if matches!(
+                item.kind,
+                Capability::LocalProjection | Capability::Realizability
+            ) =>
+        {
+            protocol_analysis_work(analysis, binding, item, limits)
+        }
         Some(ItemForm::Temporal(_form)) if item.kind == Capability::GlobalConformance => {
             if _form.item_kind == ItemKind::DeadlockFreedom {
                 super::protocol_item::protocol_clause_item(
@@ -926,6 +1128,13 @@ fn work<'a>(
         _ => absent(),
     };
     let expected = match &item.form {
+        _ if matches!(
+            item.kind,
+            Capability::LocalProjection | Capability::Realizability
+        ) =>
+        {
+            Some(crate::protocol_analysis::manifest::BACKEND_ID)
+        }
         _ if item.kind == Capability::GlobalConformance => {
             Some(crate::protocol_analysis::manifest::BACKEND_ID)
         }

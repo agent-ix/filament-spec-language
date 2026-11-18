@@ -9,16 +9,36 @@ use serde_json::{json, Value};
 use crate::analyze_cli_support::{analyze, label, litmus_request, order_protocol, Run, Workspace};
 
 fn root() -> Value {
+    let universe = crate::fixture_ids::universe_id("u");
+    let effective = crate::fixture_ids::effective_id("e");
+    let universe = fsl_foundation::node_wire::node_key_to_text(universe.root_type())
+        .expect("universe identity encodes");
+    let effective = Value::Array(
+        effective
+            .owner_chain()
+            .iter()
+            .map(|original| json!({"package": original.package(), "node": original.node()}))
+            .collect(),
+    );
     json!({"observation": {"authority": "test", "identity": "protocol-claim"},
-        "subject": {"tag": "object", "universe": "u", "type": "e", "object_identity": "flow-1"}})
+        "subject": {"tag": "object", "universe": universe, "type": effective.to_string(), "object_identity": "flow-1"}})
 }
 
-fn realizability(temporal: Value) -> Value {
+fn subject() -> Value {
+    let binding = json!({"type": "model-binding", "selection": "test/litmus"});
+    json!({"protocol": {"protocol": "Flow",
+        "over": {"reference": {"population": "ix://test/litmus/cores", "key": "core"}},
+        "roles": {"Buyer": binding, "Seller": binding}}})
+}
+
+fn realizability(mut temporal: Value) -> Value {
+    temporal["subject"] = subject();
     json!({"claim": "Flow", "kind": "realizability", "assessed_root": root(),
-        "temporal": temporal})
+        "premises": {"role_knowledge": [], "environment": []}, "temporal": temporal})
 }
 
-fn projection(temporal: Value) -> Value {
+fn projection(mut temporal: Value) -> Value {
+    temporal["subject"] = subject();
     json!({"claim": "Flow", "kind": "local-projection", "assessed_root": root(),
         "options": {"role": "Seller"}, "temporal": temporal})
 }
@@ -48,15 +68,12 @@ fn assert_refused(item: &Value, cause: &str, member: &str) {
 /// FR-636-AC-5: complete items settle under both profile words.
 #[trace("TC-2988", "FR-636-AC-5")]
 #[test]
-#[ignore = "QSL-2430: protocol items do not read temporal.profile and temporal.max_history yet"]
 fn complete_protocol_items_settle_under_both_profiles() {
     for profile in ["bounded-static", "bounded"] {
         let run = run_items(
             &format!("protocol-bounds-{profile}"),
             vec![
-                realizability(
-                    json!({"profile": profile, "max_depth": 16, "max_history": 16}),
-                ),
+                realizability(json!({"profile": profile, "max_depth": 16, "max_history": 16})),
                 projection(json!({"profile": profile, "max_depth": 16})),
             ],
         );
@@ -70,7 +87,6 @@ fn complete_protocol_items_settle_under_both_profiles() {
 /// other items still run.
 #[trace("TC-2988", "FR-636-AC-6")]
 #[test]
-#[ignore = "QSL-2430: an absent protocol profile or bound is not refused missing-member yet"]
 fn an_absent_profile_or_bound_settles_missing_member() {
     let run = run_items(
         "protocol-bounds-absent",
@@ -98,7 +114,6 @@ fn an_absent_profile_or_bound_settles_missing_member() {
 /// and `max_history` on a projection settles `unknown-member`.
 #[trace("TC-2988", "FR-636-AC-7")]
 #[test]
-#[ignore = "QSL-2430: out-of-range protocol profiles and bounds are not refused yet"]
 fn an_out_of_range_profile_or_bound_is_refused_naming_it() {
     let run = run_items(
         "protocol-bounds-range",

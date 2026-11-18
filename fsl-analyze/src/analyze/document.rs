@@ -30,6 +30,7 @@ use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
+use super::request::ProtocolAnalysisSelection;
 use super::{
     AnalyzeLimits, ClaimItem, Diagnostic, Engines, ItemForm, ItemOptions, NegotiatedItem,
     SourceProvision, SubjectBinding, TemporalItem,
@@ -174,7 +175,7 @@ pub struct ProtocolSelection {
 impl ProtocolSelection {
     /// The binding this selection states, over the request's `memory`; `None`
     /// when a capacity is no decimal count.
-    fn binding(
+    pub(super) fn binding(
         &self,
         package: &CheckedPackage,
         memory: &[fsl_eval::simulation::protocol::MemorySelection],
@@ -642,6 +643,9 @@ pub struct TemporalSelection {
     /// The item kind; `formula` when absent.
     #[serde(default)]
     pub item_kind: Option<ItemKindSelection>,
+    /// Protocol-analysis profile (FR-636, FR-575).
+    #[serde(default)]
+    pub profile: Option<String>,
     /// The item's model subject; the request's when absent.
     #[serde(default)]
     pub subject: Option<SubjectSelection>,
@@ -654,6 +658,9 @@ pub struct TemporalSelection {
     /// A bounded search's horizon.
     #[serde(default, deserialize_with = "read_max_depth")]
     pub max_depth: Option<u64>,
+    /// Realizability's local-history bound (FR-636, ADR-036 PA-14).
+    #[serde(default)]
+    pub max_history: Option<u64>,
     /// The item's own budgets.
     #[serde(default)]
     pub limits: Option<TemporalLimitsSelection>,
@@ -781,11 +788,15 @@ impl ItemSelection {
 
     fn unrouted_members(&self, options_negotiated: bool) -> bool {
         let temporal = self.temporal.as_ref();
+        let protocol_analysis = matches!(
+            self.kind.as_deref(),
+            Some("local-projection" | "realizability")
+        );
         self.probabilistic.is_some()
             || self.hybrid.is_some()
             || self.correspondence.is_some()
-            || self.premises.is_some()
-            || self.assessed_root.is_some()
+            || (self.premises.is_some() && !protocol_analysis)
+            || (self.assessed_root.is_some() && !protocol_analysis)
             || (self.trace.is_some()
                 && self.kind.as_deref() != Some(Capability::FiniteReplay.to_wire()))
             || (self.recording.is_some()
@@ -795,6 +806,7 @@ impl ItemSelection {
             // unless the item's candidates negotiate it (FR-243).
             || (!options_negotiated
                 && self.backend.is_none()
+                && !protocol_analysis
                 && self
                     .options
                     .as_ref()
@@ -1266,6 +1278,7 @@ fn resolve_call_item(
             recording: None,
             population: None,
             backend_options: call_item.options.clone(),
+            protocol_analysis: None,
         },
         form: None,
     };
@@ -1400,6 +1413,10 @@ fn resolve_one(
             };
         }
     }
+    let protocol_analysis_kind = matches!(
+        kind,
+        Capability::LocalProjection | Capability::Realizability
+    );
     let record = own.iter().find(|record| record.kind() == kind);
     // FR-967: options are checked after kind admission and the
     // inapplicable-kind rule, which `analyze` applies to an item whose kind
@@ -1422,7 +1439,12 @@ fn resolve_one(
     let applies = protocol_deadlock
         || crate::claim_family::claim_family(package, item_kind, &claim)
             .is_some_and(|family| kind.applies_to_declaration(family));
-    let backend_options = selection.options.clone().unwrap_or_default();
+    let mut backend_options = selection.options.clone().unwrap_or_default();
+    let projection_role = if kind == Capability::LocalProjection {
+        backend_options.remove("role")
+    } else {
+        None
+    };
     if applies {
         if let Some(refused) = unknown_option(
             index,
@@ -1436,6 +1458,9 @@ fn resolve_one(
     }
     let extent = match record {
         Some(record) => record.extent(),
+        None if protocol_analysis_kind => ExtentClassification::Unbounded {
+            finite_bound_available: false,
+        },
         None if kind == Capability::ValueValidity => {
             value_clause_extent(package, name, &node, &claim)
         }
@@ -1476,11 +1501,53 @@ fn resolve_one(
         candidates,
     );
     let temporal = selection.temporal.clone().unwrap_or_default();
+    let mut assessed_root_draft = fsl_replay::protocol_analysis::AssessedRootDraft::default();
+    if protocol_analysis_kind {
+        if temporal.profile.is_none() {
+            return invalid_member(index, name, "temporal.profile");
+        }
+        if temporal.max_depth.is_none() {
+            return invalid_member(index, name, "temporal.max_depth");
+        }
+        if temporal.max_depth == Some(0) {
+            return invalid_member_cause(index, name, "temporal.max_depth", "invalid-value");
+        }
+        if temporal
+            .profile
+            .as_deref()
+            .is_some_and(|profile| crate::protocol_analysis::Profile::from_wire(profile).is_none())
+        {
+            return invalid_member_cause(index, name, "temporal.profile", "invalid-value");
+        }
+        if kind == Capability::Realizability && temporal.max_history.is_none() {
+            return invalid_member(index, name, "temporal.max_history");
+        }
+        if kind == Capability::Realizability && temporal.max_history == Some(0) {
+            return invalid_member_cause(index, name, "temporal.max_history", "invalid-value");
+        }
+        if kind == Capability::LocalProjection && temporal.max_history.is_some() {
+            return invalid_member_cause(index, name, "temporal.max_history", "unknown-member");
+        }
+        if selection.assessed_root.is_none() {
+            return invalid_member(index, name, "assessed_root");
+        }
+        let Some(root_wire) = selection.assessed_root.as_ref() else {
+            return invalid_member(index, name, "assessed_root");
+        };
+        assessed_root_draft =
+            match fsl_replay::protocol_analysis::AssessedRootDraft::read_wire(root_wire) {
+                Ok(root) => root,
+                Err(member) => return invalid_member_cause(index, name, member, "invalid-value"),
+            };
+        if kind == Capability::LocalProjection && projection_role.is_none() {
+            return invalid_member(index, name, "options.role");
+        }
+    }
     let own_subject = temporal
         .subject
         .clone()
         .map_or_else(|| subject.clone(), |own| own.completed_by(subject));
-    let protocol = if protocol_deadlock {
+    let protocol = if protocol_deadlock || protocol_analysis_kind {
         let owner = package.graph().protocols().iter().find(|protocol| {
             package
                 .graph()
@@ -1494,6 +1561,9 @@ fn resolve_one(
                     Some(binding) => Some(binding),
                     None => return invalid_value(index, name, "capacities"),
                 }
+            }
+            (Some(_), _) if protocol_analysis_kind => {
+                return invalid_member(index, name, "temporal.subject.protocol")
             }
             (Some(_), _) => return invalid_value(index, name, "temporal.subject.protocol"),
             (None, _) => None,
@@ -1543,11 +1613,13 @@ fn resolve_one(
     }
     let protocol_bound =
         protocol.is_some() || (kind == Capability::GlobalConformance && protocol_claim);
-    let form = (kind == Capability::TemporalSatisfaction || kind == Capability::GlobalConformance)
+    let form = (kind == Capability::TemporalSatisfaction
+        || kind == Capability::GlobalConformance
+        || protocol_analysis_kind)
         .then(|| {
             let mut form = temporal_item(package, &claim, &temporal);
             form.pending_reductions.clone_from(&selection.reductions);
-            form.protocol = protocol;
+            form.protocol = protocol.clone();
             ItemForm::Temporal(form)
         });
     let item = ClaimItem {
@@ -1567,6 +1639,16 @@ fn resolve_one(
                 .map(DocumentSelection::reference),
             population: selection.population.clone(),
             backend_options,
+            protocol_analysis: protocol_analysis_kind.then(|| ProtocolAnalysisSelection {
+                profile: temporal.profile.clone().expect("profile checked above"),
+                max_depth: temporal.max_depth.expect("max_depth checked above"),
+                max_history: temporal.max_history,
+                role: projection_role.clone(),
+                assessed_root: selection.assessed_root.clone(),
+                assessed_root_draft,
+                protocol: protocol.clone(),
+                premises: selection.premises.clone(),
+            }),
         },
         form,
     };
@@ -1700,6 +1782,7 @@ fn resolve_derived(
         recording: None,
         population: None,
         backend_options,
+        protocol_analysis: None,
     };
     let mut form = temporal_item(package, &claim.item.claim, temporal);
     form.pending_reductions.clone_from(&selection.reductions);
@@ -1773,6 +1856,7 @@ fn resolve_schedule_claim(
                 recording: None,
                 population: selection.population.clone(),
                 backend_options,
+                protocol_analysis: None,
             },
             form: None,
         },
@@ -1799,6 +1883,29 @@ fn invalid_value(index: RequestIndex, name: &str, member: &str) -> ResolvedItem 
             )
             .with_diagnostic_detail(detail),
         ),
+    }
+}
+
+/// A required protocol-analysis request member was absent.
+fn invalid_member(index: RequestIndex, name: &str, member: &str) -> ResolvedItem {
+    invalid_member_cause(index, name, member, "missing-member")
+}
+
+fn invalid_member_cause(
+    index: RequestIndex,
+    name: &str,
+    member: &str,
+    cause: &'static str,
+) -> ResolvedItem {
+    let mut detail = Map::new();
+    detail.insert("member".to_owned(), json!(member));
+    ResolvedItem::Settled {
+        claim_name: Some(name.to_owned()),
+        record: Box::new(TerminalRecord::disposition_invalid_request(
+            index,
+            CatalogCode::new("invalid_runtime_input", cause),
+            detail,
+        )),
     }
 }
 
@@ -1892,6 +1999,7 @@ fn resolve_protocol_freedom(
                 recording: None,
                 population: selection.population.clone(),
                 backend_options,
+                protocol_analysis: None,
             },
             form: Some(ItemForm::Temporal(form)),
         },
@@ -2240,6 +2348,7 @@ fn derived_claim(
                 recording: None,
                 population: None,
                 backend_options: BTreeMap::new(),
+                protocol_analysis: None,
             },
             form: Some(ItemForm::Temporal(TemporalItem {
                 item_kind: item.item_kind().unwrap_or(ItemKind::Formula),
@@ -2406,10 +2515,28 @@ impl ClaimItem {
                 json!({"limits": {"max_cases": max_cases.get()}}),
             );
         }
+        if let Some(protocol) = &self.options.protocol_analysis {
+            if let Some(root) = &protocol.assessed_root {
+                item.insert("assessed_root".to_owned(), root.clone());
+            }
+            let mut options = self.options.backend_options.clone();
+            if let Some(role) = &protocol.role {
+                options.insert("role".to_owned(), role.clone());
+            }
+            if !options.is_empty() {
+                item.insert("options".to_owned(), json!(options));
+            }
+        }
         if let Some(ItemForm::Temporal(temporal)) = &self.form {
             let mut member = Map::new();
             member.insert("subject".to_owned(), subject.wire());
             member.insert("item_kind".to_owned(), json!(temporal.item_kind.to_wire()));
+            if let Some(protocol) = &self.options.protocol_analysis {
+                member.insert("profile".to_owned(), json!(protocol.profile));
+                if let Some(max_history) = protocol.max_history {
+                    member.insert("max_history".to_owned(), json!(max_history));
+                }
+            }
             member.insert(
                 "fairness".to_owned(),
                 Value::Array(
