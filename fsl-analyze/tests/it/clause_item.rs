@@ -132,13 +132,14 @@ fn a_clause_a_transition_breaks_settles_refuted_with_a_replayed_counterexample()
 #[trace("TC-763", "FR-281-AC-7")]
 #[test]
 fn a_claim_that_takes_a_modulus_by_zero_settles_refuted_with_a_replayed_undefined_counterexample() {
-    let world = World::new(
+    let world = World::with_kernel_functions(
         model_world::counter(),
         CONTRACT,
+        "function q using v(x: Integer): Integer pure { 6 mod x }\n",
         INFINITE,
         &[Clause {
             activation: "on each (q: M::Counter)",
-            formula: "always holds(6 mod (2 - c.value) >= 0)",
+            formula: "always holds(q(2 - c.value) >= 0)",
         }],
         &[("c", json!({"value": {"integer": "2"}}))],
     );
@@ -204,7 +205,7 @@ fn a_claim_that_takes_a_modulus_by_zero_settles_refuted_with_a_replayed_undefine
     let written = serde_json::to_value(&item).expect("an item is JSON");
     assert_eq!(written["result"], "refuted");
     assert_eq!(written["cause"]["kind"], "undefined-evaluation");
-    assert_eq!(written["cause"]["cause"], "division-by-zero");
+    assert_eq!(written["cause"]["code"], "division-by-zero");
     assert!(
         written["cause"]["where"]
             .as_str()
@@ -221,13 +222,14 @@ fn a_claim_that_takes_a_modulus_by_zero_settles_refuted_with_a_replayed_undefine
 #[trace("TC-770", "FR-286-AC-14")]
 #[test]
 fn an_unspelled_counterexample_fails_its_item_and_not_the_document() {
-    let world = World::new(
+    let world = World::with_kernel_functions(
         model_world::counter(),
         CONTRACT,
+        "function q using v(x: Integer): Integer pure { 6 mod x }\n",
         INFINITE,
         &[Clause {
             activation: "on each (q: M::Counter)",
-            formula: "always holds(6 mod (2 - c.value) >= 0)",
+            formula: "always holds(q(2 - c.value) >= 0)",
         }],
         &[("c", json!({"value": {"integer": "2"}}))],
     );
