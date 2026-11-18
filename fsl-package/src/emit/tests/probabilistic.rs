@@ -506,6 +506,318 @@ fn workload_round_trips() {
     );
 }
 
+/// The records the package route reads back from the emission of `package`
+/// over the domain package `document`: the emitted nodes, joined to the
+/// selected domain package's view.
+///
+/// `units` names the units the domain package's operation types use: the
+/// package route reads none from the bytes yet, so a package whose operations
+/// type a unit supplies them (and is joined over S3's type environment).
+fn read_back(
+    package: &CheckedPackage,
+    document: &[u8],
+    units: &BTreeMap<String, filament_exact::UnitId>,
+) -> fsl_semantics::check::CheckedProbabilisticModel {
+    use fsl_semantics::model::observation::ModelSelections;
+    let emission = emit_checked(package)
+        .unwrap_or_else(|refusal| panic!("a probabilistic package emits: {refusal:?}"));
+    let mut evidence = read_evidence(&emission);
+    evidence
+        .insert_domain_package_document(package_identity(document), document)
+        .expect("a fresh evidence key");
+    let (admitted, _) = admitted_of(read_with(&emission, &evidence));
+    let mut rows_budget = V2ReadLimits::fixture().native_join_budget();
+    let rows = emission
+        .identity_rows(&admitted, &mut rows_budget)
+        .expect("the identity rows join the package");
+    let mut join_budget = V2ReadLimits::fixture().native_join_budget();
+    let bare = crate::BarePackage::new(&admitted)
+        .with_supply(
+            crate::BareSupply {
+                identities: &rows,
+                equality: None,
+            },
+            &mut join_budget,
+        )
+        .expect("the bytes view admits its supply");
+    let world = bare.world().expect("the declarations read");
+    // The bare world cannot type an operation that names a unit (the package
+    // route reads no unit names from the bytes yet), so such a package is
+    // joined over S3's own type environment: the same declarations.
+    let types = if units.is_empty() {
+        world.types()
+    } else {
+        package.graph().scope().types()
+    };
+    let selections = crate::AnalysisView::model_selections(&bare);
+    let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
+    let model = fsl_semantics::model::state::StateModel::new(
+        ModelSelections::new(&selections, &[]),
+        types,
+        &packages,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .expect("the selected packages re-admit");
+    let operations = model.operation_table(units).expect("the operations type");
+    let nodes = bare.probabilistic().expect("the nodes read");
+    model
+        .probabilistic_model(&operations, &nodes)
+        .unwrap_or_else(|refusal| panic!("the records rebuild: {refusal}"))
+}
+
+/// The accessor-visible content of an operation, which is all of it but the
+/// `model` alias a package does not carry.
+fn operation_content(
+    operation: &fsl_semantics::check::ProbabilisticOperation,
+) -> (
+    &filament_checked::key::DeclarationKey,
+    filament_exact::EffectiveId,
+    &filament_checked::key::DeclarationKey,
+    &str,
+) {
+    (
+        operation.key(),
+        operation.declaring(),
+        operation.declaring_key(),
+        operation.name(),
+    )
+}
+
+/// FSL FR-740, FSpec FR-640-AC-1: the records read back from the emitted
+/// package are the S3 records: the same operations, positions, parameter
+/// types, support values with their weights and probabilities, and
+/// workload weights.
+fn assert_reads_back_equal(
+    package: &CheckedPackage,
+    document: &[u8],
+    units: &BTreeMap<String, filament_exact::UnitId>,
+) {
+    let checked = package.graph().probabilistic_model();
+    let read = read_back(package, document, units);
+    assert_eq!(
+        read.random_parameters().len(),
+        checked.random_parameters().len()
+    );
+    assert_eq!(read.workloads().len(), checked.workloads().len());
+    for expected in checked.random_parameters() {
+        let found = read
+            .random_parameter(expected.operation().key(), expected.parameter())
+            .unwrap_or_else(|| panic!("{} is read back", expected.parameter()));
+        assert_eq!(
+            operation_content(found.operation()),
+            operation_content(expected.operation())
+        );
+        assert_eq!(found.position(), expected.position());
+        assert_eq!(found.value_type(), expected.value_type());
+        assert_eq!(found.support(), expected.support());
+    }
+    for expected in checked.workloads() {
+        let found = read
+            .workload(expected.name())
+            .unwrap_or_else(|| panic!("{} is read back", expected.name()));
+        assert_eq!(found.model_key(), expected.model_key());
+        assert_eq!(found.weights().len(), expected.weights().len());
+        for (expected, weight) in expected.weights() {
+            let (found, read_weight) = found
+                .weights()
+                .iter()
+                .find(|(operation, _)| operation.key() == expected.key())
+                .expect("the operation is weighted");
+            assert_eq!(operation_content(found), operation_content(expected));
+            assert_eq!(read_weight, weight);
+        }
+    }
+}
+
+/// FSL FR-740: an integer-valued random parameter reads back as S3's record.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+fn a_random_parameter_reads_back_as_the_s3_record() {
+    let (document, package) = random_parameter_package();
+    assert_reads_back_equal(&package, &document, &BTreeMap::new());
+}
+
+/// FSL FR-740: a workload reads back as S3's record, with a weight that is
+/// not an integer.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+fn a_workload_reads_back_as_the_s3_record() {
+    let package = workload_package("weight ConfigVersion::attemptUpdate = 1.5;");
+    assert_reads_back_equal(
+        &package,
+        config_version_unit::DOMAIN_PACKAGE.as_bytes(),
+        &BTreeMap::new(),
+    );
+}
+
+/// FSL FR-740: an enum-valued random parameter is refused at emission with
+/// the declaration's locus, because IR's reader maps no model variant type to
+/// a support literal kind and would refuse the package. The rebuild of an
+/// enum value's rank from its type is covered at S3
+/// (`an_enum_valued_package_rebuilds_the_s3_records`).
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+fn an_enum_valued_random_parameter_refuses_emission_with_its_locus() {
+    use super::variant_types::fixture;
+    let document = serde_json::to_vec(&fixture::document()).expect("the fixture serializes");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model M = {package:?};\n\
+         random Account::promote(t) ~ {{ M::Tier::Standard: 3, M::Tier::Gold: 1 }};\n",
+        package = fixture::PACKAGE,
+    );
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    let refusal = emit_checked(&CheckedPackage::link(graph)).expect_err("emission refuses");
+    assert!(matches!(
+        &refusal,
+        EmitRefusal::ProbabilisticModelNotEmitted {
+            declaration,
+            feature: fsl_semantics::check::ProbabilisticFeature::RandomParameter,
+            region,
+            ..
+        } if declaration == "promote(t)" && region.start() < region.end()
+    ));
+}
+
+/// FSL FR-740: a quantity-valued random parameter reads back as S3's record,
+/// each value in the unit of its parameter's type, and the strict reader
+/// admits the unit node as the literal's type.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+fn a_quantity_valued_random_parameter_reads_back_as_the_s3_record() {
+    use super::abstraction::fixture;
+    let document = crate::emit::tests::wire_bytes(&fixture::quantity_document())
+        .expect("the fixture serializes");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model M = {package:?};\n\
+         dimension Time;\n\
+         unit ms : Time = rational(1, 1);\n\
+         random Timer::wait(d) ~ {{ 3 ms: 1, 1 ms: 3 }};\n",
+        package = fixture::PACKAGE,
+    );
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    let package = CheckedPackage::link(graph);
+    assert!(matches!(
+        package.graph().probabilistic_model().random_parameters()[0].support()[0]
+            .value
+            .0,
+        filament_exact::Value::Quantity(_)
+    ));
+    let filament_exact::Value::Quantity(first) =
+        &package.graph().probabilistic_model().random_parameters()[0].support()[0]
+            .value
+            .0
+    else {
+        unreachable!("a quantity support value");
+    };
+    let units = BTreeMap::from([("ms".to_owned(), first.unit().clone())]);
+    assert_reads_back_equal(&package, &document, &units);
+}
+
+/// The unit over the `Base`/`Leaf` lineage domain package with `declarations`
+/// appended, and the domain document.
+fn lineage_package(declarations: &str) -> (Vec<u8>, CheckedPackage) {
+    use super::abstraction::fixture;
+    let document = crate::emit::tests::wire_bytes(&fixture::lineage_document())
+        .expect("the fixture serializes");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model M = {package:?};\n\
+         {declarations}\n",
+        package = fixture::PACKAGE,
+    );
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    (document, CheckedPackage::link(graph))
+}
+
+/// FSpec FR-640 (FSL FR-740): a workload over two object types that share a
+/// supertype is emitted on the one type whose supertype lineage declares
+/// every weighted operation (`Leaf`, whose lineage holds `Base::op` and
+/// `Leaf::step`), is admitted by the strict reader, and reads back as S3's
+/// record.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-1")]
+#[test]
+fn a_workload_over_two_types_with_a_shared_supertype_names_the_lineage_type() {
+    let (document, package) =
+        lineage_package("workload Mixed on M { weight Base::op = 1; weight Leaf::step = 3; }");
+    let [checked] = package.graph().probabilistic_model().workloads() else {
+        panic!("one checked workload");
+    };
+    let leaf = checked
+        .model_key()
+        .expect("one type covers the model")
+        .clone();
+    assert!(leaf.node.ends_with("/Leaf"), "{leaf:?}");
+    let (_, read) = emit_and_read(&package, &document);
+    let (admitted, _) = admitted_of(read);
+    let model = fsl_semantics::check::wire_id::structural_id(
+        &fsl_semantics::model::key::object_type_node_key(&leaf).expect("a node key"),
+    );
+    let reads = admitted.workloads(&model);
+    let [workload] = &reads[..] else {
+        panic!("one workload on Leaf: {reads:?}");
+    };
+    assert_eq!(
+        workload
+            .weights
+            .iter()
+            .map(|weight| (weight.operation, &*weight.weight.numerator))
+            .collect::<Vec<_>>(),
+        [("op", "1"), ("step", "3")]
+    );
+    assert_reads_back_equal(&package, &document, &BTreeMap::new());
+}
+
+/// FSpec FR-640 (FSL FR-740): a workload whose model has two unrelated types
+/// (`Base` and `ConfigVersion`) has no model node whose lineage covers both,
+/// so emission refuses it with the workload's locus rather than writing a
+/// node the reader refuses.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+fn a_workload_over_unrelated_types_refuses_with_its_locus() {
+    use super::abstraction::fixture;
+    let document = crate::emit::tests::wire_bytes(&fixture::document()).expect("serializes");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model M = {package:?};\n\
+         workload Both on M {{ weight Base::op = 1; weight ConfigVersion::attemptUpdate = 1; }}\n",
+        package = fixture::PACKAGE,
+    );
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    let refusal = emit_checked(&CheckedPackage::link(graph)).expect_err("emission refuses");
+    assert!(matches!(
+        &refusal,
+        EmitRefusal::ProbabilisticModelNotEmitted {
+            declaration,
+            feature: fsl_semantics::check::ProbabilisticFeature::Workload,
+            region,
+            ..
+        } if declaration == "Both" && region.start() < region.end()
+    ));
+}
+
 /// TC-2062 (FR-740-AC-3, FSpec FR-640-AC-3): writing `Steady`'s weight
 /// lines in another order emits byte-identical output, and a workload with a
 /// weight of 0 is emitted with that weight.

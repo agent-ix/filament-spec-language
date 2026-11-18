@@ -226,7 +226,9 @@ pub fn settle_package_run(
             }
             PendingPackageForm::World(_)
             | PendingPackageForm::Model(_)
-            | PendingPackageForm::Operations(_) => {
+            | PendingPackageForm::Operations(_)
+            | PendingPackageForm::ProbabilisticNodes(_)
+            | PendingPackageForm::Probabilistic(_) => {
                 PackageRunError::Document(AnalyzeDocumentError::Fault)
             }
         })?;

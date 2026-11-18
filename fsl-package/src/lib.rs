@@ -53,6 +53,10 @@ mod model_input_form;
 #[cfg(feature = "std")]
 mod native_row;
 #[cfg(feature = "std")]
+mod probabilistic_read;
+#[cfg(feature = "std")]
+pub use probabilistic_read::ProbabilisticReadFault;
+#[cfg(feature = "std")]
 pub mod number;
 #[cfg(feature = "std")]
 mod protocol_activation;

@@ -43,6 +43,12 @@ use crate::family::CheckContext;
 use crate::model::operation::{OperationDeclaration, OperationLookup};
 use filament_checked::key::DeclarationKey;
 
+mod package;
+pub use package::{
+    PackageLiteral, PackageProbabilistic, PackageProbabilisticRefusal, PackageRandomParameter,
+    PackageSupport, PackageWeight, PackageWorkload,
+};
+
 /// An operation a random parameter, a reward or a workload weight names,
 /// resolved (FR-185).
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -150,6 +156,7 @@ pub struct Workload {
     declared: usize,
     name: String,
     model: String,
+    model_key: Option<DeclarationKey>,
     weights: Vec<(ProbabilisticOperation, Rational)>,
 }
 
@@ -168,6 +175,14 @@ impl Workload {
     /// The `model` alias the workload is declared on.
     pub fn model(&self) -> &str {
         &self.model
+    }
+
+    /// The object type of the model whose supertype lineage declares every
+    /// operation the workload weights: the identity of the workload's
+    /// `model` node in a package. `None` when the model's operations share
+    /// no such type.
+    pub fn model_key(&self) -> Option<&DeclarationKey> {
+        self.model_key.as_ref()
     }
 
     /// Each operation of the model with its weight, reduced, in declared
@@ -736,6 +751,40 @@ impl<'a> ProbabilisticInput<'a> {
             }
         }
         operations
+    }
+
+    /// The object type of the model `alias` whose supertype lineage declares
+    /// every operation of the model: the one type a package's workload node
+    /// names as its model (FSpec FR-640). When several types qualify, the one
+    /// conforming to the fewest of the model's types, then the first in key
+    /// order. `None` when the model's operations share no such type.
+    fn workload_model(&self, alias: &str) -> Option<DeclarationKey> {
+        let objects = self.model_objects.get(alias)?;
+        let types = self.scope.types();
+        let declaring: Vec<EffectiveId> = self
+            .model_operations(alias)
+            .into_iter()
+            .map(|(declaring, _, _)| declaring)
+            .collect();
+        let identities: Vec<(&DeclarationKey, EffectiveId)> = objects
+            .values()
+            .filter_map(|key| Some((key, self.object_types.get(key)?.clone())))
+            .collect();
+        identities
+            .iter()
+            .filter(|(_, candidate)| {
+                declaring
+                    .iter()
+                    .all(|declaring| types.conforms(candidate.clone(), declaring.clone()))
+            })
+            .min_by_key(|(key, candidate)| {
+                let lineage = identities
+                    .iter()
+                    .filter(|(_, ancestor)| types.conforms(candidate.clone(), ancestor.clone()))
+                    .count();
+                (lineage, (*key).clone())
+            })
+            .map(|(key, _)| (*key).clone())
     }
 
     /// A typer over this input's scope, charging `nodes`.
@@ -1349,6 +1398,7 @@ impl Pass<'_, '_> {
             declared: index,
             name: workload.to_owned(),
             model: model.to_owned(),
+            model_key: self.input.workload_model(model),
             weights,
         });
     }

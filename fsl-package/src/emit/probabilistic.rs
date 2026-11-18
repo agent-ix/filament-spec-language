@@ -3,20 +3,22 @@
 //! written as `probabilistic` nodes of the checked-package/v2 graph.
 //!
 //! A node's identity is `["probabilistic", form, operand...]` in the unit's
-//! package. Each node holds the one `declaration` occurrence of its
+//! package: the model type's node, the operation and parameter (or the
+//! workload's name), and the canonical spelling of the node's values and
+//! weights, so a changed weight or support value changes the identity
+//! (FSpec FR-640-AC-3). Each node holds the one `declaration` occurrence of its
 //! declaration's label span, and the nodes are appended in node-id order, so
 //! neither the order the unit declares them in nor the order a workload
 //! writes its weights in reaches the bytes.
 
+use filament_checked::key::DeclarationKey;
 use filament_contract_model::{
     CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, CheckedSemanticNodeV2,
     CheckedSourceMapEntry, CheckedSourceRegion, CheckedTerm, LiteralKind,
 };
 use filament_exact::{NodeKey, PathSegment, Rational, UnitId, Value};
 use fsl_semantics::check::wire_id::StructuralIds;
-use fsl_semantics::check::{
-    CheckedGraph, ProbabilisticFeature, ProbabilisticOperation, RandomParameter, Workload,
-};
+use fsl_semantics::check::{CheckedGraph, ProbabilisticFeature, RandomParameter, Workload};
 
 use super::{
     body_reference_targets, checked_literal_json, claim_aggregate, claim_binding, encoding,
@@ -117,19 +119,37 @@ fn spelling(value: &Rational) -> String {
     }
 }
 
+/// The canonical spelling of a support value, as its node's identity
+/// carries it.
+fn support_spelling(value: &Value) -> String {
+    match value {
+        Value::Boolean(value) => value.to_string(),
+        Value::Integer(value) => value.to_string(),
+        Value::Rational(value) => spelling(value),
+        Value::Text(value) => format!("{:?}", value.retained()),
+        Value::Quantity(value) => spelling(value.magnitude()),
+        Value::Enum(member) => member.variant().case().to_string(),
+        _ => String::new(),
+    }
+}
+
 fn reference(target: CheckedNodeId) -> CheckedTerm {
     CheckedTerm::Reference { target }
 }
 
-/// The node of the model object type that declares `operation`.
-fn declaring_node(
+/// The key and node of the model object type `declaration` names, when the
+/// graph holds its node.
+fn model_node(
     ids: &StructuralIds,
     nodes: &[CheckedSemanticNodeV2],
-    operation: &ProbabilisticOperation,
-) -> Option<CheckedNodeId> {
-    let key = fsl_semantics::model::key::object_type_node_key(operation.declaring_key()).ok()?;
-    let id = node_id(ids, key);
-    nodes.iter().any(|node| node.node_id == id).then_some(id)
+    declaration: &DeclarationKey,
+) -> Option<(NodeKey, CheckedNodeId)> {
+    let key = fsl_semantics::model::key::object_type_node_key(declaration).ok()?;
+    let id = node_id(ids, &key);
+    nodes
+        .iter()
+        .any(|node| node.node_id == id)
+        .then_some((key, id))
 }
 
 /// The built-in scalar type node of `form`, written beside the declaration
@@ -225,16 +245,21 @@ fn random_parameter_node(
         )
     };
     let region = region_of(graph, &location)?;
-    let declaring = declaring_node(ids, nodes, operation).ok_or_else(unwritable)?;
+    let (declaring_key, declaring) =
+        model_node(ids, nodes, operation.declaring_key()).ok_or_else(unwritable)?;
     let text = scalar_type(ids, graph, nodes, source_map, "text", &region)?;
     let rational = scalar_type(ids, graph, nodes, source_map, "rational", &region)?;
     let mut rows = Vec::with_capacity(random.support().len());
+    let mut content = Vec::with_capacity(random.support().len());
     for support in random.support() {
         let value = match support.value.0.clone() {
-            Value::Boolean(value) => {
-                let type_id = scalar_type(ids, graph, nodes, source_map, "boolean", &region)?;
-                literal(&type_id, LiteralKind::Boolean, &value)?
-            }
+            // IR's reader admits no Boolean or enum support value yet
+            // (probabilistic_join.rs): `not_member` refuses every literal
+            // whose payload is not a string, and `member_literal_kind` maps
+            // no model variant type to a literal kind. A value written here
+            // would refuse the whole package, so emission refuses the
+            // declaration with its locus instead.
+            Value::Boolean(_) => return Err(unwritable()),
             Value::Integer(value) => {
                 let type_id = scalar_type(ids, graph, nodes, source_map, "integer", &region)?;
                 literal(&type_id, LiteralKind::Integer, &value.to_string())?
@@ -251,15 +276,14 @@ fn random_parameter_node(
                 }
                 literal(&unit, LiteralKind::Quantity, &spelling(value.magnitude()))?
             }
-            Value::Enum(member) => {
-                let owner = node_id(ids, member.variant().owner());
-                if !nodes.iter().any(|node| node.node_id == owner) {
-                    return Err(unwritable());
-                }
-                literal(&owner, LiteralKind::Enum, &member.variant().case())?
-            }
+            Value::Enum(_) => return Err(unwritable()),
             _ => return Err(unwritable()),
         };
+        content.push(format!(
+            "{}*{}",
+            support_spelling(&support.value.0),
+            spelling(&support.weight)
+        ));
         rows.push(claim_aggregate(vec![
             claim_binding("value", value),
             claim_binding("weight", weight_literal(&rational, &support.weight)?),
@@ -272,11 +296,10 @@ fn random_parameter_node(
         claim_binding("support", claim_aggregate(rows)),
     ]);
     let operand = vec![
-        PathSegment::Text(fsl_semantics::model::key::declaration_identity_text(
-            operation.declaring_key(),
-        )),
+        PathSegment::Node(declaring_key),
         PathSegment::Text(operation.name().into()),
         PathSegment::Text(random.parameter().into()),
+        PathSegment::Text(content.join(",")),
     ];
     Ok(Pending {
         node: node(graph, ids, "random_parameter", operand, body)?,
@@ -303,20 +326,21 @@ fn workload_node(
     let region = region_of(graph, &location)?;
     let text = scalar_type(ids, graph, nodes, source_map, "text", &region)?;
     let rational = scalar_type(ids, graph, nodes, source_map, "rational", &region)?;
+    let (model_key, model) = workload
+        .model_key()
+        .and_then(|declaration| model_node(ids, nodes, declaration))
+        .ok_or_else(unwritable)?;
     let mut weights = Vec::with_capacity(workload.weights().len());
     for (operation, weight) in workload.weights() {
-        let declaring = declaring_node(ids, nodes, operation).ok_or_else(unwritable)?;
+        let (_, declaring) =
+            model_node(ids, nodes, operation.declaring_key()).ok_or_else(unwritable)?;
         weights.push((declaring, operation.name().to_owned(), weight.clone()));
     }
     weights.sort_by(|left, right| (&left.0, &left.1).cmp(&(&right.0, &right.1)));
-    // The workload's model node is the one object type every weight's
-    // declaring type is, which holds for a model of one type.
-    let mut declaring: Vec<&CheckedNodeId> = weights.iter().map(|weight| &weight.0).collect();
-    declaring.dedup();
-    let [model] = declaring[..] else {
-        return Err(unwritable());
-    };
-    let model = model.clone();
+    let content: Vec<String> = weights
+        .iter()
+        .map(|(_, operation, weight)| format!("{operation}*{}", spelling(weight)))
+        .collect();
     let rows = weights
         .iter()
         .map(|(declaring, operation, weight)| {
@@ -332,7 +356,11 @@ fn workload_node(
         claim_binding("name", text_literal(&text, workload.name())?),
         claim_binding("weights", claim_aggregate(rows)),
     ]);
-    let operand = vec![PathSegment::Text(workload.name().into())];
+    let operand = vec![
+        PathSegment::Node(model_key),
+        PathSegment::Text(workload.name().into()),
+        PathSegment::Text(content.join(",")),
+    ];
     Ok(Pending {
         node: node(graph, ids, "workload", operand, body)?,
         region,
