@@ -2267,6 +2267,11 @@ fn run_finite_window(
             LowerBoundary::HistoryCutoff
         },
     };
+    // FR-522 "Result identity": the checked clause identity, the package
+    // identity and the declaration, both of which its node key spells.
+    let Ok(clause_identity) = fsl_foundation::node_wire::node_key_to_text(&node.identity()) else {
+        return fault("clause-node-key-has-a-text-spelling");
+    };
     // FR-820: a carried state lists its positions in canonical order, each
     // stamped after the ones before (FR-643 "Order"), and supplies no absent
     // valuation; its trace admits only the positions added since its last
@@ -2290,7 +2295,7 @@ fn run_finite_window(
                     }
                 })
             },
-            || TimestampedTrace::open(clause.name(), clock.clone(), progress),
+            || TimestampedTrace::open(clause_identity.clone(), clock.clone(), progress),
         );
         *trace_positions = count;
         let from = observations.len().saturating_sub(count);
@@ -2314,7 +2319,7 @@ fn run_finite_window(
     let ordered = ordered_timestamped_positions(input);
     let late = &input.window.late;
     let trace = match TimestampedTrace::admit_uncertain(
-        clause.name(),
+        clause_identity,
         clock,
         ordered
             .iter()
