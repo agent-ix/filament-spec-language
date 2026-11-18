@@ -26,20 +26,27 @@ relationships:
 
 When the TemporalTrace evaluator (FR-327) evaluates a clause under
 `filament.temporal.infinite-trace/v1` over a finite trace, it SHALL read the
-trace as a prefix of an unknown infinite continuation and return violation
-or pending, never a proof (ADR-014 §5 A-4, FSpec FR-161-AC-2). It SHALL
-return violation only for a formula in the safety fragment whose prefix is
-a bad prefix: every infinite extension of it makes the formula false. The
-safety fragment admits interval operators (ADR-018 IV-4). This reading is
-sound: it never reports a violation that some extension would not confirm.
+trace as a prefix of an unknown infinite continuation and return holds,
+violation or pending (ADR-014 §5 A-4, FSpec FR-161-AC-2). It SHALL return
+holds for a **good prefix**, one every infinite extension of which satisfies
+the formula at its activation position (`eventually p` once `p` has held),
+whatever fragment the formula is in. It SHALL return violation only for a
+formula in the safety fragment whose prefix is a **bad prefix**: every
+infinite extension of it makes the formula false. The safety fragment
+admits interval operators (ADR-018 IV-4). Every other prefix is pending.
+This reading is sound both ways: a holds is a verdict every extension
+confirms, and so is a violation, so neither depends on the unknown
+continuation.
 
 ## Use case
 
 A runtime monitor watches a service under an infinite-trace claim. When a
 request goes unanswered past its deadline, the monitor reports the violation
-as soon as the prefix shows it. When the property is liveness, or the
-deadline has not passed yet, it reports pending, so a short observation
-never reads as a guarantee.
+as soon as the prefix shows it. When an eventuality has been met, every
+continuation keeps it met, so it reports holds. When the prefix settles
+nothing, such as an `always` with no counterexample yet, an eventuality not
+met yet or a deadline that has not passed, it reports pending, so a short
+observation never reads as a guarantee it does not give.
 
 ## Inputs
 
@@ -50,6 +57,7 @@ never reads as a guarantee.
 
 ## Outputs
 
+- `Completed(true)` (holds) for a good prefix at the activation position;
 - `Completed(false)` (violation) with the `TemporalPosition` of the
   activation that the bad prefix falsifies; `Undefined` (violation) as
   FR-327 states; or `Pending` (category pending); or
@@ -76,29 +84,44 @@ never reads as a guarantee.
 - When the clause is in the safety fragment and every infinite extension of
   the prefix makes it false at its activation position, the evaluator SHALL
   return `Completed(false)` at that position.
+- When every infinite extension of the prefix makes the clause true at its
+  activation position (a good prefix), the evaluator SHALL return
+  `Completed(true)`, whether or not the clause is in the safety fragment.
+  Unknown positions after the prefix may take any values, so a good prefix
+  is one whose verdict no continuation changes: an `eventually`, `until` or
+  `eventually[a,b]` whose witness the prefix holds, or a formula whose
+  satisfied part the prefix decides.
 - When a letter of the prefix is undefined, the evaluator SHALL return
   `Undefined` by FR-327's rule, whatever the fragment: every extension of
   the prefix holds that letter.
-- In every other case, including a formula outside the fragment whose prefix
-  already satisfies it, the evaluator SHALL return `Pending`.
+- In every other case, including a bad prefix of a formula outside the
+  safety fragment, the evaluator SHALL return `Pending`. An undefined letter
+  takes precedence over a good prefix, as over a bad one.
 - A past operator, with or without an interval, SHALL read every atomic
   predicate as false before position 0 (ADR-018 IV-2, FSpec FR-092's
   complete-history rule).
-- `Pending` SHALL map to the category pending (FR-285) and `Completed(false)` to
-  violation (FSpec FR-324-AC-2). The evaluator SHALL return neither `proved`
-  nor `tested` over a finite prefix.
+- `Pending` SHALL map to the category pending (FR-285), `Completed(false)` to
+  violation (FSpec FR-324-AC-2) and `Completed(true)` to success with truth
+  `true`, the category a lasso's `Completed(true)` maps to; a finite-replay
+  item settles it `proved` with disposition kind `holds` (FR-941). The
+  evaluator SHALL never return `tested` over a finite prefix.
+- The verdicts SHALL equal the tick monitor's (FR-251) over the same
+  position-counted prefix: the monitor settles an `eventually` instance
+  `true` at its witness and leaves an `always` `Pending`, never decided
+  `true` by the absence of a counterexample.
 - The evaluator SHALL charge and exhaust work as FR-327 states.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-328-AC-1 | Over the `Counter` prefix with `c.value` 0, 1, 2 under infinite-trace: `always holds(c.value <= 1)` is `Completed(false)` at position 0; `always holds(c.value <= 5)` is `Pending`; `eventually holds(c.value = 2)` and `eventually holds(c.value = 9)` are each `Pending`. | Test (TC-838) |
+| FR-328-AC-1 | Over the `Counter` prefix with `c.value` 0, 1, 2 under infinite-trace: `always holds(c.value <= 1)` is `Completed(false)` at position 0; `always holds(c.value <= 5)` is `Pending`; `eventually holds(c.value = 2)` is `Completed(true)` (a good prefix: position 2 is a witness every extension keeps), and `eventually holds(c.value = 9)` is `Pending`. | Test (TC-838) |
 | FR-328-AC-2 | Over the same prefix, `always (holds(c.value = 1) implies eventually[0,1] holds(c.value = 3))` is `Completed(false)` at position 0 (positions 1 and 2 are both present and neither has value 3); `always (holds(c.value = 2) implies eventually[0,1] holds(c.value = 3))` is `Pending` (position 3 is unknown). | Test (TC-838) |
 | FR-328-AC-3 | Over the same prefix, `always (holds(c.value = 0) implies once[1,1] holds(c.value = 9))` is `Completed(false)` at position 0, because `once[1,1]` at position 0 reads before position 0, where atoms are false. | Test (TC-838) |
-| FR-328-AC-4 | No clause in AC-1 to AC-3 yields `tested` or `proved`; each `Pending` maps to the category pending. | Test (TC-838) |
+| FR-328-AC-4 | No clause in AC-1 to AC-3 yields `tested`; each `Pending` maps to the category pending, and AC-1's `Completed(true)` maps to success with truth `true`. | Test (TC-838) |
 | FR-328-AC-5 | Over the `Counter` prefix with `c.value` 0, 1, 2 under infinite-trace, `eventually holds(3 mod (2 - c.value) = 2)`, outside the safety fragment, returns `Undefined{where: 2, cause: division-by-zero}`, not `Pending`. | Test (TC-847) |
 | FR-328-AC-6 | Over the `Counter` prefix with `c.value` 0, 1, 2 under infinite-trace, `always holds(c.value <= 1)` with the fairness set `fair weak inc` returns `MissingFairnessPremise` naming `fair weak whole inc`, O-16 unsupported, and evaluates no position; with an empty fairness set it is `Completed(false)` at position 0. | Test (TC-848) |
+| FR-328-AC-7 | Over the `Counter` prefix with `c.value` 0, 1, 2 under infinite-trace: `eventually holds(c.value = 1)`, `holds(c.value <= 1) until holds(c.value = 2)` and `eventually[0,2] holds(c.value = 2)` are each `Completed(true)` at position 0 (good prefixes, outside the safety fragment or not); `always eventually holds(c.value = 2)` and `eventually always holds(c.value = 2)` are `Pending` (no finite prefix is good or bad for them); `eventually holds(c.value = 9) or always holds(c.value <= 1)` is `Pending` although its right disjunct is violated, since a bad prefix outside the safety fragment does not settle; and the tick monitor of FR-251 over the same three positions gives the same verdict for each of `eventually holds(c.value = 1)` and `always holds(c.value <= 5)`. | Test (TC-2974) |
 
 ## Dependencies
 

@@ -14,8 +14,8 @@ Verify that a refinement item whose request carries no `abstract_subject`
 takes as its abstract initial states every completion of the mapping's image
 of each concrete initial state, its unfixed fields ranging over their types
 under the abstract invariants and unit bounds; that the enumeration is
-charged to one `max_candidates` total across all initial states; and that an
-empty completion set is a refutation at position 0. Scope: FR-630-AC-5.
+charged to one `max_candidates` total across all initial states; and that a
+mapping expression that does not conform to the abstract field type is refused. Scope: FR-630-AC-5.
 
 ## Test Procedure
 
@@ -24,8 +24,7 @@ empty completion set is a refutation at position 0. Scope: FR-630-AC-5.
 2. Repeat with `temporal.limits.max_candidates` 3.
 3. Analyze `Hidden` over the snapshots `a` at 0 and `a` at 1 with
    `max_candidates` 4, then 8.
-4. Analyze the refinement `Shifted` (`value = self.value + 3`) over the
-   snapshot `a` at 1.
+4. Check the refinement `Shifted` (`value = self.value + 3`).
 
 Test: `fsl-analyze/tests/it/analyze_family_cli.rs`.
 
@@ -35,6 +34,5 @@ Test: `fsl-analyze/tests/it/analyze_family_cli.rs`.
 - Step 2: `incomplete`, `resource-incomplete`, `limit-reached` naming
   `max_candidates`.
 - Step 3: `incomplete` naming `max_candidates`, then `proved`.
-- Step 4: `refuted` with `InitialNotAbstract{initial: 0}` at position 0 and a
-  one-state counterexample that replays; never `declined`.
+- Step 4: S3 refuses `ill_typed`/`type-mismatch` at `self.value + 3`; no item is analyzed.
 - Assertions compare the outcome document's typed members, never message text.

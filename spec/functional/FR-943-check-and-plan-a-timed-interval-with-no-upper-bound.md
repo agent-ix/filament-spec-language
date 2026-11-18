@@ -69,6 +69,11 @@ The checked `TimedInterval` with lower bound and openness and no upper bound
   unbounded future operator counted against the activation capacity, whose
   instance is discharged by a witness at a distance of at least `a` from its
   origin and never by one nearer.
+- On a position counter the distance is exact (FR-251 "Exact position
+  readings"), so a witness at a distance of exactly `a` decides the past
+  operator and discharges the future one at that position, in the monitor as
+  in the batch evaluator; on a time counter a witness at a tick distance of
+  exactly `a` stays `indeterminate` under the half-open tick cover.
 - The monitor entries SHALL be generated for every unbounded past operator,
   `[0, *]` included, and for an unbounded operator over another unbounded
   operator, as FR-251 states; refusing them is not a specified outcome.

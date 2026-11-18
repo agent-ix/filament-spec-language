@@ -1055,3 +1055,93 @@ fn a_step_open_interval_is_planned_on_the_position_counter() {
         "eventually[2,*] holds(c.versionNumber = 2)",
     ));
 }
+
+/// The generated entries of `formula` (a position-counted clause under
+/// `profile`) run over one reading per position, each atom of the clause
+/// taking the truth `truths[position][atom]`; per position, the
+/// `(origin, subformula, code)` results.
+fn position_outcomes(
+    profile: &str,
+    formula: &str,
+    truths: &[&[bool]],
+) -> Vec<Vec<(i128, i128, i64)>> {
+    let plan = plan_of(&position_counted(profile, formula));
+    let spec = fsl_analyze::monitor_entries::spec_from_plan(&plan)
+        .expect("the plan is in the generated fragment");
+    let inputs: Vec<crate::monitor_entries::Input> = truths
+        .iter()
+        .enumerate()
+        .map(|(position, row)| {
+            crate::monitor_entries::Input::Reading(
+                u64::try_from(position).unwrap(),
+                spec.atoms.iter().copied().zip(row.iter().copied()).collect(),
+            )
+        })
+        .collect();
+    crate::monitor_entries::run_entries(&plan, &inputs)
+        .into_iter()
+        .map(|step| {
+            step.into_iter()
+                .map(|(key, code)| (key / 1000, key % 1000, code))
+                .collect()
+        })
+        .collect()
+}
+
+/// FR-251-AC-54: a position reading is exact, so a witness at a distance
+/// equal to the lower bound decides: `once[3,*]` with `p` at position 0 is
+/// `indeterminate` at 2 and `true` at 3, and `eventually[2,*]` from origin 0
+/// is discharged `true` by `p` at position 2, not at 1.
+#[trace("TC-2968", "FR-251-AC-54")]
+#[test]
+#[ignore = "QSL-2321: position readings are exact (a witness at the lower bound decides) not implemented yet"]
+fn a_position_witness_at_the_lower_bound_decides() {
+    let once = position_outcomes(
+        "filament.temporal.infinite-trace/v1",
+        "once[3,*] holds(c.versionNumber = 2)",
+        &[&[true], &[false], &[false], &[false]],
+    );
+    assert!(
+        once[2].iter().any(|&(origin, _, code)| origin == 2 && code == 4),
+        "indeterminate at position 2: {once:?}"
+    );
+    assert!(
+        once[3].iter().any(|&(origin, _, code)| origin == 3 && code == 1),
+        "true at position 3, the lower bound itself: {once:?}"
+    );
+    let eventually = position_outcomes(
+        "filament.temporal.infinite-trace/v1",
+        "eventually[2,*] holds(c.versionNumber = 2)",
+        &[&[false], &[true], &[true]],
+    );
+    assert!(
+        !eventually[1].iter().any(|&(origin, _, code)| origin == 0 && code == 1),
+        "a witness nearer than the lower bound does not discharge: {eventually:?}"
+    );
+    assert!(
+        eventually[2].iter().any(|&(origin, _, code)| origin == 0 && code == 1),
+        "a witness at the lower bound discharges true: {eventually:?}"
+    );
+}
+
+/// FR-251-AC-54: AC-52's event-position `eventually[0, 3]` from an
+/// activation at step 0 is discharged `true` by `c.versionNumber = 3` first
+/// at step 3, the upper bound itself, not left `indeterminate`.
+#[trace("TC-2968", "FR-251-AC-54")]
+#[test]
+#[ignore = "QSL-2321: position readings are exact (a witness at the upper bound decides) not implemented yet"]
+fn a_position_witness_at_the_upper_bound_decides() {
+    let steps = position_outcomes(
+        "filament.temporal.event-position.false-extension/v1",
+        STEP_DEADLINE,
+        &[&[true, false], &[false, false], &[false, false], &[false, true]],
+    );
+    assert!(
+        steps[3].iter().any(|&(origin, _, code)| origin == 0 && code == 1),
+        "the step-0 obligation settles true at step 3: {steps:?}"
+    );
+    assert!(
+        !steps.iter().flatten().any(|&(origin, _, code)| origin == 0 && code == 4),
+        "never indeterminate at the bound: {steps:?}"
+    );
+}

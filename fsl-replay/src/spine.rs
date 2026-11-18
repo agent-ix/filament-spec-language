@@ -273,6 +273,7 @@ pub use native_result::{
     ProtocolRecordError, ProtocolSettlementEntry, RefusalLocusRead, SourceRefRead, SpanRead,
     TemporalRecord, UndefinedLocusRead, UnsupportedDiagnostic, read_native_run_result,
     read_native_run_result_bounded, write_clause_run_result, write_clause_run_result_for,
+    temporal_disposition_json,
 };
 pub(crate) use native_result::{ReasonWire, item_record};
 pub use protocol_proof::{
@@ -1477,14 +1478,6 @@ fn check_message_one(first: &CheckRefusal) -> String {
                 ProtocolAnchorCause::BinderType { binder, fault, .. } => {
                     format!("{message}: binder `{binder}`'s type does not resolve ({fault:?})")
                 }
-                ProtocolAnchorCause::AttemptBinderType {
-                    binder,
-                    expected_result,
-                    actual_result,
-                    ..
-                } => format!(
-                    "{message}: attempt binder `{binder}` has type {actual_result:?}, operation result is {expected_result:?}"
-                ),
                 ProtocolAnchorCause::ChannelRole {
                     channel, end, name, ..
                 } => format!(

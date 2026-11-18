@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use filament_exact::{Cancel, Meter, Value, ValueType};
+use filament_exact::{Cancel, Meter, Value};
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::location::ExpressionOwner;
 use fsl_analyze::model_check::{
@@ -43,7 +43,7 @@ use fsl_replay::{
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::model_request::ModelRequest;
-use fsl_semantics::check::{CheckCause, FormulaNodeId, ProtocolAnchorCause};
+use fsl_semantics::check::{CheckCause, FormulaNodeId};
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 use serde_json::Value as Json;
@@ -828,26 +828,35 @@ fn refund_thread() -> ThreadPath {
     ThreadPath::compensation(0, "R::Refund", 0)
 }
 
-/// Part of FR-211-AC-5 (TC-656), the role part at a compensation attempt: a
-/// template taken `by r`, whose compensation thread is created when `r` has
-/// no live instance and no `spawn` is enabled, deadlocks with the thread
-/// `NoRoleInstance{r}`.
+/// FR-211-AC-5 (TC-656): retiring the last instance prevents a refund
+/// attempt from dispatching, while the compensation thread can expire.
+#[trace("TC-656", "FR-211-AC-5")]
 #[test]
-fn a_compensation_attempt_owned_by_a_role_with_no_instance_gives_no_role_instance() {
+fn a_compensation_attempt_owned_by_a_role_with_no_instance_can_expire() {
     let world = World::new(&pay_by_role("until(r.v >= 0)"), &["c"], &[0]);
     let subject = world.subject();
     let system = sc_system(&subject);
     let reached = reachable(&system);
-    let waits: Vec<WaitCause> = reached
+    let retired = reached
         .iter()
-        .filter(|state| state.steps.is_empty() && state.state.has_live_instance())
-        .flat_map(|state| {
-            SubjectSystem::blocked(&system, &state.state, &[]).expect("the blocked threads")
+        .find(|state| {
+            statuses(&system, state)
+                .get("c")
+                .is_some_and(|status| status == "retired")
+                && system
+                    .threads(&state.state)
+                    .expect("threads")
+                    .iter()
+                    .any(|thread| thread.path == refund_thread())
         })
-        .filter(|thread| thread.path == refund_thread())
-        .map(|thread| thread.cause)
-        .collect();
-    assert_eq!(waits, [no_role_instance()]);
+        .expect("the refund is active after the only role instance retires");
+    let [(expiration, next)] = retired.steps.as_slice() else {
+        panic!("one expiration, got {:?}", retired.steps);
+    };
+    assert_eq!(expiration.thread(), Some(&refund_thread()));
+    assert_eq!(expiration.kind(), StepKind::CExpire);
+    assert!(expiration.actor().is_none());
+    assert_eq!(kinds(&reached, *next), [StepKind::Finish]);
 }
 
 /// ADR-027 RR-4: a `scope` role owning only the template's compensation
@@ -860,10 +869,15 @@ fn a_scope_role_stays_live_for_the_compensation_attempt_it_owns() {
     let subject = world.subject();
     let system = sc_system(&subject);
     let reached = reachable(&system);
-    assert!(reached.iter().any(|state| state
-        .steps
-        .iter()
-        .any(|(step, _)| step.kind() == StepKind::CAttempt)));
+    for kind in [StepKind::CAttempt, StepKind::CFail, StepKind::CTimeout] {
+        let dispatch = reached
+            .iter()
+            .flat_map(|state| &state.steps)
+            .map(|(step, _)| step)
+            .find(|step| step.kind() == kind)
+            .unwrap_or_else(|| panic!("{kind:?} dispatches while the scope role is live"));
+        assert_eq!(dispatch.actor().expect("the dispatch has an actor").role, "r");
+    }
     for state in reached
         .iter()
         .filter(|state| state.steps.is_empty() && state.state.has_live_instance())
@@ -2417,61 +2431,37 @@ fn an_attempt_binder_is_bound() {
     }));
 }
 
-/// FR-882-AC-4: S3 refuses even an unused attempt result binder whose type
-/// differs from the operation result, or whose operation has no result.
+/// FR-882-AC-4 (TC-2506): an attempt binder is bound to the attempt's
+/// application record whatever its declared type, so the effect of an
+/// attempt over a void operation, and of one whose binder type differs from
+/// the operation's result type, enables and the run finishes (ADR-027 ST-1,
+/// ST-2).
 #[trace("TC-2506", "FR-882-AC-4")]
 #[test]
-fn attempt_result_binders_must_match_the_operation_result_at_s3() {
-    fn refusal_for(operation: &str, contracts: &str, binder_type: &str) -> (CheckCause, String) {
-        let run = format!(
-            "sequence Main {{ attempt T by w on M::Cell::{operation} contracts [{contracts}] \
-             as (t: {binder_type}) {{ true }}; }}"
+fn an_effect_enables_whatever_the_binder_type() {
+    for run in [
+        // A void operation under a Boolean binder.
+        "sequence Main { attempt T by w on M::Cell::bump contracts [BumpPost] \
+         as (t: Boolean) { true }; effect Fx of T as (e: Boolean) { true }; }",
+        // A Boolean-returning operation under an Integer binder.
+        "sequence Main { attempt T by w on M::Cell::flag contracts [FlagPre, FlagPost] \
+         as (t: Integer) { true }; effect Fx of T as (e: Boolean) { true }; }",
+    ] {
+        let world = World::new(&unit(ORIGIN, "", "", run), &["c"], &[0]);
+        let subject = world.subject();
+        let model =
+            ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
+        let system = ProtocolSystem::new(model, &subject, Sc)
+            .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
+        assert!(
+            reachable(&system).iter().any(|state| {
+                state.steps.iter().any(|(transition, _)| {
+                    transition.kind() == StepKind::Finish && transition.node() == Some("Done")
+                })
+            }),
+            "{run}: the effect enables and the run finishes"
         );
-        let refusals = check_refusals(&unit(ORIGIN, "", "", &run));
-        let [(refusal, Some(at))] = refusals.as_slice() else {
-            panic!("one S3 refusal at the binder: {refusals:?}");
-        };
-        assert_eq!(at, "t");
-        (refusal.cause.clone(), at.clone())
     }
-
-    let (integer_refusal, _) = refusal_for("flag", "FlagPre, FlagPost", "Integer");
-    assert_eq!(
-        (integer_refusal.code(), integer_refusal.cause()),
-        (Code::IllTyped, Some("type-mismatch")),
-    );
-    let CheckCause::ProtocolAnchor(cause) = integer_refusal else {
-        panic!("the refusal retains the attempt binder types: {integer_refusal:?}");
-    };
-    let ProtocolAnchorCause::AttemptBinderType {
-        expected_result,
-        actual_result,
-        ..
-    } = cause.as_ref()
-    else {
-        panic!("the refusal names an attempt result binder: {cause:?}");
-    };
-    assert_eq!(expected_result.as_deref(), Some(&ValueType::Boolean));
-    assert_eq!(actual_result.as_ref(), &ValueType::Integer);
-
-    let (void_refusal, _) = refusal_for("touch", "TouchPre", "Boolean");
-    assert_eq!(
-        (void_refusal.code(), void_refusal.cause()),
-        (Code::IllTyped, Some("type-mismatch")),
-    );
-    let CheckCause::ProtocolAnchor(cause) = void_refusal else {
-        panic!("the refusal retains the no-result mismatch: {void_refusal:?}");
-    };
-    let ProtocolAnchorCause::AttemptBinderType {
-        expected_result,
-        actual_result,
-        ..
-    } = cause.as_ref()
-    else {
-        panic!("the refusal names the attempt result binder: {cause:?}");
-    };
-    assert_eq!(expected_result, &None);
-    assert_eq!(actual_result.as_ref(), &ValueType::Boolean);
 }
 
 /// FR-882-AC-7 (TC-2505): every remaining `Unsupported` variant has an
@@ -2516,4 +2506,49 @@ fn no_required_construct_settles_unsupported() {
 
     let variants = [Unsupported::WeakMemory, Unsupported::UnenumerableRecord];
     assert!(variants.into_iter().all(has_non_refusing_case));
+}
+
+/// FR-218-AC-44 (TC-2972): an attempt binder of any declared type checks;
+/// a read gets the result when the binder type is the operation's result
+/// type, and otherwise each read is refused `ill_typed`/`type-mismatch` at
+/// the read, never at the binder declaration.
+#[trace("TC-2972", "FR-218-AC-44")]
+#[test]
+#[ignore = "QSL-2409: attempt binder reads checked against the application record (refused at each read) not implemented yet"]
+fn an_attempt_binder_read_is_checked_against_the_record() {
+    let flag = |binder: &str, gate: &str| {
+        format!(
+            "sequence Main {{ attempt T by w on M::Cell::flag contracts [FlagPre, FlagPost] \
+             as (t: {binder}) {{ true }};{gate} }}"
+        )
+    };
+    let touch = |gate: &str| {
+        format!(
+            "sequence Main {{ attempt T by w on M::Cell::touch contracts [TouchPre] \
+             as (t: Boolean) {{ true }};{gate} }}"
+        )
+    };
+    for run in [
+        flag("Boolean", " check Gate using v { t };"),
+        flag("Integer", ""),
+        touch(""),
+    ] {
+        let _ = World::new(&unit(ORIGIN, "", "", &run), &["c"], &[0]);
+    }
+    for (run, reads) in [
+        (flag("Integer", " check Gate using v { t = 1 };"), 1),
+        (touch(" check Gate using v { t };"), 1),
+        (flag("Integer", " check Gate using v { t = 1 and t = 2 };"), 2),
+    ] {
+        let refusals = check_refusals(&unit(ORIGIN, "", "", &run));
+        assert_eq!(refusals.len(), reads, "{run}: {refusals:?}");
+        for (refusal, at) in &refusals {
+            assert_eq!(
+                (refusal.cause.code(), refusal.cause.cause()),
+                (Code::IllTyped, Some("type-mismatch")),
+                "{run}"
+            );
+            assert_eq!(at.as_deref(), Some("t"), "{run}: at the read");
+        }
+    }
 }

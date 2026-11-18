@@ -29,6 +29,8 @@ mod bare;
 #[cfg(feature = "std")]
 mod bare_slot;
 #[cfg(feature = "std")]
+mod bare_term;
+#[cfg(feature = "std")]
 mod bare_units;
 #[cfg(feature = "std")]
 mod bare_world;
@@ -75,6 +77,8 @@ pub use bare::{
 };
 #[cfg(feature = "std")]
 pub use bare_slot::{BareSelectionFailure, BareSlot, BareSource};
+#[cfg(feature = "std")]
+pub use bare_term::{BareClauseTerm, BareFrameOperation, BareStateClause, ClauseBinder};
 #[cfg(feature = "std")]
 pub use bare_world::BareWorld;
 pub use checked::{CheckedPackage, ResolvedDependency};

@@ -80,14 +80,15 @@ pub use expression::{
     supplied_stop_cause, supplied_stop_code, undefined_contract_code,
     AdmittedEvaluationViewEvaluation, ApplicationObservation, ApplicationObservationOptions,
     BinderCharges, ChargeAmounts, CheckedPackageEvaluation, ClauseEvaluation, ClauseRead,
-    ClauseSetEntry, ClauseSetEvaluation, ClauseSetOutcome, FrameEvaluation, HoldsBinders,
-    InvalidQualifiedName, InvocationBinding, ObservationIdentity, OperationCharge, OperationLedger,
-    PackageClosure, PackageTask, ProtocolReferenceOccurrence, ProtocolSlot, ProtocolSlotEvaluation,
-    ProtocolSuppliedValue, ProtocolSupply, QualifiedName, RuntimeValuePath, Separation,
-    SeparationStep, StopReport, SuppliedValue, TruncatedOperationLedger, ValueInvariantEvaluation,
-    ValueInvariantOutcome, ValueInvariantResult, ValuePathStep, ValuePathSubject, WitnessClaim,
-    BINDER_ACCOUNTING_VERSION,
+    ClauseSetEntry, ClauseSetEvaluation, ClauseSetOutcome, FrameEvaluation, HoldsAtom,
+    HoldsBinders, InvalidQualifiedName, InvocationBinding, ObservationIdentity, OperationCharge,
+    OperationLedger, PackageClosure, PackageTask, ProtocolReferenceOccurrence, ProtocolSlot,
+    ProtocolSlotEvaluation, ProtocolSuppliedValue, ProtocolSupply, QualifiedName, RuntimeValuePath,
+    Separation, SeparationStep, StopReport, SuppliedValue, TruncatedOperationLedger,
+    ValueInvariantEvaluation, ValueInvariantOutcome, ValueInvariantResult, ValuePathStep,
+    ValuePathSubject, WitnessClaim, BINDER_ACCOUNTING_VERSION,
 };
+pub use expression::{bare_evaluate_frame, PackageOperations};
 
 #[cfg(test)]
 mod map_order_tests {

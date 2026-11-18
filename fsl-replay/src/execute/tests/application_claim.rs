@@ -656,10 +656,9 @@ fn tc_1784_replay_never_rechecks_a_claim_under_another_mode() {
 
 /// FR-098-AC-27: in the recursive `d`, only the selected call's own stop at
 /// its `10 mod (n - 1)` site reproduces; a nested stop at the same
-/// `Location` is no observation.
+/// `Location` is excluded by its nonzero `frame_depth`.
 #[trace("TC-444", "FR-098-AC-27")]
 #[test]
-#[ignore = "QSL-2002: S6a reports no frame_depth yet"]
 fn tc_444_a_recursive_site_reproduces_only_at_frame_depth_zero() {
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n{PROFILE}\

@@ -810,9 +810,15 @@ impl TemporalLetters for ObservedLetters<'_> {
         }
         let (objects, over) = self.subject(position)?;
         let captures = self.active_captures()?;
-        let evaluation =
-            self.package
-                .evaluate_holds(self.clause, atom, over, captures, objects, meter);
+        let named = crate::value::HoldsAtom::of_source(self.clause, atom).ok_or_else(|| {
+            LetterStop::Fault(InternalFault::new(
+                "temporal.observed",
+                "atom-is-a-formula-use",
+            ))
+        })?;
+        let evaluation = self
+            .package
+            .evaluate_holds(&named, over, captures, objects, meter);
         let reading = Self::reading(&mut self.stopped, position, evaluation, HOLDS_CODES)?;
         if let AtomReading::Undefined(cause) = &reading {
             self.note(|| ObservedLocus::Atom(atom), position, cause);
@@ -862,7 +868,7 @@ impl TemporalLetters for ObservedLetters<'_> {
         let (objects, over) = self.subject(position)?;
         let evaluation = self
             .package
-            .evaluate_guard(self.clause, over, objects, meter);
+            .evaluate_guard(&self.clause.identity(), over, objects, meter);
         let reading = Self::reading(&mut self.stopped, position, evaluation, ACTIVATION_CODES)?;
         if let AtomReading::Undefined(cause) = &reading {
             self.note(|| ObservedLocus::Activation, position, cause);

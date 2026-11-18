@@ -34,6 +34,7 @@ use slot_supply::SourceView;
 mod value_invariants;
 
 pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol_slot;
+pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations};
 use evaluate::Machine;
 use filament_eval::Registry;
 use filament_exact::{FieldValue, Meter, NodeKey, Outcome, Value, ValueType};
@@ -440,6 +441,120 @@ pub struct HoldsBinders<'a> {
     pub over: &'a filament_exact::ObjectReference,
     /// The activation's capture values; empty for a clause with none.
     pub captures: &'a [Value],
+}
+
+/// A `holds` atom of a temporal clause as both routes name it (FR-940
+/// "Package forms of the source-checked evaluators"): the clause node's key
+/// and the atom's use position in the clause formula walked in pre-order,
+/// one position per use of a node. The package's `formula_graph()` lists the
+/// same pre-order (FR-515 "One evaluator formula"), so the position names
+/// one atom on the source route's `CheckedFormula` and on the package's
+/// view alike.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HoldsAtom {
+    /// The clause's `temporal`/`temporal_clause` node.
+    pub clause: NodeKey,
+    /// The atom's use position in the formula's pre-order.
+    pub position: usize,
+}
+
+/// The most formula uses a pre-order walk of a source formula visits: the
+/// view's own bound (FR-515 `FormulaTooLarge`), so the source route names no
+/// atom the package's view could not list.
+const FORMULA_USES: u64 = fsl_package::checked_views::FORMULA_VISITS;
+
+/// The formula nodes of `formula` in pre-order, one entry per use, until
+/// `stop` accepts an entry or the walk ends; returns the accepted position
+/// and node.
+fn formula_uses(
+    formula: &fsl_semantics::check::CheckedFormula,
+    mut stop: impl FnMut(usize, fsl_semantics::check::FormulaNodeId) -> bool,
+) -> Option<(usize, fsl_semantics::check::FormulaNodeId)> {
+    let mut pending = vec![formula.root()];
+    let mut position = 0_usize;
+    while let Some(id) = pending.pop() {
+        if u64::try_from(position).map_or(true, |visited| visited >= FORMULA_USES) {
+            return None;
+        }
+        if stop(position, id) {
+            return Some((position, id));
+        }
+        let node = formula.nodes().get(id.index())?;
+        let operands: Vec<_> = node.operands().collect();
+        pending.extend(operands.into_iter().rev());
+        position += 1;
+    }
+    None
+}
+
+impl HoldsAtom {
+    /// The atom `atom` of the source clause `clause`: its first use in the
+    /// formula's pre-order. `None` for a node the formula does not use.
+    pub fn of_source(
+        clause: &fsl_semantics::check::TemporalClauseNode,
+        atom: fsl_semantics::check::FormulaNodeId,
+    ) -> Option<Self> {
+        formula_uses(clause.clause().formula(), |_, id| id == atom).map(|(position, _)| Self {
+            clause: clause.identity(),
+            position,
+        })
+    }
+
+    /// The source formula node this atom's position names in `clause`.
+    fn source_node(
+        &self,
+        clause: &fsl_semantics::check::TemporalClauseNode,
+    ) -> Option<fsl_semantics::check::FormulaNodeId> {
+        formula_uses(clause.clause().formula(), |position, _| {
+            position == self.position
+        })
+        .map(|(_, id)| id)
+    }
+}
+
+/// The source clause node whose key is `clause`. Two declarations of one
+/// clause node share its conditions and guard (FR-337), so the first is the
+/// one every evaluator reads.
+fn source_clause<'g>(
+    graph: &'g fsl_semantics::check::CheckedGraph,
+    clause: &NodeKey,
+) -> Result<&'g fsl_semantics::check::TemporalClauseNode, CallFailure> {
+    graph
+        .temporal_clauses()
+        .iter()
+        .find(|found| found.identity() == *clause)
+        .ok_or_else(|| {
+            CallFailure::Fault(InternalFault::new(
+                "S6a",
+                "temporal-clause-resolved-by-package",
+            ))
+        })
+}
+
+/// The source clause, checked condition and slot count of `atom`. A
+/// position that is no `holds` use of the clause is a fault.
+fn source_condition<'g>(
+    graph: &'g fsl_semantics::check::CheckedGraph,
+    atom: &HoldsAtom,
+) -> Result<
+    (
+        &'g fsl_semantics::check::TemporalClauseNode,
+        CheckedNode<'g>,
+        usize,
+    ),
+    CallFailure,
+> {
+    let clause = source_clause(graph, &atom.clause)?;
+    let (condition, slots) = atom
+        .source_node(clause)
+        .and_then(|node| clause.condition(node))
+        .ok_or_else(|| {
+            CallFailure::Fault(
+                InternalFault::new("S6a", "holds-atom-resolved-by-clause")
+                    .with_named(vec![("position", atom.position.to_string())]),
+            )
+        })?;
+    Ok((clause, condition, slots))
 }
 
 /// The slot bindings of a `holds` condition of `clause` (FR-337 "Captures at
@@ -876,7 +991,7 @@ fn evaluate_declaration(
     meter: &mut Meter,
 ) -> Result<Evaluation, InternalFault> {
     let mismatch = || InternalFault::new("S6a", "family-and-evaluation-environment-disagree");
-    let (outcome, location, losses) = match (family, env) {
+    let (outcome, location, losses, frame_depth) = match (family, env) {
         (S6aFamilyKind::Value, EvaluationTarget::Value(env)) => {
             let outcome =
                 fsl_semantics::check::ValueFunctionFamily::evaluate(identity, env, meter)?;
@@ -884,6 +999,7 @@ fn evaluate_declaration(
                 outcome.into(),
                 env.location.take(),
                 std::mem::take(&mut env.losses),
+                env.frame_depth,
             )
         }
         (S6aFamilyKind::ProtocolClause, EvaluationTarget::ProtocolClause(env)) => {
@@ -893,6 +1009,7 @@ fn evaluate_declaration(
                 outcome.into(),
                 env.location.take(),
                 std::mem::take(&mut env.losses),
+                0,
             )
         }
         (S6aFamilyKind::Value, EvaluationTarget::ProtocolClause(_))
@@ -914,7 +1031,7 @@ fn evaluate_declaration(
         outcome,
         location,
         losses,
-        frame_depth: 0,
+        frame_depth,
     })
 }
 
@@ -1053,8 +1170,7 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     /// A node that is no `holds` atom of `clause` is an `Err` fault.
     fn evaluate_holds(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
-        atom: fsl_semantics::check::FormulaNodeId,
+        atom: &HoldsAtom,
         over: Value,
         captures: &[Value],
         objects: &ObjectEnvironment,
@@ -1072,8 +1188,7 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     /// A node that is no `holds` atom of `clause` is an `Err` fault.
     fn evaluate_holds_traced(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
-        atom: fsl_semantics::check::FormulaNodeId,
+        atom: &HoldsAtom,
         binders: HoldsBinders<'_>,
         objects: &ObjectEnvironment,
         observation: ObservationIdentity,
@@ -1089,7 +1204,7 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     /// A clause with no guard is an `Err` fault.
     fn evaluate_guard(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
+        clause: &NodeKey,
         over: Value,
         objects: &ObjectEnvironment,
         meter: &mut Meter,
@@ -1402,124 +1517,170 @@ impl<'a> ClauseSetup<'a> {
         observations: &'a fsl_semantics::model::observation::AdmittedObservations,
     ) -> Result<Self, CallFailure> {
         let declaration = resolve_clause(package, clause, observations)?;
-        // The clause's own observation (FR-107): `current` for an
-        // invariant, `post` for a postcondition, and `pre` for a
-        // precondition, which reads every model read there and never the
-        // post side (FR-104, FR-106), whether selected by `PreCall` or by
-        // `Invocation`.
-        let current = match declaration.observation() {
-            fsl_semantics::model::clause_observation::Observation::Current => {
-                observations.current.as_ref()
-            }
-            fsl_semantics::model::clause_observation::Observation::Post => {
-                observations.post.as_ref()
-            }
-            fsl_semantics::model::clause_observation::Observation::Pre => observations.pre.as_ref(),
-        }
-        .ok_or_else(|| {
-            CallFailure::Fault(InternalFault::new(
-                "S6a",
-                "clause-observations-missing-the-clause-observation",
-            ))
-        })?;
-
-        let mut bindings = Vec::with_capacity(declaration.parameters().len());
-        bindings.push(Value::Reference(observations.self_object.clone()));
-        let mut remaining = declaration.parameters().get(1..).unwrap_or(&[]).iter();
-        // FR-104 "Behavior": slot 1 is `result` exactly when the checker's
-        // own typed `binds_result` says so (FR-064's string-edge
-        // rule) -- never decided here by comparing a parameter's name.
-        if declaration.binds_result() {
-            remaining.next();
-            let result = observations.result.clone().ok_or_else(|| {
-                CallFailure::Fault(InternalFault::new("S6a", "postcondition-result-missing"))
-            })?;
-            bindings.push(result);
-        }
-        for (parameter, _) in remaining {
-            let value = observations
-                .parameters
-                .iter()
-                .find(|(name, _)| name == parameter)
-                .map(|(_, value)| value.clone())
-                .ok_or_else(|| {
-                    CallFailure::Fault(InternalFault::new("S6a", "clause-parameter-not-admitted"))
-                })?;
-            bindings.push(value);
-        }
-        let pre = observations
-            .pre
-            .as_ref()
-            .map(|observation| s6a::separation::observation_identity(&observation.identity));
-        // The clause's own observation names its value paths: the pre
-        // snapshot for a precondition (FR-104).
-        let own = s6a::separation::observation_identity(&current.identity);
-        let invocation = observations
-            .invocation
-            .as_ref()
-            .map(s6a::separation::observation_identity);
-        let mut trail = s6a::separation::Trail::new(own.clone(), pre);
-        trail.receiver = Some(observations.self_object.clone());
-        trail.receiver_pre = observations.receiver_pre.clone();
-        // FR-107 "The receiver path": `self` is rooted at its declared
-        // object identity when it has one, and at the invocation's receiver
-        // binding when it is a context; a context with no invocation has no
-        // path.
-        let receiver_subject = match observations.self_kind {
-            SelfKind::Object => Some(s6a::separation::ValuePathSubject::Object(
-                observations.self_object.clone(),
-            )),
-            SelfKind::Context => {
-                trail.receiver_invocation = invocation.clone();
-                trail.receiver_unlocated = invocation.is_none();
-                invocation
-                    .clone()
-                    .map(|invocation| s6a::separation::ValuePathSubject::Invocation {
-                        invocation,
-                        binding: s6a::separation::InvocationBinding::Receiver,
-                    })
-            }
-        };
-        let binding = |binding: s6a::separation::InvocationBinding| {
-            invocation
-                .clone()
-                .map(|invocation| s6a::separation::ValuePathSubject::Invocation {
-                    invocation,
-                    binding,
-                })
-        };
-        trail.bindings.push(receiver_subject.clone());
-        let mut remaining_slots = declaration.parameters().get(1..).unwrap_or(&[]).iter();
-        if declaration.binds_result() {
-            remaining_slots.next();
-            trail
-                .bindings
-                .push(binding(s6a::separation::InvocationBinding::Result));
-        }
-        for (parameter, _) in remaining_slots {
-            trail
-                .bindings
-                .push(binding(s6a::separation::InvocationBinding::Parameter(
-                    parameter.clone(),
-                )));
-        }
-        let receiver_path = receiver_subject.map(|subject| s6a::separation::RuntimeValuePath {
-            observation: own,
-            subject,
-            steps: Vec::new(),
-        });
+        let names: Vec<String> = declaration
+            .parameters()
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+        let ClauseBinding {
+            current,
+            pre,
+            bindings,
+            trail,
+            receiver_path,
+        } = bind_clause(
+            declaration.observation(),
+            &names,
+            declaration.binds_result(),
+            observations,
+        )?;
         Ok(Self {
             declaration,
-            current: &current.environment,
-            pre: observations
-                .pre
-                .as_ref()
-                .map(|observation| &observation.environment),
+            current,
+            pre,
             bindings,
             trail,
             receiver_path,
         })
     }
+}
+
+/// What one state clause's evaluation binds over its admitted observations
+/// (FR-107): the clause's own observation and the pre one, the slot values,
+/// and the trail and receiver path that root its value paths.
+pub(super) struct ClauseBinding<'a> {
+    pub(super) current: &'a ObjectEnvironment,
+    pub(super) pre: Option<&'a ObjectEnvironment>,
+    pub(super) bindings: Vec<Value>,
+    pub(super) trail: s6a::separation::Trail,
+    pub(super) receiver_path: Option<s6a::separation::RuntimeValuePath>,
+}
+
+/// FR-107: bind a state clause whose reads take `observation`, whose slot
+/// names are `parameters` (`self` first, then `result` when
+/// `binds_result`, then the operation's parameters), over `observations`.
+/// Both routes bind through here: the source route from its checked
+/// declaration, the package route from the clause's admitted node (FR-940).
+pub(super) fn bind_clause<'a>(
+    observation: fsl_semantics::model::clause_observation::Observation,
+    parameters: &[String],
+    binds_result: bool,
+    observations: &'a fsl_semantics::model::observation::AdmittedObservations,
+) -> Result<ClauseBinding<'a>, CallFailure> {
+    // The clause's own observation (FR-107): `current` for an
+    // invariant, `post` for a postcondition, and `pre` for a
+    // precondition, which reads every model read there and never the
+    // post side (FR-104, FR-106), whether selected by `PreCall` or by
+    // `Invocation`.
+    let current = match observation {
+        fsl_semantics::model::clause_observation::Observation::Current => {
+            observations.current.as_ref()
+        }
+        fsl_semantics::model::clause_observation::Observation::Post => observations.post.as_ref(),
+        fsl_semantics::model::clause_observation::Observation::Pre => observations.pre.as_ref(),
+    }
+    .ok_or_else(|| {
+        CallFailure::Fault(InternalFault::new(
+            "S6a",
+            "clause-observations-missing-the-clause-observation",
+        ))
+    })?;
+
+    let mut bindings = Vec::with_capacity(parameters.len());
+    bindings.push(Value::Reference(observations.self_object.clone()));
+    let mut remaining = parameters.get(1..).unwrap_or(&[]).iter();
+    // FR-104 "Behavior": slot 1 is `result` exactly when the checker's
+    // own typed `binds_result` says so (FR-064's string-edge
+    // rule) -- never decided here by comparing a parameter's name.
+    if binds_result {
+        remaining.next();
+        let result = observations.result.clone().ok_or_else(|| {
+            CallFailure::Fault(InternalFault::new("S6a", "postcondition-result-missing"))
+        })?;
+        bindings.push(result);
+    }
+    for parameter in remaining {
+        let value = observations
+            .parameters
+            .iter()
+            .find(|(name, _)| name == parameter)
+            .map(|(_, value)| value.clone())
+            .ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new("S6a", "clause-parameter-not-admitted"))
+            })?;
+        bindings.push(value);
+    }
+    let pre = observations
+        .pre
+        .as_ref()
+        .map(|observation| s6a::separation::observation_identity(&observation.identity));
+    // The clause's own observation names its value paths: the pre
+    // snapshot for a precondition (FR-104).
+    let own = s6a::separation::observation_identity(&current.identity);
+    let invocation = observations
+        .invocation
+        .as_ref()
+        .map(s6a::separation::observation_identity);
+    let mut trail = s6a::separation::Trail::new(own.clone(), pre);
+    trail.receiver = Some(observations.self_object.clone());
+    trail.receiver_pre = observations.receiver_pre.clone();
+    // FR-107 "The receiver path": `self` is rooted at its declared
+    // object identity when it has one, and at the invocation's receiver
+    // binding when it is a context; a context with no invocation has no
+    // path.
+    let receiver_subject = match observations.self_kind {
+        SelfKind::Object => Some(s6a::separation::ValuePathSubject::Object(
+            observations.self_object.clone(),
+        )),
+        SelfKind::Context => {
+            trail.receiver_invocation = invocation.clone();
+            trail.receiver_unlocated = invocation.is_none();
+            invocation
+                .clone()
+                .map(|invocation| s6a::separation::ValuePathSubject::Invocation {
+                    invocation,
+                    binding: s6a::separation::InvocationBinding::Receiver,
+                })
+        }
+    };
+    let binding = |binding: s6a::separation::InvocationBinding| {
+        invocation
+            .clone()
+            .map(|invocation| s6a::separation::ValuePathSubject::Invocation {
+                invocation,
+                binding,
+            })
+    };
+    trail.bindings.push(receiver_subject.clone());
+    let mut remaining_slots = parameters.get(1..).unwrap_or(&[]).iter();
+    if binds_result {
+        remaining_slots.next();
+        trail
+            .bindings
+            .push(binding(s6a::separation::InvocationBinding::Result));
+    }
+    for parameter in remaining_slots {
+        trail
+            .bindings
+            .push(binding(s6a::separation::InvocationBinding::Parameter(
+                parameter.clone(),
+            )));
+    }
+    let receiver_path = receiver_subject.map(|subject| s6a::separation::RuntimeValuePath {
+        observation: own,
+        subject,
+        steps: Vec::new(),
+    });
+    Ok(ClauseBinding {
+        current: &current.environment,
+        pre: observations
+            .pre
+            .as_ref()
+            .map(|observation| &observation.environment),
+        bindings,
+        trail,
+        receiver_path,
+    })
 }
 
 /// FR-268 step 1 (ADR-031 SW-13): resolve `quantifier` in `graph` to a
@@ -1950,19 +2111,13 @@ impl CheckedPackageEvaluation for CheckedPackage {
 
     fn evaluate_holds(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
-        atom: fsl_semantics::check::FormulaNodeId,
+        atom: &HoldsAtom,
         over: Value,
         captures: &[Value],
         objects: &ObjectEnvironment,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        let (condition, slots) = clause.condition(atom).ok_or_else(|| {
-            CallFailure::Fault(
-                InternalFault::new("S6a", "holds-atom-resolved-by-clause")
-                    .with_named(vec![("node", atom.index().to_string())]),
-            )
-        })?;
+        let (clause, condition, slots) = source_condition(self.graph(), atom)?;
         Machine::new(
             self.graph().scope(),
             self.graph(),
@@ -1976,20 +2131,14 @@ impl CheckedPackageEvaluation for CheckedPackage {
 
     fn evaluate_holds_traced(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
-        atom: fsl_semantics::check::FormulaNodeId,
+        atom: &HoldsAtom,
         binders: HoldsBinders<'_>,
         objects: &ObjectEnvironment,
         observation: ObservationIdentity,
         meter: &mut Meter,
     ) -> Result<ClauseEvaluation, CallFailure> {
         let HoldsBinders { over, captures } = binders;
-        let (condition, slots) = clause.condition(atom).ok_or_else(|| {
-            CallFailure::Fault(
-                InternalFault::new("S6a", "holds-atom-resolved-by-clause")
-                    .with_named(vec![("node", atom.index().to_string())]),
-            )
-        })?;
+        let (clause, condition, slots) = source_condition(self.graph(), atom)?;
         // `over` is slot 0 and the condition's receiver: a value read from
         // it is rooted at its declared object identity (FR-107 "The
         // receiver path").
@@ -2024,14 +2173,16 @@ impl CheckedPackageEvaluation for CheckedPackage {
 
     fn evaluate_guard(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
+        clause: &NodeKey,
         over: Value,
         objects: &ObjectEnvironment,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        let (guard, slots) = clause.guard().ok_or_else(|| {
-            CallFailure::Fault(InternalFault::new("S6a", "guard-resolved-by-clause"))
-        })?;
+        let (guard, slots) = source_clause(self.graph(), clause)?
+            .guard()
+            .ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new("S6a", "guard-resolved-by-clause"))
+            })?;
         Machine::new(
             self.graph().scope(),
             self.graph(),

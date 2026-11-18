@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use filament_semantic_value::declaration::{ObjectTypeDeclaration, TypeEnvironment};
-use fsl_forms::{BinderKind, ProtocolDeclarationForm};
+use fsl_forms::ProtocolDeclarationForm;
 use fsl_foundation::Span;
 
 use super::{refusal, BoundAttempt};
@@ -26,7 +26,6 @@ pub(super) fn bind_attempts(
     attempts: &[AttemptDeclaration],
     state_clauses: &[StateClauseDeclaration],
     types: &TypeEnvironment,
-    type_names: &impl crate::check::type_form::TypeNames,
 ) -> (Vec<BoundAttempt>, Vec<(Span, CheckRefusal)>) {
     let mut by_name: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (index, clause) in state_clauses.iter().enumerate() {
@@ -44,26 +43,6 @@ pub(super) fn bind_attempts(
     let mut bound = Vec::with_capacity(attempts.len());
     for (index, attempt_decl) in attempts.iter().enumerate() {
         let form = &protocol.attempts[index];
-        if let Some(binder) = super::record_binder(protocol, attempt_decl.declaration) {
-            if binder.kind == BinderKind::RecordBinder {
-                if let Ok(actual_result) =
-                    crate::check::type_form::resolve_form(type_names, &binder.value_type)
-                {
-                    let expected_result = attempt_decl.operation.declaration.result().cloned();
-                    if expected_result.as_ref() != Some(&actual_result) {
-                        refusals.push((
-                            binder.name.span,
-                            refusal(ProtocolAnchorCause::AttemptBinderType {
-                                binder: binder.name.name.clone(),
-                                expected_result: expected_result.map(Box::new),
-                                actual_result: Box::new(actual_result),
-                                span: binder.name.span,
-                            }),
-                        ));
-                    }
-                }
-            }
-        }
         let attempt_anchor = anchor_label(
             attempt_decl.operation.declaring.clone(),
             attempt_decl.operation.declaration.name(),
