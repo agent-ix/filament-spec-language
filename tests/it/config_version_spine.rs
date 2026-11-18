@@ -9,9 +9,7 @@ use crate::support::config_version_spine::{cases::CASES, spine, Case};
 use filament_semantic_value::catalog::Category;
 use fsl_command::command::RunLimits;
 use fsl_foundation::diagnostic::Code;
-use fsl_replay::spine::{
-    run_clause, CallOutcome, ClauseDisposition, ClauseRunRequest, ClauseRunStage,
-};
+use fsl_replay::spine::{run_clause, CallOutcome, ClauseDisposition, ClauseRunRequest, ClauseRunStage};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, path::Path, process::Command};
@@ -842,6 +840,47 @@ fn clause_run_command_routes_function_and_frame() {
         value["disposition"]["truth"],
         expected.disposition.truth().unwrap()
     );
+}
+
+/// QSL-2462 / FR-867-AC-3: a function claim maps its Population and Reference
+/// arguments into the selected snapshot before evaluating the function.
+#[trace("FR-867-AC-3")]
+#[test]
+fn function_claim_maps_population_and_reference_arguments_by_role() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("population-reference-claim");
+    build(&path, Case::Healthy);
+
+    let history_population = format!("ix://{}/config_history", spine::PACKAGE_IDENTITY);
+    let mut program = std::fs::read_to_string(path.join("spine-unit.native")).unwrap();
+    program.push_str(
+        "\nfunction acceptsRoles using v(p: Population<Config::ConfigVersion>[4], \
+         r: Config::ConfigVersion): Boolean pure { true }\n",
+    );
+    std::fs::write(path.join("spine-unit.native"), program).unwrap();
+
+    let mut request = current_clause_request();
+    request["request"]["clause"]["selection"] = json!({"function": {
+        "name": "acceptsRoles",
+        "snapshot": "current",
+        "arguments": [
+            {"parameter": "p", "value": {"population": history_population}},
+            {"parameter": "r", "value": {"reference": {
+                "population": history_population,
+                "key": "child"
+            }}}
+        ]
+    }});
+    let output = run_clause_file(&path, &request);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["disposition"]["stage"], "evaluate", "{document}");
+    assert_eq!(document["disposition"]["truth"], true, "{document}");
 }
 
 /// FR-312-AC-5: the named document role chooses the FR-106 input variant;

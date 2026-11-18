@@ -1627,7 +1627,14 @@ fn run_clause_reading(
             ref arguments,
             ref snapshot,
             ref snapshot_path,
-        } => run_function(&run, name, arguments, snapshot, snapshot_path.as_deref()),
+        } => run_function(
+            &run,
+            models.models(),
+            name,
+            arguments,
+            snapshot,
+            snapshot_path.as_deref(),
+        ),
         ClauseRunSelection::Frame {
             ref operation,
             ref invocation,
@@ -2246,7 +2253,14 @@ fn run_compiled_clause_selection(
             arguments,
             snapshot,
             snapshot_path,
-        } => run_function(&run, name, arguments, snapshot, snapshot_path.as_deref())
+        } => run_function(
+            &run,
+            compiled.models.models(),
+            name,
+            arguments,
+            snapshot,
+            snapshot_path.as_deref(),
+        )
             .unwrap_or_else(|_| {
                 report(ClauseDisposition::EvaluateFault(
                     filament_semantic_value::catalog::InternalFault::new(
@@ -2940,6 +2954,7 @@ fn evaluate_operation_contracts(
 
 fn run_function(
     run: &CompiledRun<'_>,
+    models: &[fsl_semantics::model::intake::SelectedModel],
     name: &str,
     arguments: &[ClauseArgument],
     snapshot: &DocumentRef,
@@ -3056,6 +3071,29 @@ fn run_function(
                 },
             ))));
         }
+    }
+    let mut environment = environment;
+    for (position, ((_, value_type), value)) in selected.parameters.iter().zip(&slots).enumerate() {
+        let (ValueType::Population(maximum), Some(ClauseArgumentValue::Form(form))) =
+            (value_type, value)
+        else {
+            continue;
+        };
+        let Some(population) = form.get("population").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        environment = match super::call::bind_snapshot_population(
+            &environment,
+            models,
+            population,
+            *maximum,
+            position,
+        ) {
+            Ok(environment) => environment,
+            Err(refusal) => {
+                return Ok(report(ClauseDisposition::ArgumentRefusal(refusal)));
+            }
+        };
     }
     let mut bound = Vec::with_capacity(selected.parameters.len());
     for (position, (parameter, value_type)) in selected.parameters.iter().enumerate() {
