@@ -10,7 +10,8 @@ use filament_checked::node::{Connective, ConnectiveOrigin, NodeKind, Visit};
 use filament_eval::FamilyOutcome;
 use filament_exact::{Outcome, Value};
 use filament_semantic_value::catalog::InternalFault;
-use fsl_semantics::check::{CheckedNode, CheckedStateClause};
+use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_semantics::check::{CheckedGraph, CheckedNode, CheckedStateClause};
 
 use fsl_eval::value::{ClauseEvaluation, StopReport};
 
@@ -54,6 +55,7 @@ pub(crate) struct Derived {
 /// decision: every such node is on the claim's own level and was evaluated,
 /// so S6a recorded it.
 pub(crate) fn derive_separating_witness(
+    graph: &CheckedGraph,
     clause: &CheckedStateClause,
     evaluation: &ClauseEvaluation,
 ) -> Result<Option<Derived>, InternalFault> {
@@ -62,13 +64,111 @@ pub(crate) fn derive_separating_witness(
     else {
         return Ok(None);
     };
-    Ok(Some(match decisive_stop(clause.body(), evaluation)? {
-        Some(report) => Derived {
+    let (stop, comparison) = decision_end(graph, clause.body(), evaluation)?;
+    Ok(Some(match (stop, comparison) {
+        (Some(report), _) => Derived {
             basis: SettlementBasis::decisive(*truth),
             record: Some(SeparatingWitnessRecord::from_stop(report)),
         },
-        None => closed_scope(),
+        (None, Some((report, path))) => match evaluation.receiver_path() {
+            Some(root) => Derived {
+                basis: SettlementBasis::decisive(*truth),
+                record: Some(SeparatingWitnessRecord::from_comparison(
+                    report,
+                    path,
+                    root.clone(),
+                )),
+            },
+            None => closed_scope(),
+        },
+        (None, None) => closed_scope(),
     }))
+}
+
+/// Follow the clause's decision path and return its stopped quantifier, or
+/// its authored comparison and the occurrence keys on the path to it.
+fn decision_end<'e>(
+    graph: &CheckedGraph,
+    root: CheckedNode<'_>,
+    evaluation: &'e ClauseEvaluation,
+) -> Result<
+    (
+        Option<&'e StopReport>,
+        Option<(&'e fsl_eval::value::ComparisonReport, Vec<OccurrenceKey>)>,
+    ),
+    InternalFault,
+> {
+    let mut node = root;
+    let mut path = Vec::new();
+    loop {
+        let next = match node.kind() {
+            NodeKind::Let { body, .. } => Some(*body),
+            NodeKind::If {
+                then, otherwise, ..
+            } => {
+                let condition = recorded_decision(evaluation, node)?;
+                Some(if condition { *then } else { *otherwise })
+            }
+            NodeKind::Not(operand) => Some(*operand),
+            NodeKind::Connective(_, ConnectiveOrigin::Synthesized, _, _) => {
+                return Ok((None, None));
+            }
+            NodeKind::Connective(connective, ConnectiveOrigin::Authored, left, right) => {
+                let left_value = recorded_decision(evaluation, node)?;
+                let stopped_on_left = match connective {
+                    Connective::And | Connective::Implies => !left_value,
+                    Connective::Or => left_value,
+                };
+                Some(if stopped_on_left { *left } else { *right })
+            }
+            NodeKind::Query {
+                visit: Visit::Forall | Visit::Exists,
+                ..
+            } => {
+                return Ok((evaluation.stop(node.location()), None));
+            }
+            _ => {
+                let Some(report) = evaluation.comparison(node.location()) else {
+                    return Ok((None, None));
+                };
+                path.push(occurrence_at(graph, node.location()).ok_or_else(|| {
+                    InternalFault::new("witness", "decision-path-node-has-occurrence")
+                })?);
+                return Ok((None, Some((report, path))));
+            }
+        };
+        path.push(
+            occurrence_at(graph, node.location()).ok_or_else(|| {
+                InternalFault::new("witness", "decision-path-node-has-occurrence")
+            })?,
+        );
+        let Some(next) = next else {
+            return Err(InternalFault::new(
+                "witness",
+                "decision-path-node-has-child",
+            ));
+        };
+        node = node.at(next);
+    }
+}
+
+fn recorded_decision(
+    evaluation: &ClauseEvaluation,
+    node: CheckedNode<'_>,
+) -> Result<bool, InternalFault> {
+    evaluation
+        .decision(node.location())
+        .ok_or_else(|| InternalFault::new("witness", "decision-path-node-recorded"))
+}
+
+fn occurrence_at(
+    graph: &CheckedGraph,
+    location: &filament_semantic_value::location::ExpressionLocation,
+) -> Option<OccurrenceKey> {
+    graph
+        .occurrences()
+        .find(|(_, origin, at)| *at == location && origin.role().as_str() == "expression")
+        .map(|(key, origin, _)| OccurrenceKey::new(key.clone(), origin))
 }
 
 /// FR-265's decision-path walk from `root` over `evaluation`'s recorded
@@ -112,11 +212,7 @@ pub(crate) fn decisive_stop<'e>(
                     Connective::And | Connective::Implies => !left_value,
                     Connective::Or => left_value,
                 };
-                if stopped_on_left {
-                    left
-                } else {
-                    right
-                }
+                if stopped_on_left { left } else { right }
             }
             NodeKind::Query {
                 visit: Visit::Forall | Visit::Exists,

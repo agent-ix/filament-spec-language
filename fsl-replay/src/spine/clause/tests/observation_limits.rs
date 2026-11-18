@@ -27,9 +27,9 @@ fn limited_item(limits: ObservationLimits) -> Value {
 #[test]
 fn input_byte_limit_has_one_name_and_item_result_shape() {
     let wire: crate::spine::ObservationLimitsWire = serde_json::from_value(json!({
-        "input_bytes": LIMIT
+        "document_bytes": LIMIT
     }))
-    .expect("the request member uses the FR-255 setting suffix");
+    .expect("the request member uses ObservationLimits' document_bytes field");
     let request_limits = crate::spine::ObservationLimitsWire::resolve(Some(&wire))
         .expect("the request limit resolves");
 
@@ -56,18 +56,16 @@ fn input_byte_limit_has_one_name_and_item_result_shape() {
     assert!(actual > LIMIT, "observed size: {actual}");
 }
 
-/// Trace: FR-255-AC-3, the retired member spelling is not accepted or recognized as a setting.
+/// Trace: FR-255-AC-3, the setting name remains input_bytes while the request uses document_bytes.
 #[trace("TC-106", "FR-255-AC-3")]
 #[test]
-fn document_bytes_is_not_an_observation_setting_or_request_member() {
+fn the_request_field_maps_to_the_input_bytes_setting_name() {
     let refusal = serde_json::from_value::<crate::spine::ObservationLimitsWire>(json!({
-        "document_bytes": LIMIT
+        "input_bytes": LIMIT
     }))
     .err()
-    .expect("unknown observation limit members are refused");
-    assert!(refusal
-        .to_string()
-        .contains("unknown field `document_bytes`"));
+    .expect("the request shape does not use the setting suffix");
+    assert!(refusal.to_string().contains("unknown field `input_bytes`"));
 
     assert!(Setting::from_name("observation.document_bytes").is_none());
     assert!(Setting::from_name("observation.input_bytes").is_some());

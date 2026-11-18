@@ -21,58 +21,58 @@ use super::causes::{
 };
 use super::protocol_slot::charges::{BinderCharges, ChargeRouting, Owner, Owners};
 use super::s6a::separation::{
-    locatable, occurrence_at, InvocationBinding, Provenance, RuntimeValuePath, Separation,
-    SeparationStep, StopReport, Trail, ValuePathStep, ValuePathSubject, WitnessClaim,
+    ComparisonReport, InvocationBinding, Provenance, RuntimeValuePath, Separation, SeparationStep,
+    StopReport, Trail, ValuePathStep, ValuePathSubject, WitnessClaim, locatable, occurrence_at,
 };
 use super::slot_admission;
 use filament_checked::key::DeclarationKey;
-use filament_eval::modulo as integer_modulo;
 use filament_eval::Evaluation;
 use filament_eval::FamilyOutcome;
 use filament_eval::FamilyResult;
+use filament_eval::modulo as integer_modulo;
 use filament_eval::{
     PreconditionFailure, ProtocolReferenceUnsupported, ReferenceUnresolved, StateModelUndefined,
 };
 use filament_exact::{
-    admit_quantity_result, compare_text, BoundedQuantityType, ComparisonOperator,
-    QuantityResultInterval,
+    ArithmeticOperator, BooleanConnective, IntegerArithmetic, OrderedOperands, OrderingOperator,
+    RationalArithmetic, evaluate_boolean, evaluate_integer_arithmetic,
+    evaluate_rational_arithmetic, order_numbers, retain_boolean,
 };
-use filament_exact::{
-    compare_ieee, convert_ieee_width, evaluate_ieee, exact_to_ieee, ieee_to_exact, IeeeComparison,
-    IeeeFlags, IeeeOperation, IeeeValue, IeeeWidth,
-};
-use filament_exact::{
-    compare_keys, form, form_grouped, retain_composite, CollectionValue, CompositeValue,
-    FieldValue, ObjectId, ObjectReference, OptionValue, Quantity, UnionValue, Value, ValueType,
-};
-use filament_exact::{
-    evaluate_boolean, evaluate_integer_arithmetic, evaluate_rational_arithmetic, order_numbers,
-    retain_boolean, ArithmeticOperator, BooleanConnective, IntegerArithmetic, OrderedOperands,
-    OrderingOperator, RationalArithmetic,
-};
-use filament_exact::{evaluate_decimal, Decimal, DecimalOperation, DecimalType};
 use filament_exact::{
     BoundViolation, CardinalityBound, Charge, ChargePoint, CollectionKind, Incomplete, Integer,
     LimitKind, Meter, PopulationId,
 };
+use filament_exact::{
+    BoundedQuantityType, ComparisonOperator, QuantityResultInterval, admit_quantity_result,
+    compare_text,
+};
+use filament_exact::{
+    CollectionValue, CompositeValue, FieldValue, ObjectId, ObjectReference, OptionValue, Quantity,
+    UnionValue, Value, ValueType, compare_keys, form, form_grouped, retain_composite,
+};
+use filament_exact::{Decimal, DecimalOperation, DecimalType, evaluate_decimal};
 use filament_exact::{DivisionMember, IntegerDomain};
 use filament_exact::{EffectiveId, NodeKey};
 use filament_exact::{FloatType, Rational};
-use filament_exact::{Outcome, Refusal, Undefined};
-use filament_semantic_value::catalog::{render_identity, InternalFault};
-use filament_semantic_value::declaration::{
-    operand_value, CompositeShape, EqualityOperator, FieldDeclaration, FieldRef, TypeEnvironment,
+use filament_exact::{
+    IeeeComparison, IeeeFlags, IeeeOperation, IeeeValue, IeeeWidth, compare_ieee,
+    convert_ieee_width, evaluate_ieee, exact_to_ieee, ieee_to_exact,
 };
-use filament_semantic_value::enumeration::{compare_enum, EnumMemberIndex};
+use filament_exact::{Outcome, Refusal, Undefined};
+use filament_semantic_value::catalog::{InternalFault, render_identity};
+use filament_semantic_value::declaration::{
+    CompositeShape, EqualityOperator, FieldDeclaration, FieldRef, TypeEnvironment, operand_value,
+};
+use filament_semantic_value::enumeration::{EnumMemberIndex, compare_enum};
 use filament_semantic_value::location::ExpressionLocation as Location;
 use filament_semantic_value::loss::{LocatedLoss, ValueLoss};
 use filament_semantic_value::quantity::{
-    compare_quantity, convert_quantity, evaluate_quantity_unit, ConvertedValue, QuantityOperation,
-    QuantityTarget, UnitScope,
+    ConvertedValue, QuantityOperation, QuantityTarget, UnitScope, compare_quantity,
+    convert_quantity, evaluate_quantity_unit,
 };
 use filament_semantic_value::relationship_extent::Resolution;
-use filament_semantic_value::stop::{outcome_from_stop, outcome_into_stop, Stop};
-use fsl_foundation::diagnostic::{kernel_refusal_record, Locus, RefusalRecord};
+use filament_semantic_value::stop::{Stop, outcome_from_stop, outcome_into_stop};
+use fsl_foundation::diagnostic::{Locus, RefusalRecord, kernel_refusal_record};
 use fsl_foundation::source::provenance::SourceRegion;
 use fsl_semantics::check::{CheckedGraph, DispatchTable, FormedUnits, Operator, Scope, Slot};
 #[cfg(test)]
@@ -81,7 +81,7 @@ use fsl_semantics::model::object_environment::{ObjectEnvironment, ObservedRead};
 use fsl_semantics::model::observation::OutOfRange;
 use fsl_semantics::model::population::PopulationBinding;
 use fsl_semantics::value::divide as integer_divide;
-use fsl_semantics::value::model_query::{evaluate_all_instances, evaluate_lookup, ModelQueryHalt};
+use fsl_semantics::value::model_query::{ModelQueryHalt, evaluate_all_instances, evaluate_lookup};
 use node_source::NodeSource;
 pub(crate) use world::World;
 
@@ -164,8 +164,8 @@ struct LocatedStop {
 }
 
 use crate::value::collections::{
-    self, charge_element, charge_visit, retain_scalar, Absorbed, Flow, Iteration as IterationState,
-    Sequence, Shape, Spec,
+    self, Absorbed, Flow, Iteration as IterationState, Sequence, Shape, Spec, charge_element,
+    charge_visit, retain_scalar,
 };
 use crate::value::composite::{self, construct_record, construct_tuple, present_slots, read_field};
 
@@ -1126,6 +1126,33 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             && self.frames.len() == 1
             && self.iterations == 0
             && self.imported.is_empty()
+    }
+
+    /// FR-265: retain a completed authored comparison on the claim's own
+    /// level, alongside its result and operands.
+    fn note_comparison(&mut self, node: N, left: &Value, right: &Value, result: bool) {
+        if !self.on_claim_level() || node.is_ordering_part() {
+            return;
+        }
+        let Some(location) = node.location() else {
+            return;
+        };
+        let Some(graph) = self.world.graph() else {
+            return;
+        };
+        let Some(comparison) = occurrence_at(graph, location, Some(Operator::Binary)) else {
+            return;
+        };
+        if let Some(trail) = self.trail.as_mut() {
+            trail.compared(
+                location,
+                ComparisonReport {
+                    comparison,
+                    operands: [left.clone(), right.clone()],
+                    result,
+                },
+            );
+        }
     }
 
     /// Evaluate against `package` from now on, returning the package this
@@ -2377,7 +2404,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     CollectionKind::Sequence => IndexedKind::Sequence,
                     CollectionKind::OrderedSet => IndexedKind::OrderedSet,
                     CollectionKind::Set | CollectionKind::Bag => {
-                        return Err(invariant("index-collection-kind-mismatch"))
+                        return Err(invariant("index-collection-kind-mismatch"));
                     }
                 };
                 if *kind != expected_kind
@@ -2862,7 +2889,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             NodeKind::Order(operator, kind, _, _) => {
                 let right = self.pop()?;
                 let left = self.pop()?;
-                Value::Boolean(self.order(*operator, *kind, &left, &right)?)
+                let result = self.order(*operator, *kind, &left, &right)?;
+                self.note_comparison(node, &left, &right, result);
+                Value::Boolean(result)
             }
             NodeKind::Equality(operator, checked, left_node, right_node) => {
                 let right = self.pop()?;
@@ -2878,20 +2907,22 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         && !node.at(id).value_type().admits(value)
                         && self.reads_witnessed(node.at(id))
                 };
-                match (&left, &right) {
+                let result = match (&left, &right) {
                     (Value::Integer(l), Value::Integer(r))
                         if outside_declared_range(*left_node, &left)
                             || outside_declared_range(*right_node, &right) =>
                     {
-                        Value::Boolean((l == r) == (*operator == EqualityOperator::Equal))
+                        (l == r) == (*operator == EqualityOperator::Equal)
                     }
-                    _ => Value::Boolean(outcome_into_stop(checked.evaluate(
+                    _ => outcome_into_stop(checked.evaluate(
                         self.world.types(),
                         &left,
                         &right,
                         self.meter,
-                    ))?),
-                }
+                    ))?,
+                };
+                self.note_comparison(node, &left, &right, result);
+                Value::Boolean(result)
             }
             NodeKind::IeeeNumericEquality(_, _) => {
                 let right = self.pop()?;
@@ -2908,10 +2939,17 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     if !self.world.has_ieee_profile() {
                         return Err(invariant("ieee-profile-unresolved"));
                     }
-                    Value::Boolean(outcome_into_stop(
+                    let result = outcome_into_stop(
                         compare_ieee(IeeeComparison::NumericEqual, left, right, self.meter)
                             .map_err(|_| invariant("ieee-operation-rejected"))?,
-                    )?)
+                    )?;
+                    self.note_comparison(
+                        node,
+                        &Value::Float(left),
+                        &Value::Float(right),
+                        result,
+                    );
+                    Value::Boolean(result)
                 } else {
                     // FR-397 "Evaluate once": the numeric-equality parts of
                     // an ordering's composition add no charge. The decision
@@ -4935,7 +4973,7 @@ mod union_case;
 
 #[cfg(test)]
 mod tests {
-    use crate::value::composite::{construction_fault_identifier, ConstructionSite};
+    use crate::value::composite::{ConstructionSite, construction_fault_identifier};
     use filament_exact::IntegerInterval;
     use filament_semantic_value::declaration::{
         Component, ConstructionCause, ConstructionRefusal, StorageRequest, StorageUnit,
@@ -5006,10 +5044,10 @@ mod tests {
         DomainPackage, DomainPackageRecord, DomainPackageRef, Extent, ObjectTypeRecord,
         PopulationRecord,
     };
-    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
+    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
     use fsl_semantics::model::population::{
-        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
-        PopulationDocument, PopulationMember,
+        AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, PopulationDocument,
+        PopulationMember, admit_binding,
     };
     use ix_trace_rs::trace;
 
@@ -5264,8 +5302,8 @@ mod tests {
     /// package and `F`'s checked identity, so a test can call
     /// [`fsl_semantics::check::ValueFunctionFamily::evaluate`] directly -- the S6a
     /// seam itself, bypassing `CheckedPackage::call`'s admission.
-    pub(super) fn population_function_package(
-    ) -> (fsl_package::CheckedPackage, filament_exact::NodeKey) {
+    pub(super) fn population_function_package()
+    -> (fsl_package::CheckedPackage, filament_exact::NodeKey) {
         let domain_package = domain_package("bundle.qsl174-ac10-seam");
         let view = match normalize(&domain_package, ModelNormalizationLimits::UNLIMITED) {
             NormalizeOutcome::Completed(view) => view,
@@ -5914,31 +5952,31 @@ mod tests {
         );
         let optional = ValueType::option(range);
         let outside = FieldValue::Present(Value::Integer(Integer::from(-1_i64)));
-        assert!(CheckedMachine::project(
-            &TypeEnvironment::default(),
-            &outside,
-            true,
-            &optional,
-            true
-        )
-        .is_ok());
-        assert!(CheckedMachine::project(
-            &TypeEnvironment::default(),
-            &outside,
-            true,
-            &optional,
-            false
-        )
-        .is_err());
+        assert!(
+            CheckedMachine::project(&TypeEnvironment::default(), &outside, true, &optional, true)
+                .is_ok()
+        );
+        assert!(
+            CheckedMachine::project(
+                &TypeEnvironment::default(),
+                &outside,
+                true,
+                &optional,
+                false
+            )
+            .is_err()
+        );
         let wrong_kind = FieldValue::Present(Value::Boolean(true));
-        assert!(CheckedMachine::project(
-            &TypeEnvironment::default(),
-            &wrong_kind,
-            true,
-            &optional,
-            false
-        )
-        .is_err());
+        assert!(
+            CheckedMachine::project(
+                &TypeEnvironment::default(),
+                &wrong_kind,
+                true,
+                &optional,
+                false
+            )
+            .is_err()
+        );
     }
     /// FR-106 check 6.5: an equality compares an out-of-type integer by
     /// value only when the operand reads a witnessed slot. Two integers
@@ -6003,7 +6041,7 @@ mod tests {
     fn a_float_ordering_records_no_decision_but_an_authored_connective_does() {
         use filament_exact::{FloatType, IeeeValue, IeeeWidth};
         use fsl_forms::BinaryOperator;
-        use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
+        use fsl_semantics::value::{DefinitionRole, admit_ieee_profile};
         let package = fsl_package::CheckedPackage::link(
             {
                 let mut declarations = PackageDeclarations::new(
@@ -6172,7 +6210,7 @@ mod tests {
     fn absent_optional_and_empty_sequence_edges_have_no_outgoing_edge() {
         use crate::test_ids::{effective_id, universe_id};
         use filament_exact::{
-            from_admitted, CollectionKind, CollectionType, FieldValue, ObjectId, Presence,
+            CollectionKind, CollectionType, FieldValue, ObjectId, Presence, from_admitted,
         };
 
         let target = effective_id("Node");

@@ -9,17 +9,17 @@
 //! domains are in `witness_member`.
 
 use super::frame::object;
-use super::frame_replay::{packet, request, unit_for, witness_source, Unit};
+use super::frame_replay::{Unit, packet, request, unit_for, witness_source};
 use super::*;
-use crate::execute::{separate, settle_separation, stopped_reason, SeparationOutcome};
+use crate::execute::{SeparationOutcome, separate, settle_separation, stopped_reason};
 use crate::proof_result::SettlementBasis;
 use crate::result::{DecidingElement, SeparatingWitnessRecord};
-use crate::witness::{derive_separating_witness, Derived};
+use crate::witness::{Derived, derive_separating_witness};
 use crate::{
-    replay_state_clause, DisagreementCause, InputSettlement, ObservationIdentity, ReplayRefusal,
-    ReplayResult, ReplaySource, RuntimeValuePath, SeparationReason, SeparationStep,
-    StateClauseCounterexample, StateClauseReplayResult, ValuePathStep, ValuePathSubject, Verdict,
-    WitnessEnvelope, WitnessFailure, WitnessSettlement,
+    DisagreementCause, InputSettlement, ObservationIdentity, ReplayRefusal, ReplayResult,
+    ReplaySource, RuntimeValuePath, SeparationReason, SeparationStep, StateClauseCounterexample,
+    StateClauseReplayResult, ValuePathStep, ValuePathSubject, Verdict, WitnessEnvelope,
+    WitnessFailure, WitnessSettlement, replay_state_clause,
 };
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::checking::CheckMode;
@@ -142,6 +142,29 @@ fn witness_unit_text() -> String {
 
 fn witness_unit() -> Unit {
     unit_for(witness_unit_text(), config_version_domain_document())
+}
+
+fn comparison_witness_unit_text() -> String {
+    let unit = witness_unit_text()
+        .lines()
+        .filter(|line| {
+            !line.starts_with("invariant FloatOrder")
+                && !line.starts_with("invariant FloatNot")
+                && !line.starts_with("invariant FloatLet")
+                && !line.starts_with("invariant FloatOrOperand")
+                && !line.starts_with("invariant FloatAndOperand")
+                && !line.starts_with("invariant FloatImpliesOperand")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    unit
+}
+
+fn comparison_witness_unit() -> Unit {
+    unit_for(
+        comparison_witness_unit_text(),
+        config_version_domain_document(),
+    )
 }
 
 #[trace("FR-003-AC-9")]
@@ -1116,7 +1139,8 @@ fn evaluate(
 fn derive(unit: &Unit, clause: &str, snapshot: Snapshot, self_key: &str) -> Option<Derived> {
     let (_, evaluation, _) = evaluate(unit, clause, snapshot, self_key, 1_000_000);
     let declaration = unit.compiled.package.graph().state_clause(clause).unwrap();
-    derive_separating_witness(declaration, &evaluation).expect("the derivation completes")
+    derive_separating_witness(unit.compiled.package.graph(), declaration, &evaluation)
+        .expect("the derivation completes")
 }
 
 /// The occurrence key of the node `operator` lowers to at `path` in
@@ -1167,6 +1191,9 @@ fn built_record(
 ) -> SeparatingWitnessRecord {
     SeparatingWitnessRecord {
         quantifier: Some(occurrence(unit, clause, quantifier, Operator::Quantify)),
+        deciding_comparison: None,
+        operands: None,
+        decision_path: None,
         deciding_element: DecidingElement::Value(element),
         index: Some(index),
         value_path: RuntimeValuePath {
@@ -1494,7 +1521,7 @@ fn tc_740_no_boolean_derives_no_basis() {
         .state_clause("AllBelow")
         .unwrap();
     assert_eq!(
-        derive_separating_witness(declaration, &evaluation).unwrap(),
+        derive_separating_witness(unit.compiled.package.graph(), declaration, &evaluation).unwrap(),
         None
     );
     assert_eq!(
@@ -2561,7 +2588,7 @@ fn tc_744_every_deciding_element_kind_round_trips() {
 /// that unit's id.
 fn metre_package() -> (fsl_package::CheckedPackage, filament_exact::UnitId) {
     use fsl_semantics::value::{
-        admit_unit_graph, DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage,
+        DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage, admit_unit_graph,
     };
     let owner = json!({"kind": "source", "authority": "agent-ix", "identity": "example", "package_name": "example"});
     let length = DimensionPreimage::from_json(json!({
@@ -2998,11 +3025,13 @@ fn tc_1040_the_elements_of_a_built_list_are_read_at_their_index() {
 /// its operand values and the path to it.
 #[trace("TC-2981", "FR-265-AC-11")]
 #[trace("TC-2981", "FR-265-AC-12")]
+#[trace("TC-2981", "FR-265-AC-13")]
+#[trace("TC-2981", "FR-267-AC-23")]
+#[trace("TC-2981", "FR-268-AC-5")]
 #[trace("FSpec-TC-2014", "FSpec-FR-351-AC-9")]
 #[test]
-#[ignore = "QSL-2428: a separating witness ending at a deciding comparison is not implemented yet"]
 fn tc_2981_a_path_ending_at_a_comparison_records_the_comparison_and_its_operands() {
-    let unit = witness_unit();
+    let unit = comparison_witness_unit();
     let Some(Derived {
         basis: SettlementBasis::DecisiveCounterexample,
         record: Some(record),
@@ -3010,19 +3039,201 @@ fn tc_2981_a_path_ending_at_a_comparison_records_the_comparison_and_its_operands
     else {
         panic!("MatchesParent over high ends at its `=` and is decisive");
     };
-    let text = format!("{record:?}");
-    assert!(text.contains("deciding_comparison"), "{text}");
-    assert!(text.contains("operands"), "{text}");
-    assert!(text.contains("decision_path"), "{text}");
-    assert!(text.contains("600"), "{text}");
+    let equality = occurrence(&unit, "MatchesParent", &[1], Operator::Binary);
+    assert_eq!(record.deciding_comparison, Some(equality.clone()));
+    let operands = record.operands.as_ref().expect("comparison operands");
+    assert!(crate::result::same_element(&operands[0], &integer(600)));
+    assert!(crate::result::same_element(&operands[1], &integer(0)));
+    assert_eq!(
+        record.decision_path,
+        Some(vec![
+            occurrence(&unit, "MatchesParent", &[], Operator::Binary),
+            equality.clone(),
+        ])
+    );
+    assert_eq!(
+        record.deciding_element,
+        DecidingElement::Value(Value::Boolean(false))
+    );
+    assert!(record.quantifier.is_none() && record.index.is_none());
+    assert!(record.trace_position.is_none());
+    assert!(record.value_path.steps.is_empty());
+    assert_eq!(record.value_path.observation.identity, "high");
+    assert!(matches!(
+        &record.value_path.subject,
+        ValuePathSubject::Object(reference) if reference.object().as_str() == "mid"
+    ));
+    let (_, comparison_evaluation, _) =
+        evaluate(&unit, "MatchesParent", Snapshot::High, "mid", 1_000_000);
+    let comparison_reports = unit
+        .compiled
+        .package
+        .graph()
+        .occurrences()
+        .filter_map(|(_, _, location)| {
+            matches!(
+                &location.origin,
+                filament_semantic_value::location::ExpressionOwner::StateClause {
+                    clause: name,
+                    ..
+                } if name == "MatchesParent"
+            )
+            .then(|| comparison_evaluation.comparison(location))
+            .flatten()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(comparison_reports.len(), 1);
+    assert_eq!(comparison_reports[0].comparison, equality);
+    assert_eq!(
+        super::witness_member::comparison_report_count_current("MemberAll", &[0, 600, 700]),
+        0
+    );
+    let (observations, _, mut meter) =
+        evaluate(&unit, "MatchesParent", Snapshot::High, "mid", 1_000_000);
+    assert_eq!(
+        separate(
+            &unit.compiled.package,
+            "MatchesParent",
+            &observations,
+            &record,
+            &[],
+            &mut meter,
+        )
+        .unwrap(),
+        SeparationOutcome::Holds
+    );
+    let mut missing_path = record.clone();
+    missing_path.decision_path = Some(vec![equality.clone()]);
+    assert_eq!(
+        separate(
+            &unit.compiled.package,
+            "MatchesParent",
+            &observations,
+            &missing_path,
+            &[],
+            &mut meter,
+        )
+        .unwrap(),
+        SeparationOutcome::Failed(SeparationStep::Quantifier, SeparationReason::Unmet)
+    );
+    let mut outside_comparison = record.clone();
+    outside_comparison.deciding_comparison = Some(occurrence(
+        &unit,
+        "AtLeastParent",
+        &[1],
+        Operator::Binary,
+    ));
+    assert_eq!(
+        separate(
+            &unit.compiled.package,
+            "MatchesParent",
+            &observations,
+            &outside_comparison,
+            &[],
+            &mut meter,
+        )
+        .unwrap(),
+        SeparationOutcome::Failed(SeparationStep::Quantifier, SeparationReason::Unmet)
+    );
+    let mut wrong_operands = record.clone();
+    wrong_operands.operands = Some([integer(600), integer(1)]);
+    assert_eq!(
+        separate(
+            &unit.compiled.package,
+            "MatchesParent",
+            &observations,
+            &wrong_operands,
+            &[],
+            &mut meter,
+        )
+        .unwrap(),
+        SeparationOutcome::Failed(SeparationStep::Element, SeparationReason::Unmet)
+    );
+    let mut wrong_result = record.clone();
+    wrong_result.deciding_element = DecidingElement::Value(Value::Boolean(true));
+    assert_eq!(
+        separate(
+            &unit.compiled.package,
+            "MatchesParent",
+            &observations,
+            &wrong_result,
+            &[],
+            &mut meter,
+        )
+        .unwrap(),
+        SeparationOutcome::Failed(SeparationStep::Body, SeparationReason::Unmet)
+    );
+    let (selection, snapshots) = selection("MatchesParent", Snapshot::High, "mid");
+    let domain = config_version_domain_document();
+    let packages = fsl_semantics::model::intake::package_input([domain.as_slice()]).unwrap();
+    let mut request = config_version_request_for(
+        comparison_witness_unit_text(),
+        packages,
+        "comparison-witness.native",
+        ClauseRunSelection::Clause(selection),
+    );
+    request.snapshots = snapshots;
+    request.accounting = default_accounting(1_000_000);
+    let report = run_clause(request).expect("the comparison clause runs");
+    let bytes = crate::spine::write_clause_run_result(&report).unwrap();
+    let wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        wire["witness"]["deciding_comparison"]["node_id"],
+        crate::id_text::node_text(equality.node()).unwrap()
+    );
+    assert_eq!(wire["witness"]["operands"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        wire["witness"]["decision_path"].as_array().unwrap().len(),
+        2
+    );
+    let refuses_member = |invalid: serde_json::Value, member: &str| {
+        let error =
+            crate::spine::read_native_run_result(&serde_json::to_vec(&invalid).unwrap())
+                .err()
+                .expect("a malformed comparison witness member is refused");
+        assert!(error.to_string().contains(member), "{member}: {error}");
+    };
+    let mut missing_operands = wire.clone();
+    missing_operands["witness"]
+        .as_object_mut()
+        .unwrap()
+        .remove("operands");
+    refuses_member(missing_operands, "operands");
+    let mut one_operand = wire.clone();
+    let first_operand = one_operand["witness"]["operands"][0].clone();
+    one_operand["witness"]["operands"] = serde_json::json!([first_operand]);
+    refuses_member(one_operand, "operands");
+    let mut has_quantifier = wire.clone();
+    has_quantifier["witness"]["quantifier"] =
+        has_quantifier["witness"]["decision_path"][0].clone();
+    refuses_member(has_quantifier, "quantifier");
+    let crate::spine::NativeRunResult::Clause(read) =
+        crate::spine::read_native_run_result(&bytes).unwrap()
+    else {
+        panic!("the report reads as a clause result");
+    };
+    assert_eq!(
+        read.witness(&unit.compiled.package).unwrap(),
+        report.witness
+    );
+    let replay = replay_with(
+        &unit,
+        "MatchesParent",
+        Some(record.clone()),
+        witness_source(),
+    )
+    .expect("the authored comparison record replays");
+    let arm = witness_arm(&replay);
+    assert_eq!(
+        arm.settlement(),
+        WitnessSettlement::ReproducedWithEvaluatedWitness
+    );
+    assert_eq!(arm.record(), Some(&record));
     assert!(
-        matches!(
-            derive(&unit, "AtLeastParent", Snapshot::High, "mid"),
-            Some(Derived {
-                basis: SettlementBasis::DecisiveWitness,
-                record: Some(_),
-            })
-        ),
+        matches!(derive(&unit, "AtLeastParent", Snapshot::High, "mid"), Some(Derived {
+            basis: SettlementBasis::DecisiveWitness,
+            record: Some(record),
+        }) if record.operands.as_ref().is_some_and(|operands| crate::result::same_element(&operands[0], &integer(600)) && crate::result::same_element(&operands[1], &integer(0))) && record.deciding_element == DecidingElement::Value(Value::Boolean(true))),
         "AtLeastParent over high ends at its `>=` and is a decisive witness"
     );
     // With no parent the walk ends at `present(self.parent)`, a call.

@@ -61,8 +61,9 @@ pub use protocol_slot::{
     BINDER_ACCOUNTING_VERSION,
 };
 pub use s6a::separation::{
-    ClauseEvaluation, ClauseRead, InvocationBinding, ObservationIdentity, RuntimeValuePath,
-    Separation, SeparationStep, StopReport, ValuePathStep, ValuePathSubject, WitnessClaim,
+    ClauseEvaluation, ClauseRead, ComparisonReport, InvocationBinding, ObservationIdentity,
+    RuntimeValuePath, Separation, SeparationStep, StopReport, ValuePathStep, ValuePathSubject,
+    WitnessClaim,
 };
 pub use value_invariants::{ValueInvariantEvaluation, ValueInvariantOutcome, ValueInvariantResult};
 

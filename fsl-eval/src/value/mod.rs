@@ -72,28 +72,28 @@ pub use expression::collection_write::{Provenance, WrittenCollection};
 pub(crate) use expression::evaluate_over_admitted_environment;
 pub use expression::object_environment_refusal;
 pub use expression::{
+    AdmittedEvaluationViewEvaluation, ApplicationObservation, ApplicationObservationOptions,
+    BINDER_ACCOUNTING_VERSION, BinderCharges, ChargeAmounts, CheckedPackageEvaluation,
+    ClauseEvaluation, ClauseRead, ClauseSetEntry, ClauseSetEvaluation, ClauseSetOutcome,
+    ComparisonReport, FrameEvaluation, HoldsAtom, HoldsBinders, InvalidQualifiedName,
+    InvocationBinding, ObservationIdentity, OperationCharge, OperationLedger, PackageClosure,
+    PackageTask, ProtocolReferenceOccurrence, ProtocolSlot, ProtocolSlotEvaluation,
+    ProtocolSuppliedValue, ProtocolSupply, QualifiedName, RuntimeValuePath, Separation,
+    SeparationStep, StopReport, SuppliedValue, TruncatedOperationLedger, ValueInvariantEvaluation,
+    ValueInvariantOutcome, ValueInvariantResult, ValuePathStep, ValuePathSubject, WitnessClaim,
     admit_arguments, evaluate_activation_guard, evaluate_activation_guard_at_absent_key,
     evaluate_capture, evaluate_closed_with_frame, evaluate_history_update, evaluate_join_predicate,
     evaluate_operation_contract, evaluate_protocol_slot, evaluate_refinement_row, evaluate_reward,
     evaluate_state_predicate, evaluate_state_predicate_at_absent_key,
     evaluate_state_predicate_with, evaluate_terminal_predicate, input_refusal_code, refusal_record,
     supplied_stop_cause, supplied_stop_code, undefined_contract_code,
-    AdmittedEvaluationViewEvaluation, ApplicationObservation, ApplicationObservationOptions,
-    BinderCharges, ChargeAmounts, CheckedPackageEvaluation, ClauseEvaluation, ClauseRead,
-    ClauseSetEntry, ClauseSetEvaluation, ClauseSetOutcome, FrameEvaluation, HoldsAtom,
-    HoldsBinders, InvalidQualifiedName, InvocationBinding, ObservationIdentity, OperationCharge,
-    OperationLedger, PackageClosure, PackageTask, ProtocolReferenceOccurrence, ProtocolSlot,
-    ProtocolSlotEvaluation, ProtocolSuppliedValue, ProtocolSupply, QualifiedName, RuntimeValuePath,
-    Separation, SeparationStep, StopReport, SuppliedValue, TruncatedOperationLedger,
-    ValueInvariantEvaluation, ValueInvariantOutcome, ValueInvariantResult, ValuePathStep,
-    ValuePathSubject, WitnessClaim, BINDER_ACCOUNTING_VERSION,
 };
-pub use expression::{bare_evaluate_frame, PackageOperations};
+pub use expression::{PackageOperations, bare_evaluate_frame};
 
 #[cfg(test)]
 mod map_order_tests {
     use super::{map_entry, ordered_map_entries};
-    use filament_exact::{from_admitted_map, Integer, MapType, Value, ValueType};
+    use filament_exact::{Integer, MapType, Value, ValueType, from_admitted_map};
     use ix_trace_rs::trace;
 
     fn integer(value: i64) -> Value {

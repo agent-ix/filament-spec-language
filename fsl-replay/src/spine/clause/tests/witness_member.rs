@@ -5,8 +5,10 @@
 //! stored member, in the observation the claim reads it from.
 
 use super::*;
+use super::frame_replay::unit_for;
 use crate::{ObservationIdentity, RuntimeValuePath, ValuePathStep, ValuePathSubject};
 use fsl_semantics::model::observation::SelectedObject;
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
 
 /// The claims over `history`: a direct read, a set conversion of it, and a
 /// precondition of `attemptUpdate` reading it.
@@ -148,6 +150,57 @@ pub(super) fn run_current(clause: &str, history: &[i64]) -> super::super::Clause
     ));
     request.snapshots.insert(label.clone(), bytes);
     run_clause(request).expect("a well-formed request always reports")
+}
+
+/// Count authored comparisons retained on an invariant's own level.
+pub(super) fn comparison_report_count_current(clause: &str, history: &[i64]) -> usize {
+    let (label, bytes) = document_ref_and_bytes("member-current", |label| {
+        snapshot(label, "current", history)
+    });
+    let selection = config_version_current_selection(clause, label.clone(), "mid");
+    let snapshots = [(label, bytes)].into_iter().collect::<BTreeMap<_, _>>();
+    let invocations = BTreeMap::new();
+    let unit = unit_for(unit_text(), history_domain_document());
+    let graph = unit.compiled.package.graph();
+    let declaration = graph.state_clause(clause).expect("the clause is declared");
+    let packages = fsl_semantics::model::intake::package_input([unit.domain_document.as_slice()])
+        .expect("the model package admits");
+    let observations = admit_clause_observations(
+        graph,
+        declaration,
+        &packages,
+        ModelNormalizationLimits::default(),
+        &Provisions {
+            snapshots: &snapshots,
+            invocations: &invocations,
+        },
+        &selection,
+        ObservationLimits::default(),
+    )
+    .expect("the selected observation admits");
+    let evaluation = unit
+        .compiled
+        .package
+        .evaluate_clause(
+            &QualifiedName::unqualified(clause).expect("the clause name is unqualified"),
+            &observations,
+            &mut Meter::new(default_accounting(1_000_000)),
+        )
+        .expect("the clause evaluates");
+    graph
+        .occurrences()
+        .filter_map(|(_, _, location)| {
+            matches!(
+                &location.origin,
+                filament_semantic_value::location::ExpressionOwner::StateClause {
+                    clause: name,
+                    ..
+                } if name == clause
+            )
+            .then(|| evaluation.comparison(location))
+            .flatten()
+        })
+        .count()
 }
 
 /// `MemberPre` over a pre-call observation whose pre snapshot holds
