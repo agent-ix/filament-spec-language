@@ -40,6 +40,7 @@ mod evaluation_ignores_display_strings;
 mod evaluation_rulings;
 mod fairness_kernels;
 mod family_sums;
+mod finite_hyper;
 mod finite_simulation;
 mod finite_window;
 mod float_callables;
