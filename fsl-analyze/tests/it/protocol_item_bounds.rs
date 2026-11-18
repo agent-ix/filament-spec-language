@@ -65,6 +65,17 @@ fn assert_refused(item: &Value, cause: &str, member: &str) {
     );
 }
 
+fn assert_invalid_role(item: &Value) {
+    assert_eq!(item["category"], "refusal", "{item}");
+    assert_eq!(item["record"]["backend"], "protocol-analysis", "{item}");
+    assert_eq!(item["record"]["result"], "declined", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "invalid-input", "{item}");
+    assert_eq!(
+        item["record"]["cause"]["code"], "invalid_runtime_input",
+        "{item}"
+    );
+}
+
 /// FR-636-AC-5: complete items settle under both profile words.
 #[trace("TC-2988", "FR-636-AC-5")]
 #[test]
@@ -129,4 +140,41 @@ fn an_out_of_range_profile_or_bound_is_refused_naming_it() {
     assert_refused(&run.item(1), "invalid-value", "temporal.max_history");
     assert_refused(&run.item(2), "invalid-value", "temporal.max_depth");
     assert_refused(&run.item(3), "unknown-member", "temporal.max_history");
+}
+
+/// FR-636's upper-bound range settles only the affected items; an unresolved
+/// role uses projection's invalid-role refusal instead of an unsupported route.
+#[trace("TC-2988", "FR-636-AC-7")]
+#[test]
+fn upper_bound_and_unknown_role_refusals_are_item_local() {
+    const ABOVE_SAFE_INTEGER: u64 = 9_007_199_254_740_992;
+
+    let mut unknown_role = projection(json!({"profile": "bounded-static", "max_depth": 16}));
+    unknown_role["options"]["role"] = json!("NotARole");
+    let run = run_items(
+        "protocol-bounds-upper-and-role",
+        vec![
+            realizability(json!({
+                "profile": "bounded-static",
+                "max_depth": 16,
+                "max_history": ABOVE_SAFE_INTEGER
+            })),
+            realizability(json!({
+                "profile": "bounded-static",
+                "max_depth": ABOVE_SAFE_INTEGER,
+                "max_history": 16
+            })),
+            realizability(json!({
+                "profile": "bounded-static",
+                "max_depth": 16,
+                "max_history": 16
+            })),
+            unknown_role,
+        ],
+    );
+    assert_eq!(run.exit, 20, "{}", run.document());
+    assert_refused(&run.item(0), "invalid-value", "temporal.max_history");
+    assert_refused(&run.item(1), "invalid-value", "temporal.max_depth");
+    assert_eq!(label(&run.item(2)), "proved", "{}", run.item(2));
+    assert_invalid_role(&run.item(3));
 }

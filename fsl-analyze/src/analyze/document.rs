@@ -550,9 +550,11 @@ count_members! {
     read_max_solver_time => "temporal.limits.max_solver_time",
 }
 
-/// `temporal.max_depth`: a count from 0 to 2^53 - 1 that fits `usize`.
+/// `temporal.max_depth`: retain oversized integers for protocol-analysis
+/// items, which settle them per item; other item validation remains at its
+/// existing request boundary.
 fn read_max_depth<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Option<u64>, D::Error> {
-    count(decoder, "temporal.max_depth", 0).map(Some)
+    u64::deserialize(decoder).map(Some)
 }
 
 /// FSpec FR-331's `temporal.limits`, each member a positive count.
@@ -1509,7 +1511,10 @@ fn resolve_one(
         if temporal.max_depth.is_none() {
             return invalid_member(index, name, "temporal.max_depth");
         }
-        if temporal.max_depth == Some(0) {
+        if temporal
+            .max_depth
+            .is_some_and(|bound| bound == 0 || bound > MAX_COUNT || usize::try_from(bound).is_err())
+        {
             return invalid_member_cause(index, name, "temporal.max_depth", "invalid-value");
         }
         if temporal
@@ -1522,7 +1527,11 @@ fn resolve_one(
         if kind == Capability::Realizability && temporal.max_history.is_none() {
             return invalid_member(index, name, "temporal.max_history");
         }
-        if kind == Capability::Realizability && temporal.max_history == Some(0) {
+        if kind == Capability::Realizability
+            && temporal
+                .max_history
+                .is_some_and(|bound| bound == 0 || bound > MAX_COUNT)
+        {
             return invalid_member_cause(index, name, "temporal.max_history", "invalid-value");
         }
         if kind == Capability::LocalProjection && temporal.max_history.is_some() {
@@ -2069,7 +2078,8 @@ fn temporal_settings(selection: &TemporalSelection) -> TemporalItem {
             .item_kind
             .map_or(ItemKind::Formula, ItemKindSelection::kind),
         stutter_closure: selection.stutter_closure,
-        // The reader admits only counts that fit `usize` (`read_max_depth`).
+        // Protocol-analysis items validate their bound before reaching an
+        // engine; other items retain the existing `usize` conversion rule.
         max_depth: selection
             .max_depth
             .map(|depth| usize::try_from(depth).unwrap_or(usize::MAX)),

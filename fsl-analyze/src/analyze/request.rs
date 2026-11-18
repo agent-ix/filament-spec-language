@@ -632,13 +632,10 @@ fn protocol_analysis_work<'a>(
                 Some(fsl_semantics::check::DeclarationFamily::Protocol),
             );
         };
-        let Some(role) = checked_node_named(&v2, role_name) else {
-            return super::AnalyzeItem::unadapted(
-                item.request_index,
-                item.kind,
-                Some(fsl_semantics::check::DeclarationFamily::Protocol),
-            );
-        };
+        // Route an unresolved name through the adapter's existing
+        // `UnknownRole` invalid-value settlement. The protocol node is a
+        // valid checked identity that cannot be one of its roles.
+        let role = checked_node_named(&v2, role_name).unwrap_or_else(|| protocol_node.clone());
         let request = crate::protocol_analysis::ProjectionRequest {
             protocol: protocol_node,
             definition_key,
