@@ -43,6 +43,10 @@ const EVENTUALLY: &str = "probabilistic Eventually using inf on M over (m: M::Ms
 const TOO_LIKELY: &str = "probabilistic TooLikely using inf on M over (m: M::Msg) under Even on origin \
      { probability >= rational(99, 100) [ eventually holds(m.delivered) ] }";
 
+/// `LongRun`: the long-run fraction of delivered messages under `Even`.
+const LONG_RUN: &str = "probabilistic LongRun using inf on M over (m: M::Msg) under Even on origin \
+     { long_run_fraction holds(m.delivered) >= rational(9, 10) }";
+
 fn run(name: &str, claims: &str, items: Value) -> Value {
     let ws = Workspace::new(name);
     let request = request_over(
@@ -71,13 +75,18 @@ fn statistical_items_settle_measured_from_source() {
             json!({"type": "regenerative", "min_cycles": 1}),
         ),
     ] {
+        let (claim_name, claim) = if method == "regenerative" {
+            ("LongRun", LONG_RUN)
+        } else {
+            ("Delivered", DELIVERED)
+        };
         let item = |workers: u64| {
-            json!([{"claim": "Delivered", "probabilistic": {
+            json!([{"claim": claim_name, "probabilistic": {
                 "evidence": "statistical", "method": method_selection,
                 "seed": "7", "max_witnesses": 8, "workers": workers}}])
         };
-        let one = run(&format!("stat-{method}-1"), DELIVERED, item(1));
-        let four = run(&format!("stat-{method}-4"), DELIVERED, item(4));
+        let one = run(&format!("stat-{method}-1"), claim, item(1));
+        let four = run(&format!("stat-{method}-4"), claim, item(4));
         let first = &one["items"][0];
         assert_eq!(label(first), "measured", "{first}");
         assert_eq!(
