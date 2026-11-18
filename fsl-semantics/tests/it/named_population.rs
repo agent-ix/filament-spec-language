@@ -10,7 +10,7 @@ use filament_exact::{
     CardinalityBound, CollectionKind, CollectionType, Identifier, IntegerInterval, ValueType,
 };
 use fsl_foundation::bound::{DomainKey, DomainKind};
-use fsl_semantics::check::{BodyTerm, CheckedGraph, CheckedNode, LeafTerm, LiteralValue};
+use fsl_semantics::check::{BodyTerm, CheckedGraph, CheckedNode, LeafTerm, LiteralValue, NodeTag};
 use fsl_semantics::family::ClaimExtent;
 use fsl_semantics::model::clause_observation::Observation;
 use ix_trace_rs::trace;
@@ -575,9 +575,6 @@ fn reference_literal_aliases_share_one_lowered_value_term() {
         })
         .collect();
     assert_eq!(matching.len(), 1, "one interned literal term");
-    assert_eq!(
-        matching[0].node_tag(),
-        filament_semantics::check::NodeTag::Value
-    );
+    assert_eq!(matching[0].node_tag(), NodeTag::Value);
     assert_eq!(matching[0].semantic_form(), "literal");
 }
