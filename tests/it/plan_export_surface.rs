@@ -322,7 +322,6 @@ fn export(unit: &str, with_model: bool, member: Value) -> (u8, Value) {
 #[trace("FSpec-TC-1970", "FSpec-FR-811-AC-2")]
 #[trace("FSpec-TC-1970", "FSpec-FR-811-AC-3")]
 #[trace("FSpec-TC-1976", "FSpec-FR-817-AC-3")]
-#[ignore = "QSL-1979: the export fidelity floor is not implemented yet"]
 fn an_export_below_its_fidelity_floor_refuses_with_no_text() {
     let request = |floor: Option<&str>| {
         let mut member =
@@ -375,7 +374,6 @@ fn export_request_rejects_unknown_members_before_run_selection() {
 #[test]
 #[trace("TC-2865", "FR-1015-AC-2")]
 #[trace("FSpec-TC-1976", "FSpec-FR-817-AC-4")]
-#[ignore = "QSL-1979: export limits are not implemented yet"]
 fn an_export_stops_at_its_output_byte_limit() {
     let (exit, value) = export(
         &low_unit(),

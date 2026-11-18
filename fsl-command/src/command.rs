@@ -575,6 +575,14 @@ struct FunctionRunData {
     requirements: Option<requirements::Requirements>,
 }
 
+/// Prepared export-only request. Package checking and target lowering are
+/// separate from function execution so `run` can export without a call.
+pub struct PreparedExport {
+    source: FormalSource,
+    models: Vec<FormalSource>,
+    request: ExportRequest,
+}
+
 /// Owned inputs passed to the driver's existing execution pipeline.
 pub struct FunctionRunInput {
     /// Admitted source with its authored labels and path.
@@ -611,6 +619,8 @@ impl PreparedFunctionRun {
 pub enum PreparedRun {
     /// A function selection for the existing execution pipeline.
     Function(PreparedFunctionRun),
+    /// FSpec FR-817 export selection, which does not require a function call.
+    Export(Box<PreparedExport>),
     /// A clause selection for the existing clause runner.
     Clause(Box<PreparedClauseRun>),
     /// FR-931: a `tl_lowering` request: the clause's valuation run, the
@@ -666,6 +676,10 @@ impl PreparedRun {
                     ),
             ),
             Self::Clause(request) => request.sources.clone(),
+            Self::Export(prepared) => crate::Sources::from_sources(
+                std::iter::once(prepared.source.source().clone())
+                    .chain(prepared.models.iter().map(|model| model.source().clone())),
+            ),
             Self::TlLowering(prepared) => prepared.sources.clone(),
         }
     }
@@ -2892,6 +2906,14 @@ fn prepare_complete_run(
     request: &wire::Request,
     source: FormalSource,
 ) -> Result<PreparedRun> {
+    if request.export.is_some()
+        && (request.tl_lowering.is_some() || request.clause.is_some() || request.call.is_some())
+    {
+        return Err(RunCause::ClauseRequest {
+            member: "export".to_owned(),
+            reason: "export is an independent run selection".to_owned(),
+        });
+    }
     if let Some(member) = &request.tl_lowering {
         return prepare_lowering(intake, request, member, source);
     }
@@ -2907,6 +2929,30 @@ fn prepare_complete_run(
         return Ok(PreparedRun::Clause(Box::new(PreparedClauseRun {
             request: Box::new(request),
             sources,
+        })));
+    }
+    if let Some(member) = &request.export {
+        if request.call.is_some() {
+            return Err(RunCause::ClauseRequest {
+                member: "export".to_owned(),
+                reason: "export-only requests cannot also carry a function call".to_owned(),
+            });
+        }
+        let export =
+            ExportRequest::read(member.clone()).map_err(|error| RunCause::ClauseRequest {
+                member: format!("export.{}", error.member()),
+                reason: error.to_string(),
+            })?;
+        let models = request
+            .models
+            .iter()
+            .enumerate()
+            .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
+            .collect::<Result<Vec<_>>>()?;
+        return Ok(PreparedRun::Export(Box::new(PreparedExport {
+            source,
+            models,
+            request: export,
         })));
     }
     if request.models.iter().any(|model| !is_domain_package(model)) {
@@ -3085,6 +3131,7 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
 fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Result<RunResult> {
     let prepared = match prepared {
         PreparedRun::Function(prepared) => prepared,
+        PreparedRun::Export(prepared) => return execute_export(*prepared),
         PreparedRun::TlLowering(prepared) => return execute_lowering(*prepared),
         PreparedRun::Clause(request) => {
             let selection = request.selection.clone();
@@ -3199,6 +3246,75 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
             ),
     );
     Ok(result)
+}
+
+fn execute_export(prepared: PreparedExport) -> Result<RunResult> {
+    let PreparedExport {
+        source,
+        models,
+        request,
+    } = prepared;
+    let package = package_name(source.source().identity());
+    let target_family = match request.profile.as_str() {
+        "filament.output.tla2/v1" => "tla",
+        "filament.output.lean4/v1" => "lean",
+        _ => unreachable!("the strict export reader admits only known profiles"),
+    };
+    let records = request
+        .obligations
+        .iter()
+        .map(|obligation| ExportRecord {
+            obligation: obligation.clone(),
+            disposition: ExportDisposition::Unrepresented,
+            conditions: Vec::new(),
+            causes: vec![serde_json::json!({"kind": "target-unrepresentable"})],
+            regions: Vec::new(),
+        })
+        .collect();
+    let generated = match target_family {
+        "tla" => output_mapping::render_tla(&package, &[]),
+        "lean" => output_mapping::render_lean(&package, &[]),
+        _ => unreachable!("target family follows profile"),
+    }
+    .map_err(|error| RunCause::ClauseRequest {
+        member: "export".to_owned(),
+        reason: format!("target text rendering failed: {error}"),
+    })?;
+    let mut outcome = ExportOutcome::new(
+        request.profile.clone(),
+        target_family.to_owned(),
+        ExportStatus::Assembled,
+        records,
+    );
+    outcome.module = Some(generated.module);
+    outcome.package = Some(ExportPackage {
+        source_package: package,
+        generator: "fsl-command 0.1.0".to_owned(),
+    });
+    outcome.target_text = Some(generated.text);
+    outcome.name_map = Some(
+        generated
+            .name_map
+            .iter()
+            .map(serde_json::to_value)
+            .collect::<std::result::Result<Vec<_>, _>>()?,
+    );
+    outcome.enforce_output_byte_limit(&request);
+    if outcome.status == ExportStatus::Assembled {
+        outcome.enforce_fidelity_floor(&request);
+    }
+    let exit_code = outcome.status.exit_code();
+    let value = outcome.into_value().map_err(RunCause::Json)?;
+    Ok(RunResult {
+        exit_code,
+        value: NativeResult::export_document(value),
+        outcome: None,
+        requirements: None,
+        sources: crate::Sources::from_sources(
+            std::iter::once(source.source().clone())
+                .chain(models.into_iter().map(|model| model.source().clone())),
+        ),
+    })
 }
 
 /// The package name a program compiles under: its source identity's
