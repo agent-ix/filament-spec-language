@@ -236,8 +236,11 @@ fn decide(members: &str, run: &str) -> String {
 /// An attempt `Tried` by `Service` with binder `attempted: binder_type`,
 /// then a two-case `choice Pick` by `Service`.
 fn attempted(binder_type: &str, visible: &str, yes: &str, no: &str) -> String {
+    // The binder reads the result, so the operation returns `binder_type`
+    // (FR-218 "Attempts").
+    let operation = if binder_type == "M::Receipt" { "undo" } else { "step" };
     format!(
-        "sequence Main {{ attempt Tried by Service on M::Node::step contracts [] \
+        "sequence Main {{ attempt Tried by Service on M::Node::{operation} contracts [] \
          as (attempted: {binder_type}) {{ true }}; \
          choice Pick by Service visible ({visible}) {{ \
          case yes when {{ {yes} }} sequence Yes {{ }} \
