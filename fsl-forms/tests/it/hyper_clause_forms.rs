@@ -280,14 +280,13 @@ fn a_relation_over_two_model_executions_builds_its_bindings_and_body() {
 }
 
 /// FR-171 "Behavior": a `hyper` clause over a declared finite trace domain
-/// builds its own form, so S3 can judge a quantifier's `of`; S2 resolves
+/// builds its own form, retaining the exact bound-token span; S2 resolves
 /// nothing.
 #[trace("TC-596", "FR-171-AC-1")]
 #[test]
 fn a_finite_trace_domain_clause_builds_its_domain_and_quantifiers() {
-    let (_, unit) = build(
-        "hyper Finite using inf over t in V::Traces bounded 4 forall trace a exists trace b of V { true }",
-    );
+    let source = "hyper Finite using inf over t in V::Traces bounded 4 forall trace a exists trace b of V { true }";
+    let (text, unit) = build(source);
     let [form] = unit.forms() else {
         panic!("one declaration");
     };
@@ -302,6 +301,7 @@ fn a_finite_trace_domain_clause_builds_its_domain_and_quantifiers() {
     assert_eq!(domain.variable.name, "t");
     assert_eq!(domain.population.name, "V::Traces");
     assert_eq!(domain.bound, 4);
+    assert_eq!(&text[domain.bound_span.start..domain.bound_span.end], "4");
     let aliases: Vec<_> = quantifiers
         .iter()
         .map(|quantifier| quantifier.alias.as_ref().map(|alias| alias.name.as_str()))
