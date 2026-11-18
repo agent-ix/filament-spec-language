@@ -374,6 +374,7 @@ fn first_diagnostic(text: &str) -> fsl_cst::CompleteDiagnostic {
 fn a_malformed_reference_literal_refuses_at_the_offending_token() {
     // (spelling, offending text, nth occurrence of it in the spelling, cause)
     for (malformed, offending, nth, cause) in [
+        ("#\"s1\"", "#", 0, CompleteCause::UnexpectedToken),
         ("M::T #\"s1\"", "#", 0, CompleteCause::UnexpectedToken),
         ("(x)#\"s1\"", "#", 0, CompleteCause::UnexpectedToken),
         ("f(x)#\"s1\"", "#", 0, CompleteCause::UnexpectedToken),
