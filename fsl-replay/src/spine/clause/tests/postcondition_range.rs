@@ -460,6 +460,18 @@ fn an_unbounded_operand_is_refused_with_infinite_ends() {
     assert!(message.contains("[-inf, +inf]"), "{message}");
 }
 
+#[trace("FSpec-FR-149-AC-29")]
+#[test]
+fn equality_sum_compile_refusal_keeps_its_range_context() {
+    let unit = format!(
+        "{HEADER}function f using v(a: Int[0, 10], b: Int[0, 10], c: Int[0, 10]): Boolean pure {{ c = a + b }}\n"
+    );
+    let message = refusal(function_site(&unit, "f"));
+    for detail in ["a + b", "[0, 20]", "Int[0,10]", "peer operand c"] {
+        assert!(message.contains(detail), "missing `{detail}` in {message}");
+    }
+}
+
 #[trace("TC-1416", "FR-577-AC-6")]
 #[test]
 fn a_strict_precondition_discharges_a_tighter_postcondition() {
