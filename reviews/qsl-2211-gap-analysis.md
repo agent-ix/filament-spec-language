@@ -53,3 +53,10 @@ FR-383-AC-69 is tagged to the package test and the expected assertions are prese
 | FND-002 | fixed | Verified closed at 3bd07b0; the pin-only delta leaves the action and boundary coverage unchanged. |
 | FND-003 | fixed | Verified closed at 3bd07b0; the pin-only delta leaves recommendation resolution and binder-read coverage unchanged. |
 | FND-004 | fixed | Verified closed at 3bd07b0; the pin-only delta leaves evaluator state and refusal coverage unchanged. |
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Verified closed at acfc0bc; the parser and acceptance assertions remain unchanged. |
+| FND-002 | fixed | Verified closed at acfc0bc; the action refusal assertions remain unchanged. |
+| FND-003 | fixed | Verified closed at acfc0bc; the recommendation resolution and binder-read assertions remain unchanged. |
+| FND-004 | fixed | Verified closed at acfc0bc; the evaluator state assertions remain unchanged, with evaluator focused tests reported 4/4 after rebase. |

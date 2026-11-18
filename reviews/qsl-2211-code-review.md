@@ -41,3 +41,7 @@ The Rust review found no additional ownership, panic, unsafe-code, concurrency, 
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-001 | fixed | Verified closed at 3bd07b0; the pin-only delta leaves the position-aware role and recommendation parsing unchanged. |
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Verified closed at acfc0bc; the main rebase and evaluator fallback cleanup do not alter contextual role/event parsing. |
