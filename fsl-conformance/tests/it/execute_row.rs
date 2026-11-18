@@ -34,7 +34,7 @@ fn incomplete_of(outcome: &CaseOutcome) -> &Incomplete {
 
 /// FR-564-AC-3: each of `execute`'s seven applicable cells returns its kind,
 /// as the typed `execute` result and as the FR-286 document.
-#[trace("TC-1390", "FR-564-AC-3")]
+#[trace("TC-1390", "FR-564-AC-3", "FR-286-AC-5")]
 #[test]
 fn execute_returns_each_applicable_kind() {
     let success = outcome_of(Verb::Execute, OutcomeKind::Success);
@@ -43,7 +43,7 @@ fn execute_returns_each_applicable_kind() {
     let written_success = written(&success);
     assert_eq!(written_success["operation"], "execute");
     assert_eq!(written_success["result"]["kind"], "completed");
-    assert_eq!(written_success["result"]["value"]["decimal"], "7");
+    assert_eq!(written_success["result"]["value"]["integer"], "7");
 
     let refusal = outcome_of(Verb::Execute, OutcomeKind::Refusal);
     assert_eq!(refusal.exit_code(), 20);
@@ -104,7 +104,7 @@ fn execute_returns_each_applicable_kind() {
 }
 
 /// A non-work counter supplied by the case reaches both execution paths.
-#[trace("TC-1390")]
+#[trace("TC-1390", "FR-286-AC-5")]
 #[test]
 fn execute_preserves_the_cases_non_work_accounting_limit() {
     let mut case = case_of(Verb::Execute, OutcomeKind::Success);
@@ -117,7 +117,7 @@ function seven using v(): Integer pure { 3 + 4 }
 "#;
     let baseline = run_case(&case).expect("the arithmetic case runs");
     assert_eq!(baseline.exit_code(), 0);
-    assert_eq!(written(&baseline)["result"]["value"]["decimal"], "7");
+    assert_eq!(written(&baseline)["result"]["value"]["integer"], "7");
 
     case.parameters.accounting.integer_bits = 0;
     let limited = run_case(&case).expect("the limited case runs");

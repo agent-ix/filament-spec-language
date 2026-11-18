@@ -21,13 +21,13 @@ use fsl_semantics::check::{FormulaNodeId, TemporalClauseNode};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::engine::DecisiveSearch;
-use super::finite_window::{evaluate_finite_window, TimestampedTrace, Valuation, WindowEvaluation};
+use super::finite_window::{TimestampedTrace, Valuation, WindowEvaluation, evaluate_finite_window};
 use super::tape::{TapeEntry, TapeLetter, TapeReading};
 use super::{
     AtomReading, CaptureReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
     TemporalRefusal, TemporalTrace, UndefinedCause,
 };
-use crate::value::{evaluate_capture, CheckedPackageEvaluation};
+use crate::value::{CheckedPackageEvaluation, evaluate_capture};
 use filament_eval::{CallFailure, Evaluation};
 
 /// Why a `holds` condition stopped the run without a reading, kept whole so
@@ -482,7 +482,7 @@ impl CarriedWindow {
                         result: Err(refusal),
                         stopped: None,
                         undefined: None,
-                    }
+                    };
                 }
             },
         };
@@ -1256,6 +1256,7 @@ mod tests {
             })),
             location: None,
             losses: Vec::new(),
+            frame_depth: 0,
         };
         let reading = ObservedLetters::reading(
             &mut stopped,
@@ -1304,6 +1305,7 @@ mod tests {
             outcome: FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(Box::new(FamilyCause))),
             location: None,
             losses: Vec::new(),
+            frame_depth: 0,
         };
         let reading = ObservedLetters::reading(
             &mut stopped,

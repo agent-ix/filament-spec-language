@@ -13,7 +13,7 @@ use fsl_package::AdmittedProtocolObservation;
 pub(crate) mod charges;
 pub(crate) mod resolve;
 
-pub use charges::{BinderCharges, ChargeAmounts, BINDER_ACCOUNTING_VERSION};
+pub use charges::{BINDER_ACCOUNTING_VERSION, BinderCharges, ChargeAmounts};
 
 /// Caller-constructible selector for one expression member of an emitted
 /// protocol node (FR-390). The fields intentionally stay public; admission
@@ -156,7 +156,7 @@ pub(crate) fn foreign_to_observation(
 pub(crate) fn reference_occurrences(
     value: &Value,
     types: &TypeEnvironment,
-) -> Vec<(Vec<PathStep>, filament_exact::ObjectReference)> {
+) -> Result<Vec<(Vec<PathStep>, filament_exact::ObjectReference)>, ()> {
     let mut references = Vec::new();
     let mut pending = vec![(value, Vec::new())];
     while let Some((value, path)) = pending.pop() {
@@ -193,6 +193,9 @@ pub(crate) fn reference_occurrences(
                     pending.push((value, nested));
                 }
             }
+            // `PathStep` has no map-value coordinate, so refusing preserves
+            // the checked reference occurrence's required typed path.
+            Value::Map(_) => return Err(()),
             Value::Union(union) => {
                 pending.extend(
                     union
@@ -210,11 +213,13 @@ pub(crate) fn reference_occurrences(
             | Value::Quantity(_)
             | Value::String(_)
             | Value::Text(_)
+            | Value::Bytes(_)
+            | Value::JsonObject(_)
             | Value::Enum(_)
             | Value::Population(_)
             | Value::Uuid(_)
             | Value::Timestamp(_) => {}
         }
     }
-    references
+    Ok(references)
 }

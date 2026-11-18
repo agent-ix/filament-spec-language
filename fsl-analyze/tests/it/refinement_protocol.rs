@@ -116,7 +116,7 @@ fn a_twice_protocol_refinement_holds_uncertified() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -136,7 +136,7 @@ fn a_twice_protocol_refinement_holds_uncertified() {
             refinement: world.refinement(),
             concrete: world.concrete_request(UNLIMITED),
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
         },
         &Cancel::new(),
         |_| unreachable!("a holding result does not need replay"),
@@ -183,7 +183,7 @@ fn a_protocol_refinement_with_hidden_fairness_state_reports_unsupported_liveness
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -274,7 +274,7 @@ fn a_stronger_concrete_assumption_never_settles_proved() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -353,7 +353,7 @@ fn protocol_scheduler_fairness_can_imply_a_concrete_assumption() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -450,7 +450,7 @@ fn one_protocol_class_does_not_imply_a_second_concrete_operation_assumption() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -580,7 +580,7 @@ fn a_protocol_product_limit_stops_assumption_decision_incomplete() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits,
@@ -656,7 +656,7 @@ fn required_strong_each_fairness_implies_concrete_weak_whole() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -695,7 +695,7 @@ fn required_weak_whole_fairness_does_not_imply_concrete_strong_each() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -820,7 +820,7 @@ fn a_satisfied_ensure_does_not_change_the_assumption_relation() {
                     proof_bounds: Vec::new(),
                 },
                 abstract_package: world.package(),
-                abstract_initial: vec![world.abstract_initial()],
+                abstract_initial: vec![world.abstract_initial()].into(),
                 abstract_protocol_binding: Some(protocol_binding()),
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
@@ -990,7 +990,7 @@ fn tso_flush_fairness_replays_against_an_unmet_inc_assumption() {
         refinement,
         concrete,
         abstract_package: &checked,
-        abstract_initial: abstract_initial.clone(),
+        abstract_initial: abstract_initial.clone().into(),
         abstract_protocol_binding: Some(fsl_analyze::model_check::AbstractProtocolBinding {
             over: abstract_over.clone(),
             capacities: Vec::new(),
@@ -1106,7 +1106,7 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -1165,7 +1165,7 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
             refinement: world.refinement(),
             concrete: world.concrete_request(UNLIMITED),
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
         },
         &Cancel::new(),
         |_| unreachable!("an assumption witness is not a counterexample"),
@@ -1216,7 +1216,7 @@ fn an_undetermined_protocol_assumption_has_a_typed_finite_witness() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![initial.clone()],
+            abstract_initial: vec![initial.clone()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -1286,7 +1286,7 @@ fn assert_refuted_and_replayed(
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -1372,7 +1372,7 @@ fn a_stuttering_peek_loop_is_protocol_observable_divergence() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -1451,7 +1451,7 @@ fn a_terminal_refusal_of_a_protocol_event_replays() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -1554,7 +1554,7 @@ fn a_refusal_is_permitted_when_one_stable_protocol_candidate_refuses() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -1601,7 +1601,7 @@ fn an_incoming_step_rule_failure_precedes_refusal_at_the_same_state() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -1657,7 +1657,7 @@ fn an_intended_protocol_terminal_mismatch_replays() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![initial.clone()],
+            abstract_initial: vec![initial.clone()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -1761,7 +1761,7 @@ fn a_concrete_terminal_success_mismatch_replays() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![initial.clone()],
+            abstract_initial: vec![initial.clone()].into(),
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -1821,7 +1821,7 @@ fn model_abstract_refinements_exclude_protocol_refusal_and_terminal_failures() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -2154,7 +2154,7 @@ fn the_engine_refuses_a_refinement_over_a_protocol() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -2181,7 +2181,7 @@ fn the_certificate_checker_refuses_a_refinement_over_a_protocol() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: model.package(),
-            abstract_initial: vec![model.abstract_initial()],
+            abstract_initial: vec![model.abstract_initial()].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -2202,7 +2202,7 @@ fn the_certificate_checker_refuses_a_refinement_over_a_protocol() {
             refinement: world.refinement(),
             concrete: world.concrete_request(UNLIMITED),
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
         },
         &certificate,
         &ModelCheckLimits::default(),
@@ -2294,7 +2294,7 @@ fn an_abstract_protocol_side_takes_its_capacity_binding_from_the_request() {
                     proof_bounds: Vec::new(),
                 },
                 abstract_package: world.package(),
-                abstract_initial: vec![world.abstract_initial()],
+                abstract_initial: vec![world.abstract_initial()].into(),
                 abstract_protocol_binding: Some(abstract_binding),
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
@@ -2313,4 +2313,57 @@ fn an_abstract_protocol_side_takes_its_capacity_binding_from_the_request() {
         )))
     ));
     assert!(check(binding(&[("K", 1)])).is_ok());
+}
+
+/// FR-630 "Request item", FR-147: with no abstract subject a protocol
+/// abstract side starts from the model states the mapping gives the concrete
+/// initial states (its open fields ranging over the abstract constraint),
+/// beside the protocol's own initial control, so the refusal case of
+/// FR-148-AC-11 reaches the same verdict as with the abstract snapshot named.
+#[trace("TC-1590", "FR-630")]
+#[test]
+fn an_absent_abstract_subject_starts_a_protocol_abstract_side_at_the_mapped_states() {
+    let source = cas_twice(false, false).replace(
+        "run sequence Main {\n\
+         attempt a1 by w on Spec::Counter::inc contracts [] as (r1: Spec::Counter) { true };\n\
+         attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Spec::Counter) { true };\n\
+         }\n\
+         finish Done as (d: Boolean) { true };",
+        "run sequence Main {\n\
+         event Seed by w as (f: Boolean) { true };\n\
+         choice Pick by w visible (f) { case offers when { f } sequence Offers { event ack by w as (worked: Boolean) { true }; } case refuses when { not f } sequence Refuses { } }\n\
+         }\n\
+         finish Done as (d: Boolean) { false };",
+    );
+    let world = World::with_internals(
+        Variant {
+            concrete_value: 0,
+            disable_begin: true,
+            peek: false,
+            ..Variant::CAS
+        },
+        &source,
+        serde_json::json!([{"refinement":"CasTwice","internal":["Spec::Twice::Seed", "Spec::Twice::Done"]}]),
+    );
+    let outcome = check_refinement(
+        RefinementCheckRequest {
+            refinement: world.refinement(),
+            concrete: ModelSubject {
+                simulation: world.concrete_request(UNLIMITED),
+                proof_bounds: Vec::new(),
+            },
+            abstract_package: world.package(),
+            abstract_initial: fsl_replay::AbstractInitial::Mapped,
+            abstract_protocol_binding: Some(protocol_binding()),
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("the abstract protocol subject is admitted");
+    assert!(
+        matches!(outcome.safety, SafetyOutcome::HoldsUncertified { .. }),
+        "the mapped initial states give the explicit-snapshot verdict: {:?}",
+        outcome.safety
+    );
 }

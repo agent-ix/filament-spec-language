@@ -732,7 +732,9 @@ fn at_edge(edge: usize) -> CertificateLocus {
 fn subject_refusal<O>(refusal: SubjectRefusal) -> ZoneCertificateRefusal<O> {
     match refusal {
         SubjectRefusal::Admission(failure) => ZoneCertificateRefusal::Admission(failure),
-        SubjectRefusal::NoUniverse => ZoneCertificateRefusal::Unbounded,
+        SubjectRefusal::NoUniverse | SubjectRefusal::Stopped(_) => {
+            ZoneCertificateRefusal::Unbounded
+        }
         SubjectRefusal::NoModels
         | SubjectRefusal::ProtocolSubject
         | SubjectRefusal::ProtocolAbstractSide => ZoneCertificateRefusal::UnsupportedItem,

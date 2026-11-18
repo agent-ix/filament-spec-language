@@ -51,9 +51,43 @@ impl Workspace {
 
     pub(crate) fn write(&self, name: &str, bytes: &[u8]) -> PathBuf {
         let path = self.dir.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("the file's directory");
+        }
         std::fs::write(&path, bytes).expect("the file is written");
         path
     }
+
+    /// The path of `name` in the workspace.
+    pub(crate) fn path(&self, name: &str) -> PathBuf {
+        self.dir.join(name)
+    }
+}
+
+/// The handoff directory FR-850's `package` selection names.
+pub(crate) const HANDOFF: &str = "handoff";
+
+/// Compile the `models` and `program` of `request` (a `native-analyze/1`
+/// request object over files already in `ws`) into the FR-517 handoff
+/// directory [`HANDOFF`]; returns `request` with `package` selecting that
+/// directory in place of `program`, and the handoff's package bytes.
+pub(crate) fn package_selection(ws: &Workspace, request: &Value) -> (Value, Vec<u8>) {
+    let compile = json!({"format": "native-compile/1", "request": {
+        "models": request["models"], "program": request["program"],
+        "handoff": {"directory": HANDOFF, "package_name": "analyze-unit",
+            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}});
+    let compile_path = ws.write("compile.json", compile.to_string().as_bytes());
+    let package = fsl_command::command::compile(&compile_path).expect("the program compiles");
+    let written = std::fs::read(ws.path(&format!("{HANDOFF}/checked-package.json")))
+        .expect("the handoff holds its package");
+    assert_eq!(written, package, "the handoff holds the compiled package");
+    let mut selected = request.clone();
+    selected
+        .as_object_mut()
+        .expect("a request object")
+        .remove("program");
+    selected["package"] = json!({"directory": HANDOFF});
+    (selected, package)
 }
 
 /// The FSpec FR-290 settlement the driver's `negotiate_*` gives an item

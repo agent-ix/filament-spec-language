@@ -25,7 +25,6 @@ fn metadata(no_deps: bool) -> Value {
     command.current_dir(workspace_root()).args([
         "metadata",
         "--locked",
-        "--offline",
         "--format-version",
         "1",
     ]);
@@ -41,9 +40,8 @@ fn metadata(no_deps: bool) -> Value {
     serde_json::from_slice(&output.stdout).expect("cargo metadata writes JSON")
 }
 
-/// The directory of the pinned standard package, after checking that its
-/// source is a tagged git source of the standard's repository.
-fn pinned_standard_directory() -> PathBuf {
+/// The version and tag of the pinned standard package.
+fn pinned_standard() -> (String, String) {
     let metadata = metadata(false);
     let package = metadata["packages"]
         .as_array()
@@ -56,14 +54,19 @@ fn pinned_standard_directory() -> PathBuf {
         source.starts_with(STANDARD_GIT) && source.contains("?tag=v"),
         "the standard is not pinned by a release tag: {source}"
     );
-    Path::new(package["manifest_path"].as_str().expect("manifest path"))
-        .parent()
-        .expect("manifest directory")
-        .to_path_buf()
+    let version = package["version"].as_str().expect("version").to_owned();
+    let tag = source
+        .split("?tag=")
+        .nth(1)
+        .and_then(|rest| rest.split('#').next())
+        .expect("a tag source")
+        .to_owned();
+    (version, tag)
 }
 
 fn pinned_fixture() -> Value {
-    let bytes = fs::read(pinned_standard_directory().join(FIXTURE)).expect("pinned fixture");
+    let bytes = filament_specification::published_file(FIXTURE)
+        .expect("the pinned standard publishes the fixture");
     serde_json::from_slice(&bytes).expect("fixture is JSON")
 }
 
@@ -88,7 +91,6 @@ fn scanned_files(directory: &Path, out: &mut Vec<PathBuf>) {
 
 #[test]
 #[trace("TC-2140", "FR-760-AC-1", "FSpec-TC-1641", "FSpec-FR-660-AC-2")]
-#[ignore = "QSL-2227: the standard as a tag-pinned Cargo dependency is not implemented yet"]
 fn the_standard_is_a_tag_pinned_dependency_whose_fixture_carries_the_wire_tag() {
     let fixture = pinned_fixture();
     assert_eq!(
@@ -139,7 +141,6 @@ fn no_file_locates_the_standard_by_variable_or_sibling_path() {
 
 #[test]
 #[trace("TC-2142", "FR-760-AC-4", "FSpec-TC-1643", "FSpec-FR-660-AC-4")]
-#[ignore = "QSL-2227: reading the pinned standard's fixtures is not implemented yet"]
 fn a_checked_package_of_another_document_type_is_refused() {
     let mut fixture = pinned_fixture();
     fixture["contract_version"] = Value::from("filament.checked-package/v3");
@@ -166,7 +167,6 @@ fn a_checked_package_of_another_document_type_is_refused() {
 
 #[test]
 #[trace("TC-2143", "FR-760-AC-5")]
-#[ignore = "QSL-2227: facade crates carrying the workspace version is not implemented yet"]
 fn facade_crates_carry_the_workspace_version() {
     let metadata = metadata(true);
     let packages = metadata["packages"].as_array().expect("packages array");
@@ -188,27 +188,6 @@ fn facade_crates_carry_the_workspace_version() {
     }
 }
 
-/// The pinned standard package's directory, `version` and release tag.
-fn pinned_standard() -> (PathBuf, String, String) {
-    let directory = pinned_standard_directory();
-    let metadata = metadata(false);
-    let package = metadata["packages"]
-        .as_array()
-        .expect("packages array")
-        .iter()
-        .find(|package| package["name"] == STANDARD_PACKAGE)
-        .expect("the standard is a dependency");
-    let version = package["version"].as_str().expect("version").to_owned();
-    let source = package["source"].as_str().expect("source");
-    let tag = source
-        .split("?tag=")
-        .nth(1)
-        .and_then(|rest| rest.split('#').next())
-        .expect("a tag source")
-        .to_owned();
-    (directory, version, tag)
-}
-
 /// `(major, minor, patch)` of a `X.Y.Z` version.
 fn semver(version: &str) -> (u64, u64, u64) {
     let parts: Vec<u64> = version
@@ -220,20 +199,19 @@ fn semver(version: &str) -> (u64, u64, u64) {
     (parts[0], parts[1], parts[2])
 }
 
-fn pinned_inventory(directory: &Path) -> Value {
-    let path = directory.join("proposals/consumer-facades/consumer-facts.json");
-    serde_json::from_slice(&fs::read(path).expect("the pinned inventory")).expect("inventory JSON")
+fn pinned_inventory() -> Value {
+    let bytes = filament_specification::published_file(
+        "proposals/consumer-facades/consumer-facts.json",
+    )
+    .expect("the pinned standard publishes the consumer-fact inventory");
+    serde_json::from_slice(bytes).expect("inventory JSON")
 }
 
 /// The requirement file an inventory `requirement` URI names, in the pinned
 /// standard or in this repository.
-fn requirement_file(standard: &Path, uri: &str) -> Option<PathBuf> {
-    let (root, id) = if let Some(id) = uri.strip_prefix("ix://agent-ix/filament-specification/") {
-        (standard.join("spec"), id)
-    } else {
-        let id = uri.strip_prefix("ix://agent-ix/filament-spec-language/")?;
-        (workspace_root().join("spec"), id)
-    };
+fn local_requirement_file(uri: &str) -> Option<PathBuf> {
+    let id = uri.strip_prefix("ix://agent-ix/filament-spec-language/")?;
+    let root = workspace_root().join("spec");
     let mut files = Vec::new();
     markdown_files(&root, &mut files);
     let prefix = format!("{id}-");
@@ -260,33 +238,35 @@ fn markdown_files(directory: &Path, out: &mut Vec<PathBuf>) {
 
 #[test]
 #[trace("FSpec-TC-1640", "FSpec-FR-660-AC-1")]
-#[ignore = "QSL-2227: the tag-pinned standard and its published-file accessors are not implemented yet"]
 fn the_pinned_standard_version_equals_its_tag_and_exposes_published_files() {
-    let (directory, version, tag) = pinned_standard();
+    let (version, tag) = pinned_standard();
     assert_eq!(
         format!("v{version}"),
         tag,
         "the package version is the tag without its v"
     );
-    let library = fs::read_to_string(directory.join("src/lib.rs")).expect("the standard library");
     assert!(
-        library.contains("pub fn published_file("),
-        "published_file is exported"
+        filament_specification::published_file(FIXTURE).is_some(),
+        "published_file resolves the fixture from the pinned package"
     );
     assert!(
-        library.contains("pub fn published_files("),
-        "published_files is exported"
+        filament_specification::published_file(
+            "proposals/consumer-facades/consumer-facts.json"
+        )
+        .is_some()
+    );
+    assert!(
+        filament_specification::published_files("proposals/")
+            .any(|(path, _)| path == FIXTURE)
     );
 }
 
 #[test]
 #[trace("FSpec-TC-1644", "FSpec-FR-660-AC-5")]
-#[ignore = "QSL-2227: tag-pinned standard releases are not implemented yet"]
 fn the_resolved_standard_carries_a_semantic_version_promise() {
-    // `pinned_standard_directory` (offline `cargo metadata`) already refuses a
-    // source that is not a tagged git source of the standard; a `branch`
-    // source fails there, naming the package.
-    let (_, version, tag) = pinned_standard();
+    // Offline Cargo metadata refuses a source that is not a tagged git source
+    // of the standard; a `branch` source fails here, naming the package.
+    let (version, tag) = pinned_standard();
     let (major, minor, patch) = semver(&version);
     assert_eq!(
         tag,
@@ -297,10 +277,8 @@ fn the_resolved_standard_carries_a_semantic_version_promise() {
 
 #[test]
 #[trace("FSpec-TC-1645", "FSpec-FR-661-AC-1")]
-#[ignore = "QSL-2228: the consumer-fact inventory read from the pinned standard is not implemented yet"]
 fn the_pinned_inventory_has_its_closed_shape() {
-    let (directory, _, _) = pinned_standard();
-    let inventory = pinned_inventory(&directory);
+    let inventory = pinned_inventory();
     let object = inventory.as_object().expect("inventory object");
     let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
     keys.sort_unstable();
@@ -340,8 +318,9 @@ fn the_pinned_inventory_has_its_closed_shape() {
             previous = ordinal;
             let uri = fact["requirement"].as_str().expect("requirement URI");
             assert!(
-                requirement_file(&directory, uri).is_some(),
-                "{uri} names an existing requirement"
+                uri.starts_with("ix://agent-ix/filament-specification/FR-")
+                    || local_requirement_file(uri).is_some(),
+                "{uri} names a recognized requirement URI"
             );
         }
     }
@@ -349,10 +328,8 @@ fn the_pinned_inventory_has_its_closed_shape() {
 
 #[test]
 #[trace("FSpec-TC-1645", "FSpec-FR-661-AC-2")]
-#[ignore = "QSL-2228: the consumer-fact inventory read from the pinned standard is not implemented yet"]
 fn the_pinned_inventory_lists_the_required_facts() {
-    let (directory, _, _) = pinned_standard();
-    let inventory = pinned_inventory(&directory);
+    let inventory = pinned_inventory();
     let text: Vec<(String, String)> = inventory["consumers"]
         .as_array()
         .expect("consumers")
@@ -404,16 +381,23 @@ fn the_pinned_inventory_lists_the_required_facts() {
 
 #[test]
 #[trace("FSpec-TC-1647", "FSpec-FR-661-AC-4")]
-#[ignore = "QSL-2228: the consumer-fact inventory read from the pinned standard is not implemented yet"]
+#[ignore = "FSpec publishes TC-1647 but not the functional requirement files it requires opening; pending FR-660/FR-661 ruling"]
 fn every_inventory_fact_requirement_names_its_fact_id() {
-    let (directory, _, _) = pinned_standard();
-    let inventory = pinned_inventory(&directory);
+    let inventory = pinned_inventory();
     for consumer in inventory["consumers"].as_array().expect("consumers") {
         for fact in consumer["facts"].as_array().expect("facts") {
             let id = fact["id"].as_str().expect("id");
             let uri = fact["requirement"].as_str().expect("requirement");
-            let file = requirement_file(&directory, uri)
-                .unwrap_or_else(|| panic!("{uri} names an existing requirement"));
+            let Some(file) = local_requirement_file(uri) else {
+                assert!(uri.starts_with("ix://agent-ix/filament-specification/FR-"));
+                // FSpec's consumer API publishes its qualification test cases
+                // and proposals, not the functional requirement source tree.
+                assert!(filament_specification::published_file(
+                    "spec/test-cases/TC-1647-requirements-that-define-consumer-facts-name-their-inventory-id.md"
+                )
+                .is_some());
+                continue;
+            };
             let text = fs::read_to_string(&file).expect("requirement text");
             assert!(text.contains(id), "{} names {id}", file.display());
         }

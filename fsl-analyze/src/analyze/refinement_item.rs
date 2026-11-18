@@ -20,10 +20,10 @@ use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
     open_systems, replay_refinement_trace, settle_refinement, settle_refinement_refusal,
-    RefinementTraceSettlement, SimulationCertificateRequest, TemporalCounterexample,
+    AbstractInitial, RefinementTraceSettlement, SimulationCertificateRequest,
+    TemporalCounterexample,
 };
 use fsl_semantics::check::{AbstractSide, Capability, CheckedRefinement, DeclarationFamily};
-use fsl_semantics::model::observation::DocumentRef;
 use fsl_semantics::model::state::ModelState;
 use serde_json::{json, Value};
 
@@ -76,13 +76,10 @@ pub(super) fn refinement_item<'a>(
         emit: limits.emit,
     };
     // FR-630 "Request item": the item's `abstract_subject` names the
-    // abstract initial snapshots; absent, the concrete subject's are read
-    // in the abstract model. The declaring package holds the abstract
+    // abstract initial snapshots; absent, they are the states the mapping
+    // gives the concrete initial states. The declaring package holds the abstract
     // model's selection (ADR-020 RM-1).
-    let abstract_initial: Vec<DocumentRef> = form
-        .abstract_initial
-        .clone()
-        .unwrap_or_else(|| binding.initial.clone());
+    let abstract_initial = AbstractInitial::from(form.abstract_initial.clone());
     let form = form.clone();
     Some(
         AnalyzeItem::new(
@@ -111,7 +108,7 @@ fn run(
     refinement: &CheckedRefinement,
     package: &CheckedPackage,
     concrete: &ModelSimulationRequest<'_>,
-    abstract_initial: Vec<DocumentRef>,
+    abstract_initial: AbstractInitial,
     form: &TemporalItem,
     cancel: &Cancel,
 ) -> EngineReport {

@@ -11,15 +11,15 @@ relationships:
 ## Description
 
 Verify that a `native-analyze/1` request selecting a v2 checked package is
-analyzed from the package bytes alone, gives the source route's outcome, and
+analyzed from its handoff directory's package and identity files alone, gives the source route's outcome, and
 refuses malformed or mismatched package input before any engine runs.
 Scope: FR-850-AC-1 to FR-850-AC-5.
 
 ## Test Procedure
 
-1. Compile the Counter program with `Bounded`, `BelowThree` and `AtMostTwo` to its package bytes; analyze it from source and from the package, with explicit items and with no `items`.
+1. Compile the Counter program with `Bounded`, `BelowThree` and `AtMostTwo` through a compile request carrying the `handoff` member; analyze it from source and from the handoff directory selected as `package` `{"directory": ...}`, with explicit items and with no `items`.
 2. Compare the `AtMostTwo` refutations of the two routes.
-3. Select a package file holding `{}`, a v1 document, the bytes with one source-map entry removed, and non-JSON bytes.
+3. Select a handoff directory whose `checked-package.json` holds `{}`, a v1 document, the bytes with one source-map entry removed, and non-JSON bytes.
 4. Add `program`, a `libraries` entry or `integer_division` beside `package`; empty `models`; add a `models` entry the package does not record.
 5. Ask for the item `{"claim": "Missing"}` over the package.
 

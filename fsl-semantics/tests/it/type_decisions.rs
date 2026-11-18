@@ -6,7 +6,7 @@
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::{Code, SourceIdentity};
-use fsl_semantics::check::{CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{AssemblyRefusal, CheckRefusal, CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;
 
@@ -21,8 +21,8 @@ fn unit_text(declarations: &str) -> String {
     )
 }
 
-/// S1 to S3 under `CheckMode::Linked`; S1 and S2 must accept the unit.
-fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+/// S1 and S2 must accept the unit; S3 assembly may refuse it.
+fn assemble(declarations: &str) -> Result<PackageDeclarations, AssemblyRefusal> {
     let text = unit_text(declarations);
     let parsed = fsl_cst::parse(
         SourceIdentity::new("test", "type-decisions"),
@@ -40,14 +40,33 @@ fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
         SelectedModels::default(),
         Vec::new(),
     )
-    .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
-    .check(CheckMode::Linked, CheckingLimits::default())
+}
+
+/// S1 to S3 under `CheckMode::Linked`; S1 and S2 must accept the unit.
+fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+    assemble(declarations)
+        .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
+        .check(CheckMode::Linked, CheckingLimits::default())
 }
 
 fn assert_checks(declarations: &str) {
     if let Err(refusals) = check(declarations) {
         panic!("{declarations} checks: {refusals:?}");
     }
+}
+
+/// The one assembly error of `declarations`, with its code and cause: a type
+/// written in a signature is refused when the assembler resolves it.
+fn assert_assembly_refused(declarations: &str, code: Code, cause: &str) {
+    let Err(refusal) = assemble(declarations) else {
+        panic!("{declarations} assembles but should be refused");
+    };
+    let [error] = refusal.errors.as_slice() else {
+        panic!("one typed assembly error: {refusal:?}");
+    };
+    assert_eq!(error.cause.code(), code, "{error:?}");
+    let catalog = error.cause.catalog_code().to_string();
+    assert!(catalog.contains(cause), "{catalog} names {cause}");
 }
 
 /// The one refusal of `declarations`, with its code and cause.
@@ -166,7 +185,6 @@ fn a_dotted_tuple_position_is_a_syntax_error() {
 
 #[trace("TC-1822", "FR-680-AC-3", "FSpec-FR-144-AC-33")]
 #[test]
-#[ignore = "QSL-2171: the source Map<K, V> type and its reads not implemented yet"]
 fn a_source_map_type_checks_with_its_guarded_read() {
     assert_checks(
         "function f using v(m: Map<Int[0, 3], Integer>[0, 4], k: Int[0, 3]): Integer pure \
@@ -177,7 +195,7 @@ fn a_source_map_type_checks_with_its_guarded_read() {
         Code::UndefinedExpression,
         "unproved-presence",
     );
-    assert_refused(
+    assert_assembly_refused(
         "record Cfg { a: Boolean; }\n\
          function f using v(m: Map<Cfg, Integer>): Boolean pure { true }",
         Code::IllTyped,
@@ -261,4 +279,80 @@ fn an_equality_sum_refusal_names_its_proved_range_expected_type_and_peer() {
         "function g using v(a: Int[0, 10], b: Int[0, 10], c: Int[0, 10]): Boolean pure \
          { convert<Integer>(c) = a + b }",
     );
+}
+
+const MAP_SIGNATURE: &str = "m: Map<Int[0, 3], Integer>[0, 4], k: Int[0, 3]";
+
+#[trace("TC-1822", "FR-680-AC-3", "FSpec-FR-144-AC-33", "FSpec-FR-149-AC-28")]
+#[test]
+fn maps_of_one_type_compare_and_other_maps_do_not() {
+    assert_checks(
+        "function f using v(a: Map<Int[0, 3], Integer>[0, 4], b: Map<Int[0, 3], Integer>[0, 4]): \
+         Boolean pure { a = b }",
+    );
+    assert_checks(
+        "function f using v(a: Map<Int[0, 3], Integer>[0, 4], b: Map<Int[0, 3], Integer>[0, 4]): \
+         Boolean pure { a != b }",
+    );
+    for second in [
+        "Map<Int[0, 3], Integer>",
+        "Map<Int[0, 4], Integer>[0, 4]",
+        "Map<Int[0, 3], Boolean>[0, 4]",
+    ] {
+        assert_refused(
+            &format!(
+                "function f using v(a: Map<Int[0, 3], Integer>[0, 4], b: {second}): Boolean pure \
+                 {{ a = b }}"
+            ),
+            Code::IllTyped,
+            "type-mismatch",
+        );
+    }
+}
+
+#[trace("TC-1822", "FR-680-AC-3", "FSpec-FR-144-AC-33")]
+#[test]
+fn a_map_key_that_is_not_a_scalar_key_is_refused() {
+    for key in [
+        "Option<Integer>",
+        "Sequence<Integer>",
+        "Map<Integer, Integer>",
+    ] {
+        assert_assembly_refused(
+            &format!("function f using v(m: Map<{key}, Integer>): Boolean pure {{ true }}"),
+            Code::IllTyped,
+            "operator-ineligible",
+        );
+    }
+}
+
+#[trace("TC-1822", "FR-680-AC-3", "FSpec-FR-144-AC-33")]
+#[test]
+fn a_map_key_and_value_are_checked_against_the_map_type() {
+    assert_refused(
+        &format!("function f using v({MAP_SIGNATURE}): Integer pure {{ if contains(m, true) then 1 else 0 }}"),
+        Code::IllTyped,
+        "type-mismatch",
+    );
+    assert_refused(
+        &format!("function f using v({MAP_SIGNATURE}): Integer pure {{ m[true] }}"),
+        Code::IllTyped,
+        "type-mismatch",
+    );
+    assert_refused(
+        &format!(
+            "function f using v({MAP_SIGNATURE}): Boolean pure \
+             {{ if contains(m, k) then m[k] else false }}"
+        ),
+        Code::IllTyped,
+        "type-mismatch",
+    );
+    assert_refused(
+        &format!("function f using v({MAP_SIGNATURE}): Boolean pure {{ size(m) }}"),
+        Code::IllTyped,
+        "type-mismatch",
+    );
+    assert_checks(&format!(
+        "function f using v({MAP_SIGNATURE}): Integer pure {{ size(m) }}"
+    ));
 }
