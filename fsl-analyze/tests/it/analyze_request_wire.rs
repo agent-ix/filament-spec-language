@@ -7,6 +7,7 @@
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
+use crate::counter::{unit_text, CONTRACT};
 use crate::analyze_cli_support::{
     analyze, below_three, bounded, counter_request, counter_request_with, label, request_members,
     Workspace,
@@ -394,14 +395,10 @@ fn an_analyze_request_supplies_the_integer_division_law() {
     let diagnostic = &document["diagnostics"][0];
     assert_eq!(diagnostic["code"], "missing_declaration", "{document}");
     assert_eq!(diagnostic["cause"], "missing-selection", "{document}");
-    assert!(diagnostic["locus"].is_object(), "{document}");
-    assert!(
-        diagnostic["message"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("div"),
-        "{document}"
-    );
+    let source = unit_text(&format!("{CONTRACT}{body}"));
+    let div = source.find("a div 2").expect("the program's div expression") as u64;
+    assert_eq!(diagnostic["locus"]["start"], div, "{document}");
+    assert_eq!(diagnostic["locus"]["end"], div + 7, "{document}");
 
     let ws = Workspace::new("division-law-unknown");
     let path = counter_request_with(&ws, &body, with_law(Some(json!("ceiling"))));
