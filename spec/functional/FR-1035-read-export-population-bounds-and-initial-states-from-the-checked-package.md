@@ -45,13 +45,15 @@ population's authored bound to the mapper.
   returns `None` exactly when no `bound` names the population. The
   population is then unbounded, and its exported variable carries no
   `Cardinality` or `length` conjunct.
-- Each bound's conjunct inside `TypeOK` (TLA+) or `WF` (Lean),
-  `Cardinality(DOMAIN v_T) <= N` or `v_T.length <= N`, SHALL be preceded by
-  its own `fsl:` comment line naming that bound's `[N]` region, spelled as
-  FSpec FR-814 spells a region and indented as the conjunct is. FR-814 gives
-  one region per comment, so each bound has its own comment. The comment of
-  the `TypeOK` or `WF` definition itself names that definition's own node
-  and region, as FR-814 states.
+- Each bound SHALL be exported as its own definition named by its label,
+  `<label> == Cardinality(DOMAIN v_T) <= N` (TLA+) or `def <label> : Prop :=
+  v_T.length <= N` (Lean), and `TypeOK` (TLA+) or `WF` (Lean) conjoins it by
+  that name. Like every definition, it is preceded by one unindented FSpec
+  FR-814 comment line `\* fsl: <node id> <region>` (or `-- fsl: ...`), whose
+  node id is the population's catalog node and whose region is the bound's
+  `[N]`. Each comment thus names one node and one region, as FR-814
+  requires; the `TypeOK` or `WF` comment names that definition's own node
+  and region.
 - The bound is read the same way whether or not a reachability walks the
   population. FR-380 emits the `bounded_domain`/`model_population` node
   only for a walked bound, so the mapper never infers a bound from the
@@ -71,10 +73,10 @@ population's authored bound to the mapper.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-1035-AC-1 | The spine unit with `bound HistoryBound on Config::config_history [8]` and no reachability exports to TLA+ with `Cardinality(DOMAIN v_` and `) <= 8` in `TypeOK`. The same unit without the `bound` has no `Cardinality` in its text. | Test (TC-3003) |
+| FR-1035-AC-1 | The spine unit with `bound HistoryBound on Config::config_history [8]` and no reachability exports to TLA+ with `Cardinality(DOMAIN v_` and `) <= 8` in the `HistoryBound` definition that `TypeOK` conjoins. The same unit without the `bound` has no `Cardinality` in its text. | Test (TC-3003) |
 | FR-1035-AC-2 | The spine unit with the invariant `Low` and no `initial` exports `Init == TypeOK`, exit `0`. With `constraint Small using v on Config::ConfigVersion at current { self.versionNumber <= 3 }` added, `Init` holds no `<= 3`. `Braking` with no `initial` exports an `Init` naming the mode `Moving`. | Test (TC-3003) |
 | FR-1035-AC-3 | For the spine unit without a `bound`, `CheckedGraph::population_bound` returns `None` for the `config_history` catalog entry under its model root, and the exported `TypeOK` constrains that population by no `Cardinality`. With `bound HistoryBound on Config::config_history [8]`, it returns `maximum` 8, label `HistoryBound` and `region` the bytes of `[8]`. | Test (TC-3003) |
-| FR-1035-AC-4 | With that bound, the line immediately before the `Cardinality(...) <= 8` conjunct inside `TypeOK` is a `\* fsl:` comment whose region is `<authority>/<identity>:<start>-<end>`, with `start` and `end` the offsets of `[8]` in the unit. The comment before `TypeOK ==` does not name that region. | Test (TC-3003) |
+| FR-1035-AC-4 | With that bound, the TLA+ export defines `HistoryBound == Cardinality(DOMAIN v_` ... `) <= 8`, and `TypeOK` conjoins `HistoryBound`. The line immediately before `HistoryBound ==` is an unindented comment matching FSpec FR-814-AC-6, naming the `config_history` population node and the region `<authority>/<identity>:<start>-<end>` of `[8]` in the unit. The comment before `TypeOK ==` names `TypeOK`'s node and region, not that region. | Test (TC-3003) |
 
 ## Dependencies
 

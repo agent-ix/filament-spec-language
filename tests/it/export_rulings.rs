@@ -289,15 +289,26 @@ fn the_type_ok_comment_names_the_bound_region() {
     let own = lines[type_ok - 1];
     assert!(own.starts_with("\\* fsl: "), "the TypeOK comment: {own}");
     assert!(!own.contains(&region), "{own} names only TypeOK's region");
-    let conjunct = lines[type_ok..]
+    let bound = lines
         .iter()
-        .position(|line| line.contains("Cardinality(DOMAIN v_") && line.contains(") <= 8"))
-        .map(|offset| type_ok + offset)
-        .expect("the bound's conjunct inside TypeOK");
-    let comment = lines[conjunct - 1].trim_start();
+        .position(|line| {
+            line.starts_with("HistoryBound == Cardinality(DOMAIN v_") && line.ends_with(") <= 8")
+        })
+        .expect("the bound's own HistoryBound definition");
+    assert!(
+        lines[type_ok..]
+            .iter()
+            .take_while(|line| !line.is_empty())
+            .any(|line| line.contains("HistoryBound")),
+        "TypeOK conjoins HistoryBound"
+    );
+    let comment = lines[bound - 1];
     assert!(
         comment.starts_with("\\* fsl: "),
-        "the conjunct's comment: {comment}"
+        "the bound's unindented comment: {comment}"
     );
-    assert!(comment.contains(&region), "{comment} names {region}");
+    assert!(
+        comment.ends_with(&format!(" {region}")),
+        "{comment} names {region}"
+    );
 }
