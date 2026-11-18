@@ -72,6 +72,10 @@ pub const REDUCTIONS: [&str; 3] = [
     ReductionKind::StateConstraint.as_str(),
 ];
 
+/// EN-1's one `method` value: its digital-clock route over a closed timed
+/// subject's integer-clock reading (FR-243, FR-632).
+pub const METHOD_DIGITAL_CLOCKS: &str = "digital-clocks";
+
 /// The state-graph claim forms EN-1 decides (FSpec FR-331 `state_graph_forms`,
 /// FR-390): its explicit-state search over the explored graph (FR-168).
 pub const STATE_GRAPH_FORMS: [fsl_route::StateGraphFormKind; 3] = [
@@ -101,5 +105,12 @@ pub fn descriptor(origin: ProviderOrigin) -> Result<BackendDescriptor, Registrat
             reductions: Some(&REDUCTIONS),
         },
     )
-    .map(|descriptor| descriptor.with_state_graph_forms(STATE_GRAPH_FORMS))
+    .map(|descriptor| {
+        descriptor
+            .with_state_graph_forms(STATE_GRAPH_FORMS)
+            .with_option_values(
+                crate::zone_check::manifest::METHOD,
+                [METHOD_DIGITAL_CLOCKS.to_owned()],
+            )
+    })
 }

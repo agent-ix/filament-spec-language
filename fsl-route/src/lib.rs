@@ -282,6 +282,7 @@ pub struct BackendDescriptor {
     max_cases: Option<std::num::NonZeroU64>,
     timed: bool,
     options: BTreeSet<String>,
+    option_values: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// The optional FR-331 manifest members [`descriptor_from_manifest`] reads
@@ -409,6 +410,7 @@ pub fn descriptor_from_manifest<'a>(
         state_graph_forms: BTreeSet::new(),
         timed: false,
         options: BTreeSet::new(),
+        option_values: BTreeMap::new(),
     })
 }
 
@@ -669,6 +671,7 @@ impl BackendDescriptor {
             max_cases: None,
             timed: false,
             options: BTreeSet::new(),
+            option_values: BTreeMap::new(),
         })
     }
 
@@ -861,6 +864,54 @@ impl BackendDescriptor {
             .into_iter()
             .filter(|name| !self.options.contains(*name))
             .min()
+    }
+
+    /// Publish the option `name` with exactly the values `values` (FSL
+    /// FR-243: EN-6 publishes `method` with the one value `zones`, EN-1 with
+    /// the one value `digital-clocks`). The name joins [`Self::options`]; an
+    /// item naming the option with another value does not negotiate to this
+    /// backend.
+    #[must_use]
+    pub fn with_option_values(
+        mut self,
+        name: &str,
+        values: impl IntoIterator<Item = String>,
+    ) -> Self {
+        self.options.insert(name.to_owned());
+        self.option_values
+            .insert(name.to_owned(), values.into_iter().collect());
+        self
+    }
+
+    /// The values this backend publishes for the option `name`, when it
+    /// publishes the option with a closed set of values.
+    pub fn option_values(&self, name: &str) -> Option<&BTreeSet<String>> {
+        self.option_values.get(name)
+    }
+
+    /// Whether this backend admits every option of `options` (FSL FR-243,
+    /// FR-635): it publishes each name, and for a name published with a
+    /// closed set of values, the item's value is one of them.
+    pub fn admits_options(&self, options: &BTreeMap<String, String>) -> bool {
+        options.iter().all(|(name, value)| {
+            self.options.contains(name)
+                && self
+                    .option_values
+                    .get(name)
+                    .is_none_or(|values| values.contains(value))
+        })
+    }
+
+    /// Whether `options` select this backend by value: the item names an
+    /// option this backend publishes with a closed set of values, with one
+    /// of them (FSL FR-243: `method` `digital-clocks` selects EN-1 for a
+    /// timed subject).
+    pub fn selected_by(&self, options: &BTreeMap<String, String>) -> bool {
+        options.iter().any(|(name, value)| {
+            self.option_values
+                .get(name)
+                .is_some_and(|values| values.contains(value))
+        })
     }
 
     /// Whether this backend decides an item whose subject resolves its
@@ -1782,6 +1833,31 @@ impl Registry {
     /// one to EN-6. An unknown named backend is returned unchanged.
     pub fn restrict_to_timing(&self, outcome: CandidateOutcome, timed: bool) -> CandidateOutcome {
         self.keep_candidates(outcome, |descriptor| descriptor.decides_timed() == timed)
+    }
+
+    /// FSL FR-243 and FR-635: `outcome` restricted to the backends that
+    /// admit the item's `options` (each name published, each value among a
+    /// closed set's values), then to the engines whose timing matches the
+    /// item's subject as [`Self::restrict_to_timing`] keeps them, where a
+    /// backend `options` select by value also decides a timed subject: an
+    /// item naming `method` `digital-clocks` over a timed subject has EN-1's
+    /// digital-clock route as its only candidate. With no options this is
+    /// [`Self::restrict_to_timing`]. An unknown named backend is returned
+    /// unchanged.
+    pub fn restrict_to_options_and_timing(
+        &self,
+        outcome: CandidateOutcome,
+        options: &BTreeMap<String, String>,
+        timed: bool,
+    ) -> CandidateOutcome {
+        if options.is_empty() {
+            return self.restrict_to_timing(outcome, timed);
+        }
+        self.keep_candidates(outcome, |descriptor| {
+            descriptor.admits_options(options)
+                && (descriptor.decides_timed() == timed
+                    || (timed && descriptor.selected_by(options)))
+        })
     }
 
     /// FR-144 and FSpec FR-430: `outcome`, a candidate set computed for a

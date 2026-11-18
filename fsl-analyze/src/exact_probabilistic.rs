@@ -37,6 +37,7 @@ mod unbounded;
 mod witness;
 
 pub use build::build_product;
+pub(crate) use digital::model_constraints;
 #[cfg(not(feature = "test-support"))]
 pub(crate) use build::BudgetedProductError;
 #[cfg(feature = "test-support")]

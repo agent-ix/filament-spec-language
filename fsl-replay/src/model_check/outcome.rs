@@ -59,6 +59,10 @@ pub enum UndecidedCause {
     /// ADR-023 HM-7: a hyper item's non-empty `μ_U` is matched by no fair
     /// tuple of universal behaviours (FR-176).
     VacuousMatch,
+    /// FR-240 "Vacuity" on EN-1's digital-clock route (FR-243): under the
+    /// clause's fairness the subject admits no fair time-divergent behaviour
+    /// and reaches no quiescent state, so no proof settles.
+    NoAdmittedBehaviour,
     /// ADR-027 AE-4: the run completed with no counterexample and at least
     /// one instance-limited state.
     InstanceBoundReached {
@@ -78,6 +82,7 @@ impl UndecidedCause {
             Self::NoInstance => InconclusiveCause::NoInstance,
             Self::MatchUndetermined => InconclusiveCause::MatchUndetermined,
             Self::VacuousMatch => InconclusiveCause::VacuousMatch,
+            Self::NoAdmittedBehaviour => InconclusiveCause::NoAdmittedBehaviour,
             Self::InstanceBoundReached { bound, states } => {
                 InconclusiveCause::InstanceBoundReached { bound, states }
             }
