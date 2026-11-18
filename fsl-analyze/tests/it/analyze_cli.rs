@@ -337,6 +337,69 @@ fn simulation_enumerates_the_counter_subject() {
     assert!(item.get("record").is_none());
 }
 
+/// FR-634 "Inputs" and "Refusals": every simulation bound is a positive
+/// count, so `max_steps` 0 refuses the whole request `invalid-request`;
+/// `seed` on an `enumerate` item refuses it naming the member; and a
+/// `simulation` member on a claim item refuses it.
+#[trace("TC-1594", "FR-634")]
+#[test]
+fn simulation_refuses_a_zero_bound_a_misplaced_seed_and_a_claim() {
+    for (name, item, member) in [
+        (
+            "zero-steps",
+            json!({"kind": "simulation", "simulation": {"mode": "sample", "seed": 1,
+                "samples": 1, "max_steps": 0}}),
+            "max_steps",
+        ),
+        (
+            "enumerate-seed",
+            json!({"kind": "simulation", "simulation": {"mode": "enumerate", "seed": 1}}),
+            "/items/0/simulation/seed",
+        ),
+        (
+            "claim",
+            json!({"kind": "simulation", "claim": "Bounded",
+                "simulation": {"mode": "enumerate"}}),
+            "/items/0/claim",
+        ),
+    ] {
+        let ws = Workspace::new(&format!("cli-simulation-refused-{name}"));
+        let run = analyze(&counter_request(&ws, &bounded(), json!([item])));
+        assert_eq!(run.exit, 20, "{name}: {}", run.document());
+        assert_eq!(run.document()["category"], "refusal", "{name}");
+        assert!(
+            run.document().to_string().contains(member),
+            "{name} names {member}: {}",
+            run.document()
+        );
+    }
+}
+
+/// FR-634 "Outputs": an enumeration stopped by `max_steps` is `incomplete`
+/// `LimitReached{max_steps}`, its frontier holds the horizon state, and its
+/// one trace runs from `value = 0` along the discovery edges to it.
+#[trace("TC-1594", "FR-634")]
+#[test]
+fn a_step_bound_leaves_the_horizon_state_in_the_frontier() {
+    let ws = Workspace::new("cli-simulation-horizon");
+    let run = analyze(&counter_request(
+        &ws,
+        "",
+        json!([{"kind": "simulation", "simulation": {"mode": "enumerate", "max_steps": 2}}]),
+    ));
+    let item = run.item(0);
+    assert_eq!(item["category"], "incomplete", "{item}");
+    assert_eq!(item["cause"]["kind"], "limit-reached", "{item}");
+    assert_eq!(item["cause"]["limit"], "max_steps", "{item}");
+    assert_eq!(item["frontier"].as_array().map(Vec::len), Some(1), "{item}");
+    let traces = item["traces"].as_array().expect("traces");
+    assert_eq!(traces.len(), 1, "{item}");
+    assert_eq!(traces[0]["states"].as_array().map(Vec::len), Some(3), "{item}");
+    assert_eq!(traces[0]["steps"].as_array().map(Vec::len), Some(2), "{item}");
+    assert_eq!(item["coverage"]["states"], "3", "{item}");
+    assert_eq!(run.exit, 22, "an incomplete item ranks in the exit code");
+}
+
 /// FR-635-AC-3: an unregistered backend is an invalid request.
 #[trace("TC-1595", "FR-635-AC-3")]
 #[test]
