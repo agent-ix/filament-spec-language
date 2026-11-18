@@ -1578,9 +1578,42 @@ fn run_configured(
     if let Some(result) = special {
         return Ok(result);
     }
+    #[cfg(feature = "quire-extraction")]
+    if request_has_extraction(path, limits.request_bytes)? {
+        let request = read_clause_run_request(path)?;
+        let selection = request.selection.clone();
+        let report = fsl_replay::spine::run_clause(*request).map_err(|error| {
+            Box::new(RunError {
+                cause: RunCause::ClauseRequest {
+                    member: "clause".to_owned(),
+                    reason: error.to_string(),
+                },
+                sources: crate::Sources::default(),
+            })
+        })?;
+        return output::clause_report(report, &selection).map_err(|cause| {
+            Box::new(RunError {
+                cause,
+                sources: crate::Sources::default(),
+            })
+        });
+    }
     let prepared = prepare_run_with_overrides(path, limits, overrides)?;
     let sources = prepared.admitted_sources();
     execute_prepared(prepared, &settle).map_err(|cause| Box::new(RunError { cause, sources }))
+}
+
+#[cfg(feature = "quire-extraction")]
+fn request_has_extraction(
+    path: &Path,
+    request_bytes: usize,
+) -> std::result::Result<bool, Box<RunError>> {
+    with_request_limits(path, request_bytes, |_, bytes| {
+        let request: serde_json::Value = serde_json::from_slice(bytes).map_err(RunCause::Json)?;
+        Ok(request
+            .pointer("/request/program/extraction")
+            .is_some_and(|extraction| !extraction.is_null()))
+    })
 }
 
 /// FR-661: handle the driver's in-process `version` invocation used by the
