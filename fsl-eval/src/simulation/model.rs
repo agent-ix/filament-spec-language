@@ -678,7 +678,8 @@ impl<'a> ModelSystem<'a> {
     /// [`Self::typing`] for values alone, which hold no element-count
     /// member: it lives as long as the package.
     pub(crate) fn value_typing(&self) -> encode::Typing<'a> {
-        encode::Typing::with_variants(self.types, self.input.variant_types).with_enums(self.input.enums)
+        encode::Typing::with_variants(self.types, self.input.variant_types)
+            .with_enums(self.input.enums)
     }
 
     /// Check the universes, then admit each initial document in the given
@@ -757,13 +758,6 @@ impl<'a> ModelSystem<'a> {
         let types = input.types;
         let only = selections.selections();
         let model = StateModel::new(selections, types, request.packages, request.normalization)?;
-        if !input.operations_read && model.declares_operations() {
-            return Err(refused(
-                Code::UnknownRequiredFeature,
-                "unsupported-feature",
-                &[("form", "operation".to_owned())],
-            ));
-        }
         let populations = model.populations();
 
         let mut universes = BTreeMap::new();

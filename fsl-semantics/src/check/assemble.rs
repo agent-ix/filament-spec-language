@@ -3836,6 +3836,39 @@ pub fn model_type_environment(
     .map(|admitted| admitted.types)
 }
 
+/// FR-940: the operations S3's assembly declares for the selected domain
+/// packages `views` (FR-120 "Operations"), each typed as assembly types it
+/// with `units` the unit names its types may name (FR-505). The package
+/// route reads the operation table of a package's model selections through
+/// this function, so it and the source route build one table.
+///
+/// # Errors
+///
+/// [`AssemblyRefusal`] with assembly's errors for a view whose operations
+/// assembly does not type.
+pub fn model_operation_table<'v>(
+    views: impl IntoIterator<Item = &'v crate::model::normalize::EffectiveView>,
+    units: &BTreeMap<String, filament_exact::UnitId>,
+) -> Result<OperationTable, AssemblyRefusal> {
+    let span = Span { start: 0, end: 0 };
+    let mut table = OperationTable::default();
+    for view in views {
+        // A domain package's alias is the package's spelling in source,
+        // which only names its declarations; it does not enter the table.
+        let alias = view.domain_package().model_selection.identity.clone();
+        let model = crate::model::intake::SelectedModel {
+            alias: alias.clone(),
+            span,
+            view: view.clone(),
+            operation_clauses: Vec::new(),
+            type_invariants: Vec::new(),
+        };
+        model_object_types(&alias, &model, span, &mut table, units, &[])
+            .map_err(|errors| AssemblyRefusal { errors })?;
+    }
+    Ok(table)
+}
+
 /// The type environment the unit's clauses are typed against, with the staged
 /// model admission whose completion waits for the conformance stage.
 pub(crate) struct AdmittedTypes {

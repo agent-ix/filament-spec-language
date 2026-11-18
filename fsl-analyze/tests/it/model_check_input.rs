@@ -8,7 +8,7 @@ use fsl_eval::simulation::model::{
 };
 use fsl_eval::simulation::TransitionSystem;
 use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits, V2ReadLimits};
-use fsl_semantics::model::observation::AdmissionFailure;
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use ix_trace_rs::trace;
 use serde_json::Value as Json;
 
@@ -95,7 +95,12 @@ fn the_package_route_input_builds_the_source_route_model_system() {
     let source = subject(&package, &documents, vec![start], &["a", "b"], UNLIMITED);
     let handoff = handoff(&package, &documents);
     let bare = bare(&handoff);
-    let input = PackageModelInput::of(&bare).expect("the package route reads every form");
+    let input = PackageModelInput::of(
+        &bare,
+        &documents.packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the package route reads every form");
     let mut request = source.simulation.clone();
     request.input = input.input();
     assert!(request.source_package().is_none());
@@ -124,7 +129,11 @@ fn a_package_route_input_refuses_a_form_it_does_not_read() {
     let documents = Documents::new(model);
     let handoff = handoff(&package, &documents);
     let bare = bare(&handoff);
-    let Err(PendingPackageForm::Form { form, node }) = PackageModelInput::of(&bare) else {
+    let Err(PendingPackageForm::Form { form, node }) = PackageModelInput::of(
+        &bare,
+        &documents.packages,
+        ModelNormalizationLimits::default(),
+    ) else {
         panic!("the Counter contract's clauses are not read on the package route");
     };
     assert_eq!(form, fsl_package::UnreadModelForm::State);
@@ -139,12 +148,38 @@ fn a_package_route_input_refuses_a_form_it_does_not_read() {
     );
 }
 
-/// FR-940: a model whose domain package declares an operation is refused
-/// when its system is built over a package-route input, which reads no
-/// operation table, rather than built with no step.
+/// The canonical keys of every state `system` reaches from its initial
+/// states, in breadth-first order, with each state's successor keys.
+fn reachable(system: &ModelSystem<'_>) -> Vec<(Vec<u8>, Vec<Vec<u8>>)> {
+    let key = |state: &<ModelSystem<'_> as TransitionSystem>::State| {
+        system.state_key(state).expect("a state key").0
+    };
+    let mut queue: std::collections::VecDeque<_> = system.initial().into_iter().collect();
+    let mut seen = Vec::new();
+    while let Some(state) = queue.pop_front() {
+        let at = key(&state);
+        if seen.iter().any(|(known, _)| *known == at) {
+            continue;
+        }
+        let expansion = system.successors(&state).expect("expands");
+        let next: Vec<_> = expansion
+            .successors
+            .into_iter()
+            .map(|(_, next)| next)
+            .collect();
+        seen.push((at, next.iter().map(key).collect()));
+        queue.extend(next);
+    }
+    seen
+}
+
+/// FR-940, FR-850: a model whose domain package declares operations is built
+/// over a package-route input with the operation table S3 declares for its
+/// selected domain packages, so its steps reach the source route's states
+/// with the source route's successors, rather than being refused.
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
-fn a_package_route_system_refuses_a_model_with_operations() {
+fn a_package_route_system_steps_the_operations_of_its_domain_packages() {
     let model = document(false);
     let (package, _) = package_with_clauses(&model, "", &[]);
     let mut documents = Documents::new(model);
@@ -152,21 +187,32 @@ fn a_package_route_system_refuses_a_model_with_operations() {
     let source = subject(&package, &documents, vec![start], &["a"], UNLIMITED);
     let handoff = handoff(&package, &documents);
     let bare = bare(&handoff);
-    let input = PackageModelInput::of(&bare).expect("the package holds no unread node");
+    let input = PackageModelInput::of(
+        &bare,
+        &documents.packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the package holds no unread node");
+    assert_eq!(
+        input.input().operations,
+        package.graph().scope().operations(),
+        "the package route declares the source route's operations"
+    );
+    assert_ne!(
+        *package.graph().scope().operations(),
+        fsl_semantics::model::operation::OperationTable::default(),
+        "the Counter declares operations"
+    );
     let mut request = source.simulation.clone();
     request.input = input.input();
-    let refusal = match ModelSystem::new(request) {
-        Err(AdmissionFailure::Refused(record)) => record,
-        Err(other) => panic!("{other:?}"),
-        Ok(_) => panic!("a model with operations is not built with no step"),
-    };
-    assert_eq!(refusal.catalog.code(), "unknown_required_feature");
-    assert_eq!(refusal.catalog.cause(), "unsupported-feature");
-    assert_eq!(
-        refusal.fields.get("form").map(String::as_str),
-        Some("operation")
+    let over_bytes = ModelSystem::new(request).expect("the package route admits operations");
+    let over_source = ModelSystem::new(source.simulation).expect("the source admits");
+    let (from_bytes, from_source) = (reachable(&over_bytes), reachable(&over_source));
+    assert_eq!(from_bytes, from_source);
+    assert!(
+        from_source.iter().any(|(_, next)| !next.is_empty()),
+        "the operations step the counter"
     );
-    assert!(ModelSystem::new(source.simulation).is_ok());
 }
 
 /// FR-531: the source route's input reads the source package's tables and
@@ -180,7 +226,6 @@ fn the_source_route_input_reads_the_source_package() {
     let graph = package.graph();
     assert!(std::ptr::eq(input.types, graph.scope().types()));
     assert!(std::ptr::eq(input.operations, graph.scope().operations()));
-    assert!(input.operations_read);
     let names: Vec<&str> = input
         .state_clauses
         .iter()

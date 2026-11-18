@@ -338,6 +338,27 @@ impl StateModel {
         })
     }
 
+    /// FR-940: the operations the selected domain packages declare, typed as
+    /// S3's assembly types them ([`crate::check::model_operation_table`]),
+    /// each type naming a unit of `units`. The unit's own source package
+    /// (FR-569) is not a domain package and contributes none.
+    ///
+    /// # Errors
+    ///
+    /// As [`crate::check::model_operation_table`].
+    pub fn operation_table(
+        &self,
+        units: &BTreeMap<String, filament_exact::UnitId>,
+    ) -> Result<crate::model::operation::OperationTable, crate::check::AssemblyRefusal> {
+        crate::check::model_operation_table(
+            self.views
+                .iter()
+                .filter(|view| !view.is_source())
+                .map(|view| &view.view),
+            units,
+        )
+    }
+
     /// Re-admit and re-normalize the domain packages `model_selections` name
     /// against `packages`, as FR-106 admission does.
     ///

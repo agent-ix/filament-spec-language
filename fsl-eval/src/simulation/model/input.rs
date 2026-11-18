@@ -77,10 +77,6 @@ pub struct ModelCheckInput<'a> {
     pub enums: &'a [EnumBinding],
     /// The operations each object type declares.
     pub operations: &'a OperationTable,
-    /// Whether [`Self::operations`] was read: `false` on the package route,
-    /// which reads no operation yet, so a model whose selected domain
-    /// packages declare an operation is refused when its system is built.
-    pub operations_read: bool,
     /// The domain packages the package selects, ascending by identity
     /// (FR-533).
     pub model_selections: &'a [DomainPackageRef],
@@ -116,7 +112,6 @@ impl<'a> ModelCheckInput<'a> {
             variant_types: scope.variant_types(),
             enums: scope.enums(),
             operations: scope.operations(),
-            operations_read: true,
             model_selections: graph.model_selections(),
             source_packages: graph.source_packages(),
             timed_models: graph.timed_models(),
@@ -180,6 +175,14 @@ pub enum PendingPackageForm {
     /// identity rows.
     #[error("the package's declarations are not readable: {0:?}")]
     World(fsl_package::BareSelectionFailure),
+    /// The supplied domain packages the package selects do not re-admit
+    /// against its types (FR-106).
+    #[error("the selected domain packages do not admit: {0:?}")]
+    Model(fsl_semantics::model::observation::AdmissionFailure),
+    /// The selected domain packages declare an operation assembly does not
+    /// type (FR-120 "Operations").
+    #[error("the selected domain packages' operations are not typed: {0:?}")]
+    Operations(fsl_semantics::check::AssemblyRefusal),
 }
 
 /// The package route's model-check input, built once from a
@@ -195,7 +198,11 @@ pub struct PackageModelInput<'p> {
 
 impl<'p> PackageModelInput<'p> {
     /// The package route's input over `package`, whose supply was attached
-    /// (FR-517 handoff identity rows, FR-531).
+    /// (FR-517 handoff identity rows, FR-531), with the domain package
+    /// documents `packages` bound to its model selections (FR-850
+    /// "Admission"). Its operation table is the one S3's assembly declares for
+    /// those packages ([`fsl_semantics::check::model_operation_table`]), so a
+    /// step applies the operations and effects the source route applies.
     ///
     /// A package never carries a probabilistic model (S4 refuses to emit one),
     /// so its probabilistic tables are empty.
@@ -205,8 +212,17 @@ impl<'p> PackageModelInput<'p> {
     /// [`PendingPackageForm::Form`] at the first node, in the package's node
     /// order, of a form the package route does not read yet;
     /// [`PendingPackageForm::World`] when the declarations are not readable
-    /// from the nodes and identity rows.
-    pub fn of(package: &'p BarePackage<'p>) -> Result<Self, PendingPackageForm> {
+    /// from the nodes and identity rows;
+    /// [`PendingPackageForm::Model`] when the supplied packages do not re-admit
+    /// against the package's types; [`PendingPackageForm::Operations`] when
+    /// their operations are not typed. A type that names a unit is typed
+    /// against no unit names: the package route reads none yet, so such an
+    /// operation refuses rather than being left out.
+    pub fn of(
+        package: &'p BarePackage<'p>,
+        packages: &fsl_semantics::model::intake::PackageInput,
+        normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
+    ) -> Result<Self, PendingPackageForm> {
         if let Some((form, node)) = package.first_unread_model_form() {
             return Err(PendingPackageForm::Form {
                 form,
@@ -214,11 +230,22 @@ impl<'p> PackageModelInput<'p> {
             });
         }
         let world = package.world().map_err(PendingPackageForm::World)?;
+        let model_selections = fsl_package::AnalysisView::model_selections(package);
+        let model = StateModel::new(
+            ModelSelections::new(&model_selections, &[]),
+            world.types(),
+            packages,
+            normalization,
+        )
+        .map_err(PendingPackageForm::Model)?;
+        let operations = model
+            .operation_table(&std::collections::BTreeMap::new())
+            .map_err(PendingPackageForm::Operations)?;
         Ok(Self {
             package,
             world,
-            model_selections: fsl_package::AnalysisView::model_selections(package),
-            operations: OperationTable::default(),
+            model_selections,
+            operations,
             probabilistic: CheckedProbabilisticModel::default(),
         })
     }
@@ -230,7 +257,6 @@ impl<'p> PackageModelInput<'p> {
             variant_types: &[],
             enums: &[],
             operations: &self.operations,
-            operations_read: false,
             model_selections: &self.model_selections,
             source_packages: &[],
             timed_models: &[],
@@ -290,6 +316,52 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         limits: ScalarLimits,
         cancel: Option<&filament_exact::Cancel>,
     ) -> Result<ClauseSetEvaluation, CallFailure>;
+
+    /// FR-940: the `holds` atom `atom` of a temporal clause, keyed by the
+    /// clause node and the atom's formula position, over `objects`. Both
+    /// routes evaluate it: the source route from its checked graph, the
+    /// package route through the atom's package form.
+    ///
+    /// # Errors
+    ///
+    /// As [`CheckedPackageEvaluation::evaluate_holds`].
+    fn evaluate_holds(
+        &self,
+        atom: &crate::value::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure>;
+
+    /// FR-940: the `when` guard of the temporal clause `clause`, keyed by
+    /// its node, over `objects`, on either route.
+    ///
+    /// # Errors
+    ///
+    /// As [`CheckedPackageEvaluation::evaluate_guard`].
+    fn evaluate_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure>;
+
+    /// FR-940: `invocation` against the operation frame `frame`, keyed by
+    /// its node, on either route. The package route reads the frame's
+    /// declared effect from `operations`, the input's operation table.
+    ///
+    /// # Errors
+    ///
+    /// As [`CheckedPackageEvaluation::evaluate_frame`].
+    fn evaluate_frame(
+        &self,
+        frame: &NodeKey,
+        invocation: &fsl_semantics::model::observation::AdmittedInvocation<'_>,
+        operations: &OperationTable,
+        meter: &mut Meter,
+    ) -> Result<crate::value::FrameEvaluation, CallFailure>;
 
     /// FR-230 "Collection-valued writes".
     ///
@@ -604,6 +676,38 @@ impl ModelEvaluator for CheckedPackage {
         crate::value::evaluate_clause_set_with_cancel(self, clauses, limits, cancel)
     }
 
+    fn evaluate_holds(
+        &self,
+        atom: &crate::value::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_holds(self, atom, over, captures, objects, meter)
+    }
+
+    fn evaluate_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_guard(self, clause, over, objects, meter)
+    }
+
+    fn evaluate_frame(
+        &self,
+        frame: &NodeKey,
+        invocation: &fsl_semantics::model::observation::AdmittedInvocation<'_>,
+        _operations: &OperationTable,
+        meter: &mut Meter,
+    ) -> Result<crate::value::FrameEvaluation, CallFailure> {
+        // The source route reads the declared effect from its checked frame.
+        CheckedPackageEvaluation::evaluate_frame(self, frame.clone(), invocation, meter)
+    }
+
     fn evaluate_collection_write(
         &self,
         clause: &QualifiedName,
@@ -893,6 +997,37 @@ impl ModelEvaluator for BarePackage<'_> {
         _cancel: Option<&filament_exact::Cancel>,
     ) -> Result<ClauseSetEvaluation, CallFailure> {
         CheckedPackageEvaluation::evaluate_clause_set(self, clauses, limits)
+    }
+
+    fn evaluate_holds(
+        &self,
+        atom: &crate::value::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_holds(self, atom, over, captures, objects, meter)
+    }
+
+    fn evaluate_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_guard(self, clause, over, objects, meter)
+    }
+
+    fn evaluate_frame(
+        &self,
+        frame: &NodeKey,
+        invocation: &fsl_semantics::model::observation::AdmittedInvocation<'_>,
+        operations: &OperationTable,
+        _meter: &mut Meter,
+    ) -> Result<crate::value::FrameEvaluation, CallFailure> {
+        crate::bare::evaluate_frame(self, operations, frame, invocation)
     }
 
     fn evaluate_collection_write(
