@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::negotiation::Fr290;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const SQ: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile v = \"filament.value.complete/v1\";\n\
@@ -639,8 +639,7 @@ fn provider_run_accepts_run_limits_and_request_overrides() {
     );
 
     let unused_clock = serde_json::value::RawValue::from_string(
-        json!({"spare": {"kind": "event_position", "sequence_authority": "spare"}})
-            .to_string(),
+        json!({"spare": {"kind": "event_position", "sequence_authority": "spare"}}).to_string(),
     )
     .unwrap();
     let clock_override = command::RequestOverrides {

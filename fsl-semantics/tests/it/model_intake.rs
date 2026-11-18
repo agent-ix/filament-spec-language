@@ -2634,10 +2634,17 @@ fn a_map_keyed_by_an_unbounded_package_rational_is_refused() {
         match assemble(declarations) {
             Err(refusal) => refusal.errors.iter().any(|error| {
                 error.cause.code() == Code::IllTyped
-                    && error.cause.catalog_code().to_string().contains("operator-ineligible")
+                    && error
+                        .cause
+                        .catalog_code()
+                        .to_string()
+                        .contains("operator-ineligible")
             }),
             Ok(declarations) => declarations
-                .check(CheckMode::Linked, filament_semantic_value::checking::CheckingLimits::default())
+                .check(
+                    CheckMode::Linked,
+                    filament_semantic_value::checking::CheckingLimits::default(),
+                )
                 .err()
                 .is_some_and(|refusals| {
                     refusals.iter().any(|refusal| {
@@ -2655,6 +2662,9 @@ fn a_map_keyed_by_an_unbounded_package_rational_is_refused() {
     )
     .unwrap_or_else(|refusal| panic!("a bounded Rational key assembles: {refusal:?}"));
     assert!(bounded
-        .check(CheckMode::Linked, filament_semantic_value::checking::CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            filament_semantic_value::checking::CheckingLimits::default()
+        )
         .is_ok());
 }

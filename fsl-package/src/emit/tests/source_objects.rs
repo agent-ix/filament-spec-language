@@ -500,7 +500,7 @@ fn source_object_node_identity_differs_from_selected_model_node_identity() {
         "{HEADER}model M = \"test/orders\";\nfunction f(x: M::Order): Boolean pure {{ true }}\n"
     ));
     let selected_model_node = nodes(&selected_wire)
-        .into_iter()
+        .iter()
         .find(|node| {
             node["node_tag"] == "model"
                 && node["semantic_form"] == "object_type"
@@ -1112,7 +1112,8 @@ fn a_forged_source_operation_body_row_refuses() {
         .clone();
     let size_body = wire["operation_bodies"][size]["body"].clone();
     let invalid = ("invalid_package", "invalid-value");
-    let cases: Vec<(Box<dyn Fn(&mut Value)>, String, (&str, &str))> = vec![
+    type Mutation = Box<dyn Fn(&mut Value)>;
+    let cases: Vec<(Mutation, String, (&str, &str))> = vec![
         (
             Box::new(move |w: &mut Value| {
                 w["operation_bodies"][size]["body"] = json!({"kind": "no_body"});

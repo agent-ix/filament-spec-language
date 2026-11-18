@@ -179,7 +179,7 @@ pub(super) fn run_model(
         return fault("admitted-universe-snapshot-reads");
     };
     let request = ModelSimulationRequest {
-        package: run.package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(run.package),
         packages: run.packages,
         normalization: run.model_limits,
         snapshots: run.provisions.snapshots,
@@ -306,6 +306,93 @@ pub(super) fn run_model(
         disposition,
         usage: ClauseRunUsage::from_meter(&meter, admitted),
         decisive: decisive_record,
+    }
+}
+
+/// FR-931 `cross_evaluate.initial`: the valuation of the temporal clause
+/// `name` over every behaviour of 1 to `max_steps` steps of the model
+/// subject built from the one snapshot `initial`, for every instance of the
+/// clause's `over` parameter. The subject's initial state is the snapshot
+/// and its universes are the complete populations the snapshot declares,
+/// each in ascending key order (FR-125 instancing). The caller refuses an
+/// incomplete population before the run; an admission refusal is the run's
+/// disposition.
+pub(super) fn run_behaviours(
+    run: &CompiledRun<'_>,
+    name: &str,
+    initial: &crate::DocumentRef,
+    max_steps: usize,
+) -> ClauseDisposition {
+    let graph = run.package.graph();
+    let Some(node) = graph
+        .temporal_clauses()
+        .iter()
+        .find(|node| node.clause().name() == name)
+    else {
+        return ClauseDisposition::MissingName {
+            name: name.to_owned(),
+        };
+    };
+    if let Err(failure) = admit_trace_snapshot(
+        graph.model_inputs(),
+        graph.scope().types(),
+        run.packages,
+        run.model_limits,
+        run.provisions.snapshots,
+        initial,
+        run.observation_limits,
+        &[],
+    ) {
+        return ClauseDisposition::Admit(failure);
+    }
+    let Some(mut universes) = universes(run, std::slice::from_ref(initial)) else {
+        return fault("admitted-universe-snapshot-reads").disposition;
+    };
+    for universe in &mut universes {
+        universe.keys.sort();
+    }
+    let request = ModelSimulationRequest {
+        input: fsl_eval::simulation::model::ModelCheckInput::source(run.package),
+        packages: run.packages,
+        normalization: run.model_limits,
+        snapshots: run.provisions.snapshots,
+        initial: vec![initial.clone()],
+        universes,
+        observation: run.observation_limits,
+        expansion: ExpansionLimits {
+            max_candidates: crate::spine::DEFAULT_MODEL_MAX_CANDIDATES,
+        },
+        meter: run.accounting,
+        emit: fsl_package::EmitLimits::new(u64::MAX),
+    };
+    let system = match ModelSystem::new(request) {
+        Ok(system) => system,
+        Err(failure) => return ClauseDisposition::Admit(failure),
+    };
+    let clause = node.clause();
+    let Ok(instances) = system.instances(&clause.over().1) else {
+        return fault("model-instances-are-listed").disposition;
+    };
+    let letters = match system.clause_letters(node) {
+        Ok(letters) => letters,
+        Err(_) => return fault("model-clause-has-letters").disposition,
+    };
+    match crate::model_check::replay::behaviour_valuations(
+        &system,
+        clause,
+        &letters,
+        &instances,
+        max_steps,
+        run.accounting,
+    ) {
+        Ok(behaviours) => {
+            ClauseDisposition::TemporalValuation(Box::new(super::TemporalValuation {
+                clause: clause.clone(),
+                positions: None,
+                behaviours: Some(behaviours),
+            }))
+        }
+        Err(refusal) => replay_refusal(refusal),
     }
 }
 

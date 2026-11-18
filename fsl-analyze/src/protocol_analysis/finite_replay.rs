@@ -633,7 +633,7 @@ pub(crate) struct ReplaySubject<'a, 'b> {
 impl<'a> ReplaySubject<'a, '_> {
     pub(crate) fn simulation(&self) -> ModelSimulationRequest<'a> {
         ModelSimulationRequest {
-            package: self.package,
+            input: fsl_eval::simulation::model::ModelCheckInput::source(self.package),
             packages: self.binding.packages,
             normalization: self.limits.normalization,
             snapshots: self.binding.snapshots,
@@ -1056,8 +1056,12 @@ fn report_fault(error: ReplayFault) -> EngineReport {
     }
 }
 
+fn finite_report(report: FiniteReplayReport) -> EngineReport {
+    EngineReport::FiniteReplay(Box::new(report))
+}
+
 fn declined(cause: &'static str, position: Option<usize>, path: Option<String>) -> EngineReport {
-    EngineReport::FiniteReplay(FiniteReplayReport::Declined {
+    finite_report(FiniteReplayReport::Declined {
         cause,
         position,
         path,
@@ -1108,9 +1112,9 @@ pub(crate) fn finite_replay_item<'a>(
                 subject: &subject,
             };
             match subject.replay(&trace) {
-                Ok(ReplayVerdict::Replayed(steps)) => EngineReport::FiniteReplay(
-                    FiniteReplayReport::Replayed(u64::try_from(steps).unwrap_or(u64::MAX)),
-                ),
+                Ok(ReplayVerdict::Replayed(steps)) => finite_report(FiniteReplayReport::Replayed(
+                    u64::try_from(steps).unwrap_or(u64::MAX),
+                )),
                 Ok(ReplayVerdict::StaleStep(position)) => {
                     declined("invalid-value", Some(position), None)
                 }
@@ -1126,12 +1130,10 @@ pub(crate) fn finite_replay_item<'a>(
                         return fault();
                     };
                     match run.refute(over, counterexample, None, cancel) {
-                        Ok(refuted) => {
-                            EngineReport::FiniteReplay(FiniteReplayReport::UndefinedStep {
-                                refuted: Box::new(refuted),
-                                at,
-                            })
-                        }
+                        Ok(refuted) => finite_report(FiniteReplayReport::UndefinedStep {
+                            refuted: Box::new(refuted),
+                            at,
+                        }),
                         Err(error) => report_fault(error),
                     }
                 }
@@ -1157,7 +1159,7 @@ pub(crate) fn finite_replay_item<'a>(
                         }
                         None => None,
                     };
-                    EngineReport::FiniteReplay(FiniteReplayReport::Claim(Box::new(ClaimReport {
+                    finite_report(FiniteReplayReport::Claim(Box::new(ClaimReport {
                         steps: u64::try_from(steps).unwrap_or(u64::MAX),
                         evaluation,
                         refuted,

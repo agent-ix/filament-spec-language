@@ -13,7 +13,7 @@ use fsl_package::AdmittedProtocolObservation;
 pub(crate) mod charges;
 pub(crate) mod resolve;
 
-pub use charges::{BINDER_ACCOUNTING_VERSION, BinderCharges, ChargeAmounts};
+pub use charges::{BinderCharges, ChargeAmounts, BINDER_ACCOUNTING_VERSION};
 
 /// Caller-constructible selector for one expression member of an emitted
 /// protocol node (FR-390). The fields intentionally stay public; admission

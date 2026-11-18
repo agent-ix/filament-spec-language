@@ -1493,8 +1493,8 @@ fn a_symbolic_capacity_premise_carries_the_bound_value_in_the_key() {
 /// `bounded`, a symbolic capacity is decided at the value the subject's
 /// `capacities` binding gives it, with that value in the key, so another
 /// value is another key. With `Bound` = 1 and two sends before any receive
-/// under `overflow reject`, the result is the result of the literal capacity
-/// 1. With no binding the item settles `inconclusive`, `premise-not-stated`
+/// under `overflow reject`, the result is the result of the literal capacity 1.
+/// With no binding the item settles `inconclusive`, `premise-not-stated`
 /// naming the member `capacities`, never `requires-bound`.
 #[trace("FSpec-TC-1911", "FSpec-FR-785-AC-6", "TC-2523", "FR-891-AC-2")]
 #[test]

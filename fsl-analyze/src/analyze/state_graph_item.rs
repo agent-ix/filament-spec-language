@@ -105,7 +105,7 @@ struct Run<'r, 'a> {
 impl<'a> Run<'_, 'a> {
     fn simulation(&self) -> ModelSimulationRequest<'a> {
         ModelSimulationRequest {
-            package: self.package,
+            input: fsl_eval::simulation::model::ModelCheckInput::source(self.package),
             packages: self.binding.packages,
             normalization: self.limits.normalization,
             snapshots: self.binding.snapshots,

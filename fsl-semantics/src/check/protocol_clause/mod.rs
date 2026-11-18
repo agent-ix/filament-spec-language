@@ -181,12 +181,8 @@ pub fn check(
         }
     }
 
-    let (bound_attempts, contract_refusals) = bind_attempts(
-        protocol,
-        attempts,
-        state_clauses,
-        scope.types(),
-    );
+    let (bound_attempts, contract_refusals) =
+        bind_attempts(protocol, attempts, state_clauses, scope.types());
     refusals.extend(contract_refusals);
 
     let awaits = match awaits::check(protocol, selections) {

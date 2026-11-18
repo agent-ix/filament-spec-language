@@ -305,7 +305,7 @@ impl World {
     pub(crate) fn admit(&self) -> Result<ModelSystem<'_>, AdmissionFailure> {
         ModelSystem::new(ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
-            package: &self.package,
+            input: crate::simulation::model::ModelCheckInput::source(&self.package),
             packages: &self.packages,
             normalization: ModelNormalizationLimits::default(),
             snapshots: &self.snapshots,

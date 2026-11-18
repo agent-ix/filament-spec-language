@@ -371,7 +371,7 @@ fn every_independent_checker_poll_preserves_cancellation_including_graph_expansi
         .into_iter()
         .collect();
     let system = ModelSystem::new(ModelSimulationRequest {
-        package: checked.package(),
+        input: fsl_eval::simulation::model::ModelCheckInput::source(checked.package()),
         packages: &packages,
         normalization: stages.model,
         snapshots: &snapshots,

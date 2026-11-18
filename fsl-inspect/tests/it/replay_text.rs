@@ -29,11 +29,8 @@ fn text(document: &OutcomeDocument) -> String {
 #[trace("TC-2963", "FR-865-AC-6")]
 #[ignore = "QSL-2292: the replay outcome document has no replayed result and render_outcome writes no result line for it yet"]
 fn a_replay_outcome_renders_one_result_line_per_entry() {
-    let document = OutcomeDocument::new(
-        Operation::Replay,
-        Some(OutcomeStage::S8),
-        Category::Success,
-    );
+    let document =
+        OutcomeDocument::new(Operation::Replay, Some(OutcomeStage::S8), Category::Success);
     let text = text(&document);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(

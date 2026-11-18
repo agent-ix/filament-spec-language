@@ -686,6 +686,10 @@ impl World {
         )
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+    )]
     fn assemble_with_mode(
         vault: Vault,
         reset: bool,
@@ -759,7 +763,7 @@ impl World {
         ModelSubject {
             simulation: ModelSimulationRequest {
                 emit: fsl_package::EmitLimits::fixture(),
-                package: &self.package,
+                input: fsl_eval::simulation::model::ModelCheckInput::source(&self.package),
                 packages: &self.packages,
                 normalization: ModelNormalizationLimits::default(),
                 snapshots: &self.snapshots,

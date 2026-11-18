@@ -75,9 +75,8 @@ impl SubjectIdentity {
                 .collect(),
             universes,
             packages: simulation
-                .package
-                .graph()
-                .model_selections()
+                .input
+                .model_selections
                 .iter()
                 .map(|selection| selection.identity.clone())
                 .collect(),

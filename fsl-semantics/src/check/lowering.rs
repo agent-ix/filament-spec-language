@@ -33,12 +33,12 @@ use filament_checked::node::{
     Arithmetic, CaseArm, CheckedLiteral, Connective, IntegerDivisionOperator, NodeKind,
     OrderedKind, RecordField, RecordSlot, Visit,
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, hash_map};
+use std::collections::{hash_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::ops::ControlFlow;
 
 use fsl_foundation::source::node_table::{
-    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
+    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
 };
 
 use filament_exact::{
@@ -94,40 +94,40 @@ mod timed_clause;
 
 pub(crate) use extension::ExtensionFormInput;
 pub(crate) use hybrid::{
-    HybridClaimInput, HybridModelInput, HybridSite, hybrid_location, hybrid_site,
+    hybrid_location, hybrid_site, HybridClaimInput, HybridModelInput, HybridSite,
 };
 pub(crate) use hyper::{
-    HyperClauseInput, LoweredStepRelation, StepRelationInput, finish_step_relation,
+    finish_step_relation, HyperClauseInput, LoweredStepRelation, StepRelationInput,
 };
 pub(crate) use model::ParentSlotFailure;
-pub use model::{
-    AdmittedModel, CollectionShape, ForeignView, ModelClause, PlaceRow, PlaceStep,
-    SelectedModelEnumDeclaration, SelectedModelEnumMember, SelectedOperationMember,
-    collection_kind, model_root_key,
-};
 pub(crate) use model::{
-    QuantityKind, SourceClockLayout, SourceClockPlace, bound_origin, clock_type_identity,
-    equivalence_origin, model_declaration_key, quantity_origin, record_node_key, strictly_below,
+    bound_origin, clock_type_identity, equivalence_origin, model_declaration_key, quantity_origin,
+    record_node_key, strictly_below, QuantityKind, SourceClockLayout, SourceClockPlace,
+};
+pub use model::{
+    collection_kind, model_root_key, AdmittedModel, CollectionShape, ForeignView, ModelClause,
+    PlaceRow, PlaceStep, SelectedModelEnumDeclaration, SelectedModelEnumMember,
+    SelectedOperationMember,
 };
 pub(crate) use model::{model_node_content, population_node_content};
 pub(crate) use protocol::{
-    AttemptNodes, CompensationNodes, ProtocolInput, compensation_origin, declaration_origin,
-    protocol_location,
+    compensation_origin, declaration_origin, protocol_location, AttemptNodes, CompensationNodes,
+    ProtocolInput,
 };
-pub use protocol::{ProtocolSite, RelatedSide, protocol_site};
+pub use protocol::{protocol_site, ProtocolSite, RelatedSide};
 pub(crate) use state::{
-    AnchorInput, AttemptInput, LoweredAttempt, LoweredClause, OperationBinding, StateClauseInput,
     protocol_attempt_operation_location, protocol_attempt_operation_site,
     state_clause_name_location, state_clause_name_site, state_operation_location,
-    state_operation_site,
+    state_operation_site, AnchorInput, AttemptInput, LoweredAttempt, LoweredClause,
+    OperationBinding, StateClauseInput,
 };
 pub(crate) use state_graph::StateGraphClaimInput;
 pub(crate) use state_transition::TransitionClause;
 pub(crate) use temporal::{
-    AggregatePart, LoweredTemporalClause, TemporalClauseInput, TemporalSite, temporal_location,
-    temporal_site,
+    temporal_location, temporal_site, AggregatePart, LoweredTemporalClause, TemporalClauseInput,
+    TemporalSite,
 };
-pub(crate) use terminal::{TerminalInput, TerminalSite, terminal_location, terminal_site};
+pub(crate) use terminal::{terminal_location, terminal_site, TerminalInput, TerminalSite};
 pub(crate) use timed_clause::TimedClauseInput;
 
 /// A node's place in its recursion group (FR-092 "Recursion groups"): the
@@ -1237,11 +1237,11 @@ fn carrier_rounding(carried: &filament_exact::CarriedQuantityType) -> filament_e
 #[ix_trace_rs::string_edge]
 fn variant_type_identity(path: &[filament_exact::PathSegment]) -> Option<&String> {
     match path {
-        [
-            filament_exact::PathSegment::Text(kind),
-            filament_exact::PathSegment::Text(form),
-            filament_exact::PathSegment::Text(identity),
-        ] if kind == "model" && form == "variant_type" => Some(identity),
+        [filament_exact::PathSegment::Text(kind), filament_exact::PathSegment::Text(form), filament_exact::PathSegment::Text(identity)]
+            if kind == "model" && form == "variant_type" =>
+        {
+            Some(identity)
+        }
         _ => None,
     }
 }
@@ -4877,7 +4877,22 @@ impl<'a> Lowering<'a> {
                         filament_exact::IeeeWidth::Binary64 => "float64",
                     },
                     ValueType::Quantity(_) => "quantity",
-                    _ => {
+                    ValueType::Boolean
+                    | ValueType::CarriedQuantity(_)
+                    | ValueType::Text(_)
+                    | ValueType::String
+                    | ValueType::Bytes
+                    | ValueType::JsonObject
+                    | ValueType::Uuid
+                    | ValueType::Timestamp
+                    | ValueType::Enum(_)
+                    | ValueType::Option(_)
+                    | ValueType::Composite(_)
+                    | ValueType::Collection(_)
+                    | ValueType::Map(_)
+                    | ValueType::BoundedQuantity(_)
+                    | ValueType::Reference(_)
+                    | ValueType::Population(_) => {
                         return Err(refuse(
                             node.location(),
                             CheckCause::IllTyped(filament_exact::IllTypedCause::OperatorIneligible),
@@ -4887,7 +4902,26 @@ impl<'a> Lowering<'a> {
                 let source_family = match node.at(*operand).value_type() {
                     ValueType::String => "string",
                     ValueType::Text(_) => "text",
-                    _ => {
+                    ValueType::Boolean
+                    | ValueType::Integer
+                    | ValueType::Int(_)
+                    | ValueType::Rational(_)
+                    | ValueType::Decimal(_)
+                    | ValueType::Float(_)
+                    | ValueType::Quantity(_)
+                    | ValueType::CarriedQuantity(_)
+                    | ValueType::Bytes
+                    | ValueType::JsonObject
+                    | ValueType::Uuid
+                    | ValueType::Timestamp
+                    | ValueType::Enum(_)
+                    | ValueType::Option(_)
+                    | ValueType::Composite(_)
+                    | ValueType::Collection(_)
+                    | ValueType::Map(_)
+                    | ValueType::BoundedQuantity(_)
+                    | ValueType::Reference(_)
+                    | ValueType::Population(_) => {
                         return Err(refuse(
                             node.location(),
                             CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch),
@@ -4909,7 +4943,25 @@ impl<'a> Lowering<'a> {
                     ValueType::Quantity(_) => {
                         Some(OperationMode::Rounding(filament_exact::RoundingMode::Exact))
                     }
-                    _ => None,
+                    ValueType::Boolean
+                    | ValueType::Integer
+                    | ValueType::Int(_)
+                    | ValueType::Rational(_)
+                    | ValueType::CarriedQuantity(_)
+                    | ValueType::Text(_)
+                    | ValueType::String
+                    | ValueType::Bytes
+                    | ValueType::JsonObject
+                    | ValueType::Uuid
+                    | ValueType::Timestamp
+                    | ValueType::Enum(_)
+                    | ValueType::Option(_)
+                    | ValueType::Composite(_)
+                    | ValueType::Collection(_)
+                    | ValueType::Map(_)
+                    | ValueType::BoundedQuantity(_)
+                    | ValueType::Reference(_)
+                    | ValueType::Population(_) => None,
                 };
                 let member = self.type_argument(target, node.location())?;
                 let identity = format!("filament.op.{source_family}.to_{target_kind}");
@@ -5599,7 +5651,26 @@ impl<'a> Lowering<'a> {
                     ValueType::Map(map_type) => {
                         self.leaves(LeafSource::Compared(map_type.key()), node.location())?
                     }
-                    _ => Vec::new(),
+                    ValueType::Boolean
+                    | ValueType::Integer
+                    | ValueType::Int(_)
+                    | ValueType::Rational(_)
+                    | ValueType::Decimal(_)
+                    | ValueType::Float(_)
+                    | ValueType::Quantity(_)
+                    | ValueType::CarriedQuantity(_)
+                    | ValueType::Text(_)
+                    | ValueType::String
+                    | ValueType::Bytes
+                    | ValueType::JsonObject
+                    | ValueType::Uuid
+                    | ValueType::Timestamp
+                    | ValueType::Enum(_)
+                    | ValueType::Option(_)
+                    | ValueType::Composite(_)
+                    | ValueType::BoundedQuantity(_)
+                    | ValueType::Reference(_)
+                    | ValueType::Population(_) => Vec::new(),
                 };
                 (
                     Keyed::Application(

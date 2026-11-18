@@ -49,10 +49,7 @@ use filament_exact::{Meter, NodeKey, ObjectReference, Value, ValueType};
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::Code;
-use fsl_package::CheckedPackage;
-use fsl_semantics::check::{
-    CheckedActivation, CheckedGraph, CheckedProtocol, CheckedTerminalMember,
-};
+use fsl_semantics::check::{CheckedActivation, CheckedProtocol, CheckedTerminalMember};
 use fsl_semantics::family::ClaimExtent;
 use quire_canonical::{Encode, Error, Sink, Writer};
 
@@ -62,16 +59,15 @@ use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::explore::TransitionSystem;
 use crate::simulation::footprint::Location;
 use crate::simulation::key::{self, EncodingRefusal};
-use crate::simulation::model::encode::{Canonicalizer, Enc, map_enc, reference_enc, value_enc};
+use crate::simulation::model::encode::{map_enc, reference_enc, value_enc, Canonicalizer, Enc};
 use crate::simulation::model::{
-    BROKEN, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, Observed, TerminalClass,
-    Verdict, verdict,
+    verdict, ClauseOutcome, ModelEvaluator, ModelFinding, ModelSimState, ModelSystem, Observed,
+    TerminalClass, Verdict, BROKEN,
 };
-use crate::simulation::not_simulated::{NotSimulated, RequiresBound, check_requires_bound};
+use crate::simulation::not_simulated::{check_requires_bound, NotSimulated, RequiresBound};
 use crate::simulation::progress::ZeroProgressError;
 use crate::simulation::subject::ConstraintError;
 use crate::simulation::subject::{Bounded, Cut, SubjectSystem};
-use crate::value::evaluate_protocol_slot;
 use fsl_semantics::model::observation::Observation;
 use steps::ProtocolExpansion;
 
@@ -81,11 +77,11 @@ pub use access::{
 };
 pub use capacity::{capacity_value, Capacities, CapacityRefusal, UnboundCapacity};
 pub use fairness::{
-    FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError, ProtocolTarget,
-    protocol_constraints,
+    protocol_constraints, FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError,
+    ProtocolTarget,
 };
 pub use footprint::{
-    AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation, visible,
+    visible, AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation,
 };
 pub use identity::{
     Actor, BlockedThread, BusinessEffectOccurrence, CarriedComponent, DeliveryIdentity,
@@ -103,7 +99,7 @@ pub use reach::{ReachRefusal, Reachable, ReachedState};
 pub use selection::{
     MemorySelection, MemorySelectionRefusal, ResolvedMemory, ResolvedParallel, SubjectMemory,
 };
-pub use tso::{Buffered, DEFAULT_MEMORY_BOUND, Tso, TsoComponent};
+pub use tso::{Buffered, Tso, TsoComponent, DEFAULT_MEMORY_BOUND};
 pub use wire::{
     blocked_json, fairness_json, location_json, over_reference, send_record_json, transition_json,
 };
@@ -755,9 +751,9 @@ impl<C: Encode> Envelope<'_, C> {
 /// cannot enumerate is an unbounded root.
 pub fn protocol_domains(
     protocol: &CheckedProtocol,
-    graph: &CheckedGraph,
+    evaluator: &dyn ModelEvaluator,
 ) -> Vec<(NodeKey, ValueType)> {
-    let Some(keys) = graph.protocol_node_keys(&protocol.name) else {
+    let Some(keys) = evaluator.protocol_node_keys(&protocol.name) else {
         return Vec::new();
     };
     let binders = protocol
@@ -801,10 +797,10 @@ pub fn protocol_domains(
 fn check_attempt_types(
     model: &ModelSystem<'_>,
     protocol: &CheckedProtocol,
-    graph: &CheckedGraph,
+    evaluator: &dyn ModelEvaluator,
 ) -> Result<(), NotSimulated> {
     let mut domains = BTreeMap::new();
-    let keys = graph.protocol_node_keys(&protocol.name);
+    let keys = evaluator.protocol_node_keys(&protocol.name);
     for (index, template) in protocol.obligations.compensations.iter().enumerate() {
         let Some(node) = keys.and_then(|keys| keys.compensations.get(&index)) else {
             continue;
@@ -846,10 +842,10 @@ pub fn check_protocol_bounds(
     model: &ModelSystem<'_>,
     protocol: &CheckedProtocol,
     capacities: &Capacities,
-    graph: &CheckedGraph,
+    evaluator: &dyn ModelEvaluator,
     position_limit: u64,
 ) -> Result<(), NotSimulated> {
-    let domains = subject_domains(model, protocol, graph);
+    let domains = subject_domains(model, protocol, evaluator);
     let with_capacities = |refusal| match refusal {
         NotSimulated::RequiresBound(mut bound) => {
             bound.capacities = capacities.unbound().to_vec();
@@ -859,7 +855,7 @@ pub fn check_protocol_bounds(
     };
     check_requires_bound(&roots(&domains), model.types(), position_limit)
         .map_err(with_capacities)?;
-    check_attempt_types(model, protocol, graph).map_err(with_capacities)?;
+    check_attempt_types(model, protocol, evaluator).map_err(with_capacities)?;
     if capacities.unbound().is_empty() {
         Ok(())
     } else {
@@ -871,11 +867,11 @@ pub fn check_protocol_bounds(
 fn subject_domains(
     model: &ModelSystem<'_>,
     protocol: &CheckedProtocol,
-    graph: &CheckedGraph,
+    evaluator: &dyn ModelEvaluator,
 ) -> Vec<(NodeKey, Vec<u32>, ValueType)> {
     let mut domains = model.rooted_domains();
     domains.extend(
-        protocol_domains(protocol, graph)
+        protocol_domains(protocol, evaluator)
             .into_iter()
             .map(|(node, value_type)| (node, Vec::new(), value_type)),
     );
@@ -903,8 +899,8 @@ pub fn explore_protocol<M: MemoryModel>(
     limits: crate::simulation::explore::Limits,
     poll: impl FnMut() -> bool,
 ) -> Result<crate::simulation::explore::Exploration<ModelFinding>, NotSimulated> {
-    check_attempt_types(&system.model, system.protocol, system.package.graph())?;
-    let domains = subject_domains(&system.model, system.protocol, system.package.graph());
+    check_attempt_types(&system.model, system.protocol, system.evaluator)?;
+    let domains = subject_domains(&system.model, system.protocol, system.evaluator);
     crate::simulation::explore::explore_request(
         system,
         &roots(&domains),
@@ -965,7 +961,9 @@ fn over_values(
         return over_value(model, protocol, over).map(|value| vec![value]);
     }
     if !model.enumerates(&input.value_type) {
-        return Err(ProtocolRefusal::Unsupported(Unsupported::UnenumerableRecord));
+        return Err(ProtocolRefusal::Unsupported(
+            Unsupported::UnenumerableRecord,
+        ));
     }
     model
         .domain_values(&input.value_type, &[])
@@ -1056,7 +1054,7 @@ pub type ProtocolSuccessorsAndTerminal<M> = (
 /// FR-215: the transition system of a protocol subject.
 pub struct ProtocolSystem<'a, M: MemoryModel> {
     model: ModelSystem<'a>,
-    package: &'a CheckedPackage,
+    evaluator: &'a dyn ModelEvaluator,
     protocol: &'a CheckedProtocol,
     program: Program<'a>,
     memory: M,
@@ -1154,8 +1152,8 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         subject: &ProtocolSubject<'a>,
         memory: M,
     ) -> Result<Self, ProtocolRefusal> {
-        let package = subject.model.simulation.package;
-        let protocol = package.graph().protocol(&subject.protocol).ok_or_else(|| {
+        let evaluator = subject.model.simulation.input.evaluator;
+        let protocol = evaluator.protocol(&subject.protocol).ok_or_else(|| {
             ProtocolRefusal::UnknownProtocol {
                 protocol: subject.protocol.clone(),
             }
@@ -1258,7 +1256,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         }
         let mut system = Self {
             model,
-            package,
+            evaluator,
             protocol,
             program,
             memory,
@@ -1350,14 +1348,14 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 let (instances, initial_findings) = if self.program.activation.is_some() {
                     (BTreeMap::new(), Vec::new())
                 } else {
-                    let started = self
-                        .start(0, None, &model, over)
-                        .map_err(|error| match error {
-                            settle::SettleError::Refused(refusal) => refusal,
-                            settle::SettleError::Stopped(stop) => {
-                                ProtocolRefusal::InitialStop(stop)
-                            }
-                        })?;
+                    let started =
+                        self.start(0, None, &model, over)
+                            .map_err(|error| match error {
+                                settle::SettleError::Refused(refusal) => refusal,
+                                settle::SettleError::Stopped(stop) => {
+                                    ProtocolRefusal::InitialStop(stop)
+                                }
+                            })?;
                     match started {
                         roles::Started::Instance(instance) => {
                             (BTreeMap::from([(0, *instance)]), Vec::new())
@@ -2104,14 +2102,15 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         frame: Vec<Option<Value>>,
         observation: &Observation,
     ) -> Result<Verdict, ExpansionStop> {
-        let evaluation = evaluate_protocol_slot(
-            self.package,
-            body,
-            frame,
-            &observation.environment,
-            &mut Meter::new(self.model.meter()),
-        )
-        .map_err(|_| broken())?;
+        let evaluation = self
+            .evaluator
+            .evaluate_protocol_slot(
+                body,
+                frame,
+                &observation.environment,
+                &mut Meter::new(self.model.meter()),
+            )
+            .map_err(|_| broken())?;
         Ok(verdict(&evaluation.outcome))
     }
 

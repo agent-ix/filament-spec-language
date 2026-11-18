@@ -8,10 +8,10 @@
 use super::admission_corpus::config_version_unit;
 use super::owner_model::targets;
 use super::population_bound::document;
-use super::protocol_graph::{PROFILES, argument, clause, member, target};
+use super::protocol_graph::{argument, clause, member, target, PROFILES};
 use super::protocol_reference::clause_argument;
 use super::protocol_terminal::argument as named_argument;
-use super::reachability::{Lowered, lower_with};
+use super::reachability::{lower_with, Lowered};
 use super::*;
 use crate::checked_v2::V2ReadRefusal;
 use filament_contract_model::{CheckedPackageRefusalCause, CheckedPackageRefusalCode};
@@ -30,7 +30,7 @@ fn channel_connection_model() -> fsl_semantics::model::intake::SelectedModel {
         RelationshipRecord,
     };
     use fsl_semantics::model::intake::SelectedModel;
-    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
+    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
 
     let key = |name: &str| DeclarationKey {
         package: "example/channel-connection".to_owned(),
@@ -201,13 +201,11 @@ fn a_channel_emits_only_its_declared_connection_reference() {
         held,
         "the channel connection is in the clause relationships set"
     );
-    assert!(
-        channel["dependencies"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|dependency| dependency == &relationship["node_id"])
-    );
+    assert!(channel["dependencies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|dependency| dependency == &relationship["node_id"]));
 }
 
 /// Read the complete envelope through FSL's I2 dispatch with its domain evidence.

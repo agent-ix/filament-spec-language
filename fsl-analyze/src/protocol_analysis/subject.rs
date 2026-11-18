@@ -106,7 +106,7 @@ pub fn protocol_subject(
     Ok(ProtocolSubject {
         model: ModelSubject {
             simulation: ModelSimulationRequest {
-                package: package.package,
+                input: fsl_eval::simulation::model::ModelCheckInput::source(package.package),
                 packages: package.packages,
                 normalization,
                 snapshots: package.snapshots,

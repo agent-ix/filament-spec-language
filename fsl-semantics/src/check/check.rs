@@ -4315,8 +4315,8 @@ impl<'a> Typer<'a> {
                     location: location.clone(),
                     cause: CheckCause::OperandTypeMismatch {
                         operator,
-                        left_type,
-                        right_type,
+                        left_type: Box::new(left_type),
+                        right_type: Box::new(right_type),
                     },
                 });
             }
@@ -5077,8 +5077,8 @@ impl<'a> Typer<'a> {
                 refuse(
                     location,
                     CheckCause::UnknownField {
-                        owner: declaration.name().to_owned(),
-                        field: field.to_owned(),
+                        owner: declaration.name().into(),
+                        field: field.into(),
                         span: member_span,
                     },
                 )
