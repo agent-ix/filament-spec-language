@@ -1192,6 +1192,7 @@ pub fn read_evaluation_emission<'package>(
             "admitted-reader-graph-has-structural-keys",
         ))),
     })?;
+    let admitted_identity = LibraryName::of_package(&read.admitted);
     Ok(AdmittedPackageRead {
         source: package,
         emission: emission.clone(),
@@ -1199,6 +1200,7 @@ pub fn read_evaluation_emission<'package>(
         read,
         dependencies: AdmittedPackages(closure),
         reader_nodes,
+        identity: admitted_identity,
     })
 }
 
@@ -1215,6 +1217,9 @@ pub struct AdmittedPackageRead<'package> {
     read: V2Read,
     dependencies: AdmittedPackages,
     reader_nodes: BTreeSet<NodeKey>,
+    /// The admitted package's identity, read from its `name()` and never
+    /// from the source package (FR-940 `identity`).
+    identity: LibraryName,
 }
 
 impl AdmittedPackageRead<'_> {
@@ -1226,6 +1231,11 @@ impl AdmittedPackageRead<'_> {
     /// The admitted package the reader returned for these bytes.
     pub fn admitted(&self) -> &CheckedPackageV2 {
         &self.read.admitted
+    }
+
+    /// The admitted package's identity (FR-940 `identity`).
+    pub(crate) fn admitted_identity(&self) -> &LibraryName {
+        &self.identity
     }
 
     /// The in-process package whose emission these bytes are.

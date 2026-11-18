@@ -516,8 +516,10 @@ impl ClauseDisposition {
     /// `Incomplete` is incomplete and a `Fault` an internal failure. The
     /// run's exit code is this category's
     /// [`Category::exit_code`](filament_semantic_value::catalog::Category::exit_code)
-    /// (FR-285); a finite-window `Temporal` verdict is `Pending` or
-    /// `Indeterminate` where the catalog says so.
+    /// (FR-285). A typed undefined evaluation is a violation of the claim
+    /// (FR-301), while its kernel or family reason remains the item cause; a
+    /// finite-window `Temporal` verdict is `Pending` or `Indeterminate` where
+    /// the catalog says so.
     pub fn category(&self) -> filament_semantic_value::catalog::Category {
         use filament_semantic_value::catalog::Category;
         match self {
@@ -562,9 +564,8 @@ impl ClauseDisposition {
                 fsl_foundation::diagnostic::Code::from_code(refusal.record.catalog.code())
                     .map_or(Category::InternalFailure, |code| code.category())
             }
-            Self::Evaluate(CallOutcome::Completed(CallValue::Boolean(false))) => {
-                Category::Violation
-            }
+            Self::Evaluate(CallOutcome::Completed(CallValue::Boolean(false)))
+            | Self::Evaluate(CallOutcome::Undefined { .. }) => Category::Violation,
             Self::Evaluate(CallOutcome::Completed(
                 CallValue::Reference(_) | CallValue::Written(_),
             )) => Category::InternalFailure,
@@ -576,6 +577,7 @@ impl ClauseDisposition {
     pub fn truth(&self) -> Option<bool> {
         match self {
             Self::Evaluate(CallOutcome::Completed(CallValue::Boolean(value))) => Some(*value),
+            Self::Evaluate(CallOutcome::Undefined { .. }) => Some(false),
             Self::FrameViolation(_) | Self::OperationContractViolation(_) => Some(false),
             Self::Temporal(TemporalVerdict::Holds) => Some(true),
             Self::Temporal(TemporalVerdict::Violated { .. }) => Some(false),

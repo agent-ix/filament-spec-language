@@ -356,6 +356,10 @@ fn simulation_budget_and_seeded_sampling() {
     let first = analyze(&path);
     let stopped = first.item(0);
     assert_eq!(stopped["category"], "incomplete");
+    // FSpec FR-181-AC-32: the stopped bound names its FR-461 setting and value.
+    assert_eq!(stopped["cause"]["limit"], "max_states");
+    assert_eq!(stopped["cause"]["setting"], "explore.states");
+    assert_eq!(stopped["cause"]["value"], 2);
     assert!(stopped["frontier"]
         .as_array()
         .is_some_and(|frontier| !frontier.is_empty()));

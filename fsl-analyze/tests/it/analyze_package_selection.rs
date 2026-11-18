@@ -9,32 +9,26 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    analyze, below_three, bounded, clause, counter_request, label, request_members, Run, Workspace,
+    analyze, below_three, bounded, clause, counter_request, label, package_selection,
+    request_members, Run, Workspace, HANDOFF,
 };
 
 fn at_most_two() -> String {
     clause("AtMostTwo", "", "always holds(c.value <= 2)")
 }
 
-/// Compile the Counter program with `body` and write its package bytes as
-/// `package.json`; returns the request members with `package` selected and no
+/// Compile the Counter program with `body` into its FR-517 handoff
+/// directory; returns the request members with `package` selecting it and no
 /// `program`, and the package bytes.
 fn package_request(ws: &Workspace, body: &str, items: Value) -> (Value, Vec<u8>) {
     // Writes the program, model and snapshot files beside the request.
     let _ = counter_request(ws, body, items.clone());
-    let request = request_members(Some(items));
-    let compile = json!({"format": "native-compile/1", "request": {
-        "models": request["models"], "program": request["program"]}});
-    let compile_path = ws.write("compile.json", compile.to_string().as_bytes());
-    let package = fsl_command::command::compile(&compile_path).expect("the program compiles");
-    ws.write("package.json", &package);
-    let mut selected = request;
-    selected
-        .as_object_mut()
-        .expect("a request object")
-        .remove("program");
-    selected["package"] = json!({"file": "package.json"});
-    (selected, package)
+    package_selection(ws, &request_members(Some(items)))
+}
+
+/// The handoff file `name` of FR-850's `package` selection.
+fn handoff_file(name: &str) -> String {
+    format!("{HANDOFF}/{name}")
 }
 
 fn analyze_members(ws: &Workspace, name: &str, members: &Value) -> Run {
@@ -88,7 +82,7 @@ fn malformed_package_bytes_refuse_invalid_package() {
         ("no-entry", no_entry.to_string().into_bytes()),
         ("not-json", b"not json".to_vec()),
     ] {
-        ws.write("package.json", &bytes);
+        ws.write(&handoff_file("checked-package.json"), &bytes);
         let run = analyze_members(&ws, &format!("analyze-{name}.json"), &members);
         let diagnostic = first_diagnostic(&run);
         assert_eq!(
@@ -98,6 +92,62 @@ fn malformed_package_bytes_refuse_invalid_package() {
         assert_eq!(run.document()["items"], json!([]), "{name}");
         assert_eq!(run.exit, 20, "{name}");
     }
+}
+
+/// FR-850 "Admission" (lead ruling on the handoff selection): a handoff
+/// with no `identities.json`, or one the identity reader refuses, refuses
+/// the whole request `invalid_package` with a named cause, exit 20, before
+/// any item resolves; a present equality file the reader refuses refuses
+/// the same way.
+#[trace("TC-2410", "FR-850-AC-3")]
+#[trace("TC-2966", "FR-850-AC-6", "FSpec-TC-2009", "FSpec-FR-520-AC-7")]
+#[test]
+fn a_handoff_without_its_identity_rows_refuses_invalid_package() {
+    let ws = Workspace::new("package-identities");
+    let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Missing"}]));
+    let identities = ws.path(&handoff_file("identities.json"));
+    let rows = std::fs::read(&identities).expect("the handoff writes identities.json");
+    let equality = ws.path(&handoff_file("equality.json"));
+    let equality_rows = std::fs::read(&equality).expect("the handoff writes equality.json");
+
+    std::fs::remove_file(&identities).expect("the identity file is removed");
+    let run = analyze_members(&ws, "analyze-no-identities.json", &members);
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["code"], "invalid_package", "{diagnostic}");
+    assert_eq!(diagnostic["cause"], "missing-file", "{diagnostic}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("identities.json")),
+        "{diagnostic}"
+    );
+    assert_eq!(run.document()["items"], json!([]));
+    assert_eq!(run.exit, 20);
+
+    ws.write(&handoff_file("identities.json"), b"not json");
+    let run = analyze_members(&ws, "analyze-bad-identities.json", &members);
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["code"], "invalid_package", "{diagnostic}");
+    assert_eq!(diagnostic["cause"], "malformed-file", "{diagnostic}");
+    assert_eq!(run.exit, 20);
+
+    ws.write(&handoff_file("identities.json"), &rows);
+    ws.write(&handoff_file("equality.json"), b"{}");
+    let run = analyze_members(&ws, "analyze-bad-equality.json", &members);
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["code"], "invalid_package", "{diagnostic}");
+    assert_eq!(diagnostic["cause"], "refused-file", "{diagnostic}");
+    assert_eq!(run.exit, 20);
+
+    // With both files restored the request is admitted and its unknown
+    // claim settles as an item.
+    ws.write(&handoff_file("equality.json"), &equality_rows);
+    let run = analyze_members(&ws, "analyze-restored.json", &members);
+    assert_eq!(
+        run.item(0)["record"]["diagnostic"]["cause"], "unknown-claim",
+        "{}",
+        run.document()
+    );
 }
 
 /// FR-850-AC-4 (negative): compile members beside `package`, missing models
@@ -166,7 +216,6 @@ fn compile_members_and_mismatched_models_refuse_beside_a_package() {
 /// item `unknown-claim`, as the source route does.
 #[trace("TC-2410", "FR-850-AC-5")]
 #[test]
-#[ignore = "QSL-2271: the in-process checked-package builder from package bytes conflicts with FR-087-AC-2"]
 fn an_unknown_claim_over_a_package_settles_unknown_claim() {
     let ws = Workspace::new("package-unknown-claim");
     let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Missing"}]));
@@ -216,7 +265,6 @@ fn not_above_three() -> &'static str {
 /// for a fact the package bytes lack.
 #[trace("TC-2958", "FR-940-AC-4")]
 #[test]
-#[ignore = "QSL-2271: source-route engines reading the CheckedGraph beside the view is not implemented yet"]
 fn source_analysis_decides_every_family_over_its_checked_graph() {
     let body = format!("{}{}{}", bounded(), at_most_two(), not_above_three());
     let items =
@@ -228,7 +276,7 @@ fn source_analysis_decides_every_family_over_its_checked_graph() {
     assert_eq!(run.item(1)["replay"]["reproduced"], true);
     assert_eq!(label(&run.item(2)), "proved", "{}", run.document());
     assert_eq!(
-        run.item(2)["record"]["proof_basis"]["type"],
+        run.item(2)["record"]["basis"]["type"],
         "exhaustive",
         "{}",
         run.document()
@@ -278,7 +326,7 @@ fn a_refused_package_never_falls_back_to_source() {
     let items = json!([{"claim": "NotAboveThree"}]);
     let ws = Workspace::new("package-no-fallback");
     let (members, _) = package_request(&ws, &body, items);
-    ws.write("package.json", b"{}");
+    ws.write(&handoff_file("checked-package.json"), b"{}");
     let run = analyze_members(&ws, "analyze-refused.json", &members);
     assert_eq!(run.exit, 20, "{}", run.document());
     assert!(
@@ -290,88 +338,33 @@ fn a_refused_package_never_falls_back_to_source() {
     assert_eq!(first_diagnostic(&run)["code"], "invalid_package", "{}", run.document());
 }
 
-/// Compile the Counter program with `body` through a `native-compile/1`
-/// request carrying FR-665's `handoff` member, writing the handoff directory
-/// `handoff`; returns the request members with `package` selecting that
-/// directory and no `program`.
-fn handoff_request(ws: &Workspace, body: &str, items: Value) -> Value {
-    let _ = counter_request(ws, body, items.clone());
-    let request = request_members(Some(items));
-    let compile = json!({"format": "native-compile/1", "request": {
-        "models": request["models"], "program": request["program"],
-        "handoff": {"directory": "handoff", "package_name": "counter",
-            "native_join": {"work_units": 1_000_000, "storage": 1_000_000}}}});
-    let compile_path = ws.write("compile-handoff.json", compile.to_string().as_bytes());
-    fsl_command::command::compile(&compile_path).expect("the program compiles");
-    let mut selected = request;
-    selected
-        .as_object_mut()
-        .expect("a request object")
-        .remove("program");
-    selected["package"] = json!({"directory": "handoff"});
-    selected
-}
-
-/// FR-850-AC-6 (negative): the package selection names a handoff directory
-/// whose `identities.json` supplies the identity witness; a missing or
-/// refused identity file, a refused equality file and an absent directory
-/// refuse the request `invalid_package` before any engine runs, and a
-/// directory without `equality.json` still analyzes.
+/// FR-850-AC-6 (the cases the admission tests above leave): an identity file
+/// with a foreign `format` refuses `invalid_package`/`unknown-format`, and a
+/// handoff with no `equality.json` is admitted with no equality rows.
 #[trace("TC-2966", "FR-850-AC-6")]
 #[test]
-#[ignore = "QSL-2271: the package selection reading its handoff directory's identity and equality files not implemented yet"]
-fn a_package_selection_reads_its_handoff_identity_file() {
+#[ignore = "QSL-2271: the unknown-format identity cause and an absent equality file not implemented yet"]
+fn a_foreign_identity_format_refuses_and_an_absent_equality_file_is_admitted() {
     let ws = Workspace::new("package-handoff-identities");
-    let members = handoff_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
-    let directory = ws
-        .write("analyze-probe.json", b"{}")
-        .parent()
-        .expect("the workspace")
-        .join("handoff");
-    let identities = std::fs::read(directory.join("identities.json")).expect("identities");
-    let equality = std::fs::read(directory.join("equality.json")).expect("equality");
+    let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
+    let identities = ws.path(&handoff_file("identities.json"));
+    let rows = std::fs::read(&identities).expect("the handoff writes identities.json");
 
-    let refused = |name: &str, members: &Value| -> Value {
-        let run = analyze_members(&ws, &format!("analyze-{name}.json"), members);
-        let diagnostic = first_diagnostic(&run);
-        assert_eq!(diagnostic["code"], "invalid_package", "{name}: {diagnostic}");
-        assert_eq!(run.document()["items"], json!([]), "{name}");
-        assert_eq!(run.exit, 20, "{name}");
-        diagnostic
-    };
-
-    std::fs::remove_file(directory.join("identities.json")).expect("remove identities");
-    let diagnostic = refused("no-identities", &members);
-    assert_eq!(diagnostic["cause"], "missing-file", "{diagnostic}");
-    assert!(diagnostic.to_string().contains("identities.json"), "{diagnostic}");
-
-    ws.write("handoff/identities.json", b"{}");
-    let diagnostic = refused("empty-identities", &members);
-    assert_eq!(diagnostic["cause"], "malformed-file", "{diagnostic}");
-    assert!(diagnostic.to_string().contains("identities.json"), "{diagnostic}");
-
-    let mut foreign: Value = serde_json::from_slice(&identities).expect("identities JSON");
+    let mut foreign: Value = serde_json::from_slice(&rows).expect("identities JSON");
     foreign["format"] = json!("filament.checked-handoff.identities/0");
-    ws.write("handoff/identities.json", foreign.to_string().as_bytes());
-    let diagnostic = refused("foreign-identities", &members);
+    ws.write(&handoff_file("identities.json"), foreign.to_string().as_bytes());
+    let run = analyze_members(&ws, "analyze-foreign-identities.json", &members);
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["code"], "invalid_package", "{diagnostic}");
     assert_eq!(diagnostic["cause"], "unknown-format", "{diagnostic}");
+    assert_eq!(run.document()["items"], json!([]));
+    assert_eq!(run.exit, 20);
 
-    ws.write("handoff/identities.json", &identities);
-    std::fs::remove_file(directory.join("equality.json")).expect("remove equality");
+    ws.write(&handoff_file("identities.json"), &rows);
+    std::fs::remove_file(ws.path(&handoff_file("equality.json"))).expect("remove equality");
     let run = analyze_members(&ws, "analyze-no-equality.json", &members);
-    assert_eq!(label(&run.item(0)), "proved", "{}", run.item(0));
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
     assert_eq!(run.exit, 0);
-
-    ws.write("handoff/equality.json", b"not json");
-    let diagnostic = refused("bad-equality", &members);
-    assert_eq!(diagnostic["cause"], "refused-file", "{diagnostic}");
-    assert!(diagnostic.to_string().contains("equality.json"), "{diagnostic}");
-    ws.write("handoff/equality.json", &equality);
-
-    let mut absent = members.clone();
-    absent["package"] = json!({"directory": "absent"});
-    let diagnostic = refused("absent-directory", &absent);
-    assert_eq!(diagnostic["cause"], "missing-file", "{diagnostic}");
 }
 
 /// FSpec FR-520-AC-7: the `package` member is the closed `{directory}`
@@ -379,15 +372,15 @@ fn a_package_selection_reads_its_handoff_identity_file() {
 /// naming `file`.
 #[trace("FSpec-TC-2009", "FSpec-FR-520-AC-7")]
 #[test]
-#[ignore = "QSL-2271: the package selection naming a handoff directory not implemented yet"]
+#[ignore = "QSL-2271: refusing the package file spelling not verified yet"]
 fn a_package_selection_names_a_directory_not_a_file() {
     let ws = Workspace::new("package-selection-directory");
-    let members = handoff_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
+    let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
     let run = analyze_members(&ws, "analyze-directory.json", &members);
     assert_eq!(run.exit, 0, "{}", run.document());
 
     let mut file = members;
-    file["package"] = json!({"file": "handoff/checked-package.json"});
+    file["package"] = json!({"file": handoff_file("checked-package.json")});
     let run = analyze_members(&ws, "analyze-file.json", &file);
     let diagnostic = first_diagnostic(&run);
     assert_eq!(diagnostic["code"], "invalid-request", "{diagnostic}");
@@ -412,13 +405,8 @@ fn package_claims_resolve_through_the_claim_name_table() {
     let items = json!([{"claim": "NotAboveThree"}, {"claim": "ReachThree"}, {"claim": "Missing"}]);
     let ws = Workspace::new("package-claim-names");
     let source = analyze(&counter_request(&ws, &body, items.clone()));
-    let members = handoff_request(&ws, &body, items);
-    let directory = ws
-        .write("analyze-probe.json", b"{}")
-        .parent()
-        .expect("the workspace")
-        .join("handoff");
-    let package_path = directory.join("checked-package.json");
+    let (members, _) = package_request(&ws, &body, items);
+    let package_path = ws.path(&handoff_file("checked-package.json"));
     let package: Value =
         serde_json::from_slice(&std::fs::read(&package_path).expect("package")).expect("JSON");
     let rows = package["claim_names"].as_array().expect("claim_names rows");
@@ -459,4 +447,56 @@ fn package_claims_resolve_through_the_claim_name_table() {
     let diagnostic = first_diagnostic(&run);
     assert_eq!(diagnostic["code"], "ambiguous_declaration", "{diagnostic}");
     assert_eq!(diagnostic["cause"], "ambiguous-name", "{diagnostic}");
+}
+
+/// FR-850, FR-940 (review round 1): an `invariant` state clause carries no
+/// name row in the package, so a request naming it over the package is never
+/// settled `unknown-claim` while the source route decides it; until the
+/// invariant family has a package form the request is refused whole, naming
+/// the item and the family.
+#[trace("TC-2410", "FR-850-AC-5")]
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn an_invariant_named_over_a_package_is_never_an_unknown_claim() {
+    let items = json!([{"claim": "NotAboveThree"}]);
+    let ws = Workspace::new("package-invariant-name");
+    let source = analyze(&counter_request(&ws, not_above_three(), items.clone()));
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    let (members, _) = package_request(&ws, not_above_three(), items);
+    let run = analyze_members(&ws, "analyze-invariant.json", &members);
+    assert!(
+        !run.document().to_string().contains("unknown-claim"),
+        "{}",
+        run.document()
+    );
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
+    let message = diagnostic["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("items[0]") && message.contains("unnamed-claim"),
+        "{diagnostic}"
+    );
+}
+
+/// FR-850 "Admission" (FSpec FR-520): an absent handoff directory, and a
+/// handoff with no `checked-package.json`, refuse the request
+/// `invalid_package`/`missing-file` at the request stage, exit 20.
+#[trace("TC-2410", "FR-850-AC-3")]
+#[trace("TC-2966", "FR-850-AC-6")]
+#[test]
+fn an_absent_handoff_or_package_file_refuses_missing_file() {
+    let ws = Workspace::new("package-absent");
+    let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Missing"}]));
+    let mut elsewhere = members.clone();
+    elsewhere["package"] = json!({"directory": "no-such-handoff"});
+    std::fs::remove_file(ws.path(&handoff_file("checked-package.json")))
+        .expect("the package file is removed");
+    for (name, request) in [("no-directory", &elsewhere), ("no-package", &members)] {
+        let run = analyze_members(&ws, &format!("analyze-{name}.json"), request);
+        let diagnostic = first_diagnostic(&run);
+        assert_eq!(diagnostic["code"], "invalid_package", "{name}: {diagnostic}");
+        assert_eq!(diagnostic["cause"], "missing-file", "{name}: {diagnostic}");
+        assert_eq!(run.document()["items"], json!([]), "{name}");
+        assert_eq!(run.exit, 20, "{name}");
+    }
 }

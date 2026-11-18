@@ -854,11 +854,14 @@ pub enum RunCause {
     /// (`unsupported_construct`/`not-yet-implemented`, FR-763), such as a
     /// checked-package selection (QSL-2271).
     #[error(
-        "unsupported_construct/not-yet-implemented: analyzing a {member} selection is not implemented yet"
+        "unsupported_construct/not-yet-implemented: analyzing a {member} selection is not implemented yet{detail}"
     )]
     AnalyzeNotYetImplemented {
         /// The request member the gap is in.
         member: &'static str,
+        /// What of the request is pending: empty, or the item family and
+        /// request index the gap is at.
+        detail: String,
     },
     /// FR-624: the shared subject binding or source provision of an
     /// analyze request was refused before any item ran.
