@@ -954,12 +954,12 @@ fn every_occurrence_role_is_spelled_as_ir_serializes_it() {
 
 /// The published FSpec checked-package-v2 fixture directory under
 /// `the FSpec checkout`, and its `positive-*.json` fixtures in name order.
-fn fspec_v2_fixtures() -> Option<(
+fn fspec_v2_fixtures() -> (
     tempfile::TempDir,
     std::path::PathBuf,
     Vec<std::path::PathBuf>,
-)> {
-    let fspec = fspec_directory()?;
+) {
+    let fspec = fspec_directory();
     let directory = fspec.path().join("proposals/checked-package-v2/fixtures");
     let mut paths: Vec<_> = std::fs::read_dir(&directory)
         .unwrap_or_else(|error| panic!("reading {}: {error}", directory.display()))
@@ -976,7 +976,7 @@ fn fspec_v2_fixtures() -> Option<(
         "{} holds no positive fixture",
         directory.display()
     );
-    Some((fspec, directory, paths))
+    (fspec, directory, paths)
 }
 
 /// Published fixtures read with their selected domain documents, as
@@ -1032,9 +1032,7 @@ fn supply_fspec_extension_definitions(
     struct File {
         definitions: Vec<Published>,
     }
-    let Some(fspec) = fspec_directory() else {
-        return;
-    };
+    let fspec = fspec_directory();
     let path = fspec
         .path()
         .join("proposals/checked-package-v2/extension-definitions.json");
@@ -1068,9 +1066,7 @@ fn supply_fspec_extension_definitions(
 /// `positive-*.json` fixture whose name the selection names, itself read
 /// against its own [`fixture_evidence`].
 fn supply_fspec_dependency_packages(evidence: &mut CheckedPackageEvidence, envelope: &Value) {
-    let Some((_fspec, _, fixtures)) = fspec_v2_fixtures() else {
-        return;
-    };
+    let (_fspec, _, fixtures) = fspec_v2_fixtures();
     let Some(selections) = envelope["lock"]["dependency_selections"].as_array() else {
         return;
     };
@@ -1196,7 +1192,7 @@ fn fixture_evidence(
 /// and a mutation of it, is read against its own document only), with the
 /// identity that document carries. `None` for a fixture with no entry.
 fn selected_domain_document(fixture: &str) -> Option<(String, Vec<u8>)> {
-    let fspec = fspec_directory()?;
+    let fspec = fspec_directory();
     let proposals = fspec.path().join("proposals/checked-package-v2");
     let pairing = read_fixture(&proposals.join("selected-documents.json"));
     let document = pairing["selected_documents"]
@@ -1246,7 +1242,7 @@ pub(crate) fn read_fixture_graph(
     fixture: &str,
     patch: Option<&Value>,
 ) -> Result<FixtureGraph, (CheckedPackageRefusalCode, Option<String>)> {
-    let directory = fspec_directory().expect("pinned FSpec fixture view supplies owner fixtures");
+    let directory = fspec_directory();
     let mut envelope = read_fixture(
         &directory
             .path()
@@ -1290,8 +1286,7 @@ pub(crate) fn admitted_fixture_graph(fixture: &str, patch: Option<&Value>) -> Fi
 #[trace("TC-421", "FR-095-AC-3", "TC-1111", "NFR-015-AC-6")]
 #[test]
 fn conformance_c14_source_map_lookup_over_fspec_positive_fixtures() {
-    let (_fspec, _, paths) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, _, paths) = fspec_v2_fixtures();
     let mut looked_up = 0_usize;
     for path in &paths {
         let envelope = read_fixture(path);
@@ -1348,8 +1343,7 @@ fn conformance_c14_source_map_lookup_over_fspec_positive_fixtures() {
 #[trace("FR-320-AC-4")]
 #[test]
 fn fspec_union_value_application_keys_are_admitted_by_i2() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let envelope = read_fixture(&directory.join("positive-union-nodes.json"));
     let nodes = envelope["semantic_graph"]["nodes"]
         .as_array()
@@ -1399,8 +1393,7 @@ fn fspec_union_value_application_keys_are_admitted_by_i2() {
 #[trace("TC-253", "FR-087-AC-3", "TC-1111", "NFR-015-AC-6")]
 #[test]
 fn conformance_i2_read_over_fspec_checked_package_v2_fixtures() {
-    let (_fspec, directory, paths) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, paths) = fspec_v2_fixtures();
     let mut unsorted = 0_usize;
     for path in &paths {
         let envelope = read_fixture(path);
@@ -1484,8 +1477,7 @@ fn conformance_i2_read_over_fspec_checked_package_v2_fixtures() {
 )]
 #[test]
 fn conformance_hybrid_nodes_are_admitted_and_a_swapped_model_body_is_refused() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let base = read_fixture(&directory.join("positive-all-families.json"));
     let nodes = base["semantic_graph"]["nodes"].as_array().unwrap();
     let hybrid = nodes
@@ -1529,8 +1521,7 @@ fn conformance_tank_reads_back_with_a_bare_variable_rate_and_reset() {
         CheckedHybridModel, CheckedMode, CheckedTransition, CompareOp, ContinuousVariable,
         HybridTerm, InitialEntry, ModeIndex, ResetConstraint, VariableClass, VariableIndex,
     };
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let base = read_fixture(&directory.join("positive-all-families.json"));
     let package = admitted_fixture(ALL_FAMILIES, &base);
     let read = super::read_hybrids(&package, 10_000).expect("the fixture reads back");
@@ -1586,8 +1577,7 @@ fn conformance_tank_reads_back_with_a_bare_variable_rate_and_reset() {
 #[trace("TC-1187", "FR-447-AC-13")]
 #[test]
 fn conformance_a_model_with_every_variable_clocked_is_refused_at_a_class_literal() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let mut candidate = read_fixture(&directory.join("positive-all-families.json"));
     let model = candidate["semantic_graph"]["nodes"]
         .as_array()
@@ -1624,8 +1614,7 @@ fn conformance_a_model_with_every_variable_clocked_is_refused_at_a_class_literal
 #[trace("TC-1187", "FR-447-AC-13")]
 #[test]
 fn conformance_timed_model_nodes_are_retained_by_i2() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let envelope = read_fixture(&directory.join("positive-timed-model-nodes.json"));
     let (name, outcome) = read_fixture_wire(TIMED_MODEL_NODES, &envelope);
     let Read::Verified {
@@ -1707,8 +1696,7 @@ fn conformance_timed_model_nodes_are_retained_by_i2() {
 #[trace("TC-1187", "FR-415-AC-17", "FR-447-AC-13")]
 #[test]
 fn conformance_tick_timed_model_has_operation_anchor_and_no_clock_places() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let envelope = read_fixture(&directory.join("positive-tick-timed-model-nodes.json"));
     let (name, outcome) = read_fixture_wire(TICK_TIMED_MODEL_NODES, &envelope);
     let Read::Verified {
@@ -1754,8 +1742,7 @@ fn conformance_tick_timed_model_has_operation_anchor_and_no_clock_places() {
 #[trace("TC-367", "FR-415-AC-17", "FR-322-AC-122")]
 #[test]
 fn conformance_typed_timed_model_writer_emits_an_admitted_package() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let original = read_fixture(&directory.join("positive-timed-model-nodes.json"));
     let (_, read_outcome) = read_fixture_wire(TIMED_MODEL_NODES, &original);
     let Read::Verified {
@@ -1817,8 +1804,7 @@ fn conformance_typed_timed_model_writer_emits_an_admitted_package() {
 #[trace("TC-367", "FR-322-AC-120", "FR-415-AC-17")]
 #[test]
 fn a_no_clock_dense_timed_model_needs_no_integer_literal_type() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let mut envelope = resolved_fixture(&read_fixture(
         &directory.join("positive-timed-model-nodes.json"),
     ));
@@ -1946,8 +1932,7 @@ fn a_no_clock_dense_timed_model_needs_no_integer_literal_type() {
 #[trace("TC-685")]
 #[test]
 fn changed_timed_inputs_rekey_and_read_back_the_mutated_model() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let mut base_wire = resolved_fixture(&read_fixture(
         &directory.join("positive-timed-model-nodes.json"),
     ));
@@ -2184,8 +2169,7 @@ fn changed_timed_inputs_rekey_and_read_back_the_mutated_model() {
 #[trace("TC-1187", "FR-447-AC-13")]
 #[test]
 fn conformance_hybrid_and_timed_positive_references_close_and_units_match_dimensions() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     for name in [
         "positive-all-families.json",
         "positive-timed-model-nodes.json",
@@ -2274,8 +2258,7 @@ fn conformance_hybrid_and_timed_positive_references_close_and_units_match_dimens
 #[trace("FSpec-FR-322-AC-260")]
 #[test]
 fn conformance_timed_model_vectors_keep_their_published_refusal_loci() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let base = resolved_fixture(&read_fixture(
         &directory.join("positive-timed-model-nodes.json"),
     ));
@@ -2728,8 +2711,7 @@ fn assert_admitted_binder_round_trip(
 #[trace("FSpec-FR-322-AC-295", "FSpec-TC-367")]
 #[test]
 fn conformance_timed_clause_vectors_keep_their_published_outcomes() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let proposals = directory.parent().expect("the proposal directory");
     let vectors = read_fixture(&proposals.join("timed-clause-node-vectors.json"));
     let mut replayed = 0_usize;
@@ -3057,8 +3039,7 @@ fn unknown_temporal_profile_is_unknown_profile(base: &Value) {
 #[trace("TC-253", "TC-416", "FR-087-AC-3", "FR-093-AC-16")]
 #[test]
 fn conformance_dependency_selection_vectors() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let vectors = read_fixture(&directory.join("../dependency-selection-vectors.json"));
     let fixture = vectors["base"].as_str().unwrap();
     let base = read_fixture(&directory.join("..").join(fixture));
@@ -3480,8 +3461,7 @@ fn frame_node_index(package: &Value) -> usize {
 #[trace("TC-253", "FR-087-AC-3")]
 #[test]
 fn conformance_fr340_frame_mutations_match_fspec_vectors() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let vectors = read_fixture(&directory.join("../node-identity-vectors.json"));
     let mutations = vectors["frame_mutations"]
         .as_array()
@@ -3578,8 +3558,7 @@ fn conformance_fr340_frame_mutations_match_fspec_vectors() {
 )]
 #[test]
 fn conformance_node_index_vectors_refuse_malformed_wire() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let proposals = directory.parent().expect("the proposal directory");
     let vectors = read_fixture(&proposals.join("node-index-vectors.json"));
     let fixture = vectors["base"].as_str().expect("a base fixture");
@@ -3987,8 +3966,7 @@ fn assert_extension_vector(directory: &std::path::Path, vector: &Value) {
 #[trace("FR-469-AC-10", "FR-469-AC-3", "TC-951")]
 #[test]
 fn extension_definition_vectors_xd_01_to_04() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let package_dir = directory.join("..");
     let file = read_fixture(&package_dir.join("extension-definition-vectors.json"));
     assert_eq!(
@@ -4011,8 +3989,7 @@ fn extension_definition_vectors_xd_01_to_04() {
 #[trace("FR-469-AC-3", "TC-951")]
 #[test]
 fn extension_definition_absent_from_selections_refuses_missing_selection() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let fixture = "fixtures/positive-extension-nodes.json";
     let original = read_fixture(&directory.join("positive-extension-nodes.json"));
     let mut mutated = original.clone();
@@ -4074,8 +4051,7 @@ fn extension_definition_absent_from_selections_refuses_missing_selection() {
 #[trace("FR-469-AC-9", "TC-951")]
 #[test]
 fn published_extension_definitions_conform_to_their_schema_and_pairing() {
-    let (_fspec, directory, _) =
-        fspec_v2_fixtures().expect("pinned FSpec fixture view must name a published FSpec package");
+    let (_fspec, directory, _) = fspec_v2_fixtures();
     let package_dir = directory.join("..");
     let file = read_fixture(&package_dir.join("extension-definitions.json"));
     let schema = read_fixture(&package_dir.join("extension-definitions.schema.json"));
@@ -4145,19 +4121,15 @@ fn an_ir_wrong_snapshot_refusal_maps_to_the_wrong_snapshot_code() {
     }
 }
 
-pub(crate) fn fspec_directory() -> Option<tempfile::TempDir> {
-    let files: Vec<_> = filament_specification::published_files("proposals/").collect();
-    if files.is_empty() {
-        return None;
-    }
+pub(crate) fn fspec_directory() -> tempfile::TempDir {
     let directory = tempfile::tempdir().expect("a temporary FSpec view is available");
-    for (path, bytes) in files {
+    for (path, bytes) in filament_specification::published_files("proposals/") {
         let target = directory.path().join(path);
         std::fs::create_dir_all(target.parent().expect("published file has a parent"))
             .expect("temporary FSpec directories are writable");
         std::fs::write(target, bytes).expect("temporary FSpec files are writable");
     }
-    Some(directory)
+    directory
 }
 
 /// The primary location's pointer of an IR refusal, if it has one.
