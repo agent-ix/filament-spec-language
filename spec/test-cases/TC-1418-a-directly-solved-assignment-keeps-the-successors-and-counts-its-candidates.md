@@ -36,7 +36,8 @@ do not depend on it.
    `post A { self.a = pre(self.b) }` with `post C { self.b > 0 }` and with
    `post C { self.b * 1 > 0 }`, reading each charge and comparing each
    successor set with the enumeration's.
-4. `self.a = pre(self.a) / 0`, and the meter budget `work_units` 0 case,
+4. `self.a = pre(self.succ())` from `a` 3, `b` 5, where the query `succ()`'s
+   precondition `self.b != 5` is false, and the meter budget `work_units` 0 case,
    each against its `(...) = true` reference form.
 5. The `mc/frame_candidates` axis's smallest-size test over both forms.
 

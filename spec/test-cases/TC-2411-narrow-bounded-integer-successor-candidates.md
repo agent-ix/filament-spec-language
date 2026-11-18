@@ -22,7 +22,7 @@ Scope: FR-851-AC-1 to FR-851-AC-5.
 2. Analyze the rover liveness item with `max_candidates` 630, with no limit, with 629 and with 300.
 3. Analyze variants whose `loseLidar` bound is `300 - self.speed >= 0` and `self.speed <= 300 or self.stopped`, with `max_candidates` 630.
 4. Analyze the rover mode-machine liveness clause with no `temporal.limits`.
-5. Expand FR-851-AC-5's `Cell` `set()` from `a` 1, `b` 50 with the clause whose divide conjunct comes first and with the reordered clause, each with narrowing and with forced full enumeration, and with `max_candidates` 401 and 400 for the first.
+5. Expand FR-851-AC-5's `Cell` `set()` from `a` 1, `b` 50 with the clause whose `self.nonZero()` call comes first and with the reordered clause, each with narrowing and with forced full enumeration, and with `max_candidates` 404 and 403 for the first.
 
 ## Expected Results
 
@@ -30,6 +30,6 @@ Scope: FR-851-AC-1 to FR-851-AC-5.
 - Step 2: 630 completes with the unlimited run's `exploration`; 629 and 300 each settle `incomplete` naming `max_candidates`.
 - Step 3: each settles `incomplete` naming `max_candidates`.
 - Step 4: `proved`, basis `exhaustive`, no limit reached, within 60 seconds.
-- Step 5: the first clause generates 400 candidates, charges 401, records 100 `ContractUndetermined` findings for `A` and has 11 successors, equal to its enumeration; it completes at 401 and stops with `MaxCandidates` at 400. The reordered clause generates 11 candidates, charges 12 and records no finding, equal to its enumeration.
+- Step 5: under the first clause `set` generates 400 candidates, charges 401, records 100 `ContractUndetermined` findings for `A` (reason `precondition-false`) and has 11 successors, equal to its enumeration; the expansion charges 404, completing at 404 and stopping with `MaxCandidates` at 403. The reordered clause generates 11 candidates, charges 12 and records no finding, equal to its enumeration.
 
 Test: `fsl-analyze/tests/it/bounded_successors.rs`.
