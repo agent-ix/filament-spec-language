@@ -450,6 +450,7 @@ fn pay_reaches_the_states_of_its_table_and_compensation_outcomes() {
 /// the compensation thread is `running`; at t6 the count has reached
 /// `attempts 1`, so `cend` and `cexpire` are the only steps; a recovery predicate that is
 /// false leaves the registration `unrecovered`.
+#[trace("TC-652", "FR-207-AC-2")]
 #[test]
 fn finish_waits_for_the_compensation_thread_and_cend_records_its_status() {
     explore(&pay("false"), |system, explored| {
