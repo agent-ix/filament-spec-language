@@ -319,7 +319,6 @@ fn store_buffering_separates_sc_and_tso() {
 /// FR-634-AC-1: enumerating the Counter subject reports coverage and traces.
 #[trace("TC-1594", "FR-634-AC-1")]
 #[test]
-#[ignore = "QSL-2296 (from QSL-2132): FR-634 does not say which traces an enumerate item reports nor what coverage.choices counts, and fsl-eval exploration returns no traces (spec question open)"]
 fn simulation_enumerates_the_counter_subject() {
     let ws = Workspace::new("cli-simulation");
     let run = analyze(&counter_request(
@@ -337,10 +336,140 @@ fn simulation_enumerates_the_counter_subject() {
     assert!(item.get("record").is_none());
 }
 
+/// FR-634 "Inputs" and "Refusals": every simulation bound is a positive
+/// count, so `max_steps` 0 refuses the whole request `invalid-request`;
+/// `seed` on an `enumerate` item refuses it naming the member; and a
+/// `simulation` member on a claim item refuses it.
+#[trace("TC-1594", "FR-634")]
+#[test]
+fn simulation_refuses_a_zero_bound_a_misplaced_seed_and_a_claim() {
+    for (name, item, member) in [
+        (
+            "zero-steps",
+            json!({"kind": "simulation", "simulation": {"mode": "sample", "seed": 1,
+                "samples": 1, "max_steps": 0}}),
+            "max_steps",
+        ),
+        (
+            "enumerate-seed",
+            json!({"kind": "simulation", "simulation": {"mode": "enumerate", "seed": 1}}),
+            "/items/0/simulation/seed",
+        ),
+        (
+            "claim",
+            json!({"kind": "simulation", "claim": "Bounded",
+                "simulation": {"mode": "enumerate"}}),
+            "/items/0/claim",
+        ),
+    ] {
+        let ws = Workspace::new(&format!("cli-simulation-refused-{name}"));
+        let run = analyze(&counter_request(&ws, &bounded(), json!([item])));
+        assert_eq!(run.exit, 20, "{name}: {}", run.document());
+        assert_eq!(run.document()["category"], "refusal", "{name}");
+        assert!(
+            run.document().to_string().contains(member),
+            "{name} names {member}: {}",
+            run.document()
+        );
+    }
+}
+
+/// FR-634 "Outputs": an enumeration stopped by `max_steps` is `incomplete`
+/// `LimitReached{max_steps}`, its frontier holds the horizon state, and its
+/// one trace runs from `value = 0` along the discovery edges to it.
+#[trace("TC-1594", "FR-634")]
+#[test]
+fn a_step_bound_leaves_the_horizon_state_in_the_frontier() {
+    let ws = Workspace::new("cli-simulation-horizon");
+    let run = analyze(&counter_request(
+        &ws,
+        "",
+        json!([{"kind": "simulation", "simulation": {"mode": "enumerate", "max_steps": 2}}]),
+    ));
+    let item = run.item(0);
+    assert_eq!(item["category"], "incomplete", "{item}");
+    assert_eq!(item["cause"]["kind"], "limit-reached", "{item}");
+    assert_eq!(item["cause"]["limit"], "max_steps", "{item}");
+    assert_eq!(item["frontier"].as_array().map(Vec::len), Some(1), "{item}");
+    let traces = item["traces"].as_array().expect("traces");
+    assert_eq!(traces.len(), 1, "{item}");
+    assert_eq!(
+        traces[0]["states"].as_array().map(Vec::len),
+        Some(3),
+        "{item}"
+    );
+    assert_eq!(
+        traces[0]["steps"].as_array().map(Vec::len),
+        Some(2),
+        "{item}"
+    );
+    assert_eq!(item["coverage"]["states"], "3", "{item}");
+    assert_eq!(run.exit, 22, "an incomplete item ranks in the exit code");
+}
+
+/// The Counter request with `items` under the request's FR-109 accounting
+/// limit `result_units`.
+fn metered_counter_request(ws: &Workspace, items: Value, result_units: u64) -> std::path::PathBuf {
+    let mut request = crate::analyze_cli_support::request_members(Some(items));
+    request["limits"] = json!({"accounting": {"result_units": result_units}});
+    crate::analyze_cli_support::counter_request_with(ws, "", request)
+}
+
+/// FR-634, FR-109: an enumeration's store and its written traces are
+/// charged to the request's accounting limits, so a walk whose states and
+/// traces outgrow a small `result_units` stops `incomplete` with
+/// `limit-reached` naming the counter, writing only the traces admitted
+/// before it, and the same walk under the default limits completes.
+#[trace("TC-1594", "FR-634")]
+#[test]
+fn an_enumeration_over_the_result_budget_stops_incomplete() {
+    let item = json!([{"kind": "simulation", "simulation": {"mode": "enumerate"}}]);
+    let ws = Workspace::new("cli-simulation-metered");
+    let run = analyze(&metered_counter_request(&ws, item.clone(), 1_000));
+    let stopped = run.item(0);
+    assert_eq!(stopped["category"], "incomplete", "{stopped}");
+    assert_eq!(stopped["cause"]["kind"], "limit-reached", "{stopped}");
+    assert_eq!(stopped["cause"]["limit"], "result_units", "{stopped}");
+    assert_eq!(stopped["cause"]["value"], 1_000, "{stopped}");
+    let states: u64 = stopped["coverage"]["states"]
+        .as_str()
+        .and_then(|count| count.parse().ok())
+        .expect("a decimal count");
+    assert!(states < 4, "the store stopped before the walk ended: {stopped}");
+    assert!(
+        !stopped["frontier"].as_array().expect("frontier").is_empty(),
+        "{stopped}"
+    );
+    let ws = Workspace::new("cli-simulation-unmetered");
+    let run = analyze(&counter_request(&ws, "", item));
+    assert_eq!(run.item(0)["category"], "success", "{}", run.item(0));
+}
+
+/// FR-634, FR-109: sampled traces are charged per reached state and per
+/// retained trace, so many requested samples under a small `result_units`
+/// stop `incomplete` naming the counter after the traces it admitted,
+/// never holding every requested trace.
+#[trace("TC-1594", "FR-634")]
+#[test]
+fn sampling_over_the_result_budget_stops_incomplete() {
+    let ws = Workspace::new("cli-simulation-sample-metered");
+    let run = analyze(&metered_counter_request(
+        &ws,
+        json!([{"kind": "simulation",
+            "simulation": {"mode": "sample", "seed": 5, "samples": 1_000_000}}]),
+        5_000,
+    ));
+    let stopped = run.item(0);
+    assert_eq!(stopped["category"], "incomplete", "{stopped}");
+    assert_eq!(stopped["cause"]["kind"], "limit-reached", "{stopped}");
+    assert_eq!(stopped["cause"]["limit"], "result_units", "{stopped}");
+    let traces = stopped["traces"].as_array().expect("traces").len();
+    assert!(traces < 10, "{traces} traces of a million requested");
+}
+
 /// FR-635-AC-3: an unregistered backend is an invalid request.
 #[trace("TC-1595", "FR-635-AC-3")]
 #[test]
-#[ignore = "QSL-2132: backend selection is not reachable through fsl analyze yet"]
 fn an_unregistered_backend_is_refused() {
     let ws = Workspace::new("cli-backend");
     let run = analyze(&counter_request(

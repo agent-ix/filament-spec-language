@@ -115,3 +115,136 @@ fn a_created_object_literal_is_a_per_state_lookup() {
     );
     assert_eq!(label(&fixed.item(0)), "proved", "{}", fixed.document());
 }
+
+/// A hyper clause `name` over two traces of the Counter model with `formula`.
+fn hyper(name: &str, formula: &str) -> String {
+    format!(
+        "hyper {name} using t0 over behaviours (c: M::Counter) \
+         forall trace a of M forall trace b of M {{ {formula} }}\n"
+    )
+}
+
+/// FR-1000-AC-8: a fixed literal is admitted in a hyper atom over two
+/// components.
+#[trace("TC-2957", "FR-1000-AC-8")]
+#[test]
+#[ignore = "QSL-2166: a fixed reference literal in a hyper atom is not bound per component yet"]
+fn a_fixed_literal_is_admitted_in_a_hyper_atom() {
+    let run = over_wide_universe(
+        "reflit-hyper-fixed",
+        &hyper(
+            "HF",
+            "always holds(c.value @ a <= 3 or c.value @ b <= 3 or c = M::Counter#\"a\")",
+        ),
+        "HF",
+    );
+    let text = run.document().to_string();
+    assert_eq!(run.exit, 0, "{text}");
+    assert!(!text.contains("operator-ineligible"), "{text}");
+}
+
+/// FR-1000-AC-9: a created-object literal is looked up in the component of
+/// its innermost enclosing `@ t`, whatever the atom's other reads.
+#[trace("TC-2957", "FR-1000-AC-9")]
+#[test]
+#[ignore = "QSL-2166: a created-object literal in a hyper atom is not resolved in its enclosing component yet"]
+fn a_created_object_literal_resolves_in_its_enclosing_component() {
+    let cases = [
+        (
+            "single",
+            "always holds((deref(M::Counter#\"b\").value = 0) @ a)",
+        ),
+        (
+            "spanning",
+            "always holds((deref(M::Counter#\"b\").value) @ a = c.value @ b)",
+        ),
+    ];
+    for (name, formula) in cases {
+        let run = over_wide_universe(
+            &format!("reflit-hyper-created-{name}"),
+            &hyper("HC", formula),
+            "HC",
+        );
+        let text = run.document().to_string();
+        assert!(text.contains("absent-key"), "{text}");
+        assert!(!text.contains("operator-ineligible"), "{text}");
+    }
+}
+
+/// FR-1000-AC-10: a created-object literal that no `@ t` encloses refuses at
+/// binding, even when the atom reads a component elsewhere; a fixed one there
+/// is admitted.
+#[trace("TC-2957", "FR-1000-AC-10")]
+#[test]
+#[ignore = "QSL-2166: a created-object literal outside every `@ t` is not refused yet"]
+fn a_created_object_literal_outside_every_indexed_read_refuses() {
+    let cases = [
+        ("bare", "always holds(c = M::Counter#\"K\")"),
+        (
+            "beside-a-read",
+            "always holds(c.value @ a = 0 or c = M::Counter#\"K\")",
+        ),
+    ];
+    for (name, formula) in cases {
+        let refused = over_wide_universe(
+            &format!("reflit-hyper-{name}"),
+            &hyper("HS", &formula.replace('K', "b")),
+            "HS",
+        );
+        let text = refused.document().to_string();
+        assert_eq!(refused.exit, 20, "{text}");
+        assert!(
+            text.contains("operator-ineligible") && text.contains("Counter") && text.contains("62"),
+            "{text}"
+        );
+        let admitted = over_wide_universe(
+            &format!("reflit-hyper-{name}-fixed"),
+            &hyper("HS", &formula.replace('K', "a")),
+            "HS",
+        );
+        let text = admitted.document().to_string();
+        assert!(!text.contains("operator-ineligible"), "{text}");
+    }
+}
+
+/// FR-1000-AC-11: hyper letters over components whose binding tables
+/// disagree on a literal refuse before any state is observed.
+#[trace("TC-2957", "FR-1000-AC-11")]
+#[test]
+#[ignore = "QSL-2166: hyper letters do not compare their components' reference bindings yet"]
+fn hyper_letters_refuse_disagreeing_reference_bindings() {
+    use crate::hyper_world::{Vault, World};
+    use fsl_eval::hyper::CheckedHyperLetters;
+    use fsl_eval::simulation::model::ModelSystem;
+
+    let declaration = "hyper W using inf over behaviours (v: V::Vault) \
+                       forall trace a of V forall trace b of V \
+                       { always holds(v.l @ a = v.l @ b or v = V::Vault#\"w\") }";
+    let fixed = World::with_vaults(Vault::Secure, &[("v", (0, 0)), ("w", (0, 0))], declaration);
+    let created = World::with_snapshots(
+        Vault::Secure,
+        vec![vec![("v", (0, 0))]],
+        &["v", "w"],
+        declaration,
+    );
+    let fixed_system = ModelSystem::new(fixed.subject().simulation).expect("the subject admits");
+    let created_system =
+        ModelSystem::new(created.subject().simulation).expect("the subject admits");
+    let refusal = CheckedHyperLetters::new(
+        &fixed.package,
+        &fixed.clause,
+        vec![&fixed_system, &created_system],
+    )
+    .err();
+    let text = format!("{refusal:?}");
+    assert!(
+        text.contains("ReferenceBindingsDisagree") && text.contains("77"),
+        "{text}"
+    );
+    assert!(CheckedHyperLetters::new(
+        &fixed.package,
+        &fixed.clause,
+        vec![&fixed_system, &fixed_system],
+    )
+    .is_ok());
+}

@@ -1661,8 +1661,33 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             )]),
         ));
     }
+    // FR-501 "Late-data cutoff": the samples are the evaluated positions',
+    // in their canonical order, so an excluded late observation is not one.
+    let kept_listed;
+    let sampled_from = match (listed, screened.as_ref().map(|screened| &screened.trace)) {
+        (
+            TraceInput::Timestamped { observations, .. },
+            Some(TraceInput::Timestamped {
+                progress, window, ..
+            }),
+        ) => {
+            let kept = screened
+                .as_ref()
+                .map_or(&[][..], |screened| &screened.kept[..]);
+            kept_listed = TraceInput::Timestamped {
+                observations: kept
+                    .iter()
+                    .filter_map(|position| observations.get(*position).cloned())
+                    .collect(),
+                progress: *progress,
+                window: window.clone(),
+            };
+            &kept_listed
+        }
+        _ => listed,
+    };
     if let (true, ValueType::Composite(record), None) = (sampled, over_type, tape) {
-        for (index, document) in listed.documents().enumerate() {
+        for (index, document) in sampled_from.documents().enumerate() {
             match fsl_semantics::model::observation::admit_record_sample(
                 graph.scope().types(),
                 record,
@@ -2242,6 +2267,11 @@ fn run_finite_window(
             LowerBoundary::HistoryCutoff
         },
     };
+    // FR-522 "Result identity": the checked clause identity, the package
+    // identity and the declaration, both of which its node key spells.
+    let Ok(clause_identity) = fsl_foundation::node_wire::node_key_to_text(&node.identity()) else {
+        return fault("clause-node-key-has-a-text-spelling");
+    };
     // FR-820: a carried state lists its positions in canonical order, each
     // stamped after the ones before (FR-643 "Order"), and supplies no absent
     // valuation; its trace admits only the positions added since its last
@@ -2265,7 +2295,7 @@ fn run_finite_window(
                     }
                 })
             },
-            || TimestampedTrace::open(clause.name(), clock.clone(), progress),
+            || TimestampedTrace::open(clause_identity.clone(), clock.clone(), progress),
         );
         *trace_positions = count;
         let from = observations.len().saturating_sub(count);
@@ -2289,7 +2319,7 @@ fn run_finite_window(
     let ordered = ordered_timestamped_positions(input);
     let late = &input.window.late;
     let trace = match TimestampedTrace::admit_uncertain(
-        clause.name(),
+        clause_identity,
         clock,
         ordered
             .iter()
@@ -3000,7 +3030,31 @@ fn finite_window_report(
         admitted_late: Vec::new(),
         unmatched_admissions: Vec::new(),
         correction: None,
+        key: evidence_key(run, node)?,
     })
+}
+
+/// FR-975: the obligation instance of the clause `node` in a run: the
+/// package, the declaration node key's canonical text and the selected
+/// occurrence, with no trigger (a run request carries no trigger delivery).
+fn evidence_key(
+    run: &CompiledRun<'_>,
+    node: &fsl_semantics::check::TemporalClauseNode,
+) -> Result<super::correction::EvidenceKey, Box<RunRefusal>> {
+    let clause = fsl_foundation::node_wire::node_key_to_text(&node.identity()).map_err(|_| {
+        Box::new(RunRefusal::Fault(
+            filament_semantic_value::catalog::InternalFault::new(
+                "temporal",
+                "clause-node-key-has-a-text-spelling",
+            ),
+        ))
+    })?;
+    Ok(super::correction::EvidenceKey::new(
+        run.package_name.to_owned(),
+        clause,
+        node.claim().role().as_str().to_owned(),
+        node.claim().ordinal(),
+    ))
 }
 
 /// The name of the `holds` or window-aggregate atom `atom` of the clause
@@ -3231,6 +3285,9 @@ pub struct FiniteWindowReport {
     /// FR-526: the run's place in a correction chain, once the run settles
     /// its relation.
     pub correction: Option<super::correction::CorrectionRecord>,
+    /// FR-975: the obligation instance the result is of, the key of its
+    /// evidence ledger entry.
+    pub key: super::correction::EvidenceKey,
 }
 
 /// The spine's own form of the evaluator's outcome (FR-100-AC-8).
