@@ -1330,6 +1330,22 @@ impl<'a> Typer<'a> {
                             cause: CheckCause::EmptyReferenceLiteralKey { span: *key_span },
                         });
                     }
+                    Err(
+                        filament_checked::construct::ReferenceLiteralError::InvalidIdentityEncoding,
+                    ) => {
+                        // `key.text()` is a Rust string, so this branch can
+                        // only mean the checked-node constructor violated its
+                        // own UTF-8 contract.
+                        return Err(CheckRefusal {
+                            location,
+                            cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                                filament_semantic_value::catalog::InternalFault::new(
+                                    "FR-480",
+                                    "decoded-reference-key-is-valid-utf8",
+                                ),
+                            ))),
+                        });
+                    }
                 };
                 node(kind, ValueType::Reference(object_type), &location)
             }
