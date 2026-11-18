@@ -22,22 +22,23 @@ use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
 };
 use fsl_eval::simulation::Limits;
-use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
 use fsl_foundation::RequestIndex;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    replay_model_trace, CertificateRequest, EnvelopeSource, ModelCheckItem, ModelCheckLimits,
-    ModelTraceReplayResult, ModelTraceSubject, ObligationIdentity, QualifiedName, ReplayLimits,
-    ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplaySource, ReplayTargetMembers,
-    RequestTargetWire, StateEnvironment, TemporalCounterexample, Witness, WitnessEnvelope,
-    WitnessPacket,
+    CertificateRequest, EnvelopeSource, ModelCheckItem, ModelCheckLimits, ModelTraceReplayResult,
+    ModelTraceSubject, ObligationIdentity, QualifiedName, ReplayLimits, ReplayPackage,
+    ReplayRefusal, ReplayRequestWire, ReplaySource, ReplayTargetMembers, RequestTargetWire,
+    StateEnvironment, TemporalCounterexample, Witness, WitnessEnvelope, WitnessPacket,
+    replay_model_trace,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, TemporalClauseNode};
 
-use super::items::{admission, settle_model_item, ModelItem, BROKEN, CLAUSE_FAMILY};
+use super::items::{BROKEN, CLAUSE_FAMILY, ModelItem, admission, settle_model_item};
 use super::{AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SubjectBinding};
-use crate::model_check::{manifest as en1, ModelCheckRequest};
+use crate::model_check::{ModelCheckRequest, manifest as en1};
 
 /// The replay source an EN-1 authored-clause counterexample carries: a
 /// witness transcript with no values, since the clause's lasso is the
@@ -303,27 +304,72 @@ impl<'a> ClauseSubject<'a> {
             |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
         let name = clause_name(self.node).map_err(|_| fault("clause-name"))?;
         let identity = self.node.identity();
-        replay_over(
-            &ReplayInputs {
-                backend: en1::BACKEND_ID,
-                package: self.package,
-                binding: &self.binding,
-                limits: &self.limits,
-                provision: self.provision,
-                max_candidates: self.run.max_candidates,
-                timed: None,
-            },
-            ReplayShape {
-                target: RequestTargetWire::state_clause(name.clone()),
-                members: ReplayTargetMembers::state_clause(name),
-                node: identity,
-                occurrence: OccurrenceKey::new(self.node.identity(), self.node.claim().clone()),
-                transcript: CLAUSE_TRANSCRIPT,
-            },
-            payload,
-            letters,
-        )
+        let inputs = ReplayInputs {
+            backend: en1::BACKEND_ID,
+            package: self.package,
+            binding: &self.binding,
+            limits: &self.limits,
+            provision: self.provision,
+            max_candidates: self.run.max_candidates,
+            timed: None,
+        };
+        let shape = ReplayShape {
+            target: RequestTargetWire::state_clause(name.clone()),
+            members: ReplayTargetMembers::state_clause(name),
+            node: identity,
+            occurrence: OccurrenceKey::new(self.node.identity(), self.node.claim().clone()),
+            transcript: CLAUSE_TRANSCRIPT,
+        };
+        if clause_has_reference_literal(self.node) {
+            let (_, envelope) = replay_wire(&inputs, shape, payload)?;
+            let system = ModelSystem::new(self.simulation()).map_err(ReplayRefusal::Admission)?;
+            let letters = system
+                .clause_letters(self.node)
+                .map_err(|_| fault("clause-letters"))?;
+            return fsl_replay::replay_checked_source_model_trace(
+                self.package,
+                &system,
+                self.node,
+                &envelope,
+                &letters,
+                self.limits.accounting,
+            );
+        }
+        replay_over(&inputs, shape, payload, letters)
     }
+}
+
+fn clause_has_reference_literal(node: &TemporalClauseNode) -> bool {
+    let clause = node.clause();
+    let contains = |root: fsl_semantics::check::CheckedNode<'_>| {
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            if matches!(
+                node.kind(),
+                filament_checked::NodeKind::ReferenceLiteral { .. }
+            ) {
+                return true;
+            }
+            pending.extend(node.children());
+        }
+        false
+    };
+    let formula = clause.formula();
+    (0..formula.nodes().len()).any(|index| {
+        let Some(atom) = formula.node_id(index) else {
+            return false;
+        };
+        node.condition(atom).is_some_and(|(root, _)| contains(root))
+            || node.aggregate_conditions(atom).is_some_and(|conditions| {
+                [conditions.value, conditions.filter, conditions.predicate]
+                    .into_iter()
+                    .flatten()
+                    .chain([conditions.threshold])
+                    .any(|(root, _)| contains(root))
+            })
+    }) || node.guard().is_some_and(|(root, _)| contains(root))
+        || (0..clause.captures().len())
+            .any(|index| node.capture(index).is_some_and(|(root, _)| contains(root)))
 }
 
 /// What a replay of an EN-1 counterexample reads of the run: the checked

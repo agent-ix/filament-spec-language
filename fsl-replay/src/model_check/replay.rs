@@ -972,6 +972,58 @@ pub fn replay_model_trace_with_temporal_selections(
     )
 }
 
+/// Replay a counterexample against an already checked source package whose
+/// temporal clause contains a pending reference literal.
+///
+/// The current I2 expression vocabulary cannot serialize a pending
+/// `ReferenceLiteral` as a `value/literal` string under `Reference<T>`. This
+/// source-backed path therefore validates the checked clause identity and
+/// fairness directly, then independently re-executes the witness against a
+/// fresh model system built from that same immutable checked package. Ordinary
+/// wire replay continues through [`replay_model_trace`].
+///
+/// # Errors
+///
+/// [`ReplayRefusal`] when the envelope names another clause, its fairness
+/// differs, or witness re-execution refuses.
+pub fn replay_checked_source_model_trace(
+    package: &CheckedPackage,
+    system: &ModelSystem<'_>,
+    node: &fsl_semantics::check::TemporalClauseNode,
+    envelope: &WitnessEnvelope<TemporalCounterexample>,
+    letters: &dyn ModelLetters,
+    meter: ScalarLimits,
+) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+    let expected_key = OccurrenceKey::new(node.identity(), node.claim().clone());
+    if envelope.clause_node() != &node.identity() || envelope.occurrence_key() != &expected_key {
+        return Err(refused(ModelTraceRefusal::ItemIdentity {
+            clause_node: envelope.clause_node().clone(),
+            occurrence_key: Box::new(envelope.occurrence_key().clone()),
+            expected_node: node.identity(),
+            expected_key: Box::new(expected_key),
+        }));
+    }
+    let clause = node.clause();
+    let payload = envelope.family_payload();
+    if payload.fairness != clause.fairness() {
+        return Err(refused(ModelTraceRefusal::FairnessSet {
+            payload: payload.fairness.clone(),
+            recompiled: clause.fairness().to_vec(),
+        }));
+    }
+    let formula = Some(FormulaReplay {
+        clause,
+        letters,
+        meter,
+    });
+    let (settlement, hints) = settle(system, payload, formula)?;
+    Ok(ModelTraceReplayResult {
+        settlement,
+        hints,
+        terminals: package.graph().terminal_keys(),
+    })
+}
+
 /// FR-237: the replay of a counterexample over the timed subject `timed`,
 /// once [`replay_model_trace`] has recompiled the package, resolved the
 /// item (`clause`, `None` for a derived item) and re-admitted the subject:
