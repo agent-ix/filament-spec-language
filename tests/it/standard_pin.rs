@@ -121,8 +121,8 @@ fn no_file_locates_the_standard_by_variable_or_sibling_path() {
         .filter(|path| {
             fs::read_to_string(path).is_ok_and(|text| {
                 text.contains(concat!("FSPEC", "_DIR"))
-                    || text.contains("../filament-specification")
-                    || text.contains("repository: agent-ix/filament-specification")
+                    || text.contains(concat!("../filament", "-specification"))
+                    || text.contains(concat!("repository: agent-ix/filament", "-specification"))
             })
         })
         .map(|path| path.display().to_string())
