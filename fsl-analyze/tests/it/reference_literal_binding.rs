@@ -71,7 +71,7 @@ fn a_reference_literal_resolves_at_subject_binding() {
     let fixed = analyze(&counter_request(
         &fixed_workspace,
         &temporal("F", "always holds(c = M::Counter#\"a\")"),
-        request_members(Some(json!([{"claim": "F"}]))),
+        json!([{"claim": "F"}]),
     ));
     assert_eq!(fixed.exit, 0, "{}", fixed.document());
     let unknown = over_wide_universe(
