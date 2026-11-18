@@ -32,8 +32,8 @@ use crate::check::hyper_clause::{
     CheckedFiniteHyperClause, CheckedHyperClause, CheckedModelRelation, MatchPart,
 };
 use crate::check::node_key::{
-    AggregateTerm, Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LawRole, LeafTerm, NodeRef,
-    MemberTerm, NodeTag, Operation, OperationLaw, Operator, TupleMember, TupleTerm,
+    AggregateTerm, Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LawRole, LeafTerm,
+    MemberTerm, NodeRef, NodeTag, Operation, OperationLaw, Operator, TupleMember, TupleTerm,
 };
 use crate::check::refusal::CheckRefusal;
 use crate::value::member::FairnessTarget;
