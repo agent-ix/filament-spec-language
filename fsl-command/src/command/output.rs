@@ -199,7 +199,6 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         ),
         RunCause::ClauseRequest { .. }
         | RunCause::ClocksGivenTwice
-        | RunCause::IntegerDivisionMissing
         | RunCause::OutputGivenTwice
         | RunCause::OutputExists { .. }
         | RunCause::ExtractionRequiresRun => (types::Stage::Request, types::Details::None),
@@ -371,7 +370,6 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             RunCause::TlCorrespondence { .. } | RunCause::IntegerDivisionLaw { .. } => {
                 Some("unsupported-selection")
             }
-            RunCause::IntegerDivisionMissing => Some("missing-selection"),
             RunCause::TlClause { .. } => Some("missing-name"),
             RunCause::TlSubject(record) => Some(record.catalog.cause()),
             _ => None,

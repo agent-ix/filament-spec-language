@@ -1327,6 +1327,8 @@ fn a_monitor_request_supplies_the_integer_division_law() {
         Some("missing-selection"),
         "{refused}"
     );
+    let locus = find(&refused, "locus").expect("the missing law is located at `div`");
+    assert!(locus.is_object(), "{refused}");
 }
 
 /// FR-645, QSL-2138: a window aggregate over a record trace subject is read

@@ -391,16 +391,23 @@ fn an_analyze_request_supplies_the_integer_division_law() {
     assert_eq!(run.exit, 20);
     let document = run.document();
     assert_eq!(document["items"], json!([]), "{document}");
-    assert_eq!(document["diagnostics"][0]["code"], "missing_declaration");
-    assert_eq!(document["diagnostics"][0]["cause"], "missing-selection");
+    let diagnostic = &document["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "missing_declaration", "{document}");
+    assert_eq!(diagnostic["cause"], "missing-selection", "{document}");
+    assert!(diagnostic["locus"].is_object(), "{document}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("div"),
+        "{document}"
+    );
 
     let ws = Workspace::new("division-law-unknown");
-    let path = counter_request_with(
-        &ws,
-        &body,
-        with_law(Some(json!("ceiling"))),
-    );
-    std::fs::remove_file(path.parent().unwrap().join("program.fsl")).unwrap();
+    let path = counter_request_with(&ws, &body, with_law(Some(json!("ceiling"))));
+    for file in ["program.fsl", "model.json", "start.json"] {
+        std::fs::remove_file(path.parent().unwrap().join(file)).unwrap();
+    }
     let run = analyze(&path);
     assert_eq!(run.exit, 20);
     let document = run.document();

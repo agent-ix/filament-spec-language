@@ -45,9 +45,7 @@ const FILES: usize = 64;
 fn request_integer_division(
     value: Option<serde_json::Value>,
 ) -> Result<Option<fsl_replay::AdmittedIntegerDivision>> {
-    read_integer_division(value.as_ref(), "integer_division")?
-        .map(Some)
-        .ok_or(RunCause::IntegerDivisionMissing)
+    read_integer_division(value.as_ref(), "integer_division")
 }
 
 /// Caller byte ceilings for one `run` or `compile` invocation (FR-312, FR-869).
@@ -802,9 +800,6 @@ pub enum RunCause {
         /// The value given.
         value: String,
     },
-    /// FR-767: an analyze or monitor request omitted its required law.
-    #[error("missing_declaration/missing-selection: request member `integer_division` is required")]
-    IntegerDivisionMissing,
     /// FR-931: `tl_lowering.clause` names no temporal clause of the program.
     #[error(
         "missing_declaration/missing-name: tl_lowering.clause {name:?} names no temporal clause"
@@ -1047,7 +1042,6 @@ impl RunCause {
             Self::AnalyzePackage { code, .. } => *code,
             Self::AnalyzeNotYetImplemented { .. } => Code::UnsupportedConstruct,
             Self::TlCorrespondence { .. } | Self::IntegerDivisionLaw { .. } => Code::UnknownProfile,
-            Self::IntegerDivisionMissing => Code::MissingDeclaration,
             Self::TlClause { .. } => Code::MissingDeclaration,
             Self::TlSubject(record) => {
                 Code::from_code(record.catalog.code()).unwrap_or(Code::InvalidRuntimeInput)
@@ -1202,7 +1196,6 @@ impl RunError {
             RunCause::Io { .. }
             | RunCause::Json(_)
             | RunCause::ClauseRequest { .. }
-            | RunCause::IntegerDivisionMissing
             | RunCause::IntegerDivisionLaw { .. }
             | RunCause::TlCorrespondence { .. }
             | RunCause::TlClause { .. }
@@ -1237,7 +1230,6 @@ impl RunError {
             | RunCause::ItemsFault => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
                     match &self.cause {
-                        RunCause::IntegerDivisionMissing => Some("missing-selection"),
                         RunCause::IntegerDivisionLaw { .. } => Some("unsupported-selection"),
                         _ => None,
                     },
@@ -2643,6 +2635,7 @@ fn check_sources<T>(
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     extension_catalog_override: Option<fsl_semantics::library::bundle::DefinitionCatalog>,
     finish: impl FnOnce(
+        &mut Intake<'_>,
         fsl_replay::spine::CheckedUnit,
         &[fsl_replay::spine::TemporalClockSelection],
         fsl_replay::spine::StateClauseExecutionPoints,
@@ -2871,6 +2864,7 @@ fn check_sources<T>(
         (checked, selections)
     };
     finish(
+        intake,
         checked,
         &package_selections,
         execution_points,
