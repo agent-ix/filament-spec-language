@@ -47,7 +47,8 @@ const CLAUSES: &str = "temporal Bounded using t0 over (c: M::Counter) clock \"mo
      on each (q: M::Counter) when (true) { capture n: Int[0, 3] = c.value; \
      always holds(c.value >= n) }\n\
      temporal Paired using t0 over (c: M::Counter) clock \"model-steps\" \
-     on origin { always (holds(c.value <= 1) or eventually holds(c.value = 3)) }\n";
+     on origin { always (holds(c.value <= 1) or eventually holds(c.value = 3)) }\n\
+     invariant NotAboveThree using v on M::Counter at current { self.value <= 3 }\n";
 
 /// The handoff files of the compiled Counter unit, read as FR-850
 /// "Admission" reads them.
@@ -642,4 +643,216 @@ fn admitted_objects(
     )
     .expect("the Counter snapshot admits")
     .0
+}
+
+/// The observations of the state clause `name` of the handoff's source
+/// package selected by `input`.
+fn admit_clause(
+    handoff: &Handoff,
+    name: &str,
+    provision: (
+        &BTreeMap<DocumentRef, Vec<u8>>,
+        &BTreeMap<DocumentRef, Vec<u8>>,
+    ),
+    input: fsl_semantics::model::observation::ClauseSelectionInput,
+) -> fsl_semantics::model::observation::AdmittedObservations {
+    use fsl_semantics::model::observation::{
+        admit_observations, ClauseFacts, ClauseSelection, OperationFacts, Provisions,
+    };
+    let graph = handoff.compiled.checked().graph();
+    let clause = graph.state_clause(name).expect("the clause");
+    let facts = ClauseFacts {
+        identity: clause.identity(),
+        kind: clause.kind(),
+        context: clause.context(),
+        operation: clause.operation().map(|operation| OperationFacts {
+            declaring: operation.declaring.clone(),
+            declaration: operation.declaration.clone(),
+        }),
+        operations: graph.scope().operations().clone(),
+        named_populations: clause.named_reads(),
+    };
+    admit_observations(
+        graph.model_selections(),
+        graph.scope().types(),
+        &facts,
+        handoff.compiled.packages(),
+        ModelNormalizationLimits::default(),
+        &Provisions {
+            snapshots: provision.0,
+            invocations: provision.1,
+        },
+        &ClauseSelection {
+            name: name.to_owned(),
+            input,
+        },
+        ObservationLimits::default(),
+    )
+    .unwrap_or_else(|failure| panic!("{name}: the observations admit: {failure:?}"))
+}
+
+/// FR-940-AC-6 (the forms' part): the package forms of `evaluate_clause`
+/// and `evaluate_clause_set`, reading each clause from the node its
+/// observations were admitted for, return the source forms' evaluations,
+/// trails and work for the invariant `NotAboveThree`, the precondition
+/// `CanInc` and the postcondition `Inc`, which reads `pre(self.value)`, on
+/// both sides of each, and the set's grouping, short-circuit and outcome.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn package_state_clauses_equal_their_source_forms() {
+    use fsl_eval::value::QualifiedName;
+    use fsl_semantics::model::observation::{
+        AnchorKind, ClauseSelectionInput, SelectedAnchor, SelectedObject,
+    };
+
+    let (_ws, handoff, mut budget) = handoff("package-forms-clauses");
+    let bare = BarePackage::new(&handoff.admitted)
+        .with_supply(
+            BareSupply {
+                identities: &handoff.identities,
+                equality: handoff.equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .expect("the handoff's supply joins the package");
+    let source = handoff.compiled.checked();
+    let counter_a = || SelectedObject {
+        population: "ix://test/counter/counters".to_owned(),
+        key: "a".to_owned(),
+    };
+    let mut snapshots = BTreeMap::new();
+    let mut invocations = BTreeMap::new();
+    for value in [0_i64, 1, 2, 3] {
+        snapshots.insert(
+            document_ref(&format!("current-{value}")),
+            snapshot(&format!("current-{value}"), "current", &[("a", value)]),
+        );
+        snapshots.insert(
+            document_ref(&format!("pre-{value}")),
+            snapshot(&format!("pre-{value}"), "pre", &[("a", value)]),
+        );
+        snapshots.insert(
+            document_ref(&format!("post-{value}")),
+            snapshot(&format!("post-{value}"), "post", &[("a", value)]),
+        );
+    }
+    for (label, pre, post) in [("step", 0, 1), ("still", 1, 1)] {
+        invocations.insert(
+            document_ref(label),
+            serde_json::to_vec(&serde_json::json!({
+                "format": "filament.state.invocation/v1",
+                "identity": {"authority": "test", "identity": label},
+                "model": {"identity": "test/counter"},
+                "context": "ix://test/counter/Counter",
+                "operation": "inc",
+                "self": {"population": "ix://test/counter/counters", "key": "a"},
+                "pre": {"identity": {"authority": "test", "identity": format!("pre-{pre}")}},
+                "post": {"identity": {"authority": "test", "identity": format!("post-{post}")}},
+                "parameters": {},
+                "result": null,
+                "created": [],
+                "deleted": [],
+            }))
+            .expect("the invocation serializes"),
+        );
+    }
+    let provision = (&snapshots, &invocations);
+    let current = |value: i64| ClauseSelectionInput::Current {
+        snapshot: document_ref(&format!("current-{value}")),
+        anchor: SelectedAnchor {
+            kind: AnchorKind::Initialization,
+            name: "start".to_owned(),
+        },
+        self_object: Some(counter_a()),
+    };
+    let pre_call = |value: i64| ClauseSelectionInput::PreCall {
+        snapshot: document_ref(&format!("pre-{value}")),
+        self_object: Some(counter_a()),
+        parameters: BTreeMap::new(),
+    };
+    let invoked = |label: &str| ClauseSelectionInput::Invocation {
+        invocation: document_ref(label),
+    };
+    let cases = [
+        (
+            "NotAboveThree",
+            admit_clause(&handoff, "NotAboveThree", provision, current(3)),
+        ),
+        (
+            "CanInc",
+            admit_clause(&handoff, "CanInc", provision, pre_call(2)),
+        ),
+        (
+            "CanInc",
+            admit_clause(&handoff, "CanInc", provision, pre_call(3)),
+        ),
+        (
+            "Inc",
+            admit_clause(&handoff, "Inc", provision, invoked("step")),
+        ),
+        (
+            "Inc",
+            admit_clause(&handoff, "Inc", provision, invoked("still")),
+        ),
+    ];
+    let mut readings = Vec::new();
+    for (name, observations) in &cases {
+        let qualified = QualifiedName::unqualified(*name).expect("a clause name");
+        let mut source_meter = Meter::new(UNLIMITED);
+        let from_source = source
+            .evaluate_clause(&qualified, observations, &mut source_meter)
+            .expect("the source clause evaluates");
+        let mut package_meter = Meter::new(UNLIMITED);
+        let from_package = bare
+            .evaluate_clause(&qualified, observations, &mut package_meter)
+            .expect("the package clause evaluates");
+        assert_eq!(
+            format!("{from_package:?}"),
+            format!("{from_source:?}"),
+            "{name}"
+        );
+        assert_eq!(
+            package_meter.consumed(LimitKind::WorkUnits),
+            source_meter.consumed(LimitKind::WorkUnits),
+            "{name}"
+        );
+        readings.push(boolean(&from_package.evaluation));
+    }
+    assert_eq!(readings, [true, true, false, true, false]);
+
+    // A set whose failing precondition skips the postcondition, and one
+    // that reaches it.
+    for (precondition, postcondition) in [(2, 3), (1, 3)] {
+        let pre_obs = &cases[precondition].1;
+        let post_obs = &cases[postcondition].1;
+        let set = [
+            (QualifiedName::unqualified("Inc").expect("a name"), post_obs),
+            (
+                QualifiedName::unqualified("CanInc").expect("a name"),
+                pre_obs,
+            ),
+            (
+                QualifiedName::unqualified("NotAboveThree").expect("a name"),
+                &cases[0].1,
+            ),
+        ];
+        let from_source = source
+            .evaluate_clause_set(&set, UNLIMITED)
+            .expect("the source set evaluates");
+        let from_package = bare
+            .evaluate_clause_set(&set, UNLIMITED)
+            .expect("the package set evaluates");
+        assert_eq!(
+            format!("{from_package:?}"),
+            format!("{from_source:?}"),
+            "precondition {precondition}"
+        );
+        // The false precondition skips the postcondition; the true one reaches it.
+        let expected = if precondition == 2 { 2 } else { 3 };
+        assert_eq!(
+            from_package.results.len(),
+            expected,
+            "precondition {precondition}"
+        );
+    }
 }

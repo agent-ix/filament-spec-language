@@ -1487,124 +1487,170 @@ impl<'a> ClauseSetup<'a> {
         observations: &'a fsl_semantics::model::observation::AdmittedObservations,
     ) -> Result<Self, CallFailure> {
         let declaration = resolve_clause(package, clause, observations)?;
-        // The clause's own observation (FR-107): `current` for an
-        // invariant, `post` for a postcondition, and `pre` for a
-        // precondition, which reads every model read there and never the
-        // post side (FR-104, FR-106), whether selected by `PreCall` or by
-        // `Invocation`.
-        let current = match declaration.observation() {
-            fsl_semantics::model::clause_observation::Observation::Current => {
-                observations.current.as_ref()
-            }
-            fsl_semantics::model::clause_observation::Observation::Post => {
-                observations.post.as_ref()
-            }
-            fsl_semantics::model::clause_observation::Observation::Pre => observations.pre.as_ref(),
-        }
-        .ok_or_else(|| {
-            CallFailure::Fault(InternalFault::new(
-                "S6a",
-                "clause-observations-missing-the-clause-observation",
-            ))
-        })?;
-
-        let mut bindings = Vec::with_capacity(declaration.parameters().len());
-        bindings.push(Value::Reference(observations.self_object.clone()));
-        let mut remaining = declaration.parameters().get(1..).unwrap_or(&[]).iter();
-        // FR-104 "Behavior": slot 1 is `result` exactly when the checker's
-        // own typed `binds_result` says so (FR-064's string-edge
-        // rule) -- never decided here by comparing a parameter's name.
-        if declaration.binds_result() {
-            remaining.next();
-            let result = observations.result.clone().ok_or_else(|| {
-                CallFailure::Fault(InternalFault::new("S6a", "postcondition-result-missing"))
-            })?;
-            bindings.push(result);
-        }
-        for (parameter, _) in remaining {
-            let value = observations
-                .parameters
-                .iter()
-                .find(|(name, _)| name == parameter)
-                .map(|(_, value)| value.clone())
-                .ok_or_else(|| {
-                    CallFailure::Fault(InternalFault::new("S6a", "clause-parameter-not-admitted"))
-                })?;
-            bindings.push(value);
-        }
-        let pre = observations
-            .pre
-            .as_ref()
-            .map(|observation| s6a::separation::observation_identity(&observation.identity));
-        // The clause's own observation names its value paths: the pre
-        // snapshot for a precondition (FR-104).
-        let own = s6a::separation::observation_identity(&current.identity);
-        let invocation = observations
-            .invocation
-            .as_ref()
-            .map(s6a::separation::observation_identity);
-        let mut trail = s6a::separation::Trail::new(own.clone(), pre);
-        trail.receiver = Some(observations.self_object.clone());
-        trail.receiver_pre = observations.receiver_pre.clone();
-        // FR-107 "The receiver path": `self` is rooted at its declared
-        // object identity when it has one, and at the invocation's receiver
-        // binding when it is a context; a context with no invocation has no
-        // path.
-        let receiver_subject = match observations.self_kind {
-            SelfKind::Object => Some(s6a::separation::ValuePathSubject::Object(
-                observations.self_object.clone(),
-            )),
-            SelfKind::Context => {
-                trail.receiver_invocation = invocation.clone();
-                trail.receiver_unlocated = invocation.is_none();
-                invocation
-                    .clone()
-                    .map(|invocation| s6a::separation::ValuePathSubject::Invocation {
-                        invocation,
-                        binding: s6a::separation::InvocationBinding::Receiver,
-                    })
-            }
-        };
-        let binding = |binding: s6a::separation::InvocationBinding| {
-            invocation
-                .clone()
-                .map(|invocation| s6a::separation::ValuePathSubject::Invocation {
-                    invocation,
-                    binding,
-                })
-        };
-        trail.bindings.push(receiver_subject.clone());
-        let mut remaining_slots = declaration.parameters().get(1..).unwrap_or(&[]).iter();
-        if declaration.binds_result() {
-            remaining_slots.next();
-            trail
-                .bindings
-                .push(binding(s6a::separation::InvocationBinding::Result));
-        }
-        for (parameter, _) in remaining_slots {
-            trail
-                .bindings
-                .push(binding(s6a::separation::InvocationBinding::Parameter(
-                    parameter.clone(),
-                )));
-        }
-        let receiver_path = receiver_subject.map(|subject| s6a::separation::RuntimeValuePath {
-            observation: own,
-            subject,
-            steps: Vec::new(),
-        });
+        let names: Vec<String> = declaration
+            .parameters()
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+        let ClauseBinding {
+            current,
+            pre,
+            bindings,
+            trail,
+            receiver_path,
+        } = bind_clause(
+            declaration.observation(),
+            &names,
+            declaration.binds_result(),
+            observations,
+        )?;
         Ok(Self {
             declaration,
-            current: &current.environment,
-            pre: observations
-                .pre
-                .as_ref()
-                .map(|observation| &observation.environment),
+            current,
+            pre,
             bindings,
             trail,
             receiver_path,
         })
     }
+}
+
+/// What one state clause's evaluation binds over its admitted observations
+/// (FR-107): the clause's own observation and the pre one, the slot values,
+/// and the trail and receiver path that root its value paths.
+pub(super) struct ClauseBinding<'a> {
+    pub(super) current: &'a ObjectEnvironment,
+    pub(super) pre: Option<&'a ObjectEnvironment>,
+    pub(super) bindings: Vec<Value>,
+    pub(super) trail: s6a::separation::Trail,
+    pub(super) receiver_path: Option<s6a::separation::RuntimeValuePath>,
+}
+
+/// FR-107: bind a state clause whose reads take `observation`, whose slot
+/// names are `parameters` (`self` first, then `result` when
+/// `binds_result`, then the operation's parameters), over `observations`.
+/// Both routes bind through here: the source route from its checked
+/// declaration, the package route from the clause's admitted node (FR-940).
+pub(super) fn bind_clause<'a>(
+    observation: fsl_semantics::model::clause_observation::Observation,
+    parameters: &[String],
+    binds_result: bool,
+    observations: &'a fsl_semantics::model::observation::AdmittedObservations,
+) -> Result<ClauseBinding<'a>, CallFailure> {
+    // The clause's own observation (FR-107): `current` for an
+    // invariant, `post` for a postcondition, and `pre` for a
+    // precondition, which reads every model read there and never the
+    // post side (FR-104, FR-106), whether selected by `PreCall` or by
+    // `Invocation`.
+    let current = match observation {
+        fsl_semantics::model::clause_observation::Observation::Current => {
+            observations.current.as_ref()
+        }
+        fsl_semantics::model::clause_observation::Observation::Post => observations.post.as_ref(),
+        fsl_semantics::model::clause_observation::Observation::Pre => observations.pre.as_ref(),
+    }
+    .ok_or_else(|| {
+        CallFailure::Fault(InternalFault::new(
+            "S6a",
+            "clause-observations-missing-the-clause-observation",
+        ))
+    })?;
+
+    let mut bindings = Vec::with_capacity(parameters.len());
+    bindings.push(Value::Reference(observations.self_object.clone()));
+    let mut remaining = parameters.get(1..).unwrap_or(&[]).iter();
+    // FR-104 "Behavior": slot 1 is `result` exactly when the checker's
+    // own typed `binds_result` says so (FR-064's string-edge
+    // rule) -- never decided here by comparing a parameter's name.
+    if binds_result {
+        remaining.next();
+        let result = observations.result.clone().ok_or_else(|| {
+            CallFailure::Fault(InternalFault::new("S6a", "postcondition-result-missing"))
+        })?;
+        bindings.push(result);
+    }
+    for parameter in remaining {
+        let value = observations
+            .parameters
+            .iter()
+            .find(|(name, _)| name == parameter)
+            .map(|(_, value)| value.clone())
+            .ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new("S6a", "clause-parameter-not-admitted"))
+            })?;
+        bindings.push(value);
+    }
+    let pre = observations
+        .pre
+        .as_ref()
+        .map(|observation| s6a::separation::observation_identity(&observation.identity));
+    // The clause's own observation names its value paths: the pre
+    // snapshot for a precondition (FR-104).
+    let own = s6a::separation::observation_identity(&current.identity);
+    let invocation = observations
+        .invocation
+        .as_ref()
+        .map(s6a::separation::observation_identity);
+    let mut trail = s6a::separation::Trail::new(own.clone(), pre);
+    trail.receiver = Some(observations.self_object.clone());
+    trail.receiver_pre = observations.receiver_pre.clone();
+    // FR-107 "The receiver path": `self` is rooted at its declared
+    // object identity when it has one, and at the invocation's receiver
+    // binding when it is a context; a context with no invocation has no
+    // path.
+    let receiver_subject = match observations.self_kind {
+        SelfKind::Object => Some(s6a::separation::ValuePathSubject::Object(
+            observations.self_object.clone(),
+        )),
+        SelfKind::Context => {
+            trail.receiver_invocation = invocation.clone();
+            trail.receiver_unlocated = invocation.is_none();
+            invocation
+                .clone()
+                .map(|invocation| s6a::separation::ValuePathSubject::Invocation {
+                    invocation,
+                    binding: s6a::separation::InvocationBinding::Receiver,
+                })
+        }
+    };
+    let binding = |binding: s6a::separation::InvocationBinding| {
+        invocation
+            .clone()
+            .map(|invocation| s6a::separation::ValuePathSubject::Invocation {
+                invocation,
+                binding,
+            })
+    };
+    trail.bindings.push(receiver_subject.clone());
+    let mut remaining_slots = parameters.get(1..).unwrap_or(&[]).iter();
+    if binds_result {
+        remaining_slots.next();
+        trail
+            .bindings
+            .push(binding(s6a::separation::InvocationBinding::Result));
+    }
+    for parameter in remaining_slots {
+        trail
+            .bindings
+            .push(binding(s6a::separation::InvocationBinding::Parameter(
+                parameter.clone(),
+            )));
+    }
+    let receiver_path = receiver_subject.map(|subject| s6a::separation::RuntimeValuePath {
+        observation: own,
+        subject,
+        steps: Vec::new(),
+    });
+    Ok(ClauseBinding {
+        current: &current.environment,
+        pre: observations
+            .pre
+            .as_ref()
+            .map(|observation| &observation.environment),
+        bindings,
+        trail,
+        receiver_path,
+    })
 }
 
 /// FR-268 step 1 (ADR-031 SW-13): resolve `quantifier` in `graph` to a

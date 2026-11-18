@@ -179,6 +179,29 @@ impl ReaderProtocolProjection {
         }
     }
 
+    /// The location of every node of the root context a `pre(..)` reads
+    /// (FR-104): each node below a `Pre` node, which observes the pre
+    /// snapshot. Empty for a projection with no location.
+    pub fn pre_read_locations(&self) -> Vec<Location> {
+        let mut found = Vec::new();
+        let mut pending = vec![(self.root, false)];
+        let mut seen = BTreeSet::new();
+        while let Some((index, under_pre)) = pending.pop() {
+            if !seen.insert((index, under_pre)) {
+                continue;
+            }
+            let Some(node) = self.nodes.get(index) else {
+                continue;
+            };
+            if under_pre {
+                found.extend(node.location.clone());
+            }
+            let below = under_pre || matches!(node.kind, NodeKind::Pre(_));
+            pending.extend(node.children.iter().map(|child| (*child, below)));
+        }
+        found
+    }
+
     /// The local slot a supplied binder is read through.
     pub fn local_slot(&self, binder: &NodeKey) -> Option<usize> {
         self.locals.get(binder).copied()
@@ -2248,6 +2271,15 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     return Err(fault("reader-decimal-negation-has-decimal-result").into());
                 };
                 Ok((NodeKind::DecimalNegate(*operand, target.clone()), children))
+            }
+            Some("filament.op.state.pre") => {
+                // FR-104: `pre(e)` reads `e` at the pre observation; its
+                // value is the operand's own.
+                let children = self.project_arguments(id, Some(arguments), context, locals)?;
+                let [operand] = children.as_slice() else {
+                    return Err(fault("reader-pre-read-has-one-operand").into());
+                };
+                Ok((NodeKind::Pre(*operand), children))
             }
             Some("filament.op.option.present") => {
                 let children = self.project_arguments(id, Some(arguments), context, locals)?;

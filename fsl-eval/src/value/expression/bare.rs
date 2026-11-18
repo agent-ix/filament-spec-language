@@ -349,6 +349,112 @@ pub fn evaluate_frame(
         witness,
     })
 }
+
+/// The state clause `name` names over `observations`, read from the node the
+/// observations were admitted for. The package carries no state clause name
+/// until FSpec FR-322 `claim_names` is admitted (QSL-2410): the node is the
+/// one `observations` names, `name` locates its body, and a node that is no
+/// state clause is `ObservationsMismatch`.
+fn state_clause(
+    package: &BarePackage<'_>,
+    name: &QualifiedName,
+    observations: &fsl_semantics::model::observation::AdmittedObservations,
+) -> Result<fsl_package::BareStateClause, CallFailure> {
+    let declared = name
+        .as_unqualified()
+        .ok_or_else(|| InputRefusal::UnknownClause(name.to_string()))?;
+    package
+        .project_state_clause(&observations.clause, declared)
+        .map_err(|failure| match failure {
+            BareSelectionFailure::Slot(
+                fsl_package::SlotSelectionFailure::MissingNode(_)
+                | fsl_package::SlotSelectionFailure::MalformedNode(_),
+            ) => InputRefusal::ObservationsMismatch.into(),
+            other => refusal(package, other),
+        })
+}
+
+/// FR-940 package form of [`CheckedPackageEvaluation::evaluate_clause`]: the
+/// clause body read from its admitted node, bound over `observations` as the
+/// source form binds it, and run through the shared evaluator with its
+/// trail. A `pre(..)` read observes the pre snapshot. `result` is bound
+/// exactly when the clause is a postcondition, takes it in slot 1 and the
+/// admitted observations carry the invocation's result, which they carry
+/// only for an operation that declares one (FR-104).
+fn evaluate_state_clause(
+    package: &BarePackage<'_>,
+    name: &QualifiedName,
+    observations: &fsl_semantics::model::observation::AdmittedObservations,
+    meter: &mut Meter,
+) -> Result<ClauseEvaluation, CallFailure> {
+    use fsl_semantics::model::clause_observation::Observation;
+    let clause = state_clause(package, name, observations)?;
+    let world = package
+        .world()
+        .map_err(|failure| refusal(package, failure))?;
+    let names: Vec<String> = clause
+        .parameters()
+        .iter()
+        .map(|(parameter, _)| parameter.clone())
+        .collect();
+    if clause
+        .parameters()
+        .iter()
+        .enumerate()
+        .any(|(position, (_, slot))| position != *slot)
+    {
+        return Err(CallFailure::Fault(InternalFault::new(
+            "FR-940",
+            "state-clause-parameters-take-their-slots-in-order",
+        )));
+    }
+    let binds_result = clause.observation() == Observation::Post
+        && names.len() > 1
+        && observations.result.is_some();
+    let super::ClauseBinding {
+        current,
+        pre,
+        bindings,
+        trail,
+        receiver_path,
+    } = super::bind_clause(clause.observation(), &names, binds_result, observations)?;
+    let reads: BTreeMap<filament_semantic_value::location::ExpressionLocation, Observation> =
+        clause
+            .projection()
+            .pre_read_locations()
+            .into_iter()
+            .map(|location| (location, Observation::Pre))
+            .collect();
+    let (evaluation, trail) =
+        Machine::with_world(World::Bytes(&world), current, pre, Some(&reads), meter, &[])
+            .with_trail(trail)
+            .run_traced(
+                ReaderNode::root(clause.projection()),
+                clause.projection().frame_slots(),
+                bindings,
+            )
+            .map_err(CallFailure::Fault)?;
+    Ok(ClauseEvaluation::new(evaluation, trail, receiver_path))
+}
+
+impl super::clause_set::ClauseHost for BarePackage<'_> {
+    fn clause_observation(
+        &self,
+        name: &QualifiedName,
+        observations: &fsl_semantics::model::observation::AdmittedObservations,
+    ) -> Result<fsl_semantics::model::clause_observation::Observation, CallFailure> {
+        Ok(state_clause(self, name, observations)?.observation())
+    }
+
+    fn clause(
+        &self,
+        name: &QualifiedName,
+        observations: &fsl_semantics::model::observation::AdmittedObservations,
+        meter: &mut Meter,
+    ) -> Result<ClauseEvaluation, CallFailure> {
+        evaluate_state_clause(self, name, observations, meter)
+    }
+}
 const SOURCE_DECLARATION: &str = "needs-source-declaration";
 const SOURCE_CHECKED_FORM: &str = "needs-source-checked-form";
 const OPERATION_TABLE: &str = "needs-operation-table";
@@ -649,22 +755,22 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
 
     fn evaluate_clause(
         &self,
-        _clause: &QualifiedName,
-        _observations: &fsl_semantics::model::observation::AdmittedObservations,
-        _meter: &mut Meter,
+        clause: &QualifiedName,
+        observations: &fsl_semantics::model::observation::AdmittedObservations,
+        meter: &mut Meter,
     ) -> Result<ClauseEvaluation, CallFailure> {
-        Err(unmet(self, SOURCE_DECLARATION))
+        evaluate_state_clause(self, clause, observations, meter)
     }
 
     fn evaluate_clause_set(
         &self,
-        _clauses: &[(
+        clauses: &[(
             QualifiedName,
             &fsl_semantics::model::observation::AdmittedObservations,
         )],
-        _limits: filament_exact::ScalarLimits,
+        limits: filament_exact::ScalarLimits,
     ) -> Result<ClauseSetEvaluation, CallFailure> {
-        Err(unmet(self, SOURCE_DECLARATION))
+        super::clause_set::evaluate(self, clauses, limits)
     }
 
     fn evaluate_value_invariants(

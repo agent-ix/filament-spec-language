@@ -148,7 +148,8 @@ impl<'p> BarePackage<'p> {
             Activation::Origin => (None, None),
             Activation::Each { trigger, guard } => (Some(trigger), guard.as_ref()),
         };
-        let clause_index = clause_index(package, clause_id).ok_or_else(malformed)?;
+        let clause_index =
+            declaration_index(package, clause_id, "temporal_clause").ok_or_else(malformed)?;
         let (root, site) = match term {
             ClauseTerm::Holds(position) => {
                 let graph_uses = subject.formula_graph();
@@ -359,32 +360,191 @@ fn anchor_member<'t>(term: &'t CheckedTerm, name: &str) -> Option<&'t CheckedTer
     })
 }
 
-/// The index of the temporal clause `clause` among the unit's temporal
-/// clause declarations in source order (FR-337's clause site name): the rank
-/// of its first `claim` occurrence among every temporal clause's `claim`
-/// occurrences of the same source, by the start of their source-map regions.
-fn clause_index(
+/// A `state`/`state_clause` node read for evaluation (FR-940 "Package forms
+/// of the source-checked evaluators": the invariant, precondition and
+/// postcondition bodies from the admitted checked nodes).
+pub struct BareStateClause {
+    observation: fsl_semantics::model::clause_observation::Observation,
+    parameters: Vec<(String, usize)>,
+    projection: ReaderProtocolProjection,
+}
+
+impl BareStateClause {
+    /// The observation the clause's reads take (FR-104): `current` for an
+    /// invariant or constraint, `pre` for a precondition, `post` for a
+    /// postcondition.
+    pub fn observation(&self) -> fsl_semantics::model::clause_observation::Observation {
+        self.observation
+    }
+
+    /// The clause's parameters in declaration order, `self` first, each
+    /// with the local slot the body reads it through.
+    pub fn parameters(&self) -> &[(String, usize)] {
+        &self.parameters
+    }
+
+    /// The clause body's evaluator nodes.
+    pub fn projection(&self) -> &ReaderProtocolProjection {
+        &self.projection
+    }
+}
+
+impl<'p> BarePackage<'p> {
+    /// The state clause whose node key is `clause`, its body projected over
+    /// its parameters and located under the state clause site `name`
+    /// declares (`ExpressionOwner::StateClause`), its index the clause's
+    /// rank among the unit's state clause declarations in source order.
+    /// Charges nothing.
+    ///
+    /// The package names no state clause until FSpec FR-322 `claim_names`
+    /// is admitted (QSL-2410), so `name` is the caller's.
+    ///
+    /// # Errors
+    ///
+    /// [`BareSelectionFailure`]: a witness refusal, `MissingNode` for a key
+    /// the package holds no node for, `MalformedNode` for a node that is no
+    /// state clause, or the first unsupported projection.
+    #[ix_trace_rs::string_edge]
+    pub fn project_state_clause(
+        &self,
+        clause: &NodeKey,
+        name: &str,
+    ) -> Result<BareStateClause, BareSelectionFailure> {
+        use filament_contract_model::{CheckedOperationMember, StateClauseKind};
+        use fsl_semantics::model::clause_observation::Observation;
+        let package = self.package();
+        let (_supply, identities) = self.witness()?;
+        let graph = wire_graph(package).map_err(|_| fault("bare-package-has-structural-keys"))?;
+        let mut found = None;
+        for node in &package.resolved_graph().nodes {
+            let key = graph
+                .key(&node.node_id)
+                .map_err(|_| fault("bare-package-has-structural-keys"))?;
+            if key == *clause {
+                found = Some(node);
+                break;
+            }
+        }
+        let node = found.ok_or_else(|| SlotSelectionFailure::MissingNode(clause.clone()))?;
+        let malformed =
+            || BareSelectionFailure::from(SlotSelectionFailure::MalformedNode(clause.clone()));
+        let CheckedTerm::Application {
+            operation,
+            arguments,
+            ..
+        } = &node.body
+        else {
+            return Err(malformed());
+        };
+        let read = operation.read().map_err(|_| malformed())?;
+        let Some(CheckedOperationMember::StateClause { clause: kind }) = read.member else {
+            return Err(malformed());
+        };
+        let observation = match kind {
+            StateClauseKind::Invariant | StateClauseKind::Constraint => Observation::Current,
+            StateClauseKind::Precondition => Observation::Pre,
+            StateClauseKind::Postcondition => Observation::Post,
+        };
+        let [CheckedTerm::Aggregate { members }, _anchor, CheckedTerm::Reference { target: body }] =
+            arguments.as_slice()
+        else {
+            return Err(malformed());
+        };
+        let nodes: BTreeMap<&CheckedNodeId, &CheckedSemanticNodeV2> = package
+            .resolved_graph()
+            .nodes
+            .iter()
+            .map(|node| (&node.node_id, node))
+            .collect();
+        let mut keys = Vec::with_capacity(members.len());
+        let mut names = Vec::with_capacity(members.len());
+        for member in members {
+            let CheckedTerm::Reference { target } = member else {
+                return Err(malformed());
+            };
+            let parameter = nodes.get(target).ok_or_else(malformed)?;
+            let parameter_name = group_member(&parameter.body, "name")
+                .and_then(text)
+                .ok_or_else(|| fault("bare-binder-has-a-name"))?;
+            names.push(parameter_name.to_owned());
+            keys.push(
+                graph
+                    .key(target)
+                    .map_err(|_| fault("bare-package-has-structural-keys"))?,
+            );
+        }
+        let index =
+            declaration_index(package, &node.node_id, "state_clause").ok_or_else(malformed)?;
+        let walker = BareWalker::new(
+            package,
+            identities,
+            self.equality_decisions(),
+            self.exact_type_projections(),
+        )
+        .map_err(SlotSelectionFailure::Fault)?;
+        let root_key = graph
+            .key(body)
+            .map_err(|_| fault("bare-package-has-structural-keys"))?;
+        let projection = walker
+            .project_term(
+                &root_key,
+                &keys,
+                filament_semantic_value::location::ExpressionOwner::StateClause {
+                    clause: name.to_owned(),
+                    index,
+                },
+            )
+            .map_err(walk_failure)?;
+        let world = self.world()?;
+        if projection.has_unrepresented_types(world.types()) {
+            return Err(BareSelectionFailure::Unsupported(Box::new(
+                UnsupportedView::missing_type(package.name(), root_key),
+            )));
+        }
+        let parameters = names
+            .into_iter()
+            .zip(&keys)
+            .map(|(name, key)| {
+                projection
+                    .local_slot(key)
+                    .map(|slot| (name, slot))
+                    .ok_or_else(|| fault("bare-clause-binder-has-a-local-slot"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(BareStateClause {
+            observation,
+            parameters,
+            projection,
+        })
+    }
+}
+
+/// The rank of `node`'s first `claim` occurrence among every `claim`
+/// occurrence of the nodes of `form` in the same source, by the start of
+/// their source-map regions: the node's declaration index in source order.
+fn declaration_index(
     package: &filament_contract_model::CheckedPackageV2,
-    clause: &CheckedNodeId,
+    node: &CheckedNodeId,
+    form: &str,
 ) -> Option<usize> {
     use filament_contract_model::CheckedOccurrenceRole;
-    let temporal: std::collections::BTreeSet<&CheckedNodeId> = package
+    let of_form: BTreeSet<&CheckedNodeId> = package
         .resolved_graph()
         .nodes
         .iter()
-        .filter(|node| node.semantic_form.as_ref() == "temporal_clause")
-        .map(|node| &node.node_id)
+        .filter(|candidate| candidate.semantic_form.as_ref() == form)
+        .map(|candidate| &candidate.node_id)
         .collect();
     let claims: Vec<&filament_contract_model::CheckedSourceMapEntry> = package
         .source_map()
         .iter()
         .filter(|entry| {
-            entry.role == CheckedOccurrenceRole::Claim && temporal.contains(&entry.node_id)
+            entry.role == CheckedOccurrenceRole::Claim && of_form.contains(&entry.node_id)
         })
         .collect();
     let own = claims
         .iter()
-        .filter(|entry| entry.node_id == *clause)
+        .filter(|entry| entry.node_id == *node)
         .filter_map(|entry| entry.regions.first())
         .min_by_key(|region| region.start)?;
     Some(
