@@ -277,7 +277,14 @@ enum Frame<'e, 'r> {
     /// The key type of a map index after its key expression is typed.
     IndexKey(Box<(Node, Location)>),
     /// The element-position obligation after the index has integer type.
-    IndexPosition(u64, ExprRef<'e>, Location),
+    IndexPosition(
+        u64,
+        NodeId,
+        filament_checked::node::IndexedKind,
+        ValueType,
+        ExprRef<'e>,
+        Location,
+    ),
     /// `present(r.f)` or `present(r.f.c)` of a guarded clock place: the
     /// field's name, the union case, and the `present` node's location;
     /// admits the typed owner `r` (FR-230 "Presence is derived").
@@ -1081,7 +1088,7 @@ impl<'a> Typer<'a> {
                     (name, expression.at(*value), expression.at(*body)),
                     location,
                     frames,
-                )
+                );
             }
             ExprNode::Case(case) => {
                 self.enter(&location)?;
@@ -1470,7 +1477,7 @@ impl<'a> Typer<'a> {
                     (name, expression.at(*value), expression.at(*body)),
                     location,
                     frames,
-                );
+                )
             }
             ExprNode::If {
                 condition,
@@ -2745,10 +2752,9 @@ impl<'a> Typer<'a> {
         }
     }
 
-    /// Type the index form's source and static selector constraints. A map
-    /// lookup builds the `Index` node (FSpec FR-144 "Indexing"); the tuple
-    /// projection and sequence index nodes are not built yet, so a proved read
-    /// of those remains unsupported after its source-level type checks.
+    /// Type the index form's source and static selector constraints. Map
+    /// lookup and sequence or ordered-set indexing produce separate checked
+    /// nodes; tuple projection remains unsupported.
     fn accept_index<'e, 'r>(
         &mut self,
         frame: Box<IndexFrame<'e>>,
@@ -2823,7 +2829,26 @@ impl<'a> Typer<'a> {
             {
                 let minimum = collection.bound().map_or(0, |bound| bound.minimum());
                 let index_location = location.child(1);
-                frames.push(Frame::IndexPosition(minimum, index, location));
+                let kind = match collection.kind() {
+                    CollectionKind::Sequence => filament_checked::node::IndexedKind::Sequence,
+                    CollectionKind::OrderedSet => filament_checked::node::IndexedKind::OrderedSet,
+                    _ => {
+                        return Err(CheckRefusal::ill_typed(
+                            &location,
+                            IllTypedCause::OperatorIneligible,
+                        ));
+                    }
+                };
+                let value_type = collection.element().clone();
+                let collection_id = self.push(source);
+                frames.push(Frame::IndexPosition(
+                    minimum,
+                    collection_id,
+                    kind,
+                    value_type,
+                    index,
+                    location,
+                ));
                 Ok(Step::Descend(Goal::Expect(
                     index,
                     Expected::Checked(Cow::Owned(ValueType::Integer)),
@@ -2899,7 +2924,7 @@ impl<'a> Typer<'a> {
                     &location,
                 )))
             }
-            Frame::IndexPosition(minimum, index, location) => {
+            Frame::IndexPosition(minimum, collection, kind, value_type, index, location) => {
                 let proved = match index.node() {
                     ExprNode::Integer(position) => {
                         position.to_u64().is_some_and(|position| position < minimum)
@@ -2913,12 +2938,15 @@ impl<'a> Typer<'a> {
                         CheckCause::Unproved(Obligation::Presence),
                     ));
                 }
-                Err(refuse(
-                    &index_location,
-                    CheckCause::UnsupportedFeature {
-                        loci: vec![index_location.clone()],
+                Ok(Step::Typed(node(
+                    NodeKind::Index {
+                        collection,
+                        index: self.push(typed),
+                        kind,
                     },
-                ))
+                    value_type,
+                    &location,
+                )))
             }
             Frame::SlotPresence(field, all, location) => self
                 .slot_presence(typed, field, all, &location)
