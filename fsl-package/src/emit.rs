@@ -2407,6 +2407,7 @@ fn literal_value(value: &LiteralValue) -> Result<(LiteralKind, serde_json::Value
         LiteralValue::Quantity(value) => (LiteralKind::Quantity, json!(rational(value))),
         LiteralValue::Text(value) => (LiteralKind::Text, json!(value)),
         LiteralValue::String(value) => (LiteralKind::String, json!(value)),
+        LiteralValue::Reference(value) => (LiteralKind::Reference, json!(value)),
         LiteralValue::Uuid(value) => (LiteralKind::Uuid, json!(value.to_string())),
         LiteralValue::Timestamp(value) => (LiteralKind::Timestamp, json!(value.to_string())),
         LiteralValue::Bytes(_) => {

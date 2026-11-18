@@ -1303,6 +1303,56 @@ impl<'a> Typer<'a> {
                 ValueType::String,
                 &location,
             ),
+            ExprNode::ReferenceLiteral {
+                type_name,
+                key,
+                key_span,
+            } => {
+                let declared = self.type_named(&type_name.name, &location)?;
+                let Some(object_type) = self.source_scope().object_type_named(&type_name.name)
+                else {
+                    return Err(CheckRefusal {
+                        location,
+                        cause: CheckCause::ReferenceLiteralTypeMismatch {
+                            name: type_name.clone(),
+                            actual: declared,
+                        },
+                    });
+                };
+                let identity = key.text().as_bytes().to_vec();
+                let kind = match filament_checked::construct::reference_literal(
+                    object_type.clone(),
+                    identity.clone(),
+                ) {
+                    Ok(_) => NodeKind::ReferenceLiteral {
+                        object_type: object_type.clone(),
+                        identity,
+                    },
+                    Err(filament_checked::construct::ReferenceLiteralError::EmptyIdentity) => {
+                        return Err(CheckRefusal {
+                            location,
+                            cause: CheckCause::EmptyReferenceLiteralKey { span: *key_span },
+                        });
+                    }
+                    Err(
+                        filament_checked::construct::ReferenceLiteralError::InvalidIdentityEncoding,
+                    ) => {
+                        // `key.text()` is a Rust string, so this branch can
+                        // only mean the checked-node constructor violated its
+                        // own UTF-8 contract.
+                        return Err(CheckRefusal {
+                            location,
+                            cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                                filament_semantic_value::catalog::InternalFault::new(
+                                    "FR-480",
+                                    "decoded-reference-key-is-valid-utf8",
+                                ),
+                            ))),
+                        });
+                    }
+                };
+                node(kind, ValueType::Reference(object_type), &location)
+            }
             ExprNode::Rational(numerator, denominator) => {
                 self.rational_literal(numerator, denominator, hint.as_deref(), &location)?
             }

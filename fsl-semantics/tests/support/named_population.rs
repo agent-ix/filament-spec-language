@@ -189,6 +189,15 @@ pub struct Checked {
 /// The unit over the package (with `archive` when asked) holding
 /// `declarations`, checked, or its refusals each with its text.
 pub fn check(archive: bool, declarations: &str) -> Result<Checked, Vec<Refused>> {
+    check_with_profiles(archive, "", declarations)
+}
+
+/// [`check`] with additional profile selections placed before the model.
+pub fn check_with_profiles(
+    archive: bool,
+    profiles: &str,
+    declarations: &str,
+) -> Result<Checked, Vec<Refused>> {
     let document = document(archive);
     let packages = package_input([document.as_slice()]).unwrap();
     let text = format!(
@@ -196,6 +205,7 @@ pub fn check(archive: bool, declarations: &str) -> Result<Checked, Vec<Refused>>
          profile v = \"filament.value.complete/v1\";\n\
          profile t = \"filament.temporal.infinite-trace/v1\";\n\
          profile m = \"filament.model.complete/v1\";\n\
+         {profiles}\n\
          model M = \"{PACKAGE}\";\n\
          {declarations}\n",
     );

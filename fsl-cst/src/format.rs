@@ -282,6 +282,9 @@ fn needs_space(
     if current_is_generic_angle {
         return false;
     }
+    if current.spelling() == b"#" || previous.spelling() == b"#" {
+        return false;
+    }
     if previous_is_generic_angle && previous.spelling() == b"<" {
         return false;
     }

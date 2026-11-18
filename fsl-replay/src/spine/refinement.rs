@@ -341,6 +341,8 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::IllTyped(_)
         | CheckCause::UndeclaredVariantCase { .. }
         | CheckCause::OperandTypeMismatch { .. }
+        | CheckCause::ReferenceLiteralTypeMismatch { .. }
+        | CheckCause::EmptyReferenceLiteralKey { .. }
         | CheckCause::IdentityObservingForm(_)
         | CheckCause::WrongSnapshot(_)
         | CheckCause::MissingName(_)
