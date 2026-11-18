@@ -2986,6 +2986,9 @@ fn tc_1040_the_elements_of_a_built_list_are_read_at_their_index() {
 /// its operand values and the path to it.
 #[trace("TC-2981", "FR-265-AC-11")]
 #[trace("TC-2981", "FR-265-AC-12")]
+#[trace("TC-2981", "FR-265-AC-13")]
+#[trace("TC-2981", "FR-267-AC-23")]
+#[trace("TC-2981", "FR-268-AC-5")]
 #[trace("FSpec-TC-2014", "FSpec-FR-351-AC-9")]
 #[test]
 fn tc_2981_a_path_ending_at_a_comparison_records_the_comparison_and_its_operands() {
@@ -3021,6 +3024,31 @@ fn tc_2981_a_path_ending_at_a_comparison_records_the_comparison_and_its_operands
         &record.value_path.subject,
         ValuePathSubject::Object(reference) if reference.object().as_str() == "mid"
     ));
+    let (_, comparison_evaluation, _) =
+        evaluate(&unit, "MatchesParent", Snapshot::High, "mid", 1_000_000);
+    let comparison_reports = unit
+        .compiled
+        .package
+        .graph()
+        .occurrences()
+        .filter_map(|(_, _, location)| {
+            matches!(
+                &location.origin,
+                filament_semantic_value::location::ExpressionOwner::StateClause {
+                    clause: name,
+                    ..
+                } if name == "MatchesParent"
+            )
+            .then(|| comparison_evaluation.comparison(location))
+            .flatten()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(comparison_reports.len(), 1);
+    assert_eq!(comparison_reports[0].comparison, equality);
+    assert_eq!(
+        super::witness_member::comparison_report_count_current("MemberAll", &[0, 600, 700]),
+        0
+    );
     let (observations, _, mut meter) =
         evaluate(&unit, "MatchesParent", Snapshot::High, "mid", 1_000_000);
     assert_eq!(
@@ -3043,6 +3071,25 @@ fn tc_2981_a_path_ending_at_a_comparison_records_the_comparison_and_its_operands
             "MatchesParent",
             &observations,
             &missing_path,
+            &[],
+            &mut meter,
+        )
+        .unwrap(),
+        SeparationOutcome::Failed(SeparationStep::Quantifier, SeparationReason::Unmet)
+    );
+    let mut outside_comparison = record.clone();
+    outside_comparison.deciding_comparison = Some(occurrence(
+        &unit,
+        "AtLeastParent",
+        &[1],
+        Operator::Binary,
+    ));
+    assert_eq!(
+        separate(
+            &unit.compiled.package,
+            "MatchesParent",
+            &observations,
+            &outside_comparison,
             &[],
             &mut meter,
         )
@@ -3100,6 +3147,27 @@ fn tc_2981_a_path_ending_at_a_comparison_records_the_comparison_and_its_operands
         wire["witness"]["decision_path"].as_array().unwrap().len(),
         2
     );
+    let refuses_member = |invalid: serde_json::Value, member: &str| {
+        let error =
+            crate::spine::read_native_run_result(&serde_json::to_vec(&invalid).unwrap())
+                .err()
+                .expect("a malformed comparison witness member is refused");
+        assert!(error.to_string().contains(member), "{member}: {error}");
+    };
+    let mut missing_operands = wire.clone();
+    missing_operands["witness"]
+        .as_object_mut()
+        .unwrap()
+        .remove("operands");
+    refuses_member(missing_operands, "operands");
+    let mut one_operand = wire.clone();
+    let first_operand = one_operand["witness"]["operands"][0].clone();
+    one_operand["witness"]["operands"] = serde_json::json!([first_operand]);
+    refuses_member(one_operand, "operands");
+    let mut has_quantifier = wire.clone();
+    has_quantifier["witness"]["quantifier"] =
+        has_quantifier["witness"]["decision_path"][0].clone();
+    refuses_member(has_quantifier, "quantifier");
     let crate::spine::NativeRunResult::Clause(read) =
         crate::spine::read_native_run_result(&bytes).unwrap()
     else {

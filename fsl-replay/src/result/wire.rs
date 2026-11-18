@@ -928,6 +928,7 @@ impl RecordWire<Box<RawValue>> {
                         .map_err(|_| CauseCodecError::Shape("operands"))?;
                 }
             }
+            (Some(_), None, Some(_)) => return Err(CauseCodecError::Shape("operands")),
             (None, None, None) => {
                 if self.index.is_none() {
                     return Err(CauseCodecError::MissingIndex);
