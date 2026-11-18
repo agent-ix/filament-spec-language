@@ -3746,6 +3746,13 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     .ok_or_else(|| invariant("component-environment-resolved"));
             }
         }
+        // FR-120 "Eligible" (W50): a read inside `pre(...)` observes the
+        // pre-state, also a read in the body or precondition of a function or
+        // dispatched query that `pre(...)` calls, whose locations the clause's
+        // `reads` does not list.
+        if let (Some(_), Anchor::Pre, Some(pre)) = (self.reads, self.anchor, self.pre_objects) {
+            return Ok(pre);
+        }
         match self.reads {
             Some(reads)
                 if node.location().and_then(|location| reads.get(location))
@@ -5108,7 +5115,7 @@ mod carried_sum;
 #[cfg(test)]
 mod invariants;
 
-mod node_source;
+pub(super) mod node_source;
 pub(super) mod reader_source;
 mod world;
 
