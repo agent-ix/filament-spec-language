@@ -114,6 +114,30 @@ fn a_reference_literal_resolves_at_subject_binding() {
     assert!(!text.contains("operator-ineligible"), "{text}");
 }
 
+/// FR-1000-AC-4 (TC-2957): a call whose body contains a reference literal
+/// still uses checked-source replay when a temporal counterexample is settled.
+#[trace("TC-2957", "FR-1000-AC-4")]
+#[test]
+fn a_called_function_reference_literal_replays_from_checked_source() {
+    let workspace = Workspace::new("reflit-function-replay");
+    let body = format!(
+        "function reference_a using v(): Reference<M::Counter> pure {{ M::Counter#\"a\" }}\n{}",
+        temporal(
+            "CalledReference",
+            "always holds(c.value = 1 and c = reference_a())",
+        ),
+    );
+    let run = analyze(&counter_request(
+        &workspace,
+        &body,
+        json!([{"claim": "CalledReference"}]),
+    ));
+    assert_eq!(run.exit, 10, "{}", run.document());
+    let item = run.item(0);
+    assert_eq!(label(&item), "refuted", "{item}");
+    assert!(!item["counterexample"].is_null(), "{item}");
+}
+
 /// FR-1000-AC-5: a created-object literal with no member is undefined
 /// `absent-key`; a fixed literal is decided.
 #[trace("TC-2835", "FR-1000-AC-5", "FSpec-FR-480-AC-4")]
