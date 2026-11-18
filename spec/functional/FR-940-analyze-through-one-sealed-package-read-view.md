@@ -86,9 +86,16 @@ result on both routes because both routes read the same bytes.
   `read_evaluation_package` returns for the `CheckedPackage` S4 built for the
   request's program: its emission's bytes read back by the strict reader.
 - On the package route: the `BarePackage` over the `CheckedPackageV2` that the
-  strict checked-package reader admitted from the request's `package` file
+  strict checked-package reader admitted from the `checked-package.json` of
+  the FR-517 handoff directory the request's `package` selection names
   (FR-850 "Admission"), with the request's domain packages bound to its model
-  selections.
+  selections and, through `BarePackage::with_supply`, the identity rows
+  `ReadIdentityRows::read` admitted from that directory's `identities.json`
+  and the equality rows `ReadEqualityRows::read` admitted from its
+  `equality.json` when present. These rows are the identity witness the
+  reader projection (`BarePackage::world()`, the bare walker and observation
+  admission) reads; they come from the handoff files only, never from the
+  package bytes (FR-531).
 
 ## Outputs
 
@@ -153,12 +160,12 @@ and `FR-621`'s outcome document is unchanged.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-940-AC-1 | For FR-850-AC-1's Counter package, each `AnalysisView` accessor returns equal values over the `AdmittedPackageRead` of the compiled `CheckedPackage` and over the `BarePackage` of its written bytes; an analysis entry called with either value gives the same item records for `Bounded`, `BelowThree` and `AtMostTwo`. | Test (TC-2620) |
+| FR-940-AC-1 | For FR-850-AC-1's Counter package, each `AnalysisView` accessor returns equal values over the `AdmittedPackageRead` of the compiled `CheckedPackage` and over the `BarePackage` of the `checked-package.json` of its handoff directory, written by a `native-compile/1` request carrying the `handoff` member (FR-665), with that directory's identity and equality rows attached; an analysis entry called with either value gives the same item records for `Bounded`, `BelowThree` and `AtMostTwo`. | Test (TC-2620) |
 | FR-940-AC-2 | `AnalysisView` has no implementation outside `fsl_package` (a `compile_fail` doctest implementing it for a local type fails with `E0277`, and one passing a `CheckedPackage` where `&dyn AnalysisView` is expected fails the same way), and no public function of any FSL crate takes a `BarePackage` or a `CheckedPackageV2` and returns a `CheckedPackage` or a `CheckedGraph` (source scan of every function returning either type). | Inspection (TC-2620) |
 | FR-940-AC-3 | `fsl analyze` with a `package` selection no longer refuses `package` as not implemented: FR-850-AC-1's request completes with FR-850's outcome, exit 0. | Test (TC-2620) |
 | FR-940-AC-4 | Over source, the Counter request with the items `Bounded`, `AtMostTwo` and the `invariant` state clause `NotAboveThree` (`self.value <= 3`, FR-625-AC-4) settles `proved`, `refuted` with `replay.reproduced` `true`, and `proved` basis `exhaustive` respectively, and the store-buffering litmus claim over `SB` with `memory` `tso` settles `refuted` (FR-629-AC-1); no record of either request is `unsupported` and no diagnostic names a package fact. | Test (TC-2958) |
-| FR-940-AC-5 | The `package` request over the bytes of AC-4's compiled Counter unit gives, for `NotAboveThree` and `AtMostTwo`, item records equal to the source route's, `AtMostTwo` with the same counterexample, replay target and `reproduced` `true`. | Test (TC-2958) |
-| FR-940-AC-6 | For each item family whose evaluator FR-531's inventory lists as taking a source-checked value (the temporal clauses `Bounded` and `AtMostTwo`, the invariant `NotAboveThree`, the deadlock-freedom item and the `SB` litmus claim under `tso`), a `program` request and a `package` request over the bytes of the same compiled unit give equal item records, counterexamples and replays, and no package-route record is `unsupported`; a `package` file the strict reader refuses settles no item and compiles no source (FR-850-AC-3). | Test (TC-2958) |
+| FR-940-AC-5 | The `package` request over the handoff directory of AC-4's Counter unit, written by its compile request's `handoff` member, gives, for `NotAboveThree` and `AtMostTwo`, item records equal to the source route's, `AtMostTwo` with the same counterexample, replay target and `reproduced` `true`. | Test (TC-2958) |
+| FR-940-AC-6 | For each item family whose evaluator FR-531's inventory lists as taking a source-checked value (the temporal clauses `Bounded` and `AtMostTwo`, the invariant `NotAboveThree`, the deadlock-freedom item and the `SB` litmus claim under `tso`), a `program` request and a `package` request over the handoff directory of the same compiled unit give equal item records, counterexamples and replays, and no package-route record is `unsupported`; a handoff directory whose `checked-package.json` the strict reader refuses, or that holds no `identities.json`, settles no item and compiles no source (FR-850-AC-3, FR-850-AC-6). | Test (TC-2958) |
 
 ## Dependencies
 

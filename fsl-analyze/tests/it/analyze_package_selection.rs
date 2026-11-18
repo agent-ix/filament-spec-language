@@ -289,3 +289,108 @@ fn a_refused_package_never_falls_back_to_source() {
     assert_eq!(run.document()["last_stage"], Value::Null, "{}", run.document());
     assert_eq!(first_diagnostic(&run)["code"], "invalid_package", "{}", run.document());
 }
+
+/// Compile the Counter program with `body` through a `native-compile/1`
+/// request carrying FR-665's `handoff` member, writing the handoff directory
+/// `handoff`; returns the request members with `package` selecting that
+/// directory and no `program`.
+fn handoff_request(ws: &Workspace, body: &str, items: Value) -> Value {
+    let _ = counter_request(ws, body, items.clone());
+    let request = request_members(Some(items));
+    let compile = json!({"format": "native-compile/1", "request": {
+        "models": request["models"], "program": request["program"],
+        "handoff": {"directory": "handoff", "package_name": "counter",
+            "native_join": {"work_units": 1_000_000, "storage": 1_000_000}}}});
+    let compile_path = ws.write("compile-handoff.json", compile.to_string().as_bytes());
+    fsl_command::command::compile(&compile_path).expect("the program compiles");
+    let mut selected = request;
+    selected
+        .as_object_mut()
+        .expect("a request object")
+        .remove("program");
+    selected["package"] = json!({"directory": "handoff"});
+    selected
+}
+
+/// FR-850-AC-6 (negative): the package selection names a handoff directory
+/// whose `identities.json` supplies the identity witness; a missing or
+/// refused identity file, a refused equality file and an absent directory
+/// refuse the request `invalid_package` before any engine runs, and a
+/// directory without `equality.json` still analyzes.
+#[trace("TC-2966", "FR-850-AC-6")]
+#[test]
+#[ignore = "QSL-2271: the package selection reading its handoff directory's identity and equality files not implemented yet"]
+fn a_package_selection_reads_its_handoff_identity_file() {
+    let ws = Workspace::new("package-handoff-identities");
+    let members = handoff_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
+    let directory = ws
+        .write("analyze-probe.json", b"{}")
+        .parent()
+        .expect("the workspace")
+        .join("handoff");
+    let identities = std::fs::read(directory.join("identities.json")).expect("identities");
+    let equality = std::fs::read(directory.join("equality.json")).expect("equality");
+
+    let refused = |name: &str, members: &Value| -> Value {
+        let run = analyze_members(&ws, &format!("analyze-{name}.json"), members);
+        let diagnostic = first_diagnostic(&run);
+        assert_eq!(diagnostic["code"], "invalid_package", "{name}: {diagnostic}");
+        assert_eq!(run.document()["items"], json!([]), "{name}");
+        assert_eq!(run.exit, 20, "{name}");
+        diagnostic
+    };
+
+    std::fs::remove_file(directory.join("identities.json")).expect("remove identities");
+    let diagnostic = refused("no-identities", &members);
+    assert_eq!(diagnostic["cause"], "missing-file", "{diagnostic}");
+    assert!(diagnostic.to_string().contains("identities.json"), "{diagnostic}");
+
+    ws.write("handoff/identities.json", b"{}");
+    let diagnostic = refused("empty-identities", &members);
+    assert_eq!(diagnostic["cause"], "malformed-file", "{diagnostic}");
+    assert!(diagnostic.to_string().contains("identities.json"), "{diagnostic}");
+
+    let mut foreign: Value = serde_json::from_slice(&identities).expect("identities JSON");
+    foreign["format"] = json!("filament.checked-handoff.identities/0");
+    ws.write("handoff/identities.json", foreign.to_string().as_bytes());
+    let diagnostic = refused("foreign-identities", &members);
+    assert_eq!(diagnostic["cause"], "unknown-format", "{diagnostic}");
+
+    ws.write("handoff/identities.json", &identities);
+    std::fs::remove_file(directory.join("equality.json")).expect("remove equality");
+    let run = analyze_members(&ws, "analyze-no-equality.json", &members);
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.item(0));
+    assert_eq!(run.exit, 0);
+
+    ws.write("handoff/equality.json", b"not json");
+    let diagnostic = refused("bad-equality", &members);
+    assert_eq!(diagnostic["cause"], "refused-file", "{diagnostic}");
+    assert!(diagnostic.to_string().contains("equality.json"), "{diagnostic}");
+    ws.write("handoff/equality.json", &equality);
+
+    let mut absent = members.clone();
+    absent["package"] = json!({"directory": "absent"});
+    let diagnostic = refused("absent-directory", &absent);
+    assert_eq!(diagnostic["cause"], "missing-file", "{diagnostic}");
+}
+
+/// FSpec FR-520-AC-7: the `package` member is the closed `{directory}`
+/// selection; the package file spelling `{file}` refuses `invalid-request`
+/// naming `file`.
+#[trace("FSpec-TC-2009", "FSpec-FR-520-AC-7")]
+#[test]
+#[ignore = "QSL-2271: the package selection naming a handoff directory not implemented yet"]
+fn a_package_selection_names_a_directory_not_a_file() {
+    let ws = Workspace::new("package-selection-directory");
+    let members = handoff_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
+    let run = analyze_members(&ws, "analyze-directory.json", &members);
+    assert_eq!(run.exit, 0, "{}", run.document());
+
+    let mut file = members;
+    file["package"] = json!({"file": "handoff/checked-package.json"});
+    let run = analyze_members(&ws, "analyze-file.json", &file);
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["code"], "invalid-request", "{diagnostic}");
+    assert!(diagnostic.to_string().contains("file"), "{diagnostic}");
+    assert_eq!(run.exit, 20);
+}
