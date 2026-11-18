@@ -31,6 +31,7 @@ use fsl_semantics::check::{
 use fsl_semantics::model::observation::Observation;
 
 use super::contracts::{Verdict, verdict};
+use super::reference_bindings::ReferenceBinding;
 use super::walk::{Row, rows_of, stop};
 use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem, state_document};
 use crate::model_subject::{AtomStop, ModelInstance, ModelLetters};
@@ -255,6 +256,34 @@ impl ClauseLetters<'_, '_> {
                         .conforms(row.reference.object_type().clone(), self.parameter.clone())
             })
             .map(|row| row.reference.clone())
+    }
+
+    /// Add the subject-dependent membership reads of CreatedObject literals
+    /// from a separately checked temporal expression. The model evaluator's
+    /// graph-only footprint cannot see these literals in the base package.
+    fn add_reference_literal_reads(
+        &self,
+        root: CheckedNode<'_>,
+        reads: &mut BTreeSet<SymbolicLocation>,
+    ) {
+        let Some(package) = self.system.source_package() else {
+            return;
+        };
+        let mut literals = BTreeSet::new();
+        super::reference_bindings::collect_literals(package.graph(), root, &mut literals);
+        for literal in literals {
+            if let Some(ReferenceBinding::CreatedObject { populations, .. }) = self
+                .reference_bindings
+                .get(&literal.object_type, &literal.identity)
+            {
+                reads.extend(
+                    populations
+                        .iter()
+                        .cloned()
+                        .map(|population| SymbolicLocation::AnyMembership { population }),
+                );
+            }
+        }
     }
 }
 
@@ -634,12 +663,14 @@ impl ModelLetters for ClauseLetters<'_, '_> {
         );
         if let Some((guard, _)) = node.guard() {
             reads.extend(self.system.guard_reads(guard, &binders)?);
+            self.add_reference_literal_reads(guard, &mut reads);
         }
         for (index, (name, declared)) in clause.captures().enumerate() {
             let (initializer, _) = node
                 .capture(index)
                 .ok_or(FootprintRefusal::Unresolved { what: "capture" })?;
             reads.extend(self.system.guard_reads(initializer, &binders)?);
+            self.add_reference_literal_reads(initializer, &mut reads);
             binders.push((name.to_owned(), declared.clone()));
         }
         Ok(reads)
@@ -652,6 +683,10 @@ impl ModelLetters for ClauseLetters<'_, '_> {
         let (condition, _) = node
             .condition(atom)
             .ok_or(FootprintRefusal::Unresolved { what: "holds atom" })?;
-        self.system.atom_reads(node.clause().over(), condition)
+        let mut reads = self
+            .system
+            .atom_reads(node.clause().over(), condition)?;
+        self.add_reference_literal_reads(condition, &mut reads);
+        Ok(reads)
     }
 }
