@@ -115,6 +115,8 @@ pub(crate) struct EvaluationEnv<'a> {
     pub(crate) location: Option<filament_semantic_value::location::ExpressionLocation>,
     /// The last hook call's `Evaluation.losses`, recorded like `location`.
     pub(crate) losses: Vec<filament_semantic_value::loss::LocatedLoss>,
+    /// The last hook call's S6a frame depth, recorded alongside its location.
+    pub(crate) frame_depth: u32,
     /// Whether the caller already charged this application's `function.call`
     /// (the `filament-eval` scheduler does), so the hook charges nothing.
     pub(crate) call_charged: bool,
@@ -134,6 +136,7 @@ impl<'a> EvaluationEnv<'a> {
             arguments: Some(arguments),
             location: None,
             losses: Vec::new(),
+            frame_depth: 0,
             call_charged: false,
         }
     }
@@ -202,6 +205,7 @@ impl super::s6a::ReferenceEvaluation for ValueFunctionFamily {
     ) -> Result<filament_eval::EvalOutcome<Value>, InternalFault> {
         env.location = None;
         env.losses.clear();
+        env.frame_depth = 0;
         // FR-090-AC-3 (ADR-013 T-4): `call` always resolves `checked` from
         // this same package's declarations before calling `evaluate`, so a
         // lookup miss here means the two lookups disagreed -- a broken S6a
@@ -249,6 +253,7 @@ impl super::s6a::ReferenceEvaluation for ValueFunctionFamily {
         .run(function.body, function.slots, arguments)?;
         env.location = evaluation.location;
         env.losses = evaluation.losses;
+        env.frame_depth = evaluation.frame_depth;
         match evaluation.outcome {
             filament_eval::FamilyOutcome::Evaluated(outcome) => {
                 Ok(filament_eval::EvalOutcome::Kernel(outcome))

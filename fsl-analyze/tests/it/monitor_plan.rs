@@ -18,7 +18,8 @@ use crate::units::Domain;
 pub(crate) const TIME_UNITS: &str = "dimension Time;\n\
     unit s : Time = rational(1, 1);\n\
     unit ms : Time = rational(1, 1000) * s;\n\
-    unit us : Time = rational(1, 1000000) * s;\n";
+    unit us : Time = rational(1, 1000000) * s;\n\
+    unit step : Time = rational(1, 1) * s;\n";
 
 pub(crate) fn ratio(numerator: i64, denominator: i64) -> Rational {
     Rational::new(Integer::from(numerator), Integer::from(denominator)).expect("nonzero")
@@ -1044,78 +1045,10 @@ fn a_step_open_interval_is_planned_on_the_position_counter() {
     ));
 }
 
-/// FR-943-AC-3, the monitor half: with `p` true at position 0, the step
-/// `once[3,*] holds(p)` is `indeterminate` at position 2 (the monitor reads no
-/// position before its baseline), never `false` at the lower bound, and `true`
-/// from position 4; `eventually[2,*] holds(p)` from an origin at position 0 is
-/// not discharged by `p` at position 1 and is discharged `true` by `p` at
-/// position 3. The tick cover of FR-251 (`1 + 2u`, here 1) makes a witness
-/// exactly at the lower bound `indeterminate` in the monitor, so the AC's
-/// `true` at position 3 and discharge at position 2 hold for the batch
-/// evaluator and are one position sharper than FR-251 lets the monitor be.
+/// FR-943-AC-3, the monitor half (FR-251-AC-54): `once[3,*]` is `true` at
+/// position 3 and `eventually[2,*]` is discharged by `p` at position 2.
 #[trace("TC-2623", "FR-943-AC-3")]
 #[test]
-fn a_step_open_interval_decides_at_its_lower_bound_on_the_position_counter() {
-    use crate::monitor_entries::{run_reference, Input};
-    let profile = "filament.temporal.infinite-trace/v1";
-    let past = plan_of(&position_counted(
-        profile,
-        "once[3,*] holds(c.versionNumber = 2)",
-    ));
-    let atom = *crate::monitor_entries::atoms_of(&past)
-        .first()
-        .expect("the clause holds one atom");
-    let node = i128::try_from(past.buffers()[0].0.index()).expect("a node index");
-    let truth = |tick: u64| Input::Reading(tick, vec![(atom, tick == 0)]);
-    let inputs: Vec<Input> = (0..5).map(truth).collect();
-    let entries = run_reference(&past, &inputs);
-    let code = |tick: i128| {
-        entries[usize::try_from(tick).expect("a tick")]
-            .iter()
-            .find(|(key, _)| *key == tick * 1000 + node)
-            .map(|(_, code)| *code)
-    };
-    assert_eq!(code(2), Some(4), "indeterminate at position 2");
-    assert_ne!(code(3), Some(2), "never false at the lower bound");
-    assert_eq!(code(4), Some(1), "true from position 4");
-
-    let future = plan_of(&position_counted(
-        profile,
-        "eventually[2,*] holds(c.versionNumber = 2)",
-    ));
-    let atom = *crate::monitor_entries::atoms_of(&future)
-        .first()
-        .expect("the clause holds one atom");
-    let node = i128::try_from(future.program().root().index()).expect("a node index");
-    let truth = |tick: u64, value: bool| Input::Reading(tick, vec![(atom, value)]);
-    let entries_at = |inputs: &[Input]| run_reference(&future, inputs);
-    let found = |entries: &[Vec<(i128, i64)>], step: usize| {
-        entries[step]
-            .iter()
-            .find(|(key, _)| *key == node)
-            .map(|(_, code)| *code)
-    };
-    // `p` at position 1 does not discharge the origin at position 0.
-    let early = entries_at(&[truth(0, false), truth(1, true), truth(2, false)]);
-    assert_ne!(found(&early, 1), Some(1));
-    assert_ne!(found(&early, 2), Some(1));
-    // `p` at position 3 discharges it.
-    let late = entries_at(&[
-        truth(0, false),
-        truth(1, false),
-        truth(2, false),
-        truth(3, true),
-    ]);
-    assert_eq!(found(&late, 3), Some(1));
-}
-
-/// FR-943-AC-3 as written: `once[3,*]` is `true` at position 3 and
-/// `eventually[2,*]` is discharged by `p` at position 2. FR-251's tick cover
-/// makes the monitor decide one position later, so the AC and FR-251 differ
-/// (next spec batch).
-#[trace("TC-2623", "FR-943-AC-3")]
-#[test]
-#[ignore = "QSL-2321: FR-943-AC-3 decides at the lower bound itself; FR-251's tick cover decides one position later"]
 fn a_step_open_interval_decides_at_the_lower_bound_itself() {
     use crate::monitor_entries::{run_reference, Input};
     let profile = "filament.temporal.infinite-trace/v1";
@@ -1148,4 +1081,92 @@ fn a_step_open_interval_decides_at_the_lower_bound_itself() {
     let entries = run_reference(&future, &inputs);
     let found = entries[2].iter().find(|(key, _)| *key == root);
     assert_eq!(found.map(|(_, code)| *code), Some(1));
+}
+
+/// The generated entries of `formula` (a position-counted clause under
+/// `profile`) run over one reading per position, each atom of the clause
+/// taking the truth `truths[position][atom]`; per position, the
+/// `(origin, subformula, code)` results.
+fn position_outcomes(
+    profile: &str,
+    formula: &str,
+    truths: &[&[bool]],
+) -> Vec<Vec<(i128, i128, i64)>> {
+    let plan = plan_of(&position_counted(profile, formula));
+    let spec = fsl_analyze::monitor_entries::spec_from_plan(&plan)
+        .expect("the plan is in the generated fragment");
+    let inputs: Vec<crate::monitor_entries::Input> = truths
+        .iter()
+        .enumerate()
+        .map(|(position, row)| {
+            crate::monitor_entries::Input::Reading(
+                u64::try_from(position).unwrap(),
+                spec.atoms.iter().copied().zip(row.iter().copied()).collect(),
+            )
+        })
+        .collect();
+    crate::monitor_entries::run_entries(&plan, &inputs)
+        .into_iter()
+        .map(|step| {
+            step.into_iter()
+                .map(|(key, code)| (key / 1000, key % 1000, code))
+                .collect()
+        })
+        .collect()
+}
+
+/// FR-251-AC-54: a position reading is exact, so a witness at a distance
+/// equal to the lower bound decides: `once[3,*]` with `p` at position 0 is
+/// `indeterminate` at 2 and `true` at 3, and `eventually[2,*]` from origin 0
+/// is discharged `true` by `p` at position 2, not at 1.
+#[trace("TC-2968", "FR-251-AC-54")]
+#[test]
+fn a_position_witness_at_the_lower_bound_decides() {
+    let once = position_outcomes(
+        "filament.temporal.infinite-trace/v1",
+        "once[3,*] holds(c.versionNumber = 2)",
+        &[&[true], &[false], &[false], &[false]],
+    );
+    assert!(
+        once[2].iter().any(|&(origin, _, code)| origin == 2 && code == 4),
+        "indeterminate at position 2: {once:?}"
+    );
+    assert!(
+        once[3].iter().any(|&(origin, _, code)| origin == 3 && code == 1),
+        "true at position 3, the lower bound itself: {once:?}"
+    );
+    let eventually = position_outcomes(
+        "filament.temporal.infinite-trace/v1",
+        "eventually[2,*] holds(c.versionNumber = 2)",
+        &[&[false], &[true], &[true]],
+    );
+    assert!(
+        !eventually[1].iter().any(|&(origin, _, code)| origin == 0 && code == 1),
+        "a witness nearer than the lower bound does not discharge: {eventually:?}"
+    );
+    assert!(
+        eventually[2].iter().any(|&(origin, _, code)| origin == 0 && code == 1),
+        "a witness at the lower bound discharges true: {eventually:?}"
+    );
+}
+
+/// FR-251-AC-54: AC-52's event-position `eventually[0, 3]` from an
+/// activation at step 0 is discharged `true` by `c.versionNumber = 3` first
+/// at step 3, the upper bound itself, not left `indeterminate`.
+#[trace("TC-2968", "FR-251-AC-54")]
+#[test]
+fn a_position_witness_at_the_upper_bound_decides() {
+    let steps = position_outcomes(
+        "filament.temporal.event-position.false-extension/v1",
+        STEP_DEADLINE,
+        &[&[true, false], &[false, false], &[false, false], &[false, true]],
+    );
+    assert!(
+        steps[3].iter().any(|&(origin, _, code)| origin == 0 && code == 1),
+        "the step-0 obligation settles true at step 3: {steps:?}"
+    );
+    assert!(
+        !steps.iter().flatten().any(|&(origin, _, code)| origin == 0 && code == 4),
+        "never indeterminate at the bound: {steps:?}"
+    );
 }

@@ -44,7 +44,7 @@ const DERIVED_TARGET: &str = "derived_item";
 
 /// The letters of a derived item: it has no `holds` atom and no activation,
 /// so a read of either is a fault of the engine, never a reading.
-pub(super) struct NoLetters;
+pub(crate) struct NoLetters;
 
 impl NoLetters {
     fn fault() -> AtomStop {
@@ -85,7 +85,7 @@ impl ModelLetters for NoLetters {
 }
 
 /// The replay target of a derived item.
-pub(super) fn derived_target() -> Option<QualifiedName> {
+pub(crate) fn derived_target() -> Option<QualifiedName> {
     QualifiedName::new(vec![Identifier::new(DERIVED_TARGET).ok()?]).ok()
 }
 
@@ -103,7 +103,7 @@ pub(super) fn deadlock_item<'a>(
     form: &TemporalItem,
 ) -> Option<AnalyzeItem<'a>> {
     let simulation = move |binding: &SubjectBinding<'a>| ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,

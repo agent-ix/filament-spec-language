@@ -26,7 +26,6 @@ use super::{
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::simulation::key;
 use crate::temporal::UndefinedCause;
-use crate::value::{evaluate_history_update, evaluate_refinement_row};
 
 /// What one row evaluation gave (ADR-020 RE-4, RE-5).
 #[derive(Clone, Debug)]
@@ -80,14 +79,15 @@ impl ModelSystem<'_> {
         observed: &StateObservation,
         bindings: Vec<Value>,
     ) -> Result<RowReading, ExpansionStop> {
-        let evaluation = evaluate_refinement_row(
-            self.package,
-            row,
-            &observed.0.environment,
-            bindings,
-            &mut Meter::new(self.meter),
-        )
-        .map_err(|_| stop(BROKEN))?;
+        let evaluation = self
+            .evaluator()
+            .evaluate_refinement_row(
+                row,
+                &observed.0.environment,
+                bindings,
+                &mut Meter::new(self.meter),
+            )
+            .map_err(|_| stop(BROKEN))?;
         reading(&evaluation.outcome)
     }
 
@@ -139,14 +139,15 @@ impl ModelSystem<'_> {
         (pre, post): (&StateObservation, &StateObservation),
         bindings: Vec<Value>,
     ) -> Result<RowReading, ExpansionStop> {
-        let evaluation = evaluate_history_update(
-            self.package,
-            row,
-            (&pre.0.environment, &post.0.environment),
-            bindings,
-            &mut Meter::new(self.meter),
-        )
-        .map_err(|_| stop(BROKEN))?;
+        let evaluation = self
+            .evaluator()
+            .evaluate_history_update(
+                row,
+                (&pre.0.environment, &post.0.environment),
+                bindings,
+                &mut Meter::new(self.meter),
+            )
+            .map_err(|_| stop(BROKEN))?;
         reading(&evaluation.outcome)
     }
 

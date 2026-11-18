@@ -33,8 +33,8 @@ use filament_exact::{Cancel, ObjectReference, ValueType};
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::claim_family::claim_family;
 use crate::model_check::{
-    check_model, check_protocol, manifest as en1, HyperRefusal, LivenessRefusal, ModelCheckRefusal,
-    ModelCheckRequest, ProtocolCheckRequest,
+    check_model, check_protocol_constrained, manifest as en1, HyperRefusal, LivenessRefusal,
+    ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
 };
 use crate::statistical::{check_statistical, manifest as en4, StatisticalRequest};
 use crate::zone_check::{
@@ -260,7 +260,7 @@ pub fn protocol_item<'a>(
 }
 
 /// [`protocol_item`] with no check of what `item` runs.
-fn run_protocol_item(
+pub(super) fn run_protocol_item(
     index: RequestIndex,
     family: Option<DeclarationFamily>,
     item: ProtocolItem<'_>,
@@ -271,69 +271,70 @@ fn run_protocol_item(
         family,
         Mode::Bounded,
         en1::BACKEND_ID,
-        move |cancel| {
-            let ProtocolItem {
-                request,
-                certificate,
-                replay,
-            } = item;
-            let limits = request.limits;
-            let protocol = request.subject.protocol.clone();
-            let on_each = request
-                .subject
-                .model
-                .simulation
-                .package
-                .graph()
-                .protocol(&protocol)
-                .is_some_and(fsl_eval::simulation::protocol::activates_on_each);
-            let max_live_instances =
-                fsl_eval::simulation::protocol::live_instance_bound(request.max_live_instances);
-            let roles: Vec<_> = request
-                .subject
-                .roles
-                .iter()
-                .map(|binding| (binding.role.clone(), binding.model.clone()))
-                .collect();
-            let capacities: Vec<_> = request
-                .subject
-                .capacities
-                .iter()
-                .map(|binding| (binding.name.clone(), binding.value))
-                .collect();
-            let over = request.subject.over.clone();
-            let simulation = request.subject.model.simulation.clone();
-            match check_protocol(request, cancel) {
-                Ok(outcome) => {
-                    let record = fsl_replay::settle_protocol_check(
-                        &outcome,
-                        &limits,
-                        &certificate,
-                        cancel,
-                        replay,
-                    );
-                    // The model system is rebuilt only for a counterexample.
-                    let subject = record
-                        .counterexample
-                        .as_ref()
-                        .and_then(|_| {
-                            fsl_eval::simulation::protocol::over_reference(
-                                simulation, &protocol, &over,
-                            )
-                        })
-                        .map(|over| fsl_replay::ProtocolWire {
-                            protocol,
-                            over,
-                            roles,
-                            capacities,
-                            max_live_instances: on_each.then_some(max_live_instances),
-                        });
-                    EngineReport::Protocol(Box::new(record), subject)
-                }
-                Err(refusal) => EngineReport::Refused(model_refusal(&refusal)),
-            }
-        },
+        move |cancel| settle_protocol_item(item, None, cancel),
     )
+}
+
+/// Run `item` on EN-1 over its protocol subject and settle it (FR-215,
+/// FR-217).
+pub(super) fn settle_protocol_item(
+    item: ProtocolItem<'_>,
+    constraint: Option<&str>,
+    cancel: &Cancel,
+) -> EngineReport {
+    let ProtocolItem {
+        request,
+        certificate,
+        replay,
+    } = item;
+    let limits = request.limits;
+    let protocol = request.subject.protocol.clone();
+    let on_each = request
+        .subject
+        .model
+        .simulation
+        .input
+        .evaluator
+        .protocol(&protocol)
+        .is_some_and(fsl_eval::simulation::protocol::activates_on_each);
+    let max_live_instances =
+        fsl_eval::simulation::protocol::live_instance_bound(request.max_live_instances);
+    let roles: Vec<_> = request
+        .subject
+        .roles
+        .iter()
+        .map(|binding| (binding.role.clone(), binding.model.clone()))
+        .collect();
+    let capacities: Vec<_> = request
+        .subject
+        .capacities
+        .iter()
+        .map(|binding| (binding.name.clone(), binding.value))
+        .collect();
+    let over = request.subject.over.clone();
+    let simulation = request.subject.model.simulation.clone();
+    match check_protocol_constrained(request, constraint, cancel) {
+        Ok(outcome) => {
+            let record =
+                fsl_replay::settle_protocol_check(&outcome, &limits, &certificate, cancel, replay);
+            // The model system is rebuilt only for a counterexample.
+            let subject = record
+                .counterexample
+                .as_ref()
+                .and_then(|_| {
+                    fsl_eval::simulation::protocol::over_reference(simulation, &protocol, &over)
+                })
+                .map(|over| fsl_replay::ProtocolWire {
+                    protocol,
+                    over,
+                    roles,
+                    capacities,
+                    max_live_instances: on_each.then_some(max_live_instances),
+                });
+            EngineReport::Protocol(Box::new(record), subject)
+        }
+        Err(refusal) => EngineReport::Refused(model_refusal(&refusal)),
+    }
 }
 
 /// The `probabilistic-satisfaction` item that runs `request` on EN-4 and
@@ -535,6 +536,18 @@ pub enum DerivedItemMismatch {
     },
 }
 
+/// The source package a derived item's run or check is over: a
+/// package-route subject carries none to read `derived`'s anchor from.
+fn source<'p>(
+    package: Option<&'p CheckedPackage>,
+    derived: &RequestItem,
+) -> Result<&'p CheckedPackage, DerivedItemMismatch> {
+    package.ok_or_else(|| DerivedItemMismatch::OtherAnchor {
+        index: derived.index(),
+        occurrence: derived.occurrence().clone(),
+    })
+}
+
 /// FSpec FR-368 "Claim and anchor": every package a run or a certificate
 /// check of `derived` is over holds the `model_root` node `derived` is
 /// anchored at, with its `generated` occurrence 0 (FR-411
@@ -664,8 +677,11 @@ pub fn derived_model_item<'a>(
         });
     }
     let packages = [
-        item.request.subject.simulation.package,
-        item.certificate.subject.simulation.package,
+        source(item.request.subject.simulation.source_package(), derived)?,
+        source(
+            item.certificate.subject.simulation.source_package(),
+            derived,
+        )?,
     ];
     join_anchor(derived, packages)?;
     let expected = join_terminals(derived, packages)?;
@@ -673,7 +689,7 @@ pub fn derived_model_item<'a>(
     item.request.limits.limits = derived_graph_limits(limits);
     item.request.max_depth = None;
     let family = claim_family(
-        item.request.subject.simulation.package,
+        source(item.request.subject.simulation.source_package(), derived)?,
         ItemKind::DeadlockFreedom,
         derived.occurrence(),
     );
@@ -750,7 +766,10 @@ pub fn derived_protocol_item<'a, S>(
     item.certificate.max_messages = max_messages;
     item.certificate.max_live_instances = max_live_instances;
     let family = claim_family(
-        item.request.subject.model.simulation.package,
+        source(
+            item.request.subject.model.simulation.source_package(),
+            derived,
+        )?,
         kind,
         derived.occurrence(),
     );
@@ -803,8 +822,8 @@ pub fn derived_zone_item<'a, S: Clone + Eq + 'a>(
     // deadlock-freedom run settles `Proved{Reduced, Uncertified}` with no
     // certificate check (FR-160), so the run alone can decide the verdict.
     let packages = [
-        item.request.subject.system().package(),
-        item.certificate.simulation.package,
+        source(item.request.subject.system().source_package(), derived)?,
+        source(item.certificate.simulation.source_package(), derived)?,
     ];
     join_anchor(derived, packages)?;
     if kind == ItemKind::DeadlockFreedom {
@@ -838,7 +857,7 @@ pub fn derived_zone_item<'a, S: Clone + Eq + 'a>(
         defaults.max_symbolic_transitions,
     );
     let family = claim_family(
-        item.request.subject.system().package(),
+        source(item.request.subject.system().source_package(), derived)?,
         kind,
         derived.occurrence(),
     );
@@ -1036,6 +1055,24 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal)) => {
             Refusal::Failed(CatalogCode::new(refusal.code().as_str(), refusal.cause()))
         }
+        // FSL FR-1033: a protocol binding FR-205's subject builder refuses is
+        // the request's own `invalid_runtime_input`, so the item settles
+        // `declined` `invalid-input` with that code.
+        ModelCheckRefusal::Protocol(ProtocolRefusal::UnknownProtocol { protocol }) => {
+            named_decline(INVALID_VALUE, "protocol", protocol.clone())
+        }
+        ModelCheckRefusal::Protocol(
+            ProtocolRefusal::OverBinding { .. } | ProtocolRefusal::RolePopulation { .. },
+        ) => Refusal::Declined(
+            ProofRefusalCause::InvalidInput,
+            DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+            INVALID_VALUE,
+        ),
+        ModelCheckRefusal::Protocol(ProtocolRefusal::RoleMapping { role }) => named_decline(
+            CatalogCode::new("invalid_runtime_input", "wrong-role-mapping"),
+            "role",
+            role.clone(),
+        ),
         // Engine defects, and refusals whose types name no catalog code
         // (a spec point for STD-444's follow-up): `failed` with the
         // broken-invariant diagnostic.
@@ -1067,6 +1104,20 @@ pub(super) fn statistical_refusal(
             Err(_) => Refusal::Failed(BROKEN),
         },
     })
+}
+
+/// FSL FR-1033-AC-5: a protocol binding the request's own input does not admit
+/// settles `declined` `invalid-input`, its diagnostic naming the `member`
+/// `name` it refused.
+fn named_decline(code: CatalogCode, member: &str, name: String) -> Refusal {
+    let mut detail = serde_json::Map::new();
+    detail.insert(member.to_owned(), serde_json::json!(name));
+    Refusal::DeclinedWithDetail(
+        ProofRefusalCause::InvalidInput,
+        DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+        code,
+        detail,
+    )
 }
 
 #[cfg(test)]

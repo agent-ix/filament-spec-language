@@ -251,8 +251,9 @@ pub use clause::{
     incomplete_of, name_clause_atom, pending_report, read_evidence_ledger, read_ledger, run_clause,
     run_clause_batch, run_clause_with_temporal_selections, run_package_temporal,
     run_package_temporal_bounded, run_package_trace_subject, run_program_batch,
-    run_temporal_valuation, run_trace_subject_clause, sample_position, settle_correction,
-    settle_run_correction, temporal_batch_exit_code, temporal_batch_outcome, write_ledger,
+    run_temporal_behaviours, run_temporal_valuation, run_trace_subject_clause, sample_position,
+    settle_correction, settle_run_correction, temporal_batch_exit_code, temporal_batch_outcome,
+    write_ledger,
 };
 mod refinement;
 pub use refinement::{
@@ -273,6 +274,7 @@ pub use native_result::{
     ProtocolRecordError, ProtocolSettlementEntry, RefusalLocusRead, SourceRefRead, SpanRead,
     TemporalRecord, UndefinedLocusRead, UnsupportedDiagnostic, read_native_run_result,
     read_native_run_result_bounded, write_clause_run_result, write_clause_run_result_for,
+    temporal_disposition_json,
 };
 pub(crate) use native_result::{ReasonWire, item_record};
 pub use protocol_proof::{
@@ -1477,14 +1479,6 @@ fn check_message_one(first: &CheckRefusal) -> String {
                 ProtocolAnchorCause::BinderType { binder, fault, .. } => {
                     format!("{message}: binder `{binder}`'s type does not resolve ({fault:?})")
                 }
-                ProtocolAnchorCause::AttemptBinderType {
-                    binder,
-                    expected_result,
-                    actual_result,
-                    ..
-                } => format!(
-                    "{message}: attempt binder `{binder}` has type {actual_result:?}, operation result is {expected_result:?}"
-                ),
                 ProtocolAnchorCause::ChannelRole {
                     channel, end, name, ..
                 } => format!(

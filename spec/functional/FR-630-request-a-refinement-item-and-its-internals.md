@@ -95,6 +95,15 @@ compiles, and only this item finds it.
   `InitialNotAbstract{initial}`, `initial` the concrete initial state's
   index, at position 0, and its counterexample is the one-state concrete
   path, replayed by FR-145. It is never `declined` or `invalid-input`.
+- **A mapping expression conforms to the abstract field's type.** An object
+  row's field expression is checked against the abstract field's declared
+  type by static conformance (ADR-016 SC-2), and S3 refuses one whose type
+  does not conform `ill_typed`/`type-mismatch` at the expression; it is never
+  range-checked into the field at run time. An image can therefore leave the
+  abstract initial states only through a constraint that is not part of the
+  static type: an abstract invariant, or a unit bound, which FSpec FR-154
+  checks as an invariant over a `Quantity<u>` value admitted at a bounded
+  position. Those are the cases the empty completion set above decides.
 
 ## Inputs
 
@@ -149,7 +158,8 @@ compiles, and only this item finds it.
 | FR-630-AC-2 | A request carrying `refinement_internals` naming the program's refinement compiles with them and settles as FR-147 states; without the member it supplies the empty list. | Test (TC-1590) |
 | FR-630-AC-3 | A history row typed `Decimal[0, 100; 0, 2; nearest-even]`, and one typed as an enum, check, and the refinement item over each settles `proved` for a correct mapping. | Test (TC-1590) |
 | FR-630-AC-4 | A field row of type `Sequence<Reference<Ring>>[0, 2]` mapped to `Sequence<Reference<Queue>>[0, 2]` checks and its refinement item settles `proved`. | Test (TC-1590) |
-| FR-630-AC-5 | Over the Counter fixture (`value: Int[0, 3]`) refined by the abstract `Spec::Counter`, with no `abstract_subject`: the refinement `Hidden`, whose object row fixes no field (`object Spec::Counter from M::Counter { }`) and maps `inc` to `stutter`, over the concrete snapshot with counter `a` at 0, settles `proved`, its initial candidate set holding exactly the four abstract states `value` 0, 1, 2 and 3; the same item with `temporal.limits.max_candidates` 3 settles `incomplete`, `resource-incomplete`, cause `limit-reached` naming `max_candidates`; over the two concrete snapshots `a` at 0 and `a` at 1 it settles `incomplete` naming `max_candidates` with `max_candidates` 4 and `proved` with 8, the cap counting completions across both initial states; the refinement `Shifted` (`value = self.value + 3`, `inc` mapped to `stutter`) over the snapshot `a` at 1, whose image `value` 4 lies outside the unit bound `Int[0, 3]`, settles `refuted` with `InitialNotAbstract{initial: 0}` at position 0 and a one-state counterexample that replays, never `declined` or `mapping-undefined`. | Test (TC-2964) |
+| FR-630-AC-5 | Over the Counter fixture (`value: Int[0, 3]`) refined by the abstract `Spec::Counter`, with no `abstract_subject`: the refinement `Hidden`, whose object row fixes no field (`object Spec::Counter from M::Counter { }`) and maps `inc` to `stutter`, over the concrete snapshot with counter `a` at 0, settles `proved`, its initial candidate set holding exactly the four abstract states `value` 0, 1, 2 and 3; the same item with `temporal.limits.max_candidates` 3 settles `incomplete`, `resource-incomplete`, cause `limit-reached` naming `max_candidates`; over the two concrete snapshots `a` at 0 and `a` at 1 it settles `incomplete` naming `max_candidates` with `max_candidates` 4 and `proved` with 8, the cap counting completions across both initial states; the refinement `Shifted` (`value = self.value + 3`, `inc` mapped to `stutter`) is refused at S3 `ill_typed`/`type-mismatch` at `self.value + 3`, because its type `Int[3, 6]` does not conform to the abstract field type `Int[0, 3]` (ADR-016 SC-2), so no item is analyzed for it; the empty completion set is FR-630-AC-6's. | Test (TC-2964) |
+| FR-630-AC-6 | Over the Counter fixture with a field `elapsed: Quantity<ms>` on both sides, the abstract side's under the unit bound `max 3` (FSpec FR-154 "Unit bounds"), with no `abstract_subject`, the refinement `Late` (`value = self.value; elapsed = self.elapsed + 2 ms;`, `inc` mapped to `stutter`) checks, since a `Quantity<ms>` expression is admitted at a bounded quantity position and left to the bound as an invariant; over the concrete snapshot with counter `a` at `value` 0 and `elapsed` 2 ms, whose image `elapsed` 4 ms violates the bound, it settles `refuted` with `InitialNotAbstract{initial: 0}` at position 0 and a one-state counterexample that replays, never `declined`, `invalid-input` or `mapping-undefined`; with `elapsed` 1 ms (image 3 ms, the bound itself) it settles `proved`. | Test (TC-2971) |
 
 ## Dependencies
 

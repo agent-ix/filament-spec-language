@@ -663,8 +663,7 @@ fn holds_atom(
         .clone();
     unit.package
         .evaluate_holds(
-            clause,
-            atom,
+            &fsl_eval::value::HoldsAtom::of_source(clause, atom).expect("a formula use"),
             Value::Reference(watcher),
             &[],
             objects,
@@ -1018,11 +1017,22 @@ fn invalid_holds_handles_fault_without_spending_the_meter() {
             .expect("the watcher")
             .clone(),
     );
+    // FR-940: the atom is named by its formula use; the root is a use that
+    // is no `holds` atom, and the larger clause's last use is past this one.
+    let non_holds =
+        fsl_eval::value::HoldsAtom::of_source(clause, non_holds).expect("the root is a use");
+    let beyond = fsl_eval::value::HoldsAtom {
+        clause: clause.identity(),
+        position: fsl_eval::value::HoldsAtom::of_source(larger_clause, beyond)
+            .expect("the larger clause uses its last node")
+            .position,
+    };
+    assert!(beyond.position >= formula.nodes().len());
     for atom in [non_holds, beyond] {
         let mut meter = Meter::new(UNLIMITED);
-        let result =
-            unit.package
-                .evaluate_holds(clause, atom, over.clone(), &[], &objects, &mut meter);
+        let result = unit
+            .package
+            .evaluate_holds(&atom, over.clone(), &[], &objects, &mut meter);
         let filament_eval::CallFailure::Fault(fault) =
             result.expect_err("invalid atom must not yield an Evaluation")
         else {
@@ -1030,13 +1040,19 @@ fn invalid_holds_handles_fault_without_spending_the_meter() {
         };
         assert_eq!(fault.stage(), "S6a");
         assert_eq!(fault.invariant(), "holds-atom-resolved-by-clause");
-        assert_eq!(fault.named(), &[("node", atom.index().to_string())]);
+        assert_eq!(fault.named(), &[("position", atom.position.to_string())]);
         assert_eq!(meter, Meter::new(UNLIMITED), "invalid atom charges nothing");
     }
     let mut meter = Meter::new(UNLIMITED);
     let result = unit
         .package
-        .evaluate_holds(clause, valid, over.clone(), &[], &objects, &mut meter)
+        .evaluate_holds(
+            &fsl_eval::value::HoldsAtom::of_source(clause, valid).expect("a formula use"),
+            over.clone(),
+            &[],
+            &objects,
+            &mut meter,
+        )
         .expect("the selected valid holds atom evaluates");
     assert!(matches!(
         result.outcome,

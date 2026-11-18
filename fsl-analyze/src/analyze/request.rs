@@ -244,6 +244,32 @@ pub struct TemporalItem {
     pub witness_samples: Option<u64>,
     /// The witness-sampling seed; the published default when absent.
     pub seed: Option<u64>,
+    /// FSL FR-1033: the protocol subject the item is decided over; the model
+    /// subject when absent.
+    pub protocol: Option<ProtocolBinding>,
+    /// FR-225's `max_store_buffer`; EN-1's default when absent.
+    pub max_store_buffer: Option<u64>,
+    /// FR-225's `max_messages`; EN-1's default when absent.
+    pub max_messages: Option<u64>,
+}
+
+/// FSL FR-1033: a protocol subject as a request binds it (FSpec FR-433's
+/// `protocol-subject` spelling), with the request's memory selection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolBinding {
+    /// The declared name of the protocol clause.
+    pub protocol: String,
+    /// The `over` object as its population identity and key; `None` when the
+    /// request gives none.
+    pub over: Option<(String, String)>,
+    /// Each static role's binding.
+    pub roles: Vec<fsl_eval::model_subject::RoleBinding>,
+    /// Each symbolic capacity's binding.
+    pub capacities: Vec<fsl_eval::model_subject::CapacityBinding>,
+    /// The request's `memory` selection (FR-219).
+    pub memory: Vec<fsl_eval::simulation::protocol::MemorySelection>,
+    /// The effective model of each outermost `parallel`, by scoped path.
+    pub effective: Vec<(String, fsl_foundation::MemoryModelName)>,
 }
 
 impl Default for TemporalItem {
@@ -264,6 +290,9 @@ impl Default for TemporalItem {
             pending_reductions: None,
             witness_samples: None,
             seed: None,
+            protocol: None,
+            max_store_buffer: None,
+            max_messages: None,
         }
     }
 }
@@ -453,7 +482,7 @@ pub(super) fn simulation<'a>(
     limits: &super::AnalyzeLimits,
 ) -> fsl_eval::simulation::model::ModelSimulationRequest<'a> {
     fsl_eval::simulation::model::ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,
@@ -586,6 +615,20 @@ fn work<'a>(
                 package,
                 binding,
                 *limits,
+                &item.claim,
+                item.request_index,
+                form,
+            )
+            .unwrap_or_else(absent)
+        }
+        Some(ItemForm::Temporal(form))
+            if item.kind == Capability::TemporalSatisfaction && form.protocol.is_some() =>
+        {
+            super::protocol_item::protocol_clause_item(
+                package,
+                binding,
+                *limits,
+                provision,
                 &item.claim,
                 item.request_index,
                 form,
@@ -786,6 +829,7 @@ fn work<'a>(
                         package,
                         binding.clone(),
                         *limits,
+                        provision,
                         protocol,
                         trace,
                     )

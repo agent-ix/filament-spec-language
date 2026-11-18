@@ -28,4 +28,5 @@ Test: `tests/it/request_surface_s1_16.rs`.
 
 - Step 1: `traces` equals instances times paths, `agree` true, exit 0.
 - Step 2: `invalid-request` naming `tl_lowering.cross_evaluate.over`;
-  `incomplete_population`; `traces` 0 and `positions` 0, exit 0.
+  exit 20; `incomplete_population`, category incomplete, exit 22; `traces` 0
+  and `positions` 0, exit 0.

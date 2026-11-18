@@ -253,3 +253,47 @@ fn nested_until_operators_compose() {
         Outcome::Violated { .. }
     ));
 }
+
+/// FR-1034-AC-3 (TC-2969): over `Rpc` at `T = 4 ms`, claims with a lower
+/// bound and no upper bound are decided by the zone search: the
+/// `eventually[1 ms, *]` and `once[1 ms, *]` claims hold with accepted
+/// certificates, `once(1 ms, *]` is refuted at the exact lower bound and
+/// replays, and `until[4 ms, *]` is refuted by the server deadline.
+#[trace("TC-2969", "FR-1034-AC-3")]
+#[test]
+#[ignore = "QSL-2408: zone search for [q, *] (lower-bound-only clock) not implemented yet"]
+fn open_upper_intervals_are_decided_by_zone_search() {
+    let world = |body: &str| {
+        rpc_claim(
+            4,
+            TIMED,
+            &format!(
+                "temporal Open using tt over (c: M::Call) clock \"model-time\" on origin \
+                 {{ {body} }}\n"
+            ),
+        )
+    };
+    for body in [
+        "always (holds(c.phase = 1) implies eventually[1 ms, *] holds(not (c.phase = 1)))",
+        "always (holds(c.phase = 2) implies once[1 ms, *] holds(c.phase = 1))",
+    ] {
+        let world = world(body);
+        let certificate = proved(decide(&world));
+        assert_eq!(
+            check(&world, &certificate, CertificateCheckLimits::default()),
+            Ok(ZoneCertificateVerdict::Accepted),
+            "{body}"
+        );
+    }
+    let strict = world("always (holds(c.phase = 2) implies once(1 ms, *] holds(c.phase = 1))");
+    let counterexample = violated(decide(&strict));
+    assert_eq!(operations(&counterexample)[..2], ["send", "reply"]);
+    assert_eq!(delays(&counterexample)[..2], [whole(0), whole(1)]);
+    let settlement = replay(&strict, &counterexample).expect("replays");
+    assert!(reproduced(&settlement), "{settlement:?}");
+    let late = world(
+        "always (holds(c.phase = 1) implies \
+         (holds(c.phase = 1) until[4 ms, *] holds(c.phase = 2)))",
+    );
+    let _ = violated(decide(&late));
+}

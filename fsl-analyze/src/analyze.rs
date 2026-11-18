@@ -38,6 +38,7 @@ pub mod document;
 mod exact;
 mod invariant_item;
 mod items;
+mod protocol_item;
 mod reduction_item;
 mod refinement_item;
 mod request;
@@ -79,7 +80,9 @@ use fsl_semantics::model::observation::{
 
 pub use crate::contract_check::contract_item;
 pub use crate::value_check::value_item;
+pub(crate) use clause_item::{replay_protocol_over, ProtocolReplayInputs, ReplayShape};
 pub use clause_item::{ClauseItemRefusal, ClauseLimits, ClauseSubject, CLAUSE_TRANSCRIPT};
+pub(crate) use derived_item::{derived_target, NoLetters};
 pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
 #[cfg(feature = "test-support")]
 pub use exact::{exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered};
@@ -492,7 +495,7 @@ pub struct AnalyzeOutcome {
 }
 
 /// What an item's engine reported beside its terminal record (FR-621).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ItemDetail {
     /// The item's request index.
     pub request_index: RequestIndex,
@@ -503,6 +506,26 @@ pub struct ItemDetail {
     pub checker: Option<fsl_replay::CertificateChecker>,
     /// The steps of the supplied trace a `finite-replay` proof replayed.
     pub replayed_steps: Option<u64>,
+    /// The memory bound a weak-memory protocol run used and whether it was
+    /// reached (FSpec FR-439, FR-225); `None` under `sc` and for a model
+    /// subject.
+    pub memory_bound: Option<fsl_replay::StatedMemoryBound>,
+    /// What a `finite-replay` item reports of a protocol claim beyond its
+    /// terminal record (FR-941).
+    pub finite_replay: Option<FiniteReplayDetail>,
+}
+
+/// FR-941: what a `finite-replay` item reports of a protocol claim beyond its
+/// terminal record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FiniteReplayDetail {
+    /// The deciding required clause's reading over the replayed behaviour,
+    /// which writes the item's `disposition.temporal` (FSpec FR-352).
+    pub evaluation:
+        Option<Result<fsl_eval::temporal::TemporalOutcome, fsl_eval::temporal::TemporalRefusal>>,
+    /// The `where` of a protocol expression undefined at a replayed state:
+    /// `{position, state_key, locus}`.
+    pub undefined_where: Option<serde_json::Value>,
 }
 
 impl ItemDetail {
@@ -519,6 +542,8 @@ impl ItemDetail {
                 .and_then(|model| model.checker)
                 .or_else(|| protocol.and_then(|protocol| protocol.checker)),
             replayed_steps: record.replayed_steps,
+            memory_bound: protocol.and_then(|protocol| protocol.memory_bound),
+            finite_replay: record.finite_replay.clone(),
         }
     }
 }
@@ -599,6 +624,9 @@ pub enum Counterexample {
     StateGraph(Box<GraphReport>),
     /// A global-conformance recording prefix, already replayed in process.
     GlobalConformance(Box<serde_json::Value>),
+    /// An EN-7 closed-form miss in FSpec FR-419's `schedulability-miss`
+    /// spelling, typed and not replayed.
+    ScheduleMiss(Box<serde_json::Value>),
 }
 
 /// What a state-graph engine run reports for one item (FR-628): the record of
@@ -815,7 +843,10 @@ fn item_stage(
         .iter()
         .find(|found| found.request_index == record.request_index())
     {
-        return if matches!(found.counterexample, Counterexample::StateGraph(_)) {
+        return if matches!(
+            found.counterexample,
+            Counterexample::StateGraph(_) | Counterexample::ScheduleMiss(_)
+        ) {
             OutcomeStage::S7
         } else {
             OutcomeStage::S8
@@ -1448,9 +1479,15 @@ pub struct AnalyzeRecord {
     /// EN-7's closed-form outcome with its evidence (FR-247): the miss of a
     /// `refuted` item, the fixpoints or demand points of a `proved` one.
     pub closed_form: Option<Box<fsl_replay::ClosedFormOutcome>>,
+    /// FSpec FR-419's `schedulability-miss` counterexample of a refuted
+    /// EN-7 item (FSL FR-621): recomputed by the closed-form check, so it has
+    /// no replay.
+    pub schedule_miss: Option<Box<serde_json::Value>>,
     /// The number of steps of a supplied trace a `finite-replay` item
     /// replayed to its proof (FR-941).
     pub replayed_steps: Option<u64>,
+    /// FR-941: what a `finite-replay` item reports of a protocol claim.
+    pub finite_replay: Option<FiniteReplayDetail>,
 }
 
 /// How an item settled.
@@ -1480,10 +1517,12 @@ impl AnalyzeRecord {
             refinement_steps: None,
             protocol_subject: None,
             replayed_steps: None,
+            finite_replay: None,
             protocol_analysis: None,
             protocol_conformance: None,
             protocol_conformance_counterexample: None,
             closed_form: None,
+            schedule_miss: None,
             state_graph: None,
         }
     }
@@ -1539,6 +1578,15 @@ impl AnalyzeRecord {
         if let Some(found) = &self.contract_check {
             return Some(found.wire.clone());
         }
+        if let Some(found) = &self.schedule_miss {
+            // FSpec FR-331's counterexample entry around FR-419's miss object.
+            let backend = self.terminal().and_then(|terminal| terminal.backend());
+            return Some(Ok(serde_json::json!({
+                "request_index": self.request_index.get(),
+                "backend": backend.map(BackendId::as_str),
+                "counterexample": (**found).clone(),
+            })));
+        }
         self.probabilistic_counterexample
             .as_ref()
             .map(|found| found.wire.clone())
@@ -1583,6 +1631,9 @@ impl AnalyzeRecord {
         }
         if let Some(found) = self.contract_check.take() {
             return Some(Counterexample::Contract(found.found));
+        }
+        if let Some(found) = self.schedule_miss.take() {
+            return Some(Counterexample::ScheduleMiss(found));
         }
         self.probabilistic_counterexample
             .take()
@@ -1697,7 +1748,8 @@ impl Counterexample {
             Self::Probabilistic(_)
             | Self::Contract(_)
             | Self::StateGraph(_)
-            | Self::GlobalConformance(_) => None,
+            | Self::GlobalConformance(_)
+            | Self::ScheduleMiss(_) => None,
         }
     }
 }
@@ -1994,6 +2046,70 @@ fn terminal(record: TerminalRecord) -> Settlement {
     Settlement::Terminal(Box::new(record))
 }
 
+/// FR-941 "Formula claims": the terminal record the deciding required
+/// clause's reading `evaluation` settles when it refutes nothing. A reading
+/// that refutes carries its counterexample and settles through EN-1's record.
+fn claim_terminal(
+    evaluation: &Result<fsl_eval::temporal::TemporalOutcome, fsl_eval::temporal::TemporalRefusal>,
+    index: RequestIndex,
+    backend: BackendId,
+    steps: u64,
+) -> TerminalRecord {
+    use fsl_eval::temporal::TemporalOutcome as Outcome;
+    use fsl_replay::{InconclusiveCause, ModelCheckLimit, UnavailabilityCause};
+    match evaluation {
+        Ok(Outcome::Holds) => TerminalRecord::proved_by_replay(index, backend, steps),
+        Ok(Outcome::Pending) => {
+            TerminalRecord::inconclusive(index, backend, InconclusiveCause::TemporalPending)
+        }
+        Ok(Outcome::InsufficientData(short)) => TerminalRecord::inconclusive(
+            index,
+            backend,
+            InconclusiveCause::InsufficientData {
+                count: short.data.count,
+                min_count: short.data.min_count,
+            },
+        ),
+        Ok(Outcome::MissingFairnessPremise { constraint }) => TerminalRecord::unsupported(
+            index,
+            backend,
+            UnavailabilityCause::MissingFairnessPremise {
+                constraint: constraint.clone(),
+            },
+        ),
+        Ok(Outcome::Incomplete(incomplete)) => TerminalRecord::incomplete(
+            index,
+            backend,
+            IncompleteCause::LimitReached {
+                limit: ModelCheckLimit::EvaluationMeter {
+                    counter: incomplete.limit_kind,
+                },
+                value: incomplete.limit,
+            },
+        ),
+        Ok(Outcome::WindowLimitReached(reached)) => TerminalRecord::incomplete(
+            index,
+            backend,
+            IncompleteCause::LimitReached {
+                limit: ModelCheckLimit::MaxWindowValues,
+                value: reached.limit,
+            },
+        ),
+        Err(refusal) => TerminalRecord::declined_with(
+            index,
+            backend,
+            ProofRefusalCause::InvalidInput,
+            DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+            refusal.catalog_code(),
+        ),
+        // A violated or undefined reading carries its counterexample, which
+        // settles through EN-1's record; one without it broke an invariant.
+        Ok(Outcome::Violated { .. } | Outcome::Undefined(_)) => {
+            TerminalRecord::failed(index, backend)
+        }
+    }
+}
+
 /// The record names `engine`, the one `Engines` holds for the item's
 /// candidate. An item's adapter and that candidate agree by construction
 /// (`AnalyzeItem::new` takes the adapter's own `BackendId`); a future
@@ -2081,13 +2197,17 @@ fn settle(
             record(terminal(statistical.into_terminal(index, backend)), None)
         }
         EngineReport::FiniteReplay(report) => {
+            use crate::protocol_analysis::FiniteReplayReport;
             let mut replayed = None;
+            let mut protocol_check = None;
+            let mut protocol_subject = None;
+            let mut finite_replay = None;
             let settled_record = match report {
-                crate::protocol_analysis::FiniteReplayReport::Replayed(steps) => {
+                FiniteReplayReport::Replayed(steps) => {
                     replayed = Some(steps);
                     TerminalRecord::proved_by_replay(index, backend, steps)
                 }
-                crate::protocol_analysis::FiniteReplayReport::Declined {
+                FiniteReplayReport::Declined {
                     cause,
                     position,
                     path,
@@ -2110,9 +2230,55 @@ fn settle(
                         declined.with_diagnostic_detail(detail)
                     }
                 }
+                FiniteReplayReport::Claim(claim) => {
+                    let crate::protocol_analysis::ClaimReport {
+                        steps,
+                        evaluation,
+                        refuted,
+                    } = *claim;
+                    let terminal = match refuted {
+                        Some(refuted) => {
+                            let terminal = refuted
+                                .record
+                                .to_terminal(index, backend.clone())
+                                .unwrap_or_else(|_| TerminalRecord::failed(index, backend));
+                            protocol_check = Some(refuted.record);
+                            protocol_subject = refuted.subject;
+                            terminal
+                        }
+                        None => {
+                            if matches!(&evaluation, Ok(fsl_eval::temporal::TemporalOutcome::Holds))
+                            {
+                                replayed = Some(steps);
+                            }
+                            claim_terminal(&evaluation, index, backend, steps)
+                        }
+                    };
+                    finite_replay = Some(FiniteReplayDetail {
+                        evaluation: Some(evaluation),
+                        undefined_where: None,
+                    });
+                    terminal
+                }
+                FiniteReplayReport::UndefinedStep { refuted, at } => {
+                    let terminal = refuted
+                        .record
+                        .to_terminal(index, backend.clone())
+                        .unwrap_or_else(|_| TerminalRecord::failed(index, backend));
+                    protocol_check = Some(refuted.record);
+                    protocol_subject = refuted.subject;
+                    finite_replay = Some(FiniteReplayDetail {
+                        evaluation: None,
+                        undefined_where: Some(at),
+                    });
+                    terminal
+                }
             };
             AnalyzeRecord {
                 replayed_steps: replayed,
+                protocol_check,
+                protocol_subject,
+                finite_replay,
                 ..record(terminal(settled_record), None)
             }
         }
@@ -2137,7 +2303,11 @@ fn settle(
             settled
         }
         EngineReport::ClosedForm(report) => {
-            let schedule_item::ClosedFormReport { value, outcome } = *report;
+            let schedule_item::ClosedFormReport {
+                value,
+                outcome,
+                miss,
+            } = *report;
             // A refuted value without its miss evidence is an engine fault,
             // never a verdict.
             let settlement = terminal(
@@ -2146,6 +2316,7 @@ fn settle(
             );
             AnalyzeRecord {
                 closed_form: Some(Box::new(outcome)),
+                schedule_miss: miss.map(Box::new),
                 ..AnalyzeRecord::of(index, settlement)
             }
         }
@@ -2324,10 +2495,9 @@ mod tests {
             &[(index, output)].into_iter().collect(),
         )
         .expect("the settled item serializes");
-        let wire: serde_json::Value = serde_json::from_slice(
-            &document.to_bytes().expect("the document encodes"),
-        )
-        .expect("the document is JSON");
+        let wire: serde_json::Value =
+            serde_json::from_slice(&document.to_bytes().expect("the document encodes"))
+                .expect("the document is JSON");
 
         assert_eq!(wire["items"][0]["result"], "proved");
         assert_eq!(wire["items"][0]["obligations"][0]["verdict"], "satisfied");
@@ -2789,8 +2959,7 @@ mod tests {
                 "en-7"
             ]
         );
-        let [en1, en4, en5, _en6, value, contract, protocol, en7] = registrations.as_slice()
-        else {
+        let [en1, en4, en5, _en6, value, contract, protocol, en7] = registrations.as_slice() else {
             panic!(
                 "the linked engine set contains EN-1, EN-4, EN-5, EN-6, the two check arms, \
                  the protocol analysis engine and EN-7"

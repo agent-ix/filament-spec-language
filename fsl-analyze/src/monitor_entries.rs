@@ -75,6 +75,14 @@ pub struct Thresholds {
     pub none_hi: i128,
     /// Whether the offset 0 of an event with itself is in the interval.
     pub zero_in: bool,
+    /// Smallest offset every point of which is at or above the lower bound,
+    /// for the left operand of a binary operator (ADR-018 IV-2: it ranges
+    /// over distances from the lower bound on, the bound's closedness aside).
+    pub guard_lo: i128,
+    /// Largest offset that lies wholly below the lower bound, for the same.
+    pub guard_none: i128,
+    /// Whether the lower bound is above 0, so the left operand is bounded below.
+    pub guarded: bool,
 }
 
 /// What an interval operator adds to a temporal operator.
@@ -231,6 +239,19 @@ fn ceil_of(value: &Rational) -> Option<i128> {
 }
 
 impl Thresholds {
+    /// The body of the generated guard function: the left operand `phi` counted
+    /// only at distances from the lower bound on, uncertain between.
+    fn guard_body(&self) -> String {
+        if !self.guarded {
+            return "phi".to_owned();
+        }
+        format!(
+            "if same then vTrue() else if dmin >= {} then phi else if dmax <= {} then vTrue() else vOr(phi, vUnknown())",
+            sig(self.guard_lo),
+            sig(self.guard_none)
+        )
+    }
+
     /// The thresholds of the tick interval `[lower, upper]` (with the given
     /// endpoint flags) under the cover width `1 + 2 * uncertainty`.
     pub fn of(
@@ -239,24 +260,55 @@ impl Thresholds {
         upper: Option<&Rational>,
         upper_closed: bool,
         uncertainty: &Rational,
+        exact: bool,
     ) -> Option<Self> {
         let int = |value: i64| Rational::from_integer(ExactInteger::from(value));
-        let width = int(1).add(&int(2).mul(uncertainty));
+        // A position reading is the exact instant (FR-251 "Exact position
+        // readings"): the cover has no width, and closedness decides.
+        let width = if exact {
+            int(0)
+        } else {
+            int(1).add(&int(2).mul(uncertainty))
+        };
         let zero = int(0);
         let above = zero > *lower || (zero == *lower && lower_closed);
         let below = upper.is_none_or(|upper| zero < *upper || (zero == *upper && upper_closed));
         // An interval with no upper bound is never passed: its upper
         // thresholds are beyond every tick the generated integers hold.
         let (all_hi, none_hi) = match upper {
+            Some(upper) if exact => {
+                let last = if upper_closed {
+                    floor_of(upper)?
+                } else {
+                    ceil_of(upper)?.checked_sub(1)?
+                };
+                (last, last.checked_add(1)?)
+            }
             Some(upper) => (floor_of(&upper.sub(&width))?, ceil_of(&upper.add(&width))?),
             None => (NO_UPPER, NO_UPPER),
         };
+        let (all_lo, none_lo, guard_lo, guard_none) = if exact {
+            let first = if lower_closed {
+                ceil_of(lower)?
+            } else {
+                floor_of(lower)?.checked_add(1)?
+            };
+            let guard_first = ceil_of(lower)?;
+            (first, first - 1, guard_first, guard_first - 1)
+        } else {
+            let all_lo = ceil_of(&lower.add(&width))?;
+            let none_lo = floor_of(&lower.sub(&width))?;
+            (all_lo, none_lo, all_lo, none_lo)
+        };
         Some(Self {
-            all_lo: ceil_of(&lower.add(&width))?,
+            all_lo,
             all_hi,
-            none_lo: floor_of(&lower.sub(&width))?,
+            none_lo,
             none_hi,
             zero_in: above && below,
+            guard_lo,
+            guard_none,
+            guarded: *lower > zero,
         })
     }
 }
@@ -318,6 +370,7 @@ pub fn spec_from_plan(plan: &TimedMonitorPlan) -> Result<EntrySpec, EntryRefusal
                     bound.upper.as_ref(),
                     bound.upper_closed,
                     plan.uncertainty(),
+                    plan.exact_positions(),
                 )
                 .ok_or(EntryRefusal::TickRange { node: *index })?,
             ),
@@ -700,7 +753,7 @@ impl<'a> Gen<'a> {
                 "let r = fold<Acc>(a, x in cells: \
                     if x.pf < ip then a \
                     else Acc { acc: vOr(a.acc, vAnd(vAnd(member_@N@(x.tf - it, x.tl - it, x.pf = ip and x.pl = ip), psi_@N@(s, x, hz)), a.pfx)), \
-                               pfx: vAnd(a.pfx, phi_@N@(s, x, hz)) }, \
+                               pfx: vAnd(a.pfx, guard_@N@(phi_@N@(s, x, hz), x.tf - it, x.tl - it, x.pf = ip and x.pl = ip)) }, \
                     identity: Acc { acc: vFalse(), pfx: vTrue() }) in \
                  @POL@(if hz - it >= @OWN@ then r.acc else vOr(r.acc, vAnd(vFuture(), r.pfx)))",
                 "z.pf < x.pf and memberKind_@N@(x.tf - z.tf, x.tl - z.tf, false) > 0",
@@ -717,7 +770,7 @@ impl<'a> Gen<'a> {
                 "let r = fold<Acc>(a, x in cells: \
                     if x.pl < 0 then Acc { acc: x.fv, pfx: a.pfx } \
                     else if x.pl > ip then a \
-                    else Acc { acc: vOr(vAnd(a.acc, phi_@N@(s, x, hz)), vAnd(member_@N@(it - x.tl, it - x.tf, x.pf = ip and x.pl = ip), psi_@N@(s, x, hz))), \
+                    else Acc { acc: vOr(vAnd(a.acc, guard_@N@(phi_@N@(s, x, hz), it - x.tl, it - x.tf, x.pf = ip and x.pl = ip)), vAnd(member_@N@(it - x.tl, it - x.tf, x.pf = ip and x.pl = ip), psi_@N@(s, x, hz))), \
                                pfx: a.pfx }, \
                     identity: Acc { acc: vFalse(), pfx: vTrue() }) in \
                  let early = not @SUMMARY@ and s.history_start >= 0 and memberKind_@N@(it - (s.history_start - 1), it - (s.history_start - 1), false) > 0 in \
@@ -735,6 +788,7 @@ impl<'a> Gen<'a> {
             ("OWN", sig(t.none_hi)),
             ("POL", pol.to_owned()),
             ("ZERO", t.zero_in.to_string()),
+            ("GUARD", t.guard_body()),
             ("ALL_LO", sig(t.all_lo)),
             ("ALL_HI", sig(t.all_hi)),
             ("NONE_LO", sig(t.none_lo)),
@@ -775,7 +829,7 @@ impl<'a> Gen<'a> {
                 else 1 }\n\
              function member_@N@ using v(dmin: Integer, dmax: Integer, same: Boolean): V pure { \
                 let k = memberKind_@N@(dmin, dmax, same) in \
-                if k = 2 then vTrue() else if k = 0 then vFalse() else vUnknown() }\n\
+                if k = 2 then vTrue() else if k = 0 then vFalse() else vUnknown() }\n             function guard_@N@ using v(phi: V, dmin: Integer, dmax: Integer, same: Boolean): V pure { @GUARD@ }\n\
              function phi_@N@ using v(s: State, x: Cell, hz: Integer): V pure { @PHIBODY@ }\n\
              function psi_@N@ using v(s: State, x: Cell, hz: Integer): V pure { \
                 if x.lost then vLostBy(@N@ + 1) else @PSI@ }\n\
@@ -918,7 +972,7 @@ impl<'a> Gen<'a> {
         // An unbounded future operator with a lower bound (`[a, *]`) reads an
         // event as a witness only at a distance of at least `a` from its
         // origin (FR-943).
-        let (member_fns, mem_cell, mem_event) = match node.start {
+        let (member_fns, mem_cell, mem_event, guard_cell, guard_event) = match node.start {
             Some(t) => (
                 tpl(
                     "function memberKind_@N@ using v(dmin: Integer, dmax: Integer, same: Boolean): Integer pure { \
@@ -928,10 +982,11 @@ impl<'a> Gen<'a> {
                         else 1 }\n\
                      function member_@N@ using v(dmin: Integer, dmax: Integer, same: Boolean): V pure { \
                         let k = memberKind_@N@(dmin, dmax, same) in \
-                        if k = 2 then vTrue() else if k = 0 then vFalse() else vUnknown() }\n",
+                        if k = 2 then vTrue() else if k = 0 then vFalse() else vUnknown() }\n             function guard_@N@ using v(phi: V, dmin: Integer, dmax: Integer, same: Boolean): V pure { @GUARD@ }\n",
                     &[
                         ("N", id.to_string()),
                         ("ZERO", t.zero_in.to_string()),
+                        ("GUARD", t.guard_body()),
                         ("ALL_LO", sig(t.all_lo)),
                         ("ALL_HI", sig(t.all_hi)),
                         ("NONE_LO", sig(t.none_lo)),
@@ -940,8 +995,16 @@ impl<'a> Gen<'a> {
                 ),
                 format!("vAnd(member_{id}(x.tf - e.origin_tick, x.tl - e.origin_tick, x.pf = e.status.position and x.pl = e.status.position), psi)"),
                 format!("vAnd(member_{id}(hz - e.origin_tick, hz - e.origin_tick, e.status.position = pos), psi)"),
+                format!("guard_{id}(phi, x.tf - e.origin_tick, x.tl - e.origin_tick, x.pf = e.status.position and x.pl = e.status.position)"),
+                format!("guard_{id}(phi, hz - e.origin_tick, hz - e.origin_tick, e.status.position = pos)"),
             ),
-            None => (String::new(), "psi".to_owned(), "psi".to_owned()),
+            None => (
+                String::new(),
+                "psi".to_owned(),
+                "psi".to_owned(),
+                "phi".to_owned(),
+                "phi".to_owned(),
+            ),
         };
         out.push_str(&member_fns);
         match node.carrier {
@@ -956,7 +1019,7 @@ impl<'a> Gen<'a> {
                     "function foldStep_@N@ using v(s: State, e: Activation, a: Acc, x: Cell, hz: Integer): Acc pure { \
                         let psi = if x.lost then vLostBy(@C@ + 1) else @POL@(psiX_@N@(s, x.inputs, x.pf, x.uv, hz)) in \
                         let phi = if x.lost then vLostBy(@C@ + 1) else @PHI@ in \
-                        Acc { acc: vOr(a.acc, vAnd(@MEMPSI@, a.pfx)), pfx: vAnd(a.pfx, phi) } }\n\
+                        Acc { acc: vOr(a.acc, vAnd(@MEMPSI@, a.pfx)), pfx: vAnd(a.pfx, @GUARDCELL@) } }\n\
                      function foldCellAct_@N@ using v(s: State, e: Activation, x: Cell, hz: Integer): Activation pure { \
                         let r = foldStep_@N@(s, e, @ACC0@, x, hz) in actAcc(e, r.acc, r.pfx) }\n\
                      function elemVal_@N@ using v(s: State, e: Activation, hz: Integer): V pure { \
@@ -972,6 +1035,7 @@ impl<'a> Gen<'a> {
                         ("PHI", phi_cell),
                         ("ACC0", acc0.to_owned()),
                         ("MEMPSI", mem_cell),
+                        ("GUARDCELL", guard_cell),
                     ],
                 ));
             }
@@ -980,7 +1044,7 @@ impl<'a> Gen<'a> {
                     "function foldEvt_@N@ using v(s: State, e: Activation, atoms: Atoms, pos: Integer, hz: Integer): Activation pure { \
                         let psi = @POL@(psiX_@N@(s, atoms, pos, noUv(), hz)) in \
                         let phi = @PHI@ in \
-                        actAcc(e, vOr(e.status.acc, vAnd(@MEMPSI@, e.status.pfx)), vAnd(e.status.pfx, phi)) }\n\
+                        actAcc(e, vOr(e.status.acc, vAnd(@MEMPSI@, e.status.pfx)), vAnd(e.status.pfx, @GUARDEVT@)) }\n\
                      function elemVal_@N@ using v(s: State, e: Activation, hz: Integer): V pure { \
                         @POL@(vOr(e.status.acc, vAnd(vFuture(), e.status.pfx))) }\n",
                     &[
@@ -988,6 +1052,7 @@ impl<'a> Gen<'a> {
                         ("POL", pol.to_owned()),
                         ("PHI", phi_event),
                         ("MEMPSI", mem_event),
+                        ("GUARDEVT", guard_event),
                     ],
                 ));
             }

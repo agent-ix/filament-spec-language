@@ -810,9 +810,15 @@ impl TemporalLetters for ObservedLetters<'_> {
         }
         let (objects, over) = self.subject(position)?;
         let captures = self.active_captures()?;
-        let evaluation =
-            self.package
-                .evaluate_holds(self.clause, atom, over, captures, objects, meter);
+        let named = crate::value::HoldsAtom::of_source(self.clause, atom).ok_or_else(|| {
+            LetterStop::Fault(InternalFault::new(
+                "temporal.observed",
+                "atom-is-a-formula-use",
+            ))
+        })?;
+        let evaluation = self
+            .package
+            .evaluate_holds(&named, over, captures, objects, meter);
         let reading = Self::reading(&mut self.stopped, position, evaluation, HOLDS_CODES)?;
         if let AtomReading::Undefined(cause) = &reading {
             self.note(|| ObservedLocus::Atom(atom), position, cause);
@@ -862,7 +868,7 @@ impl TemporalLetters for ObservedLetters<'_> {
         let (objects, over) = self.subject(position)?;
         let evaluation = self
             .package
-            .evaluate_guard(self.clause, over, objects, meter);
+            .evaluate_guard(&self.clause.identity(), over, objects, meter);
         let reading = Self::reading(&mut self.stopped, position, evaluation, ACTIVATION_CODES)?;
         if let AtomReading::Undefined(cause) = &reading {
             self.note(|| ObservedLocus::Activation, position, cause);
@@ -1365,18 +1371,9 @@ pub fn observed_valuation(
     trace: TemporalTrace,
     meter: &mut Meter,
 ) -> Result<ObservedValuation, ValuationStop> {
-    let TemporalTrace::Finite { len } = trace else {
+    if !matches!(trace, TemporalTrace::Finite { .. }) {
         return Err(ValuationStop::NotFinite);
-    };
-    let checked = clause.clause();
-    let atoms: Vec<FormulaNodeId> = checked
-        .formula()
-        .nodes()
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }))
-        .map(|(index, _)| FormulaNodeId::from_arena_index(index))
-        .collect();
+    }
     let mut letters = ObservedLetters {
         package,
         clause,
@@ -1391,6 +1388,35 @@ pub fn observed_valuation(
         fixed: BTreeMap::new(),
         active: None,
     };
+    letters_valuation(clause.clause(), &mut letters, trace, meter)
+}
+
+/// [`observed_valuation`] over any letter source: each `holds` atom of
+/// `clause` read through `letters` at every position of the closed finite
+/// `trace`, the activation positions, and the formula's value at each, on
+/// the one clause evaluator. A model behaviour's letters reach FR-931's
+/// cross-evaluation through this entry.
+///
+/// # Errors
+///
+/// [`ValuationStop`], as for [`observed_valuation`].
+pub fn letters_valuation<L: TemporalLetters>(
+    clause: &fsl_semantics::check::CheckedTemporalClause,
+    letters: &mut L,
+    trace: TemporalTrace,
+    meter: &mut Meter,
+) -> Result<ObservedValuation, ValuationStop> {
+    let TemporalTrace::Finite { len } = trace else {
+        return Err(ValuationStop::NotFinite);
+    };
+    let atoms: Vec<FormulaNodeId> = clause
+        .formula()
+        .nodes()
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }))
+        .map(|(index, _)| FormulaNodeId::from_arena_index(index))
+        .collect();
     let mut readings = Vec::new();
     let mut activations = Vec::new();
     for index in 0..len {
@@ -1401,7 +1427,7 @@ pub fn observed_valuation(
             .collect::<Result<Vec<_>, _>>()
             .map_err(ValuationStop::Letter)?;
         readings.push(row);
-        let active = match checked.activation() {
+        let active = match clause.activation() {
             fsl_semantics::check::Activation::Origin => index == 0,
             fsl_semantics::check::Activation::Each { guarded: false } => true,
             fsl_semantics::check::Activation::Each { guarded: true } => matches!(
@@ -1413,11 +1439,11 @@ pub fn observed_valuation(
         };
         if active {
             let (result, _) = super::engine::run_seeking(
-                super::engine::Subject::of_clause(checked),
+                super::engine::Subject::of_clause(clause),
                 trace,
                 super::engine::Goal::At(position),
                 false,
-                &mut letters,
+                letters,
                 meter,
             );
             activations.push((position, result.map_err(ValuationStop::Refused)?));

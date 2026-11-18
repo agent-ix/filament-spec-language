@@ -275,12 +275,11 @@ spine APIs rather than a first sketch, and are accepted as its contract:
 - **Settling.** The session SHALL settle a clause at the first call at which
   its profile's evaluator returns a decided verdict over the observations
   seen, and SHALL NOT settle it at any other call before `finish`:
-  - infinite-trace: a bad prefix of a formula in FR-328's safety fragment
-    (`violation`), or an `Undefined` that is a violation. A formula outside
-    the fragment, an eventuality among them, is never decided by a finite
-    prefix: FR-328 reports it `pending` whatever the prefix shows, so
-    `Reaches` (`eventually holds(r.level = 2)`) stays `Pending` after it
-    sees level 2 (FR-330-AC-2);
+  - infinite-trace: a good prefix (`success`, truth `true`), a bad prefix of
+    a formula in FR-328's safety fragment (`violation`), or an `Undefined`
+    that is a violation. `Reaches` (`eventually holds(r.level = 2)`) settles
+    `success` at the call that sees level 2 (FR-330-AC-2); a formula with no
+    good or bad prefix seen yet stays `Pending`;
   - event-position and fixed-sample (closed-trace) profiles: FR-820's
     `decided` verdict, FR-504's open-scope reading of the positions seen, when
     it is definite. Its seen horizon is `S = n - 1` over a `Finite` trace and
@@ -376,7 +375,7 @@ spine APIs rather than a first sketch, and are accepted as its contract:
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-643-AC-1 | For FR-330-AC-1's `Bounded`, AC-2's `Reaches` and AC-12's `always holds(c.value <= 1)` over snapshots `c.value` 0, 1, 2, 1, 0 fed one at a time in a `Finite` session, the report after step `k` equals `B(k)` for each clause still `Pending` and `B(s)` for a clause settled at step `s` (`Bounded` settles `violation` at step 2, `always holds(c.value <= 1)` at step 3, `Reaches` never), with `B(k)` of the same category and truth for each settled clause, and `finish()` returns `B(5)` for `Reaches` and the settled reports for the others. | Test (TC-1666) |
+| FR-643-AC-1 | For FR-330-AC-1's `Bounded`, AC-2's `Reaches` and AC-12's `always holds(c.value <= 1)` over snapshots `c.value` 0, 1, 2, 1, 0 fed one at a time in a `Finite` session, the report after step `k` equals `B(k)` for each clause still `Pending` and `B(s)` for a clause settled at step `s` (`Bounded` settles `violation` at step 2, `always holds(c.value <= 1)` at step 3, `Reaches` `success` at step 3, its good prefix), with `B(k)` of the same category and truth for each settled clause, and `finish()` returns the settled reports. | Test (TC-1666) |
 | FR-643-AC-2 | A `Timestamped` session over FR-641-AC-1's three observations with progress asserted after each reports, after the last, FR-501-AC-4's outcome; the ledger it returns equals the one the batch run returns. | Test (TC-1666) |
 | FR-643-AC-3 | Once `always holds(c.value <= 1)` settles `violation` at the step of `c.value` 2, the later steps report the same report for it; a clause passes from `Pending` to `Settled` only at the step that decides it, a `Pending` clause whose report changes is named as changed with status still `Pending`, and each step names exactly the clauses whose status or report changed. | Test (TC-1666) |
 | FR-643-AC-4 | A checkpoint taken after step 2 and resumed gives, for steps 3 to 5, the reports of the uninterrupted session; resuming under another package, or with another clause list, refuses `monitor-state-mismatch`. | Test (TC-1667) |

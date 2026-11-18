@@ -19,9 +19,7 @@ use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape,
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::check::CheckedNode;
 use fsl_semantics::check::footprint::{
-    FootprintObject, FootprintRefusal, SymbolicFootprint, SymbolicLocation, derive_atom_reads,
-    derive_attempt_footprint_fallback, derive_constraint_reads, derive_footprint,
-    derive_guard_reads, derive_node_reads, derive_selected_footprint, derive_slot_reads,
+    FootprintObject, FootprintRefusal, SymbolicFootprint, SymbolicLocation,
 };
 use fsl_semantics::model::clause_observation::Observation;
 use fsl_semantics::model::object_environment::{ObservedRead, ReadLog};
@@ -444,8 +442,7 @@ impl<'a> ModelSystem<'a> {
             .entry(key)
             .or_insert_with_key(|(_, _, types, selected)| {
                 let select = |clause| selected.as_ref().is_none_or(|set| set.contains(&clause));
-                match derive_selected_footprint(
-                    self.package.graph(),
+                match self.evaluator().selected_footprint(
                     &self.model,
                     receiver.object_type().clone(),
                     application.declaring.clone(),
@@ -454,8 +451,7 @@ impl<'a> ModelSystem<'a> {
                     &select,
                 ) {
                     Err(FootprintRefusal::UnsupportedForm { .. }) => {
-                        derive_attempt_footprint_fallback(
-                            self.package.graph(),
+                        self.evaluator().attempt_footprint_fallback(
                             &self.model,
                             receiver.object_type().clone(),
                             application.declaring.clone(),
@@ -577,8 +573,7 @@ impl<'a> ModelSystem<'a> {
                         declared_target(value_type).map(|target| (name.clone(), target))
                     })
                     .collect();
-                derive_footprint(
-                    self.package.graph(),
+                self.evaluator().footprint(
                     &self.model,
                     receiver_type.clone(),
                     application.declaring.clone(),
@@ -600,13 +595,11 @@ impl<'a> ModelSystem<'a> {
     /// such clause, and [`FootprintError::Refused`] when the clause reads
     /// through a form FSpec FR-383 gives no footprint rule.
     pub fn constraint_reads(&self, name: &str) -> Result<BTreeSet<Location>, FootprintError> {
-        let graph = self.package.graph();
-        let clause = graph
-            .state_clauses()
-            .iter()
-            .find(|clause| clause.name() == name)
+        let evaluator = self.evaluator();
+        let clause = evaluator
+            .state_clause(name)
             .ok_or(FootprintError::UnknownConstraint)?;
-        let symbolic = derive_constraint_reads(graph, &self.model, clause)?;
+        let symbolic = evaluator.constraint_reads(&self.model, clause)?;
         Ok(symbolic
             .iter()
             .filter_map(|location| lower(location, &|_| None))
@@ -629,13 +622,9 @@ impl<'a> ModelSystem<'a> {
         parameters: &[(String, ValueType)],
         body: &fsl_semantics::check::CheckedBody,
     ) -> Result<BTreeSet<Location>, FootprintError> {
-        let symbolic = derive_slot_reads(
-            self.package.graph(),
-            &self.model,
-            name,
-            parameters,
-            body.root(),
-        )?;
+        let symbolic = self
+            .evaluator()
+            .slot_reads(&self.model, name, parameters, body.root())?;
         Ok(symbolic
             .iter()
             .filter_map(|location| lower(location, &|_| None))
@@ -673,13 +662,9 @@ impl<'a> ModelSystem<'a> {
         body: &fsl_semantics::check::CheckedBody,
         over: Option<&ObjectReference>,
     ) -> Result<Option<BTreeSet<Location>>, FootprintError> {
-        let symbolic = derive_node_reads(
-            self.package.graph(),
-            &self.model,
-            name,
-            parameters,
-            body.root(),
-        )?;
+        let symbolic = self
+            .evaluator()
+            .node_reads(&self.model, name, parameters, body.root())?;
         if over.is_none() && !symbolic.is_empty() {
             return Ok(None);
         }
@@ -723,7 +708,7 @@ impl<'a> ModelSystem<'a> {
         over: &(String, ValueType),
         condition: CheckedNode<'_>,
     ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-        derive_atom_reads(self.package.graph(), &self.model, over, condition)
+        self.evaluator().atom_reads(&self.model, over, condition)
     }
 
     /// FR-125-AC-18, FR-337: the symbolic locations the activation's
@@ -741,7 +726,8 @@ impl<'a> ModelSystem<'a> {
         condition: CheckedNode<'_>,
         binders: &[(String, ValueType)],
     ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-        derive_guard_reads(self.package.graph(), &self.model, binders, condition)
+        self.evaluator()
+            .guard_reads(&self.model, binders, condition)
     }
 
     /// FR-156 "Atom footprints": the locations an atom reads for `instance`

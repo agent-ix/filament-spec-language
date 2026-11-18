@@ -1323,7 +1323,8 @@ mod tests {
 
     /// FR-218-AC-23 (TC-1065 rows 6 and 7): an unsound join list refuses
     /// `invalid_package`/`invalid-value` at the list, or at the count for a
-    /// quorum; sound ones check and a label listed twice joins once.
+    /// quorum. An empty list refuses at S1. Sound lists check and a label
+    /// listed twice joins once.
     #[trace("TC-1065", "FR-218-AC-23")]
     #[test]
     fn an_unsound_join_refuses_at_the_list_or_the_quorum_count() {
@@ -1345,7 +1346,6 @@ mod tests {
                 "3",
                 JoinFault::QuorumAboveLabels { labels: 2 },
             ),
-            ("any [] outstanding cancel", "[]", JoinFault::NoLabel),
         ] {
             let (text, cause, code, tag) = only_refusal(&pipeline("", &parallel(join)));
             assert_eq!((code, tag.as_str()), ("invalid_package", "invalid-value"));
@@ -1359,6 +1359,29 @@ mod tests {
             assert_eq!(*fault, expected, "{join}");
             assert_eq!(located(&text, &cause), located_at, "{join}");
         }
+        let text = format!(
+            "{HEADER}{}\n",
+            pipeline("", &parallel("any [] outstanding cancel"))
+        );
+        let parsed = fsl_cst::parse(
+            SourceIdentity::new("a", "u"),
+            "unit.native",
+            text.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("S1 reads the unit");
+        assert!(!parsed.is_admissible());
+        let [diagnostic] = parsed.diagnostics() else {
+            panic!("one syntax diagnostic, got {:?}", parsed.diagnostics());
+        };
+        assert_eq!(diagnostic.code, fsl_cst::CompleteCode::InvalidSyntax);
+        assert_eq!(diagnostic.cause, fsl_cst::CompleteCause::UnexpectedToken);
+        let span = diagnostic.byte_span().expect("a located diagnostic");
+        assert_eq!(
+            span.start,
+            text.find("[] outstanding").expect("the join list") + 1
+        );
+        assert_eq!(&text[span.start..span.end], "]");
         for join in [
             "all [east, west]",
             "quorum(2) [east, west] outstanding cancel",

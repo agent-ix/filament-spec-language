@@ -147,6 +147,7 @@ pub(crate) fn reference_spec<'p>(plan: &'p TimedMonitorPlan) -> TickMonitorSpec<
             })
             .collect(),
         uncertainty: plan.uncertainty().clone(),
+        exact: plan.exact_positions(),
         width_bits: plan.binding().width_bits(),
         max_reading_gap: plan.max_reading_gap(),
         capacities: plan

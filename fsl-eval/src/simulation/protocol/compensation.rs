@@ -39,7 +39,6 @@ use crate::simulation::model::encode::{reference_enc, value_enc};
 use crate::simulation::model::{
     FirstApplication, ModelFinding, ModelSimState, OperationRef, Verdict, verdict,
 };
-use crate::value::evaluate_protocol_slot;
 
 /// The instance, compensation thread and registration an attempt step is
 /// enumerated for.
@@ -106,14 +105,15 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         model: &ModelSimState,
     ) -> Result<Decided, ExpansionStop> {
         let observation = self.model.observation_of(model)?;
-        let evaluation = evaluate_protocol_slot(
-            self.package,
-            body,
-            frame,
-            &observation.environment,
-            &mut Meter::new(self.model.meter()),
-        )
-        .map_err(|_| super::broken())?;
+        let evaluation = self
+            .evaluator
+            .evaluate_protocol_slot(
+                body,
+                frame,
+                &observation.environment,
+                &mut Meter::new(self.model.meter()),
+            )
+            .map_err(|_| super::broken())?;
         if let FamilyOutcome::Evaluated(Outcome::Completed(value)) = &evaluation.outcome {
             return Ok(Decided::Value(value.clone()));
         }

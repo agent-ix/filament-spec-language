@@ -21,58 +21,58 @@ use super::causes::{
 };
 use super::protocol_slot::charges::{BinderCharges, ChargeRouting, Owner, Owners};
 use super::s6a::separation::{
-    InvocationBinding, Provenance, RuntimeValuePath, Separation, SeparationStep, StopReport, Trail,
-    ValuePathStep, ValuePathSubject, WitnessClaim, locatable, occurrence_at,
+    locatable, occurrence_at, InvocationBinding, Provenance, RuntimeValuePath, Separation,
+    SeparationStep, StopReport, Trail, ValuePathStep, ValuePathSubject, WitnessClaim,
 };
 use super::slot_admission;
 use filament_checked::key::DeclarationKey;
+use filament_eval::modulo as integer_modulo;
 use filament_eval::Evaluation;
 use filament_eval::FamilyOutcome;
 use filament_eval::FamilyResult;
-use filament_eval::modulo as integer_modulo;
 use filament_eval::{
     PreconditionFailure, ProtocolReferenceUnsupported, ReferenceUnresolved, StateModelUndefined,
 };
 use filament_exact::{
-    ArithmeticOperator, BooleanConnective, IntegerArithmetic, OrderedOperands, OrderingOperator,
-    RationalArithmetic, evaluate_boolean, evaluate_integer_arithmetic,
-    evaluate_rational_arithmetic, order_numbers, retain_boolean,
+    admit_quantity_result, compare_text, BoundedQuantityType, ComparisonOperator,
+    QuantityResultInterval,
 };
+use filament_exact::{
+    compare_ieee, convert_ieee_width, evaluate_ieee, exact_to_ieee, ieee_to_exact, IeeeComparison,
+    IeeeFlags, IeeeOperation, IeeeValue, IeeeWidth,
+};
+use filament_exact::{
+    compare_keys, form, form_grouped, retain_composite, CollectionValue, CompositeValue,
+    FieldValue, ObjectId, ObjectReference, OptionValue, Quantity, UnionValue, Value, ValueType,
+};
+use filament_exact::{
+    evaluate_boolean, evaluate_integer_arithmetic, evaluate_rational_arithmetic, order_numbers,
+    retain_boolean, ArithmeticOperator, BooleanConnective, IntegerArithmetic, OrderedOperands,
+    OrderingOperator, RationalArithmetic,
+};
+use filament_exact::{evaluate_decimal, Decimal, DecimalOperation, DecimalType};
 use filament_exact::{
     BoundViolation, CardinalityBound, Charge, ChargePoint, CollectionKind, Incomplete, Integer,
     LimitKind, Meter, PopulationId,
 };
-use filament_exact::{
-    BoundedQuantityType, ComparisonOperator, QuantityResultInterval, admit_quantity_result,
-    compare_text,
-};
-use filament_exact::{
-    CollectionValue, CompositeValue, FieldValue, ObjectId, ObjectReference, OptionValue, Quantity,
-    UnionValue, Value, ValueType, compare_keys, form, form_grouped, retain_composite,
-};
-use filament_exact::{Decimal, DecimalOperation, DecimalType, evaluate_decimal};
 use filament_exact::{DivisionMember, IntegerDomain};
 use filament_exact::{EffectiveId, NodeKey};
 use filament_exact::{FloatType, Rational};
-use filament_exact::{
-    IeeeComparison, IeeeFlags, IeeeOperation, IeeeValue, IeeeWidth, compare_ieee,
-    convert_ieee_width, evaluate_ieee, exact_to_ieee, ieee_to_exact,
-};
 use filament_exact::{Outcome, Refusal, Undefined};
-use filament_semantic_value::catalog::{InternalFault, render_identity};
+use filament_semantic_value::catalog::{render_identity, InternalFault};
 use filament_semantic_value::declaration::{
-    CompositeShape, EqualityOperator, FieldDeclaration, FieldRef, TypeEnvironment, operand_value,
+    operand_value, CompositeShape, EqualityOperator, FieldDeclaration, FieldRef, TypeEnvironment,
 };
-use filament_semantic_value::enumeration::{EnumMemberIndex, compare_enum};
+use filament_semantic_value::enumeration::{compare_enum, EnumMemberIndex};
 use filament_semantic_value::location::ExpressionLocation as Location;
 use filament_semantic_value::loss::{LocatedLoss, ValueLoss};
 use filament_semantic_value::quantity::{
-    ConvertedValue, QuantityOperation, QuantityTarget, UnitScope, compare_quantity,
-    convert_quantity, evaluate_quantity_unit,
+    compare_quantity, convert_quantity, evaluate_quantity_unit, ConvertedValue, QuantityOperation,
+    QuantityTarget, UnitScope,
 };
 use filament_semantic_value::relationship_extent::Resolution;
-use filament_semantic_value::stop::{Stop, outcome_from_stop, outcome_into_stop};
-use fsl_foundation::diagnostic::{Locus, RefusalRecord, kernel_refusal_record};
+use filament_semantic_value::stop::{outcome_from_stop, outcome_into_stop, Stop};
+use fsl_foundation::diagnostic::{kernel_refusal_record, Locus, RefusalRecord};
 use fsl_foundation::source::provenance::SourceRegion;
 use fsl_semantics::check::{CheckedGraph, DispatchTable, FormedUnits, Operator, Scope, Slot};
 #[cfg(test)]
@@ -81,7 +81,7 @@ use fsl_semantics::model::object_environment::{ObjectEnvironment, ObservedRead};
 use fsl_semantics::model::observation::OutOfRange;
 use fsl_semantics::model::population::PopulationBinding;
 use fsl_semantics::value::divide as integer_divide;
-use fsl_semantics::value::model_query::{ModelQueryHalt, evaluate_all_instances, evaluate_lookup};
+use fsl_semantics::value::model_query::{evaluate_all_instances, evaluate_lookup, ModelQueryHalt};
 use node_source::NodeSource;
 pub(crate) use world::World;
 
@@ -164,8 +164,8 @@ struct LocatedStop {
 }
 
 use crate::value::collections::{
-    self, Absorbed, Flow, Iteration as IterationState, Sequence, Shape, Spec, charge_element,
-    charge_visit, retain_scalar,
+    self, charge_element, charge_visit, retain_scalar, Absorbed, Flow, Iteration as IterationState,
+    Sequence, Shape, Spec,
 };
 use crate::value::composite::{self, construct_record, construct_tuple, present_slots, read_field};
 
@@ -2341,10 +2341,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             // FR-322: `eval` queues a `case` through `Task::Select`, never
             // `Task::Apply`.
             NodeKind::Case { .. } => return Err(invariant("evaluation-apply-node-invalid")),
-            // These checked carriers are admitted and lowered, but their
-            // runtime semantics belong to the owning follow-up slices. Keep
-            // the evaluator total without fabricating a value.
-            NodeKind::QuantityScale { .. } | NodeKind::QuantityScaleDiv { .. } => {
+            // Quantity scaling is applied below with the source unit kept on
+            // the result (FR-142 quantity scaling).
+            NodeKind::QuantityScaleDiv { .. } => {
                 return Err(unsupported_construct("quantity_scale"));
             }
             NodeKind::TupleProject { .. } => {
@@ -2728,6 +2727,35 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 // scope keeps one entry per distinct unit.
                 self.units.form(unit);
                 Value::Quantity(quantity)
+            }
+            NodeKind::QuantityScale { .. } => {
+                let factor = match self.pop()? {
+                    Value::Integer(value) => Rational::from_integer(value),
+                    Value::Rational(value) => value,
+                    Value::Decimal(value) => value.normalized().to_rational(),
+                    _ => return Err(invariant("quantity-scale-factor-expected")),
+                };
+                let Value::Quantity(quantity) = self.pop()? else {
+                    return Err(invariant("quantity-scale-operand-expected"));
+                };
+                if self.units.resolve(&quantity).is_none() {
+                    return Err(unresolved_unit());
+                }
+                let operation = RationalArithmetic::Multiply(quantity.magnitude(), &factor);
+                self.meter.charge(
+                    Charge::new(ChargePoint::UnitIdentityRead)
+                        .size(LimitKind::ValueOccurrences, 1)
+                        .size(LimitKind::IntegerBits, quantity.magnitude().max_part_bits()),
+                )?;
+                self.meter
+                    .charge(Charge::new(ChargePoint::UnitRationalArithmetic).exact_size(
+                        LimitKind::IntegerBits,
+                        filament_exact::rational_arithmetic_bits(operation),
+                    ))?;
+                let magnitude = quantity.magnitude().mul(&factor);
+                self.meter
+                    .charge(Charge::new(ChargePoint::UnitResultRetain).results(1))?;
+                Value::Quantity(Quantity::new(magnitude, quantity.unit().clone()))
             }
             NodeKind::QuantityNegate(_) => {
                 let Value::Quantity(operand) = self.pop()? else {
@@ -4841,7 +4869,7 @@ mod union_case;
 
 #[cfg(test)]
 mod tests {
-    use crate::value::composite::{ConstructionSite, construction_fault_identifier};
+    use crate::value::composite::{construction_fault_identifier, ConstructionSite};
     use filament_exact::IntegerInterval;
     use filament_semantic_value::declaration::{
         Component, ConstructionCause, ConstructionRefusal, StorageRequest, StorageUnit,
@@ -4912,10 +4940,10 @@ mod tests {
         DomainPackage, DomainPackageRecord, DomainPackageRef, Extent, ObjectTypeRecord,
         PopulationRecord,
     };
-    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
+    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
     use fsl_semantics::model::population::{
-        AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, PopulationDocument,
-        PopulationMember, admit_binding,
+        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
+        PopulationDocument, PopulationMember,
     };
     use ix_trace_rs::trace;
 
@@ -5170,8 +5198,8 @@ mod tests {
     /// package and `F`'s checked identity, so a test can call
     /// [`fsl_semantics::check::ValueFunctionFamily::evaluate`] directly -- the S6a
     /// seam itself, bypassing `CheckedPackage::call`'s admission.
-    pub(super) fn population_function_package()
-    -> (fsl_package::CheckedPackage, filament_exact::NodeKey) {
+    pub(super) fn population_function_package(
+    ) -> (fsl_package::CheckedPackage, filament_exact::NodeKey) {
         let domain_package = domain_package("bundle.qsl174-ac10-seam");
         let view = match normalize(&domain_package, ModelNormalizationLimits::UNLIMITED) {
             NormalizeOutcome::Completed(view) => view,
@@ -5820,31 +5848,31 @@ mod tests {
         );
         let optional = ValueType::option(range);
         let outside = FieldValue::Present(Value::Integer(Integer::from(-1_i64)));
-        assert!(
-            CheckedMachine::project(&TypeEnvironment::default(), &outside, true, &optional, true)
-                .is_ok()
-        );
-        assert!(
-            CheckedMachine::project(
-                &TypeEnvironment::default(),
-                &outside,
-                true,
-                &optional,
-                false
-            )
-            .is_err()
-        );
+        assert!(CheckedMachine::project(
+            &TypeEnvironment::default(),
+            &outside,
+            true,
+            &optional,
+            true
+        )
+        .is_ok());
+        assert!(CheckedMachine::project(
+            &TypeEnvironment::default(),
+            &outside,
+            true,
+            &optional,
+            false
+        )
+        .is_err());
         let wrong_kind = FieldValue::Present(Value::Boolean(true));
-        assert!(
-            CheckedMachine::project(
-                &TypeEnvironment::default(),
-                &wrong_kind,
-                true,
-                &optional,
-                false
-            )
-            .is_err()
-        );
+        assert!(CheckedMachine::project(
+            &TypeEnvironment::default(),
+            &wrong_kind,
+            true,
+            &optional,
+            false
+        )
+        .is_err());
     }
     /// FR-106 check 6.5: an equality compares an out-of-type integer by
     /// value only when the operand reads a witnessed slot. Two integers
@@ -5909,7 +5937,7 @@ mod tests {
     fn a_float_ordering_records_no_decision_but_an_authored_connective_does() {
         use filament_exact::{FloatType, IeeeValue, IeeeWidth};
         use fsl_forms::BinaryOperator;
-        use fsl_semantics::value::{DefinitionRole, admit_ieee_profile};
+        use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
         let package = fsl_package::CheckedPackage::link(
             {
                 let mut declarations = PackageDeclarations::new(
@@ -6078,7 +6106,7 @@ mod tests {
     fn absent_optional_and_empty_sequence_edges_have_no_outgoing_edge() {
         use crate::test_ids::{effective_id, universe_id};
         use filament_exact::{
-            CollectionKind, CollectionType, FieldValue, ObjectId, Presence, from_admitted,
+            from_admitted, CollectionKind, CollectionType, FieldValue, ObjectId, Presence,
         };
 
         let target = effective_id("Node");
