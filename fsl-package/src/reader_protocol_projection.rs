@@ -1333,7 +1333,12 @@ impl<'wire> BareWalker<'wire> {
             .iter()
             .filter(|node| has_form(node, WireTag::Function, WireForm::PureFunction))
             .filter_map(|node| {
-                let name = node.declaration.as_ref()?.qualified_name.last()?.to_string();
+                let name = node
+                    .declaration
+                    .as_ref()?
+                    .qualified_name
+                    .last()?
+                    .to_string();
                 let start = admitted
                     .source_map()
                     .iter()
