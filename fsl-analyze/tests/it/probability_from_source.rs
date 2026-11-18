@@ -43,10 +43,10 @@ const EVENTUALLY: &str = "probabilistic Eventually using inf on M over (m: M::Ms
 const TOO_LIKELY: &str = "probabilistic TooLikely using inf on M over (m: M::Msg) under Even on origin \
      { probability >= rational(99, 100) [ eventually holds(m.delivered) ] }";
 
-/// `LongRun`: the long-run fraction of delivered messages under `Even`.
+/// `LongRun`: the long-run fraction of healthy ticks under `Steady`.
 const LONG_RUN: &str = "probabilistic LongRun using inf on M over (m: M::Msg) under Even on origin \
-     with alpha 0.1, beta 0.1, indifference 0.05 \
-     { long_run_fraction holds(m.delivered) >= rational(9, 10) }";
+     with alpha 0.1, beta 0.1, indifference 0.1 \
+     { long_run_fraction holds(n.healthy) >= 0.3 }";
 
 fn run(name: &str, claims: &str, items: Value) -> Value {
     let ws = Workspace::new(name);
@@ -59,6 +59,40 @@ fn run(name: &str, claims: &str, items: Value) -> Value {
     );
     let run = analyze(&request);
     run.document()
+}
+
+fn run_health_long_run(name: &str, items: Value) -> Value {
+    let model =
+        crate::prob_world::health("self.healthy = (not fault)", "true: 1, false: 1", false, "");
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         model M = \"{}\";\n{}\n{}\n",
+        model.package, model.body, LONG_RUN
+    );
+    let model_document = model.document(false);
+    let snapshot = json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "test", "identity": "start"},
+        "observation": "current",
+        "model": {"identity": model.package},
+        "anchor": {"kind": "initialization", "name": "start"},
+        "populations": [{"population": "ix://test/health/nodes", "complete": true,
+            "objects": [{"key": "n", "type": "ix://test/health/Node",
+                "fields": {"healthy": {"boolean": true}}}]}]
+    })
+    .to_string()
+    .into_bytes();
+    let ws = Workspace::new(name);
+    let request = request_over(
+        &ws,
+        &unit,
+        &model_document,
+        &[snapshot],
+        json!({"items": items}),
+    );
+    analyze(&request).document()
 }
 
 /// FR-741-AC-1: each statistical method settles `measured` with a
@@ -76,18 +110,27 @@ fn statistical_items_settle_measured_from_source() {
             json!({"type": "regenerative", "min_cycles": 1}),
         ),
     ] {
-        let (claim_name, claim) = if method == "regenerative" {
-            ("LongRun", LONG_RUN)
+        let claim_name = if method == "regenerative" {
+            "LongRun"
         } else {
-            ("Delivered", DELIVERED)
+            "Delivered"
         };
         let item = |workers: u64| {
             json!([{"claim": claim_name, "probabilistic": {
                 "evidence": "statistical", "method": method_selection,
                 "seed": "7", "max_witnesses": 8, "workers": workers}}])
         };
-        let one = run(&format!("stat-{method}-1"), claim, item(1));
-        let four = run(&format!("stat-{method}-4"), claim, item(4));
+        let (one, four) = if method == "regenerative" {
+            (
+                run_health_long_run(&format!("stat-{method}-1"), item(1)),
+                run_health_long_run(&format!("stat-{method}-4"), item(4)),
+            )
+        } else {
+            (
+                run(&format!("stat-{method}-1"), DELIVERED, item(1)),
+                run(&format!("stat-{method}-4"), DELIVERED, item(4)),
+            )
+        };
         assert!(one["items"][0].is_object(), "{one}");
         assert!(four["items"][0].is_object(), "{four}");
         let first = &one["items"][0];

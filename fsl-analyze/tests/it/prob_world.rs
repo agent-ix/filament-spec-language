@@ -23,7 +23,7 @@ use fsl_semantics::check::{CheckRefusal, CheckedProbabilisticClaim, PackageDecla
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 /// The native Boolean type reference.
 pub(crate) const BOOLEAN: &str = "ix://filament/native/Boolean";
@@ -146,7 +146,7 @@ impl Model {
     }
 
     /// The domain package document.
-    fn document(&self, symmetric: bool) -> Vec<u8> {
+    pub(crate) fn document(&self, symmetric: bool) -> Vec<u8> {
         let mut kinds = vec![
             ("object_type", meaning::OBJECT_TYPE),
             ("population", meaning::POPULATION),
