@@ -3079,6 +3079,20 @@ pub enum CheckCause {
         /// The retained sequence's length under `profile`.
         retained_length: u64,
     },
+    /// FR-480: a reference literal's name resolves to a declaration that is
+    /// not an object type. The source locus is the type name itself.
+    ReferenceLiteralTypeMismatch {
+        /// The type name as written, including its source span.
+        name: fsl_forms::NameForm,
+        /// The kind the name resolved to.
+        actual: ValueType,
+    },
+    /// FR-480: an empty key cannot identify an object. The source locus is
+    /// the string token.
+    EmptyReferenceLiteralKey {
+        /// The quoted string token's span.
+        span: Span,
+    },
     /// `ill_typed` / `identity-observing-form` (FR-150): a form that
     /// observes the identity of a `symmetric` population's objects, at the
     /// form's node. Boxed like the other payload-bearing causes.
@@ -3673,7 +3687,8 @@ impl CheckCause {
             | Self::UnitMismatch
             | Self::IntegerOutsideI128(_)
             | Self::MalformedUuidLiteral { .. }
-            | Self::TextLiteralOutsideBounds { .. } => Code::IllTyped,
+            | Self::TextLiteralOutsideBounds { .. }
+            | Self::ReferenceLiteralTypeMismatch { .. } => Code::IllTyped,
             Self::WrongSnapshot(_) | Self::UnanchoredResult { .. } => Code::WrongSnapshot,
             Self::MissingName(_)
             | Self::UnknownField { .. }
@@ -3697,7 +3712,8 @@ impl CheckCause {
             | Self::ReservedIntrinsicConflict(_)
             | Self::DefinitionCycle { .. }
             | Self::InvalidDispatchDeclaration(_)
-            | Self::NodePreimage(_) => Code::InvalidPackage,
+            | Self::NodePreimage(_)
+            | Self::EmptyReferenceLiteralKey { .. } => Code::InvalidPackage,
             Self::UnrepresentableBound => Code::UnrepresentableConstraint,
             Self::MissingSelection { .. } => Code::MissingDeclaration,
             Self::UnsupportedFeature { .. } => Code::UnknownRequiredFeature,
@@ -3759,7 +3775,8 @@ impl CheckCause {
             Self::IdentityObservingForm(_) => Some("identity-observing-form"),
             Self::IntegerOutsideI128(_)
             | Self::MalformedUuidLiteral { .. }
-            | Self::TextLiteralOutsideBounds { .. } => Some("type-mismatch"),
+            | Self::TextLiteralOutsideBounds { .. }
+            | Self::ReferenceLiteralTypeMismatch { .. } => Some("type-mismatch"),
             Self::UnanchoredResult { .. } => Some("wrong-anchor"),
             Self::MissingName(_)
             | Self::UnknownField { .. }
@@ -3788,6 +3805,7 @@ impl CheckCause {
             Self::ResourceExhausted(cause) => Some(cause.kind.setting().kind().catalog_cause()),
             Self::DefinitionCycle { .. } => Some("definition-cycle"),
             Self::InvalidDispatchDeclaration(_) => Some("invalid-value"),
+            Self::EmptyReferenceLiteralKey { .. } => Some("invalid-value"),
             Self::MissingSelection { .. } => Some("missing-selection"),
             Self::UnsupportedFeature { .. } => Some("unsupported-feature"),
             Self::ProfileProhibitedOperator(_) | Self::LayerEquality { .. } => {

@@ -5,7 +5,7 @@
 //! and no node key is parsed back out of it (a node reference renders as its
 //! key's display text).
 
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use super::*;
 use crate::check::node_key::{
@@ -130,6 +130,7 @@ fn literal_json(value: &LiteralValue) -> (&'static str, Json) {
         LiteralValue::Quantity(value) => ("quantity", json!(value.to_string())),
         LiteralValue::Text(text) => ("text", json!(text)),
         LiteralValue::String(text) => ("string", json!(text)),
+        LiteralValue::Reference(text) => ("reference", json!(text)),
         LiteralValue::Uuid(value) => ("uuid", json!(value.to_string())),
         LiteralValue::Timestamp(value) => ("timestamp", json!(value.to_string())),
         LiteralValue::Bytes(value) => ("bytes", json!(value)),

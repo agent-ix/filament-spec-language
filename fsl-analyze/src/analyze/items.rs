@@ -1023,14 +1023,20 @@ fn timed_refinement_refusal(refusal: &TimedRefinementRefusal) -> Refusal {
 
 pub(crate) fn admission(failure: &AdmissionFailure) -> Refusal {
     let declined = |cause, record: &fsl_semantics::model::observation::AdmissionRecord| {
-        Refusal::Declined(
-            cause,
-            DeclineCode::Fsl(
-                fsl_foundation::diagnostic::Code::from_code(record.catalog.code())
-                    .unwrap_or(fsl_foundation::diagnostic::Code::RuntimeInvariant),
-            ),
-            record.catalog,
-        )
+        let decline = DeclineCode::Fsl(
+            fsl_foundation::diagnostic::Code::from_code(record.catalog.code())
+                .unwrap_or(fsl_foundation::diagnostic::Code::RuntimeInvariant),
+        );
+        if record.fields.is_empty() {
+            Refusal::Declined(cause, decline, record.catalog)
+        } else {
+            let detail = record
+                .fields
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), serde_json::json!(value)))
+                .collect();
+            Refusal::DeclinedWithDetail(cause, decline, record.catalog, detail)
+        }
     };
     match failure {
         AdmissionFailure::Refused(record) => declined(ProofRefusalCause::InvalidInput, record),
@@ -1236,6 +1242,25 @@ mod tests {
             diagnostic.to_string(),
             "unavailable_observation/missing-required-artifact"
         );
+    }
+
+    /// FR-1000-AC-4/10: subject-binding admission fields reach the outcome's
+    /// structured diagnostic details.
+    #[trace("TC-2957", "FR-1000-AC-4", "FR-1000-AC-10")]
+    #[test]
+    fn admission_preserves_reference_literal_type_and_key_details() {
+        let mut admission_record = record(Code::IllTyped, "operator-ineligible");
+        admission_record
+            .fields
+            .insert("type", "Counter".to_owned());
+        admission_record.fields.insert("key", "62".to_owned());
+        let failure = AdmissionFailure::Refused(Box::new(admission_record));
+        let Refusal::DeclinedWithDetail(_, _, diagnostic, details) = admission(&failure) else {
+            panic!("expected the admission fields to be retained");
+        };
+        assert_eq!(diagnostic.to_string(), "ill_typed/operator-ineligible");
+        assert_eq!(details["type"], "Counter");
+        assert_eq!(details["key"], "62");
     }
 
     /// FR-281-AC-11: a malformed symmetry declaration is `declined`,

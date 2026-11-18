@@ -282,6 +282,7 @@ pub struct BackendDescriptor {
     max_cases: Option<std::num::NonZeroU64>,
     timed: bool,
     options: BTreeSet<String>,
+    option_values: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// The optional FR-331 manifest members [`descriptor_from_manifest`] reads
@@ -409,6 +410,7 @@ pub fn descriptor_from_manifest<'a>(
         state_graph_forms: BTreeSet::new(),
         timed: false,
         options: BTreeSet::new(),
+        option_values: BTreeMap::new(),
     })
 }
 
@@ -669,6 +671,7 @@ impl BackendDescriptor {
             max_cases: None,
             timed: false,
             options: BTreeSet::new(),
+            option_values: BTreeMap::new(),
         })
     }
 
@@ -861,6 +864,54 @@ impl BackendDescriptor {
             .into_iter()
             .filter(|name| !self.options.contains(*name))
             .min()
+    }
+
+    /// Publish the option `name` with exactly the values `values` (FSL
+    /// FR-243: EN-6 publishes `method` with the one value `zones`, EN-1 with
+    /// the one value `digital-clocks`). The name joins [`Self::options`]; an
+    /// item naming the option with another value does not negotiate to this
+    /// backend.
+    #[must_use]
+    pub fn with_option_values(
+        mut self,
+        name: &str,
+        values: impl IntoIterator<Item = String>,
+    ) -> Self {
+        self.options.insert(name.to_owned());
+        self.option_values
+            .insert(name.to_owned(), values.into_iter().collect());
+        self
+    }
+
+    /// The values this backend publishes for the option `name`, when it
+    /// publishes the option with a closed set of values.
+    pub fn option_values(&self, name: &str) -> Option<&BTreeSet<String>> {
+        self.option_values.get(name)
+    }
+
+    /// Whether this backend admits every option of `options` (FSL FR-243,
+    /// FR-635): it publishes each name, and for a name published with a
+    /// closed set of values, the item's value is one of them.
+    pub fn admits_options(&self, options: &BTreeMap<String, String>) -> bool {
+        options.iter().all(|(name, value)| {
+            self.options.contains(name)
+                && self
+                    .option_values
+                    .get(name)
+                    .is_none_or(|values| values.contains(value))
+        })
+    }
+
+    /// Whether `options` select this backend by value: the item names an
+    /// option this backend publishes with a closed set of values, with one
+    /// of them (FSL FR-243: `method` `digital-clocks` selects EN-1 for a
+    /// timed subject).
+    pub fn selected_by(&self, options: &BTreeMap<String, String>) -> bool {
+        options.iter().any(|(name, value)| {
+            self.option_values
+                .get(name)
+                .is_some_and(|values| values.contains(value))
+        })
     }
 
     /// Whether this backend decides an item whose subject resolves its
@@ -1308,6 +1359,9 @@ pub struct CandidateSet {
     missing_fairness: BTreeSet<FairnessKind>,
     missing_reduction: Option<ReductionKind>,
     evidence: Option<ItemEvidence>,
+    /// The candidates a timing restriction set aside, with their fairness
+    /// kinds: an option value that selects one readmits it (FSL FR-243).
+    set_aside: BTreeMap<Candidate, BTreeSet<FairnessKind>>,
 }
 
 impl CandidateSet {
@@ -1323,6 +1377,7 @@ impl CandidateSet {
             missing_fairness: BTreeSet::new(),
             missing_reduction: None,
             evidence: None,
+            set_aside: BTreeMap::new(),
         }
     }
 
@@ -1755,7 +1810,7 @@ impl Registry {
     /// unchanged.
     pub fn restrict_to_timed(&self, outcome: CandidateOutcome, timed: bool) -> CandidateOutcome {
         if timed {
-            self.keep_candidates(outcome, BackendDescriptor::decides_timed)
+            self.keep_timing(outcome, BackendDescriptor::decides_timed)
         } else {
             outcome
         }
@@ -1781,7 +1836,80 @@ impl Registry {
     /// clause item read from an analyze document routes to EN-1 and a timed
     /// one to EN-6. An unknown named backend is returned unchanged.
     pub fn restrict_to_timing(&self, outcome: CandidateOutcome, timed: bool) -> CandidateOutcome {
-        self.keep_candidates(outcome, |descriptor| descriptor.decides_timed() == timed)
+        self.keep_timing(outcome, |descriptor| descriptor.decides_timed() == timed)
+    }
+
+    /// FSL FR-243 and FR-635: `outcome` restricted to the backends that
+    /// admit the item's `options` (each name published, each value among a
+    /// closed set's values), then to the engines whose timing matches the
+    /// item's subject as [`Self::restrict_to_timing`] keeps them, where a
+    /// backend `options` select by value also decides a timed subject: an
+    /// item naming `method` `digital-clocks` over a timed subject has EN-1's
+    /// digital-clock route as its only candidate. With no options this is
+    /// [`Self::restrict_to_timing`]. An unknown named backend is returned
+    /// unchanged.
+    pub fn restrict_to_options_and_timing(
+        &self,
+        outcome: CandidateOutcome,
+        options: &BTreeMap<String, String>,
+        timed: bool,
+    ) -> CandidateOutcome {
+        if options.is_empty() {
+            return self.restrict_to_timing(outcome, timed);
+        }
+        let CandidateOutcome::Candidates(mut set) = outcome else {
+            return outcome;
+        };
+        // A candidate an earlier timing restriction set aside, which the
+        // options select by value, is readmitted: it met every other rule.
+        if timed {
+            let readmitted: Vec<(Candidate, BTreeSet<FairnessKind>)> = set
+                .set_aside
+                .iter()
+                .filter(|(candidate, _)| {
+                    self.held
+                        .get(&candidate.id)
+                        .is_some_and(|descriptor| descriptor.selected_by(options))
+                })
+                .map(|(candidate, kinds)| (candidate.clone(), kinds.clone()))
+                .collect();
+            for (candidate, kinds) in readmitted {
+                if !set.candidates.contains(&candidate) {
+                    set.candidates.push(candidate.clone());
+                }
+                set.fairness.insert(candidate, kinds);
+            }
+            set.candidates.sort();
+        }
+        self.keep_timing(CandidateOutcome::Candidates(set), |descriptor| {
+            descriptor.admits_options(options)
+                && (descriptor.decides_timed() == timed
+                    || (timed && descriptor.selected_by(options)))
+        })
+    }
+
+    /// [`Self::keep_candidates`] for a timing restriction: the candidates it
+    /// drops are set aside with their fairness kinds (FSL FR-243).
+    fn keep_timing(
+        &self,
+        outcome: CandidateOutcome,
+        keep: impl Fn(&BackendDescriptor) -> bool,
+    ) -> CandidateOutcome {
+        let CandidateOutcome::Candidates(mut set) = outcome else {
+            return outcome;
+        };
+        let (kept, dropped): (Vec<Candidate>, Vec<Candidate>) = set
+            .candidates
+            .iter()
+            .cloned()
+            .partition(|candidate| self.held.get(&candidate.id).is_some_and(&keep));
+        for candidate in dropped {
+            if let Some(kinds) = set.fairness.remove(&candidate) {
+                set.set_aside.insert(candidate, kinds);
+            }
+        }
+        set.candidates = kept;
+        CandidateOutcome::Candidates(set)
     }
 
     /// FR-144 and FSpec FR-430: `outcome`, a candidate set computed for a
@@ -1869,6 +1997,7 @@ impl Registry {
             missing_reduction: None,
             evidence: matches!(kind, Capability::ProbabilisticSatisfaction)
                 .then(|| evidence.clone()),
+            set_aside: BTreeMap::new(),
         })
     }
 }
@@ -1881,6 +2010,61 @@ mod tests {
 
     fn candidate(id: &str) -> Candidate {
         Candidate::new(BackendId::new(id))
+    }
+
+    /// FSL FR-243-AC-4: `method` is negotiated by its published values. A
+    /// timed item with no method reaches the zone engine; `digital-clocks`
+    /// readmits the engine the timing restriction set aside and drops the zone
+    /// engine; a value no engine publishes leaves no candidate.
+    #[test]
+    #[trace("TC-2290", "FR-243-AC-4")]
+    fn the_method_option_selects_a_timed_route_by_its_value() {
+        let temporal = [(Capability::TemporalSatisfaction, Mode::Bounded)];
+        let mut registry = Registry::new();
+        registry
+            .register(
+                descriptor("en-1", temporal)
+                    .with_option_values("method", ["digital-clocks".to_owned()]),
+            )
+            .expect("en-1 registers");
+        registry
+            .register(
+                descriptor("en-6", temporal)
+                    .with_timed()
+                    .with_option_values("method", ["zones".to_owned()]),
+            )
+            .expect("en-6 registers");
+        let timed = || {
+            registry.restrict_to_timed(
+                registry.candidates(Capability::TemporalSatisfaction, None),
+                true,
+            )
+        };
+        let ids = |outcome: CandidateOutcome| match outcome {
+            CandidateOutcome::Candidates(set) => set
+                .candidates()
+                .iter()
+                .map(|candidate| candidate.id().as_str().to_owned())
+                .collect::<Vec<_>>(),
+            CandidateOutcome::UnknownBackend(_) => vec!["unknown".to_owned()],
+        };
+        let method = |value: &str| BTreeMap::from([("method".to_owned(), value.to_owned())]);
+        assert_eq!(
+            ids(registry.restrict_to_options_and_timing(timed(), &BTreeMap::new(), true)),
+            ["en-6"]
+        );
+        assert_eq!(
+            ids(registry.restrict_to_options_and_timing(timed(), &method("zones"), true)),
+            ["en-6"]
+        );
+        assert_eq!(
+            ids(registry.restrict_to_options_and_timing(timed(), &method("digital-clocks"), true)),
+            ["en-1"]
+        );
+        assert!(
+            ids(registry.restrict_to_options_and_timing(timed(), &method("regions"), true))
+                .is_empty()
+        );
     }
 
     fn descriptor(

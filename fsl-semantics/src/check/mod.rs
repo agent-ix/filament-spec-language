@@ -6802,6 +6802,8 @@ impl PackageDeclarations {
                         scope.types(),
                         &state_clauses,
                         &model,
+                        None,
+                        None,
                         footprint::Operation {
                             receiver_type: binding.receiver.clone(),
                             declaring,

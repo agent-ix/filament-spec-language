@@ -497,6 +497,7 @@ fn is_scalar_application(node: CheckedNode<'_>) -> bool {
         | NodeKind::IeeeTotalOrder(..)
         | NodeKind::IeeeBitIdentical(..)
         | NodeKind::Literal(_)
+        | NodeKind::ReferenceLiteral { .. }
         | NodeKind::Coerce(..)
         | NodeKind::Local(_)
         | NodeKind::Let { .. }

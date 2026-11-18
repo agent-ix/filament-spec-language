@@ -30,15 +30,20 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::model::observation::Observation;
 
-use super::contracts::{verdict, Verdict};
-use super::walk::{rows_of, stop, Row};
-use super::{state_document, ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
+use super::contracts::{Verdict, verdict};
+use super::reference_bindings::ReferenceBinding;
+use super::walk::{Row, rows_of, stop};
+use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem, state_document};
 use crate::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use crate::simulation::StateKey;
 use crate::temporal::{AtomReading, CaptureReading};
+use crate::value::{
+    evaluate_state_predicate_at_absent_key_with_reference_bindings,
+    evaluate_state_predicate_with_reference_bindings,
+};
 
 /// Why a clause has no [`ClauseLetters`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum LettersRefusal {
     /// The clause's `over` parameter is not an object reference, so the
     /// clause has no instance (FR-125 Instancing).
@@ -52,6 +57,25 @@ pub enum LettersRefusal {
     /// the clause's trace variables (FR-487).
     #[error("a hyper clause needs one model system for each of its trace variables")]
     ComponentsMismatch,
+    /// A hyper clause's components resolve at least one reference literal
+    /// differently at subject admission (FR-1000-AC-11).
+    #[error(
+        "hyper components {components:?} disagree on reference literal {object_type}#{identity}: {bindings:?}"
+    )]
+    ReferenceBindingsDisagree {
+        /// The effective object type named by the literal.
+        object_type: String,
+        /// The UTF-8 identity bytes, rendered as lowercase hexadecimal.
+        identity: String,
+        /// The first component and the component with a differing binding.
+        components: Vec<usize>,
+        /// The resolved binding for each reported component.
+        bindings: Vec<String>,
+    },
+    /// A separately checked hyper clause contains a literal that the
+    /// component subject cannot admit.
+    #[error("hyper reference literal admission failed: {0}")]
+    ReferenceBindingsAdmission(fsl_semantics::model::observation::AdmissionFailure),
 }
 
 /// The `holds` atoms of one checked temporal clause, read at the states of a
@@ -69,6 +93,9 @@ pub enum LettersRefusal {
 pub struct ClauseLetters<'s, 'a> {
     system: &'s ModelSystem<'a>,
     node: ClauseSource<'s>,
+    /// Base package bindings extended with literals from this separately
+    /// checked temporal clause.
+    reference_bindings: super::reference_bindings::ReferenceBindings,
     parameter: EffectiveId,
     /// The declaration key of the parameter's object type.
     type_key: DeclarationKey,
@@ -164,9 +191,26 @@ impl<'a> ModelSystem<'a> {
             .type_key(parameter.clone())
             .cloned()
             .ok_or(LettersRefusal::OverTypeUndeclared)?;
+        let reference_bindings = match (node, self.source_package()) {
+            (ClauseSource::Source(source_node), Some(package)) => {
+                super::reference_bindings::ReferenceBindings::with_temporal_clause(
+                    &self.reference_bindings,
+                    package.graph(),
+                    source_node,
+                    &self.model,
+                    self.types,
+                    &self.populations,
+                    &self.universes,
+                    &self.initial,
+                )
+                .map_err(LettersRefusal::ReferenceBindingsAdmission)?
+            }
+            _ => self.reference_bindings.clone(),
+        };
         Ok(ClauseLetters {
             system: self,
             node,
+            reference_bindings,
             parameter: parameter.clone(),
             type_key,
             overlapping: self
@@ -212,6 +256,34 @@ impl ClauseLetters<'_, '_> {
                         .conforms(row.reference.object_type().clone(), self.parameter.clone())
             })
             .map(|row| row.reference.clone())
+    }
+
+    /// Add the subject-dependent membership reads of CreatedObject literals
+    /// from a separately checked temporal expression. The model evaluator's
+    /// graph-only footprint cannot see these literals in the base package.
+    fn add_reference_literal_reads(
+        &self,
+        root: CheckedNode<'_>,
+        reads: &mut BTreeSet<SymbolicLocation>,
+    ) {
+        let Some(package) = self.system.source_package() else {
+            return;
+        };
+        let mut literals = BTreeSet::new();
+        super::reference_bindings::collect_literals(package.graph(), root, &mut literals);
+        for literal in literals {
+            if let Some(ReferenceBinding::CreatedObject { populations, .. }) = self
+                .reference_bindings
+                .get(&literal.object_type, &literal.identity)
+            {
+                reads.extend(
+                    populations
+                        .iter()
+                        .cloned()
+                        .map(|population| SymbolicLocation::AnyMembership { population }),
+                );
+            }
+        }
     }
 }
 
@@ -384,24 +456,47 @@ impl ModelLetters for ClauseLetters<'_, '_> {
             .ok_or_else(|| fault("engine-reads-only-holds-atoms"))?;
         let observed = self.observe(state)?;
         let condition = Condition { body, slots };
-        let evaluation = match self.bound(&observed.rows, instance) {
-            Some(bound) => self.system.evaluator().evaluate_state_predicate(
-                &condition,
-                &observed.observation.environment,
-                Some(bound),
-                Vec::new(),
-                meter,
-            ),
-            None => self
-                .system
-                .evaluator()
-                .evaluate_state_predicate_at_absent_key(
+        let evaluation = if let Some(package) = self.system.source_package() {
+            match self.bound(&observed.rows, instance) {
+                Some(bound) => evaluate_state_predicate_with_reference_bindings(
+                    package,
+                    &condition,
+                    &observed.observation.environment,
+                    Some(bound),
+                    Vec::new(),
+                    Some(&self.reference_bindings),
+                    meter,
+                ),
+                None => evaluate_state_predicate_at_absent_key_with_reference_bindings(
+                    package,
                     &condition,
                     &observed.observation.environment,
                     self.key_reference(instance)?,
                     instance.population.node.clone(),
+                    Some(&self.reference_bindings),
                     meter,
                 ),
+            }
+        } else {
+            match self.bound(&observed.rows, instance) {
+                Some(bound) => self.system.evaluator().evaluate_state_predicate(
+                    &condition,
+                    &observed.observation.environment,
+                    Some(bound),
+                    Vec::new(),
+                    meter,
+                ),
+                None => self
+                    .system
+                    .evaluator()
+                    .evaluate_state_predicate_at_absent_key(
+                        &condition,
+                        &observed.observation.environment,
+                        self.key_reference(instance)?,
+                        instance.population.node.clone(),
+                        meter,
+                    ),
+            }
         }
         .map_err(AtomStop::Fault)?;
         reading(&evaluation.outcome)
@@ -568,12 +663,14 @@ impl ModelLetters for ClauseLetters<'_, '_> {
         );
         if let Some((guard, _)) = node.guard() {
             reads.extend(self.system.guard_reads(guard, &binders)?);
+            self.add_reference_literal_reads(guard, &mut reads);
         }
         for (index, (name, declared)) in clause.captures().enumerate() {
             let (initializer, _) = node
                 .capture(index)
                 .ok_or(FootprintRefusal::Unresolved { what: "capture" })?;
             reads.extend(self.system.guard_reads(initializer, &binders)?);
+            self.add_reference_literal_reads(initializer, &mut reads);
             binders.push((name.to_owned(), declared.clone()));
         }
         Ok(reads)
@@ -586,6 +683,10 @@ impl ModelLetters for ClauseLetters<'_, '_> {
         let (condition, _) = node
             .condition(atom)
             .ok_or(FootprintRefusal::Unresolved { what: "holds atom" })?;
-        self.system.atom_reads(node.clause().over(), condition)
+        let mut reads = self
+            .system
+            .atom_reads(node.clause().over(), condition)?;
+        self.add_reference_literal_reads(condition, &mut reads);
+        Ok(reads)
     }
 }

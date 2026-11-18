@@ -296,3 +296,109 @@ fn an_unread_member_settles_unsupported_not_requires_bound() {
     );
     assert_eq!(run.exit, 21);
 }
+
+/// The first two steps of `item`'s counterexample: each delay's numerator and
+/// denominator and its operation's name.
+fn head(item: &Value) -> Vec<(String, String, String)> {
+    item["counterexample"]["prefix"]
+        .as_array()
+        .expect("a finite prefix")
+        .iter()
+        .take(2)
+        .map(|step| {
+            let delay = &step["delay"];
+            (
+                delay["numerator"].as_str().unwrap_or("-").to_owned(),
+                delay["denominator"].as_str().unwrap_or("-").to_owned(),
+                step["transition"]["operation"]["node"]
+                    .as_str()
+                    .and_then(|node| node.rsplit('/').next())
+                    .unwrap_or("-")
+                    .to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// FR-632-AC-2: with `options.method` `digital-clocks` the closed `Rpc`
+/// subject settles the MITL claims as the zone route does, on backend
+/// `en-1`: `eventually[0 ms, 3 ms]` proved with basis `exhaustive`, and the
+/// closed `eventually[0 ms, 2 ms]` refuted by `send` at 0 then `reply` after
+/// the integer delay 3, a counterexample that replays.
+#[trace("TC-1592", "FR-632-AC-2")]
+#[test]
+fn digital_clocks_settle_mitl_claims_as_zones_do() {
+    let unit = rpc_unit(
+        4,
+        &format!(
+            "{}{}",
+            settles("[0 ms, 3 ms]").replace("Settles", "Within"),
+            settles("[0 ms, 2 ms]").replace("Settles", "Early")
+        ),
+    );
+    let digital = json!({"method": "digital-clocks"});
+    let (run, items) = run(
+        "timed-digital-mitl",
+        &unit,
+        json!([{"claim": "Within", "options": digital.clone()},
+            {"claim": "Early", "options": digital},
+            {"claim": "Within"}, {"claim": "Early"}]),
+    );
+    assert_eq!(label(&items[0]), "proved", "{}", items[0]);
+    assert_eq!(items[0]["record"]["backend"], "en-1", "{}", items[0]);
+    assert_eq!(
+        items[0]["record"]["basis"]["type"], "exhaustive",
+        "{}",
+        items[0]
+    );
+    assert_eq!(label(&items[1]), "refuted", "{}", items[1]);
+    assert_eq!(items[1]["record"]["backend"], "en-1", "{}", items[1]);
+    assert_eq!(items[1]["replay"]["reproduced"], true, "{}", items[1]);
+    let expected: Vec<(String, String, String)> = [("0", "1", "send"), ("3", "1", "reply")]
+        .iter()
+        .map(|(n, d, op)| ((*n).to_owned(), (*d).to_owned(), (*op).to_owned()))
+        .collect();
+    assert_eq!(head(&items[1]), expected, "{}", items[1]["counterexample"]);
+    // The zone route agrees.
+    assert_eq!(label(&items[2]), "proved", "{}", items[2]);
+    assert_eq!(items[2]["record"]["backend"], "en-6", "{}", items[2]);
+    assert_eq!(label(&items[3]), "refuted", "{}", items[3]);
+    assert_eq!(run.exit, 10);
+}
+
+/// QSL-2129: an item naming `options.method` `zones` negotiates to EN-6 and
+/// one naming a value no backend publishes has no candidate.
+#[trace("TC-2290", "FR-243-AC-4")]
+#[test]
+fn the_method_option_is_negotiated_by_its_published_values() {
+    let (_, items) = run(
+        "timed-method-values",
+        &rpc_unit(4, &settles("[0 ms, 3 ms]")),
+        json!([{"claim": "Settles", "options": {"method": "zones"}},
+            {"claim": "Settles", "options": {"method": "regions"}}]),
+    );
+    assert_eq!(label(&items[0]), "proved", "{}", items[0]);
+    assert_eq!(items[0]["record"]["backend"], "en-6", "{}", items[0]);
+    assert_eq!(label(&items[1]), "unsupported", "{}", items[1]);
+}
+
+/// FR-625-AC-3 on the digital-clock route: a state budget returns
+/// `incomplete` naming the limit, never a verdict, on backend `en-1`.
+#[trace("TC-1592", "FR-632-AC-2")]
+#[test]
+fn a_digital_clock_state_budget_is_incomplete() {
+    let (run, items) = run(
+        "timed-digital-budget",
+        &rpc_unit(4, &settles("[0 ms, 3 ms]")),
+        json!([{"claim": "Settles", "options": {"method": "digital-clocks"},
+            "temporal": {"limits": {"max_states": 2}}}]),
+    );
+    assert_eq!(label(&items[0]), "incomplete", "{}", items[0]);
+    assert_eq!(
+        items[0]["record"]["cause"]["limit"], "max_states",
+        "{}",
+        items[0]
+    );
+    assert_eq!(items[0]["record"]["backend"], "en-1", "{}", items[0]);
+    assert_eq!(run.exit, 22);
+}

@@ -75,6 +75,11 @@ descriptor and its `ExternalProvider` transport (the driver's
 `ProcessProvider`, "How a process provider runs an item"), and the run's
 FSpec FR-462 limits as `ProviderOptions.provider_limits`, and SHALL build its
 registry from `Engines::fsl()` and those providers, before any negotiation.
+`providers` MAY also carry in-process engines with origin `Linked`, such as
+the reference hybrid provider `Engine::hybrid_reference()` (FR-1019) that
+the driver passes by default and that a hybrid plan runs on (FR-1021); they
+register and negotiate exactly as the process providers do, so the engine
+set stays a parameter of the entry and never a request member.
 The entry with an empty `providers` is the entry with no plugin
 configured. No entry reads a provider configuration of its own: the driver
 starts the processes from `--provider-config` (FR-287) and passes them in,

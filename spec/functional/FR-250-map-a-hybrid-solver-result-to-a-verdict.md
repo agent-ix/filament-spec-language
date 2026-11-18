@@ -90,6 +90,7 @@ stays on the record for the engineer to read, with its replay outcome.
       pub jumps: Vec<TraceJump>,
       pub delta: Option<ExactRational>,        // the solver's tolerance; None reads 0
       pub loop_to: Option<u64>,                // the state a lasso's last state returns to
+      pub end: Option<TraceBefore>,            // where the last dwell is cut (FSpec FR-193); never with loop_to
   }
   pub struct TraceJump {
       pub transition: u64,

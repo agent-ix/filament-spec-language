@@ -25,8 +25,9 @@ driver's `export --evidence <request>` verb runs the same intake.
 
 ## Behavior
 
-- The `export_evidence` member SHALL carry `package` (the FSpec FR-299
-  package key of an assembled export), `obligation`, `tool` (`tlc`,
+- The `export_evidence` member SHALL carry `package` (the `package` member
+  of an assembled export's outcome, FSpec FR-817, which with that export's
+  records is its FSpec FR-299 package key), `obligation`, `tool` (`tlc`,
   `apalache`, `tlaps` or `lean`) and `artifact`: for `lean` and `tlaps` the
   proof file, for `tlc` and `apalache` the model-checker configuration, and
   for a counterexample the tool's trace file.

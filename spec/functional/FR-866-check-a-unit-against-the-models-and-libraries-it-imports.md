@@ -47,7 +47,8 @@ same two selections and hands them to the same intake.
 ### The options
 
 - `--model <identity>=<file>`, repeatable: `<file>` is a `semantic-ir/2.0.0`
-  domain package document supplied under `<identity>`, read and admitted
+  domain package document, or a model unit recognized by content and
+  compiled to its document (FR-710), supplied under `<identity>`, read and admitted
   exactly as one entry of a compile request's `models` member (FR-027,
   FR-056, FSpec FR-154). The unit's `model` declarations select it by
   identity.

@@ -16,6 +16,7 @@
 //! literals.
 
 use filament_checked::key::DeclarationKey;
+use filament_checked::node::NodeKind;
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{Cancel, EffectiveId, ValueType};
@@ -28,7 +29,7 @@ use fsl_forms::{ExprId, ExprNode, Expression, ExpressionSpans, StepLabelForm};
 use fsl_foundation::Span;
 
 use crate::check::abstraction::OperationKey;
-use crate::check::check::{bind_parameters, HyperTyping, NamedScope, Scope, StateContext, Typer};
+use crate::check::check::{HyperTyping, NamedScope, Scope, StateContext, Typer, bind_parameters};
 use crate::check::facts::Definedness;
 use crate::check::ir::{CheckedBody, CheckedNode};
 use crate::check::observation::Observations;
@@ -477,6 +478,26 @@ pub(crate) fn lower_atom<'a>(
                     span: locate(read),
                 });
             }
+        }
+    }
+    // W38: a reference literal's created-object lookup belongs to the
+    // innermost enclosing `@ trace`, just like the indexed member reads.
+    // It is not an S3 model-state read, so retain its component separately
+    // in the same location map for subject binding and S6a evaluation.
+    let mut pending = vec![body.root()];
+    while let Some(node) = pending.pop() {
+        pending.extend(node.children());
+        if !matches!(node.kind(), NodeKind::ReferenceLiteral { .. }) {
+            continue;
+        }
+        let component = node_at(expression, &node.location().path())
+            .and_then(|id| enclosing.get(id.index()).copied().flatten())
+            .and_then(|indexed| match expression.at(indexed).node() {
+                ExprNode::Indexed { trace, .. } => traces.iter().position(|name| name == trace),
+                _ => None,
+            });
+        if let Some(component) = component {
+            components.insert(node.location().clone(), component);
         }
     }
     Definedness::new(

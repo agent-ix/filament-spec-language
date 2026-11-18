@@ -25,6 +25,7 @@ use super::s6a::separation::{
     StopReport, Trail, ValuePathStep, ValuePathSubject, WitnessClaim, locatable, occurrence_at,
 };
 use super::slot_admission;
+use crate::simulation::model::{ReferenceBinding, ReferenceBindings};
 use filament_checked::key::DeclarationKey;
 use filament_eval::Evaluation;
 use filament_eval::FamilyOutcome;
@@ -855,6 +856,12 @@ pub(crate) struct Machine<'a, 'm, N> {
     /// FR-487: the component environment each model read of a hyper atom's
     /// condition observes, when the machine runs one.
     components: Option<ComponentReads<'a>>,
+    /// FR-1000: this subject's fixed/created decision for pending reference
+    /// literals; absent outside model-state evaluation.
+    reference_bindings: Option<&'a ReferenceBindings>,
+    /// FR-1000/W38: the subject table for each hyper component. A created
+    /// literal selects the table indexed by its checked `@ trace` location.
+    component_reference_bindings: Option<&'a [&'a ReferenceBindings]>,
 }
 
 /// The component environments a hyper atom's condition reads (FR-487
@@ -1065,7 +1072,26 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             witnessed_reads: std::collections::BTreeSet::new(),
             absent_parameters: Vec::new(),
             components: None,
+            reference_bindings: None,
+            component_reference_bindings: None,
         }
+    }
+
+    /// FR-1000: evaluate against the reference literals admitted with the
+    /// model subject that owns the current state.
+    pub(crate) fn with_reference_bindings(mut self, bindings: &'a ReferenceBindings) -> Self {
+        self.reference_bindings = Some(bindings);
+        self
+    }
+
+    /// W38: bind hyper literal occurrences to the component table selected
+    /// by the checked innermost `@ trace` component.
+    pub(crate) fn with_component_reference_bindings(
+        mut self,
+        bindings: &'a [&'a ReferenceBindings],
+    ) -> Self {
+        self.component_reference_bindings = Some(bindings);
+        self
     }
 
     /// FR-125 Instancing: `slot` carries absent-key guard provenance when the
@@ -2255,6 +2281,73 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
 
     fn eval(&mut self, node: N) -> Result<(), Halt> {
         match node.kind() {
+            NodeKind::ReferenceLiteral {
+                object_type,
+                identity,
+            } => {
+                let key = (object_type, identity);
+                let component_binding = self
+                    .components
+                    .and_then(|components| {
+                        node.location()
+                            .and_then(|location| components.reads.get(location))
+                    })
+                    .and_then(|component| {
+                        self.component_reference_bindings
+                            .and_then(|bindings| bindings.get(*component).copied())
+                    })
+                    .and_then(|bindings| bindings.get(key.0, key.1));
+                let binding = component_binding
+                    .or_else(|| {
+                        self.reference_bindings
+                            .and_then(|bindings| bindings.get(key.0, key.1))
+                    })
+                    .or_else(|| {
+                        self.component_reference_bindings.and_then(|bindings| {
+                            bindings
+                                .iter()
+                                .find_map(|bindings| bindings.get(key.0, key.1))
+                        })
+                    })
+                    .ok_or_else(|| invariant("reference-literal-subject-binding-exists"))?;
+                match binding {
+                    ReferenceBinding::Fixed(reference) => {
+                        self.push_value(Value::Reference(reference.clone()), false);
+                    }
+                    ReferenceBinding::CreatedObject {
+                        object_type,
+                        identity,
+                        population,
+                        populations,
+                    } => {
+                        let objects = self.objects_for(node)?;
+                        self.log_reference_membership_read(node, objects, populations);
+                        let reference = populations.iter().find_map(|population| {
+                            objects
+                                .population_members(&population.node)
+                                .into_iter()
+                                .flatten()
+                                .find(|reference| {
+                                    reference.object().as_str() == identity
+                                        && self.world.types().conforms(
+                                            reference.object_type().clone(),
+                                            object_type.clone(),
+                                        )
+                                })
+                        });
+                        let Some(reference) = reference else {
+                            return Err(Halt::Family(FamilyResult::Undefined(Box::new(
+                                StateModelUndefined::AbsentKey {
+                                    binding: population.node.clone(),
+                                    key: render_identity(identity.as_bytes()),
+                                },
+                            ))));
+                        };
+                        self.push_value(Value::Reference(reference.clone()), false);
+                    }
+                }
+                return Ok(());
+            }
             NodeKind::Literal(literal) => {
                 self.push_value(N::literal(literal).clone(), false);
                 return Ok(());
@@ -2360,6 +2453,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     fn apply(&mut self, node: N) -> Result<(), Halt> {
         let value = match node.kind() {
             NodeKind::Literal(_)
+            | NodeKind::ReferenceLiteral { .. }
             | NodeKind::Local(_)
             | NodeKind::Let { .. }
             | NodeKind::If { .. }
@@ -3701,6 +3795,35 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             population: key.clone(),
             object,
         });
+    }
+
+    /// Records a created-object reference literal's lookup in the population
+    /// selected during subject binding. The graph stays subject-independent;
+    /// footprint derivation admits all populations related to its type.
+    fn log_reference_membership_read(
+        &self,
+        node: N,
+        objects: &ObjectEnvironment,
+        populations: &[DeclarationKey],
+    ) {
+        let Some(log) = objects.read_log() else {
+            return;
+        };
+        let observation = self
+            .reads
+            .and_then(|reads| node.location().and_then(|location| reads.get(location)))
+            .copied()
+            .unwrap_or(match self.anchor {
+                Anchor::Pre => fsl_semantics::model::clause_observation::Observation::Pre,
+                Anchor::Post => fsl_semantics::model::clause_observation::Observation::Post,
+            });
+        for population in populations {
+            log.record(ObservedRead::Membership {
+                observation,
+                population: population.clone(),
+                object: None,
+            });
+        }
     }
 
     /// FR-139: the objects of the concrete population `population` in the

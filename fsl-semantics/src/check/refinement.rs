@@ -1130,6 +1130,7 @@ fn leaf_checked_term(
                 LiteralValue::Quantity(value) => ("quantity", json!(spelled(value))),
                 LiteralValue::Text(value) => ("text", json!(value)),
                 LiteralValue::String(value) => ("string", json!(value)),
+                LiteralValue::Reference(value) => ("reference", json!(value)),
                 LiteralValue::Uuid(value) => ("uuid", json!(value.to_string())),
                 LiteralValue::Timestamp(value) => ("timestamp", json!(value.to_string())),
                 LiteralValue::Bytes(value) => ("bytes", json!(value)),

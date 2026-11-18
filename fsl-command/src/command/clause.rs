@@ -32,6 +32,7 @@ pub(super) fn read(
     request: &wire::Request,
     clause: &wire::ClauseRun,
     source: FormalSource,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<ClauseRunRequest> {
     let source_identity = source.source().identity().clone();
     let run_source = ClauseRunSource::Program {
@@ -39,7 +40,14 @@ pub(super) fn read(
         path: source.source().path().to_owned(),
         bytes: source.source().text().as_bytes().to_vec(),
     };
-    read_with_source(intake, request, clause, source_identity, run_source)
+    read_with_source(
+        intake,
+        request,
+        clause,
+        source_identity,
+        run_source,
+        observation_override,
+    )
 }
 
 #[cfg(feature = "quire-extraction")]
@@ -49,6 +57,7 @@ pub(super) fn read_extracted(
     clause: &wire::ClauseRun,
     source: FormalSource,
     extracted: fsl_source::ExtractedSource,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<ClauseRunRequest> {
     let source_identity = source.source().identity().clone();
     read_with_source(
@@ -57,6 +66,7 @@ pub(super) fn read_extracted(
         clause,
         source_identity,
         ClauseRunSource::Extracted(extracted),
+        observation_override,
     )
 }
 
@@ -66,7 +76,14 @@ fn read_with_source(
     clause: &wire::ClauseRun,
     source_identity: SourceIdentity,
     source: ClauseRunSource,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<ClauseRunRequest> {
+    if observation_override.is_some() && clause.observation_limits.is_some() {
+        return Err(invalid(
+            "observation_limits",
+            "request member and RequestOverrides::observation were both supplied",
+        ));
+    }
     if request
         .models
         .iter()
@@ -105,9 +122,13 @@ fn read_with_source(
             bytes: read.source().text().as_bytes().to_vec(),
         }))
         .map_err(|error| invalid("libraries", error.to_string()))?;
-    let observation_limits =
-        fsl_replay::spine::ObservationLimitsWire::resolve(clause.observation_limits.as_ref())
-            .map_err(|error| invalid(error.member, error.reason))?;
+    let observation_limits = match observation_override {
+        Some(limits) => limits,
+        None => {
+            fsl_replay::spine::ObservationLimitsWire::resolve(clause.observation_limits.as_ref())
+                .map_err(|error| invalid(error.member, error.reason))?
+        }
+    };
     let mut by_file = BTreeMap::<String, SuppliedObservation>::new();
     let mut observations = BTreeMap::new();
     for (key, file) in &clause.observations {

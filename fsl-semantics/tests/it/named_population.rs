@@ -10,7 +10,7 @@ use filament_exact::{
     CardinalityBound, CollectionKind, CollectionType, Identifier, IntegerInterval, ValueType,
 };
 use fsl_foundation::bound::{DomainKey, DomainKind};
-use fsl_semantics::check::{CheckedGraph, CheckedNode};
+use fsl_semantics::check::{BodyTerm, CheckedGraph, CheckedNode, LeafTerm, LiteralValue, NodeTag};
 use fsl_semantics::family::ClaimExtent;
 use fsl_semantics::model::clause_observation::Observation;
 use ix_trace_rs::trace;
@@ -491,45 +491,91 @@ fn a_protocol_slot_that_reads_model_state_names_a_population() {
 /// barred-slot occurrence stays pending at S3 rather than refusing.
 #[trace("TC-2834", "FR-1000-AC-2", "FSpec-TC-965", "FSpec-FR-480-AC-2")]
 #[test]
-#[ignore = "QSL-2166: S3 does not type a reference literal or keep it pending yet"]
 fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
-    let clause = |body: &str| format!("invariant R using v on M::Counter at current {{ {body} }}");
-    checked(false, &clause("self = M::Counter#\"a\""));
-    for (body, expected, at) in [
+    let protocol = |literal: &str| {
+        format!(
+            concat!(
+                "record Pick {{ target: Reference<M::Counter>; }}\n",
+                "protocol L using p over (c: M::Counter) on origin {{\n",
+                "role R on M::Counter;\nrole S on M::Counter;\n",
+                "channel ch from R to S carries Pick ordering unordered delivery ",
+                "exactly-once-premise capacity 2 overflow reject;\n",
+                "run sequence Main {{\n",
+                "send Go via ch as (go: Pick) {{ go.target = {literal} }};\n",
+                "receive Got via ch of Go as (got: Pick) {{ true }};\n",
+                "}}\n",
+                "finish Done as (d: Boolean) {{ true }};\n",
+                "}}"
+            ),
+            literal = literal
+        )
+    };
+    let check_protocol = |literal: &str| {
+        fixture::check_with_profiles(
+            false,
+            "profile p = \"filament.protocol.finite-global/v1\";",
+            &protocol(literal),
+        )
+    };
+    match check_protocol("M::Counter#\"a\"") {
+        Ok(_) => {}
+        Err(refusals) => panic!("a well-typed reference literal checks: {refusals:?}"),
+    }
+    for (literal, expected, at) in [
         (
-            "self = M::Nothing#\"a\"",
+            "M::Nothing#\"a\"",
             ("missing_declaration", "missing-name"),
-            "Nothing",
+            "M::Nothing#\"a\"",
         ),
+        ("M::Level#\"a\"", ("ill_typed", "type-mismatch"), "M::Level"),
         (
-            "self = M::Level#\"a\"",
-            ("ill_typed", "type-mismatch"),
-            "M::Level",
-        ),
-        (
-            "self = M::Counter#\"\"",
+            "M::Counter#\"\"",
             ("invalid_package", "invalid-value"),
             "\"\"",
         ),
     ] {
-        let (code, cause, text) = refused(false, &clause(body));
-        assert_eq!((code.as_str(), cause.as_str()), expected, "{body}");
-        assert_eq!(text, at, "{body}");
+        let refusals = match check_protocol(literal) {
+            Err(refusals) => refusals,
+            Ok(_) => panic!("{literal}: expected a refusal"),
+        };
+        let [refusal] = &refusals[..] else {
+            panic!("{literal}: expected one refusal, got {refusals:?}");
+        };
+        assert_eq!(
+            (refusal.code.as_str(), refusal.cause.as_str()),
+            expected,
+            "{literal}"
+        );
+        assert_eq!(refusal.at, at, "{literal}");
     }
-    checked(
+}
+
+/// FR-1000-AC-3 (TC-2834): S4 lowers aliases of one typed reference literal
+/// to the same reference-valued literal term.
+#[trace("TC-2834", "FR-1000-AC-3")]
+#[test]
+fn reference_literal_aliases_share_one_lowered_value_term() {
+    let checked = fixture::checked(
         false,
-        "profile p = \"filament.protocol.finite-global/v1\";\n\
-         record Pick { target: Reference<M::Counter>; }\n\
-         protocol L using p over (c: M::Counter) on origin {\n\
-         role R on M::Counter;\nrole S on M::Counter;\n\
-         channel ch from R to S carries Pick ordering unordered delivery \
-         exactly-once-premise capacity 2 overflow reject;\n\
-         run sequence Main {\n\
-         send Go via ch as (go: Pick) { true };\n\
-         receive Got via ch of Go as (got: Pick) { true };\n\
-         choice Decide by S visible (got.target) { \
-         case yes when { got.target = M::Counter#\"z\" } sequence Yes { } \
-         case no when { not (got.target = M::Counter#\"z\") } sequence No { } } }\n\
-         finish Done as (d: Boolean) { true };\n}",
+        "model N = \"test/counter\";\n\
+         function same_m using v(): Reference<M::Counter> pure { M::Counter#\"a\" }\n\
+         function same_n using v(): Reference<N::Counter> pure { N::Counter#\"a\" }",
     );
+    let matching: Vec<_> = checked
+        .graph
+        .semantic_graph()
+        .nodes()
+        .filter(|node| {
+            matches!(
+                node.body(),
+                BodyTerm::Leaf(LeafTerm::Literal {
+                    value: LiteralValue::Reference(value),
+                    ..
+                }) if value == "61"
+            )
+        })
+        .collect();
+    assert_eq!(matching.len(), 1, "one interned literal term");
+    assert_eq!(matching[0].node_tag(), NodeTag::Value);
+    assert_eq!(matching[0].semantic_form(), "literal");
 }

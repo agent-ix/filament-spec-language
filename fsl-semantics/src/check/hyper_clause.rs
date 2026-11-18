@@ -14,7 +14,7 @@
 //! abstraction-relation binding it also has a second requirement, the code
 //! claim.
 
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{CollectionKind, EffectiveId, Identifier, NodeKey, ValueType};
@@ -29,32 +29,32 @@ use fsl_forms::{
     QuantifierKind, SpanId, StepLabelForm, TemporalFormulaForm, TemporalNodeForm, TemporalOperator,
     TypeFormHead,
 };
+use fsl_foundation::Span;
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::{Code, StageFailure, Staged};
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::Span;
 
+use super::Scope;
 use super::abstraction::{AbstractionKey, CheckedAbstractionRelation, OperationKey};
 use super::check::{HyperTyping, Signatures, Typer};
 use super::ir::{CheckedBody, CheckedNode};
 use super::profile::TemporalProfile;
 use super::refusal::{CheckCause, CheckRefusal, Obligation, TemporalCause};
-use super::state_clause::{population_of, PopulationDomain};
+use super::state_clause::{PopulationDomain, population_of};
 use super::temporal_clause::FormulaNodeId;
 use super::temporal_clause::{
-    build_formula, checked_constraint, checked_operators, in_safety_fragment, CheckedFormula,
-    CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations,
+    CheckedFormula, CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations,
+    build_formula, checked_constraint, checked_operators, in_safety_fragment,
 };
-use super::Scope;
 use super::{AdmittedModel, Capability};
-use crate::family::requirements::{classify_domains, ClaimExtent, ClassifyFailure, Requirements};
+use crate::family::requirements::{ClaimExtent, ClassifyFailure, Requirements, classify_domains};
 use crate::family::{CheckContext, CheckOutcome, FamilyContract};
 use crate::model::operation::OperationLookup;
 
 pub(crate) mod emission;
 pub(crate) mod lowering;
 
-pub use lowering::{operation_text, AtomSlot, STUTTER_TEXT};
+pub use lowering::{AtomSlot, STUTTER_TEXT, operation_text};
 
 /// The stage name this module's faults report.
 const STAGE: &str = "check.hyper";
@@ -586,8 +586,10 @@ impl CheckedHyperClause {
         Some((condition.root(), condition.slots))
     }
 
-    /// The component (trace variable index, quantifier order) that each model
-    /// read of the atom `atom` reads, keyed by the read's location.
+    /// The component (trace variable index, quantifier order) selected by each
+    /// model read or indexed reference literal in the `holds` atom `atom`,
+    /// keyed by the checked node's location. Reference literals use this
+    /// mapping for subject-specific created-object lookup (W38).
     pub fn component_reads(&self, atom: FormulaNodeId) -> Option<&BTreeMap<Location, usize>> {
         self.atoms.get(&atom.index()).map(|atom| &atom.components)
     }
@@ -2131,6 +2133,12 @@ fn check_atom(
             ExprNode::Name(name) if parameter(&name.name).is_some() => {
                 touched.extend(around);
             }
+            ExprNode::ReferenceLiteral { .. } => {
+                // W38: an indexed reference literal is a component-bound
+                // constant or created-object lookup, not a model-member read.
+                // It still supplies the enclosing `@ trace` component.
+                touched.extend(around);
+            }
             other => {
                 let root_parameter = read_root(visit.node).and_then(parameter);
                 let reads_member = match other {
@@ -2407,6 +2415,7 @@ fn check_match(
                 | ExprNode::DecimalValue { .. }
                 | ExprNode::Quantity(_)
                 | ExprNode::String(_)
+                | ExprNode::ReferenceLiteral { .. }
                 | ExprNode::Binary { .. }
                 | ExprNode::Not(_)
                 | ExprNode::Negate(_)
@@ -2855,6 +2864,7 @@ fn is_opaque(node: &ExprNode) -> bool {
         | ExprNode::Lookup { .. }
         | ExprNode::Dispatch { .. }
         | ExprNode::Quantity(_)
+        | ExprNode::ReferenceLiteral { .. }
         | ExprNode::Power { .. }
         | ExprNode::Reaches { .. }
         | ExprNode::ProtocolReference { .. } => true,
@@ -3096,6 +3106,7 @@ fn leaf_payload(node: &ExprNode, swap: Swap<'_>) -> (Vec<u8>, Vec<u8>) {
             text_segment(&format!("{coefficient}e-{scale}")),
         ),
         ExprNode::Binary { .. }
+        | ExprNode::ReferenceLiteral { .. }
         | ExprNode::Quantity(_)
         | ExprNode::Power { .. }
         | ExprNode::Case(_)

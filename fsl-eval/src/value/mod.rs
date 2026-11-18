@@ -14,6 +14,7 @@ pub mod collections;
 pub mod composite;
 mod expression;
 pub(crate) use expression::evaluate_clause_set_with_cancel;
+pub(crate) use expression::evaluate_hyper_holds_with_component_bindings;
 
 /// FSpec FR-144 canonical key order of two map keys. Float keys use their
 /// membership identity's IEEE total order; integer and decimal keys use their
@@ -72,6 +73,8 @@ pub use expression::collection_write::{Provenance, WrittenCollection};
 pub use expression::post_targets::{PostTarget, PostTargets};
 pub(crate) use expression::{bare_post_targets, source_post_targets};
 pub(crate) use expression::evaluate_over_admitted_environment;
+pub(crate) use expression::evaluate_state_predicate_with_reference_bindings;
+pub(crate) use expression::evaluate_state_predicate_at_absent_key_with_reference_bindings;
 pub use expression::object_environment_refusal;
 pub use expression::{
     AdmittedEvaluationViewEvaluation, ApplicationObservation, ApplicationObservationOptions,

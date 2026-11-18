@@ -206,6 +206,9 @@ fn show(expression: ExprRef<'_>) -> String {
             )
         }
         ExprNode::String(literal) => format!("string({:?})", literal.text()),
+        ExprNode::ReferenceLiteral { type_name, key, .. } => {
+            format!("ReferenceLiteral[{}, {:?}]", type_name.name, key.text())
+        }
         ExprNode::Name(spelling) => spelling.name.clone(),
         ExprNode::Let { name, .. } => format!("Let[{name}]"),
         ExprNode::If { .. } => "If".into(),
