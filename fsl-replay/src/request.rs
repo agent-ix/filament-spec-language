@@ -16,8 +16,9 @@ use filament_exact::ScalarLimits;
 
 use crate::bounds::{BoundExceeded, ReplayLimits};
 use crate::identity::{
-    DeclaredDomain, DefinitionSourceRef, ObligationIdentity, ProfileSelection, SourceRefWire,
+    DeclaredDomain, DefinitionSourceRef, ProfileSelection, SourceRefWire,
 };
+use fsl_package::ObligationIdentity;
 use crate::object_environment::ObjectEnvironmentRef;
 use crate::target::{
     ReplayOverBinding, ReplayTarget, RequestTargetWire, TargetMember, TargetSelectionRefusal,

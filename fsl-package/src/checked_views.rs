@@ -32,7 +32,7 @@ pub use subject::{
     FORMULA_VISITS,
 };
 
-use crate::{CheckedPackage, OccurrenceRefusal, RuntimeBindingRequirement};
+use crate::{OccurrenceRefusal, RuntimeBindingRequirement};
 
 /// The runtime subject kinds and their protocol declarations in `package`.
 ///
@@ -40,10 +40,9 @@ use crate::{CheckedPackage, OccurrenceRefusal, RuntimeBindingRequirement};
 /// schemas. It returns each requirement with its subject kind, subject node,
 /// and protocol scope; it does not create runtime identities or observations.
 pub fn subject_kinds(
-    package: &CheckedPackage,
+    package: &filament_contract_model::CheckedPackageV2,
 ) -> Result<Vec<RuntimeBindingRequirement>, OccurrenceRefusal> {
-    Ok(package
-        .protocol_occurrence_schemas()?
+    Ok(crate::protocol_occurrence_schemas_from_read(package)?
         .into_iter()
         .flat_map(|protocol| protocol.requirements)
         .collect())

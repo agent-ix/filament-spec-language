@@ -17,7 +17,7 @@ use serde_json::{json, Map, Value};
 
 use super::declaration::SlotRole;
 use super::json::{array, canonical_text, check_members, count, object, require, string, Fault};
-use crate::identity::ObligationIdentity;
+use fsl_package::ObligationIdentity;
 use crate::proof_result::child;
 
 /// FR-290's closed capability-kind vocabulary (`filament.capability-kind/v1`).
