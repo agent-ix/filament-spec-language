@@ -85,6 +85,7 @@ mod supplied_phases;
 mod tc235_business_meaning_runtime;
 mod temporal_activation;
 mod temporal_aggregate_precedence;
+mod temporal_capture_activations;
 mod temporal_causes;
 mod temporal_evidence;
 mod temporal_identity;

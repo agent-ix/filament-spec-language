@@ -280,6 +280,7 @@ pub(super) fn run_model(
                         node,
                         atom,
                         &observed.over,
+                        &[],
                         &observed.environment,
                         ObservationIdentity {
                             authority: observed.identity.authority,

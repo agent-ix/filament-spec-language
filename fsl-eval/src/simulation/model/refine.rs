@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 
 use filament_exact::ValueType;
 
-use super::domain::Domain;
+use super::domain::{Domain, Odometer};
 use super::walk::{exhausted, stop};
 use super::{
     encode, identity_limits, state_document, ClauseOutcome, ModelSimState, ModelSystem, BROKEN,
@@ -269,4 +269,134 @@ fn reading(outcome: &FamilyOutcome<Value>) -> Result<RowReading, ExpansionStop> 
     }
     // The probe-only variant is never built by a real evaluation.
     Err(stop(BROKEN))
+}
+
+impl<'a> ModelSystem<'a> {
+    /// This system with `states` as its initial states, in the order given,
+    /// each anchored as its paired anchor says. A refinement whose abstract
+    /// subject names no initial snapshots builds its abstract system this
+    /// way, from the states its mapping gives the concrete initial states
+    /// (FSL FR-630 "Request item"), not from snapshot documents.
+    #[must_use]
+    pub fn with_initial_states(
+        mut self,
+        states: impl IntoIterator<
+            Item = (
+                ModelState,
+                fsl_semantics::model::observation::SelectedAnchor,
+            ),
+        >,
+    ) -> Self {
+        self.initial = states
+            .into_iter()
+            .map(|(state, anchor)| ModelSimState {
+                state,
+                anchor,
+                reached_by: None,
+            })
+            .collect();
+        self
+    }
+}
+
+impl ModelSystem<'_> {
+    /// Every state that agrees with `visible` and gives each open `slot`
+    /// (population, object key, field) a value of its field's type, and
+    /// whose invariants and unit bounds all hold (FSL FR-630 "Request item":
+    /// hidden fields range over the values the abstract model's initial
+    /// constraint admits). An absent `?` field is one of the values. The
+    /// result is empty when no assignment satisfies the constraint.
+    ///
+    /// # Errors
+    ///
+    /// An [`ExpansionStop`] when a slot names no object or field of this
+    /// system, a field's type is not enumerable, the assignments exceed
+    /// the remaining `budget` of assignments (the caller's `max_candidates`,
+    /// shared by every call of one opening), or an evaluation stops.
+    pub fn complete_open_fields(
+        &self,
+        visible: &ModelState,
+        anchor: &fsl_semantics::model::observation::SelectedAnchor,
+        slots: &[(DeclarationKey, String, DeclarationKey)],
+        budget: &mut u128,
+    ) -> Result<Vec<ModelState>, ExpansionStop> {
+        let mut references = Vec::new();
+        for objects in visible.populations.values() {
+            for (key, object) in objects {
+                references.push(
+                    self.object_reference(&object.type_identity, key)
+                        .map_err(|_| stop(BROKEN))?,
+                );
+            }
+        }
+        let mut domains = Vec::new();
+        for (population, key, field) in slots {
+            let object = visible
+                .populations
+                .get(population)
+                .and_then(|objects| objects.get(key))
+                .ok_or_else(|| stop(BROKEN))?;
+            let declared = self
+                .fields
+                .get(&object.type_identity)
+                .and_then(|fields| fields.iter().find(|declared| declared.key == *field))
+                .ok_or_else(|| stop(BROKEN))?;
+            let domain = Domain::of(
+                &declared.value_type,
+                &references,
+                self.types,
+                &self.record_orders,
+            )
+            .ok_or_else(|| exhausted(ExpansionLimit::MaxCandidates))?;
+            domains.push((domain, declared.optional));
+        }
+        let radices: Vec<u128> = domains
+            .iter()
+            .map(|(domain, optional)| domain.len().saturating_add(u128::from(*optional)))
+            .collect();
+        let total = radices
+            .iter()
+            .try_fold(1u128, |total, radix| total.checked_mul(*radix));
+        match total {
+            Some(total) if total <= *budget => *budget -= total,
+            _ => return Err(exhausted(ExpansionLimit::MaxCandidates)),
+        }
+        let mut completed = Vec::new();
+        let mut assignments = Odometer::new(radices);
+        while let Some(digits) = assignments.next_digits() {
+            let mut state = visible.clone();
+            for (((population, key, field), (domain, optional)), digit) in
+                slots.iter().zip(&domains).zip(&digits)
+            {
+                let object = state
+                    .populations
+                    .get_mut(population)
+                    .and_then(|objects| objects.get_mut(key))
+                    .ok_or_else(|| stop(BROKEN))?;
+                // With an optional field, digit 0 is the absent value.
+                let index = if *optional {
+                    match digit.checked_sub(1) {
+                        Some(index) => index,
+                        None => {
+                            object.fields.remove(field);
+                            continue;
+                        }
+                    }
+                } else {
+                    *digit
+                };
+                let value = domain.nth(index).ok_or_else(|| stop(BROKEN))?;
+                object.fields.insert(field.clone(), value);
+            }
+            let candidate = ModelSimState {
+                state,
+                anchor: anchor.clone(),
+                reached_by: None,
+            };
+            if self.invariant_findings_at(&candidate)?.is_empty() {
+                completed.push(candidate.state);
+            }
+        }
+        Ok(completed)
+    }
 }
