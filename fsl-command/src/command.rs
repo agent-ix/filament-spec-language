@@ -780,13 +780,10 @@ pub enum RunCause {
         /// The name given.
         name: String,
     },
-    /// FR-931: a `tl_lowering` form this build does not run yet
-    /// (`unsupported_construct`/`not-yet-implemented`).
-    #[error("unsupported_construct/not-yet-implemented: {member} is not implemented yet")]
-    TlNotYetImplemented {
-        /// The request member the gap is in.
-        member: &'static str,
-    },
+    /// FR-931: the model subject builder refused the
+    /// `cross_evaluate.initial` snapshot (FR-120's admission refusals).
+    #[error("tl_lowering.cross_evaluate.initial is refused: {}/{}", .0.catalog.code(), .0.catalog.cause())]
+    TlSubject(Box<fsl_semantics::model::observation::AdmissionRecord>),
     /// FR-931: the lowering of a supported clause broke an invariant.
     #[error("the TL lowering faulted: {0}")]
     TlFault(String),
@@ -1006,7 +1003,9 @@ impl RunCause {
             Self::AnalyzeNotYetImplemented { .. } => Code::UnsupportedConstruct,
             Self::TlCorrespondence { .. } | Self::IntegerDivisionLaw { .. } => Code::UnknownProfile,
             Self::TlClause { .. } => Code::MissingDeclaration,
-            Self::TlNotYetImplemented { .. } => Code::UnsupportedConstruct,
+            Self::TlSubject(record) => {
+                Code::from_code(record.catalog.code()).unwrap_or(Code::InvalidRuntimeInput)
+            }
             Self::TlFault(_) => Code::RuntimeInvariant,
             Self::AnalyzeUniverse(
                 fsl_analyze::analyze::document::UniverseRefusal::Unprovisioned { .. },
@@ -1160,7 +1159,7 @@ impl RunError {
             | RunCause::TlCorrespondence { .. }
             | RunCause::IntegerDivisionLaw { .. }
             | RunCause::TlClause { .. }
-            | RunCause::TlNotYetImplemented { .. }
+            | RunCause::TlSubject(_)
             | RunCause::TlFault(_)
             | RunCause::ClocksGivenTwice
             | RunCause::OutputGivenTwice
@@ -2953,21 +2952,57 @@ fn prepare_lowering(
         });
     }
     let lowering = tl::decode(member)?;
-    if matches!(lowering.cross, Some(tl::CrossEvaluate::Initial)) {
-        return Err(RunCause::TlNotYetImplemented {
-            member: "tl_lowering.cross_evaluate.initial",
-        });
-    }
     let clause: wire::ClauseRun = serde_json::from_value(tl::selection(&lowering))?;
     let text = source.source().text().to_owned();
     let run = clause::read(intake, request, &clause, source)?;
+    let behaviours = match &lowering.cross {
+        Some(tl::CrossEvaluate::Initial { max_steps, .. }) => {
+            Some(initial_subject(&run, *max_steps)?)
+        }
+        Some(tl::CrossEvaluate::Trace { .. }) | None => None,
+    };
     let sources = crate::Sources::from_sources(intake.sources.iter().cloned());
     Ok(PreparedRun::TlLowering(Box::new(PreparedLowering {
         request: run,
         lowering,
+        behaviours,
         source: text,
         sources,
     })))
+}
+
+/// FR-931 `cross_evaluate.initial`: the snapshot the lowering's model
+/// subject is built from, and the longest behaviour. A universe is a
+/// complete population, so a population the snapshot marks incomplete
+/// refuses `incomplete_population` naming it, as FR-620 refuses a universe
+/// snapshot's.
+fn initial_subject(
+    run: &fsl_replay::spine::ClauseRunRequest,
+    max_steps: u64,
+) -> Result<(fsl_semantics::model::observation::DocumentRef, usize)> {
+    let mut snapshots = run.snapshots.keys();
+    let (Some(initial), None) = (snapshots.next(), snapshots.next()) else {
+        return Err(RunCause::ClauseRequest {
+            member: "tl_lowering.cross_evaluate.initial".to_owned(),
+            reason: "expected one snapshot file".to_owned(),
+        });
+    };
+    let reference =
+        serde_json::json!({"authority": initial.authority, "identity": initial.identity});
+    let subject: fsl_analyze::analyze::document::SubjectSelection =
+        serde_json::from_value(serde_json::json!({
+            "initial_states": [reference],
+            "universes": [reference],
+            "proof_bounds": [],
+        }))?;
+    subject
+        .check_universes(&run.snapshots)
+        .map_err(RunCause::AnalyzeUniverse)?;
+    let max_steps = usize::try_from(max_steps).map_err(|_| RunCause::ClauseRequest {
+        member: "tl_lowering.cross_evaluate.max_steps".to_owned(),
+        reason: "the step bound does not fit this platform".to_owned(),
+    })?;
+    Ok((initial.clone(), max_steps))
 }
 
 /// Prepare FR-100's function or clause selection without executing a stage.
@@ -3162,6 +3197,8 @@ fn prepare_complete_run(
 pub struct PreparedLowering {
     request: fsl_replay::spine::ClauseRunRequest,
     lowering: tl::TlLowering,
+    /// `cross_evaluate.initial`'s snapshot and longest behaviour.
+    behaviours: Option<(fsl_semantics::model::observation::DocumentRef, usize)>,
     source: String,
     sources: crate::Sources,
 }
@@ -3184,20 +3221,31 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
     let PreparedLowering {
         request,
         lowering,
+        behaviours,
         source,
         sources,
     } = prepared;
     let selection = request.selection.clone();
-    let report = fsl_replay::spine::run_temporal_valuation(request).map_err(|error| {
-        RunCause::ClauseRequest {
-            member: "tl_lowering".to_owned(),
-            reason: error.to_string(),
+    let report = match &behaviours {
+        Some((initial, max_steps)) => {
+            fsl_replay::spine::run_temporal_behaviours(request, initial, *max_steps)
         }
+        None => fsl_replay::spine::run_temporal_valuation(request),
+    }
+    .map_err(|error| RunCause::ClauseRequest {
+        member: "tl_lowering".to_owned(),
+        reason: error.to_string(),
     })?;
     let valuation = match &report.disposition {
         fsl_replay::spine::ClauseDisposition::TemporalValuation(valuation) => valuation,
         fsl_replay::spine::ClauseDisposition::MissingName { name } => {
             return Err(RunCause::TlClause { name: name.clone() });
+        }
+        // FR-931: a snapshot the subject builder refuses refuses the request.
+        fsl_replay::spine::ClauseDisposition::Admit(
+            fsl_semantics::model::observation::AdmissionFailure::Refused(record),
+        ) if behaviours.is_some() => {
+            return Err(RunCause::TlSubject(record.clone()));
         }
         _ => return output::clause_report(report, &selection),
     };

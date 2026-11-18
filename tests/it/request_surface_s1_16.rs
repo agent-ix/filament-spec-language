@@ -972,21 +972,17 @@ fn tla_export_agrees_with_fsl_exploration() {
 #[test]
 #[trace("TC-2107", "FR-757-AC-2")]
 #[trace("TC-2107", "FR-757-AC-3")]
-#[ignore = "QSL-2147: cross_evaluate.initial (behaviour enumeration) is not implemented yet"]
 fn tl_cross_evaluation_agrees_and_timed_clauses_do_not_lower() {
-    let unit = "language \"ix:native\" edition \"1-draft\";\n\
-         profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
-         model Config = \"example/config-version\";\n\
-         temporal Low using t over (c: Config::ConfigVersion) clock \"model-steps\" \
-         on origin { always [0, 3] holds(c.versionNumber <= 2) }\n";
-    let (_, value) = run(
-        unit,
-        true,
-        (
-            "tl_lowering",
-            json!({"clause": "Low",
-        "cross_evaluate": {"initial": "spine-snapshot.json", "max_steps": 4}}),
-        ),
+    // The corpus is every behaviour of up to 4 steps of FR-931-AC-6's
+    // two-object `bump` snapshot: `Low` holds on some and is violated on
+    // those that reach `versionNumber` 3. The spine snapshot is anchored at
+    // the handler `validate`, which FR-120 refuses as an initial state.
+    let (code, value) = cross_from(&bump_low(), &["a", "b"], true, 4);
+    assert_eq!(code, 0, "{value}");
+    let cross = &value["tl_lowering"]["cross_evaluation"];
+    assert!(
+        cross["traces"].as_u64().expect("a trace count") > 1,
+        "{value}"
     );
     assert_eq!(
         value["tl_lowering"]["cross_evaluation"]["faults"],
@@ -1264,25 +1260,15 @@ fn a_malformed_tl_lowering_member_is_refused() {
     refusal_names(&value, "tl_lowering.clause");
 }
 
-/// FR-931-AC-4: cross-evaluation agrees on the spine's behaviours.
+/// FR-931-AC-4: cross-evaluation agrees on the behaviours of AC-6's snapshot.
 #[test]
 #[trace("TC-2603", "FR-931-AC-4")]
-#[ignore = "QSL-2147: FR-931-AC-4 cross-evaluation from AC-6's initialization-anchored two-version snapshot over versionNumber Int[0, 3] with max_steps 2 not implemented yet"]
-fn tl_cross_evaluation_agrees_on_the_spine_behaviours() {
-    let unit = low(EVENT_POSITION, LOW_BODY);
-    let (code, value) = run(
-        &unit,
-        true,
-        (
-            "tl_lowering",
-            json!({"clause": "Low",
-                "cross_evaluate": {"initial": "spine-snapshot.json", "max_steps": 4}}),
-        ),
-    );
+fn tl_cross_evaluation_agrees_on_the_snapshot_behaviours() {
+    let (code, value) = cross_from(&bump_low(), &["a", "b"], true, 2);
     assert_eq!(code, 0, "{value}");
     let cross = &value["tl_lowering"]["cross_evaluation"];
     let traces = cross["traces"].as_u64().expect("a trace count");
-    assert!(traces >= 1, "{value}");
+    assert!(traces >= 2, "{value}");
     assert!(cross["positions"].as_u64().expect("a position count") >= traces);
     assert_eq!(cross["agree"], true);
     assert_eq!(cross["faults"], json!([]));
@@ -1327,19 +1313,13 @@ fn only_fsl_command_names_the_tl_crates() {
 /// steps as its own closed trace, so the trace count grows with `max_steps`.
 #[test]
 #[trace("TC-2962", "FR-931-AC-6")]
-#[ignore = "QSL-2147: cross_evaluate.initial instance enumeration and closed-trace reading are not implemented yet"]
 fn tl_cross_evaluation_reads_each_behaviour_as_a_closed_trace() {
-    let unit = low(EVENT_POSITION, LOW_BODY);
+    // FR-931-AC-6's snapshot `S` (objects `a` and `b`, the model stepping
+    // `bump`), not the spine snapshot: that one is anchored at the handler
+    // `validate`, which FR-120 refuses as an initial state.
+    let unit = bump_low();
     let traces = |max_steps: u64| {
-        let (code, value) = run(
-            &unit,
-            true,
-            (
-                "tl_lowering",
-                json!({"clause": "Low",
-                    "cross_evaluate": {"initial": "spine-snapshot.json", "max_steps": max_steps}}),
-            ),
-        );
+        let (code, value) = cross_from(&unit, &["a", "b"], true, max_steps);
         assert_eq!(code, 0, "{value}");
         let cross = &value["tl_lowering"]["cross_evaluation"];
         assert_eq!(cross["agree"], true, "{value}");
@@ -1357,7 +1337,6 @@ fn tl_cross_evaluation_reads_each_behaviour_as_a_closed_trace() {
 /// FR-931-AC-7 (negative): `over` beside `initial` refuses naming it.
 #[test]
 #[trace("TC-2962", "FR-931-AC-7")]
-#[ignore = "QSL-2147: cross_evaluate.initial refusals are not implemented yet"]
 fn tl_cross_evaluation_refuses_over_beside_initial() {
     let unit = low(EVENT_POSITION, LOW_BODY);
     let (code, value) = run(
@@ -1371,4 +1350,220 @@ fn tl_cross_evaluation_refuses_over_beside_initial() {
     );
     assert_eq!(code, 20, "{value}");
     refusal_names(&value, "tl_lowering.cross_evaluate.over");
+}
+
+/// FR-931-AC-6's unit: `Low` beside a postcondition that makes the model's
+/// one operation step `versionNumber + 1` (`bump`) up to its bound 3.
+fn bump_low() -> String {
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         profile t = \"{EVENT_POSITION}\";\n\
+         model Config = \"example/config-version\";\n\
+         post Bump using v on Config::ConfigVersion::attemptUpdate {{ \
+         pre(self.versionNumber) < 3 and self.versionNumber = pre(self.versionNumber) + 1 }}\n\
+         temporal Low using t over (c: Config::ConfigVersion) clock \"model-steps\" \
+         on origin {{ {LOW_BODY} }}\n"
+    )
+}
+
+/// The spine snapshot with the population `complete` as given and holding
+/// one object of `versionNumber` 0 and no parent per key of `keys`.
+fn snapshot_of(directory: &Path, keys: &[&str], complete: bool) -> Value {
+    let bytes = std::fs::read(directory.join("spine-snapshot.json")).unwrap();
+    let mut snapshot: Value = serde_json::from_slice(&bytes).unwrap();
+    // FR-120: an initial state is a snapshot anchored at an initialization.
+    snapshot["anchor"] = json!({"kind": "initialization", "name": "start"});
+    let population = &mut snapshot["populations"][0];
+    let template = population["objects"][0].clone();
+    population["complete"] = json!(complete);
+    population["objects"] = keys
+        .iter()
+        .map(|key| {
+            let mut object = template.clone();
+            object["key"] = json!(key);
+            object["fields"]["versionNumber"] = json!({"integer": "0"});
+            object["fields"]["parent"] = json!({"absent": {}});
+            object
+        })
+        .collect();
+    snapshot
+}
+
+/// Cross-evaluates `unit`'s `Low` from the snapshot `snapshot_of(keys,
+/// complete)` written as `s.json`, with `max_steps`. The ConfigVersion model
+/// is narrowed to `versionNumber: Int[0, 3]`: FR-120 enumerates every
+/// object's modified field, so two objects over `Int[0, 1000]` give 1001^2
+/// candidates per application, past the default `max_candidates`.
+fn cross_from(unit: &str, keys: &[&str], complete: bool, max_steps: u64) -> (u8, Value) {
+    let directory = bump_directory(unit, keys, complete);
+    write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0",
+                "source": source("spine-model.semantic-ir.json")}],
+            "program": {"source": source("unit.native")},
+            "tl_lowering": {"clause": "Low",
+                "cross_evaluate": {"initial": "s.json", "max_steps": max_steps}}}}),
+    )
+}
+
+/// The spine files with the model narrowed to `versionNumber: Int[0, 3]`,
+/// `unit` as `unit.native` and `snapshot_of(keys, complete)` as `s.json`.
+fn bump_directory(unit: &str, keys: &[&str], complete: bool) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let model = directory.path().join("spine-model.semantic-ir.json");
+    let narrowed = std::fs::read_to_string(&model)
+        .unwrap()
+        .replace("\"value\": \"1000\"", "\"value\": \"3\"");
+    assert!(!narrowed.contains("\"1000\""), "the bound is narrowed");
+    std::fs::write(&model, narrowed).unwrap();
+    let snapshot = snapshot_of(directory.path(), keys, complete);
+    std::fs::write(
+        directory.path().join("s.json"),
+        serde_json::to_vec(&snapshot).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    directory
+}
+
+/// FR-931 "Cross-evaluation": a work-budget stop during enumeration reports
+/// the counts reached and exits 22, never a correspondence loss (exit 30),
+/// wherever the budget runs out: at an expansion, inside the subject's own
+/// clause evaluation, or inside the native evaluator of a trace. The
+/// request has no budget member, so the run is driven through the library
+/// entry (`run_temporal_behaviours`, `tl_record`) under each `work_units`
+/// bound from 1 to 200; an unbounded run completes.
+#[test]
+#[trace("TC-2962", "FR-931-AC-6")]
+fn a_work_budget_stop_during_enumeration_exits_incomplete() {
+    // `on each`: the last activation is evaluated after the last row is read,
+    // so a budget can run out inside the evaluator there.
+    let unit = bump_low().replace("on origin", "on each (d: Config::ConfigVersion)");
+    let directory = bump_directory(&unit, &["a", "b"], true);
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0",
+            "source": source("spine-model.semantic-ir.json")}],
+        "program": {"source": source("unit.native")},
+        "clause": {"selection": {"temporal": {"name": "Low", "trace": {"finite": []}}},
+            "observations": {"initial": "s.json"}}}});
+    let path = directory.path().join("budget.json");
+    std::fs::write(&path, request.to_string()).unwrap();
+    let run = |work_units: u64| {
+        let mut clause_run =
+            fsl_command::command::read_clause_run_request(&path).expect("a clause run");
+        clause_run.accounting.work_units = work_units;
+        let initial = clause_run
+            .snapshots
+            .keys()
+            .next()
+            .expect("the snapshot")
+            .clone();
+        let report = fsl_replay::spine::run_temporal_behaviours(clause_run, &initial, 2)
+            .expect("a report");
+        let fsl_replay::spine::ClauseDisposition::TemporalValuation(valuation) =
+            &report.disposition
+        else {
+            panic!("a valuation: {:?}", report.disposition);
+        };
+        fsl_command::command::tl_record(
+            valuation,
+            &unit,
+            None,
+            &fsl_command::command::AtomMapping::default(),
+        )
+        .expect("the clause lowers")
+    };
+    let full = run(u64::MAX);
+    assert_eq!(full.exit_code, 0, "{}", full.record);
+    let complete = full.record["cross_evaluation"]["traces"].clone();
+    // Every bound from 1 up: the low ones stop at the subject's own clause
+    // evaluation, then at the trace reads, then inside the evaluator at an
+    // `on each` activation, each an incomplete run.
+    for work_units in 1..=200 {
+        let record = run(work_units);
+        let cross = &record.record["cross_evaluation"];
+        assert_ne!(record.exit_code, 30, "{work_units}: {}", record.record);
+        assert_eq!(cross["faults"], json!([]), "{work_units}: {}", record.record);
+        assert_eq!(record.exit_code, 22, "{work_units}: {}", record.record);
+        assert!(
+            cross["traces"].as_u64() < complete.as_u64(),
+            "{}",
+            record.record
+        );
+    }
+}
+
+/// FR-931-AC-6: from a snapshot of `a` and `b` whose model steps `bump`, the
+/// run evaluates both instances and each behaviour of 1 and of 2 steps as its
+/// own closed trace: `traces` is 2 (the instances) times the 1- and 2-step
+/// paths, and every trace compares at least its activation position.
+#[test]
+#[trace("TC-2962", "FR-931-AC-6")]
+fn tl_cross_evaluation_enumerates_instances_and_behaviours_of_a_snapshot() {
+    let unit = bump_low();
+    let cross = |max_steps: u64| {
+        let (code, value) = cross_from(&unit, &["a", "b"], true, max_steps);
+        assert_eq!(code, 0, "{value}");
+        let cross = value["tl_lowering"]["cross_evaluation"].clone();
+        assert_eq!(cross["agree"], true, "{value}");
+        assert_eq!(cross["faults"], json!([]), "{value}");
+        cross
+    };
+    // FR-120's successors of `(a, b)`: for each receiver below 3, the
+    // receiver bumped and the other object's `versionNumber` (in the frame
+    // `modifies [versionNumber]`, unconstrained by `Bump`) each of 0 to 3.
+    let successors = |(a, b): (u64, u64)| {
+        let mut next = Vec::new();
+        for other in 0..=3 {
+            if a < 3 {
+                next.push((a + 1, other));
+            }
+            if b < 3 {
+                next.push((other, b + 1));
+            }
+        }
+        next
+    };
+    let one_step = successors((0, 0));
+    let two_step: usize = one_step.iter().map(|state| successors(*state).len()).sum();
+    let paths = |steps: u64| match steps {
+        1 => one_step.len(),
+        _ => one_step.len() + two_step,
+    };
+    for max_steps in [1, 2] {
+        let cross = cross(max_steps);
+        let traces = cross["traces"].as_u64().expect("a trace count");
+        // Two instances, `a` then `b`, each reading every path; a 1-step
+        // behaviour is a trace of its own beside its 2-step extensions.
+        assert_eq!(
+            traces,
+            2 * u64::try_from(paths(max_steps)).unwrap(),
+            "{cross}"
+        );
+        assert!(cross["positions"].as_u64().expect("a position count") >= traces);
+    }
+}
+
+/// FR-931-AC-7: an incomplete population refuses `incomplete_population`
+/// naming it, exit 20; an empty population gives zero traces and zero
+/// positions, exit 0.
+#[test]
+#[trace("TC-2962", "FR-931-AC-7")]
+fn tl_cross_evaluation_refuses_an_incomplete_universe_and_counts_an_empty_one() {
+    let unit = bump_low();
+    let (code, value) = cross_from(&unit, &["a"], false, 2);
+    // `incomplete_population` is the incomplete row, exit 22 (ADR-029 CB-4).
+    assert_eq!(code, 22, "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    refusal_names(&value, "incomplete_population");
+    refusal_names(&value, "config_history");
+    let (code, value) = cross_from(&unit, &[], true, 2);
+    assert_eq!(code, 0, "{value}");
+    let cross = &value["tl_lowering"]["cross_evaluation"];
+    assert_eq!(cross["traces"], 0, "{value}");
+    assert_eq!(cross["positions"], 0, "{value}");
+    assert_eq!(cross["agree"], true, "{value}");
 }

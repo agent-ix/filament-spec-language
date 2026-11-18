@@ -15,6 +15,7 @@
 //! probabilistic structure of a state's successors.
 
 mod application;
+mod behaviours;
 mod cells;
 mod constraint;
 mod contract;
@@ -29,6 +30,7 @@ pub use input::{
 };
 mod key_budget;
 mod letters;
+pub use behaviours::{model_behaviours, BehaviourState, BehavioursEnd};
 pub use key_budget::{ModelKeyBudget, ModelKeyError, ModelKeyExpansionError};
 pub(crate) mod probabilistic;
 mod refine;

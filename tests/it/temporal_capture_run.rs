@@ -365,3 +365,27 @@ fn monitored(directory: &Path, name: &str, levels: &[i64]) -> Value {
     }
     status
 }
+
+/// FR-860-AC-4, FR-337 "Captures": a possibly-zero `mod` written in a
+/// capture's initializer is an `unproved-nonzero` obligation that S3 refuses
+/// under Linked (FR-495-AC-3), because a declared clause is always checked
+/// Linked; the run refuses at compile, exit 20, never at run time.
+#[test]
+#[trace("TC-2440", "FR-860-AC-4")]
+fn a_possibly_zero_mod_in_a_capture_is_refused_at_check() {
+    let directory = tempfile::tempdir().unwrap();
+    let inline = "temporal DivInline using e over (r: Reading) clock \"events\" on origin \
+         { capture m: Integer = 3 mod (2 - r.level); always[0,1] holds(m >= 0) }\n";
+    let refused = run_with(
+        directory.path(),
+        inline,
+        "DivInline",
+        json!({"finite": moving(&[0, 2])}),
+    );
+    assert_eq!(refused.status.code(), Some(20));
+    let document: Value = serde_json::from_slice(&refused.stdout).expect("a result document");
+    let refusal = &document["disposition"]["refusal"];
+    assert_eq!(document["disposition"]["stage"], "compile", "{document}");
+    assert_eq!(refusal["code"], "undefined_expression", "{document}");
+    assert_eq!(refusal["cause"], "unproved-nonzero", "{document}");
+}
