@@ -1109,44 +1109,103 @@ impl RecordWire<ElementSlot> {
         elements: &mut Elements,
     ) -> Result<SeparatingWitnessRecord, CauseCodecError> {
         let deciding_element = take(elements, self.deciding_element)?;
-        let (quantifier, index) = match &deciding_element {
-            // A record naming a deciding quantifier is a collection
-            // quantifier's family, which assigns an index (FSpec FR-351).
-            DecidingElement::Value(_) => (
-                Some(
-                    self.quantifier
-                        .ok_or(CauseCodecError::Shape("quantifier"))?
-                        .read()?,
-                ),
-                Some(self.index.ok_or(CauseCodecError::MissingIndex)?),
-            ),
-            // A protocol family has no quantifier occurrence and assigns no
-            // index, and always names a trace position (FSpec FR-351,
-            // ADR-036 PA-24).
-            DecidingElement::Protocol(_) => {
-                if self.quantifier.is_some() {
-                    return Err(CauseCodecError::Shape("quantifier"));
+        let (quantifier, deciding_comparison, operands, decision_path, index) =
+            match &deciding_element {
+                DecidingElement::Value(_) if self.deciding_comparison.is_some() => {
+                    if self.quantifier.is_some() {
+                        return Err(CauseCodecError::Shape("quantifier"));
+                    }
+                    if self.index.is_some() {
+                        return Err(CauseCodecError::Shape("index"));
+                    }
+                    let comparison = self
+                        .deciding_comparison
+                        .take()
+                        .ok_or(CauseCodecError::Shape("deciding_comparison"))?
+                        .read()?;
+                    let operands = decode_operands(
+                        self.operands
+                            .take()
+                            .ok_or(CauseCodecError::Shape("operands"))?,
+                        keys,
+                    )?;
+                    let path = self
+                        .decision_path
+                        .take()
+                        .ok_or(CauseCodecError::Shape("decision_path"))?
+                        .into_iter()
+                        .map(OccurrenceWire::read)
+                        .collect::<Result<Vec<_>, _>>()?;
+                    (None, Some(comparison), Some(operands), Some(path), None)
                 }
-                if self.index.is_some() {
-                    return Err(CauseCodecError::Shape("index"));
+                // A record naming a deciding quantifier is a collection
+                // quantifier's family, which assigns an index (FSpec FR-351).
+                DecidingElement::Value(_) => {
+                    if self.operands.is_some() || self.decision_path.is_some() {
+                        return Err(CauseCodecError::Shape("deciding_comparison"));
+                    }
+                    (
+                        Some(
+                            self.quantifier
+                                .ok_or(CauseCodecError::Shape("quantifier"))?
+                                .read()?,
+                        ),
+                        None,
+                        None,
+                        None,
+                        Some(self.index.ok_or(CauseCodecError::MissingIndex)?),
+                    )
                 }
-                if self.trace_position.is_none() {
-                    return Err(CauseCodecError::Shape("trace_position"));
+                // A protocol family has no quantifier occurrence and assigns no
+                // index, and always names a trace position (FSpec FR-351,
+                // ADR-036 PA-24).
+                DecidingElement::Protocol(_) => {
+                    if self.quantifier.is_some() {
+                        return Err(CauseCodecError::Shape("quantifier"));
+                    }
+                    if self.index.is_some() {
+                        return Err(CauseCodecError::Shape("index"));
+                    }
+                    if self.trace_position.is_none() {
+                        return Err(CauseCodecError::Shape("trace_position"));
+                    }
+                    if self.deciding_comparison.is_some()
+                        || self.operands.is_some()
+                        || self.decision_path.is_some()
+                    {
+                        return Err(CauseCodecError::Shape("deciding_comparison"));
+                    }
+                    (None, None, None, None, None)
                 }
-                (None, None)
-            }
-        };
+            };
         Ok(SeparatingWitnessRecord {
             quantifier,
-            deciding_comparison: None,
-            operands: None,
-            decision_path: None,
+            deciding_comparison,
+            operands,
+            decision_path,
             deciding_element,
             index,
             value_path: self.value_path.read(keys)?,
             trace_position: self.trace_position.map(TracePosition::new),
         })
     }
+}
+
+fn decode_operands(
+    values: Vec<Box<RawValue>>,
+    keys: Keys<'_>,
+) -> Result<[Value; 2], CauseCodecError> {
+    let [left, right] = values.as_slice() else {
+        return Err(CauseCodecError::Shape("operands"));
+    };
+    let left = quire_canonical::read(left.get().as_bytes(), u64::MAX)
+        .map_err(|_| CauseCodecError::Shape("operands"))?;
+    let right = quire_canonical::read(right.get().as_bytes(), u64::MAX)
+        .map_err(|_| CauseCodecError::Shape("operands"))?;
+    Ok([
+        decode_element(left.root(), keys)?,
+        decode_element(right.root(), keys)?,
+    ])
 }
 
 /// FR-283's `decisive` member of a temporal violation's monitor record and

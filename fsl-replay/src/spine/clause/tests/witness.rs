@@ -144,6 +144,22 @@ fn witness_unit() -> Unit {
     unit_for(witness_unit_text(), config_version_domain_document())
 }
 
+fn comparison_witness_unit() -> Unit {
+    let unit = witness_unit_text()
+        .lines()
+        .filter(|line| {
+            !line.starts_with("invariant FloatOrder")
+                && !line.starts_with("invariant FloatNot")
+                && !line.starts_with("invariant FloatLet")
+                && !line.starts_with("invariant FloatOrOperand")
+                && !line.starts_with("invariant FloatAndOperand")
+                && !line.starts_with("invariant FloatImpliesOperand")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    unit_for(unit, config_version_domain_document())
+}
+
 #[trace("FR-003-AC-9")]
 #[test]
 fn private_witness_and_codec_sources_keep_format_identity() {
@@ -2966,7 +2982,7 @@ fn tc_1040_the_elements_of_a_built_list_are_read_at_their_index() {
 #[trace("FSpec-TC-2014", "FSpec-FR-351-AC-9")]
 #[test]
 fn tc_2981_a_path_ending_at_a_comparison_records_the_comparison_and_its_operands() {
-    let unit = witness_unit();
+    let unit = comparison_witness_unit();
     let Some(Derived {
         basis: SettlementBasis::DecisiveCounterexample,
         record: Some(record),
@@ -2974,19 +2990,33 @@ fn tc_2981_a_path_ending_at_a_comparison_records_the_comparison_and_its_operands
     else {
         panic!("MatchesParent over high ends at its `=` and is decisive");
     };
-    let text = format!("{record:?}");
-    assert!(text.contains("deciding_comparison"), "{text}");
-    assert!(text.contains("operands"), "{text}");
-    assert!(text.contains("decision_path"), "{text}");
-    assert!(text.contains("600"), "{text}");
+    let equality = occurrence(&unit, "MatchesParent", &[1], Operator::Binary);
+    assert_eq!(record.deciding_comparison, Some(equality.clone()));
+    assert_eq!(record.operands, Some([integer(600), integer(0)]));
+    assert_eq!(
+        record.decision_path,
+        Some(vec![
+            occurrence(&unit, "MatchesParent", &[], Operator::Binary),
+            equality,
+        ])
+    );
+    assert_eq!(
+        record.deciding_element,
+        DecidingElement::Value(Value::Boolean(false))
+    );
+    assert!(record.quantifier.is_none() && record.index.is_none());
+    assert!(record.trace_position.is_none());
+    assert!(record.value_path.steps.is_empty());
+    assert_eq!(record.value_path.observation.identity, "high");
+    assert!(matches!(
+        &record.value_path.subject,
+        ValuePathSubject::Object(reference) if reference.object().as_str() == "mid"
+    ));
     assert!(
-        matches!(
-            derive(&unit, "AtLeastParent", Snapshot::High, "mid"),
-            Some(Derived {
-                basis: SettlementBasis::DecisiveWitness,
-                record: Some(_),
-            })
-        ),
+        matches!(derive(&unit, "AtLeastParent", Snapshot::High, "mid"), Some(Derived {
+            basis: SettlementBasis::DecisiveWitness,
+            record: Some(record),
+        }) if record.operands == Some([integer(600), integer(0)]) && record.deciding_element == DecidingElement::Value(Value::Boolean(true))),
         "AtLeastParent over high ends at its `>=` and is a decisive witness"
     );
     // With no parent the walk ends at `present(self.parent)`, a call.
