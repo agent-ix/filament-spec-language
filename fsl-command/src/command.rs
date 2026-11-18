@@ -1571,32 +1571,22 @@ fn run_configured(
             } else if let Some(result) = check_argv(directory, bytes)? {
                 Ok(Some(result))
             } else {
-                items::run_bytes(directory, bytes, limits, overrides, &settle)
+                if let Some(result) = items::run_bytes(directory, bytes, limits, overrides, &settle)? {
+                    Ok(Some(result))
+                } else {
+                    #[cfg(feature = "quire-extraction")]
+                    if let Some(result) =
+                        run_extracted_clause_bytes(directory, bytes, limits.dependent_bytes)?
+                    {
+                        return Ok(Some(result));
+                    }
+                    Ok(None)
+                }
             }
         }
     })?;
     if let Some(result) = special {
         return Ok(result);
-    }
-    #[cfg(feature = "quire-extraction")]
-    if request_has_extraction(path, limits.request_bytes)? {
-        let request = read_clause_run_request(path)?;
-        let selection = request.selection.clone();
-        let report = fsl_replay::spine::run_clause(request).map_err(|error| {
-            Box::new(RunError {
-                cause: RunCause::ClauseRequest {
-                    member: "clause".to_owned(),
-                    reason: error.to_string(),
-                },
-                sources: crate::Sources::default(),
-            })
-        })?;
-        return output::clause_report(report, &selection).map_err(|cause| {
-            Box::new(RunError {
-                cause,
-                sources: crate::Sources::default(),
-            })
-        });
     }
     let prepared = prepare_run_with_overrides(path, limits, overrides)?;
     let sources = prepared.admitted_sources();
@@ -1604,16 +1594,27 @@ fn run_configured(
 }
 
 #[cfg(feature = "quire-extraction")]
-fn request_has_extraction(
-    path: &Path,
-    request_bytes: usize,
-) -> std::result::Result<bool, Box<RunError>> {
-    with_request_limits(path, request_bytes, |_, bytes| {
-        let request: serde_json::Value = serde_json::from_slice(bytes).map_err(RunCause::Json)?;
-        Ok(request
-            .pointer("/request/program/extraction")
-            .is_some_and(|extraction| !extraction.is_null()))
-    })
+fn run_extracted_clause_bytes(
+    directory: &Path,
+    bytes: &[u8],
+    dependent_bytes: usize,
+) -> Result<Option<RunResult>> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(RunCause::Json)?;
+    if !value
+        .pointer("/request/program/extraction")
+        .is_some_and(|extraction| !extraction.is_null())
+    {
+        return Ok(None);
+    }
+    let request = read_clause_run_request_bytes(directory, bytes, Some(dependent_bytes))?;
+    let selection = request.selection.clone();
+    let report = fsl_replay::spine::run_clause(request).map_err(|error| {
+        RunCause::ClauseRequest {
+            member: "clause".to_owned(),
+            reason: error.to_string(),
+        }
+    })?;
+    output::clause_report(report, &selection).map(Some)
 }
 
 /// FR-661: handle the driver's in-process `version` invocation used by the
@@ -1861,63 +1862,72 @@ pub fn read_clause_run_request(
     path: &Path,
 ) -> std::result::Result<fsl_replay::spine::ClauseRunRequest, ClauseRunRequestRefusal> {
     with_request(path, |directory, bytes| {
-        let request: wire::Request = request(bytes)?;
-        #[cfg(feature = "quire-extraction")]
-        if request.program.extraction.is_some() && request.package.is_some() {
-            return Err(RunCause::ExtractionPackageConflict);
-        }
-        #[cfg(feature = "quire-extraction")]
-        if request.program.extraction.is_some() && request.program.clauses.len() != 1 {
-            return Err(RunCause::ExtractionClauseCount {
-                actual: request.program.clauses.len(),
-            });
-        }
-        let clause = request
-            .clause
-            .as_ref()
-            .ok_or_else(|| RunCause::ClauseRequest {
-                member: "clause".to_owned(),
-                reason: "missing clause run".to_owned(),
-            })?;
-        if request.call.is_some() {
-            return Err(RunCause::ClauseRequest {
-                member: "call".to_owned(),
-                reason: "call and clause are mutually exclusive".to_owned(),
-            });
-        }
-        let mut intake = intake(
-            directory,
-            FileCounts {
-                programs: request.libraries.len().saturating_add(1),
-                models: request.models.len(),
-                observations: clause
-                    .observations
-                    .values()
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .len(),
-                extensions: request.extensions.len(),
-            },
-        )?;
-        reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
-        let source = intake.source(&request.program.source, "program.source")?;
-        #[cfg(feature = "quire-extraction")]
-        if let Some(extraction) = &request.program.extraction {
-            let _body_identity = (
-                &extraction.body.authority,
-                &extraction.body.identity,
-                &extraction.body.document,
-            );
-            let binding = &request.program.clauses[0];
-            let _clause_id = &binding.clause;
-            fsl_source::clause_context(&binding.package, source.source())
-                .map_err(|diagnostics| RunCause::InvalidQuireContext { diagnostics })?;
-        } else {
-            require_complete_edition(source.source())?;
-        }
-        #[cfg(not(feature = "quire-extraction"))]
-        require_complete_edition(source.source())?;
-        clause::read(&mut intake, &request, clause, source)
+        read_clause_run_request_bytes(directory, bytes, None)
     })
+}
+
+fn read_clause_run_request_bytes(
+    directory: &Path,
+    bytes: &[u8],
+    dependent_bytes: Option<usize>,
+) -> Result<fsl_replay::spine::ClauseRunRequest> {
+    let request: wire::Request = request(bytes)?;
+    #[cfg(feature = "quire-extraction")]
+    if request.program.extraction.is_some() && request.package.is_some() {
+        return Err(RunCause::ExtractionPackageConflict);
+    }
+    #[cfg(feature = "quire-extraction")]
+    if request.program.extraction.is_some() && request.program.clauses.len() != 1 {
+        return Err(RunCause::ExtractionClauseCount {
+            actual: request.program.clauses.len(),
+        });
+    }
+    let clause = request
+        .clause
+        .as_ref()
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: "clause".to_owned(),
+            reason: "missing clause run".to_owned(),
+        })?;
+    if request.call.is_some() {
+        return Err(RunCause::ClauseRequest {
+            member: "call".to_owned(),
+            reason: "call and clause are mutually exclusive".to_owned(),
+        });
+    }
+    let counts = FileCounts {
+        programs: request.libraries.len().saturating_add(1),
+        models: request.models.len(),
+        observations: clause
+            .observations
+            .values()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        extensions: request.extensions.len(),
+    };
+    let mut intake = match dependent_bytes {
+        Some(maximum) => intake_with_bytes(directory, counts, maximum)?,
+        None => intake(directory, counts)?,
+    };
+    reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
+    let source = intake.source(&request.program.source, "program.source")?;
+    #[cfg(feature = "quire-extraction")]
+    if let Some(extraction) = &request.program.extraction {
+        let _body_identity = (
+            &extraction.body.authority,
+            &extraction.body.identity,
+            &extraction.body.document,
+        );
+        let binding = &request.program.clauses[0];
+        let _clause_id = &binding.clause;
+        fsl_source::clause_context(&binding.package, source.source())
+            .map_err(|diagnostics| RunCause::InvalidQuireContext { diagnostics })?;
+    } else {
+        require_complete_edition(source.source())?;
+    }
+    #[cfg(not(feature = "quire-extraction"))]
+    require_complete_edition(source.source())?;
+    clause::read(&mut intake, &request, clause, source)
 }
 
 /// Compile a `1-draft` source-only job through the spine (FR-027).
