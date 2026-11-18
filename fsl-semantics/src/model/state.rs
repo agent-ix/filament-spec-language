@@ -359,6 +359,23 @@ impl StateModel {
         )
     }
 
+    /// FR-940: the population domains of the selected domain packages whose
+    /// member types overlap `object`, as S3 reads them for a temporal
+    /// clause's claim over `object` (FR-336), before the unit's authored
+    /// bounds (FR-380) are applied.
+    pub fn overlapping_populations(
+        &self,
+        object: filament_exact::EffectiveId,
+    ) -> Vec<crate::check::PopulationDomain> {
+        let models: Vec<crate::check::lowering::AdmittedModel> = self
+            .views
+            .iter()
+            .filter(|view| !view.is_source())
+            .map(|view| crate::check::lowering::AdmittedModel::from_view(&view.view))
+            .collect();
+        crate::check::state_clause::populations_overlapping(&models, object, &self.types)
+    }
+
     /// Re-admit and re-normalize the domain packages `model_selections` name
     /// against `packages`, as FR-106 admission does.
     ///

@@ -136,7 +136,7 @@ mod ir;
 mod key_order;
 pub use key_order::node_keys_within;
 mod layer;
-mod lowering;
+pub(crate) mod lowering;
 pub(crate) use assemble::variant_type_declarations;
 pub(crate) use lowering::record_node_key;
 pub use lowering::{protocol_site, ProtocolSite, RelatedSide};
@@ -163,7 +163,7 @@ mod refusal;
 mod region;
 mod settings;
 mod source_model;
-mod state_clause;
+pub(crate) mod state_clause;
 mod state_graph_claim;
 mod state_model;
 mod step_simulation;
@@ -543,6 +543,7 @@ pub use temporal_clause::{
     TemporalDeclarations, TemporalSelection, TemporalTraceFamily, TimeNominalForm, TimeNominalNode,
     TimeNominalOrigin, TimeSourceKind, TimedPropertyForm, UnaryTemporal, DEFAULT_CLOCK_ROLE,
 };
+pub use temporal_clause::{PackageClauseForm, PackageClauseRefusal, PackageFormulaNode};
 pub use timed_model::{
     CheckedTimedPredicate, ClockConstraint, ClockField, ClockGuard, ClockId, ClockOp,
     ClockParameterRange, ClockReset, ClockResets, CollectionWrite, ConstraintNodes,

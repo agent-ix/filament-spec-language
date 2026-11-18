@@ -941,3 +941,64 @@ fn package_state_clauses_equal_their_source_forms() {
         );
     }
 }
+
+/// FR-940 "Package forms of the source-checked evaluators" (QSL-2425): the
+/// package form of each temporal clause of the Counter handoff, read from the
+/// `BarePackage`'s admitted nodes by its node key with the supplied domain
+/// packages' population domains, is the clause the source route's checked
+/// graph holds: the same name, span, binders, clock, activation, operators,
+/// formula and claim, so the model checker reads one clause on both routes.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn the_package_form_of_each_temporal_clause_equals_its_source_form() {
+    let (_ws, handoff, mut budget) = handoff("package-forms-clause");
+    let bare = BarePackage::new(&handoff.admitted)
+        .with_supply(
+            BareSupply {
+                identities: &handoff.identities,
+                equality: handoff.equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .expect("the handoff's supply joins the package");
+    let world = bare.world().expect("the package's declarations read");
+    let selections = fsl_package::AnalysisView::model_selections(&bare);
+    let model = fsl_semantics::model::state::StateModel::new(
+        fsl_semantics::model::observation::ModelSelections::new(&selections, &[]),
+        world.types(),
+        handoff.compiled.packages(),
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the supplied domain package admits");
+    let clauses = handoff.compiled.checked().graph().temporal_clauses();
+    assert_eq!(clauses.len(), 4);
+    for source in clauses {
+        let mut form = bare
+            .temporal_clause_form(&source.identity())
+            .unwrap_or_else(|refusal| panic!("{}: {refusal:?}", source.clause().name()));
+        if let filament_exact::ValueType::Reference(object) = &form.over.1 {
+            form.populations = model.overlapping_populations(object.clone());
+        }
+        let package = fsl_semantics::check::CheckedTemporalClause::of_package_form(
+            form,
+            world.types(),
+            filament_semantic_value::checking::CheckingLimits::default().nodes(),
+        )
+        .unwrap_or_else(|refusal| panic!("{}: {refusal}", source.clause().name()));
+        // The package carries the declaration's name region, not its whole
+        // span: the name lies within the declaration, and every other field
+        // is the source form's.
+        let (name, declaration) = (package.span(), source.clause().span());
+        assert!(
+            declaration.start <= name.start && name.end <= declaration.end,
+            "{name:?} within {declaration:?}"
+        );
+        assert_eq!(
+            format!("{package:?}"),
+            format!("{:?}", source.clause().clone().with_span(name)),
+            "{}",
+            source.clause().name()
+        );
+        assert!(package == source.clause().clone().with_span(name));
+    }
+}

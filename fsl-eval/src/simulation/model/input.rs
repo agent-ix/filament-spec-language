@@ -31,9 +31,9 @@ use fsl_semantics::check::footprint::{
 };
 use fsl_semantics::check::{
     CheckedBody, CheckedHyperClause, CheckedNode, CheckedProbabilisticModel, CheckedProtocol,
-    CheckedProtocolNodeKeys, CheckedRow, CheckedStateClause, CheckedTerminalPredicate, EnumBinding,
-    FormulaNodeId, ModelTimeSource, Reward, StatePredicate, TimedModel, VariantTypeDeclaration,
-    Written,
+    CheckedProtocolNodeKeys, CheckedRow, CheckedStateClause, CheckedTemporalClause,
+    CheckedTerminalPredicate, EnumBinding, FormulaNodeId, ModelTimeSource, Reward, StatePredicate,
+    TimedModel, VariantTypeDeclaration, Written,
 };
 use fsl_semantics::model::clause_observation::Observation;
 use fsl_semantics::model::domain_package::{DomainPackage, DomainPackageRef};
@@ -185,12 +185,24 @@ pub enum PendingPackageForm {
     Operations(fsl_semantics::check::AssemblyRefusal),
 }
 
+/// Why the package route built no package form of a temporal clause (FR-940).
+#[derive(Debug, thiserror::Error)]
+pub enum PendingClauseForm {
+    /// The clause's facts were not read from the package.
+    #[error("the package form of the clause was not read: {0:?}")]
+    Read(fsl_package::BareClauseRefusal),
+    /// The facts read do not rebuild the clause.
+    #[error("the package form of the clause was not built: {0}")]
+    Build(fsl_semantics::check::PackageClauseRefusal),
+}
+
 /// The package route's model-check input, built once from a
 /// [`BarePackage`]'s admitted nodes (FR-940): it owns the tables it read and
 /// lends them as a [`ModelCheckInput`].
 pub struct PackageModelInput<'p> {
     package: &'p BarePackage<'p>,
     world: fsl_package::BareWorld,
+    model: StateModel,
     model_selections: Vec<DomainPackageRef>,
     operations: OperationTable,
     probabilistic: CheckedProbabilisticModel,
@@ -244,10 +256,38 @@ impl<'p> PackageModelInput<'p> {
         Ok(Self {
             package,
             world,
+            model,
             model_selections,
             operations,
             probabilistic: CheckedProbabilisticModel::default(),
         })
+    }
+
+    /// FR-940: the package form of the temporal clause whose node key is
+    /// `clause`, the model checker's clause on the package route: read from
+    /// the package's nodes ([`BarePackage::temporal_clause_form`]) with the
+    /// population domains of the supplied domain packages, and rebuilt as S3
+    /// builds it ([`CheckedTemporalClause::of_package_form`]) within S3's
+    /// domain `position_limit`.
+    ///
+    /// # Errors
+    ///
+    /// [`PendingClauseForm`] for a clause the package does not select or
+    /// whose package form reads a fact the form does not read yet.
+    pub fn temporal_clause(
+        &self,
+        clause: &NodeKey,
+        position_limit: u64,
+    ) -> Result<CheckedTemporalClause, PendingClauseForm> {
+        let mut form = self
+            .package
+            .temporal_clause_form(clause)
+            .map_err(PendingClauseForm::Read)?;
+        if let ValueType::Reference(object) = &form.over.1 {
+            form.populations = self.model.overlapping_populations(object.clone());
+        }
+        CheckedTemporalClause::of_package_form(form, self.world.types(), position_limit)
+            .map_err(PendingClauseForm::Build)
     }
 
     /// The input this package lends.
