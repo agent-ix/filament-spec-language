@@ -520,11 +520,7 @@ fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
             ("missing_declaration", "missing-name"),
             "M::Nothing#\"a\"",
         ),
-        (
-            "M::Level#\"a\"",
-            ("ill_typed", "type-mismatch"),
-            "M::Level",
-        ),
+        ("M::Level#\"a\"", ("ill_typed", "type-mismatch"), "M::Level"),
         (
             "M::Counter#\"\"",
             ("invalid_package", "invalid-value"),
