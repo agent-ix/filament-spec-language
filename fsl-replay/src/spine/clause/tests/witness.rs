@@ -9,17 +9,17 @@
 //! domains are in `witness_member`.
 
 use super::frame::object;
-use super::frame_replay::{packet, request, unit_for, witness_source, Unit};
+use super::frame_replay::{Unit, packet, request, unit_for, witness_source};
 use super::*;
-use crate::execute::{separate, settle_separation, stopped_reason, SeparationOutcome};
+use crate::execute::{SeparationOutcome, separate, settle_separation, stopped_reason};
 use crate::proof_result::SettlementBasis;
 use crate::result::{DecidingElement, SeparatingWitnessRecord};
-use crate::witness::{derive_separating_witness, Derived};
+use crate::witness::{Derived, derive_separating_witness};
 use crate::{
-    replay_state_clause, DisagreementCause, InputSettlement, ObservationIdentity, ReplayRefusal,
-    ReplayResult, ReplaySource, RuntimeValuePath, SeparationReason, SeparationStep,
-    StateClauseCounterexample, StateClauseReplayResult, ValuePathStep, ValuePathSubject, Verdict,
-    WitnessEnvelope, WitnessFailure, WitnessSettlement,
+    DisagreementCause, InputSettlement, ObservationIdentity, ReplayRefusal, ReplayResult,
+    ReplaySource, RuntimeValuePath, SeparationReason, SeparationStep, StateClauseCounterexample,
+    StateClauseReplayResult, ValuePathStep, ValuePathSubject, Verdict, WitnessEnvelope,
+    WitnessFailure, WitnessSettlement, replay_state_clause,
 };
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::checking::CheckMode;
@@ -1107,7 +1107,8 @@ fn evaluate(
 fn derive(unit: &Unit, clause: &str, snapshot: Snapshot, self_key: &str) -> Option<Derived> {
     let (_, evaluation, _) = evaluate(unit, clause, snapshot, self_key, 1_000_000);
     let declaration = unit.compiled.package.graph().state_clause(clause).unwrap();
-    derive_separating_witness(declaration, &evaluation).expect("the derivation completes")
+    derive_separating_witness(unit.compiled.package.graph(), declaration, &evaluation)
+        .expect("the derivation completes")
 }
 
 /// The occurrence key of the node `operator` lowers to at `path` in
@@ -1473,7 +1474,7 @@ fn tc_740_no_boolean_derives_no_basis() {
         .state_clause("AllBelow")
         .unwrap();
     assert_eq!(
-        derive_separating_witness(declaration, &evaluation).unwrap(),
+        derive_separating_witness(unit.compiled.package.graph(), declaration, &evaluation).unwrap(),
         None
     );
     assert_eq!(
@@ -2528,7 +2529,7 @@ fn tc_744_every_deciding_element_kind_round_trips() {
 /// that unit's id.
 fn metre_package() -> (fsl_package::CheckedPackage, filament_exact::UnitId) {
     use fsl_semantics::value::{
-        admit_unit_graph, DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage,
+        DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage, admit_unit_graph,
     };
     let owner = json!({"kind": "source", "authority": "agent-ix", "identity": "example", "package_name": "example"});
     let length = DimensionPreimage::from_json(json!({
@@ -2961,7 +2962,6 @@ fn tc_1040_the_elements_of_a_built_list_are_read_at_their_index() {
 #[trace("TC-2981", "FR-265-AC-12")]
 #[trace("FSpec-TC-2014", "FSpec-FR-351-AC-9")]
 #[test]
-#[ignore = "QSL-2428: a separating witness ending at a deciding comparison is not implemented yet"]
 fn tc_2981_a_path_ending_at_a_comparison_records_the_comparison_and_its_operands() {
     let unit = witness_unit();
     let Some(Derived {
