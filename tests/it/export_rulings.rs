@@ -292,15 +292,15 @@ fn the_type_ok_comment_names_the_bound_region() {
     let bound = lines
         .iter()
         .position(|line| {
-            line.starts_with("HistoryBound == Cardinality(DOMAIN v_") && line.ends_with(") <= 8")
+            line.starts_with("b_HistoryBound == Cardinality(DOMAIN v_") && line.ends_with(") <= 8")
         })
-        .expect("the bound's own HistoryBound definition");
+        .expect("the bound's own b_HistoryBound definition");
     assert!(
         lines[type_ok..]
             .iter()
             .take_while(|line| !line.is_empty())
-            .any(|line| line.contains("HistoryBound")),
-        "TypeOK conjoins HistoryBound"
+            .any(|line| line.contains("b_HistoryBound")),
+        "TypeOK conjoins b_HistoryBound"
     );
     let comment = lines[bound - 1];
     assert!(
