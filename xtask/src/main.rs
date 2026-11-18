@@ -14,10 +14,10 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use xtask::{
-    Outcome, canonical_types, checked_input, conformance, consumer_facades,
+    canonical_types, checked_input, conformance, consumer_facades,
     error::{Error, Result},
     examples_check, pin_check, qualification, refinement, route_lint, seam_probe, string_edge,
-    test_suites,
+    test_suites, Outcome,
 };
 
 const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-edge\n       \
@@ -53,6 +53,9 @@ fn run(arguments: &[OsString]) -> Result<Outcome> {
     if command == "pin-check" {
         return pin_check::run(&workspace_root, operands);
     }
+    if command == "consumer-facades" {
+        return consumer_facades::run(&workspace_root, operands);
+    }
     let workspace_operand = match (command, operands) {
         (_, []) => None,
         ("canonical-types", [workspace]) => Some(Path::new(workspace).to_path_buf()),
@@ -66,7 +69,6 @@ fn run(arguments: &[OsString]) -> Result<Outcome> {
         "canonical-types" => {
             canonical_types::run(workspace_operand.as_deref().unwrap_or(&workspace_root))
         }
-        "consumer-facades" => consumer_facades::run(&workspace_root, operands),
         "conformance-input" => conformance::check_input(&workspace_root),
         "conformance" => conformance::run(&workspace_root),
         "ci" => conformance::run_ci(&workspace_root),
