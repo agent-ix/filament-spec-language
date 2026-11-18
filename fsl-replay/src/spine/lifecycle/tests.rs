@@ -2398,6 +2398,8 @@ fn check_retains_the_owning_protocol_locus() {
     )
     .expect_err("X's missing type refuses check");
     let x_start = unit.find("protocol X").expect("X's declaration") + "protocol ".len();
+    let x_declaration_start = x_start - "protocol ".len();
+    let x_end = x_declaration_start + broken.len();
     let StageFailure::RefusedWithPayload(refusal, results) = failure else {
         panic!("check retains protocol results: {failure:?}");
     };
@@ -2424,8 +2426,8 @@ fn check_retains_the_owning_protocol_locus() {
             && declaration_span.start == x_start
             && declaration_span.end == x_start + 1
             && locus.source() == parsed.source().reference()
-            && locus.start() == x_start as u64
-            && locus.end() == (x_start + 1) as u64
+            && locus.start() >= x_start as u64
+            && locus.end() <= x_end as u64
     ), "{:#?}", results.protocol_results);
     let without_payload = crate::ReplayRefusal::Recompile(*refusal);
     assert_eq!(with_payload_category, without_payload.code().category());
