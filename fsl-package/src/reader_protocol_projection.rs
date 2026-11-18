@@ -1290,7 +1290,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                             .and_then(|declaration| declaration.qualified_name.last())
                             .map(|name| name.to_string())
                             .ok_or_else(|| fault("reader-function-parameter-name-is-admitted"))?;
-                        let value_type = self.index.types().value_type(id)?;
+                        let value_type = self.value_type(id)?;
                         Ok(ReaderProtocolParameter {
                             name,
                             node: self.index.key(id)?,

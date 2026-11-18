@@ -669,15 +669,15 @@ impl<'p> BarePackage<'p> {
         let world = self.world()?;
         let selected = projection
             .selected_function_node()
-            .ok_or_else(|| SlotSelectionFailure::Fault(fault("bare-function-projection-has-entry")))?;
-        let unsupported_parameter = projection
-            .selected_function()
-            .into_iter()
-            .flat_map(|function| function.parameters.iter())
-            .find(|parameter| world.types().runtime_type(&parameter.value_type).is_none());
-        if unsupported_parameter.is_some()
-            || projection.has_unrepresented_types(world.types())
-        {
+            .ok_or_else(|| fault("bare-function-projection-has-entry"))?;
+        let unsupported_type = projection.selected_function().is_some_and(|function| {
+            function
+                .parameters
+                .iter()
+                .any(|parameter| world.types().runtime_type(&parameter.value_type).is_none())
+                || world.types().runtime_type(function.result_type).is_none()
+        });
+        if unsupported_type || projection.has_unrepresented_types(world.types()) {
             return Err(BareSelectionFailure::Unsupported(Box::new(
                 UnsupportedView::missing_type(self.package().name(), selected.clone()),
             )));
