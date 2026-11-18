@@ -1445,11 +1445,13 @@ fn bump_directory(unit: &str, keys: &[&str], complete: bool) -> tempfile::TempDi
 /// clause evaluation, or inside the native evaluator of a trace. The
 /// request has no budget member, so the run is driven through the library
 /// entry (`run_temporal_behaviours`, `tl_record`) under each `work_units`
-/// bound up to one that completes.
+/// bound from 1 to 200; an unbounded run completes.
 #[test]
 #[trace("TC-2962", "FR-931-AC-6")]
 fn a_work_budget_stop_during_enumeration_exits_incomplete() {
-    let unit = bump_low();
+    // `on each`: the last activation is evaluated after the last row is read,
+    // so a budget can run out inside the evaluator there.
+    let unit = bump_low().replace("on origin", "on each (d: Config::ConfigVersion)");
     let directory = bump_directory(&unit, &["a", "b"], true);
     let request = json!({"format": "native-run/1", "request": {
         "models": [{"format": "semantic-ir/2.0.0",
@@ -1487,27 +1489,21 @@ fn a_work_budget_stop_during_enumeration_exits_incomplete() {
     let full = run(u64::MAX);
     assert_eq!(full.exit_code, 0, "{}", full.record);
     let complete = full.record["cross_evaluation"]["traces"].clone();
-    let mut stopped = 0;
-    let mut work_units = 1;
-    loop {
+    // Every bound from 1 up: the low ones stop at the subject's own clause
+    // evaluation, then at the trace reads, then inside the evaluator at an
+    // `on each` activation, each an incomplete run.
+    for work_units in 1..=200 {
         let record = run(work_units);
         let cross = &record.record["cross_evaluation"];
         assert_ne!(record.exit_code, 30, "{work_units}: {}", record.record);
         assert_eq!(cross["faults"], json!([]), "{work_units}: {}", record.record);
-        if record.exit_code == 0 {
-            assert_eq!(cross["traces"], complete, "{}", record.record);
-            break;
-        }
         assert_eq!(record.exit_code, 22, "{work_units}: {}", record.record);
         assert!(
             cross["traces"].as_u64() < complete.as_u64(),
             "{}",
             record.record
         );
-        stopped += 1;
-        work_units = work_units + work_units / 8 + 1;
     }
-    assert!(stopped > 0, "a low budget stops the enumeration");
 }
 
 /// FR-931-AC-6: from a snapshot of `a` and `b` whose model steps `bump`, the
