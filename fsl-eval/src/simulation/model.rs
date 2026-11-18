@@ -1272,7 +1272,7 @@ impl<'a> ModelSystem<'a> {
             if path.first() == Some(&2) {
                 continue;
             }
-            let ValueType::Int(domain) = value_type else {
+            let ValueType::Int(domain) = &value_type else {
                 continue;
             };
             for (kind, value) in [
