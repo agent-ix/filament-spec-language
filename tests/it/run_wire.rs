@@ -1914,6 +1914,8 @@ fn a_record_sample_ledger_file_carries_each_covered_fingerprint() {
 #[derive(Debug)]
 struct CountingProvider {
     verdict: fsl_analyze::provider::ProviderVerdict,
+    /// How long each `settle` call takes before it answers.
+    delay: std::time::Duration,
     calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     items: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     events_before: std::sync::Arc<std::sync::atomic::AtomicUsize>,
@@ -1933,6 +1935,7 @@ impl fsl_analyze::provider::ExternalProvider for CountingProvider {
         }
         self.items
             .fetch_add(request.items().len(), Ordering::SeqCst);
+        std::thread::sleep(self.delay);
         vec![self.verdict.clone(); request.items().len()]
     }
 }
@@ -1976,6 +1979,15 @@ impl Recorded {
         &self,
         verdict: fsl_analyze::provider::ProviderVerdict,
     ) -> fsl_analyze::analyze::Engine {
+        self.slow_provider(verdict, std::time::Duration::ZERO)
+    }
+
+    /// [`Self::provider`] taking `delay` to answer each request.
+    fn slow_provider(
+        &self,
+        verdict: fsl_analyze::provider::ProviderVerdict,
+        delay: std::time::Duration,
+    ) -> fsl_analyze::analyze::Engine {
         let descriptor = fsl_route::descriptor_from_manifest(
             fsl_route::Candidate::new(fsl_foundation::BackendId::new(RECORDING)),
             fsl_route::ProviderOrigin::Process,
@@ -1997,6 +2009,7 @@ impl Recorded {
             fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
             Box::new(CountingProvider {
                 verdict,
+                delay,
                 calls: std::sync::Arc::clone(&self.calls),
                 items: std::sync::Arc::clone(&self.items),
                 events_before: std::sync::Arc::clone(&self.events_before),
@@ -2037,12 +2050,28 @@ fn monitor_with_items(
     Result<fsl_command::command::MonitorSummary, Box<fsl_command::command::RunError>>,
     Vec<Value>,
 ) {
+    let members = items.map_or_else(|| json!({}), |items| json!({"items": items}));
+    monitor_with_members(clauses, members, providers, recorded, cancel)
+}
+
+/// [`monitor_with_items`] with the request members `members` (`items` and
+/// what is read beside it) added to the request.
+fn monitor_with_members(
+    clauses: Value,
+    members: Value,
+    providers: Vec<fsl_analyze::analyze::Engine>,
+    recorded: &Recorded,
+    cancel: &filament_exact::Cancel,
+) -> (
+    Result<fsl_command::command::MonitorSummary, Box<fsl_command::command::RunError>>,
+    Vec<Value>,
+) {
     use fsl_command::command::{monitor, MonitorEvent, MonitorProviders, RunLimits};
 
     let directory = tempfile::tempdir().unwrap();
     let mut request = monitor_request(clauses, json!({"kind": "finite"}));
-    if let Some(items) = items {
-        request["request"]["items"] = items;
+    for (name, value) in members.as_object().into_iter().flatten() {
+        request["request"][name] = value.clone();
     }
     let path = write_trace(directory.path(), "items.json", &request);
     std::fs::write(directory.path().join("unit.native"), even_unit()).unwrap();
@@ -2317,7 +2346,7 @@ fn command_monitor_settles_unknown_backends_and_unknown_answers() {
 /// provider request.
 #[test]
 #[trace("TC-2984", "FR-644-AC-11")]
-#[ignore = "QSL-2284: a cancelled monitor stream returns a refusal, not a summary of cancelled clauses"]
+#[ignore = "QSL-2437: an already-cancelled monitor returns MonitorCancelled, not its summary (FR-853-AC-3)"]
 fn a_cancelled_monitor_settles_its_items_incomplete() {
     let cancel = filament_exact::Cancel::new();
     cancel.cancel(filament_exact::CancelCause::Requested);
@@ -2336,4 +2365,88 @@ fn a_cancelled_monitor_settles_its_items_incomplete() {
         assert_eq!(item["category"], "incomplete", "{item}");
         assert!(item.to_string().contains("requested"), "{item}");
     }
+}
+
+/// FR-644 "Provider-routed items" (TC-2984): the items' `deadline_ms` stops
+/// the items alone. With `deadline_ms` 0 every item settles `incomplete`,
+/// cancelled by its deadline, no provider request is sent, and the events and
+/// clause entries equal the stream's without `items`.
+#[test]
+#[trace("TC-2984", "FR-644-AC-8")]
+fn an_expired_items_deadline_leaves_the_stream_unchanged() {
+    let clauses = json!([{"name": "Reaches"}, {"name": "Never"}]);
+    let plain = Recorded::new();
+    let (without, events_without) = monitor_with_items(
+        clauses.clone(),
+        None,
+        Vec::new(),
+        &plain,
+        &filament_exact::Cancel::new(),
+    );
+    let without = without.expect("the stream runs without items");
+
+    let recorded = Recorded::new();
+    let (summary, seen) = monitor_with_members(
+        clauses,
+        json!({"items": [{"claim": "Even", "kind": "value-validity", "backend": RECORDING}],
+            "deadline_ms": 0}),
+        vec![recorded.provider(fsl_analyze::provider::ProviderVerdict::Proved)],
+        &recorded,
+        &filament_exact::Cancel::new(),
+    );
+    let summary = summary.expect("an expired items deadline still streams");
+    let value = summary.as_value();
+    assert_eq!(recorded.calls(), 0, "{value}");
+    assert_eq!(seen, events_without);
+    assert_eq!(clause_summary(value), *without.as_value());
+    let items = value["items"].as_array().expect("items");
+    assert!(!items.is_empty(), "{value}");
+    for item in items {
+        assert_eq!(item["category"], "incomplete", "{item}");
+        assert!(item.to_string().contains("deadline"), "{item}");
+    }
+    assert_eq!(summary.exit_code, 10);
+}
+
+/// FR-644 "Provider-routed items" (TC-2984): a short items deadline that
+/// runs out while the provider is answering stops the items alone; the
+/// stream still gives the events and clause entries of the stream without
+/// `items`.
+#[test]
+#[trace("TC-2984", "FR-644-AC-8")]
+fn an_items_deadline_expiring_mid_settlement_leaves_the_stream_unchanged() {
+    let clauses = json!([{"name": "Reaches"}, {"name": "Never"}]);
+    let plain = Recorded::new();
+    let (without, events_without) = monitor_with_items(
+        clauses.clone(),
+        None,
+        Vec::new(),
+        &plain,
+        &filament_exact::Cancel::new(),
+    );
+    let without = without.expect("the stream runs without items");
+
+    let recorded = Recorded::new();
+    let (summary, seen) = monitor_with_members(
+        clauses,
+        json!({"items": [{"claim": "Even", "kind": "value-validity", "backend": RECORDING}],
+            "deadline_ms": 20}),
+        vec![recorded.slow_provider(
+            fsl_analyze::provider::ProviderVerdict::Proved,
+            std::time::Duration::from_millis(200),
+        )],
+        &recorded,
+        &filament_exact::Cancel::new(),
+    );
+    let summary = summary.expect("an items deadline expiring mid-settlement still streams");
+    let value = summary.as_value();
+    assert_eq!(recorded.calls(), 1, "the provider request was in flight");
+    assert_eq!(seen, events_without);
+    assert_eq!(clause_summary(value), *without.as_value());
+    assert!(
+        value["items"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()),
+        "{value}"
+    );
 }

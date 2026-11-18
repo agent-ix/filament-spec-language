@@ -561,24 +561,34 @@ fn drive(
                 .routed
                 .as_ref()
                 .map(|routed| {
-                    // FR-635: a provider's `package` is this compile's own
-                    // emission, under the request's clock selections. The
-                    // emission is remembered so the provider request reads
-                    // these bytes; an emission the selections refuse leaves
-                    // the provider items `package-not-emitted` (FSpec FR-331).
-                    let _ = fsl_package::emit_dependency_with_temporal_selections_and_cancel(
-                        checked.package(),
-                        selections,
-                        settle.cancel,
-                        routed.limits.emit,
-                    );
-                    super::analyze::settle_items(
-                        checked.package(),
-                        &packages,
-                        std::iter::once(&program).chain(libraries.iter().copied()),
-                        routed,
-                        settle,
-                    )
+                    // FR-644: the items settle under their own handle, which the
+                    // stream's cancellation reaches, so their `deadline_ms` stops
+                    // the items alone and every event stays the stream's.
+                    chained(settle.cancel, |items_cancel| {
+                        let settle = Settle {
+                            negotiate: settle.negotiate,
+                            engines: settle.engines,
+                            cancel: items_cancel,
+                        };
+                        // FR-635: a provider's `package` is this compile's own
+                        // emission, under the request's clock selections. The
+                        // emission is remembered so the provider request reads
+                        // these bytes; an emission the selections refuse leaves
+                        // the provider items `package-not-emitted` (FSpec FR-331).
+                        let _ = fsl_package::emit_dependency_with_temporal_selections_and_cancel(
+                            checked.package(),
+                            selections,
+                            settle.cancel,
+                            routed.limits.emit,
+                        );
+                        super::analyze::settle_items(
+                            checked.package(),
+                            &packages,
+                            std::iter::once(&program).chain(libraries.iter().copied()),
+                            routed,
+                            &settle,
+                        )
+                    })
                 })
                 .transpose()?;
             let mut sources: Vec<Source> = vec![program.source().clone()];
@@ -889,5 +899,39 @@ pub(super) fn is_monitor_request(bytes: &[u8]) -> bool {
     }
     serde_json::from_slice::<Peek>(bytes).is_ok_and(|peek| {
         peek.format == fsl_foundation::wire_format::WireFormat::MonitorRequest.as_str()
+    })
+}
+
+/// Run `work` under a fresh handle that `outer`'s cancellation reaches, with
+/// its cause, while `work` runs; cancelling the fresh handle leaves `outer`
+/// live. A monitor's items settle under it (FR-644 "Provider-routed items"),
+/// so their deadline stops the items and never the stream.
+fn chained<T>(outer: &Cancel, work: impl FnOnce(&Cancel) -> T) -> T {
+    /// How often the forwarding thread reads `outer`.
+    const POLL: std::time::Duration = std::time::Duration::from_millis(5);
+    let inner = Cancel::new();
+    if let Some(cause) = outer.cause() {
+        inner.cancel(cause);
+    }
+    std::thread::scope(|scope| {
+        let (done, finished) = std::sync::mpsc::channel::<()>();
+        let (watched, forwarded) = (outer.clone(), inner.clone());
+        scope.spawn(move || loop {
+            if let Some(cause) = watched.cause() {
+                forwarded.cancel(cause);
+                break;
+            }
+            // The thread ends on `work`'s end, or when the channel closes.
+            if !matches!(
+                finished.recv_timeout(POLL),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ) {
+                break;
+            }
+        });
+        let value = work(&inner);
+        // A closed channel also ends the thread.
+        let _ = done.send(());
+        value
     })
 }
