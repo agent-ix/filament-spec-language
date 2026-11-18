@@ -757,7 +757,7 @@ impl ClauseRunSelectionWire {
 #[serde(deny_unknown_fields)]
 pub struct ObservationLimitsWire {
     /// The document input-byte ceiling (`observation.input_bytes`).
-    pub input_bytes: Option<u64>,
+    pub document_bytes: Option<u64>,
     /// The objects-per-document ceiling.
     pub objects_per_document: Option<u64>,
     /// The values-per-document ceiling.
@@ -772,7 +772,7 @@ impl ObservationLimitsWire {
     pub fn resolve(overrides: Option<&Self>) -> Result<ObservationLimits, ClauseRequestReadError> {
         let mut limits = ObservationLimits::default();
         if let Some(overrides) = overrides {
-            if let Some(value) = overrides.input_bytes {
+            if let Some(value) = overrides.document_bytes {
                 limits.document_bytes = value;
             }
             if let Some(value) = overrides.objects_per_document {

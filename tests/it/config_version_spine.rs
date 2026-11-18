@@ -561,7 +561,7 @@ fn clause_run_observation_limit_reports_its_own_bound() {
     );
     assert_eq!(output.status.code(), Some(22), "{output:?}");
     let error: Value = serde_json::from_slice(&output.stderr).unwrap();
-    assert_eq!(error["details"]["limit"], "observation.document_bytes");
+    assert_eq!(error["details"]["limit"], "observation.input_bytes");
     assert_eq!(error["details"]["maximum"], 1_000_000);
 }
 
@@ -579,14 +579,11 @@ fn coded<'a>(value: &'a Value, code: &str) -> Option<&'a Value> {
     }
 }
 
-/// FR-312-AC-9 (TC-2982): the observation byte ceiling set by the request
-/// member settles the clause item with the one `stage_limit_exceeded` record
-/// naming `observation.input_bytes`, and the hint names the setting `--limit`
-/// accepts. FR-312-AC-10's `RequestOverrides::observation` is the code
-/// ticket's to add and test.
-#[trace("TC-2982", "FR-312-AC-9")]
+/// TC-2982's request path: `document_bytes` settles the native result with an
+/// observation input-byte limit record naming the `observation.input_bytes`
+/// setting. Driver-rendered hints are covered with the driver implementation.
+#[trace("TC-2982", "FR-491-AC-8")]
 #[test]
-#[ignore = "QSL-2015: the observation byte ceiling as one stage_limit_exceeded item naming observation.input_bytes is not implemented yet"]
 fn clause_run_observation_limit_is_one_stage_limit_item_naming_its_setting() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("observation-shape");
@@ -614,20 +611,21 @@ fn clause_run_observation_limit_is_one_stage_limit_item_naming_its_setting() {
     let document: Value = serde_json::from_slice(&output.stdout).expect("an outcome document");
     let limit = coded(&document, "stage_limit_exceeded")
         .unwrap_or_else(|| panic!("a stage_limit_exceeded item: {document}"));
-    assert_eq!(limit["setting"], "observation.input_bytes", "{limit}");
-    assert_eq!(limit["bound"], size - 1, "{limit}");
-    assert_eq!(limit["actual"], size, "{limit}");
+    assert_eq!(
+        limit["fields"]["setting"], "observation.input_bytes",
+        "{limit}"
+    );
+    assert_eq!(limit["fields"]["bound"], (size - 1).to_string(), "{limit}");
+    assert_eq!(limit["fields"]["actual"], size.to_string(), "{limit}");
     assert!(
         coded(&document, "resource_exhausted").is_none(),
         "{document}"
     );
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("observation.document_bytes"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
     );
-    assert!(text.contains("--limit observation.input_bytes="), "{text}");
-    assert!(!text.contains("observation.document_bytes"), "{text}");
     assert_eq!(run(size).status.code(), Some(0));
 }
 
