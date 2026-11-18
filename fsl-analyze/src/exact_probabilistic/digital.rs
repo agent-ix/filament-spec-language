@@ -292,7 +292,7 @@ pub(crate) fn model_constraints<'m>(
 /// FR-204 "Admission": the delay distributions and the form shape.
 fn admit(
     system: &ModelSystem<'_>,
-    package: &filament_checked::CheckedPackage,
+    package: &fsl_package::CheckedPackage,
     claim: &CheckedProbabilisticClaim,
     workload: Option<&Workload>,
 ) -> Result<(), ProductRefusal> {

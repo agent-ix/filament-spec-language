@@ -247,6 +247,9 @@ fn run_timed(
 ) -> EngineReport {
     let claim = request.claim;
     let simulation = request.subject.simulation.clone();
+    let Some(source_package) = simulation.source_package() else {
+        return not_yet();
+    };
     let limits = request.limits;
     let meter = simulation.meter;
     let subject = SubjectLimits {
@@ -375,7 +378,7 @@ fn run_timed(
         let bytes = write_probability_certificate(&document, document_limits, cancel)?;
         check_probability_certificate_document(
             &system,
-            simulation.packages.graph().probabilistic_model().claims(),
+            source_package.graph().probabilistic_model().claims(),
             &identity,
             &bytes,
             document_limits,
