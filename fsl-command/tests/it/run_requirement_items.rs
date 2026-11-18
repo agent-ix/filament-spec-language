@@ -585,6 +585,68 @@ fn provider_run_accepts_run_limits_and_request_overrides() {
         1,
         "refusal sends no request"
     );
+
+    let below_dependent_size = command::RunLimits {
+        request_bytes,
+        dependent_bytes: dependent_bytes - 1,
+    };
+    let error = command::run_with_providers_and_limits_and_overrides(
+        &request,
+        below_dependent_size,
+        &overrides,
+        &Fr290,
+        vec![recording_provider(
+            &seen,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+        &options,
+        &cancel,
+    )
+    .expect_err("the provider run enforces the caller's dependent-file byte ceiling");
+    assert!(matches!(
+        error.cause,
+        command::RunCause::Limit(command::LimitKind::DependentBytes { maximum })
+            if maximum == dependent_bytes - 1
+    ));
+    assert_eq!(
+        seen.lock().unwrap().settle_calls,
+        1,
+        "a dependent-file limit refusal sends no request"
+    );
+
+    let unused_clock = serde_json::value::RawValue::from_string(
+        json!({"spare": {"kind": "event_position", "sequence_authority": "spare"}})
+            .to_string(),
+    )
+    .unwrap();
+    let clock_override = command::RequestOverrides {
+        clocks: Some(&unused_clock),
+        ..command::RequestOverrides::default()
+    };
+    let error = command::run_with_providers_and_limits_and_overrides(
+        &request,
+        limits,
+        &clock_override,
+        &Fr290,
+        vec![recording_provider(
+            &seen,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+        &options,
+        &cancel,
+    )
+    .expect_err("the non-default clock override is applied to the provider run");
+    assert!(
+        error
+            .to_string()
+            .contains("names a clock no temporal declaration uses"),
+        "{error}"
+    );
+    assert_eq!(
+        seen.lock().unwrap().settle_calls,
+        1,
+        "the unused clock refuses before provider settlement"
+    );
 }
 
 /// FR-961-AC-4, FR-961-AC-5: negative cases of the run-side entry: a repeated
