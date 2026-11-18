@@ -14,8 +14,10 @@ use serde_json::json;
 use super::super::application::{Applications, OperationRef};
 use super::super::walk::{rows_of, Budget};
 use super::super::{explore_model, ModelSystem};
+use crate::simulation::expansion::ExpansionLimit;
 use crate::simulation::explore::{Limits, Outcome};
 use crate::simulation::sampled::world::{initial, Model, Operation, World, BOOLEAN};
+use crate::simulation::TransitionSystem;
 
 const PACKAGE: &str = "test/rover";
 
@@ -200,4 +202,167 @@ fn narrowing_keeps_the_exploration() {
         panic!("the exploration completes: {:?}", solved.outcome);
     };
     assert!(stats.states > 31, "{stats:?}");
+}
+
+/// A query of [`cell_with`]: its name, result type reference, precondition
+/// and body.
+type Query = (&'static str, &'static str, &'static str, &'static str);
+
+/// FR-851-AC-5's `nonZero(): Boolean`: an empty frame, body `true` and
+/// precondition `self.a != 0`, so `self.nonZero()` is `Undefined` with
+/// reason `precondition-false` on every candidate with `a` 0.
+const NON_ZERO: Query = ("nonZero", BOOLEAN, "self.a != 0", "true");
+
+/// `mirror(): A`, whose body `3 - self.a` is defined exactly when its
+/// precondition `self.b != 5` holds.
+const MIRROR: Query = ("mirror", "ix://test/rover/A", "self.b != 5", "3 - self.a");
+
+/// FR-851-AC-5's `Cell`: `a: Int[0, 3]` and `b: Int[0, 99]`, at `a` 1 and
+/// `b` 50, with the query `nonZero()` and the operation `set()`, which
+/// modifies both fields and has the clause `post A { post }`, or its
+/// enumerated reference form.
+fn cell(post: &str, enumerated: bool) -> World {
+    cell_with(post, enumerated, 50, &[NON_ZERO])
+}
+
+/// The `Cell` at `b` with the queries `queries` and `set()`'s clause
+/// `post A { post }`, or its enumerated reference form.
+fn cell_with(post: &str, enumerated: bool, b: u32, queries: &[Query]) -> World {
+    let ident = |name: &str| format!("ix://{PACKAGE}/{name}");
+    let post = if enumerated {
+        format!("({post}) = true")
+    } else {
+        post.to_owned()
+    };
+    let operation = |name: &'static str, modifies: Vec<&'static str>| Operation {
+        name,
+        parameters: Vec::new(),
+        modifies,
+    };
+    let mut operations: Vec<Operation> = queries
+        .iter()
+        .map(|(name, ..)| operation(name, Vec::new()))
+        .collect();
+    operations.push(operation("set", vec!["a", "b"]));
+    let mut body: String = queries
+        .iter()
+        .map(|(name, _, pre, value)| {
+            format!(
+                "pre {name}Pre using v on M::Cell::{name} {{ {pre} }}\n\
+                 body {name}Body using v on M::Cell::{name}() {{ {value} }}\n"
+            )
+        })
+        .collect();
+    body.push_str(&format!("post A using v on M::Cell::set {{ {post} }}\n"));
+    let results: Vec<(&str, &str)> = queries
+        .iter()
+        .map(|(name, result, ..)| (*name, *result))
+        .collect();
+    World::with_queries(
+        &Model {
+            package: PACKAGE,
+            object: "Cell",
+            population: "cells",
+            key: "k1",
+            integers: vec![("A", 0, 3), ("B", 0, 99)],
+            fields: vec![("a", ident("A")), ("b", ident("B"))],
+            operations,
+            body,
+            initial: json!({"a": {"integer": "1"}, "b": {"integer": b.to_string()}}),
+        },
+        &results,
+    )
+}
+
+/// The one finding a candidate of `applications` records for the
+/// postcondition `A`, with the reason it is undefined.
+fn undetermined(applications: &Applications) -> Vec<String> {
+    applications
+        .findings
+        .iter()
+        .map(|finding| format!("{finding:?}"))
+        .filter(|finding| finding.contains("ContractUndetermined"))
+        .collect()
+}
+
+/// FR-851-AC-5: a dispatched call as the first conjunct leaves the defined
+/// prefix empty, so neither `a` nor `b` is narrowed: `set` generates all 400
+/// candidates and charges 401, records one `ContractUndetermined` for `A`
+/// (`precondition-false`) on each of the 100 candidates with `a` 0, and
+/// keeps the 11 successors with `a` 2 and `b` 0 to 10, exactly as forced
+/// full enumeration does. The expansion, which also applies `nonZero`
+/// (its argument vector, its one unchanged candidate and its first result
+/// pair), charges 404: it completes under 404 and stops naming
+/// `MaxCandidates` under 403.
+#[trace("TC-2411", "FR-851-AC-5")]
+#[test]
+fn an_undefined_leading_conjunct_narrows_nothing() {
+    let post = "self.nonZero() and self.a = 2 and self.b <= 10";
+    let narrowed = cell(post, false);
+    let enumerated = cell(post, true);
+    let (solved, solved_charge) = apply(&narrowed.system(), "set");
+    let (full, full_charge) = apply(&enumerated.system(), "set");
+    assert_eq!(solved_charge, 401);
+    assert_eq!(full_charge, 401);
+    assert_eq!(solved.successors.len(), 11);
+    let findings = undetermined(&solved);
+    assert_eq!(findings.len(), 100, "{:?}", solved.findings);
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.contains("PreconditionFalse")),
+        "{findings:?}"
+    );
+    assert_eq!(view(&solved), view(&full));
+
+    let expand = |world: &World, max: u64| {
+        let system = world.system_within(max);
+        let state = initial(&system);
+        system
+            .successors(&state)
+            .map(|expansion| format!("{expansion:?}"))
+    };
+    let complete = expand(&narrowed, 404).expect("the expansion fits 404 candidates");
+    assert_eq!(
+        Some(complete),
+        expand(&enumerated, 1_000_000).ok(),
+        "the narrowed expansion is the enumerated one"
+    );
+    assert_eq!(
+        expand(&narrowed, 403).err().map(|stop| stop.limit),
+        Some(Some(ExpansionLimit::MaxCandidates))
+    );
+}
+
+/// FR-851-AC-5: with the call last, `a` is solved and `b` narrowed to 0 to
+/// 10: `set` generates 11 candidates, charges 12 and records no finding, as
+/// its forced full enumeration records none, since every candidate with `a`
+/// 0 stops at `self.a = 2`.
+#[trace("TC-2411", "FR-851-AC-5")]
+#[test]
+fn an_undefined_trailing_conjunct_keeps_the_prefix_narrowing() {
+    let post = "self.a = 2 and self.b <= 10 and self.nonZero()";
+    let (solved, solved_charge) = apply(&cell(post, false).system(), "set");
+    let (full, full_charge) = apply(&cell(post, true).system(), "set");
+    assert_eq!(solved_charge, 12);
+    assert_eq!(full_charge, 401);
+    assert_eq!(solved.successors.len(), 11);
+    assert!(solved.findings.is_empty(), "{:?}", solved.findings);
+    assert_eq!(view(&solved), view(&full));
+}
+
+/// FR-120 "Eligible", FR-120-AC-32: an equation whose `e` calls a
+/// dispatched query on the pre-state gives exactly its enumerated reference
+/// form's successors, findings and charge, both where the query's
+/// precondition holds (`b` 50) and where it is false (`b` 5).
+#[trace("TC-1418", "FR-120-AC-32")]
+#[test]
+fn an_equation_over_a_pre_state_query_keeps_the_enumeration() {
+    let post = "self.a = pre(self.mirror())";
+    for b in [50, 5] {
+        let (solved, solved_charge) = apply(&cell_with(post, false, b, &[MIRROR]).system(), "set");
+        let (full, full_charge) = apply(&cell_with(post, true, b, &[MIRROR]).system(), "set");
+        assert_eq!(solved_charge, full_charge, "b = {b}");
+        assert_eq!(view(&solved), view(&full), "b = {b}");
+    }
 }

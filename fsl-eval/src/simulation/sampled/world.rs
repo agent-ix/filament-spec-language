@@ -131,8 +131,9 @@ impl Model {
         })
     }
 
-    /// The domain package document.
-    fn document(&self) -> Vec<u8> {
+    /// The domain package document, each operation `queries` names returning
+    /// its type.
+    fn document_with(&self, queries: &[(&str, &str)]) -> Vec<u8> {
         let mut kinds = vec![
             ("object_type", meaning::OBJECT_TYPE),
             ("population", meaning::POPULATION),
@@ -169,8 +170,18 @@ impl Model {
             "object_type",
             json!({
                 "supertypes": [], "fields": fields,
-                "operations": self.operations.iter().map(|operation| self.operation(operation))
-                    .collect::<Vec<_>>(),
+                "operations": self.operations.iter().map(|operation| {
+                    let mut node = self.operation(operation);
+                    if let Some((_, type_ref)) =
+                        queries.iter().find(|(name, _)| *name == operation.name)
+                    {
+                        node["returns"] = json!({"typeRef": type_ref,
+                            "multiplicity": {"lower": 1, "upper": 1, "ordered": false,
+                                "unique": true},
+                            "nullable": false});
+                    }
+                    node
+                }).collect::<Vec<_>>(),
                 "relationships": [],
             }),
         ));
@@ -228,11 +239,21 @@ impl World {
 
     /// Add checked fixture profiles in the unit's declaration header.
     pub(crate) fn with_profiles(model: &Model, profiles: &[(&str, &str)]) -> Self {
+        Self::checked(model, profiles, &[])
+    }
+
+    /// `model` whose operations `queries` names, as (operation, result type
+    /// reference), each return that type: a query when its frame is empty.
+    pub(crate) fn with_queries(model: &Model, queries: &[(&str, &str)]) -> Self {
+        Self::checked(model, &[], queries)
+    }
+
+    fn checked(model: &Model, profiles: &[(&str, &str)], queries: &[(&str, &str)]) -> Self {
         let profiles = profiles
             .iter()
             .map(|(name, identity)| format!("profile {name} = \"{identity}\";\n"))
             .collect::<String>();
-        let document = model.document();
+        let document = model.document_with(queries);
         let packages = package_input([document.as_slice()]).expect("one model");
         let unit = format!(
             "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n{profiles}\
@@ -258,16 +279,21 @@ impl World {
             fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
         })
         .expect("the kept operation clauses parse");
-        let graph = PackageDeclarations::assemble(
+        let mut declarations = PackageDeclarations::assemble(
             parsed.source().reference().clone(),
             "fixture".to_owned(),
             built,
             models,
             Vec::new(),
         )
-        .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
-        .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:#?}"));
+        .expect("the unit assembles");
+        // FR-302: link the dispatch table of each family a call may name.
+        declarations
+            .link_dispatch(ModelNormalizationLimits::default())
+            .unwrap_or_else(|refusals| panic!("the dispatch links: {refusals:#?}"));
+        let graph = declarations
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:#?}"));
 
         let header = json!({"identity": model.package});
         let snapshot = json!({
@@ -303,6 +329,17 @@ impl World {
 
     /// The system over this world, or its admission failure.
     pub(crate) fn admit(&self) -> Result<ModelSystem<'_>, AdmissionFailure> {
+        self.admit_within(1_000_000)
+    }
+
+    /// The system over this world with an expansion budget of
+    /// `max_candidates`.
+    pub(crate) fn system_within(&self, max_candidates: u64) -> ModelSystem<'_> {
+        self.admit_within(max_candidates)
+            .expect("the system admits")
+    }
+
+    fn admit_within(&self, max_candidates: u64) -> Result<ModelSystem<'_>, AdmissionFailure> {
         ModelSystem::new(ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
             input: crate::simulation::model::ModelCheckInput::source(&self.package),
@@ -312,9 +349,7 @@ impl World {
             initial: vec![self.initial.clone()],
             universes: vec![self.universe.clone()],
             observation: ObservationLimits::default(),
-            expansion: ExpansionLimits {
-                max_candidates: 1_000_000,
-            },
+            expansion: ExpansionLimits { max_candidates },
             meter: UNLIMITED,
         })
     }

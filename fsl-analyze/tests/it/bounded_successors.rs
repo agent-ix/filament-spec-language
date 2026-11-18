@@ -75,8 +75,7 @@ fn run(name: &str, bounds: &str, limits: Option<Value>) -> Run {
 /// `sample`'s 8 argument vectors, each with its one solved candidate and
 /// one pair. So with `max_candidates` 630 the item explores to completion
 /// and reports the unlimited run's exploration, with 629 it stops, and
-/// with 300 it stops on `loseLidar`'s 301 kept candidates. (FR-851-AC-2
-/// states 400, which leaves out the pairs FR-120 counts.)
+/// with 300 it stops on `loseLidar`'s 301 kept candidates.
 #[trace("TC-2411", "FR-851-AC-1")]
 #[trace("TC-2411", "FR-851-AC-2")]
 #[test]
@@ -105,8 +104,8 @@ fn bounded_fields_are_enumerated_inside_their_postcondition_interval() {
 }
 
 /// FR-851-AC-3 (negative): a bound not of the `self.f op e` form, and a
-/// bound under `or`, narrow nothing, so 400 candidates do not cover the
-/// 2001-value speed range.
+/// bound under `or`, narrow nothing, so the 630 candidates under which the
+/// narrowed item completes do not cover the 2001-value speed range.
 #[trace("TC-2411", "FR-851-AC-3")]
 #[test]
 fn an_ineligible_bound_is_enumerated_over_the_whole_range() {
@@ -114,7 +113,7 @@ fn an_ineligible_bound_is_enumerated_over_the_whole_range() {
         ("bounded-not-form", "300 - self.speed >= 0"),
         ("bounded-or", "self.speed <= 300 or self.stopped"),
     ] {
-        let run = run(name, bounds, Some(json!({"max_candidates": 400})));
+        let run = run(name, bounds, Some(json!({"max_candidates": 630})));
         assert_eq!(label(&run.item(0)), "incomplete", "{name}: {}", run.item(0));
         assert_eq!(
             run.item(0)["record"]["cause"]["limit"],
