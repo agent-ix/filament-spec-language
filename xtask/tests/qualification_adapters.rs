@@ -14,6 +14,7 @@ const FALSE: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"
 
 struct Fixture {
     _temp: TempDir,
+    _fspec_temp: TempDir,
     corpus: PathBuf,
     fspec: PathBuf,
     value: Value,
@@ -21,7 +22,7 @@ struct Fixture {
     native_replay: Option<fsl_replay::ReplayRequestWire>,
 }
 
-fn fspec_repository() -> PathBuf {
+fn fspec_repository() -> TempDir {
     xtask::published_fspec::directory("proposals/")
 }
 
@@ -35,7 +36,8 @@ impl Fixture {
     fn new(subject: &str, operation: &str, source: &str, expected: Value) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let corpus = temp.path().join("corpus");
-        let fspec = fspec_repository();
+        let fspec_temp = fspec_repository();
+        let fspec = fspec_temp.path().to_path_buf();
         fs::create_dir_all(corpus.join("inputs")).unwrap();
         for path in [
             "proposals/conformance-corpus-v1/schema.json",
@@ -51,6 +53,7 @@ impl Fixture {
         });
         Self {
             _temp: temp,
+            _fspec_temp: fspec_temp,
             corpus,
             fspec,
             value,

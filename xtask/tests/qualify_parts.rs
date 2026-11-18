@@ -3,23 +3,26 @@
 //! matrix and the parity of the linked backends (FR-567).
 
 use std::path::{Path, PathBuf};
+use tempfile::TempDir;
 
 use ix_trace_rs::trace;
 use serde_json::Value;
 use xtask::qualify::{self, QualifyInputs};
 
-fn fspec_dir() -> PathBuf {
+fn fspec_dir() -> TempDir {
     xtask::published_fspec::directory("proposals/")
 }
 
-fn inputs() -> QualifyInputs {
-    let fixtures = fspec_dir().join("proposals/conformance-corpus-v1/fixtures");
-    QualifyInputs {
-        fspec: fspec_dir(),
+fn inputs() -> (TempDir, QualifyInputs) {
+    let fspec = fspec_dir();
+    let fixtures = fspec.path().join("proposals/conformance-corpus-v1/fixtures");
+    let inputs = QualifyInputs {
+        fspec: fspec.path().to_path_buf(),
         operands: vec!["--corpus".into(), fixtures.into_os_string()],
         #[cfg(feature = "test-support")]
         matrix: None,
-    }
+    };
+    (fspec, inputs)
 }
 
 fn report(outcome: &xtask::Outcome) -> Value {
@@ -42,7 +45,8 @@ fn part<'a>(report: &'a Value, name: &str) -> &'a Value {
 #[trace("TC-1396")]
 #[test]
 fn a_passing_run_names_the_three_parts_and_qualifies() {
-    let outcome = qualify::run(&inputs()).expect("the gate runs");
+    let (_fspec, inputs) = inputs();
+    let outcome = qualify::run(&inputs).expect("the gate runs");
     assert_eq!(outcome.code, 0, "{}", outcome.stdout);
     let report = report(&outcome);
     assert_eq!(report["verdict"], "qualified");
@@ -60,7 +64,8 @@ fn a_passing_run_names_the_three_parts_and_qualifies() {
 #[trace("TC-1396")]
 #[test]
 fn the_report_names_the_root_package_version() {
-    let outcome = qualify::run(&inputs()).expect("the gate runs");
+    let (_fspec, inputs) = inputs();
+    let outcome = qualify::run(&inputs).expect("the gate runs");
     let version = report(&outcome)["fsl_version"].clone();
     assert_eq!(version, filament_spec_language::VERSION);
     assert_ne!(
@@ -102,7 +107,7 @@ fn a_failing_matrix_case_fails_the_gate_by_name() {
             other => *other,
         })
         .collect();
-    let mut gate = inputs();
+    let (_fspec, mut gate) = inputs();
     gate.matrix = Some(cells);
     let outcome = qualify::run(&gate).expect("the gate runs");
     assert_eq!(outcome.code, 1, "{}", outcome.stdout);
