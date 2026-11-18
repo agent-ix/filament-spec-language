@@ -73,12 +73,13 @@ fn fspec_positive_equality_vectors_match_typed_producer_facts() {
         function text using v(a: Text[0, 8; nfc], b: Text[0, 8; nfc]): Boolean pure { a = b }\n\
         function enumeration using v(a: Color, b: Color): Boolean pure { a != b }\n\
         function quantity using v(a: Quantity<ms>, b: Quantity<s>): Boolean pure { convert<Quantity<s>>(a) = b }\n\
-         function plan using v(a: Point, b: Point): Boolean pure { a = b }\n\
+        function plan using v(a: Point, b: Point): Boolean pure { a = b }\n\
         function float using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure { a = b }\n\
+        function float_not_equal using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure { a != b }\n\
         function compound using v(a: Quantity<m>, b: Quantity<m>): Boolean pure { a * b = a * b }\n";
     let graph = checked_graph(declarations);
     let facts: Vec<_> = graph.equality_producer_data().values().collect();
-    assert_eq!(facts.len(), 6, "each equality application is retained once");
+    assert_eq!(facts.len(), 7, "each equality application is retained once");
 
     let text = facts
         .iter()
@@ -115,12 +116,17 @@ fn fspec_positive_equality_vectors_match_typed_producer_facts() {
     assert_eq!(plan.operator(), EqualityOperator::Equal);
     assert!(plan.units().ids().next().is_none());
 
-    let float = facts
+    let float_comparisons = facts
         .iter()
-        .find(|fact| fact.schedule() == EqualitySchedule::Float)
-        .expect("the float comparison selects the IEEE equality schedule");
-    assert_eq!(float.operator(), EqualityOperator::Equal);
-    assert!(float.units().ids().next().is_none());
+        .filter(|fact| fact.schedule() == EqualitySchedule::Float)
+        .collect::<Vec<_>>();
+    assert_eq!(float_comparisons.len(), 2);
+    assert!(float_comparisons.iter().any(|fact| {
+        fact.operator() == EqualityOperator::Equal && fact.units().ids().next().is_none()
+    }));
+    assert!(float_comparisons.iter().any(|fact| {
+        fact.operator() == EqualityOperator::NotEqual && fact.units().ids().next().is_none()
+    }));
 
     let compound = facts
         .iter()
@@ -161,13 +167,27 @@ fn nested_equalities_each_retain_producer_facts() {
 #[test]
 fn float_equality_schedule_roundtrips_as_float() {
     let emission = emitted(
-        "function float_equal using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure { a = b }",
+        "function float_equal using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure { a = b }\n\
+         function float_not_equal using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure { a != b }",
     );
     super::assert_equality_reader_outcomes(&emission, read_back(&emission));
-    assert_eq!(
-        wire(&emission)["checked_term_data"]["equality_decisions"][0]["schedule"],
-        "float"
-    );
+    let decisions = wire(&emission)["checked_term_data"]["equality_decisions"]
+        .as_array()
+        .expect("Float equality rows are emitted");
+    assert_eq!(decisions.len(), 2);
+    let mut operators = decisions
+        .iter()
+        .map(|decision| decision["operator"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    operators.sort_unstable();
+    assert_eq!(operators, ["equal", "not_equal"]);
+    for decision in decisions {
+        assert_eq!(decision["schedule"], "float");
+        assert!(decision["left"]["conversion_target"].is_null());
+        assert!(decision["right"]["conversion_target"].is_null());
+        assert_eq!(decision["units"], json!([]));
+        assert_eq!(decision["enum_members"], json!([]));
+    }
 }
 
 /// FSpec FR-290: the equality expression's producer identity remains keyed by

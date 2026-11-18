@@ -3727,11 +3727,15 @@ fn checked_equality_term_data(
             });
         };
         let operation = application_body.operation.identity();
-        let operator_matches = match row.producer_data.operator() {
-            filament_semantic_value::declaration::EqualityOperator::Equal => {
+        let operator_matches = match (row.producer_data.schedule(), row.producer_data.operator()) {
+            (
+                filament_semantic_value::declaration::EqualitySchedule::Float,
+                _,
+            ) => operation == "filament.op.ieee.numeric_equal",
+            (_, filament_semantic_value::declaration::EqualityOperator::Equal) => {
                 OperationSuffix::of(operation) == Some(OperationSuffix::Eq)
             }
-            filament_semantic_value::declaration::EqualityOperator::NotEqual => {
+            (_, filament_semantic_value::declaration::EqualityOperator::NotEqual) => {
                 OperationSuffix::of(operation) == Some(OperationSuffix::Ne)
             }
         };
