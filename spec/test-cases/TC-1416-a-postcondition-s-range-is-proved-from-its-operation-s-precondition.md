@@ -67,7 +67,7 @@ function's selection (`g`, `f`).
     (AC-33).
 15. Check a bank unit declaring `Credit` on `deposit` before a 200-conjunct
     `pre` clause `Big`, with `s3.nodes` at 160 (AC-36,
-    `the_cumulative_node_meter_trips_at_the_earlier_postcondition`).
+    `the_node_meter_trips_at_a_later_declared_precondition_before_any_postcondition`).
 
 Tag each test `#[trace("TC-1416", "FR-577-AC-n")]` for the criterion it
 checks, and step 2's region assertion also
@@ -102,8 +102,8 @@ checks, and step 2's region assertion also
 - Step 14: one `ModelFinding::ContractUndetermined` for `Debited` per
   candidate post-state of the frame, 101 in all (one per `balance` value in
   `[0, 100]`), and no successor for that application.
-- Step 15: `stage_limit_exceeded` naming `s3.nodes`, located inside `Credit`,
-  before `Big`.
+- Step 15: `stage_limit_exceeded` naming `s3.nodes`, bound 160, actual 161,
+  located inside `Big`; `Credit` is not charged.
 
 Every refusal above is `undefined_expression`/`unproved-range` unless the
 step names another.

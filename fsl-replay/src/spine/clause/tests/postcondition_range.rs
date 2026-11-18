@@ -1161,14 +1161,13 @@ fn a_bound_refines_neither_a_sum_nor_a_difference_written_backwards() {
     }
 }
 
-/// The documented node-meter order (FR-577 Outputs): the `s3.nodes` meter is
-/// cumulative over the package and preconditions are checked first, so `Big`
-/// uses the ceiling up and the earlier, small `Credit` is the first clause to
-/// trip it. Source-order checking would trip only at `Big`; the difference is
-/// accepted.
+/// FR-577 "Node-meter order": the `s3.nodes` meter is one running count and
+/// the `pre` clauses are charged before the `post` clauses, so `Big`, declared
+/// after `Credit`, is charged first; its nodes alone pass the limit, so the
+/// refusal is inside `Big` at count 161 and `Credit` is never charged.
 #[trace("TC-1416", "FR-577-AC-36")]
 #[test]
-fn the_cumulative_node_meter_trips_at_the_earlier_postcondition() {
+fn the_node_meter_trips_at_a_later_declared_precondition_before_any_postcondition() {
     let credit = "post Credit using v on Bank::Account::deposit \
                   { self.balance = pre(self.balance) - amount }\n";
     let big = clause(
@@ -1206,9 +1205,15 @@ fn the_cumulative_node_meter_trips_at_the_earlier_postcondition() {
     let Some(fsl_foundation::diagnostic::Locus::Region(region)) = limit.locus() else {
         panic!("the limit is located: {refused:?}");
     };
-    // The first refusal is inside `Credit`, which precedes `Big` in the unit.
     assert!(
-        (region.start() as usize) < text.find("pre Big").unwrap(),
+        format!("{limit:?}").contains("configured_bound: 160, actual: 161"),
+        "{limit:?}"
+    );
+    // The refusal is inside `Big`, which follows `Credit` in the unit.
+    let big_start = text.find("pre Big").unwrap();
+    assert!((region.start() as usize) >= big_start, "{refused:?}");
+    assert!(
+        (region.end() as usize) <= big_start + big.len(),
         "{refused:?}"
     );
 }
