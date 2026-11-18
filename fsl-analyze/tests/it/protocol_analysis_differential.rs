@@ -10,7 +10,7 @@ use crate::analyze_cli_support::{analyze, label, litmus_request, order_protocol,
 /// FR-636-AC-2: global deadlock freedom agrees with projection.
 #[trace("TC-1596", "FR-636-AC-2")]
 #[test]
-#[ignore = "QSL-2224: protocol analysis items are not reachable through fsl analyze yet"]
+#[ignore = "QSL-2430: local-projection and realizability items are not reachable through fsl analyze yet"]
 fn protocol_deadlock_agrees_with_projection() {
     let root = json!({"observation": {"authority": "test", "identity": "protocol-claim"},
         "subject": {"tag": "object", "universe": "u", "type": "e", "object_identity": "flow-1"}});
@@ -22,8 +22,10 @@ fn protocol_deadlock_agrees_with_projection() {
             json!({"items": [
                 {"claim": "Flow", "temporal": {"item_kind": "deadlock-freedom"}},
                 {"claim": "Flow", "kind": "local-projection", "assessed_root": root,
-                 "options": {"role": "Seller"}},
-                {"claim": "Flow", "kind": "realizability", "assessed_root": root},
+                 "options": {"role": "Seller"},
+                 "temporal": {"profile": "bounded-static", "max_depth": 16}},
+                {"claim": "Flow", "kind": "realizability", "assessed_root": root,
+                 "temporal": {"profile": "bounded-static", "max_depth": 16, "max_history": 16}},
             ]}),
         ));
         let global = label(&run.item(0)) == "proved";
