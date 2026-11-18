@@ -7,7 +7,7 @@ use filament_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
-use filament_exact::{ObjectId, ObjectReference, ScalarLimits, Value};
+use filament_exact::{ObjectId, ObjectReference, ScalarLimits, Value, ValueType};
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
@@ -500,6 +500,12 @@ fn membership(population: &str, object: &FootprintObject) -> SymbolicLocation {
 
 fn any_membership(population: &str) -> SymbolicLocation {
     SymbolicLocation::AnyMembership {
+        population: key(population),
+    }
+}
+
+fn any_membership_location(population: &str) -> Location {
+    Location::AnyMembership {
         population: key(population),
     }
 }
@@ -1069,15 +1075,15 @@ fn a_reference_literal_in_a_clause_reads_related_population_membership() {
     );
     let receiver = subject.reference("Gate", "g");
     let created = footprint_on(&system, "Gate", "literal", &receiver);
-    assert!(created.reads.contains(&any_membership("cells")));
-    assert!(created.reads.contains(&any_membership("spares")));
-    assert!(created.enabling.contains(&any_membership("cells")));
-    assert!(created.enabling.contains(&any_membership("spares")));
+    assert!(created.reads.contains(&any_membership_location("cells")));
+    assert!(created.reads.contains(&any_membership_location("spares")));
+    assert!(created.enabling.contains(&any_membership_location("cells")));
+    assert!(created.enabling.contains(&any_membership_location("spares")));
     let fixed = footprint_on(&system, "Gate", "literalFixed", &receiver);
-    assert!(!fixed.reads.contains(&any_membership("cells")));
-    assert!(!fixed.reads.contains(&any_membership("spares")));
-    assert!(!fixed.enabling.contains(&any_membership("cells")));
-    assert!(!fixed.enabling.contains(&any_membership("spares")));
+    assert!(!fixed.reads.contains(&any_membership_location("cells")));
+    assert!(!fixed.reads.contains(&any_membership_location("spares")));
+    assert!(!fixed.enabling.contains(&any_membership_location("cells")));
+    assert!(!fixed.enabling.contains(&any_membership_location("spares")));
 
     let over = (
         "g".to_owned(),
