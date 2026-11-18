@@ -238,15 +238,12 @@ fn self_field<'a, N: NodeSource<'a>>(node: N) -> Option<String> {
 /// Whether `node` reads only `pre(...)` terms, the operation's arguments
 /// and literals, combined by pure operators: never `self` outside
 /// `pre(...)`, a post-state read or a call.
-///
-/// A `pre(...)` term that calls a function or a dispatched query is not
-/// read here: the clause evaluator does not give such a call the value an
-/// evaluation over the pre-state alone gives it, so solving it could skip a
-/// candidate the clause leaves undefined. The equation is left to the clause.
+/// A `pre(...)` term may call a function or a dispatched query (FR-120
+/// "Eligible"): the call reads the pre-state, so it has one value for the
+/// application.
 fn pre_only<'a, N: NodeSource<'a>>(node: N) -> bool {
     match node.kind() {
-        NodeKind::Pre(_) => !calls(node),
-        NodeKind::Literal(_) => true,
+        NodeKind::Pre(_) | NodeKind::Literal(_) => true,
         NodeKind::Local(slot) => *slot != 0,
         NodeKind::Coerce(..)
         | NodeKind::Negate(_)
@@ -260,21 +257,6 @@ fn pre_only<'a, N: NodeSource<'a>>(node: N) -> bool {
         | NodeKind::Let { .. } => node.children().into_iter().all(pre_only),
         _ => false,
     }
-}
-
-/// Whether `node` calls a function or a dispatched query anywhere.
-fn calls<'a, N: NodeSource<'a>>(node: N) -> bool {
-    let mut pending = vec![node];
-    while let Some(next) = pending.pop() {
-        if matches!(
-            next.kind(),
-            NodeKind::Call { .. } | NodeKind::ImportedCall { .. } | NodeKind::Dispatch { .. }
-        ) {
-            return true;
-        }
-        pending.extend(next.children());
-    }
-    false
 }
 
 /// Whether `node` reads the local `slot` anywhere.

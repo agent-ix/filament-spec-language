@@ -351,18 +351,42 @@ fn an_undefined_trailing_conjunct_keeps_the_prefix_narrowing() {
     assert_eq!(view(&solved), view(&full));
 }
 
-/// FR-120 "Eligible", FR-120-AC-32: an equation whose `e` calls a
-/// dispatched query on the pre-state gives exactly its enumerated reference
-/// form's successors, findings and charge, both where the query's
-/// precondition holds (`b` 50) and where it is false (`b` 5).
+/// FR-120 "Eligible": an equation whose `e` calls a dispatched query on the
+/// pre-state is solved when the call is defined. At `a` 1 and `b` 50,
+/// `pre(self.mirror())` is 2 and `pre(self.b)` is 50, so `set` generates the
+/// one candidate `a` 2, `b` 50 and charges 2, where its enumerated reference
+/// form charges 401; both keep that one successor and record no finding.
 #[trace("TC-1418", "FR-120-AC-32")]
 #[test]
-fn an_equation_over_a_pre_state_query_keeps_the_enumeration() {
-    let post = "self.a = pre(self.mirror())";
-    for b in [50, 5] {
-        let (solved, solved_charge) = apply(&cell_with(post, false, b, &[MIRROR]).system(), "set");
-        let (full, full_charge) = apply(&cell_with(post, true, b, &[MIRROR]).system(), "set");
-        assert_eq!(solved_charge, full_charge, "b = {b}");
-        assert_eq!(view(&solved), view(&full), "b = {b}");
-    }
+fn an_equation_over_a_defined_pre_state_query_is_solved() {
+    let post = "self.a = pre(self.mirror()) and self.b = pre(self.b)";
+    let (solved, solved_charge) = apply(&cell_with(post, false, 50, &[MIRROR]).system(), "set");
+    let (full, full_charge) = apply(&cell_with(post, true, 50, &[MIRROR]).system(), "set");
+    assert_eq!(solved_charge, 2);
+    assert_eq!(full_charge, 401);
+    assert_eq!(solved.successors.len(), 1);
+    assert!(solved.findings.is_empty(), "{:?}", solved.findings);
+    assert_eq!(view(&solved), view(&full));
+}
+
+/// FR-120-AC-32: at `b` 5 the query's precondition is false on the
+/// pre-state, so `pre(self.mirror())` is `Undefined` (`precondition-false`)
+/// and the application is not solved: it gives its enumerated reference
+/// form's successors (none), its `ContractUndetermined` finding for `A` on
+/// every candidate, and its charge.
+#[trace("TC-1418", "FR-120-AC-32")]
+#[test]
+fn an_equation_over_an_undefined_pre_state_query_is_enumerated() {
+    let post = "self.a = pre(self.mirror()) and self.b = pre(self.b)";
+    let (unsolved, unsolved_charge) = apply(&cell_with(post, false, 5, &[MIRROR]).system(), "set");
+    let (full, full_charge) = apply(&cell_with(post, true, 5, &[MIRROR]).system(), "set");
+    assert_eq!(unsolved_charge, 401);
+    assert_eq!(full_charge, 401);
+    assert!(unsolved.successors.is_empty());
+    let findings = undetermined(&unsolved);
+    assert_eq!(findings.len(), 400, "{:?}", unsolved.findings);
+    assert!(findings
+        .iter()
+        .all(|finding| finding.contains("PreconditionFalse")));
+    assert_eq!(view(&unsolved), view(&full));
 }
