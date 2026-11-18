@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use filament_eval::{CallAdmissionFailure, CallAdmissionLocus, CallFailure, Evaluation, FamilyOutcome};
 use filament_exact::{Charge, ChargePoint, Meter, NodeKey, Outcome, Value};
 use filament_semantic_value::catalog::InternalFault;
+use filament_semantic_value::call::InputRefusal;
 use fsl_package::{BarePackage, BareSelectionFailure, BareSlot, BareWorld, ProtocolSlotDescriptor};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
@@ -23,7 +24,8 @@ use super::slot_supply::{admit_slot_supply, AdmittedSupply, SlotHost, SourceView
 use super::{
     unsupported_projection, ApplicationObservation, ApplicationObservationOptions,
     CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, FrameEvaluation,
-    QualifiedName, Separation, SuppliedRun, ValueInvariantEvaluation,
+    QualifiedName, Separation, SuppliedFailure, SuppliedLimits, SuppliedRun,
+    ValueInvariantEvaluation,
 };
 
 /// A selection or projection refusal as the call reports it (FR-533
