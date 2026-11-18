@@ -119,14 +119,40 @@ impl ReaderProtocolProjection {
         self.frame_slots
     }
 
-    /// Locate every node of the root context as a node of a standalone
-    /// checked expression (`ExpressionOwner::Expression`), by its child-index
-    /// path from the root: a clause term is checked as a standalone
-    /// expression rooted at the term (FR-337), so this is the location the
-    /// source route's checked term gives each node. A node reached twice
-    /// keeps the location of its first walk position.
-    fn locate_standalone(&mut self) {
-        let mut pending = vec![(self.root, Location::root(Origin::Expression))];
+    /// Locate every node of the root context under `owner`, by its
+    /// child-index path from the root: a clause term is checked as its own
+    /// expression rooted at the term, owned by its clause site (FR-337), so
+    /// this is the location the source route's checked term gives each node.
+    /// A node reached twice keeps the location of its first walk position.
+    fn locate_under(&mut self, owner: Origin) {
+        self.locate_from(self.root, owner);
+    }
+
+    /// Locate each called function's body under its own `Body` owner, its
+    /// declaration index the one `indices` gives its name: the location the
+    /// source route's checked body gives each of its nodes.
+    fn locate_functions(&mut self, indices: &BTreeMap<String, usize>) {
+        let bodies: Vec<(usize, Origin)> = self
+            .functions
+            .iter()
+            .filter_map(|function| {
+                let index = *indices.get(&function.name)?;
+                Some((
+                    function.body,
+                    Origin::Body {
+                        function: function.name.clone(),
+                        index,
+                    },
+                ))
+            })
+            .collect();
+        for (body, owner) in bodies {
+            self.locate_from(body, owner);
+        }
+    }
+
+    fn locate_from(&mut self, root: usize, owner: Origin) {
+        let mut pending = vec![(root, Location::root(owner))];
         while let Some((index, location)) = pending.pop() {
             let Some(node) = self.nodes.get_mut(index) else {
                 continue;
@@ -135,7 +161,14 @@ impl ReaderProtocolProjection {
                 continue;
             }
             let children = node.children.clone();
+            let coerced = matches!(node.kind, NodeKind::Coerce(..));
             node.location = Some(location.clone());
+            if coerced {
+                // The checker locates an implicit coercion at its operand's
+                // position, so the operand shares the coercion's location.
+                pending.extend(children.into_iter().map(|child| (child, location.clone())));
+                continue;
+            }
             pending.extend(
                 children
                     .into_iter()
@@ -1270,19 +1303,56 @@ impl<'wire> BareWalker<'wire> {
     /// (FR-940 "Package forms of the source-checked evaluators"): a temporal
     /// clause's `holds` condition or activation guard. The package writes no
     /// `protocol_locations` row for a clause term (FR-383 rows are written for
-    /// protocol slots only), so its applications carry no location.
+    /// protocol slots only), so each node is located under `owner`, the
+    /// term's clause site.
     pub(crate) fn project_term(
         &self,
         root: &NodeKey,
         binders: &[NodeKey],
+        owner: Origin,
     ) -> Result<ReaderProtocolProjection, WalkFailure> {
         let mut projection = self.slot(&SlotRequest {
             root: root.clone(),
             origin: String::new(),
             binders: binders.to_vec(),
         })?;
-        projection.locate_standalone();
+        projection.locate_under(owner);
+        projection.locate_functions(&self.function_indices());
         Ok(projection)
+    }
+
+    /// Each pure function's declaration index among the package's functions
+    /// in source order, by its name: the rank of its `declaration`
+    /// occurrence among every pure function's, by the start of their
+    /// source-map regions.
+    fn function_indices(&self) -> BTreeMap<String, usize> {
+        let admitted = self.index.admitted;
+        let mut declared: Vec<(u64, String)> = admitted
+            .resolved_graph()
+            .nodes
+            .iter()
+            .filter(|node| has_form(node, WireTag::Function, WireForm::PureFunction))
+            .filter_map(|node| {
+                let name = node.declaration.as_ref()?.qualified_name.last()?.to_string();
+                let start = admitted
+                    .source_map()
+                    .iter()
+                    .filter(|entry| {
+                        entry.node_id == node.node_id
+                            && entry.role
+                                == filament_contract_model::CheckedOccurrenceRole::Declaration
+                    })
+                    .filter_map(|entry| entry.regions.first().map(|region| region.start))
+                    .min()?;
+                Some((start, name))
+            })
+            .collect();
+        declared.sort();
+        declared
+            .into_iter()
+            .enumerate()
+            .map(|(index, (_, name))| (name, index))
+            .collect()
     }
 
     /// The number of rows each type-declaration origin holds for each

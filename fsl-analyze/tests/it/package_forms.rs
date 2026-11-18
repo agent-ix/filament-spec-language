@@ -18,7 +18,8 @@ use ix_trace_rs::trace;
 use crate::analyze_cli_support::{
     counter_request_with, counter_snapshot, package_selection, request_members, Workspace, HANDOFF,
 };
-use crate::counter::document;
+use crate::counter::{document, package_with_mode, CONTRACT};
+use filament_semantic_value::checking::CheckMode;
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
     integer_bits: u64::MAX,
@@ -34,15 +35,19 @@ const UNLIMITED: ScalarLimits = ScalarLimits {
 };
 
 /// The clauses whose `holds` conditions and guards the forms read: an
-/// `on origin` clause, a guarded `on each` clause and a clause whose
-/// condition reads a capture.
+/// `on origin` clause, a guarded `on each` clause, a clause whose condition
+/// reads a capture and a clause with two `holds` atoms. The handoff is
+/// compiled under `CheckMode::Linked`, which refuses an unproved divisor, so
+/// the undefined case is [`package_holds_equals_source_holds_where_undefined`].
 const CLAUSES: &str = "temporal Bounded using t0 over (c: M::Counter) clock \"model-steps\" \
      on origin { always holds(c.value <= 3 and not (c.value = 1)) }\n\
      temporal Guarded using t0 over (c: M::Counter) clock \"model-steps\" \
      on each (q: M::Counter) when (c.value >= 2) { always holds(c.value <= 2) }\n\
      temporal Captured using t0 over (c: M::Counter) clock \"model-steps\" \
      on each (q: M::Counter) when (true) { capture n: Int[0, 3] = c.value; \
-     always holds(c.value >= n) }\n";
+     always holds(c.value >= n) }\n\
+     temporal Paired using t0 over (c: M::Counter) clock \"model-steps\" \
+     on origin { always (holds(c.value <= 1) or eventually holds(c.value = 3)) }\n";
 
 /// The handoff files of the compiled Counter unit, read as FR-850
 /// "Admission" reads them.
@@ -164,11 +169,19 @@ fn boolean(evaluation: &filament_eval::Evaluation) -> bool {
     }
 }
 
+/// The truth of a completed Boolean, `None` for an undefined reading.
+fn reading(evaluation: &filament_eval::Evaluation) -> Option<bool> {
+    match &evaluation.outcome {
+        filament_eval::FamilyOutcome::Evaluated(filament_exact::Outcome::Undefined(_)) => None,
+        _ => Some(boolean(evaluation)),
+    }
+}
+
 /// FR-940-AC-6 (the forms' part): over the handoff of the Counter unit, the
-/// package form of `evaluate_holds` returns the source form's value and work
-/// for every `holds` atom of an `on origin`, a guarded `on each` and a
-/// capture-reading clause, at counter values that make each condition both
-/// true and false.
+/// package form of `evaluate_holds` returns the source form's value, work and
+/// location for every `holds` atom of an `on origin`, a guarded `on each`, a
+/// capture-reading and a two-atom clause, at counter values that make each
+/// condition true and false.
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 fn package_holds_equals_source_holds() {
@@ -188,13 +201,16 @@ fn package_holds_equals_source_holds() {
         (0, vec![]),
         (1, vec![]),
         (2, vec![Value::Integer(2_i64.into())]),
+        (3, vec![]),
     ] {
         let clause = clause(&handoff, index);
         let atoms = holds_atoms(clause);
-        assert!(!atoms.is_empty(), "clause {index} has a holds atom");
+        let expected_atoms = if index == 3 { 2 } else { 1 };
+        assert_eq!(atoms.len(), expected_atoms, "clause {index}'s holds atoms");
         for value in [1, 2, 3] {
             let objects = objects(&handoff, value);
             let over = Value::Reference(counter(&objects));
+            let mut readings = Vec::new();
             for atom in &atoms {
                 let mut source_meter = Meter::new(UNLIMITED);
                 let from_source = source
@@ -204,31 +220,39 @@ fn package_holds_equals_source_holds() {
                 let from_package = bare
                     .evaluate_holds(atom, over.clone(), &captures, &objects, &mut package_meter)
                     .expect("the package form evaluates");
-                assert_eq!(
-                    outcome(&from_package),
-                    outcome(&from_source),
-                    "clause {index} at value {value}"
-                );
-                assert_eq!(
-                    from_package.location, from_source.location,
-                    "clause {index} at value {value}"
-                );
+                let at = format!("clause {index} atom {} at value {value}", atom.position);
+                assert_eq!(outcome(&from_package), outcome(&from_source), "{at}");
+                assert_eq!(from_package.location, from_source.location, "{at}");
                 assert_eq!(
                     package_meter.consumed(LimitKind::WorkUnits),
                     source_meter.consumed(LimitKind::WorkUnits),
-                    "clause {index} at value {value}"
+                    "{at}"
                 );
-                seen.push(boolean(&from_package));
+                let read = reading(&from_package);
+                if read.is_none() {
+                    // An undefined reading is located at the dividing node,
+                    // on both routes alike.
+                    assert!(from_package.location.is_some(), "{at}");
+                }
+                readings.push(read);
             }
+            if index == 3 && value == 1 {
+                // The two atoms of one clause read different values.
+                assert_eq!(readings, [Some(true), Some(false)]);
+            }
+            seen.extend(readings);
         }
     }
-    assert!(seen.contains(&true) && seen.contains(&false), "{seen:?}");
+    for expected in [Some(true), Some(false)] {
+        assert!(seen.contains(&expected), "{seen:?}");
+    }
 }
 
 /// FR-940-AC-6 (the forms' part): the package form of `evaluate_guard`
 /// returns the source form's value for the guarded `on each` clause on both
 /// sides of its guard, and `evaluate_holds_traced` returns the source form's
-/// evaluation and receiver path.
+/// evaluation, trail, receiver path and work for every atom of the guarded
+/// and the two-atom clause.
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 fn package_guard_and_traced_holds_equal_their_source_forms() {
@@ -275,43 +299,62 @@ fn package_guard_and_traced_holds_equal_their_source_forms() {
     }
     assert_eq!(guards, [false, true]);
 
-    let objects = objects(&handoff, 3);
-    let over = counter(&objects);
     let observation = ObservationIdentity {
         authority: "test".to_owned(),
         identity: "start".to_owned(),
     };
-    for atom in holds_atoms(guarded) {
-        let binders = HoldsBinders {
-            over: &over,
-            captures: &[],
-        };
-        let mut source_meter = Meter::new(UNLIMITED);
-        let from_source = source
-            .evaluate_holds_traced(
-                &atom,
-                binders,
-                &objects,
-                observation.clone(),
-                &mut source_meter,
-            )
-            .expect("the source traced form evaluates");
-        let mut package_meter = Meter::new(UNLIMITED);
-        let from_package = bare
-            .evaluate_holds_traced(
-                &atom,
-                binders,
-                &objects,
-                observation.clone(),
-                &mut package_meter,
-            )
-            .expect("the package traced form evaluates");
-        assert_eq!(
-            outcome(&from_package.evaluation),
-            outcome(&from_source.evaluation)
-        );
-        assert!(!boolean(&from_package.evaluation));
-        assert_eq!(from_package.receiver_path(), from_source.receiver_path());
+    // The traced form over the guarded, and the two-atom clause:
+    // the trail (decisions, reads and stops by location), the receiver path
+    // and the work are the source form's.
+    let mut traced = Vec::new();
+    for index in [1, 3] {
+        let clause = clause(&handoff, index);
+        for value in [1, 2, 3] {
+            let objects = objects(&handoff, value);
+            let over = counter(&objects);
+            for atom in holds_atoms(clause) {
+                let binders = HoldsBinders {
+                    over: &over,
+                    captures: &[],
+                };
+                let mut source_meter = Meter::new(UNLIMITED);
+                let from_source = source
+                    .evaluate_holds_traced(
+                        &atom,
+                        binders,
+                        &objects,
+                        observation.clone(),
+                        &mut source_meter,
+                    )
+                    .expect("the source traced form evaluates");
+                let mut package_meter = Meter::new(UNLIMITED);
+                let from_package = bare
+                    .evaluate_holds_traced(
+                        &atom,
+                        binders,
+                        &objects,
+                        observation.clone(),
+                        &mut package_meter,
+                    )
+                    .expect("the package traced form evaluates");
+                let at = format!("clause {index} atom {} at value {value}", atom.position);
+                assert_eq!(
+                    format!("{from_package:?}"),
+                    format!("{from_source:?}"),
+                    "{at}"
+                );
+                assert_eq!(
+                    package_meter.consumed(LimitKind::WorkUnits),
+                    source_meter.consumed(LimitKind::WorkUnits),
+                    "{at}"
+                );
+                assert!(from_package.receiver_path().is_some(), "{at}");
+                traced.push(reading(&from_package.evaluation));
+            }
+        }
+    }
+    for expected in [Some(true), Some(false)] {
+        assert!(traced.contains(&expected), "{traced:?}");
     }
 }
 
@@ -454,4 +497,149 @@ fn package_frame_equals_source_frame() {
         ));
     }
     assert_eq!(verdicts, [(true, false), (false, true)]);
+}
+
+/// FR-940-AC-6 with FR-495-AC-3: under `CheckMode::Kernel` a function whose
+/// divisor can be zero checks and is undefined there. For a `holds` condition
+/// that calls it, the package form over the bytes of the Kernel-checked
+/// Counter returns the source form's value, location, work and trail at the
+/// values where it is true and where it is undefined.
+#[trace("TC-2958", "FR-940-AC-6", "FR-495-AC-3")]
+#[test]
+fn package_holds_equals_source_holds_where_undefined() {
+    let model = document(false);
+    let body = format!(
+        "{CONTRACT}function part using v(a: Int[0, 3]): Int[0, 9] pure {{ 6 mod (2 - a) }}\n\
+         temporal Partial using t0 over (c: M::Counter) clock \"model-steps\" \
+         on origin {{ always holds(part(c.value) = 0) }}\n"
+    );
+    let source = package_with_mode(&model, &body, CheckMode::Kernel);
+    let domain = fsl_semantics::model::intake::package_input([model.as_slice()])
+        .expect("the Counter domain package admits");
+    let read = fsl_package::read_evaluation_package(
+        &source,
+        fsl_semantics::library::LibraryName::new("package").expect("a library name"),
+        &domain,
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+    )
+    .expect("the strict reader admits the Kernel package's emission");
+    let mut rows_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let rows = read
+        .emission()
+        .identity_rows(read.admitted(), &mut rows_budget)
+        .expect("identity rows join the package");
+    let equality = read
+        .emission()
+        .equality_witness(read.admitted(), &mut rows_budget)
+        .expect("the emission writes its equality witness");
+    let mut budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let bare = BarePackage::new(read.admitted())
+        .with_supply(
+            BareSupply {
+                identities: &rows,
+                equality: Some(&equality),
+            },
+            &mut budget,
+        )
+        .expect("the bytes view admits its supply");
+    let graph = source.graph();
+    let [clause] = graph.temporal_clauses() else {
+        panic!("one temporal clause");
+    };
+    let [atom] = holds_atoms(clause).try_into().expect("one holds atom");
+    let observation = ObservationIdentity {
+        authority: "test".to_owned(),
+        identity: "start".to_owned(),
+    };
+    let mut readings = Vec::new();
+    for value in [1, 2, 3] {
+        let objects = admitted_objects(graph, &domain, value);
+        let reference = counter(&objects);
+        let over = Value::Reference(reference.clone());
+        let mut source_meter = Meter::new(UNLIMITED);
+        let from_source = source
+            .evaluate_holds(&atom, over.clone(), &[], &objects, &mut source_meter)
+            .expect("the source form evaluates");
+        let mut package_meter = Meter::new(UNLIMITED);
+        let from_package = bare
+            .evaluate_holds(&atom, over, &[], &objects, &mut package_meter)
+            .expect("the package form evaluates");
+        assert_eq!(
+            outcome(&from_package),
+            outcome(&from_source),
+            "value {value}"
+        );
+        assert_eq!(from_package.location, from_source.location, "value {value}");
+        assert_eq!(
+            package_meter.consumed(LimitKind::WorkUnits),
+            source_meter.consumed(LimitKind::WorkUnits),
+            "value {value}"
+        );
+        let read = reading(&from_package);
+        if read.is_none() {
+            assert!(from_package.location.is_some(), "value {value}");
+        }
+        readings.push(read);
+
+        let binders = HoldsBinders {
+            over: &reference,
+            captures: &[],
+        };
+        let mut source_meter = Meter::new(UNLIMITED);
+        let traced_source = source
+            .evaluate_holds_traced(
+                &atom,
+                binders,
+                &objects,
+                observation.clone(),
+                &mut source_meter,
+            )
+            .expect("the source traced form evaluates");
+        let mut package_meter = Meter::new(UNLIMITED);
+        let traced_package = bare
+            .evaluate_holds_traced(
+                &atom,
+                binders,
+                &objects,
+                observation.clone(),
+                &mut package_meter,
+            )
+            .expect("the package traced form evaluates");
+        assert_eq!(
+            format!("{traced_package:?}"),
+            format!("{traced_source:?}"),
+            "value {value}"
+        );
+        assert_eq!(
+            package_meter.consumed(LimitKind::WorkUnits),
+            source_meter.consumed(LimitKind::WorkUnits),
+            "value {value}"
+        );
+    }
+    // `6 mod (2 - value)` is 0 at 1 and 3 and divides by zero at 2.
+    assert_eq!(readings, [Some(true), None, Some(true)]);
+}
+
+/// [`objects`] over any checked graph and domain package input.
+fn admitted_objects(
+    graph: &fsl_semantics::check::CheckedGraph,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    value: i64,
+) -> ObjectEnvironment {
+    let selected = document_ref("start");
+    let provision: BTreeMap<DocumentRef, Vec<u8>> =
+        BTreeMap::from([(selected.clone(), counter_snapshot(&[("a", value)]))]);
+    admit_trace_snapshot(
+        graph.model_selections(),
+        graph.scope().types(),
+        packages,
+        ModelNormalizationLimits::default(),
+        &provision,
+        &selected,
+        ObservationLimits::default(),
+        &[],
+    )
+    .expect("the Counter snapshot admits")
+    .0
 }

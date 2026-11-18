@@ -148,25 +148,39 @@ impl<'p> BarePackage<'p> {
             Activation::Origin => (None, None),
             Activation::Each { trigger, guard } => (Some(trigger), guard.as_ref()),
         };
-        let root = match term {
+        let clause_index = clause_index(package, clause_id).ok_or_else(malformed)?;
+        let (root, site) = match term {
             ClauseTerm::Holds(position) => {
                 let graph_uses = subject.formula_graph();
                 let entry = graph_uses.get(position).ok_or_else(malformed)?;
                 if entry.kind() != Some(FormulaOperation::Holds) {
                     return Err(malformed());
                 }
+                // The source arena numbers each distinct formula node by its
+                // first use in pre-order (FR-515 "One evaluator formula").
+                let mut distinct: Vec<&CheckedNodeId> = Vec::new();
+                for used in graph_uses.iter().take(position + 1) {
+                    if !distinct.contains(&used.node) {
+                        distinct.push(used.node);
+                    }
+                }
+                let node = distinct
+                    .iter()
+                    .position(|held| *held == entry.node)
+                    .ok_or_else(|| fault("bare-holds-use-is-a-formula-node"))?;
                 let earlier = graph_uses
                     .iter()
                     .take(position)
                     .filter(|used| used.kind() == Some(FormulaOperation::Holds))
                     .count();
-                subject
+                let leaf = subject
                     .predicate_leaves()
                     .get(earlier)
-                    .ok_or_else(|| fault("bare-holds-use-has-a-predicate-leaf"))?
+                    .ok_or_else(|| fault("bare-holds-use-has-a-predicate-leaf"))?;
+                (leaf, format!("temporal {clause_index} holds {node}"))
             }
             ClauseTerm::Guard => match guard {
-                Some(guard) => guard,
+                Some(guard) => (guard, format!("temporal {clause_index} guard")),
                 None => return Ok(None),
             },
         };
@@ -225,7 +239,11 @@ impl<'p> BarePackage<'p> {
             .key(root)
             .map_err(|_| fault("bare-package-has-structural-keys"))?;
         let projection = walker
-            .project_term(&root_key, &keys)
+            .project_term(
+                &root_key,
+                &keys,
+                filament_semantic_value::location::ExpressionOwner::TypeDeclaration { name: site },
+            )
             .map_err(walk_failure)?;
         let world = self.world()?;
         if projection.has_unrepresented_types(world.types()) {
@@ -339,4 +357,41 @@ fn anchor_member<'t>(term: &'t CheckedTerm, name: &str) -> Option<&'t CheckedTer
         CheckedTerm::Binding { name: bound, value } if &**bound == name => Some(&**value),
         _ => None,
     })
+}
+
+/// The index of the temporal clause `clause` among the unit's temporal
+/// clause declarations in source order (FR-337's clause site name): the rank
+/// of its first `claim` occurrence among every temporal clause's `claim`
+/// occurrences of the same source, by the start of their source-map regions.
+fn clause_index(
+    package: &filament_contract_model::CheckedPackageV2,
+    clause: &CheckedNodeId,
+) -> Option<usize> {
+    use filament_contract_model::CheckedOccurrenceRole;
+    let temporal: std::collections::BTreeSet<&CheckedNodeId> = package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .filter(|node| node.semantic_form.as_ref() == "temporal_clause")
+        .map(|node| &node.node_id)
+        .collect();
+    let claims: Vec<&filament_contract_model::CheckedSourceMapEntry> = package
+        .source_map()
+        .iter()
+        .filter(|entry| {
+            entry.role == CheckedOccurrenceRole::Claim && temporal.contains(&entry.node_id)
+        })
+        .collect();
+    let own = claims
+        .iter()
+        .filter(|entry| entry.node_id == *clause)
+        .filter_map(|entry| entry.regions.first())
+        .min_by_key(|region| region.start)?;
+    Some(
+        claims
+            .iter()
+            .filter_map(|entry| entry.regions.first())
+            .filter(|region| region.source == own.source && region.start < own.start)
+            .count(),
+    )
 }
