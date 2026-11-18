@@ -103,6 +103,14 @@ const CLAUSES: &[(&str, &str)] = &[
         "NoneSelected",
         "forall(n in filter(m in ints(sequence[0, self.versionNumber]): m > 900): n < 0)",
     ),
+    (
+        "MatchesParent",
+        "present(self.parent) implies self.versionNumber = value(self.parent).versionNumber",
+    ),
+    (
+        "AtLeastParent",
+        "present(self.parent) implies self.versionNumber >= value(self.parent).versionNumber",
+    ),
 ];
 
 /// The `witness` unit's text, selecting the `Config` domain package.
@@ -2943,5 +2951,55 @@ fn tc_1040_the_elements_of_a_built_list_are_read_at_their_index() {
                 ],
             ),
         ]
+    );
+}
+
+/// TC-2981 (FR-265-AC-11, AC-12): a separating path that ends at an authored
+/// comparison derives the decisive basis and a record naming the comparison,
+/// its operand values and the path to it.
+#[trace("TC-2981", "FR-265-AC-11")]
+#[trace("TC-2981", "FR-265-AC-12")]
+#[trace("FSpec-TC-2014", "FSpec-FR-351-AC-9")]
+#[test]
+#[ignore = "QSL-2428: a separating witness ending at a deciding comparison is not implemented yet"]
+fn tc_2981_a_path_ending_at_a_comparison_records_the_comparison_and_its_operands() {
+    let unit = witness_unit();
+    let Some(Derived {
+        basis: SettlementBasis::DecisiveCounterexample,
+        record: Some(record),
+    }) = derive(&unit, "MatchesParent", Snapshot::High, "mid")
+    else {
+        panic!("MatchesParent over high ends at its `=` and is decisive");
+    };
+    let text = format!("{record:?}");
+    assert!(text.contains("deciding_comparison"), "{text}");
+    assert!(text.contains("operands"), "{text}");
+    assert!(text.contains("decision_path"), "{text}");
+    assert!(text.contains("600"), "{text}");
+    assert!(
+        matches!(
+            derive(&unit, "AtLeastParent", Snapshot::High, "mid"),
+            Some(Derived {
+                basis: SettlementBasis::DecisiveWitness,
+                record: Some(_),
+            })
+        ),
+        "AtLeastParent over high ends at its `>=` and is a decisive witness"
+    );
+    // With no parent the walk ends at `present(self.parent)`, a call.
+    assert_eq!(
+        derive(&unit, "MatchesParent", Snapshot::High, "root"),
+        closed()
+    );
+    // FR-265-AC-3: `OrAll` ends at `self.versionNumber = 0`.
+    assert!(
+        matches!(
+            derive(&unit, "OrAll", Snapshot::High, "mid"),
+            Some(Derived {
+                basis: SettlementBasis::DecisiveCounterexample,
+                record: Some(_),
+            })
+        ),
+        "OrAll's walk ends at an authored `=`"
     );
 }

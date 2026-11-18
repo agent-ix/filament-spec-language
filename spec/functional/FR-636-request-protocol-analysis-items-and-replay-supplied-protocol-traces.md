@@ -72,7 +72,8 @@ obligation rather than declining the input.
   (FSpec FR-331); `options.role` names the role a `local-projection` item
   projects onto.
 - `temporal.limits`: FR-625's limits plus `max_live_instances`,
-  `max_messages` and `max_walk_steps`.
+  `max_messages` (FR-225: every message in flight, on every channel and in
+  the RA component) and `max_walk_steps`.
 - `trace`: for `finite-replay`, the `{authority, identity}` of a provisioned
   document holding the trace in FSpec FR-433's spelling.
 - `recording`: for `global-conformance` in replay mode, the `{authority, identity}`
