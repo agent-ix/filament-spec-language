@@ -2745,11 +2745,12 @@ pub(super) fn decisive_over(
         ))
     };
     let position = atom.position.index();
+    let named = fsl_eval::value::HoldsAtom::of_source(node, atom.atom)
+        .ok_or_else(|| fault("decisive-atom-is-a-formula-use"))?;
     let evaluation = run
         .package
         .evaluate_holds_traced(
-            node,
-            atom.atom,
+            &named,
             fsl_eval::value::HoldsBinders { over, captures },
             objects,
             observation,
