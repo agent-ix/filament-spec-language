@@ -100,6 +100,9 @@ pub struct ModelCheckInput<'a> {
     pub terminals: Result<Vec<PackageTerminal<'a>>, TerminalResolveRefusal>,
     /// The evaluator of the package's checked forms.
     pub evaluator: &'a dyn ModelEvaluator,
+    /// The source package the tables were read from; `None` on the package
+    /// route.
+    pub source: Option<&'a CheckedPackage>,
 }
 
 impl<'a> ModelCheckInput<'a> {
@@ -137,6 +140,7 @@ impl<'a> ModelCheckInput<'a> {
                 .collect(),
             terminals: fsl_package::resolve_terminals(package),
             evaluator: package,
+            source: Some(package),
         }
     }
 
@@ -156,7 +160,7 @@ impl<'a> ModelCheckInput<'a> {
     /// The source package, for an engine that has no package form yet
     /// (the SMT encoding); `None` on the package route.
     pub fn source_package(&self) -> Option<&'a CheckedPackage> {
-        self.evaluator.source_package()
+        self.source
     }
 }
 
@@ -235,6 +239,7 @@ impl<'p> PackageModelInput<'p> {
             state_clauses: Vec::new(),
             terminals: Ok(Vec::new()),
             evaluator: self.package,
+            source: None,
         }
     }
 }
@@ -261,9 +266,6 @@ const SOURCE_FORM: InternalFault = InternalFault::new("FR-940", "source-form-on-
 /// route, the package route through [`CheckedPackageEvaluation`] over the
 /// package's forms.
 pub trait ModelEvaluator: sealed::Sealed + Sync {
-    /// The source package; `None` on the package route.
-    fn source_package(&self) -> Option<&CheckedPackage>;
-
     /// FR-107: one state clause, by name, over its admitted observations.
     ///
     /// # Errors
@@ -584,10 +586,6 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
 }
 
 impl ModelEvaluator for CheckedPackage {
-    fn source_package(&self) -> Option<&CheckedPackage> {
-        Some(self)
-    }
-
     fn evaluate_clause(
         &self,
         clause: &QualifiedName,
@@ -879,10 +877,6 @@ const NO_SOURCE_FOOTPRINT: FootprintRefusal = FootprintRefusal::Unresolved {
 };
 
 impl ModelEvaluator for BarePackage<'_> {
-    fn source_package(&self) -> Option<&CheckedPackage> {
-        None
-    }
-
     fn evaluate_clause(
         &self,
         clause: &QualifiedName,
