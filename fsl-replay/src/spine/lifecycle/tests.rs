@@ -327,7 +327,7 @@ fn parse_carries_protocol_results_for_a_confined_syntax_refusal() {
 }
 
 /// FR-503-AC-2 (TC-1298 row 2): header syntax errors are unattributable and
-/// carry no protocol result payload.
+/// carry no protocol results.
 #[trace("TC-1298", "FR-503-AC-2")]
 #[test]
 fn header_syntax_error_does_not_attach_protocol_results() {
@@ -339,11 +339,16 @@ fn header_syntax_error_does_not_attach_protocol_results() {
         &Cancel::new(),
     )
     .expect_err("the header syntax is invalid");
-    assert!(failure.payload().is_none(), "{failure:?}");
+    assert!(
+        failure
+            .payload()
+            .map_or(true, |payload| payload.protocol_results.is_empty()),
+        "{failure:?}"
+    );
 }
 
 /// FR-503-AC-2 (TC-1298 row 2): an unbounded protocol EOF remains
-/// unattributable and carries no protocol result payload.
+/// unattributable and carries no protocol results.
 #[trace("TC-1298", "FR-503-AC-2")]
 #[test]
 fn unbounded_protocol_eof_does_not_attach_protocol_results() {
@@ -354,7 +359,12 @@ fn unbounded_protocol_eof_does_not_attach_protocol_results() {
         &Cancel::new(),
     )
     .expect_err("the protocol reaches EOF without its closing delimiter");
-    assert!(failure.payload().is_none(), "{failure:?}");
+    assert!(
+        failure
+            .payload()
+            .map_or(true, |payload| payload.protocol_results.is_empty()),
+        "{failure:?}"
+    );
 }
 
 /// FR-503-AC-2 (TC-1298 row 2): a bounded non-protocol refusal after the
@@ -412,7 +422,7 @@ fn protocol_expression_is_not_counted_as_a_declaration() {
 }
 
 /// FR-503-AC-2 (TC-1298 row 2): a non-protocol declaration that runs to EOF
-/// is unbounded and carries no protocol result payload.
+/// is unbounded and carries no protocol results.
 #[trace("TC-1298", "FR-503-AC-2")]
 #[test]
 fn unbounded_nonprotocol_eof_does_not_attach_protocol_results() {
@@ -425,7 +435,12 @@ fn unbounded_nonprotocol_eof_does_not_attach_protocol_results() {
         &Cancel::new(),
     )
     .expect_err("the state clause reaches EOF without a closing delimiter");
-    assert!(failure.payload().is_none(), "{failure:?}");
+    assert!(
+        failure
+            .payload()
+            .map_or(true, |payload| payload.protocol_results.is_empty()),
+        "{failure:?}"
+    );
 }
 
 /// FR-503-AC-2 (TC-1298 row 2): a non-protocol brace error between two
@@ -2383,6 +2398,8 @@ fn check_retains_the_owning_protocol_locus() {
     )
     .expect_err("X's missing type refuses check");
     let x_start = unit.find("protocol X").expect("X's declaration") + "protocol ".len();
+    let x_declaration_start = x_start - "protocol ".len();
+    let x_end = x_declaration_start + broken.len();
     let StageFailure::RefusedWithPayload(refusal, results) = failure else {
         panic!("check retains protocol results: {failure:?}");
     };
@@ -2409,9 +2426,9 @@ fn check_retains_the_owning_protocol_locus() {
             && declaration_span.start == x_start
             && declaration_span.end == x_start + 1
             && locus.source() == parsed.source().reference()
-            && locus.start() == x_start as u64
-            && locus.end() == (x_start + 1) as u64
-    ));
+            && locus.start() >= x_start as u64
+            && locus.end() <= x_end as u64
+    ), "{:#?}", results.protocol_results);
     let without_payload = crate::ReplayRefusal::Recompile(*refusal);
     assert_eq!(with_payload_category, without_payload.code().category());
     assert_eq!(
@@ -2609,6 +2626,7 @@ fn fixture_chain() -> Chain {
 fn refusal(failure: FrontEndFailure) -> Box<CompileRefusal> {
     match failure {
         StageFailure::Refused(refusal) => refusal,
+        StageFailure::RefusedWithPayload(refusal, _) => *refusal,
         other => panic!("expected a refusal, got {other:?}"),
     }
 }

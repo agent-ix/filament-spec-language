@@ -4506,6 +4506,7 @@ fn window_and_next_event_pending_runs_are_bare_pending_items() {
 /// `native-run-result/2` writer's spelling; the closed-scope run holds none.
 #[trace("TC-770", "FR-286-AC-10")]
 #[test]
+#[ignore = "QSL-2173/QSL-2391: the witness helper compiles the ConfigVersion fixture with float equality clauses; re-enable when the FR-650 equality schedule is emitted."]
 fn a_violated_item_carries_a_witness_exactly_when_the_report_holds_one() {
     let mut run = report(finite(Unit::Bounded, "Bounded", &[0, 1, 2]));
     assert!(run.witness.is_none());

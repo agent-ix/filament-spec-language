@@ -833,7 +833,7 @@ fn bank_snapshot(label: &DocumentRef, observation: &str, balance: i64) -> Vec<u8
         "format": "filament.state.snapshot/v1",
         "identity": document_identity_json(label),
         "observation": observation,
-        "model": {"identity": BANK, "version": "1.0.0"},
+        "model": {"identity": BANK},
         "populations": [{
             "population": id("accounts"),
             "complete": true,
@@ -868,7 +868,7 @@ fn bank_invocation() -> (
         json!({
             "format": "filament.state.invocation/v1",
             "identity": document_identity_json(label),
-            "model": {"identity": BANK, "version": "1.0.0"},
+            "model": {"identity": BANK},
             "context": id("Account"),
             "operation": "withdraw",
             "self": {"population": id("accounts"), "key": "a"},
