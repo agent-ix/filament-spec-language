@@ -44,7 +44,7 @@ fn first_diagnostic(run: &Run) -> Value {
 /// route's counterexample and replay.
 #[trace("TC-2410", "FR-850-AC-2")]
 #[test]
-#[ignore = "QSL-2271: the in-process checked-package builder from package bytes conflicts with FR-087-AC-2"]
+#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn a_package_refutation_equals_the_source_refutation() {
     let body = format!("{}{}{}", bounded(), below_three(), at_most_two());
     let items = json!([{"claim": "AtMostTwo"}]);
@@ -240,7 +240,7 @@ fn an_unknown_claim_over_a_package_settles_unknown_claim() {
 /// refused as not implemented and its items equal the source route's.
 #[trace("TC-2620", "FR-940-AC-1", "FR-940-AC-3")]
 #[test]
-#[ignore = "QSL-2271: the analysis engines do not read a package through AnalysisView yet"]
+#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn a_package_request_reads_the_source_route_facts_through_the_view() {
     let body = format!("{}{}{}", bounded(), below_three(), at_most_two());
     let items = json!([{"claim": "Bounded"}, {"claim": "BelowThree"}, {"claim": "AtMostTwo"}]);
@@ -290,7 +290,7 @@ fn source_analysis_decides_every_family_over_its_checked_graph() {
 /// evaluators through their package forms with the source route's records.
 #[trace("TC-2958", "FR-940-AC-5")]
 #[test]
-#[ignore = "QSL-2271: package forms of the source-checked evaluators are not implemented yet"]
+#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn the_package_route_reaches_the_source_checked_evaluators() {
     let body = format!("{}{}{}", bounded(), at_most_two(), not_above_three());
     let items = json!([{"claim": "NotAboveThree"}, {"claim": "AtMostTwo"}]);
@@ -323,7 +323,7 @@ fn the_package_route_reaches_the_source_checked_evaluators() {
 /// item and is never analyzed from source instead.
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
-#[ignore = "QSL-2271: the package route without a source fallback is not implemented yet"]
+#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn a_refused_package_never_falls_back_to_source() {
     let families = format!("{}{}{}", bounded(), at_most_two(), not_above_three());
     let all = json!([{"claim": "Bounded"}, {"claim": "AtMostTwo"}, {"claim": "NotAboveThree"}]);
@@ -373,7 +373,7 @@ fn a_refused_package_never_falls_back_to_source() {
 /// handoff with no `equality.json` is admitted with no equality rows.
 #[trace("TC-2966", "FR-850-AC-6")]
 #[test]
-#[ignore = "QSL-2271: the unknown-format identity cause and an absent equality file not implemented yet"]
+#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn a_foreign_identity_format_refuses_and_an_absent_equality_file_is_admitted() {
     let ws = Workspace::new("package-handoff-identities");
     let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
@@ -405,7 +405,7 @@ fn a_foreign_identity_format_refuses_and_an_absent_equality_file_is_admitted() {
 /// naming `file`.
 #[trace("FSpec-TC-2009", "FSpec-FR-520-AC-7")]
 #[test]
-#[ignore = "QSL-2271: refusing the package file spelling not verified yet"]
+#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn a_package_selection_names_a_directory_not_a_file() {
     let ws = Workspace::new("package-selection-directory");
     let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
@@ -606,4 +606,132 @@ fn a_name_in_both_name_tables_is_refused() {
     assert_eq!(diagnostic["code"], "ambiguous_declaration", "{diagnostic}");
     assert_eq!(diagnostic["cause"], "ambiguous-name", "{diagnostic}");
     assert_eq!(run.document()["items"], json!([]));
+}
+
+/// The `request` members of the `native-analyze/1` request at `path`.
+fn request_of(path: &std::path::Path) -> Value {
+    let document: Value =
+        serde_json::from_slice(&std::fs::read(path).expect("the request")).expect("JSON");
+    document["request"].clone()
+}
+
+/// The item `{claim, temporal: {item_kind: deadlock-freedom}}` over the
+/// model selection `identity`.
+fn deadlock_item(identity: &str) -> Value {
+    json!({"claim": identity, "temporal": {"item_kind": "deadlock-freedom"}})
+}
+
+/// Analyze `unit` over `model` from counter `a` at 0 with `items`, from
+/// source and from its handoff directory; returns both runs.
+fn both_routes(name: &str, unit: &str, model: &[u8], items: &Value) -> (Run, Run) {
+    let ws = Workspace::new(name);
+    let path = crate::analyze_cli_support::request_over(
+        &ws,
+        unit,
+        model,
+        &[crate::analyze_cli_support::counter_snapshot(&[("a", 0)])],
+        json!({ "items": items }),
+    );
+    let source = analyze(&path);
+    let (members, _) = package_selection(&ws, &request_of(&path));
+    let package = analyze_members(&ws, "analyze-package.json", &members);
+    (source, package)
+}
+
+/// FR-850 "Equality with the source route", FR-940-AC-3 and AC-6 (QSL-2406):
+/// `fsl analyze` over the handoff directory of a Counter unit whose
+/// operations come from its domain package gives the source route's
+/// document: the temporal clauses `Bounded` (proved) and `AtMostTwo`
+/// (refuted, its counterexample replayed from the package bytes) and the
+/// derived deadlock-freedom item over `test/counter` settle with equal
+/// items, aggregate, last stage and exit code; over the Counter with no
+/// operation the deadlock item is refuted on both routes with the same
+/// counterexample and replay.
+#[trace("TC-2410", "FR-850-AC-2")]
+#[trace("TC-2620", "FR-940-AC-3")]
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn a_package_request_settles_temporal_and_deadlock_items_as_the_source_route() {
+    let unit = crate::counter::unit_text(&format!("{}{}", bounded(), at_most_two()));
+    let items =
+        json!([{"claim": "Bounded"}, {"claim": "AtMostTwo"}, deadlock_item("test/counter")]);
+    let (source, package) = both_routes(
+        "package-route-families",
+        &unit,
+        &crate::counter::document(false),
+        &items,
+    );
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    assert_eq!(label(&source.item(1)), "refuted", "{}", source.document());
+    assert_eq!(label(&source.item(2)), "proved", "{}", source.document());
+    assert_eq!(package.item(1)["replay"]["reproduced"], true);
+    for member in ["items", "aggregate", "last_stage", "category", "registry"] {
+        assert_eq!(
+            package.document()[member],
+            source.document()[member],
+            "{member}: {}",
+            package.document()
+        );
+    }
+    assert_eq!(package.exit, source.exit);
+
+    let still = crate::model_world::still_counter();
+    let (source, package) = both_routes(
+        "package-route-deadlock",
+        &crate::counter::unit_text(&bounded()),
+        &still.document,
+        &json!([deadlock_item("test/counter")]),
+    );
+    assert_eq!(label(&source.item(0)), "refuted", "{}", source.document());
+    assert_eq!(package.item(0)["replay"]["reproduced"], true);
+    assert_eq!(
+        package.document()["items"],
+        source.document()["items"],
+        "{}",
+        package.document()
+    );
+    assert_eq!(package.exit, source.exit);
+}
+
+/// FR-940 "Package forms of the source-checked evaluators" (QSL-2406,
+/// QSL-2432): a request whose item names a family the package route has
+/// no form of yet is refused whole, typed and naming the family, never
+/// settled from source or `unsupported`: a derived item naming its model by
+/// the alias the package does not carry, a clause with a fairness set
+/// (naming the fact and its node), and the default items.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn a_pending_package_family_refuses_typed_naming_it() {
+    let fair = clause(
+        "Fair",
+        "fair weak M::Counter::inc;",
+        "eventually holds(c.value = 3)",
+    );
+    let unit = crate::counter::unit_text(&format!("{}{fair}", bounded()));
+    for (items, expected) in [
+        (
+            json!([deadlock_item("M")]),
+            "items[0] names the model-alias family",
+        ),
+        (
+            json!([{"claim": "Bounded"}, {"claim": "Fair"}]),
+            "items[1] names a temporal clause whose fairness has no package form yet at",
+        ),
+    ] {
+        let (_, package) = both_routes(
+            "package-route-pending",
+            &unit,
+            &crate::counter::document(false),
+            &items,
+        );
+        let diagnostic = first_diagnostic(&package);
+        assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
+        assert!(
+            diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains(expected)),
+            "{diagnostic}"
+        );
+        assert_eq!(package.document()["items"], json!([]));
+    }
 }

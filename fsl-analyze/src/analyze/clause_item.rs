@@ -82,6 +82,17 @@ pub enum ClauseItemRefusal {
     /// target can name it.
     #[error("the clause's declared name is not an identifier")]
     UnnamedClause,
+    /// On the package route (FR-940): the clause carries a fact its package
+    /// form does not read yet (a fairness set, an interval, an aggregate
+    /// atom, a shared formula node, a profile other than the infinite-trace
+    /// one or a capture), at the node that carries it.
+    #[error("unsupported_construct/not-yet-implemented: the clause's package form does not read its {fact} at {node:?} yet")]
+    Pending {
+        /// The fact not read yet.
+        fact: &'static str,
+        /// The node that carries it.
+        node: fsl_package::CheckedNodeId,
+    },
 }
 
 /// The inputs of one authored-clause item.
@@ -598,6 +609,8 @@ pub struct PackageClauseSubject<'a> {
     binding: SubjectBinding<'a>,
     limits: AnalyzeLimits,
     run: ClauseLimits,
+    proof_bounds: Vec<fsl_foundation::bound::ProofBound>,
+    temporal: Option<super::TemporalItem>,
     package_bytes: &'a [u8],
     supply: fsl_replay::HandoffSupply<'a>,
 }
@@ -609,9 +622,11 @@ impl<'a> PackageClauseSubject<'a> {
     ///
     /// # Errors
     ///
+    /// [`ClauseItemRefusal::Pending`] when the clause carries a fact its
+    /// package form does not read yet, naming the fact and its node;
     /// [`ClauseItemRefusal::UnknownClause`] when the package holds no such
-    /// clause or its package form is not read; [`ClauseItemRefusal::UnnamedClause`]
-    /// when its name is no identifier.
+    /// clause; [`ClauseItemRefusal::UnnamedClause`] when its name is no
+    /// identifier.
     pub fn new(
         package: &'a fsl_eval::simulation::model::PackageModelInput<'a>,
         package_bytes: &'a [u8],
@@ -630,7 +645,13 @@ impl<'a> PackageClauseSubject<'a> {
                 key,
                 filament_semantic_value::checking::CheckingLimits::default().nodes(),
             )
-            .map_err(|_| ClauseItemRefusal::UnknownClause)?;
+            .map_err(|refusal| match refusal.pending_fact() {
+                Some((fact, node)) => ClauseItemRefusal::Pending {
+                    fact,
+                    node: node.clone(),
+                },
+                None => ClauseItemRefusal::UnknownClause,
+            })?;
         let identity = fsl_replay::ClauseIdentity::of_admitted(admitted, &clause)
             .map_err(|_| ClauseItemRefusal::UnknownClause)?;
         named(&clause)?;
@@ -642,9 +663,31 @@ impl<'a> PackageClauseSubject<'a> {
             binding,
             limits,
             run,
+            proof_bounds: Vec::new(),
+            temporal: None,
             package_bytes,
             supply,
         })
+    }
+
+    /// The package form of the clause the item checks.
+    pub fn clause(&self) -> &fsl_semantics::check::CheckedTemporalClause {
+        &self.clause
+    }
+
+    /// The clause's claim occurrence, read from its `temporal_clause_names`
+    /// row.
+    pub fn occurrence(&self) -> &OccurrenceKey {
+        &self.occurrence
+    }
+
+    /// The subject with the request item's settings `temporal` and its
+    /// explicit proof bounds, which the item runs under as
+    /// [`ClauseSubject`]'s configured item does.
+    pub(super) fn configured(mut self, temporal: super::TemporalItem) -> Self {
+        self.proof_bounds.clone_from(&temporal.proof_bounds);
+        self.temporal = Some(temporal);
+        self
     }
 
     /// The `temporal-satisfaction` item that runs the package-form clause
@@ -660,6 +703,15 @@ impl<'a> PackageClauseSubject<'a> {
             en1::BACKEND_ID,
             move |cancel| {
                 let subject = &self;
+                if let Some(temporal) = &subject.temporal {
+                    if temporal.item_kind != fsl_route::request::ItemKind::Formula
+                        || temporal.abstract_subject.is_some()
+                        || temporal.stutter_closure.is_some()
+                        || temporal.fairness != subject.clause.fairness()
+                    {
+                        return EngineReport::Refused(Refusal::Unsupported(super::items::NOT_YET));
+                    }
+                }
                 let system = match ModelSystem::new(subject.simulation()) {
                     Ok(system) => system,
                     Err(failure) => return EngineReport::Refused(admission(&failure)),
@@ -679,17 +731,29 @@ impl<'a> PackageClauseSubject<'a> {
                             subject: subject.model_subject(),
                             item: item(),
                             max_depth: subject.run.max_depth,
-                            limits: ModelCheckLimits {
-                                limits: subject.run.limits,
-                                ..ModelCheckLimits::default()
-                            },
-                            reductions: Default::default(),
+                            limits: subject
+                                .temporal
+                                .as_ref()
+                                .map(|temporal| temporal.limits)
+                                .unwrap_or(ModelCheckLimits {
+                                    limits: subject.run.limits,
+                                    ..ModelCheckLimits::default()
+                                }),
+                            reductions: subject
+                                .temporal
+                                .as_ref()
+                                .map(|temporal| temporal.reductions.clone())
+                                .unwrap_or_default(),
                         },
                         certificate: CertificateRequest {
                             temporal_clock_selections: &[],
                             subject: subject.model_subject(),
                             item: item(),
-                            smt_encoding: Default::default(),
+                            smt_encoding: subject
+                                .temporal
+                                .as_ref()
+                                .and_then(|temporal| temporal.smt_encoding)
+                                .unwrap_or_default(),
                         },
                         replay: Box::new(|payload| subject.replay(payload, &letters)),
                     },
@@ -731,7 +795,7 @@ impl<'a> PackageClauseSubject<'a> {
     fn model_subject(&self) -> fsl_eval::model_subject::ModelSubject<'a> {
         fsl_eval::model_subject::ModelSubject {
             simulation: self.simulation(),
-            proof_bounds: Vec::new(),
+            proof_bounds: self.proof_bounds.clone(),
         }
     }
 

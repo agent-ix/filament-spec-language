@@ -206,6 +206,22 @@ pub enum PendingClauseForm {
     Build(fsl_semantics::check::PackageClauseRefusal),
 }
 
+impl PendingClauseForm {
+    /// The fact the clause carries that its package form does not read yet,
+    /// with the node that carries it, when that is why no form was built
+    /// (FR-940): a fairness set, an interval, an aggregate atom, a shared
+    /// formula node, a profile other than the infinite-trace one or a
+    /// capture.
+    pub fn pending_fact(&self) -> Option<(&'static str, &fsl_package::CheckedNodeId)> {
+        match self {
+            Self::Read(fsl_package::BareClauseRefusal::Pending { fact, node }) => {
+                Some((fact, node))
+            }
+            Self::Read(fsl_package::BareClauseRefusal::Selection(_)) | Self::Build(_) => None,
+        }
+    }
+}
+
 /// The package route's model-check input, built once from a
 /// [`BarePackage`]'s admitted nodes (FR-940): it owns the tables it read and
 /// lends them as a [`ModelCheckInput`].
@@ -283,7 +299,11 @@ impl<'p> PackageModelInput<'p> {
     /// # Errors
     ///
     /// [`PendingClauseForm`] for a clause the package does not select or
-    /// whose package form reads a fact the form does not read yet.
+    /// whose package form reads a fact the form does not read yet. A clause
+    /// under a profile other than the infinite-trace one, and a clause with
+    /// captures, whose package-route letters do not read them yet, are
+    /// refused [`fsl_package::BareClauseRefusal::Pending`] at the clause node
+    /// (`profile`, `capture`) before any engine runs.
     pub fn temporal_clause(
         &self,
         clause: &NodeKey,
@@ -293,6 +313,24 @@ impl<'p> PackageModelInput<'p> {
             .package
             .temporal_clause_form(clause)
             .map_err(PendingClauseForm::Read)?;
+        let pending = |fact| -> Result<CheckedTemporalClause, PendingClauseForm> {
+            let node = self
+                .package
+                .temporal_clause_node(clause)
+                .map_err(PendingClauseForm::Read)?;
+            Err(PendingClauseForm::Read(
+                fsl_package::BareClauseRefusal::Pending {
+                    fact,
+                    node: node.clone(),
+                },
+            ))
+        };
+        if form.profile != fsl_semantics::check::TemporalProfile::InfiniteTrace {
+            return pending("profile");
+        }
+        if !form.captures.is_empty() {
+            return pending("capture");
+        }
         if let ValueType::Reference(object) = &form.over.1 {
             form.populations = self.model.overlapping_populations(object.clone());
         }

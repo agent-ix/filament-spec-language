@@ -576,3 +576,105 @@ fn a_package_route_refutation_replays_from_the_handoff_as_the_source_refutation(
     let package = records.remove(0);
     assert_eq!(format!("{package:?}"), format!("{source:?}"));
 }
+
+/// Run `check` over the package route's model-check input of `world`'s
+/// emitted package, its bytes and its handoff supply.
+fn over_package_route(
+    world: &World,
+    check: impl FnOnce(
+        &fsl_eval::simulation::model::PackageModelInput<'_>,
+        &[u8],
+        fsl_replay::HandoffSupply<'_>,
+    ),
+) {
+    use fsl_package::{BarePackage, BareSupply, V2ReadLimits};
+    let binding = world.binding(&["c"]);
+    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .expect("the package emits");
+    let bytes = emission.package().bytes().to_vec();
+    let admitted =
+        fsl_package::admit_checked_package(&bytes, binding.packages, V2ReadLimits::fixture())
+            .expect("the strict reader admits the bytes");
+    let mut budget = V2ReadLimits::fixture().native_join_budget();
+    let identities = emission
+        .identity_rows(&admitted, &mut budget)
+        .expect("the identity rows");
+    let equality = emission
+        .equality_witness(&admitted, &mut budget)
+        .expect("the equality rows");
+    let identity_bytes = identities.to_bytes(&admitted).expect("identities.json");
+    let equality_bytes = equality.to_bytes(&admitted).expect("equality.json");
+    let bare = BarePackage::new(&admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut budget,
+        )
+        .expect("the supply joins");
+    let input = fsl_eval::simulation::model::PackageModelInput::of(
+        &bare,
+        binding.packages,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .expect("the package route reads every form");
+    check(
+        &input,
+        &bytes,
+        fsl_replay::HandoffSupply {
+            identities: &identity_bytes,
+            equality: Some(&equality_bytes),
+        },
+    );
+}
+
+/// QSL-2432 (FR-940 "Package forms of the source-checked evaluators"): a
+/// clause whose package form reads a fact the package route does not read
+/// yet is refused by the package route's clause subject with that fact and
+/// the clause's node, never as an unknown clause: a fairness set, and a
+/// capture, which the package route's letters do not evaluate yet, so no
+/// engine reaches a capture fault.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn a_pending_package_clause_fact_is_refused_typed_naming_it() {
+    for (formula, expected) in [
+        (
+            "fair weak M::Counter::inc; eventually holds(c.value = 3)",
+            "fairness",
+        ),
+        (
+            "capture n: Int[0, 3] = c.value; always holds(c.value >= n)",
+            "capture",
+        ),
+    ] {
+        let world = World::new(
+            model_world::counter(),
+            "",
+            INFINITE,
+            &[Clause {
+                activation: "on each (q: M::Counter) when (true)",
+                formula,
+            }],
+            &[("c", json!({"value": {"integer": "0"}}))],
+        );
+        let key = world.package.graph().temporal_clauses()[0].identity();
+        over_package_route(&world, |input, bytes, supply| {
+            let refused = fsl_analyze::analyze::PackageClauseSubject::new(
+                input,
+                bytes,
+                supply,
+                world.binding(&["c"]),
+                AnalyzeLimits::unbounded(),
+                &key,
+                ClauseLimits::default(),
+            )
+            .err()
+            .expect("the pending clause is refused");
+            let fsl_analyze::analyze::ClauseItemRefusal::Pending { fact, .. } = refused else {
+                panic!("{formula}: a typed pending refusal, not {refused:?}");
+            };
+            assert_eq!(fact, expected, "{formula}");
+        });
+    }
+}

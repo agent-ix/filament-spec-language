@@ -577,6 +577,41 @@ impl From<BareSelectionFailure> for BareClauseRefusal {
 }
 
 impl<'p> BarePackage<'p> {
+    /// FR-940: the node of the temporal clause whose node key is `clause`,
+    /// which a refusal of its package form names.
+    ///
+    /// # Errors
+    ///
+    /// [`BareClauseRefusal::Selection`] when the package holds no temporal
+    /// clause at the key.
+    pub fn temporal_clause_node(
+        &self,
+        clause: &NodeKey,
+    ) -> Result<&'p CheckedNodeId, BareClauseRefusal> {
+        self.temporal_clause_semantic_node(clause)
+            .map(|node| &node.node_id)
+    }
+
+    fn temporal_clause_semantic_node(
+        &self,
+        clause: &NodeKey,
+    ) -> Result<&'p CheckedSemanticNodeV2, BareClauseRefusal> {
+        let package = self.package();
+        let graph = wire_graph(package).map_err(|_| fault("bare-package-has-structural-keys"))?;
+        for node in &package.resolved_graph().nodes {
+            if node.semantic_form.as_ref() != "temporal_clause" {
+                continue;
+            }
+            let key = graph
+                .key(&node.node_id)
+                .map_err(|_| fault("bare-package-has-structural-keys"))?;
+            if key == *clause {
+                return Ok(node);
+            }
+        }
+        Err(BareSelectionFailure::from(SlotSelectionFailure::MissingNode(clause.clone())).into())
+    }
+
     /// FR-940: the package form of the temporal clause whose node key is
     /// `clause`, read from the package's admitted nodes, source map, name
     /// rows and type projections: its name, span, profile, `over`, trigger
@@ -599,31 +634,15 @@ impl<'p> BarePackage<'p> {
         use fsl_semantics::check::{BinaryTemporal, PackageFormulaNode, UnaryTemporal};
         let package = self.package();
         self.witness()?;
-        let graph = wire_graph(package).map_err(|_| fault("bare-package-has-structural-keys"))?;
         let nodes: BTreeMap<&CheckedNodeId, &CheckedSemanticNodeV2> = package
             .resolved_graph()
             .nodes
             .iter()
             .map(|node| (&node.node_id, node))
             .collect();
-        let missing =
-            || BareSelectionFailure::from(SlotSelectionFailure::MissingNode(clause.clone()));
         let malformed =
             || BareSelectionFailure::from(SlotSelectionFailure::MalformedNode(clause.clone()));
-        let mut found = None;
-        for node in nodes.values() {
-            if node.semantic_form.as_ref() != "temporal_clause" {
-                continue;
-            }
-            let key = graph
-                .key(&node.node_id)
-                .map_err(|_| fault("bare-package-has-structural-keys"))?;
-            if key == *clause {
-                found = Some(*node);
-                break;
-            }
-        }
-        let node = found.ok_or_else(missing)?;
+        let node = self.temporal_clause_semantic_node(clause)?;
         let view = temporal_subject(package, &node.node_id).map_err(|_| malformed())?;
         let name = view.name().ok_or_else(malformed)?.to_owned();
         let CheckedTerm::Application { arguments, .. } = &node.body else {

@@ -545,17 +545,38 @@ impl TemporalClaim {
         for key in named {
             domains.insert(key.clone(), DomainKind::Population);
         }
-        let requirements = Requirements::new(self.kind, ClaimExtent::from_domains(domains))
-            .with_fairness(self.fairness.iter().copied());
+        Ok(self.requirements_over(ClaimExtent::from_domains(domains)))
+    }
+
+    /// The claim's requirements over `extent`: its kind, fairness kinds,
+    /// model subject and punctual disposition, as [`Self::requirements`]
+    /// writes them around the extent it keys.
+    pub fn requirements_over(&self, extent: ClaimExtent) -> Requirements {
+        let requirements =
+            Requirements::new(self.kind, extent).with_fairness(self.fairness.iter().copied());
         let requirements = if self.model_subject {
             requirements.over_model_subject()
         } else {
             requirements
         };
-        Ok(match self.punctual {
+        match self.punctual {
             Some(span) => requirements.with_unsupported(UnsupportedItem::PunctualInterval { span }),
             None => requirements,
-        })
+        }
+    }
+
+    /// The kinds of the domains [`Self::requirements`] keys before the
+    /// populations its `holds` atoms name: each parameter's unbounded type
+    /// position, the formula's infinite trace and each unbounded population
+    /// of the `over` type (FR-290 reads an extent's classification from these
+    /// kinds alone).
+    pub fn domain_kinds(&self) -> Vec<DomainKind> {
+        let mut kinds: Vec<DomainKind> = self.parameter_domains.values().copied().collect();
+        if self.infinite_trace {
+            kinds.push(DomainKind::InfiniteTrace);
+        }
+        kinds.extend(self.populations.iter().map(|_| DomainKind::Population));
+        kinds
     }
 }
 
@@ -950,6 +971,11 @@ impl CheckedTemporalClause {
     /// `BoundedWindow`, which admits punctual intervals.
     pub fn unsupported_punctual(&self) -> Option<Span> {
         self.claim.punctual
+    }
+
+    /// The clause's `temporal-satisfaction` claim (ADR-014 §4).
+    pub fn claim(&self) -> &TemporalClaim {
+        &self.claim
     }
 }
 
