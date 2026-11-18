@@ -3006,7 +3006,7 @@ fn tc_2981_a_path_ending_at_a_comparison_records_the_comparison_and_its_operands
         record.decision_path,
         Some(vec![
             occurrence(&unit, "MatchesParent", &[], Operator::Binary),
-            equality,
+            equality.clone(),
         ])
     );
     assert_eq!(
