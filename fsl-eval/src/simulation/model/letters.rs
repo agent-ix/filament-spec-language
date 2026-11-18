@@ -36,6 +36,10 @@ use super::{state_document, ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
 use crate::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use crate::simulation::StateKey;
 use crate::temporal::{AtomReading, CaptureReading};
+use crate::value::{
+    evaluate_state_predicate_at_absent_key_with_reference_bindings,
+    evaluate_state_predicate_with_reference_bindings,
+};
 
 /// Why a clause has no [`ClauseLetters`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -384,24 +388,47 @@ impl ModelLetters for ClauseLetters<'_, '_> {
             .ok_or_else(|| fault("engine-reads-only-holds-atoms"))?;
         let observed = self.observe(state)?;
         let condition = Condition { body, slots };
-        let evaluation = match self.bound(&observed.rows, instance) {
-            Some(bound) => self.system.evaluator().evaluate_state_predicate(
-                &condition,
-                &observed.observation.environment,
-                Some(bound),
-                Vec::new(),
-                meter,
-            ),
-            None => self
-                .system
-                .evaluator()
-                .evaluate_state_predicate_at_absent_key(
+        let evaluation = if let Some(package) = self.system.source_package() {
+            match self.bound(&observed.rows, instance) {
+                Some(bound) => evaluate_state_predicate_with_reference_bindings(
+                    package,
+                    &condition,
+                    &observed.observation.environment,
+                    Some(bound),
+                    Vec::new(),
+                    Some(&self.system.reference_bindings),
+                    meter,
+                ),
+                None => evaluate_state_predicate_at_absent_key_with_reference_bindings(
+                    package,
                     &condition,
                     &observed.observation.environment,
                     self.key_reference(instance)?,
                     instance.population.node.clone(),
+                    Some(&self.system.reference_bindings),
                     meter,
                 ),
+            }
+        } else {
+            match self.bound(&observed.rows, instance) {
+                Some(bound) => self.system.evaluator().evaluate_state_predicate(
+                    &condition,
+                    &observed.observation.environment,
+                    Some(bound),
+                    Vec::new(),
+                    meter,
+                ),
+                None => self
+                    .system
+                    .evaluator()
+                    .evaluate_state_predicate_at_absent_key(
+                        &condition,
+                        &observed.observation.environment,
+                        self.key_reference(instance)?,
+                        instance.population.node.clone(),
+                        meter,
+                    ),
+            }
         }
         .map_err(AtomStop::Fault)?;
         reading(&evaluation.outcome)

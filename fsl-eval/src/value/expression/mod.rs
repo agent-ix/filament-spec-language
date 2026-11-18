@@ -676,8 +676,24 @@ pub fn evaluate_state_predicate_at_absent_key(
     binding: String,
     meter: &mut Meter,
 ) -> Result<Evaluation, InternalFault> {
+    evaluate_state_predicate_at_absent_key_with_reference_bindings(
+        package, predicate, current, key, binding, None, meter,
+    )
+}
+
+/// [`evaluate_state_predicate_at_absent_key`] with the subject's FR-1000
+/// reference-literal decisions.
+pub(crate) fn evaluate_state_predicate_at_absent_key_with_reference_bindings(
+    package: &CheckedPackage,
+    predicate: &impl fsl_semantics::check::StatePredicate,
+    current: &ObjectEnvironment,
+    key: filament_exact::ObjectReference,
+    binding: String,
+    reference_bindings: Option<&crate::simulation::model::ReferenceBindings>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
     let reads = std::collections::BTreeMap::new();
-    Machine::with_pre(
+    let machine = Machine::with_pre(
         package.graph().scope(),
         package.graph(),
         current,
@@ -685,9 +701,12 @@ pub fn evaluate_state_predicate_at_absent_key(
         Some(&reads),
         meter,
         package.graph().dispatch_tables(),
-    )
-    .with_absent_parameter(0, binding)
-    .run(
+    );
+    let machine = match reference_bindings {
+        Some(bindings) => machine.with_reference_bindings(bindings),
+        None => machine,
+    };
+    machine.with_absent_parameter(0, binding).run(
         predicate.body(),
         predicate.slots(),
         vec![Value::Reference(key)],
