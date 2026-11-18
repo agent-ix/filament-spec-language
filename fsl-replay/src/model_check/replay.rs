@@ -754,9 +754,10 @@ pub struct HandoffSupply<'s> {
 /// provision: the strict reader admits the bytes against the request's domain
 /// packages, the supply is attached to the `BarePackage`, the model system is
 /// built from its model-check input and the envelope's clause is its package
-/// form, read by its `clause_node` (FR-128). An untimed authored clause is
-/// replayed; a derived item, an invariant and a timed reading have no package
-/// form here yet and are refused, never replayed from source.
+/// form, read by its `clause_node` (FR-128). An untimed authored clause and a
+/// package-level freedom item over a model subject are replayed; an invariant
+/// and a timed reading have no package form here yet and are refused, never
+/// replayed from source.
 ///
 /// # Errors
 ///
@@ -809,9 +810,53 @@ pub fn replay_model_trace_from_package(
         return Err(fault("package-route-replays-no-timed-reading-yet"));
     }
     let payload = envelope.family_payload();
+    let documents = request.byte_provision().snapshots();
+    let meter = request.accounting_limits();
+    let system = ModelSystem::new(ModelSimulationRequest {
+        input: input.input(),
+        packages: &packages,
+        normalization: limits.spine.model,
+        snapshots: &documents,
+        initial: subject.initial.clone(),
+        universes: subject.universes.clone(),
+        observation: limits.observation,
+        expansion: subject.expansion,
+        meter,
+        emit: limits.spine.package.emit(),
+    })
+    .map_err(ReplayRefusal::Admission)?;
     let (for_deadlock, for_race) = derived_items(payload);
     if for_deadlock || for_race || matches!(payload.kind, CounterexampleKind::TimeLock) {
-        return Err(fault("package-route-replays-no-derived-item-yet"));
+        // A package-level freedom item over a model subject is anchored at
+        // the `model_root` node of a model selection the package records, with
+        // the `generated` occurrence 0, as [`resolve_item`] anchors it.
+        let anchored = fsl_package::AnalysisView::model_selections(&bare)
+            .iter()
+            .filter_map(|selection| fsl_semantics::check::model_root_key(selection).ok())
+            .any(|root| root == *envelope.clause_node());
+        if !anchored {
+            return Err(refused(ModelTraceRefusal::UnknownTemporalClause {
+                clause_node: envelope.clause_node().clone(),
+            }));
+        }
+        let expected = OccurrenceKey::new(
+            envelope.clause_node().clone(),
+            filament_exact::Origin::new(filament_exact::Role::new("generated"), 0),
+        );
+        if expected != *envelope.occurrence_key() {
+            return Err(refused(ModelTraceRefusal::ItemIdentity {
+                clause_node: envelope.clause_node().clone(),
+                occurrence_key: Box::new(envelope.occurrence_key().clone()),
+                expected_node: envelope.clause_node().clone(),
+                expected_key: Box::new(expected),
+            }));
+        }
+        let (settlement, hints) = settle(&system, payload, None)?;
+        return Ok(ModelTraceReplayResult {
+            settlement,
+            hints,
+            terminals: TerminalKeys::default(),
+        });
     }
     let clause = input
         .temporal_clause(
@@ -843,21 +888,6 @@ pub fn replay_model_trace_from_package(
             recompiled: clause.fairness().to_vec(),
         }));
     }
-    let documents = request.byte_provision().snapshots();
-    let meter = request.accounting_limits();
-    let system = ModelSystem::new(ModelSimulationRequest {
-        input: input.input(),
-        packages: &packages,
-        normalization: limits.spine.model,
-        snapshots: &documents,
-        initial: subject.initial.clone(),
-        universes: subject.universes.clone(),
-        observation: limits.observation,
-        expansion: subject.expansion,
-        meter,
-        emit: limits.spine.package.emit(),
-    })
-    .map_err(ReplayRefusal::Admission)?;
     let (settlement, hints) = settle(
         &system,
         payload,

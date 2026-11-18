@@ -332,3 +332,54 @@ fn the_model_checker_decides_a_package_form_clause_as_its_source_form() {
     }
     assert_eq!(verdicts, [true, false], "Bounded holds, AtMostTwo does not");
 }
+
+/// FR-940-AC-6 (deadlock-freedom, QSL-2403's engine half): EN-1 decides the
+/// derived deadlock-freedom item over the package route's model system with
+/// the source route's outcome, for a Counter whose operations stay enabled
+/// and for one whose model declares none, which deadlocks at its start.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn the_model_checker_decides_deadlock_freedom_over_the_package_route_as_over_source() {
+    use fsl_analyze::model_check::{check_model, ModelCheckRequest};
+    use fsl_replay::{ModelCheckItem, ModelCheckLimits};
+    let mut verdicts = Vec::new();
+    for model in [document(false), still_document()] {
+        let (package, _) = package_with_clauses(&model, "", &[]);
+        let mut documents = Documents::new(model);
+        let start = documents.start("start", &[("a", 0)]);
+        let source = subject(&package, &documents, vec![start], &["a"], UNLIMITED);
+        let handoff = handoff(&package, &documents);
+        let bare = bare(&handoff);
+        let input = PackageModelInput::of(
+            &bare,
+            &documents.packages,
+            ModelNormalizationLimits::default(),
+        )
+        .expect("the package holds no unread node");
+        let mut over_bytes = source.simulation.clone();
+        over_bytes.input = input.input();
+        let run = |simulation: fsl_eval::simulation::model::ModelSimulationRequest<'_>| {
+            check_model(
+                ModelCheckRequest {
+                    temporal_clock_selections: &[],
+                    subject: fsl_eval::model_subject::ModelSubject {
+                        simulation,
+                        proof_bounds: Vec::new(),
+                    },
+                    item: ModelCheckItem::DeadlockFreedom,
+                    max_depth: None,
+                    limits: ModelCheckLimits::default(),
+                    reductions: Default::default(),
+                },
+                &filament_exact::Cancel::new(),
+            )
+            .map(|outcome| format!("{outcome:?}"))
+            .map_err(|refusal| format!("{refusal:?}"))
+        };
+        let from_source = run(source.simulation.clone());
+        let from_package = run(over_bytes);
+        assert_eq!(from_package, from_source);
+        verdicts.push(from_package.expect("checked").starts_with("Holds"));
+    }
+    assert_eq!(verdicts, [true, false], "the still Counter deadlocks");
+}
