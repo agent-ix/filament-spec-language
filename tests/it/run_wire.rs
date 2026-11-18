@@ -1419,6 +1419,8 @@ fn command_monitor_streams_events_to_its_sink() {
             handed.set(handed.get() + 1);
             seen.push(event.clone());
         },
+        Vec::new(),
+        &fsl_analyze::provider::ProviderOptions::default(),
         RunLimits::default(),
         &filament_exact::Cancel::new(),
     )
@@ -1448,6 +1450,8 @@ fn command_monitor_streams_events_to_its_sink() {
         &missing,
         lines.iter().map(|line| Ok(line.clone().into_bytes())),
         &mut |_| nothing += 1,
+        Vec::new(),
+        &fsl_analyze::provider::ProviderOptions::default(),
         RunLimits::default(),
         &filament_exact::Cancel::new(),
     );
@@ -1455,6 +1459,107 @@ fn command_monitor_streams_events_to_its_sink() {
     assert_eq!(error.category().exit_code(), 20);
     assert!(error.to_string().contains("Absent"), "{error}");
     assert_eq!(nothing, 0);
+}
+
+/// A process provider that answers no item; `command::monitor` only
+/// registers it.
+#[derive(Debug)]
+struct Silent;
+
+impl fsl_analyze::provider::ExternalProvider for Silent {
+    fn settle(
+        &self,
+        request: &fsl_analyze::provider::ProviderRequest<'_>,
+        _cancel: &filament_exact::Cancel,
+    ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
+        panic!("monitor sent the provider {} items", request.items().len())
+    }
+}
+
+/// The `Silent` process provider under `backend`, advertising
+/// `value-validity` `unbounded`.
+fn silent_provider(backend: &str) -> fsl_analyze::analyze::Engine {
+    let descriptor = fsl_route::descriptor_from_manifest(
+        fsl_route::Candidate::new(fsl_foundation::BackendId::new(backend)),
+        fsl_route::ProviderOrigin::Process,
+        vec![(
+            Some(fsl_semantics::check::Capability::ValueValidity.to_wire()),
+            Some(fsl_route::Mode::Unbounded.to_wire()),
+        )],
+        fsl_route::ManifestMembers {
+            domains: Some(&[fsl_foundation::bound::DomainKind::Integer.to_wire()]),
+            fairness_kinds: None,
+            evidence_kinds: None,
+            memory_models: None,
+            reductions: None,
+        },
+    )
+    .expect("the descriptor advertises the external value arm");
+    fsl_analyze::analyze::Engine::external(
+        descriptor,
+        fsl_analyze::analyze::BackendTool::new("silent-provider", "1").expect("a tool"),
+        Box::new(Silent),
+    )
+    .expect("the descriptor is unbounded")
+}
+
+/// FR-635 "One rule for every provider-routing entry", FR-644: `command::monitor`
+/// takes the started process providers and builds the registry from
+/// `Engines::fsl()` and them before the request is read. A configured
+/// provider leaves the events and summary of the stream with none, and a
+/// provider repeating a registered `BackendId` refuses `invalid-request`
+/// naming `providers`, exit 20, before any record is read.
+#[test]
+#[trace("FR-635", "FR-644")]
+fn command_monitor_takes_the_started_providers() {
+    use fsl_command::command::{monitor, MonitorEvent, RunLimits};
+
+    let directory = tempfile::tempdir().unwrap();
+    let request = monitor_request(
+        json!([{"name": "Reaches"}, {"name": "Never"}]),
+        json!({"kind": "finite"}),
+    );
+    let path = write_trace(directory.path(), "stream.json", &request);
+    let mut lines: Vec<String> = observations(&[0, 1, 2, 1, 0])
+        .iter()
+        .map(Value::to_string)
+        .collect();
+    lines.push(json!({"end": true}).to_string());
+    let run = |providers: Vec<fsl_analyze::analyze::Engine>| {
+        let mut seen: Vec<Value> = Vec::new();
+        let read = std::cell::Cell::new(0_usize);
+        let summary = monitor(
+            &path,
+            lines.iter().map(|line| {
+                read.set(read.get() + 1);
+                Ok(line.clone().into_bytes())
+            }),
+            &mut |event: &MonitorEvent| seen.push(event.as_value().clone()),
+            providers,
+            &fsl_analyze::provider::ProviderOptions::default(),
+            RunLimits::default(),
+            &filament_exact::Cancel::new(),
+        );
+        (summary, seen, read.get())
+    };
+    let (without, events_without, _) = run(Vec::new());
+    let without = without.expect("the stream runs with no provider");
+    let (with, events_with, _) = run(vec![silent_provider("monitor-plugin")]);
+    let with = with.expect("the stream runs with a started provider");
+    assert_eq!(events_with, events_without);
+    assert_eq!(with.as_value(), without.as_value());
+    assert_eq!(with.exit_code, 10);
+
+    let (repeated, events, read) = run(vec![
+        silent_provider("monitor-plugin"),
+        silent_provider("monitor-plugin"),
+    ]);
+    let error = repeated.expect_err("a repeated BackendId refuses");
+    assert_eq!(error.category().exit_code(), 20);
+    let value = error.value().expect("a refusal envelope");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    assert!(value.to_string().contains("providers"), "{value}");
+    assert_eq!((events.len(), read), (0, 0), "refused before any record");
 }
 
 /// Run `command::monitor` over the `levels` observations of `clauses`,
@@ -1489,6 +1594,8 @@ fn cancelled_monitor(
         &path,
         records,
         &mut |event| seen.push(event.clone()),
+        Vec::new(),
+        &fsl_analyze::provider::ProviderOptions::default(),
         RunLimits::default(),
         cancel,
     )
