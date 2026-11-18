@@ -942,6 +942,7 @@ mod runtime {
         let unit = "language \"ix:native\" edition \"1-draft\";\n\
 profile v = \"filament.value.complete/v1\";\n\
 profile t = \"filament.temporal.timed/v1\";\n\
+profile tc = \"filament.temporal.complete/v1\";\n\
 model M = \"acme/orders\";\n\
 time M dense unit ms;\n\
 temporal T using t over (r: M::Widget) clock \"model-time\" on origin { eventually[0, 1] holds(r.code > 0) }\n";
