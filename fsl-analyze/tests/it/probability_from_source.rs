@@ -297,7 +297,11 @@ fn probabilistic_witness_replays() {
     let reproduced = record
         .probabilistic_counterexample
         .expect("the source run retains replayed witness evidence");
-    assert_eq!(reproduced.wire, emitted, "the verb emits this path set");
+    assert_eq!(
+        reproduced.wire.as_ref().expect("the witness spells"),
+        &emitted,
+        "the verb emits this path set"
+    );
 
     let witness = reproduced.evidence();
     let system = ModelSystem::new(world.subject().simulation).expect("the source model admits");
