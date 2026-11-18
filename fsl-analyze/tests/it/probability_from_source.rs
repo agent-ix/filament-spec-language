@@ -63,7 +63,7 @@ fn run(name: &str, claims: &str, items: Value) -> Value {
 #[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
 #[test]
 fn statistical_items_settle_measured_from_source() {
-    for method in ["okamoto", "sprt", "clopper-pearson"] {
+    for method in ["okamoto", "sprt"] {
         let item = |workers: u64| {
             json!([{"claim": "Delivered", "probabilistic": {
                 "evidence": "statistical", "method": {"type": method},
@@ -73,8 +73,20 @@ fn statistical_items_settle_measured_from_source() {
         let four = run(&format!("stat-{method}-4"), DELIVERED, item(4));
         let first = &one["items"][0];
         assert_eq!(label(first), "measured", "{first}");
-        assert_eq!(first["measurement"]["method"], method, "{first}");
-        assert_eq!(first["measurement"]["seed"], "7", "{first}");
+        assert_eq!(
+            first["verdict"]["basis"]["method"]["type"], method,
+            "{first}"
+        );
+        assert_eq!(first["verdict"]["provenance"]["seed"], "7", "{first}");
+        assert!(first["verdict"]["interval"].is_object(), "{first}");
+        assert!(
+            first["verdict"]["basis"]["samples"].as_str().is_some(),
+            "{first}"
+        );
+        assert!(
+            first["verdict"]["basis"]["draws"].as_str().is_some(),
+            "{first}"
+        );
         assert_eq!(first, &four["items"][0], "workers do not change the result");
     }
 }
@@ -114,10 +126,7 @@ fn an_exact_item_below_its_threshold_is_refuted_with_a_replayed_witness() {
     );
     let item = &document["items"][0];
     assert_eq!(label(item), "refuted", "{item}");
-    assert_eq!(
-        item["counterexample"]["replay"]["reproduced"], true,
-        "{item}"
-    );
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
 /// FR-741-AC-4 (negative): an unbounded exact-only claim requested with

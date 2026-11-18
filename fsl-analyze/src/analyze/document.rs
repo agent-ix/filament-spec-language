@@ -3336,6 +3336,15 @@ fn write_run(
     let mut gaps = Vec::new();
     for (record, mut written) in records.iter().zip(written) {
         let index = record.request_index();
+        if let Some(bytes) = record.exact_certificate_document() {
+            if let Ok(document) = serde_json::from_slice::<Value>(bytes) {
+                written["certificate"] = json!({
+                    "accepted": true,
+                    "kind": "exact",
+                    "document": document,
+                });
+            }
+        }
         if let Some(output) = outcome.protocol_conformance.get(&index) {
             if let (Some(record), Ok(Value::Object(members))) =
                 (written.as_object_mut(), serde_json::to_value(output))
@@ -3572,6 +3581,7 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     let index = record.remove("request_index").unwrap_or(Value::Null);
     let category = record.remove("category").unwrap_or(Value::Null);
     let counterexample = record.remove("counterexample");
+    let certificate = record.remove("certificate");
     let mut item = Map::new();
     item.insert("request_index".to_owned(), index);
     item.insert(
@@ -3580,15 +3590,20 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     );
     item.insert("request".to_owned(), request.unwrap_or(Value::Null));
     item.insert("category".to_owned(), category);
+    if let Some(certificate) = certificate {
+        item.insert("certificate".to_owned(), certificate);
+    }
     if let (Some(checker), Some(identity), Some("proved")) = (
         detail.as_ref().and_then(|detail| detail.checker),
         identity,
         record.get("result").and_then(Value::as_str),
     ) {
-        item.insert(
-            "certificate".to_owned(),
-            json!({"identity": identity, "checker": checker.as_str(), "accepted": true}),
-        );
+        if !item.contains_key("certificate") {
+            item.insert(
+                "certificate".to_owned(),
+                json!({"identity": identity, "checker": checker.as_str(), "accepted": true}),
+            );
+        }
     }
     let mut spelled = None;
     if let Some(mut counterexample) = counterexample {
@@ -3608,6 +3623,7 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
         "global",
         "projections",
         "recording",
+        "verdict",
     ] {
         if let Some(value) = record.get(member) {
             item.insert(member.to_owned(), value.clone());

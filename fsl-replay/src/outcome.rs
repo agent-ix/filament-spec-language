@@ -25,8 +25,8 @@
 
 mod counterexample;
 pub use counterexample::{
-    assignments_wire, graph_evidence_wire, probabilistic_wire, protocol_temporal_wire,
-    temporal_wire, CounterexampleWireError, ProtocolWire,
+    CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
+    probabilistic_wire, protocol_temporal_wire, temporal_wire,
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
@@ -42,6 +42,7 @@ use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::ReplayRefusal;
 use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::model_check::state_graph::WitnessSource;
 use crate::proof_result::{
@@ -52,12 +53,11 @@ use crate::proof_result::{
 use crate::result::ReplayResult;
 use crate::spine::kernel_undefined_reason;
 use crate::spine::{
-    classify_clause_run, item_record, CallIncomplete, CallOutcome, CallRefusal, CheckedUnit,
-    ClauseDisposition, ClauseRunReport, CompileRefusal, EmittedUnit, FrontEndFailure,
-    ParsedUnitSource, ReasonWire, RunRefusal, SpineStage, TemporalUndefinedCause, TemporalVerdict,
+    CallIncomplete, CallOutcome, CallRefusal, CheckedUnit, ClauseDisposition, ClauseRunReport,
+    CompileRefusal, EmittedUnit, FrontEndFailure, ParsedUnitSource, ReasonWire, RunRefusal,
+    SpineStage, TemporalUndefinedCause, TemporalVerdict, classify_clause_run, item_record,
 };
 use crate::statistical::{self, Decision, StatisticalVerdict};
-use crate::ReplayRefusal;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::temporal::UndefinedCause;
 
@@ -894,6 +894,9 @@ pub struct OutcomeItem {
     /// `undecided`.
     #[serde(skip_serializing_if = "Option::is_none")]
     measured: Option<&'static str>,
+    /// The FR-410 StatisticalVerdict of a completed measured result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verdict: Option<serde_json::Value>,
     /// The state-graph settlement method, when this item came from FR-391.
     #[serde(skip_serializing_if = "Option::is_none")]
     method: Option<&'static str>,
@@ -1289,6 +1292,10 @@ impl OutcomeItem {
             basis,
             certification,
             measured,
+            verdict: match value {
+                TerminalValue::Measured(verdict) => Some(statistical_verdict_wire(verdict)),
+                _ => None,
+            },
             method: None,
             max_depth: None,
             seed: None,
@@ -1400,6 +1407,7 @@ impl OutcomeItem {
             basis: None,
             certification: None,
             measured: None,
+            verdict: None,
             method: None,
             max_depth: None,
             seed: None,
@@ -1474,6 +1482,7 @@ impl OutcomeItem {
             basis: None,
             certification: None,
             measured: None,
+            verdict: None,
             method: None,
             max_depth: None,
             seed: None,
@@ -1507,6 +1516,167 @@ impl OutcomeItem {
     pub fn certification(&self) -> Option<Certification> {
         self.certification
     }
+}
+
+fn rational_wire(value: &filament_exact::Rational) -> serde_json::Value {
+    serde_json::json!({
+        "numerator": value.numerator().to_string(),
+        "denominator": value.denominator().to_string(),
+    })
+}
+
+fn statistical_method_wire(method: statistical::StatisticalMethod) -> serde_json::Value {
+    match method {
+        statistical::StatisticalMethod::Okamoto => serde_json::json!({"type": "okamoto"}),
+        statistical::StatisticalMethod::Sprt => serde_json::json!({"type": "sprt"}),
+        statistical::StatisticalMethod::Regenerative { min_cycles } => {
+            serde_json::json!({"type": "regenerative", "min_cycles": min_cycles.to_string()})
+        }
+    }
+}
+
+fn statistical_decision_wire(decision: Decision) -> serde_json::Value {
+    match decision {
+        Decision::Accepted => serde_json::json!({"type": "accepted"}),
+        Decision::Rejected => serde_json::json!({"type": "rejected"}),
+        Decision::Undecided(cause) => serde_json::json!({
+            "type": "undecided",
+            "cause": {"type": match cause {
+                statistical::UndecidedCause::IndifferenceRegion => "indifference-region",
+                statistical::UndecidedCause::UndecidedSuccessor => "undecided-successor",
+            }}
+        }),
+    }
+}
+
+fn statistical_estimate_wire(
+    estimate: Option<&filament_exact::Rational>,
+    quantile: Option<&statistical::MeasureValue>,
+) -> serde_json::Value {
+    let estimate = estimate
+        .cloned()
+        .unwrap_or_else(|| filament_exact::Rational::from_integer(Integer::from(0)));
+    let mut value = serde_json::Map::new();
+    value.insert("value".to_owned(), rational_wire(&estimate));
+    if let Some(quantile) = quantile {
+        let quantile = match quantile {
+            statistical::MeasureValue::Value(value) => {
+                serde_json::json!({"value": rational_wire(value)})
+            }
+            statistical::MeasureValue::Censored => {
+                serde_json::json!({"value": rational_wire(&estimate)})
+            }
+        };
+        value.insert("quantile".to_owned(), quantile);
+    }
+    serde_json::Value::Object(value)
+}
+
+fn statistical_interval_wire(
+    interval: Option<&(filament_exact::Rational, filament_exact::Rational)>,
+) -> Option<serde_json::Value> {
+    interval.map(|(lower, upper)| {
+        serde_json::json!({
+            "lower": rational_wire(lower),
+            "upper": rational_wire(upper),
+        })
+    })
+}
+
+fn statistical_verdict_wire(verdict: &StatisticalVerdict) -> serde_json::Value {
+    let method = statistical_method_wire(verdict.basis.method);
+    let method_name = method["type"].as_str().unwrap_or("okamoto");
+    let decision = statistical_decision_wire(verdict.decision);
+    let tests: Vec<_> = verdict
+        .tests
+        .iter()
+        .map(|test| {
+            let mut result = serde_json::Map::new();
+            result.insert(
+                "index".to_owned(),
+                serde_json::json!(test.index.to_string()),
+            );
+            result.insert(
+                "decision".to_owned(),
+                statistical_decision_wire(test.decision),
+            );
+            result.insert(
+                "estimate".to_owned(),
+                statistical_estimate_wire(test.estimate.as_ref(), test.quantile.as_ref()),
+            );
+            if let Some(interval) = statistical_interval_wire(test.interval.as_ref()) {
+                result.insert("interval".to_owned(), interval);
+            }
+            result.insert(
+                "samples".to_owned(),
+                serde_json::json!(test.samples.to_string()),
+            );
+            result.insert(
+                "draws".to_owned(),
+                serde_json::json!(test.draws.to_string()),
+            );
+            serde_json::Value::Object(result)
+        })
+        .collect();
+    let provenance_tests: Vec<_> = verdict
+        .provenance
+        .tests
+        .iter()
+        .map(|test| {
+            let last = test.traces.first.saturating_add(
+                test.traces
+                    .count
+                    .saturating_sub(1)
+                    .saturating_mul(test.traces.step),
+            );
+            serde_json::json!({
+                "index": test.index.to_string(),
+                "initial_state": test.initial.to_string(),
+                "binding": null,
+                "first_trace_index": test.traces.first.to_string(),
+                "last_trace_index": last.to_string(),
+            })
+        })
+        .collect();
+    let mut basis = serde_json::json!({
+        "method": method,
+        "confidence": {
+            "alpha": rational_wire(verdict.basis.confidence.alpha()),
+            "beta": rational_wire(verdict.basis.confidence.beta()),
+            "iota": rational_wire(verdict.basis.confidence.indifference()),
+        },
+        "samples": verdict.basis.samples.to_string(),
+        "draws": verdict.basis.draws.to_string(),
+        "tests": {
+            "m": verdict.basis.tests.to_string(),
+            "alpha": rational_wire(&verdict.basis.alpha_per_test),
+            "beta": rational_wire(&verdict.basis.beta_per_test),
+        },
+        "coverage": match verdict.basis.coverage {
+            statistical::Coverage::FiniteSample => "finite-sample",
+            statistical::Coverage::Asymptotic => "asymptotic",
+        },
+    });
+    if let Some(grid) = verdict.basis.delay_grid_bits {
+        basis["grid"] = serde_json::json!(grid.to_string());
+    }
+    let mut value = serde_json::json!({
+        "decision": decision,
+        "estimate": statistical_estimate_wire(verdict.estimate.as_ref(), verdict.quantile.as_ref()),
+        "basis": basis,
+        "provenance": {
+            "seed": verdict.provenance.seed.to_string(),
+            "sampler": "filament.simulation.sampler/v1",
+            "tests": provenance_tests,
+        },
+        "tests": tests,
+        "witnesses": [],
+    });
+    if let Some(interval) = statistical_interval_wire(verdict.interval.as_ref()) {
+        value["interval"] = interval;
+    }
+    let _ = method_name;
+    value
 }
 
 /// The cause an item built from `report` carries: the table's `cause`
@@ -2899,10 +3069,10 @@ mod tests {
 
     use filament_exact::{Cancel, CancelCause, Identifier, ScalarLimits};
     use filament_semantic_value::catalog::{CatalogCode, InternalFault};
-    use fsl_foundation::diagnostic::LimitExceeded;
     use fsl_foundation::Setting;
+    use fsl_foundation::diagnostic::LimitExceeded;
     use fsl_semantics::model::object_environment::ObjectEnvironment;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::*;
     use crate::identity::QualifiedName;
@@ -3044,8 +3214,8 @@ mod tests {
     use crate::proof_result::{IncompleteCause, ProofRefusalCause, UnavailabilityCause};
     use crate::result::{DisagreementCause, EvaluatedValue, InputArmResult, Verdict, WitnessCheck};
     use crate::spine::{
-        check, default_accounting, package, parse, run, select, Call, CallLocus, DependencyInput,
-        PackageLimits, ParseRequest, SpineLimits,
+        Call, CallLocus, DependencyInput, PackageLimits, ParseRequest, SpineLimits, check,
+        default_accounting, package, parse, run, select,
     };
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/spine-compile.native");
