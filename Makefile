@@ -358,8 +358,13 @@ ci: export CARGO_PROFILE_DEV_DEBUG := 0
 ci: export CARGO_PROFILE_TEST_DEBUG := 0
 ci: export CARGO_PROFILE_DEV_DEBUG_ASSERTIONS := true
 ci: export CARGO_PROFILE_TEST_DEBUG_ASSERTIONS := true
-ci: check-spec-validation
+ci: check-spec-validation pin-check
 	@$(CONFORMANCE_XTASK) ci
+
+# FR-760-AC-3: Cargo manifests are the pin check's source of truth.
+.PHONY: pin-check
+pin-check:
+	@cargo run --locked --package xtask -- pin-check
 
 # The internal graph is used by xtask after it has canonicalized FSPEC_DIR.
 # Scope the input prerequisite to this graph, so standalone targets such as

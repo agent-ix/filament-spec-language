@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -64,7 +64,6 @@ fn check_with(bindings: &Value) -> Output {
 
 #[test]
 #[trace("TC-2141", "FR-760-AC-3", "FSpec-TC-1642", "FSpec-FR-660-AC-3")]
-#[ignore = "QSL-2227: `xtask pin-check` and tag pins on every agent-ix dependency are not implemented yet"]
 fn pin_check_passes_the_workspace_and_refuses_a_branch_dependency() {
     let workspace = xtask(&["pin-check"]);
     assert_eq!(workspace.status.code(), Some(0), "{}", report(&workspace));

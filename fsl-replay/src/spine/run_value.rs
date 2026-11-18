@@ -8,7 +8,6 @@
 //! payload forms. A type is named by the declared name of a declaration of the
 //! unit's own source.
 
-use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
 use super::identity_form;
@@ -1027,13 +1026,22 @@ impl<'a> Forms<'a> {
                 Json::Object(object)
             }
             Value::Map(map) => {
-                let entries = ordered_map_entries(map)
-                    .ok_or(WriteStop::Fault("map-keys-have-a-canonical-order"))?;
-                let entries = entries
-                    .into_iter()
+                // FR-650's run form sorts by the RFC 8785 bytes of the
+                // normalized key form. Semantic walks use FR-144 order.
+                let mut keyed = map
+                    .entries()
+                    .iter()
                     .map(|(key, value)| {
+                        let key_form = self.write_at(key, below)?;
+                        Ok((order_key(&key_form), key_form, value))
+                    })
+                    .collect::<Result<Vec<_>, WriteStop>>()?;
+                keyed.sort_by(|left, right| left.0.cmp(&right.0));
+                let entries = keyed
+                    .into_iter()
+                    .map(|(_, key, value)| {
                         Ok(json!({
-                            "key": self.write_at(key, below)?,
+                            "key": key,
                             "value": self.write_at(value, below)?,
                         }))
                     })
@@ -1229,30 +1237,6 @@ fn read_bytes(text: &str) -> Option<Vec<u8>> {
             Some((high << 4) | low)
         })
         .collect()
-}
-
-/// Map entries in FR-144 canonical key order: mathematical order for exact
-/// numeric keys and the membership order for IEEE keys.
-fn ordered_map_entries(map: &filament_exact::MapValue) -> Option<Vec<(&Value, &Value)>> {
-    let mut entries: Vec<_> = map
-        .entries()
-        .iter()
-        .map(|(key, value)| (key, value))
-        .collect();
-    let mut incomparable = false;
-    entries.sort_unstable_by(|(left, _), (right, _)| {
-        let order = match (left, right) {
-            (Value::Float(left), Value::Float(right)) => {
-                Some(left.total_order_key().cmp(&right.total_order_key()))
-            }
-            _ => filament_exact::compare_keys(left, right),
-        };
-        order.unwrap_or_else(|| {
-            incomparable = true;
-            Ordering::Equal
-        })
-    });
-    (!incomparable).then_some(entries)
 }
 
 /// Rewrite each Decimal object inside `form` with its trailing zeros
@@ -1619,11 +1603,11 @@ mod tests {
         assert!(forms.has_form(&ValueType::option(ValueType::Boolean)));
     }
 
-    /// FR-650 and FR-144: map forms admit entries and write them in canonical
-    /// key order.
+    /// FR-650: run forms write Map entries in normalized run-key form order;
+    /// FR-144's mathematical order belongs to semantic traversal.
     #[trace("FR-650-AC-11", "FR-144-AC-6")]
     #[test]
-    fn maps_round_trip_in_canonical_key_order() {
+    fn maps_write_entries_in_run_form_order() {
         let forms = forms();
         let map = ValueType::Map(std::sync::Arc::new(
             filament_exact::MapType::new(ValueType::Integer, ValueType::Boolean, None)
@@ -1641,8 +1625,8 @@ mod tests {
             forms.write(&value).expect("the map value is writable"),
             serde_json::json!({
                 "map": [
-                    {"key": {"integer": "9"}, "value": {"boolean": false}},
                     {"key": {"integer": "10"}, "value": {"boolean": true}},
+                    {"key": {"integer": "9"}, "value": {"boolean": false}},
                 ]
             })
         );

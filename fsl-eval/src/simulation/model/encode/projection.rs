@@ -1248,7 +1248,7 @@ pub(super) fn project_value<'a, S: ValueSink>(
 
 #[cfg(test)]
 mod tests {
-    use filament_exact::{JsonObject, ValueType};
+    use filament_exact::{Integer, JsonObject, MapType, ValueType};
 
     use super::*;
 
@@ -1287,6 +1287,57 @@ mod tests {
             Enc::tagged(
                 "json_object",
                 vec![("text", Enc::text("{\"a\":1,\"b\":2}"))]
+            )
+        );
+    }
+
+    /// FR-106-AC-61 / FR-650-AC-1: a Map projection orders entries by the
+    /// RFC 8785 bytes of each normalized key run form, so integer 10 precedes
+    /// integer 9 lexicographically.
+    #[ix_trace_rs::trace("FR-106-AC-61", "FR-650-AC-1")]
+    #[test]
+    fn map_projection_uses_canonical_run_key_order() {
+        let map_type = MapType::new(ValueType::Integer, ValueType::Boolean, None)
+            .expect("integer keys are scalar");
+        let value = filament_exact::from_admitted_map(
+            map_type,
+            vec![
+                (Value::Integer(Integer::from(9_i64)), Value::Boolean(false)),
+                (Value::Integer(Integer::from(10_i64)), Value::Boolean(true)),
+            ],
+        )
+        .expect("distinct integer keys form a map");
+
+        let projected = retained(|sink| project_value(sink, &value, Typing::none(), None, false));
+        assert_eq!(
+            projected,
+            Enc::tagged(
+                "map",
+                vec![(
+                    "entries",
+                    Enc::Array(vec![
+                        Enc::Object(vec![
+                            (
+                                "key",
+                                Enc::tagged("integer", vec![("value", Enc::text("10"))]),
+                            ),
+                            (
+                                "value",
+                                Enc::tagged("boolean", vec![("value", Enc::Bool(true))]),
+                            ),
+                        ]),
+                        Enc::Object(vec![
+                            (
+                                "key",
+                                Enc::tagged("integer", vec![("value", Enc::text("9"))]),
+                            ),
+                            (
+                                "value",
+                                Enc::tagged("boolean", vec![("value", Enc::Bool(false))]),
+                            ),
+                        ]),
+                    ]),
+                )],
             )
         );
     }
