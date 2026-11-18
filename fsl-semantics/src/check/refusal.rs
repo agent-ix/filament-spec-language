@@ -228,6 +228,20 @@ pub enum ProtocolAnchorCause {
         /// The span of the type form (or nested argument form) at fault.
         span: Span,
     },
+    /// FR-882-AC-4: an attempt's result binder does not have exactly the
+    /// operation's result type, including a binder for an operation with no
+    /// result.
+    AttemptBinderType {
+        /// The attempt result binder's declared name.
+        binder: String,
+        /// The operation result type, or `None` for an operation without a
+        /// result.
+        expected_result: Option<Box<ValueType>>,
+        /// The result binder's declared type.
+        actual_result: Box<ValueType>,
+        /// The binder's own declared name span.
+        span: Span,
+    },
     /// FR-218 "Channels": a channel's `from` or `to` names no role the
     /// protocol declares. `missing_declaration`/`missing-name`, at the role
     /// name; both ends refuse independently.
@@ -965,12 +979,6 @@ pub enum ProtocolConstruct {
     /// `attempt`: that protocol's node is written after the state clauses
     /// its attempts list, which are written after the functions. QSL-1121g.
     ReferenceToAttemptProtocol,
-    /// A clause whose `over` input is not a reference to an object type of a
-    /// selected model: there is no exact local model declaration node to
-    /// name as the clause's `owner_model`
-    /// (FSpec FR-464 "owner_model", FR-383), and the reader refuses a clause
-    /// without one. QSL-1147.
-    NoOwnerModel,
 }
 
 impl ProtocolConstruct {
@@ -984,7 +992,6 @@ impl ProtocolConstruct {
             Self::ChannelCarriesBounded => "QSL-1137",
             Self::Relationships => "QSL-1141",
             Self::ChannelKeyNotEqualityStable => "QSL-1142",
-            Self::NoOwnerModel => "QSL-1147",
             Self::PostTestRepeat | Self::RepeatDecisionReadsBody => "STD-539",
             Self::RepeatStepsThroughRepeat => "IR-1100",
         }
@@ -1163,6 +1170,7 @@ impl ProtocolAnchorCause {
             | Self::MissingRoleType { span, .. }
             | Self::MissingRole { span, .. }
             | Self::BinderType { span, .. }
+            | Self::AttemptBinderType { span, .. }
             | Self::ChannelRole { span, .. }
             | Self::ChannelType { span, .. }
             | Self::ChannelDeliveryRange { span, .. }
@@ -1244,6 +1252,7 @@ impl ProtocolAnchorCause {
             | Self::RelatedConnection { .. }
             | Self::RolePopulationType { .. }
             | Self::RoleMax { .. } => Code::IllTyped,
+            Self::AttemptBinderType { .. } => Code::IllTyped,
             Self::JoinFunctionKind { .. } | Self::JoinFunctionType { .. } => Code::IllTyped,
             Self::KeyClause { cause, .. } | Self::SlotClause { cause, .. } => cause.code(),
             Self::WrongObservation { .. } => Code::WrongSnapshot,
@@ -1301,6 +1310,7 @@ impl ProtocolAnchorCause {
             | Self::RelatedEnd { .. }
             | Self::RolePopulationType { .. }
             | Self::RoleMax { .. } => "type-mismatch",
+            Self::AttemptBinderType { .. } => "type-mismatch",
             Self::JoinFunctionType { .. } => "type-mismatch",
             Self::KeyModelState { .. }
             | Self::KeyEquality { .. }

@@ -231,7 +231,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         // `[forward, over, activation binder, protocol captures, ...]`.
         let leading: Vec<Option<Value>> = {
             let instance = Self::instance(next, ordinal)?;
-            [Some(forward), Some(self.over.clone())]
+            [Some(forward), Some(instance.over.clone())]
                 .into_iter()
                 .chain(self.activation_value(instance))
                 .chain(Self::protocol_values(instance))
@@ -304,14 +304,19 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             .map(|(key, registration)| (key.clone(), registration.clone()))
             .collect();
         let count = template.registration.len();
-        let protocol: Vec<Option<Value>> =
-            Self::protocol_values(Self::instance(next, ordinal)?).collect();
+        let (protocol, instance_over) = {
+            let instance = Self::instance(next, ordinal)?;
+            (
+                Self::protocol_values(instance).collect::<Vec<Option<Value>>>(),
+                instance.over.clone(),
+            )
+        };
         for (key, mut registration) in waiting {
             // `[trigger, protocol captures, registration captures, over]`.
             let mut frame = vec![Some(trigger.clone())];
             frame.extend(protocol.iter().cloned());
             frame.extend(Self::captured(&registration, count));
-            frame.push(Some(self.over.clone()));
+            frame.push(Some(instance_over.clone()));
             match self.holds(template, template.guard, frame, next, findings)? {
                 None => return Ok(false),
                 Some(false) => continue,
@@ -320,7 +325,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             for (_, initializer) in &template.activation {
                 // `[trigger, over, protocol captures, registration captures,
                 // earlier activation captures]`.
-                let mut frame = vec![Some(trigger.clone()), Some(self.over.clone())];
+                let mut frame = vec![Some(trigger.clone()), Some(instance_over.clone())];
                 frame.extend(protocol.iter().cloned());
                 frame.extend(Self::captured(&registration, usize::MAX));
                 match self.decide_template(template, initializer, frame, next)? {
@@ -610,7 +615,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 let mut frame = vec![earlier.clone(), Some(value.clone())];
                 frame.extend(Self::protocol_values(instance));
                 frame.extend(Self::captured(registration, usize::MAX));
-                frame.push(Some(self.over.clone()));
+                frame.push(Some(instance.over.clone()));
                 if self.holds(
                     template,
                     template.retry,
@@ -657,7 +662,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             let mut frame = vec![record.clone()];
             frame.extend(Self::protocol_values(instance));
             frame.extend(Self::captured(registration, usize::MAX));
-            frame.push(Some(self.over.clone()));
+            frame.push(Some(instance.over.clone()));
             let Some(recovered) = self.holds(
                 template,
                 template.recover,

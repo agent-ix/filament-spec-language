@@ -358,8 +358,8 @@ fn refuse_unsupported(
     protocol: &CheckedProtocol,
 ) -> Result<(), ProtocolRefusal> {
     for control in &protocol.controls.controls {
-        if let ControlStep::Unstepped(construct) = control.step() {
-            return Err(unsupported(Unsupported::Control(construct)));
+        if matches!(control.step(), ControlStep::Unstepped(_)) {
+            return Err(ProtocolRefusal::fault("a-checked-protocol-control-is-stepped"));
         }
     }
     // The pre-check (TS-5) has already refused an unbounded record type.
@@ -586,13 +586,6 @@ impl<'a> Program<'a> {
                     attempt.operation.declaration.result() == Some(&binder.value_type)
                 })
             });
-            // An attempt binder with no value of its type is never bound, so
-            // no slot may read it (ADR-027 ST-1).
-            if let (Some(slot), None) = (binder, binds) {
-                if readers.get(slot).is_some_and(|readers| !readers.is_empty()) {
-                    return Err(unsupported(Unsupported::UnboundAttemptBinder));
-                }
-            }
             attempts.insert(
                 node,
                 Attempt {

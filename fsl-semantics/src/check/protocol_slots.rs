@@ -569,7 +569,10 @@ impl Checker<'_, '_> {
             let input = self
                 .binders
                 .iter()
-                .position(|binder| binder.origin == BinderOrigin::Input);
+                .position(|binder| {
+                    binder.origin == BinderOrigin::Input
+                        && matches!(binder.value_type, ValueType::Reference(_))
+                });
             let reads = model_state_reads(&body, slot.form, input);
             if !reads.is_empty() {
                 for span in reads {
