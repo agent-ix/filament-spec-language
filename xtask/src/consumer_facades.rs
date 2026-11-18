@@ -15,6 +15,12 @@ use crate::Outcome;
 
 const USAGE: &str = "usage: cargo xtask consumer-facades [--bindings <file>] [--inventory <file>]";
 const INVENTORY_PATH: &str = "proposals/consumer-facades/consumer-facts.json";
+const PENDING_FACTS: &[(&str, &str)] = &[
+    ("CF-CG-04", "QSL-1109"),
+    ("CF-IR-04", "QSL-1109"),
+    ("CF-OB-01", "OBS-1"),
+    ("CF-RT-02", "QSL-1867"),
+];
 
 #[derive(Default)]
 struct PublicApi {
@@ -90,10 +96,23 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
             continue;
         };
         for fact in facts {
-            let Some(accessors) = binding.facts.get(fact) else {
+            let Some(fact_binding) = binding.facts.get(fact) else {
                 failures.push(format!("{fact}: unbound"));
                 continue;
             };
+            let expected_pending_ticket = PENDING_FACTS
+                .iter()
+                .find_map(|(pending_fact, ticket)| (*pending_fact == fact).then_some(*ticket));
+            if fact_binding.pending_ticket.as_deref() != expected_pending_ticket {
+                failures.push(format!(
+                    "{fact}: pending ticket must be {}",
+                    expected_pending_ticket.unwrap_or("absent")
+                ));
+            }
+            if let Some(ticket) = fact_binding.pending_ticket.as_deref() {
+                report.push(format!("{fact}: pending ({ticket})"));
+                continue;
+            }
             let (crate_name, modules) = binding
                 .module
                 .split_once("::")
@@ -115,7 +134,7 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
                 continue;
             }
             let mut resolved = Vec::new();
-            for accessor in accessors {
+            for accessor in &fact_binding.accessors {
                 let path = format!("{module_path}::{accessor}");
                 if accessor_resolves(api, &module_path, accessor) {
                     resolved.push(path);
@@ -164,7 +183,12 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
 
 struct ConsumerBinding {
     module: String,
-    facts: BTreeMap<String, Vec<String>>,
+    facts: BTreeMap<String, BindingFact>,
+}
+
+struct BindingFact {
+    accessors: Vec<String>,
+    pending_ticket: Option<String>,
 }
 
 fn validate_object(value: &Value, allowed: &[&str], name: &str, failures: &mut Vec<String>) {
@@ -305,7 +329,12 @@ fn bindings_by_consumer(
         };
         let mut fact_map = BTreeMap::new();
         for fact in facts {
-            validate_object(fact, &["fact", "accessors"], "binding fact", failures);
+            validate_object(
+                fact,
+                &["fact", "accessors", "pending_ticket"],
+                "binding fact",
+                failures,
+            );
             let Some(id) = fact.get("fact").and_then(Value::as_str) else {
                 failures.push(format!("bindings {name}: fact has no id"));
                 continue;
@@ -329,7 +358,26 @@ fn bindings_by_consumer(
             if accessors.is_empty() {
                 failures.push(format!("{id}: accessors must be non-empty"));
             }
-            if fact_map.insert(id.to_owned(), accessors).is_some() {
+            let pending_ticket = match fact.get("pending_ticket") {
+                None => None,
+                Some(value) => match value.as_str() {
+                    Some(ticket) if !ticket.is_empty() => Some(ticket.to_owned()),
+                    _ => {
+                        failures.push(format!("{id}: pending_ticket must be a non-empty string"));
+                        None
+                    }
+                },
+            };
+            if fact_map
+                .insert(
+                    id.to_owned(),
+                    BindingFact {
+                        accessors,
+                        pending_ticket,
+                    },
+                )
+                .is_some()
+            {
                 failures.push(format!("{id}: duplicate binding"));
             }
         }

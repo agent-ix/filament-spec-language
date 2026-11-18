@@ -143,13 +143,40 @@ fn the_contract_check_passes_over_the_committed_bindings() {
         }
     }
     for path in [
-        "fsl_package::SchedulabilityRoot::obligation_identity",
-        "fsl_replay::check_closed_form",
-        "fsl_analyze::monitor_root::admit_progress_view",
-        "fsl_package::checked_views::subject_kinds",
+        "CF-CG-04: pending (QSL-1109)",
+        "CF-IR-04: pending (QSL-1109)",
+        "CF-OB-01: pending (OBS-1)",
+        "CF-RT-02: pending (QSL-1867)",
     ] {
-        assert!(text.contains(path), "the report resolves {path}: {text}");
+        assert!(text.contains(path), "the report lists {path}: {text}");
     }
+}
+
+#[test]
+#[trace("TC-2144", "FR-761-AC-1")]
+fn an_unresolved_accessor_requires_its_keyed_pending_ticket() {
+    let mut bindings = committed_bindings();
+    let code_generation = bindings["consumers"]
+        .as_array_mut()
+        .expect("consumers")
+        .iter_mut()
+        .find(|consumer| consumer["consumer"] == "code-generation")
+        .expect("code-generation consumer");
+    let closed_form = code_generation["facts"]
+        .as_array_mut()
+        .expect("facts")
+        .iter_mut()
+        .find(|fact| fact["fact"] == "CF-CG-04")
+        .expect("CF-CG-04 binding");
+    closed_form["pending_ticket"] = json!("QSL-9999");
+
+    let output = check_with(&bindings);
+    let text = report(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("CF-CG-04: pending ticket must be QSL-1109"),
+        "{text}"
+    );
 }
 
 #[test]

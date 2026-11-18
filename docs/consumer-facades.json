@@ -8,7 +8,7 @@
         { "fact": "CF-IR-01", "accessors": ["CHECKED_PACKAGE_V2"] },
         { "fact": "CF-IR-02", "accessors": ["read_import_view"] },
         { "fact": "CF-IR-03", "accessors": ["schedulability_roots", "SchedulabilityRoot::occurrence"] },
-        { "fact": "CF-IR-04", "accessors": ["SchedulabilityRoot::obligation_identity"] }
+        { "fact": "CF-IR-04", "accessors": ["SchedulabilityRoot::obligation_identity"], "pending_ticket": "QSL-1109" }
       ]
     },
     {
@@ -30,7 +30,7 @@
         { "fact": "CF-CG-01", "accessors": ["call_site", "CallSite", "CallSiteSelection"] },
         { "fact": "CF-CG-02", "accessors": ["ImportedFunctionSite::library", "ImportedFunctionSite::package", "ImportedFunctionSite::function"] },
         { "fact": "CF-CG-03", "accessors": ["FunctionSite::obligation_identity", "OperationSite::obligation_identity"] },
-        { "fact": "CF-CG-04", "accessors": ["check_closed_form"] }
+        { "fact": "CF-CG-04", "accessors": ["check_closed_form"], "pending_ticket": "QSL-1109" }
       ]
     },
     {
@@ -38,7 +38,7 @@
       "module": "fsl_analyze::monitor_root",
       "facts": [
         { "fact": "CF-RT-01", "accessors": ["emit_plan_root", "PlanRoot", "PlanRootRequest"] },
-        { "fact": "CF-RT-02", "accessors": ["admit_progress_view", "PlanAuthoritySelection"] }
+        { "fact": "CF-RT-02", "accessors": ["admit_progress_view", "PlanAuthoritySelection"], "pending_ticket": "QSL-1867" }
       ]
     },
     {
@@ -54,7 +54,7 @@
       "consumer": "observation",
       "module": "fsl_package::checked_views",
       "facts": [
-        { "fact": "CF-OB-01", "accessors": ["subject_kinds", "SubjectKind"] }
+        { "fact": "CF-OB-01", "accessors": ["subject_kinds", "SubjectKind"], "pending_ticket": "OBS-1" }
       ]
     }
   ]
