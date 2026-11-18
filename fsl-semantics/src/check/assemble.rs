@@ -2751,6 +2751,11 @@ fn model_value_type(
                 }
                 let key_type = if matches!(named, ValueTypeRef::Native(NativeValueType::Text)) {
                     ValueType::String
+                } else if matches!(
+                    named,
+                    ValueTypeRef::Native(NativeValueType::Float32 | NativeValueType::Float64)
+                ) {
+                    return Err(Unmapped::Unsupported);
                 } else {
                     element(&map.keys)?
                 };
