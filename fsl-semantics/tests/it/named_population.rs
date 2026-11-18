@@ -495,7 +495,6 @@ fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
     let protocol = |literal: &str| {
         format!(
             concat!(
-                "profile p = \"filament.protocol.finite-global/v1\";\n",
                 "record Pick {{ target: Reference<M::Counter>; }}\n",
                 "protocol L using p over (c: M::Counter) on origin {{\n",
                 "role R on M::Counter;\nrole S on M::Counter;\n",
@@ -513,7 +512,17 @@ fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
             literal = literal
         )
     };
-    checked(false, &protocol("M::Counter#\"a\""));
+    let check_protocol = |literal: &str| {
+        fixture::check_with_profiles(
+            false,
+            "profile p = \"filament.protocol.finite-global/v1\";",
+            &protocol(literal),
+        )
+    };
+    assert!(
+        check_protocol("M::Counter#\"a\"").is_ok(),
+        "a well-typed reference literal checks"
+    );
     for (literal, expected, at) in [
         (
             "M::Nothing#\"a\"",
@@ -527,24 +536,18 @@ fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
             "\"\"",
         ),
     ] {
-        let (code, cause, text) = refused(false, &protocol(literal));
-        assert_eq!((code.as_str(), cause.as_str()), expected, "{literal}");
-        assert_eq!(text, at, "{literal}");
+        let refusals = match check_protocol(literal) {
+            Err(refusals) => refusals,
+            Ok(_) => panic!("{literal}: expected a refusal"),
+        };
+        let [refusal] = &refusals[..] else {
+            panic!("{literal}: expected one refusal, got {refusals:?}");
+        };
+        assert_eq!(
+            (refusal.code.as_str(), refusal.cause.as_str()),
+            expected,
+            "{literal}"
+        );
+        assert_eq!(refusal.at, at, "{literal}");
     }
-    checked(
-        false,
-        "profile p = \"filament.protocol.finite-global/v1\";\n\
-         record Pick { target: Reference<M::Counter>; }\n\
-         protocol L using p over (c: M::Counter) on origin {\n\
-         role R on M::Counter;\nrole S on M::Counter;\n\
-         channel ch from R to S carries Pick ordering unordered delivery \
-         exactly-once-premise capacity 2 overflow reject;\n\
-         run sequence Main {\n\
-         send Go via ch as (go: Pick) { true };\n\
-         receive Got via ch of Go as (got: Pick) { true };\n\
-         choice Decide by S visible (got.target) { \
-         case yes when { got.target = M::Counter#\"z\" } sequence Yes { } \
-         case no when { not (got.target = M::Counter#\"z\") } sequence No { } } }\n\
-         finish Done as (d: Boolean) { true };\n}",
-    );
 }
