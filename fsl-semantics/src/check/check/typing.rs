@@ -25,10 +25,11 @@ use std::sync::Arc;
 
 use super::native_literal::NativeConstructor;
 use super::{
-    catalogued_step, contains_pre_eligible_read, contextual, ineligible, is_integer, mismatch,
-    node, refuse, LocalKind, Typer,
+    LocalKind, Typer, catalogued_step, contains_pre_eligible_read, contextual, ineligible,
+    is_integer, mismatch, node, refuse,
 };
-use crate::check::call_target::{resolve_target, ResolvedTarget};
+use crate::check::DispatchOperation;
+use crate::check::call_target::{ResolvedTarget, resolve_target};
 use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
 use crate::check::refusal::{
@@ -37,7 +38,6 @@ use crate::check::refusal::{
 };
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
-use crate::check::DispatchOperation;
 use filament_exact::Cancel;
 use filament_exact::{
     ArithmeticOperator, CollectionKind, CollectionType, DecimalType, FloatType, IeeeValue,
@@ -1526,7 +1526,7 @@ impl<'a> Typer<'a> {
                     (name, expression.at(*value), expression.at(*body)),
                     location,
                     frames,
-                )
+                );
             }
             ExprNode::If {
                 condition,
