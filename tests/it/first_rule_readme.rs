@@ -59,7 +59,7 @@ fn first_rule_readme_example_compiles_against_config_version() {
                 "file": "first-rule.native",
                 "authority": "agent-ix",
                 "identity": "test:readme-first-rule",
-                "document": "README A first rule",
+                "document": "README-A-first-rule",
                 "formal_revision": 1
             }}
         }
