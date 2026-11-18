@@ -294,7 +294,6 @@ fn gate_fails_on_test_for_unlisted_fact() {
 }
 
 #[test]
-#[test]
 #[trace("TC-2582", "FR-912-AC-3")]
 fn gate_does_not_allow_an_issue_key_to_exempt_an_ignored_test() {
     let scratch = scratch_tests("", None, "#[ignore = \"QSL-1109\"]");
