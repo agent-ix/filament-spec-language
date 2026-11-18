@@ -10,16 +10,16 @@ use std::path::Path;
 
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::document::{
-    AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, SubjectSelection, analyze_document,
-    resolve_items,
+    analyze_document, resolve_items, AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate,
+    SubjectSelection,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
 use fsl_semantics::model::observation::DocumentProvision;
 
 use super::{
-    FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
-    check_sources, intake_with_bytes, request, require_complete_edition, wire,
+    check_sources, intake_with_bytes, request, require_complete_edition, wire, FileCounts,
+    FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
 };
 
 fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
@@ -27,6 +27,85 @@ fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
         member: member.to_owned(),
         reason: reason.into(),
     }
+}
+
+fn validate_activated_population(
+    position: usize,
+    population: &serde_json::Value,
+) -> std::result::Result<(), (String, String)> {
+    let base = format!("/items/{position}/population");
+    let invalid_at = |pointer: String, reason: String| Err((pointer, reason));
+    let Some(groups) = population.as_array() else {
+        return invalid_at(base, "population must be an array".to_owned());
+    };
+    for (group_index, group) in groups.iter().enumerate() {
+        let group_pointer = format!("{base}/{group_index}");
+        let Some(group) = group.as_object() else {
+            return invalid_at(
+                group_pointer,
+                "population entry must be an object".to_owned(),
+            );
+        };
+        for key in group.keys() {
+            if !matches!(key.as_str(), "role" | "instance" | "members") {
+                return invalid_at(
+                    format!("{group_pointer}/{}", pointer_token(key)),
+                    format!("unknown population entry member `{key}`"),
+                );
+            }
+        }
+        let role_pointer = format!("{group_pointer}/role");
+        if group
+            .get("role")
+            .and_then(serde_json::Value::as_str)
+            .is_none()
+        {
+            return invalid_at(role_pointer, "role must be a string".to_owned());
+        }
+        if let Some(instance) = group.get("instance") {
+            if !instance.is_null() && !instance.is_string() {
+                return invalid_at(
+                    format!("{group_pointer}/instance"),
+                    "instance must be a string or null".to_owned(),
+                );
+            }
+        }
+        let members_pointer = format!("{group_pointer}/members");
+        let Some(members) = group.get("members").and_then(serde_json::Value::as_array) else {
+            return invalid_at(members_pointer, "members must be an array".to_owned());
+        };
+        for (member_index, member) in members.iter().enumerate() {
+            let member_pointer = format!("{members_pointer}/{member_index}");
+            let Some(member) = member.as_object() else {
+                return invalid_at(
+                    member_pointer,
+                    "population member must be an object".to_owned(),
+                );
+            };
+            for key in member.keys() {
+                if !matches!(key.as_str(), "authority" | "identity") {
+                    return invalid_at(
+                        format!("{member_pointer}/{}", pointer_token(key)),
+                        format!("unknown population member field `{key}`"),
+                    );
+                }
+            }
+            for field in ["authority", "identity"] {
+                let pointer = format!("{member_pointer}/{field}");
+                let Some(value) = member.get(field).and_then(serde_json::Value::as_str) else {
+                    return invalid_at(pointer, format!("{field} must be a string"));
+                };
+                if value.is_empty() {
+                    return invalid_at(pointer, format!("{field} must be nonempty"));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn pointer_token(value: &str) -> String {
+    value.replace('~', "~0").replace('/', "~1")
 }
 
 /// A read `native-analyze/1` request: its compiled-from sources, supplied
@@ -109,6 +188,30 @@ fn read<'d>(
                 &format!("/items/{position}/recording"),
                 "recording is only valid on a global-conformance item",
             ));
+        }
+        if let Some(population) = &item.population {
+            if item.kind.as_deref()
+                != Some(fsl_semantics::check::Capability::GlobalConformance.to_wire())
+            {
+                return Err(invalid(
+                    &format!("/items/{position}/population"),
+                    "population is only valid on a global-conformance item",
+                ));
+            }
+            if item.recording.is_none() {
+                return Err(invalid(
+                    &format!("/items/{position}/population"),
+                    "population requires a recording",
+                ));
+            }
+            validate_activated_population(position, population)
+                .map_err(|(pointer, reason)| invalid(&pointer, reason))?;
+            serde_json::from_value::<Vec<fsl_analyze::analyze::document::ActivatedRolePopulation>>(
+                population.clone(),
+            )
+            .map_err(|error| {
+                invalid(&format!("/items/{position}/population"), error.to_string())
+            })?;
         }
     }
     // FR-634: a `simulation` item names no claim and carries its

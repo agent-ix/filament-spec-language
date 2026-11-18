@@ -28,7 +28,7 @@ use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use super::{
     AnalyzeLimits, ClaimItem, Diagnostic, Engines, ItemForm, ItemOptions, NegotiatedItem,
@@ -39,6 +39,12 @@ use fsl_eval::simulation::model::PopulationUniverse;
 /// The request document format FR-620 reads.
 pub const REQUEST_FORMAT: &str = "native-analyze/1";
 
+fn present_json_value<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(decoder).map(Some)
+}
+
 /// A `{authority, identity}` reference to a provisioned document.
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
 #[serde(deny_unknown_fields)]
@@ -46,6 +52,29 @@ pub struct DocumentSelection {
     /// The document's declared authority.
     pub authority: String,
     /// The document's declared identity.
+    pub identity: String,
+}
+
+/// One activated protocol role population supplied with a recording request.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ActivatedRolePopulation {
+    /// The checked protocol role whose activated members are listed.
+    pub role: String,
+    /// The protocol activation instance, when the protocol is `on each`.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub instance: Option<Value>,
+    /// The activated role members.
+    pub members: Vec<ActivatedRoleMember>,
+}
+
+/// One authority-scoped identity in an activated role population.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
+#[serde(deny_unknown_fields)]
+pub struct ActivatedRoleMember {
+    /// The member reference authority.
+    pub authority: String,
+    /// The member reference identity.
     pub identity: String,
 }
 
@@ -530,6 +559,9 @@ pub struct ItemSelection {
     /// A `global-conformance` item's supplied FR-737 recording.
     #[serde(default)]
     pub recording: Option<DocumentSelection>,
+    /// The activated population used to close a recording's fan-out scope.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub population: Option<Value>,
     /// A `simulation` item's settings (FR-634).
     #[serde(default)]
     pub simulation: Option<super::SimulationSelection>,
@@ -1022,6 +1054,7 @@ fn resolve_call_item(
             max_cases: None,
             trace: None,
             recording: None,
+            population: None,
             backend_options: call_item.options.clone(),
         },
         form: None,
@@ -1239,10 +1272,10 @@ fn resolve_one(
     }
     let form = (kind == Capability::TemporalSatisfaction || kind == Capability::GlobalConformance)
         .then(|| {
-        let mut form = temporal_item(package, &claim, &temporal);
-        form.pending_reductions.clone_from(&selection.reductions);
-        ItemForm::Temporal(form)
-    });
+            let mut form = temporal_item(package, &claim, &temporal);
+            form.pending_reductions.clone_from(&selection.reductions);
+            ItemForm::Temporal(form)
+        });
     let item = ClaimItem {
         request_index: index,
         claim,
@@ -1258,6 +1291,7 @@ fn resolve_one(
                 .recording
                 .as_ref()
                 .map(DocumentSelection::reference),
+            population: selection.population.clone(),
             backend_options,
         },
         form,
@@ -1383,6 +1417,7 @@ fn resolve_derived(
         max_cases: None,
         trace: None,
         recording: None,
+        population: None,
         backend_options,
     };
     let mut form = temporal_item(package, &claim.item.claim, temporal);
@@ -1671,6 +1706,7 @@ fn derived_items(
                         max_cases: None,
                         trace: None,
                         recording: None,
+                        population: None,
                         backend_options: BTreeMap::new(),
                     },
                     form: Some(ItemForm::Temporal(TemporalItem {
@@ -1743,6 +1779,9 @@ impl ClaimItem {
                 "recording".to_owned(),
                 json!({"authority": recording.authority, "identity": recording.identity}),
             );
+        }
+        if let Some(population) = &self.options.population {
+            item.insert("population".to_owned(), population.clone());
         }
         if let Some(max_cases) = self.options.max_cases {
             item.insert(
@@ -2357,7 +2396,13 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
         }
         item.insert("counterexample".to_owned(), counterexample);
     }
-    for member in ["obligations", "closure", "global", "projections", "recording"] {
+    for member in [
+        "obligations",
+        "closure",
+        "global",
+        "projections",
+        "recording",
+    ] {
         if let Some(value) = record.get(member) {
             item.insert(member.to_owned(), value.clone());
         }
