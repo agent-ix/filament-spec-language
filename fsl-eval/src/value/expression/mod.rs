@@ -341,7 +341,7 @@ pub fn evaluate_model_relation(
         observations: Some(&observations),
     })
     .run(
-        relation.typed_body(),
+        relation.typed_body().root(),
         relation.body_parameters().len(),
         arguments,
     )
