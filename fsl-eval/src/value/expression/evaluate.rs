@@ -2939,10 +2939,17 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     if !self.world.has_ieee_profile() {
                         return Err(invariant("ieee-profile-unresolved"));
                     }
-                    Value::Boolean(outcome_into_stop(
+                    let result = outcome_into_stop(
                         compare_ieee(IeeeComparison::NumericEqual, left, right, self.meter)
                             .map_err(|_| invariant("ieee-operation-rejected"))?,
-                    )?)
+                    )?;
+                    self.note_comparison(
+                        node,
+                        &Value::Float(left),
+                        &Value::Float(right),
+                        result,
+                    );
+                    Value::Boolean(result)
                 } else {
                     // FR-397 "Evaluate once": the numeric-equality parts of
                     // an ordering's composition add no charge. The decision
