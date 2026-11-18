@@ -620,6 +620,69 @@ fn observation_override_matches_the_in_request_limit() {
     assert_eq!(actual.exit_code, expected.exit_code);
 }
 
+#[cfg(feature = "quire-extraction")]
+#[test]
+#[trace("TC-2982", "FR-312-AC-10")]
+fn extracted_clause_observation_override_conflict_refuses_before_observation_read() {
+    let directory = tempfile::tempdir().unwrap();
+    crate::config_version_spine::spine::write(
+        directory.path(),
+        crate::config_version_spine::Case::Healthy,
+    )
+    .unwrap();
+    let body = crate::config_version_spine::spine::unit_text();
+    std::fs::write(
+        directory.path().join("spec.md"),
+        format!("# Doc\n\n## Invariants\n\n### ParentOrder\n```ix:native\n{body}```\n"),
+    )
+    .unwrap();
+    let request = json!({
+        "format": "native-run/1",
+        "request": {
+            "models": [{"format": "semantic-ir/2.0.0", "source": {
+                "file": "spine-model.semantic-ir.json", "authority": "agent-ix",
+                "identity": "example:spine-model.semantic-ir.json", "document": "SpineModel",
+                "formal_revision": 1
+            }}],
+            "program": {
+                "source": {"file": "spec.md", "authority": "agent-ix",
+                    "identity": "ix://agent-ix/spec", "document": "Doc", "formal_revision": 1},
+                "extraction": {"body": {"authority": "agent-ix", "identity": "body", "document": "Body"}},
+                "clauses": [{"clause": "ParentOrder", "package": "example/config-version"}]
+            },
+            "clause": {
+                "selection": {"clause": {
+                    "name": "ParentOrder", "observation": "current",
+                    "self": {"population": "ix://example/config-version/config_history", "key": "child"},
+                    "anchor": {"kind": "handler", "name": "validate"}
+                }},
+                "observations": {"current": "missing-observation.json"},
+                "observation_limits": {"document_bytes": 100}
+            }
+        }
+    });
+    let path = write_request(directory.path(), "extracted.json", request);
+    let limits = fsl_semantics::model::observation::ObservationLimits::default();
+    let error = command::run_with_overrides(
+        &path,
+        &command::RequestOverrides {
+            observation: Some(&limits),
+            ..Default::default()
+        },
+        &crate::negotiation::Fr290,
+    )
+    .unwrap_err();
+    let envelope = error.value().expect("refusal envelope");
+    assert_eq!(envelope["stage"], "request", "{envelope}");
+    assert_eq!(envelope["code"], "invalid-request", "{envelope}");
+    assert!(
+        envelope["message"]
+            .as_str()
+            .unwrap()
+            .contains("observation_limits")
+    );
+}
+
 #[test]
 #[trace("TC-2455", "FR-865-AC-5")]
 fn run_error_exposes_admitted_sources_for_text_rendering() {

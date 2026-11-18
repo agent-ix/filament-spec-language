@@ -1625,9 +1625,12 @@ fn run_configured(
                     Ok(Some(result))
                 } else {
                     #[cfg(feature = "quire-extraction")]
-                    if let Some(result) =
-                        run_extracted_clause_bytes(directory, bytes, limits.dependent_bytes)?
-                    {
+                    if let Some(result) = run_extracted_clause_bytes(
+                        directory,
+                        bytes,
+                        limits.dependent_bytes,
+                        overrides.observation.copied(),
+                    )? {
                         return Ok(Some(result));
                     }
                     Ok(None)
@@ -1648,6 +1651,7 @@ fn run_extracted_clause_bytes(
     directory: &Path,
     bytes: &[u8],
     dependent_bytes: usize,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<Option<RunResult>> {
     let value: serde_json::Value = serde_json::from_slice(bytes).map_err(RunCause::Json)?;
     if !value
@@ -1656,7 +1660,12 @@ fn run_extracted_clause_bytes(
     {
         return Ok(None);
     }
-    let request = read_clause_run_request_bytes(directory, bytes, Some(dependent_bytes))?;
+    let request = read_clause_run_request_bytes(
+        directory,
+        bytes,
+        Some(dependent_bytes),
+        observation_override,
+    )?;
     let (extraction, map) = extraction_record(&request, &value)?;
     let selection = request.selection.clone();
     let report =
@@ -1912,7 +1921,7 @@ pub fn read_clause_run_request(
     path: &Path,
 ) -> std::result::Result<fsl_replay::spine::ClauseRunRequest, ClauseRunRequestRefusal> {
     with_request(path, |directory, bytes| {
-        read_clause_run_request_bytes(directory, bytes, None)
+        read_clause_run_request_bytes(directory, bytes, None, None)
     })
 }
 
@@ -1920,6 +1929,7 @@ fn read_clause_run_request_bytes(
     directory: &Path,
     bytes: &[u8],
     dependent_bytes: Option<usize>,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<fsl_replay::spine::ClauseRunRequest> {
     let request: wire::Request = request(bytes)?;
     #[cfg(feature = "quire-extraction")]
@@ -1987,13 +1997,20 @@ fn read_clause_run_request_bytes(
             Ok(extracted) => extracted,
             Err(error) => return Err(extraction_failure(error)?),
         };
-        return clause::read_extracted(&mut intake, &request, clause, source, extracted, None);
+        return clause::read_extracted(
+            &mut intake,
+            &request,
+            clause,
+            source,
+            extracted,
+            observation_override,
+        );
     } else {
         require_complete_edition(source.source())?;
     }
     #[cfg(not(feature = "quire-extraction"))]
     require_complete_edition(source.source())?;
-    clause::read(&mut intake, &request, clause, source, None)
+    clause::read(&mut intake, &request, clause, source, observation_override)
 }
 
 #[cfg(feature = "quire-extraction")]
