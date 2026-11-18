@@ -707,6 +707,14 @@ fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::No
             Some((claim.name().to_owned(), claim.occurrence()?.node().clone()))
         }),
     );
+    // FR-630: a refinement is named by its declared name and keyed at the
+    // node of its requirement record (FR-144).
+    names.extend(graph.refinements().iter().filter_map(|refinement| {
+        Some((
+            refinement.name().to_owned(),
+            refinement.requirement_occurrence()?.node().clone(),
+        ))
+    }));
     names
 }
 

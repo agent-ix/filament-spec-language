@@ -558,6 +558,22 @@ fn work<'a>(
         }
         Some(ItemForm::Temporal(form))
             if item.kind == Capability::TemporalSatisfaction
+                && matches!(form.item_kind, ItemKind::Formula | ItemKind::Refinement)
+                && !super::document::timed(package)
+                && super::refinement_item::refinement_at(package, &item.claim).is_some() =>
+        {
+            super::refinement_item::refinement_item(
+                package,
+                binding,
+                *limits,
+                &item.claim,
+                item.request_index,
+                form,
+            )
+            .unwrap_or_else(absent)
+        }
+        Some(ItemForm::Temporal(form))
+            if item.kind == Capability::TemporalSatisfaction
                 && matches!(
                     form.item_kind,
                     ItemKind::DeadlockFreedom | ItemKind::TimeLockFreedom
