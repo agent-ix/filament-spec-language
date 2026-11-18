@@ -1188,19 +1188,25 @@ fn event_node_anchors(
     // `as (x: T)` record binder (FR-113 "Refusals"), its own body block and
     // zero or more `related by` clauses.
     let binderless = kind == ProtocolNodeKind::Attempt
-        && !event_items
-            .iter()
-            .any(|item| matches!(item, Item::Node(child) if child.production() == Production::Parameter));
+        && !event_items.iter().any(
+            |item| matches!(item, Item::Node(child) if child.production() == Production::Parameter),
+        );
     if binderless {
         // A binder-less `attempt` (FR-218) is carried as an unnameable
         // `Boolean` binder with a `true` body: it never binds a value and no
         // source text can read it, so every later stage keeps its one shape.
         let end = node.span().end;
-        let span = Span { start: end.saturating_sub(1), end };
+        let span = Span {
+            start: end.saturating_sub(1),
+            end,
+        };
         collector.binders.push(BinderForm {
             kind: BinderKind::RecordBinder,
             name: DeclaredName {
-                name: format!("{OMITTED_ATTEMPT_BINDER}{}", collector.declarations[declaration_index].name.name),
+                name: format!(
+                    "{OMITTED_ATTEMPT_BINDER}{}",
+                    collector.declarations[declaration_index].name.name
+                ),
                 span,
             },
             scope,
@@ -1210,8 +1216,7 @@ fn event_node_anchors(
             owner: declaration_index,
             expression: ExpressionForm {
                 expression: super::syntax::Expression::boolean(true),
-                spans: super::spans::ExpressionSpans::new(span)
-                    .map_err(|_| unexpected(node))?,
+                spans: super::spans::ExpressionSpans::new(span).map_err(|_| unexpected(node))?,
             },
             span,
         });

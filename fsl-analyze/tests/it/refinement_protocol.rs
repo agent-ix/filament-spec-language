@@ -59,10 +59,7 @@ fn cas_once() -> String {
         .replace("protocol Twice", "protocol Once")
         .replace("abstract Spec::Twice", "abstract Spec::Once")
         .replace("refinement CasTwice", "refinement CasOnce")
-        .replace(
-            "attempt a2 by w on Spec::Counter::inc contracts [];",
-            "",
-        )
+        .replace("attempt a2 by w on Spec::Counter::inc contracts [];", "")
 }
 
 fn protocol_binding() -> fsl_analyze::model_check::AbstractProtocolBinding {
@@ -1583,10 +1580,7 @@ fn an_incoming_step_rule_failure_precedes_refusal_at_the_same_state() {
             "attempt a2 by w on Spec::Counter::inc contracts [];\n\
              event ack by w as (worked: Boolean) { true };",
         )
-        .replace(
-            "attempt a2 by w on Spec::Counter::inc contracts [];",
-            "",
-        )
+        .replace("attempt a2 by w on Spec::Counter::inc contracts [];", "")
         .replace(
             "step Impl::Counter::commitB -> Spec::Counter::inc(self);",
             "step Impl::Counter::commitB -> stutter;",
@@ -1637,14 +1631,8 @@ fn an_incoming_step_rule_failure_precedes_refusal_at_the_same_state() {
 #[test]
 fn an_intended_protocol_terminal_mismatch_replays() {
     let source = cas_twice(false, true)
-        .replace(
-            "attempt a1 by w on Spec::Counter::inc contracts [];\n",
-            "",
-        )
-        .replace(
-            "attempt a2 by w on Spec::Counter::inc contracts [];\n",
-            "",
-        )
+        .replace("attempt a1 by w on Spec::Counter::inc contracts [];\n", "")
+        .replace("attempt a2 by w on Spec::Counter::inc contracts [];\n", "")
         .replace(
             "role w on Spec::Counter;",
             "role w on Spec::Counter;\nterminal any;",
@@ -1742,14 +1730,8 @@ fn an_intended_protocol_terminal_mismatch_replays() {
 #[test]
 fn a_concrete_terminal_success_mismatch_replays() {
     let source = cas_twice(false, true)
-        .replace(
-            "attempt a1 by w on Spec::Counter::inc contracts [];\n",
-            "",
-        )
-        .replace(
-            "attempt a2 by w on Spec::Counter::inc contracts [];\n",
-            "",
-        )
+        .replace("attempt a1 by w on Spec::Counter::inc contracts [];\n", "")
+        .replace("attempt a2 by w on Spec::Counter::inc contracts [];\n", "")
         .replace(
             "role w on Spec::Counter;",
             "role w on Spec::Counter;\nterminal when { c.value = 0 };",
@@ -2068,8 +2050,8 @@ fn an_any_row_can_take_a_visible_protocol_transition() {
 #[trace("TC-553", "FR-148-AC-1")]
 #[test]
 fn a_node_row_matches_the_attempt_identity_and_binder() {
-    let source = cas_twice(false, false)
-        .replace("Spec::Counter::inc(self)", "node Spec::Twice::a1(self)");
+    let source =
+        cas_twice(false, false).replace("Spec::Counter::inc(self)", "node Spec::Twice::a1(self)");
     let world = World::with_internals(
         Variant {
             peek: false,

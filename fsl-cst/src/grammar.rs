@@ -2267,12 +2267,7 @@ fn protocol(g: &mut Grammar) {
     // An `attempt` may omit its `as (x: T)` result binder (FR-218): over an
     // operation that returns nothing it must, and over a valued operation
     // omitting it discards the result.
-    let attempt_tail = || {
-        c(vec![
-            event_tail(),
-            s(vec![x(";")]),
-        ])
-    };
+    let attempt_tail = || c(vec![event_tail(), s(vec![x(";")])]);
     g.insert(
         P::EventNode,
         c(vec![
@@ -3257,7 +3252,7 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::{complete_compound_spellings, complete_reserved_words, complete_v1};
-    use crate::{Limits, parse};
+    use crate::{parse, Limits};
     use fsl_foundation::SourceIdentity;
 
     #[trace("FSpec-TC-180", "FSpec-FR-339-AC-1", "FSpec-FR-302-AC-1")]
