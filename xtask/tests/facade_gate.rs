@@ -102,7 +102,7 @@ fn scratch_tests(extra: &str, skip: Option<&str>, attribute_on_pr_03: &str) -> t
         ));
     }
     source.push_str(extra);
-    fs::write(scratch.path().join("contract.rs"), source).expect("write the scratch tests");
+    fs::write(scratch.path().join("main.rs"), source).expect("write the scratch tests");
     scratch
 }
 
@@ -111,57 +111,6 @@ fn gate_over(directory: &Path) -> Output {
         "facade-tests",
         "--tests",
         directory.to_str().expect("UTF-8 path"),
-    ])
-}
-
-fn pending_inventory(fact: &str, ticket: &str) -> tempfile::TempDir {
-    let scratch = tempfile::tempdir().expect("scratch inventory directory");
-    let facts = inventory_facts()
-        .into_iter()
-        .map(|id| {
-            if id == fact {
-                serde_json::json!({"id": id, "pending_ticket": ticket})
-            } else {
-                serde_json::json!({"id": id})
-            }
-        })
-        .collect::<Vec<_>>();
-    fs::write(
-        scratch.path().join("inventory.json"),
-        serde_json::to_vec(&serde_json::json!({"consumers": [{"facts": facts}]}))
-            .expect("serialize inventory"),
-    )
-    .expect("write scratch inventory");
-    scratch
-}
-
-fn scratch_tests_with_pending(fact: &str, ticket: &str) -> tempfile::TempDir {
-    let scratch = tempfile::tempdir().expect("scratch directory");
-    let mut source = String::new();
-    for id in inventory_facts() {
-        if id == fact {
-            source.push_str(&format!(
-                "#[test]\n#[ignore = \"{ticket}\"]\nfn {}pending_contract() {{}}\n",
-                test_prefix(&id)
-            ));
-        } else {
-            source.push_str(&format!(
-                "#[test]\nfn {}reads_the_fact() {{}}\n",
-                test_prefix(&id)
-            ));
-        }
-    }
-    fs::write(scratch.path().join("contract.rs"), source).expect("write the scratch tests");
-    scratch
-}
-
-fn gate_over_inventory(directory: &Path, inventory: &Path) -> Output {
-    xtask(&[
-        "facade-tests",
-        "--tests",
-        directory.to_str().expect("UTF-8 path"),
-        "--inventory",
-        inventory.to_str().expect("UTF-8 path"),
     ])
 }
 
@@ -250,7 +199,7 @@ fn every_bound_fact_has_a_passing_contract_call_test() {
     }
     let run = cargo(&["test", "-p", CONSUMER]);
     assert!(run.status.success(), "{}", report(&run));
-    assert!(report(&run).contains(" 4 ignored"), "{}", report(&run));
+    assert!(report(&run).contains(" 0 ignored"), "{}", report(&run));
 }
 
 #[test]
@@ -299,6 +248,11 @@ fn gate_passes_when_every_fact_has_a_live_test() {
 #[trace("TC-2579", "FR-912-AC-2")]
 fn gate_fails_on_fact_without_test() {
     let scratch = scratch_tests("", Some("CF-PR-03"), "");
+    fs::write(
+        scratch.path().join("orphan.rs"),
+        "#[test] fn cf_pr_03_orphan() {}",
+    )
+    .expect("write the orphan Rust file");
     let output = gate_over(scratch.path());
     assert_eq!(output.status.code(), Some(1), "{}", report(&output));
     assert!(report(&output).contains("CF-PR-03"));
@@ -321,7 +275,7 @@ fn gate_fails_on_ignored_contract_test() {
             text.contains("cf_pr_03_reads_the_fact"),
             "{attribute}: {text}"
         );
-        assert!(text.contains("contract.rs"), "{attribute}: {text}");
+        assert!(text.contains("main.rs"), "{attribute}: {text}");
         assert!(text.contains("CF-PR-03"), "{attribute}: {text}");
     }
 }
@@ -340,35 +294,12 @@ fn gate_fails_on_test_for_unlisted_fact() {
 }
 
 #[test]
-#[trace("TC-2582", "FR-912-AC-5")]
-fn gate_allows_an_issue_keyed_test_only_for_its_pending_fact() {
-    let fact = "CF-CG-04";
-    let ticket = "QSL-1109";
-    let inventory = pending_inventory(fact, ticket);
-    let tests = scratch_tests_with_pending(fact, ticket);
-    let output = gate_over_inventory(tests.path(), &inventory.path().join("inventory.json"));
-    assert_eq!(output.status.code(), Some(0), "{}", report(&output));
-    assert!(report(&output).contains("CF-CG-04: pending by QSL-1109"));
-}
-
 #[test]
-#[trace("TC-2583", "FR-912-AC-5")]
-fn gate_rejects_a_pending_test_with_the_wrong_issue_key() {
-    let fact = "CF-CG-04";
-    let inventory = pending_inventory(fact, "QSL-1109");
-    let tests = scratch_tests_with_pending(fact, "QSL-9999");
-    let output = gate_over_inventory(tests.path(), &inventory.path().join("inventory.json"));
+#[trace("TC-2582", "FR-912-AC-3")]
+fn gate_does_not_allow_an_issue_key_to_exempt_an_ignored_test() {
+    let scratch = scratch_tests("", None, "#[ignore = \"QSL-1109\"]");
+    let output = gate_over(scratch.path());
     assert_eq!(output.status.code(), Some(1), "{}", report(&output));
-    assert!(report(&output).contains("does not match its authorized pending_ticket"));
-}
-
-#[test]
-#[trace("TC-2584", "FR-912-AC-5")]
-fn gate_rejects_a_pending_ticket_not_in_the_authorized_map() {
-    let fact = "CF-CG-04";
-    let inventory = pending_inventory(fact, "QSL-9999");
-    let tests = scratch_tests_with_pending(fact, "QSL-9999");
-    let output = gate_over_inventory(tests.path(), &inventory.path().join("inventory.json"));
-    assert_eq!(output.status.code(), Some(1), "{}", report(&output));
-    assert!(report(&output).contains("not an authorized pending fact"));
+    assert!(report(&output).contains("function is ignored"));
+    assert!(report(&output).contains("CF-PR-03"));
 }

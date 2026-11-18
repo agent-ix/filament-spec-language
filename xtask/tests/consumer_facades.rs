@@ -143,10 +143,10 @@ fn the_contract_check_passes_over_the_committed_bindings() {
         }
     }
     for path in [
-        "CF-CG-04: pending (QSL-1109)",
-        "CF-IR-04: pending (QSL-1109)",
-        "CF-OB-01: pending (OBS-1)",
-        "CF-RT-02: pending (QSL-1867)",
+        "fsl_replay::check_closed_form",
+        "fsl_package::SchedulabilityRoot::obligation_identity",
+        "fsl_package::checked_views::subject_kinds",
+        "fsl_analyze::monitor_root::admit_progress_view",
     ] {
         assert!(text.contains(path), "the report lists {path}: {text}");
     }
@@ -154,7 +154,7 @@ fn the_contract_check_passes_over_the_committed_bindings() {
 
 #[test]
 #[trace("TC-2144", "FR-761-AC-1")]
-fn an_unresolved_accessor_requires_its_keyed_pending_ticket() {
+fn a_pending_field_is_rejected_by_the_closed_binding_schema() {
     let mut bindings = committed_bindings();
     let code_generation = bindings["consumers"]
         .as_array_mut()
@@ -173,10 +173,7 @@ fn an_unresolved_accessor_requires_its_keyed_pending_ticket() {
     let output = check_with(&bindings);
     let text = report(&output);
     assert_eq!(output.status.code(), Some(1), "{text}");
-    assert!(
-        text.contains("CF-CG-04: pending ticket must be QSL-1109"),
-        "{text}"
-    );
+    assert!(text.contains("binding fact: unexpected field pending_ticket"), "{text}");
 }
 
 #[test]

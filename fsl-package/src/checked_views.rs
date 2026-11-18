@@ -23,6 +23,7 @@ pub use predicate::{
     checked_predicate, instance_bound_atoms, CheckedPredicateView, PredicateKind,
     PredicateSelection,
 };
+pub use crate::protocol_occurrence::SubjectKind;
 #[cfg(test)]
 pub(crate) use subject::temporal_subject_within;
 pub use subject::{
@@ -30,6 +31,23 @@ pub use subject::{
     FormulaNodeUse, FormulaOperation, OperatorDirection, OperatorUse, TemporalSubjectView,
     FORMULA_VISITS,
 };
+
+use crate::{CheckedPackage, OccurrenceRefusal, RuntimeBindingRequirement};
+
+/// The runtime subject kinds and their protocol declarations in `package`.
+///
+/// This is a projection of the checked package's protocol occurrence
+/// schemas. It returns each requirement with its subject kind, subject node,
+/// and protocol scope; it does not create runtime identities or observations.
+pub fn subject_kinds(
+    package: &CheckedPackage,
+) -> Result<Vec<RuntimeBindingRequirement>, OccurrenceRefusal> {
+    Ok(package
+        .protocol_occurrence_schemas()?
+        .into_iter()
+        .flat_map(|protocol| protocol.requirements)
+        .collect())
+}
 
 /// Why a view was not read: a closed set, so a caller branches on the
 /// variant. No refusal returns a partial view.

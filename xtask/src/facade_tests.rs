@@ -25,10 +25,9 @@ struct Consumer {
     facts: Vec<Fact>,
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Fact {
     id: String,
-    #[serde(default)]
-    pending_ticket: Option<String>,
 }
 
 #[derive(Debug)]
@@ -37,32 +36,6 @@ struct ContractFunction {
     path: PathBuf,
     live: bool,
     reason: Option<&'static str>,
-    ignored_by: Option<String>,
-}
-
-const ALLOWED_PENDING_FACTS: [(&str, &str); 4] = [
-    ("CF-CG-04", "QSL-1109"),
-    ("CF-IR-04", "QSL-1109"),
-    ("CF-OB-01", "OBS-1"),
-    ("CF-RT-02", "QSL-1867"),
-];
-
-fn pending_ticket(attributes: &[Attribute]) -> Option<String> {
-    attributes.iter().find_map(|attribute| {
-        if !attribute.path().is_ident("ignore") {
-            return None;
-        }
-        let syn::Meta::NameValue(value) = &attribute.meta else {
-            return None;
-        };
-        let syn::Expr::Lit(expression) = &value.value else {
-            return None;
-        };
-        let syn::Lit::Str(ticket) = &expression.lit else {
-            return None;
-        };
-        Some(ticket.value())
-    })
 }
 
 fn has_attribute(attributes: &[Attribute], name: &str) -> bool {
@@ -118,24 +91,10 @@ fn collect_items(
                     continue;
                 }
                 let has_test = has_attribute(&function.attrs, "test");
-                let ignored_by = if !module_disabled
-                    && has_test
-                    && has_attribute(&function.attrs, "ignore")
-                    && !has_attribute(&function.attrs, "cfg")
-                    && !has_attribute(&function.attrs, "cfg_attr")
-                {
-                    pending_ticket(&function.attrs)
-                } else {
-                    None
-                };
                 let reason = if module_disabled {
                     Some("enclosing module is conditional")
                 } else if has_attribute(&function.attrs, "ignore") {
-                    Some(if ignored_by.is_some() {
-                        "function is ignored pending its issue"
-                    } else {
-                        "function is ignored without an issue key"
-                    })
+                    Some("function is ignored")
                 } else if has_attribute(&function.attrs, "cfg")
                     || has_attribute(&function.attrs, "cfg_attr")
                 {
@@ -150,7 +109,6 @@ fn collect_items(
                     path: source_file.to_path_buf(),
                     live: reason.is_none(),
                     reason,
-                    ignored_by,
                 });
             }
             Item::Mod(module) => {
@@ -224,47 +182,18 @@ fn collect_file(
     )
 }
 
-fn source_paths(directory: &Path) -> Result<Vec<PathBuf>> {
-    let entries = fs::read_dir(directory).map_err(|error| Error::io(directory, error))?;
-    let mut paths = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|error| Error::io(directory, error))?;
-        let path = entry.path();
-        if path.is_dir() {
-            paths.extend(source_paths(&path)?);
-        } else if path.extension().is_some_and(|extension| extension == "rs") {
-            paths.push(path);
-        }
-    }
-    Ok(paths)
-}
-
 fn scan_sources(directory: &Path) -> Result<Vec<ContractFunction>> {
     let root = directory
         .canonicalize()
         .map_err(|error| Error::io(directory, error))?;
-    let mut paths = source_paths(&root)?;
-    paths.sort();
+    let main = root.join("main.rs");
     let mut seen = std::collections::BTreeSet::new();
     let mut functions = Vec::new();
-    if let Some(main) = paths
-        .iter()
-        .find(|path| path.file_name().is_some_and(|name| name == "main.rs"))
-    {
-        let main = main
-            .canonicalize()
-            .map_err(|error| Error::io(main, error))?;
-        seen.insert(main.clone());
-        collect_file(&main, &root, false, &mut seen, &mut functions)?;
-    }
-    for path in paths {
-        let path = path
-            .canonicalize()
-            .map_err(|error| Error::io(&path, error))?;
-        if seen.insert(path.clone()) {
-            collect_file(&path, &root, false, &mut seen, &mut functions)?;
-        }
-    }
+    let main = main
+        .canonicalize()
+        .map_err(|error| Error::io(&main, error))?;
+    seen.insert(main.clone());
+    collect_file(&main, &root, false, &mut seen, &mut functions)?;
     Ok(functions)
 }
 
@@ -324,27 +253,15 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
         }
     }
     let facts = inventory_facts(inventory.as_deref())?;
-    let mut known = std::collections::BTreeMap::<String, Option<String>>::new();
+    let mut known = std::collections::BTreeSet::<String>::new();
     let mut failures = Vec::new();
     for fact in facts {
-        if let Some(ticket) = &fact.pending_ticket {
-            if !ALLOWED_PENDING_FACTS
-                .iter()
-                .any(|(id, allowed)| *id == fact.id && *allowed == ticket)
-            {
-                failures.push(format!(
-                    "{}: pending_ticket {ticket} is not an authorized pending fact",
-                    fact.id
-                ));
-            }
-        }
-        if known.insert(fact.id.clone(), fact.pending_ticket).is_some() {
+        if !known.insert(fact.id.clone()) {
             failures.push(format!("{}: duplicate inventory fact id", fact.id));
         }
     }
     let functions = scan_sources(&tests)?;
     let mut seen = std::collections::BTreeMap::<String, Vec<String>>::new();
-    let mut pending_seen = std::collections::BTreeSet::<String>::new();
     for function in &functions {
         let Some(id) = fact_id(&function.name) else {
             failures.push(format!(
@@ -354,7 +271,7 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
             ));
             continue;
         };
-        if !known.contains_key(&id) {
+        if !known.contains(&id) {
             failures.push(format!(
                 "{}: {} names unknown inventory fact {id}",
                 function.path.display(),
@@ -362,22 +279,6 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
             ));
         } else if function.live {
             seen.entry(id).or_default().push(function.name.clone());
-        } else if let Some(ticket) = &function.ignored_by {
-            if known.get(&id).and_then(Option::as_deref) == Some(ticket.as_str())
-                && ALLOWED_PENDING_FACTS
-                    .iter()
-                    .any(|(allowed_id, allowed_ticket)| {
-                        *allowed_id == id && *allowed_ticket == ticket
-                    })
-            {
-                pending_seen.insert(id);
-            } else {
-                failures.push(format!(
-                    "{}: {} ignored for {id} by {ticket}, which does not match its authorized pending_ticket",
-                    function.path.display(),
-                    function.name
-                ));
-            }
         } else {
             failures.push(format!(
                 "{}: {} for {id} is not live: {}",
@@ -388,14 +289,9 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
         }
     }
     let mut output = String::new();
-    for (id, pending_ticket) in &known {
+    for id in &known {
         if let Some(names) = seen.get(id) {
             output.push_str(&format!("{id}: {}\n", names.join(", ")));
-        } else if pending_ticket.is_some() && pending_seen.contains(id) {
-            output.push_str(&format!(
-                "{id}: pending by {}\n",
-                pending_ticket.as_deref().unwrap_or("unknown issue")
-            ));
         } else {
             failures.push(format!("{id}: no live contract test"));
         }
@@ -435,7 +331,12 @@ mod tests {
     fn live_test_must_have_test_and_no_disable_attributes() {
         let root = tempdir();
         let source = "#[test] fn cf_pr_01_live() {} #[test] #[ignore] fn cf_pr_02_ignored() {} #[cfg(test)] mod hidden { #[test] fn cf_pr_03_hidden() {} }";
-        fs::write(root.path().join("contract.rs"), source).unwrap();
+        fs::write(root.path().join("main.rs"), source).unwrap();
+        fs::write(
+            root.path().join("orphan.rs"),
+            "#[test] fn cf_pr_99_orphaned() {}",
+        )
+        .unwrap();
         let functions = scan_sources(root.path()).unwrap();
         assert_eq!(functions.len(), 3);
         assert!(

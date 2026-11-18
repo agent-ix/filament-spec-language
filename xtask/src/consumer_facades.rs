@@ -15,13 +15,6 @@ use crate::Outcome;
 
 const USAGE: &str = "usage: cargo xtask consumer-facades [--bindings <file>] [--inventory <file>]";
 const INVENTORY_PATH: &str = "proposals/consumer-facades/consumer-facts.json";
-const PENDING_FACTS: &[(&str, &str)] = &[
-    ("CF-CG-04", "QSL-1109"),
-    ("CF-IR-04", "QSL-1109"),
-    ("CF-OB-01", "OBS-1"),
-    ("CF-RT-02", "QSL-1867"),
-];
-
 #[derive(Default)]
 struct PublicApi {
     paths: BTreeSet<String>,
@@ -100,19 +93,6 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
                 failures.push(format!("{fact}: unbound"));
                 continue;
             };
-            let expected_pending_ticket = PENDING_FACTS
-                .iter()
-                .find_map(|(pending_fact, ticket)| (*pending_fact == fact).then_some(*ticket));
-            if fact_binding.pending_ticket.as_deref() != expected_pending_ticket {
-                failures.push(format!(
-                    "{fact}: pending ticket must be {}",
-                    expected_pending_ticket.unwrap_or("absent")
-                ));
-            }
-            if let Some(ticket) = fact_binding.pending_ticket.as_deref() {
-                report.push(format!("{fact}: pending ({ticket})"));
-                continue;
-            }
             let (crate_name, modules) = binding
                 .module
                 .split_once("::")
@@ -188,7 +168,6 @@ struct ConsumerBinding {
 
 struct BindingFact {
     accessors: Vec<String>,
-    pending_ticket: Option<String>,
 }
 
 fn validate_object(value: &Value, allowed: &[&str], name: &str, failures: &mut Vec<String>) {
@@ -331,7 +310,7 @@ fn bindings_by_consumer(
         for fact in facts {
             validate_object(
                 fact,
-                &["fact", "accessors", "pending_ticket"],
+                &["fact", "accessors"],
                 "binding fact",
                 failures,
             );
@@ -358,22 +337,11 @@ fn bindings_by_consumer(
             if accessors.is_empty() {
                 failures.push(format!("{id}: accessors must be non-empty"));
             }
-            let pending_ticket = match fact.get("pending_ticket") {
-                None => None,
-                Some(value) => match value.as_str() {
-                    Some(ticket) if !ticket.is_empty() => Some(ticket.to_owned()),
-                    _ => {
-                        failures.push(format!("{id}: pending_ticket must be a non-empty string"));
-                        None
-                    }
-                },
-            };
             if fact_map
                 .insert(
                     id.to_owned(),
                     BindingFact {
                         accessors,
-                        pending_ticket,
                     },
                 )
                 .is_some()
