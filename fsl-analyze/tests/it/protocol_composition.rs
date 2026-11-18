@@ -455,7 +455,10 @@ fn a_claim_with_a_formula_is_decided_over_the_replayed_behaviour() {
         )
     };
 
-    let holds = run_with("formula-holds", &[("R", "eventually[0,3] holds(k.r1 = k.r1)")]);
+    let holds = run_with(
+        "formula-holds",
+        &[("R", "eventually[0,3] holds(k.r1 = k.r1)")],
+    );
     let item = holds.item(0);
     assert_eq!(label(&item), "proved", "{item}");
     assert_eq!(item["disposition"]["temporal"]["kind"], "holds", "{item}");
@@ -464,7 +467,10 @@ fn a_claim_with_a_formula_is_decided_over_the_replayed_behaviour() {
     let violated = run_with("formula-violated", &[("R", "always holds(k.r1 != k.r1)")]);
     let item = violated.item(0);
     assert_eq!(label(&item), "refuted", "{item}");
-    assert_eq!(item["disposition"]["temporal"]["kind"], "violated", "{item}");
+    assert_eq!(
+        item["disposition"]["temporal"]["kind"], "violated",
+        "{item}"
+    );
     assert_eq!(item["disposition"]["temporal"]["position"], 0, "{item}");
     assert_eq!(item["counterexample"]["kind"], "formula", "{item}");
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
@@ -486,7 +492,10 @@ fn a_claim_with_a_formula_is_decided_over_the_replayed_behaviour() {
     );
     let item = first_refuting.item(0);
     assert_eq!(label(&item), "refuted", "{item}");
-    assert_eq!(item["disposition"]["temporal"]["kind"], "violated", "{item}");
+    assert_eq!(
+        item["disposition"]["temporal"]["kind"], "violated",
+        "{item}"
+    );
 }
 
 /// FR-941-AC-5: a protocol expression undefined at a replayed state refutes
@@ -501,7 +510,11 @@ fn an_undefined_protocol_expression_refutes_at_its_state() {
     let undefined_got = format!(
         "function q using v(x: Integer): Integer pure {{ 6 mod x }}\n{}",
         order_protocol(true)
-            .replacen("role Buyer on M::Cell;", "capture c: Integer = 0;\nrole Buyer on M::Cell;", 1)
+            .replacen(
+                "role Buyer on M::Cell;",
+                "capture c: Integer = 0;\nrole Buyer on M::Cell;",
+                1
+            )
             .replacen(
                 "receive Got via Order of Placed as (got: Ack) { true }",
                 "receive Got via Order of Placed as (got: Ack) { q(c) = 0 }",
@@ -548,6 +561,12 @@ fn an_undefined_protocol_expression_refutes_at_its_state() {
     );
     let item = run.item(0);
     assert_eq!(label(&item), "declined", "{item}");
-    assert_eq!(item["record"]["diagnostic"]["cause"], "invalid-value", "{item}");
-    assert_eq!(item["record"]["diagnostic"]["detail"]["position"], 0, "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "invalid-value",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["position"], 0,
+        "{item}"
+    );
 }

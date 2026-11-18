@@ -14,14 +14,14 @@ use fsl_eval::model_subject::{
 };
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
 use fsl_eval::simulation::protocol::{
-    Capacities, MemoryModel, ProtocolFairness, ProtocolRefusal, ProtocolSystem, ProtocolTransition,
-    ResolvedMemory, SubjectMemory, live_instance_bound, over_reference, send_record_json,
-    transition_json,
+    live_instance_bound, over_reference, send_record_json, transition_json, Capacities,
+    MemoryModel, ProtocolFairness, ProtocolRefusal, ProtocolSystem, ProtocolTransition,
+    ResolvedMemory, SubjectMemory,
 };
-use fsl_eval::temporal::{TemporalOutcome, TemporalRefusal};
 use fsl_eval::simulation::{StateKey, TransitionSystem};
-use fsl_package::CheckedPackage;
+use fsl_eval::temporal::{TemporalOutcome, TemporalRefusal};
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_package::CheckedPackage;
 use fsl_replay::{
     evaluate_protocol_trace, settle_protocol_check, undefined_finding, CounterexampleKind,
     ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord, ModelStep,
@@ -39,8 +39,8 @@ use fsl_semantics::check::{Capability, DeclarationFamily};
 
 use super::manifest::BACKEND_ID;
 use crate::analyze::{
-    derived_target, replay_protocol_over, AnalyzeItem, AnalyzeLimits, EngineReport,
-    NoLetters, ProtocolReplayInputs, Refusal, ReplayShape, SourceProvision, SubjectBinding,
+    derived_target, replay_protocol_over, AnalyzeItem, AnalyzeLimits, EngineReport, NoLetters,
+    ProtocolReplayInputs, Refusal, ReplayShape, SourceProvision, SubjectBinding,
 };
 
 /// The FSpec FR-433 trace document a `finite-replay` item names: a format
@@ -466,10 +466,7 @@ fn read_claim<M: MemoryModel>(
             over,
         });
     };
-    let node = formula
-        .required
-        .get(index)
-        .ok_or(ReplayFault::Broken)?;
+    let node = formula.required.get(index).ok_or(ReplayFault::Broken)?;
     let counterexample = match &reading.evaluation {
         Ok(TemporalOutcome::Violated { at }) => {
             // The counterexample is the supplied trace through the first false
@@ -487,20 +484,22 @@ fn read_claim<M: MemoryModel>(
                 CounterexampleKind::Formula,
             );
             let shortest = read_clause(system, node, &shortened, formula.accounting)?;
-            Some(if matches!(
-                &shortest.evaluation,
-                Ok(TemporalOutcome::Violated { at: held }) if held == at
-            ) {
-                shortened
-            } else {
-                behaviour(
-                    trace.initial_state,
-                    steps,
-                    Some(over.clone()),
-                    fairness,
-                    CounterexampleKind::Formula,
-                )
-            })
+            Some(
+                if matches!(
+                    &shortest.evaluation,
+                    Ok(TemporalOutcome::Violated { at: held }) if held == at
+                ) {
+                    shortened
+                } else {
+                    behaviour(
+                        trace.initial_state,
+                        steps,
+                        Some(over.clone()),
+                        fairness,
+                        CounterexampleKind::Formula,
+                    )
+                },
+            )
         }
         Ok(TemporalOutcome::Undefined(undefined)) => {
             let position = undefined.at.index();
@@ -555,7 +554,11 @@ fn replay_steps<M: MemoryModel>(
     let Some(mut state) = system.initial().into_iter().nth(trace.initial_state) else {
         return Ok(ReplayVerdict::NoInitialState);
     };
-    let key_of = |state: &_| system.canonical_state_key(state).map_err(|_| ReplayFault::Broken);
+    let key_of = |state: &_| {
+        system
+            .canonical_state_key(state)
+            .map_err(|_| ReplayFault::Broken)
+    };
     let mut keys = vec![key_of(&state)?];
     let mut steps: Vec<ModelStep<ProtocolTransition>> = Vec::with_capacity(trace.steps.len());
     for position in 0..=trace.steps.len() {
@@ -614,7 +617,8 @@ fn replay_steps<M: MemoryModel>(
     if formula.required.is_empty() {
         return Ok(ReplayVerdict::Replayed(steps.len()));
     }
-    read_claim(system, trace, &steps, &keys, formula).map(|claimed| ReplayVerdict::Claimed(Box::new(claimed)))
+    read_claim(system, trace, &steps, &keys, formula)
+        .map(|claimed| ReplayVerdict::Claimed(Box::new(claimed)))
 }
 
 /// The bindings the claim's protocol subject is over: the model simulation
@@ -966,7 +970,7 @@ impl Run<'_, '_> {
         let shape = match clause {
             Some(node) => {
                 let name = QualifiedName::new(vec![
-                    Identifier::new(node.clause().name()).map_err(|_| ReplayFault::Broken)?,
+                    Identifier::new(node.clause().name()).map_err(|_| ReplayFault::Broken)?
                 ])
                 .map_err(|_| ReplayFault::Broken)?;
                 ReplayShape {
@@ -1017,8 +1021,7 @@ impl Run<'_, '_> {
             cancel,
             move |payload| replay_protocol_over(&inputs, shape, payload, letters),
         );
-        let on_each = self
-            .protocol_activates_on_each();
+        let on_each = self.protocol_activates_on_each();
         let wire = record.counterexample.as_ref().and_then(|_| {
             over_reference(self.subject.simulation(), &self.protocol.name, &over).map(|over| {
                 ProtocolWire {
@@ -1044,18 +1047,16 @@ impl Run<'_, '_> {
 /// The engine report of a fault of the replay.
 fn report_fault(error: ReplayFault) -> EngineReport {
     match error {
-        ReplayFault::Admission(failure) => EngineReport::Refused(crate::analyze::admission(&failure)),
+        ReplayFault::Admission(failure) => {
+            EngineReport::Refused(crate::analyze::admission(&failure))
+        }
         ReplayFault::Stopped(stop) => EngineReport::Refused(Refusal::Failed(stop.cause)),
         ReplayFault::UnboundCapacity => EngineReport::Refused(Refusal::RequiresBound),
         ReplayFault::Protocol | ReplayFault::Broken => fault(),
     }
 }
 
-fn declined(
-    cause: &'static str,
-    position: Option<usize>,
-    path: Option<String>,
-) -> EngineReport {
+fn declined(cause: &'static str, position: Option<usize>, path: Option<String>) -> EngineReport {
     EngineReport::FiniteReplay(FiniteReplayReport::Declined {
         cause,
         position,
@@ -1125,10 +1126,12 @@ pub(crate) fn finite_replay_item<'a>(
                         return fault();
                     };
                     match run.refute(over, counterexample, None, cancel) {
-                        Ok(refuted) => EngineReport::FiniteReplay(FiniteReplayReport::UndefinedStep {
-                            refuted: Box::new(refuted),
-                            at,
-                        }),
+                        Ok(refuted) => {
+                            EngineReport::FiniteReplay(FiniteReplayReport::UndefinedStep {
+                                refuted: Box::new(refuted),
+                                at,
+                            })
+                        }
                         Err(error) => report_fault(error),
                     }
                 }

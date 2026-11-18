@@ -919,7 +919,6 @@ fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
     }
 }
 
-
 /// [`refinement_request`] with every item's `abstract_subject` removed, so
 /// the item takes FR-630's default abstract initial states, over the concrete
 /// snapshots of counter `a` at each of `values`.
@@ -946,7 +945,10 @@ fn refinement_request_without_abstract(
             "a", *value,
         )]))
         .expect("the fixture is UTF-8")
-        .replace("\"identity\":\"start\"", &format!("\"identity\":\"{identity}\""));
+        .replace(
+            "\"identity\":\"start\"",
+            &format!("\"identity\":\"{identity}\""),
+        );
         ws.write(&format!("{identity}.json"), snapshot.as_bytes());
         request["documents"]
             .as_array_mut()
@@ -995,8 +997,14 @@ fn default_abstract_initial_states_are_every_admissible_completion() {
     assert_eq!(results(&run, 2), ["proved", "incomplete"]);
     let stopped = run.item(1);
     assert_eq!(stopped["category"], "incomplete", "{stopped}");
-    assert_eq!(stopped["record"]["cause"]["kind"], "limit-reached", "{stopped}");
-    assert_eq!(stopped["record"]["cause"]["limit"], "max_candidates", "{stopped}");
+    assert_eq!(
+        stopped["record"]["cause"]["kind"], "limit-reached",
+        "{stopped}"
+    );
+    assert_eq!(
+        stopped["record"]["cause"]["limit"], "max_candidates",
+        "{stopped}"
+    );
     assert_eq!(
         stopped["record"]["cause"]["setting"], "expansion.max_candidates",
         "{stopped}"

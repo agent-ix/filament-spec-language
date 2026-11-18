@@ -2625,16 +2625,24 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     // FR-941: a claim's required clauses are read by the temporal evaluator,
     // whose reading is the item's FSpec FR-352 `disposition.temporal`; a
     // protocol expression undefined at a replayed state names where.
-    if let Some(finite) = detail.as_ref().and_then(|detail| detail.finite_replay.as_ref()) {
+    if let Some(finite) = detail
+        .as_ref()
+        .and_then(|detail| detail.finite_replay.as_ref())
+    {
         if let Some(evaluation) = &finite.evaluation {
-            if let Ok(disposition) = fsl_replay::temporal_disposition_json(evaluation.as_ref(), spelled.clone()) {
-                if let (Some(axes), Some(basis)) = (item.get_mut("axes"), disposition.get("basis")) {
+            if let Ok(disposition) =
+                fsl_replay::temporal_disposition_json(evaluation.as_ref(), spelled.clone())
+            {
+                if let (Some(axes), Some(basis)) = (item.get_mut("axes"), disposition.get("basis"))
+                {
                     axes["settlement"] = basis.clone();
                 }
                 item.insert("disposition".to_owned(), disposition);
             }
         }
-        if let (Some(at), Some(Value::Object(cause))) = (&finite.undefined_where, record.get_mut("cause")) {
+        if let (Some(at), Some(Value::Object(cause))) =
+            (&finite.undefined_where, record.get_mut("cause"))
+        {
             cause.insert("where".to_owned(), at.clone());
         }
     }

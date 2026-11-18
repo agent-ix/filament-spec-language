@@ -79,8 +79,8 @@ use fsl_semantics::model::observation::{
 
 pub use crate::contract_check::contract_item;
 pub use crate::value_check::value_item;
-pub use clause_item::{ClauseItemRefusal, ClauseLimits, ClauseSubject, CLAUSE_TRANSCRIPT};
 pub(crate) use clause_item::{replay_protocol_over, ProtocolReplayInputs, ReplayShape};
+pub use clause_item::{ClauseItemRefusal, ClauseLimits, ClauseSubject, CLAUSE_TRANSCRIPT};
 pub(crate) use derived_item::{derived_target, NoLetters};
 pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
 #[cfg(feature = "test-support")]
@@ -516,7 +516,8 @@ pub struct ItemDetail {
 pub struct FiniteReplayDetail {
     /// The deciding required clause's reading over the replayed behaviour,
     /// which writes the item's `disposition.temporal` (FSpec FR-352).
-    pub evaluation: Option<Result<fsl_eval::temporal::TemporalOutcome, fsl_eval::temporal::TemporalRefusal>>,
+    pub evaluation:
+        Option<Result<fsl_eval::temporal::TemporalOutcome, fsl_eval::temporal::TemporalRefusal>>,
     /// The `where` of a protocol expression undefined at a replayed state:
     /// `{position, state_key, locus}`.
     pub undefined_where: Option<serde_json::Value>,
@@ -2459,10 +2460,9 @@ mod tests {
             &[(index, output)].into_iter().collect(),
         )
         .expect("the settled item serializes");
-        let wire: serde_json::Value = serde_json::from_slice(
-            &document.to_bytes().expect("the document encodes"),
-        )
-        .expect("the document is JSON");
+        let wire: serde_json::Value =
+            serde_json::from_slice(&document.to_bytes().expect("the document encodes"))
+                .expect("the document is JSON");
 
         assert_eq!(wire["items"][0]["result"], "proved");
         assert_eq!(wire["items"][0]["obligations"][0]["verdict"], "satisfied");
@@ -2924,8 +2924,7 @@ mod tests {
                 "en-7"
             ]
         );
-        let [en1, en4, en5, _en6, value, contract, protocol, en7] = registrations.as_slice()
-        else {
+        let [en1, en4, en5, _en6, value, contract, protocol, en7] = registrations.as_slice() else {
             panic!(
                 "the linked engine set contains EN-1, EN-4, EN-5, EN-6, the two check arms, \
                  the protocol analysis engine and EN-7"
