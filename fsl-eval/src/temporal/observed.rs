@@ -407,7 +407,7 @@ fn evaluate_window_over(
 
 /// FR-820: [`evaluate_positions_finite_window`] carried across a trace that
 /// grows. The state reads only the positions an open activation can still
-/// read ([`WindowState`]), so each step's work is bounded by them, and its
+/// read ([`WindowState`](super::finite_window::WindowState)), so each step's work is bounded by them, and its
 /// report equals the batch report over the prefix.
 #[derive(Clone, Debug, Default)]
 pub struct CarriedWindow {
