@@ -420,6 +420,7 @@ fn read_inputs(intake: &mut super::Intake<'_>, request: wire::MonitorRequest) ->
             clocks: request.clocks,
             output: None,
             handoff: None,
+            check_mode: filament_semantic_value::checking::CheckMode::Linked,
         },
     })
 }

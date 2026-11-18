@@ -2,6 +2,7 @@
 //! FR-026–028, FR-031: closed records; existing constructors own identifier validity.
 
 use filament_contract_model as ir;
+use filament_semantic_value::checking::CheckMode;
 use fsl_foundation::AccountingSetting;
 use fsl_foundation::serde_object::{deserialize_objects, from_object};
 use serde::Deserialize;
@@ -56,6 +57,26 @@ pub(super) struct CompileRequest {
     /// FR-665: checked-package handoff written after compilation succeeds.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub handoff: Option<Handoff>,
+    /// FR-952: the mode every function body of the unit is checked under;
+    /// `Linked` when absent.
+    #[serde(default = "linked", deserialize_with = "check_mode")]
+    pub check_mode: CheckMode,
+}
+
+const fn linked() -> CheckMode {
+    CheckMode::Linked
+}
+
+/// FR-952: `"linked"` or `"kernel"`; any other value, a non-string or
+/// `null` included, refuses naming the member.
+fn check_mode<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<CheckMode, D::Error> {
+    match serde_json::Value::deserialize(decoder)? {
+        serde_json::Value::String(mode) if mode == "linked" => Ok(CheckMode::Linked),
+        serde_json::Value::String(mode) if mode == "kernel" => Ok(CheckMode::Kernel),
+        other => Err(serde::de::Error::custom(format!(
+            "check_mode must be `linked` or `kernel`, found {other}"
+        ))),
+    }
 }
 
 /// FR-767's run-side supplied library: its own law is independent of the

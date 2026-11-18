@@ -884,6 +884,7 @@ pub(crate) fn run_reading_with_integer_division<T>(
             refinement_internals: None,
             temporal_selections: &check_selections,
             clocks: Some(&call.clocks),
+            check_mode: None,
         },
         &models,
         dependencies,

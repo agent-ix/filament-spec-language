@@ -520,6 +520,7 @@ fn read<'d>(
         clocks: Default::default(),
         output: None,
         handoff: None,
+        check_mode: filament_semantic_value::checking::CheckMode::Linked,
     };
     Ok(Readout::Source(
         AnalyzeInput {
