@@ -24,7 +24,7 @@ use std::rc::Rc;
 mod persistent;
 
 use self::persistent::PersistentMap;
-use super::check::{DispatchOperation, holds_float};
+use super::check::{holds_float, DispatchOperation};
 use super::ir::{CheckedNode, DispatchTable, Slot};
 use super::observation::Observations;
 use super::refusal::{
@@ -900,7 +900,11 @@ impl<'a> Definedness<'a> {
         while let NodeKind::ConvertScalar(_, operand) = inner.kind() {
             inner = inner.at(*operand);
         }
-        if is_integer(inner) { inner } else { node }
+        if is_integer(inner) {
+            inner
+        } else {
+            node
+        }
     }
 
     fn comparison(

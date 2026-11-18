@@ -2376,7 +2376,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 let expected_kind = match collection.collection_type().kind() {
                     CollectionKind::Sequence => IndexedKind::Sequence,
                     CollectionKind::OrderedSet => IndexedKind::OrderedSet,
-                    _ => return Err(invariant("index-collection-kind-mismatch")),
+                    CollectionKind::Set | CollectionKind::Bag => {
+                        return Err(invariant("index-collection-kind-mismatch"))
+                    }
                 };
                 if *kind != expected_kind
                     || node.at(*index).value_type() != &ValueType::Integer
