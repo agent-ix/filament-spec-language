@@ -1209,11 +1209,11 @@ fn a_package_delay_that_breaks_fr_253_is_refused_on_read_back() {
     }
 }
 
-/// FSL FR-253, FR-740: a delay on an operation of an object type other than the
-/// timed model's root cannot reach S4, where IR would refuse it: a package
-/// that declares two object types has no single timed root, so S3 refuses the
-/// time source (and the delay with it) at the source's span.
-#[trace("TC-708", "FR-253-AC-3")]
+/// FR-230: a timed model over a domain package that declares two object types
+/// has no single timed root, so S3 refuses the time source at its span before
+/// any delay is checked. (A timed SOURCE model is another route: see
+/// `a_delay_on_a_timed_source_model_refuses_emission_with_its_locus`.)
+#[trace("TC-685", "FR-230-AC-38")]
 #[test]
 fn a_delay_beside_a_second_object_type_is_refused_at_the_time_source() {
     use super::abstraction::fixture;
@@ -1282,4 +1282,72 @@ fn the_delay_unit_is_that_of_the_dense_source_of_the_declaring_nodes_root() {
         None,
         "a node that roots no timed model has no unit"
     );
+}
+
+/// FSL FR-740, FSpec FR-640 Reader rule 5: a delay declared in a unit that
+/// times a SOURCE model (`object O { .. }` written in the unit, `time O dense
+/// unit ms`) is accepted by S3 and refused at S4 with its declaration's locus,
+/// whether the delay is on the timed object or on another source object.
+///
+/// A documented deferral, not a design. S4 finds no `model` node for the
+/// declaring object (a source declaration is written under its source-owner
+/// identity, not the model-owned object type key `delay_node` looks up). Fixing
+/// that lookup would not be enough under IR v0.1.4: `join.operation` resolves
+/// the `declaring` node through the selected domain packages
+/// (`RetainedModels::owner_by_key`), which hold no source-declared object, so
+/// IR refuses a delay (and likewise a random parameter or workload) whose
+/// declaring node is a source object. Emitting these needs IR to admit
+/// source-owned operation owners; until then the package is refused here, with
+/// the declaration's locus, rather than written without the delay.
+#[trace("TC-2062", "FR-185-AC-12")]
+#[test]
+fn a_delay_on_a_timed_source_model_refuses_emission_with_its_locus() {
+    for (objects, delay, operation) in [
+        (
+            "object O { d: Clock; operation step() modifies self.d; }\n",
+            "delay O::step ~ uniform;\n",
+            "step",
+        ),
+        (
+            "object O { d: Clock; operation step() modifies self.d; }\n\
+             object Other { n: Integer; operation poke() modifies self.n; }\n",
+            "delay Other::poke ~ uniform;\n",
+            "poke",
+        ),
+    ] {
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile P = \"filament.temporal.complete/v1\";\n\
+             dimension Time; unit ms : Time = rational(1, 1);\n\
+             time O dense unit ms;\n{objects}{delay}"
+        );
+        let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+            .expect("the package input is empty");
+        let graph = assemble_with_models(source.as_bytes(), &packages)
+            .expect("the unit assembles")
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .unwrap_or_else(|refusals| panic!("{operation}: S3 accepts the delay: {refusals:?}"));
+        assert_eq!(
+            graph.probabilistic_model().delays().len(),
+            1,
+            "{operation}: one checked delay"
+        );
+        let refusal = emit_checked(&CheckedPackage::link(graph)).expect_err("emission refuses");
+        assert!(
+            matches!(
+                &refusal,
+                EmitRefusal::ProbabilisticModelNotEmitted {
+                    declaration,
+                    feature: fsl_semantics::check::ProbabilisticFeature::Delay,
+                    region,
+                    ..
+                } if declaration == operation && region.start() < region.end()
+            ),
+            "{operation}: {refusal:?}"
+        );
+        assert_eq!(
+            (refusal.code(), refusal.cause()),
+            (Code::UnsupportedConstruct, Some("not-yet-implemented"))
+        );
+    }
 }

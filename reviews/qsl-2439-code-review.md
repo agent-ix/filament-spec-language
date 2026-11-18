@@ -68,3 +68,20 @@ strict IR reader admits every family. FND-001 and FND-002 are real edge gaps (an
 admission mismatch and an unvalidated rebuild from untrusted packages); both fail safe or
 silently on inputs this repository's producer does not generate. Mergeable once FND-001 and
 FND-002 are fixed in this PR or deferred to tickets; FND-003/FND-004 are cheap in-PR fixes.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | low | `a_delay_beside_a_second_object_type_is_refused_at_the_time_source` is tagged FR-253-AC-3 but asserts an `AmbiguousTimedModel` time-source refusal (FR-230), none of FR-253-AC-3's delay refusals; its doc claims a delay on a non-root object type "cannot reach S4", which the round-1 probe disproves (see FND-001 disposition) | fsl-package/src/emit/tests/probabilistic.rs:1212-1250 |
+
+## Dispositions
+
+Round 1, head c4aea60878421a962cdf80497d98628a059ecd80 (fix commit 5d65b7f59, then a merge of origin/main 67fb1c431).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | The coder's claim that the S4 refusal arms are unreachable is false. A temporary probe at c4aea608 (reverted) on a source-declared timed model `object O { w: W; d: Clock; operation step() modifies self.d; } time O dense unit ms; delay O::step ~ uniform;` is admitted by S3 (one delay) and refused by S4 as ProbabilisticModelNotEmitted { declaration: "step", feature: Delay, region 284..308 }; adding `object Other { n: Integer; operation poke() modifies self.n; } delay Other::poke ~ uniform;` behaves the same. So every delay of a timed source model refuses at S4. The refusal carries the locus (fail-safe), but FR-740 says SHALL emit: either emit (IR/FSpec support for source-object declaring nodes may be needed) or file a deferral ticket and add a test pinning this refusal and its locus |
+| FND-002 | fixed | `delay_fault` re-checks FR-253 on read-back and refuses `PackageProbabilisticRefusal::InvalidDelay`; `a_package_delay_that_breaks_fr_253_is_refused_on_read_back` covers all six faults |
+| FND-003 | fixed | `delay_round_trips` and `each_delay_family_is_emitted_as_a_delay_distribution_node` now assert FR-640-AC-2's literal values (1/4 ms, 1/2, 1 ms:90, 3 ms:10) and that each time is typed by the unit `ms` |
+| FND-004 | fixed | `append_probabilistic_nodes` and the `probabilistic_read` module doc now name delays |

@@ -53,3 +53,12 @@ Examined (clean unless listed above):
 FR-740-AC-3's delay half and FSpec FR-640-AC-2/AC-3 delay cases are met and tested. FND-001
 (refusal locus coverage) should be closed in this PR together with SR-...42 FND-001; FND-002
 is a cheap determinism test.
+
+## Dispositions
+
+Round 1, head c4aea60878421a962cdf80497d98628a059ecd80 (fix commit 5d65b7f59).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | The refusal arm is reachable (a timed source model's delay refuses at S4, see SR-2026111612172400000042 FND-001 round 1), and no test yet asserts that refusal or its locus; `the_delay_unit_is_that_of_the_dense_source_of_the_declaring_nodes_root` checks only `dense_unit` returning None for a non-root node, and `a_delay_beside_a_second_object_type_is_refused_at_the_time_source` stops at S3 |
+| FND-002 | fixed | `reordering_two_delays_changes_no_delay_node` emits two delays in both declaration orders and asserts byte-equal delay nodes in the same order |
