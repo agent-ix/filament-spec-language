@@ -121,7 +121,6 @@ fn an_unproved_or_ineligible_index_is_refused() {
 
 #[trace("TC-1821", "FR-680-AC-2", "FSpec-FR-143-AC-22")]
 #[test]
-#[ignore = "QSL-2171: tuple position read p[n] not implemented yet"]
 fn a_tuple_position_is_read_with_a_literal_index() {
     assert_checks(
         "tuple Pair(Boolean, Integer);\n\
