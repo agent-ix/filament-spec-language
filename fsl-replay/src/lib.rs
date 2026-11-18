@@ -121,11 +121,13 @@ pub use call_site::{
     FieldSite, FunctionSite, ImportedFunctionName, ImportedFunctionSite, OperationSite,
     PopulationName, PopulationSite, ValueParitySite,
 };
+pub use certificate::closed_form::check::{
+    check_closed_form, CertificateRefusal, ClaimTriple, ClosedFormResult,
+};
 pub use certificate::closed_form::outcome::{
     AmcEvidence, ClosedFormAnalysis, ClosedFormEvidence, ClosedFormOutcome, DemandWitness,
     HighModeMiss, JobIterates, MissEvidence, ScheduleLimit, TaskFixpoint,
 };
-pub use certificate::closed_form::check::{check_closed_form, CertificateRefusal, ClaimTriple, ClosedFormResult};
 pub use certificate::closed_form::recompute::{recompute, ClosedFormCheck, ClosedFormDisagreement};
 pub use certificate::closed_form::settle::settle;
 pub use certificate::closed_form::task_set::{
@@ -275,14 +277,13 @@ pub use model_check::refinement_settle::{
 #[doc(hidden)]
 pub use model_check::replay::replay_timed_counterexample;
 pub use model_check::replay::{
-    behaviour_valuations, evaluate_model_trace, evaluate_protocol_trace, replay_model_trace,
-    replay_checked_source_model_trace,
-    replay_model_trace_from_package, replay_model_trace_with_temporal_selections,
-    replay_protocol_trace, replay_protocol_trace_with_temporal_selections, BehaviourValuationEnd,
-    BehaviourValuations, DelayBar, HandoffSupply, ModelTraceEnd, ModelTraceRefusal,
-    ModelTraceReplayResult, ModelTraceRun, ModelTraceSettlement, ModelTraceSubject,
-    ModelTraceValue, ProtocolTraceEnd, ProtocolTraceRun, ProtocolTraceSubject, StrongFairnessHint,
-    TimedReplay,
+    behaviour_valuations, evaluate_model_trace, evaluate_protocol_trace,
+    replay_checked_source_model_trace, replay_model_trace, replay_model_trace_from_package,
+    replay_model_trace_with_temporal_selections, replay_protocol_trace,
+    replay_protocol_trace_with_temporal_selections, BehaviourValuationEnd, BehaviourValuations,
+    DelayBar, HandoffSupply, ModelTraceEnd, ModelTraceRefusal, ModelTraceReplayResult,
+    ModelTraceRun, ModelTraceSettlement, ModelTraceSubject, ModelTraceValue, ProtocolTraceEnd,
+    ProtocolTraceRun, ProtocolTraceSubject, StrongFairnessHint, TimedReplay,
 };
 pub use model_check::settle::{
     settle_model_check, settle_protocol_check, CertificateChecker, Execution, ModelCheckRecord,

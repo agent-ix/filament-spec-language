@@ -6,8 +6,8 @@
 //! verdict it settles as ([`settle`]). It names nothing of `fsl-analyze`,
 //! which depends on these types and not the reverse.
 
-pub mod outcome;
 pub mod check;
+pub mod outcome;
 pub mod recompute;
 pub mod settle;
 pub mod task_set;

@@ -85,7 +85,13 @@ fn a_failed_cargo_selection_stops_the_gate() {
         run_case(root.path(), "nonzero", 2),
         Err(Error::ConformanceCheck { .. })
     ));
-    assert_eq!(fs::read_to_string(root.path().join("calls")).unwrap().lines().count(), 3);
+    assert_eq!(
+        fs::read_to_string(root.path().join("calls"))
+            .unwrap()
+            .lines()
+            .count(),
+        3
+    );
 }
 
 #[test]
@@ -98,7 +104,10 @@ fn each_selection_refuses_missing_evidence_or_failure() {
                 Err(Error::ConformanceCheck { .. })
             ));
             assert_eq!(
-                fs::read_to_string(root.path().join("calls")).unwrap().lines().count(),
+                fs::read_to_string(root.path().join("calls"))
+                    .unwrap()
+                    .lines()
+                    .count(),
                 index + 1,
                 "{mode} at {}",
                 CHECKS[index].selection

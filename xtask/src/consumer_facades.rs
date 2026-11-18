@@ -308,12 +308,7 @@ fn bindings_by_consumer(
         };
         let mut fact_map = BTreeMap::new();
         for fact in facts {
-            validate_object(
-                fact,
-                &["fact", "accessors"],
-                "binding fact",
-                failures,
-            );
+            validate_object(fact, &["fact", "accessors"], "binding fact", failures);
             let Some(id) = fact.get("fact").and_then(Value::as_str) else {
                 failures.push(format!("bindings {name}: fact has no id"));
                 continue;
@@ -338,12 +333,7 @@ fn bindings_by_consumer(
                 failures.push(format!("{id}: accessors must be non-empty"));
             }
             if fact_map
-                .insert(
-                    id.to_owned(),
-                    BindingFact {
-                        accessors,
-                    },
-                )
+                .insert(id.to_owned(), BindingFact { accessors })
                 .is_some()
             {
                 failures.push(format!("{id}: duplicate binding"));
@@ -552,7 +542,8 @@ fn scan_item(crate_name: &str, module: &str, visible: bool, item: Item, api: &mu
             for field in item.fields {
                 if is_public(&field.vis) {
                     if let Some(ident) = field.ident {
-                        api.members.insert((module.to_owned(), name.clone(), ident.to_string()));
+                        api.members
+                            .insert((module.to_owned(), name.clone(), ident.to_string()));
                     }
                 }
             }
@@ -579,8 +570,11 @@ fn scan_item(crate_name: &str, module: &str, visible: bool, item: Item, api: &mu
                 if source.ends_with("::*") {
                     let source_module = source.trim_end_matches("::*");
                     let destination = module.to_owned();
-                    api.wildcard_reexports
-                        .push((module.to_owned(), destination, source_module.to_owned()));
+                    api.wildcard_reexports.push((
+                        module.to_owned(),
+                        destination,
+                        source_module.to_owned(),
+                    ));
                 } else {
                     let destination = if module == crate_name {
                         alias
@@ -610,8 +604,11 @@ fn scan_item(crate_name: &str, module: &str, visible: bool, item: Item, api: &mu
             for member in item.items {
                 match member {
                     syn::ImplItem::Fn(method) if visible && is_public(&method.vis) => {
-                        api.members
-                            .insert((module.to_owned(), type_name.clone(), method.sig.ident.to_string()));
+                        api.members.insert((
+                            module.to_owned(),
+                            type_name.clone(),
+                            method.sig.ident.to_string(),
+                        ));
                     }
                     _ => {}
                 }
@@ -742,10 +739,18 @@ fn resolve_use_path(crate_name: &str, owner: &str, source: &str) -> String {
     let path = if let Some(path) = source.strip_prefix("crate::") {
         path.to_owned()
     } else if let Some(path) = source.strip_prefix("self::") {
-        if owner.is_empty() { path.to_owned() } else { format!("{owner}::{path}") }
+        if owner.is_empty() {
+            path.to_owned()
+        } else {
+            format!("{owner}::{path}")
+        }
     } else if let Some(path) = source.strip_prefix("super::") {
         let parent = owner.rsplit_once("::").map_or("", |(parent, _)| parent);
-        if parent.is_empty() { path.to_owned() } else { format!("{parent}::{path}") }
+        if parent.is_empty() {
+            path.to_owned()
+        } else {
+            format!("{parent}::{path}")
+        }
     } else {
         source.to_owned()
     };

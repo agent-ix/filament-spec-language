@@ -4344,11 +4344,10 @@ impl<'a> Resolution<'a> {
                         {
                             SourceRegion::new(frame.raw.clone(), 0, 0).ok()
                         }
-                        CheckCause::EmptyPackage { .. } => {
-                            frame.source_units.first().and_then(|unit| {
-                                region(unit.source().reference(), header_span(unit))
-                            })
-                        }
+                        CheckCause::EmptyPackage { .. } => frame
+                            .source_units
+                            .first()
+                            .and_then(|unit| region(unit.source().reference(), header_span(unit))),
                         _ => None,
                     })
             });

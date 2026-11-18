@@ -1035,7 +1035,9 @@ fn supply_fspec_extension_definitions(
     let Some(fspec) = fspec_directory() else {
         return;
     };
-    let path = fspec.path().join("proposals/checked-package-v2/extension-definitions.json");
+    let path = fspec
+        .path()
+        .join("proposals/checked-package-v2/extension-definitions.json");
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
@@ -1245,7 +1247,12 @@ pub(crate) fn read_fixture_graph(
     patch: Option<&Value>,
 ) -> Result<FixtureGraph, (CheckedPackageRefusalCode, Option<String>)> {
     let directory = fspec_directory().expect("pinned FSpec fixture view supplies owner fixtures");
-    let mut envelope = read_fixture(&directory.path().join("proposals/checked-package-v2").join(fixture));
+    let mut envelope = read_fixture(
+        &directory
+            .path()
+            .join("proposals/checked-package-v2")
+            .join(fixture),
+    );
     if let Some(patch) = patch {
         apply_json_patch(&mut envelope, patch);
     }

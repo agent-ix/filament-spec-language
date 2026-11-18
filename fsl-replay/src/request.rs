@@ -15,10 +15,7 @@ use std::collections::BTreeMap;
 use filament_exact::ScalarLimits;
 
 use crate::bounds::{BoundExceeded, ReplayLimits};
-use crate::identity::{
-    DeclaredDomain, DefinitionSourceRef, ProfileSelection, SourceRefWire,
-};
-use fsl_package::ObligationIdentity;
+use crate::identity::{DeclaredDomain, DefinitionSourceRef, ProfileSelection, SourceRefWire};
 use crate::object_environment::ObjectEnvironmentRef;
 use crate::target::{
     ReplayOverBinding, ReplayTarget, RequestTargetWire, TargetMember, TargetSelectionRefusal,
@@ -28,6 +25,7 @@ use filament_semantic_value::supplied_stop::SuppliedLimits;
 use fsl_foundation::BackendId;
 use fsl_foundation::Code;
 use fsl_foundation::{AccountingSetting, Setting, SettingName};
+use fsl_package::ObligationIdentity;
 use fsl_semantics::library::LibraryName;
 
 mod package;
