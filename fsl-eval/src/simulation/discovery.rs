@@ -181,7 +181,7 @@ pub fn enumerate_request<S: TransitionSystem, R: Root>(
     let bounds = request.bounds;
     let identity = request.identity;
     let oversized = |key: &StateKey| {
-        u64::try_from(key.as_bytes().len()).map_or(true, |len| len > bounds.max_state_key_bytes)
+        !u64::try_from(key.as_bytes().len()).is_ok_and(|len| len <= bounds.max_state_key_bytes)
     };
     let mut states: Vec<Discovered<S::TransitionId>> = Vec::new();
     let mut known: HashMap<StateKey, usize> = HashMap::new();
