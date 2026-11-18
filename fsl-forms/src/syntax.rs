@@ -632,6 +632,8 @@ pub enum ExprNode {
         type_name: NameForm,
         /// The decoded key and its source spelling.
         key: StringLiteral,
+        /// The quoted key token's source span, for located S3 refusals.
+        key_span: Span,
     },
     /// A parameter, `let` or binder name, or a qualified enum member.
     Name(NameForm),

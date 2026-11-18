@@ -357,12 +357,22 @@ fn a_reference_literal_builds_one_value_form() {
         let ExprNode::ReferenceLiteral {
             type_name,
             key: actual_key,
+            key_span,
         } = function.body.root().node()
         else {
             panic!("{literal}: {:?}", function.body.root_node());
         };
         assert_eq!(type_name.name, "M::T", "{literal}");
         assert_eq!(actual_key.text(), key, "{literal}");
+        let key_start = source.find(literal).expect("literal span") + literal.find('"').unwrap();
+        assert_eq!(
+            key_span,
+            &Span {
+                start: key_start,
+                end: key_start + literal[literal.find('"').unwrap()..].len(),
+            },
+            "{literal}"
+        );
         assert!(function.body.root().children().is_empty(), "{literal}");
         let spans = &function.spans().expect("source-derived spans").body;
         assert_eq!(spans.span(spans.root()), Some(span(&source, literal)));

@@ -810,7 +810,7 @@ enum Shape {
     Decimal(Integer, u32, DecimalSpellingKind),
     Quantity(QuantityForm),
     String(StringLiteral),
-    ReferenceLiteral(NameForm, StringLiteral),
+    ReferenceLiteral(NameForm, StringLiteral, Span),
     Name(NameForm),
     Let {
         name: String,
@@ -952,9 +952,13 @@ impl Shape {
                 arity(0)?;
                 ExprNode::String(text)
             }
-            Self::ReferenceLiteral(type_name, key) => {
+            Self::ReferenceLiteral(type_name, key, key_span) => {
                 arity(0)?;
-                ExprNode::ReferenceLiteral { type_name, key }
+                ExprNode::ReferenceLiteral {
+                    type_name,
+                    key,
+                    key_span,
+                }
             }
             Self::Name(name) => {
                 arity(0)?;
@@ -2122,7 +2126,10 @@ impl<'c> Mapping<'c> {
                     .ok_or_else(|| unexpected(child))?;
                 let key = StringLiteral::from_spelling(text(key_token, child)?)
                     .ok_or_else(|| unexpected(child))?;
-                self.leaf(Shape::ReferenceLiteral(type_name, key), &task)
+                self.leaf(
+                    Shape::ReferenceLiteral(type_name, key, key_token.span()),
+                    &task,
+                )
             }
             Production::CollectionValue => {
                 let kind = match items.first() {
