@@ -249,8 +249,12 @@ fn random_parameter_node(
         )
     };
     let region = region_of(graph, &location)?;
-    let (declaring_key, declaring) =
-        model_node(ids, nodes, operation.declaring_key()).ok_or_else(unwritable)?;
+    let (declaring_key, declaring) = model_node(
+        ids,
+        nodes,
+        operation.declaring_key().ok_or_else(unwritable)?,
+    )
+    .ok_or_else(unwritable)?;
     let text = scalar_type(ids, graph, nodes, source_map, "text", &region)?;
     let rational = scalar_type(ids, graph, nodes, source_map, "rational", &region)?;
     let mut rows = Vec::with_capacity(random.support().len());
@@ -338,8 +342,12 @@ fn workload_node(
         .ok_or_else(unwritable)?;
     let mut weights = Vec::with_capacity(workload.weights().len());
     for (operation, weight) in workload.weights() {
-        let (_, declaring) =
-            model_node(ids, nodes, operation.declaring_key()).ok_or_else(unwritable)?;
+        let (_, declaring) = model_node(
+            ids,
+            nodes,
+            operation.declaring_key().ok_or_else(unwritable)?,
+        )
+        .ok_or_else(unwritable)?;
         weights.push((declaring, operation.name().to_owned(), weight.clone()));
     }
     weights.sort_by(|left, right| (&left.0, &left.1).cmp(&(&right.0, &right.1)));

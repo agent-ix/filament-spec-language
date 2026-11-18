@@ -51,3 +51,13 @@ Examined (clean unless listed above):
 Code conforms to the parts of FR-740/FR-640 it implements. Coverage gap FND-001 should be
 closed in this PR (a reordered multi-operation workload and a changed-weight identity
 assertion); FND-002/FND-003 are spec clarifications for FSpec, not blockers.
+
+## Dispositions
+
+Round 1, head 3936e36cabda798c65231072ef4f0fdad4562b87 (fix commit aeec40ac1).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | new `changing_one_weight_or_support_value_changes_the_node_identity` (FSpec-FR-640-AC-3) asserts that changing a workload weight, a support weight or a support value changes the node id and that reordering does not; the reorder byte test is fixed too |
+| FND-002 | deferred | FSpec-owned clarification of how a body maps to operands (FR-640/FR-322); outside this repository's scope, admissible as written, no FSL change required |
+| FND-003 | deferred | FSpec-owned wording question ("a literal of the parameter's declared type"); IR admits the emitted form; outside this repository's scope |

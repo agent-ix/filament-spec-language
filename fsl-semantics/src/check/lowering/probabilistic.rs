@@ -39,7 +39,9 @@ impl Lowering<'_> {
         for random in model.random_parameters() {
             let at = random.declaration_location();
             self.charge(1, &at)?;
-            self.rooted_model_node(random.operation().declaring_key(), &at)?;
+            if let Some(declaring) = random.operation().declaring_key() {
+                self.rooted_model_node(declaring, &at)?;
+            }
             if let NodeRef::Admitted(key) = self.type_ref(random.value_type(), &at)? {
                 self.record_generated(key, &at);
             }
@@ -48,7 +50,9 @@ impl Lowering<'_> {
             let at = workload.declaration_location();
             self.charge(1, &at)?;
             for (operation, _) in workload.weights() {
-                self.rooted_model_node(operation.declaring_key(), &at)?;
+                if let Some(declaring) = operation.declaring_key() {
+                    self.rooted_model_node(declaring, &at)?;
+                }
             }
             if let Some(model) = workload.model_key() {
                 self.rooted_model_node(model, &at)?;

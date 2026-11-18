@@ -3914,7 +3914,8 @@ fn assert_rebuilds_s3(document: &[u8], body: &str) {
             .random_parameters()
             .iter()
             .map(|random| PackageRandomParameter {
-                declaring: object_type_node_key(random.operation().declaring_key()).unwrap(),
+                declaring: object_type_node_key(random.operation().declaring_key().unwrap())
+                    .unwrap(),
                 operation: random.operation().name().to_owned(),
                 parameter: random.parameter().to_owned(),
                 support: random
@@ -3937,7 +3938,8 @@ fn assert_rebuilds_s3(document: &[u8], body: &str) {
                     .weights()
                     .iter()
                     .map(|(operation, weight)| PackageWeight {
-                        declaring: object_type_node_key(operation.declaring_key()).unwrap(),
+                        declaring: object_type_node_key(operation.declaring_key().unwrap())
+                            .unwrap(),
                         operation: operation.name().to_owned(),
                         weight: weight.clone(),
                     })
@@ -3952,7 +3954,7 @@ fn assert_rebuilds_s3(document: &[u8], body: &str) {
         (
             operation.key().clone(),
             operation.declaring(),
-            operation.declaring_key().clone(),
+            operation.declaring_key().cloned(),
             operation.name().to_owned(),
         )
     };

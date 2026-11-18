@@ -234,7 +234,7 @@ impl StateModel {
                 model: view.view.domain_package().model_selection.identity.clone(),
                 key: operation_key,
                 declaring,
-                declaring_key: key.clone(),
+                declaring_key: Some(key.clone()),
                 name: name.to_owned(),
             },
             operation,

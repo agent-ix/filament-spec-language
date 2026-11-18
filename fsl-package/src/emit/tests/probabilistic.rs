@@ -402,8 +402,10 @@ fn random_parameter_round_trips() {
     let (_, read) = emit_and_read(&package, &document);
     let (admitted, source_map) = admitted_of(read);
     let declaring = fsl_semantics::check::wire_id::structural_id(
-        &fsl_semantics::model::key::object_type_node_key(checked.operation().declaring_key())
-            .expect("the declaring type has a node key"),
+        &fsl_semantics::model::key::object_type_node_key(
+            checked.operation().declaring_key().unwrap(),
+        )
+        .expect("the declaring type has a node key"),
     );
     let reads = admitted.random_parameters(&declaring, checked.operation().name());
     let [read] = &reads[..] else {
@@ -477,7 +479,7 @@ fn workload_round_trips() {
         panic!("one weighted operation");
     };
     let model = fsl_semantics::check::wire_id::structural_id(
-        &fsl_semantics::model::key::object_type_node_key(operation.declaring_key())
+        &fsl_semantics::model::key::object_type_node_key(operation.declaring_key().unwrap())
             .expect("the model type has a node key"),
     );
     let reads = admitted.workloads(&model);
@@ -572,7 +574,7 @@ fn operation_content(
 ) -> (
     &filament_checked::key::DeclarationKey,
     filament_exact::EffectiveId,
-    &filament_checked::key::DeclarationKey,
+    Option<&filament_checked::key::DeclarationKey>,
     &str,
 ) {
     (

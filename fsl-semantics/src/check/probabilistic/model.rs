@@ -56,15 +56,18 @@ pub struct ProbabilisticOperation {
     model: String,
     key: DeclarationKey,
     declaring: EffectiveId,
-    declaring_key: DeclarationKey,
+    declaring_key: Option<DeclarationKey>,
     name: String,
 }
 
 impl ProbabilisticOperation {
     /// The declaration key of the object type that declares the operation:
-    /// the identity of its `model` node.
-    pub fn declaring_key(&self) -> &DeclarationKey {
-        &self.declaring_key
+    /// the identity of its `model` node. `None` when the declaring type is
+    /// no object type of the operation's own model (nothing then names a
+    /// node for it): lowering roots nothing and emission refuses the
+    /// declaration with its locus.
+    pub fn declaring_key(&self) -> Option<&DeclarationKey> {
+        self.declaring_key.as_ref()
     }
 
     /// The `model` alias whose domain package declares the operation.
@@ -618,6 +621,21 @@ pub(crate) fn site_spans(
         })
 }
 
+/// The key of the model's own object type whose identity is `declaring`.
+/// `None` when the declaring type is none of the model's object types: no
+/// key then names its `model` node, so lowering roots nothing and emission
+/// refuses the declaration with its locus.
+fn declaring_key_of(
+    objects: &BTreeMap<Identifier, DeclarationKey>,
+    object_types: &BTreeMap<DeclarationKey, EffectiveId>,
+    declaring: &EffectiveId,
+) -> Option<DeclarationKey> {
+    objects
+        .values()
+        .find(|candidate| object_types.get(*candidate) == Some(declaring))
+        .cloned()
+}
+
 /// What the declarations are resolved and typed against.
 pub(crate) struct ProbabilisticInput<'a> {
     pub(crate) scope: &'a Scope,
@@ -719,21 +737,7 @@ impl<'a> ProbabilisticInput<'a> {
             ProbabilisticOperation {
                 model: alias.clone(),
                 key: key.clone(),
-                // The declaring type's key: the model's own object of that
-                // identity, else any type table entry of it. Never a refusal
-                // here, so a unit S3 accepted before the key was recorded
-                // still checks; a key without a node is refused at emission
-                // with the declaration's locus.
-                declaring_key: objects
-                    .values()
-                    .find(|candidate| self.object_types.get(*candidate) == Some(&declaring))
-                    .or_else(|| {
-                        self.object_types
-                            .iter()
-                            .find_map(|(candidate, id)| (*id == declaring).then_some(candidate))
-                    })
-                    .cloned()
-                    .unwrap_or_else(|| key.clone()),
+                declaring_key: declaring_key_of(objects, self.object_types, &declaring),
                 declaring,
                 name: declaration.name().to_owned(),
             },
@@ -1441,4 +1445,41 @@ impl Pass<'_, '_> {
 /// The span of `expression`'s root, or `fallback`.
 fn expression_span(expression: &ExpressionForm, fallback: Span) -> Span {
     expression.spans.at(&[]).unwrap_or(fallback)
+}
+
+#[cfg(test)]
+mod declaring_key_tests {
+    use super::*;
+    use filament_exact::OriginalDeclarationKey;
+
+    fn id(node: &str) -> EffectiveId {
+        EffectiveId::new(None, OriginalDeclarationKey::new("fixture", node))
+    }
+
+    fn key(node: &str) -> DeclarationKey {
+        DeclarationKey {
+            package: "fixture".into(),
+            node: node.into(),
+        }
+    }
+
+    /// FR-185-AC-12: a declaring type that is none of the model's object
+    /// types has no key (never another package's key, never the
+    /// operation's), so S3 neither refuses nor roots it, and emission
+    /// refuses the declaration with its locus.
+    #[test]
+    fn a_declaring_type_outside_the_models_objects_has_no_key() {
+        let own = key("own");
+        let foreign = key("foreign");
+        let objects = BTreeMap::from([(Identifier::new("Own").unwrap(), own.clone())]);
+        let object_types = BTreeMap::from([(own.clone(), id("own")), (foreign, id("foreign"))]);
+        assert_eq!(
+            declaring_key_of(&objects, &object_types, &id("own")),
+            Some(own)
+        );
+        assert_eq!(
+            declaring_key_of(&objects, &object_types, &id("foreign")),
+            None
+        );
+    }
 }

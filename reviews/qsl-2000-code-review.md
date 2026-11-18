@@ -68,3 +68,18 @@ weight sort, zero weights, single declaration occurrence and deterministic emiss
 ordering. No high findings. FND-001 (tautological determinism test) and FND-002
 (trace inflation) should be fixed in this PR; FND-003 needs a ticket or a stated
 deferral. Mergeable after those.
+
+## Dispositions
+
+Round 1, head 3936e36cabda798c65231072ef4f0fdad4562b87 (fix commit aeec40ac1).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `workload_weight_order_changes_no_bytes_and_weight_zero_is_emitted` now emits the two-operation lineage workload with its weight lines in both orders and compares bytes |
+| FND-002 | fixed | the refusal tests are retagged TC-2062 / FR-185-AC-12 (S4 refusal carries the declaration's locus), which is what they assert; the message half of AC-12 is the pre-existing fsl-command `probabilistic_package_locus` test (ignored QSL-1996 on main) |
+| FND-003 | deferred | QSL-2444 (Backlog) filed; referenced at emit/probabilistic.rs:333 and in the test name `a_workload_over_unrelated_types_refuses_with_its_locus_qsl_2444` |
+| FND-004 | fixed | text support spelled with `serde_json::to_string`, documented as the literal's JSON string encoding |
+| FND-005 | fixed | `value_of` admits through `ty.admits(&value)`; the text Meter is sized to the literal (bytes, 18x NFKC expansion, bounded work) |
+| FND-006 | fixed | `support_spelling` returns `Option`, Boolean/Enum arms removed, `None` refuses with the declaration's locus |
+| FND-007 | fixed | digital_clocks.rs:848 ignore now cites QSL-2439 |
+| FND-008 | still-open | The `Unresolved::Missing` path was replaced by an untested fallback chain: the alias's own objects, then any `object_types` entry with the same EffectiveId (which can name a type of another package), then `key.clone()`, which is the operation's declaration key used as a type key. The comment says a key without a node "is refused at emission with the declaration's locus", but `Lowering::probabilistic_declarations` runs first in the same check and calls `model_node` on that key: `model_owner` faults `UnadmittedPackage` for another package's key, and `records.get` faults `UnknownDeclaration` for an operation key. Either one becomes an S3 InternalFault refusal of the whole unit, or roots a mislabelled declaring node. Required: make `declaring_key` an `Option`, skip rooting on `None` and refuse at emission with the locus (as `model_key` already does), or restore a typed S3 refusal; in both cases add a test that reaches the case |
