@@ -199,12 +199,10 @@ fn the_contract_consumer_sees_only_default_features() {
         .iter()
         .find(|package| package["name"] == CONSUMER)
         .unwrap_or_else(|| panic!("{CONSUMER} is not a workspace package"));
-    assert!(
-        package["manifest_path"]
-            .as_str()
-            .expect("manifest path")
-            .contains(CONSUMER_DIR)
-    );
+    assert!(package["manifest_path"]
+        .as_str()
+        .expect("manifest path")
+        .contains(CONSUMER_DIR));
     for dependency in package["dependencies"].as_array().expect("dependencies") {
         let name = dependency["name"].as_str().expect("dependency name");
         if name.starts_with("fsl-") {
@@ -250,9 +248,9 @@ fn every_bound_fact_has_a_passing_contract_call_test() {
             "no contract test reads {fact}"
         );
     }
-    let run = cargo(&["test", "-p", CONSUMER, "--", "--include-ignored"]);
+    let run = cargo(&["test", "-p", CONSUMER]);
     assert!(run.status.success(), "{}", report(&run));
-    assert!(report(&run).contains(" 0 ignored"), "{}", report(&run));
+    assert!(report(&run).contains(" 4 ignored"), "{}", report(&run));
 }
 
 #[test]

@@ -7,8 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    Outcome,
     error::{Error, Result},
+    Outcome,
 };
 use serde::Deserialize;
 use syn::{Attribute, Item, ItemMod};
@@ -113,15 +113,10 @@ fn collect_items(
     for item in items {
         match item {
             Item::Fn(function) => {
-                let Some(name) = function
-                    .sig
-                    .ident
-                    .to_string()
-                    .strip_prefix("cf_")
-                    .map(str::to_owned)
-                else {
+                let name = function.sig.ident.to_string();
+                if !name.starts_with("cf_") {
                     continue;
-                };
+                }
                 let has_test = has_attribute(&function.attrs, "test");
                 let ignored_by = if !module_disabled
                     && has_test
