@@ -19,7 +19,9 @@
 //! validated into a [`TimedInterval`]: a negative lower bound, `a > b` and an
 //! open end with `a = b` refuse `invalid_timed_model`/`invalid-interval` at
 //! the interval. A step interval `[a, b]` has bounds with no unit and refuses
-//! `ill_typed`/`type-mismatch`; `[a, *]` refuses as ADR-014 TR-3 states.
+//! `ill_typed`/`type-mismatch`, `[a, *]` included. A timed interval `[q, *]`
+//! has a least distance and no upper bound (FR-943); `[0 ms, *]` is the operator
+//! written with no interval.
 //!
 //! The clause is classified into one [`TimedPropertyForm`], in FR-234's
 //! order, and a `TimedInvariant`, `TimedSafety` or `TimedLiveness` clause

@@ -872,4 +872,33 @@ mod tests {
         );
         assert_eq!(closed.key(profile(), node(1)).interval(), &closed);
     }
+
+    /// FR-943: `[q, *)` has a least distance and no upper bound; it contains
+    /// every offset from `q` on and reaches every offset, `[0, *)` is the whole
+    /// half line, and its key differs from a bounded interval's.
+    #[trace("TC-2623", "FR-943")]
+    #[test]
+    fn a_timed_interval_may_have_no_upper_bound() {
+        let (zero, five) = (ratio(0, 1), ratio(5, 1));
+        assert_eq!(
+            TimedInterval::unbounded(ratio(-1, 2), true),
+            Err(InvalidTimedInterval::NegativeLower)
+        );
+        let closed = TimedInterval::unbounded(five.clone(), true).unwrap();
+        assert!(!closed.is_bounded() && !closed.is_punctual() && !closed.is_whole());
+        assert_eq!(closed.upper(), None);
+        assert!(closed.contains(&five) && closed.contains(&ratio(1_000_000, 1)));
+        assert!(!closed.contains(&ratio(499, 100)));
+        assert!(closed.reaches(&ratio(1_000_000, 1)));
+        let open = TimedInterval::unbounded(five.clone(), false).unwrap();
+        assert!(!open.contains(&five) && open.contains(&ratio(501, 100)));
+        assert_ne!(open, closed);
+        assert!(TimedInterval::unbounded(zero.clone(), true).unwrap().is_whole());
+        assert!(!TimedInterval::unbounded(zero, false).unwrap().is_whole());
+        let bounded = TimedInterval::new(five, true, ratio(9, 1), true).unwrap();
+        assert_ne!(
+            bounded.key(profile(), node(1)),
+            closed.key(profile(), node(1))
+        );
+    }
 }

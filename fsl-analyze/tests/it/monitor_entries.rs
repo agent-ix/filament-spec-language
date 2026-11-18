@@ -1694,3 +1694,152 @@ fn unbounded_past_operators_reach_generated_entries() {
         let _ = package_of(&render(&spec));
     }
 }
+
+/// FR-251 "Unbounded past operators" and FR-943: `once`, `historically`,
+/// `since` and `triggered` with no interval or `[a, *]`, and the future
+/// operators with `[a, *]`.
+const UNBOUNDED_SHAPES: [&str; 14] = [
+    "once holds(c.versionNumber = 3)",
+    "historically holds(c.versionNumber = 3)",
+    "holds(c.versionNumber = 2) since holds(c.versionNumber = 3)",
+    "holds(c.versionNumber = 2) triggered holds(c.versionNumber = 3)",
+    "once[2 ms, *] holds(c.versionNumber = 3)",
+    "historically[1 ms, *] holds(c.versionNumber = 3)",
+    "holds(c.versionNumber = 2) since[2 ms, *] holds(c.versionNumber = 3)",
+    "holds(c.versionNumber = 2) triggered[1 ms, *] holds(c.versionNumber = 3)",
+    "eventually[1 ms, *] holds(c.versionNumber = 3)",
+    "always[2 ms, *] holds(c.versionNumber = 3)",
+    "holds(c.versionNumber = 2) until[1 ms, *] holds(c.versionNumber = 3)",
+    "holds(c.versionNumber = 2) release[2 ms, *] holds(c.versionNumber = 3)",
+    "once[0 ms, 3 ms] once holds(c.versionNumber = 3)",
+    "once once[0 ms, 2 ms] holds(c.versionNumber = 3)",
+];
+
+/// Unbounded operators over bounded future operands: the folded entry waits
+/// for its operand to settle (FR-251 "Settled operand").
+const UNBOUNDED_OVER_FUTURE: [&str; 3] = [
+    "historically (holds(c.versionNumber = 2) implies eventually[0 ms, 2 ms] holds(c.versionNumber = 3))",
+    "once eventually[0 ms, 2 ms] holds(c.versionNumber = 3)",
+    "once[1 ms, *] (holds(c.versionNumber = 2) and eventually[0 ms, 1 ms] holds(c.versionNumber = 3))",
+];
+
+#[trace("TC-1081", "FR-251-AC-7")]
+#[test]
+fn unbounded_operators_agree_with_the_reference_on_every_trace_family() {
+    for shape in UNBOUNDED_SHAPES.iter().chain(&UNBOUNDED_OVER_FUTURE) {
+        for target in families() {
+            differential(shape, target, 25);
+        }
+    }
+}
+
+/// FR-251-AC-22: `once holds(p)` is planned with capacity 2, and with
+/// uncertainty 2 ticks capacity ceil(0.002 x 5) + 1 = 2; its buffer holds at
+/// most two entries and the summary cell.
+#[trace("TC-706", "FR-251-AC-22")]
+#[test]
+fn an_unbounded_once_is_planned_with_a_cover_width_buffer() {
+    let plan = premise_plan(&format!("once {P}"), &tick_target(2, 8));
+    assert_eq!(capacities(&plan), [2]);
+    let mut target = tick_target(2, 8);
+    target.uncertainty = crate::monitor_plan::ratio(2, 1);
+    let plan = premise_plan(&format!("once {P}"), &target);
+    assert_eq!(capacities(&plan), [2]);
+    let spec = spec_from_plan(&plan).unwrap();
+    let inputs = evenly(40, 600, spec.atoms[0], |_| false);
+    let (entries, lengths) = run_entries_probe(&plan, &spec, &inputs, "map(x in s.buffer_0: x.tf)");
+    assert_eq!(entries, run_reference(&plan, &inputs));
+    assert!(lengths.iter().all(|cells| cells.len() <= 3), "{lengths:?}");
+}
+
+/// FR-251-AC-23 and AC-24: an entry that has aged out is folded into the
+/// summary cell, so `once` is `true` from a witness at tick 0 and
+/// `historically` is `false` from a counterexample at tick 100, 5000 ticks on.
+#[trace("TC-1081", "FR-251-AC-23", "FR-251-AC-24")]
+#[test]
+fn an_aged_out_entry_is_folded_into_the_summary_cell() {
+    let plan = premise_plan(&format!("once {P}"), &tick_target(2, 8));
+    let spec = spec_from_plan(&plan).unwrap();
+    let atom = spec.atoms[0];
+    let inputs = vec![
+        Input::Reading(0, vec![(atom, true)]),
+        Input::Reading(5000, vec![(atom, false)]),
+    ];
+    let node = i128::try_from(plan.buffers()[0].0.index()).unwrap();
+    let (entries, sizes) = run_entries_probe(&plan, &spec, &inputs, "map(x in s.buffer_0: x.tf)");
+    assert_eq!(entries, run_reference(&plan, &inputs));
+    // The tick-5000 entry and the cell: the tick-0 entry was folded.
+    assert_eq!(sizes[1].len(), 2);
+    assert!(entries[1].iter().any(|(key, code)| key % 1000 == node && *code == 1));
+    let plan = premise_plan(&format!("historically {P}"), &tick_target(2, 8));
+    let inputs = vec![
+        Input::Reading(0, vec![(atom, true)]),
+        Input::Reading(100, vec![(atom, false)]),
+        Input::Reading(5000, vec![(atom, true)]),
+    ];
+    let entries = run_entries(&plan, &inputs);
+    assert_eq!(entries, run_reference(&plan, &inputs));
+    assert!(entries[2].iter().any(|(key, code)| key % 1000 == node && *code == 2));
+}
+
+/// FR-251-AC-26 and the sticky rule of "Unbounded past operators": three
+/// events inside one tick cover overflow the two-entry buffer, the result is
+/// `Incomplete(event_buffer)`, and the buffer is emptied to the summary cell.
+#[trace("TC-706", "FR-251-AC-26")]
+#[test]
+fn an_overflow_of_an_unbounded_past_operator_is_sticky() {
+    let plan = premise_plan(&format!("once {P}"), &tick_target(2, 8));
+    let spec = spec_from_plan(&plan).unwrap();
+    let atom = spec.atoms[0];
+    let inputs = vec![
+        Input::Reading(0, vec![(atom, false)]),
+        Input::Reading(0, vec![(atom, false)]),
+        Input::Reading(0, vec![(atom, false)]),
+        Input::Reading(5, vec![(atom, false)]),
+    ];
+    let (entries, sizes) = run_entries_probe(&plan, &spec, &inputs, "map(x in s.buffer_0: x.tf)");
+    assert_eq!(entries, run_reference(&plan, &inputs));
+    assert!(entries[2].iter().any(|(_, code)| *code == 2002), "{entries:?}");
+    assert!(sizes.iter().all(|cells| cells.len() <= 3), "{sizes:?}");
+}
+
+/// FR-251-AC-34 and FR-943-AC-2: `once[5 ms, *] holds(p)` has capacity 12;
+/// with `p` true at tick 0 it is `indeterminate` at tick 4000 and `true` at
+/// tick 6000.
+#[trace("TC-1081", "FR-251-AC-34")]
+#[test]
+fn a_lower_bounded_unbounded_once_decides_after_its_lower_bound() {
+    let plan = premise_plan("once[5 ms, *] holds(c.versionNumber = 3)", &tick_target(2, 8));
+    assert_eq!(capacities(&plan), [12]);
+    let spec = spec_from_plan(&plan).unwrap();
+    let atom = spec.atoms[0];
+    let inputs = vec![
+        Input::Reading(0, vec![(atom, true)]),
+        Input::Reading(4000, vec![(atom, false)]),
+        Input::Reading(6000, vec![(atom, false)]),
+    ];
+    let entries = run_entries(&plan, &inputs);
+    assert_eq!(entries, run_reference(&plan, &inputs));
+    let node = i128::try_from(plan.buffers()[0].0.index()).unwrap();
+    let at = |step: usize, tick: i128| {
+        entries[step]
+            .iter()
+            .find(|(key, _)| *key == tick * 1000 + node)
+            .map(|(_, code)| *code)
+    };
+    assert_eq!(at(1, 4000), Some(4));
+    assert_eq!(at(2, 6000), Some(1));
+}
+
+/// FR-251-AC-32: `historically (req implies eventually[0 ms, 5 ms] ack)` has
+/// settling delay 5000, retention 5001 and capacity 12.
+#[trace("TC-1081", "FR-251-AC-32")]
+#[test]
+fn an_unbounded_past_operator_over_a_bounded_future_one_has_the_settling_delay() {
+    let plan = premise_plan(
+        "historically (holds(c.versionNumber = 2) implies eventually[0 ms, 5 ms] holds(c.versionNumber = 3))",
+        &tick_target(2, 8),
+    );
+    assert_eq!(capacities(&plan).len(), 2);
+    assert_eq!(plan.buffers().iter().map(|(_, c)| *c).max(), Some(12));
+}
