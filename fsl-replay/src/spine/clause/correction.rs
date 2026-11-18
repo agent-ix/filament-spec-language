@@ -397,3 +397,58 @@ pub(crate) fn run_correction(
     )
     .map(Some)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    fn entry(package: &str, lineage: u64) -> serde_json::Value {
+        let superseded: Vec<String> = (0..lineage).map(|at| format!("r{at}")).collect();
+        serde_json::json!({
+            "key": {"package": package, "clause": "Seen",
+                "occurrence": {"role": "declaration", "ordinal": 0}, "trigger": null},
+            "result_identity": "latest", "input_identity": "input",
+            "correspondence": null, "lineage": lineage, "superseded": superseded})
+    }
+
+    /// FR-975-AC-1: writing a read ledger reproduces its bytes, members in
+    /// file order and entries in key order.
+    #[trace("TC-2750", "FR-975-AC-1")]
+    #[test]
+    fn writing_a_read_ledger_reproduces_its_bytes() {
+        let document = serde_json::json!({"format": EVIDENCE_LEDGER_FORMAT,
+            "results": [entry("first", 0), entry("second", 2)]});
+        let bytes = serde_json::to_vec(&document).unwrap();
+        let read = read_evidence_ledger(&bytes).unwrap();
+        assert_eq!(serde_json::to_vec(&read).unwrap(), bytes);
+    }
+
+    /// FR-975 "The file form": a missing `trigger` or `correspondence`, a
+    /// lineage past the ceiling and a repeated member are not the file form.
+    #[trace("TC-2751", "FR-975-AC-4")]
+    #[test]
+    fn a_missing_nullable_member_or_a_lineage_past_the_ceiling_is_refused() {
+        for member in ["trigger", "correspondence"] {
+            let mut entry = entry("first", 0);
+            match member {
+                "trigger" => entry["key"].as_object_mut().unwrap().remove(member),
+                _ => entry.as_object_mut().unwrap().remove(member),
+            };
+            let document =
+                serde_json::json!({"format": EVIDENCE_LEDGER_FORMAT, "results": [entry]});
+            let refused = read_evidence_ledger(&serde_json::to_vec(&document).unwrap());
+            assert!(refused.is_err(), "{member}");
+        }
+        let mut past = entry("first", 0);
+        past["lineage"] = serde_json::json!(LINEAGE_CEILING + 1);
+        let document = serde_json::json!({"format": EVIDENCE_LEDGER_FORMAT, "results": [past]});
+        let refused = read_evidence_ledger(&serde_json::to_vec(&document).unwrap())
+            .expect_err("a lineage past the ceiling");
+        assert!(refused.reason.contains("lineage"), "{}", refused.reason);
+        let repeated = format!(
+            "{{\"format\":\"{EVIDENCE_LEDGER_FORMAT}\",\"format\":\"{EVIDENCE_LEDGER_FORMAT}\",\"results\":[]}}"
+        );
+        assert!(read_evidence_ledger(repeated.as_bytes()).is_err());
+    }
+}
