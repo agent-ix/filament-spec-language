@@ -498,7 +498,7 @@ fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
         (
             "self = M::Nothing#\"a\"",
             ("missing_declaration", "missing-name"),
-            "Nothing",
+            "M::Nothing#\"a\"",
         ),
         (
             "self = M::Level#\"a\"",
