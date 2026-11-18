@@ -520,8 +520,8 @@ fn drive(
     settle: &Settle<'_>,
     cancel: &Cancel,
 ) -> Result<MonitorSummary> {
-    let request: wire::MonitorRequest = request(bytes)?;
-    let integer_division = request_integer_division(request.integer_division)?;
+    let mut request: wire::MonitorRequest = request(bytes)?;
+    let integer_division = request_integer_division(request.integer_division.take())?;
     let records_file = request.records.clone();
     match (matches!(source, Records::Batch), &records_file) {
         (true, None) => {

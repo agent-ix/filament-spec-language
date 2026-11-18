@@ -2542,7 +2542,7 @@ fn complete_sources(
         limits,
         None,
         None,
-        |checked, selections, points, packages, _, libraries, models, inventory, failure| {
+        |_intake, checked, selections, points, packages, _, libraries, models, inventory, failure| {
             let cancel = filament_exact::Cancel::new();
             let result = fsl_replay::spine::package_with_temporal_selections(
                 &checked,
