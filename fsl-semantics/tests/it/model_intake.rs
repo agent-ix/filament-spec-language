@@ -3194,4 +3194,56 @@ mod float_members {
             );
         }
     }
+/// FR-056-AC-43: bare native Text, Rational and Decimal members remain in an
+/// admitted model package even though they have no checked value type. The
+/// assembler records them as untyped members rather than rejecting the model.
+#[trace("FR-056-AC-43")]
+#[test]
+fn bare_native_text_rational_and_decimal_model_members_are_admitted() {
+    let package = "test/rational-value-type";
+    let mut document = rational_intake_document();
+    let fields = document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Holder fields");
+    fields[0]["typeRef"] = "ix://filament/native/Rational".into();
+    fields.push(wire_field(
+        "ix://test/rational-value-type/Holder/memo",
+        "memo",
+        "ix://filament/native/Text",
+    ));
+    fields.push(wire_field(
+        "ix://test/rational-value-type/Holder/amount",
+        "amount",
+        "ix://filament/native/Decimal",
+    ));
+    let bytes = serde_json::to_vec(&document).expect("serialize package");
+    let packages = package_input([bytes.as_slice()]).expect("package input");
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         model M = {package:?};\n"
+    );
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "bare-native-model-members"),
+        "bare-native-model-members.native",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let selected = admit_unit(
+        &unit.selections().models,
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("I1 admits the package");
+    fsl_semantics::check::PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        crate::TEST_PACKAGE_NAME.to_owned(),
+        unit,
+        selected,
+        Vec::new(),
+    )
+    .unwrap_or_else(|refusal| panic!("bare native members are admitted: {refusal:?}"));
 }
