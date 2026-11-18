@@ -59,7 +59,7 @@ pub(super) const TRIED: &str =
 
 /// FR-218-AC-41: `role W on M` checks beside a role on a model type, and the
 /// replicated form over the alias refuses with the alias as its region.
-#[trace("TC-2020", "FR-218-AC-41")]
+#[trace("TC-2020", "FR-218-AC-41", "FR-884-AC-5")]
 #[test]
 fn a_role_on_a_whole_model_checks_and_its_replicated_form_refuses_at_the_alias() {
     let roles = "role W on M;\nrole R on M::Actor;";
@@ -93,6 +93,7 @@ fn a_role_on_a_whole_model_checks_and_its_replicated_form_refuses_at_the_alias()
     "TC-2021",
     "FR-218-AC-42",
     "FR-884-AC-1",
+    "FR-884-AC-5",
     "FSpec-TC-1521",
     "FSpec-FR-053-AC-5"
 )]
@@ -159,7 +160,7 @@ fn a_variant_without_a_well_founded_order_refuses_at_the_variant() {
 /// FR-884-AC-2 (TC-2508): an unproved-exhaustive `choice` refuses at its
 /// header and two roles of one name refuse at each name, never at the
 /// protocol declaration.
-#[trace("TC-2508", "FR-884-AC-2")]
+#[trace("TC-2508", "FR-884-AC-2", "FR-884-AC-5")]
 #[test]
 fn a_nonexhaustive_choice_and_a_duplicate_role_refuse_at_their_subject() {
     let run = format!(
@@ -203,7 +204,7 @@ fn a_nonexhaustive_choice_and_a_duplicate_role_refuse_at_their_subject() {
 
 /// FR-218-AC-17 / FR-884-AC-1: an `over` read carries its typed slot cause
 /// and a source locus covering the exact expression.
-#[trace("TC-2508", "FR-218-AC-17", "FR-884-AC-1")]
+#[trace("TC-2508", "FR-218-AC-17", "FR-884-AC-1", "FR-884-AC-5")]
 #[test]
 fn the_over_read_refusal_is_at_the_read() {
     let run = format!(
@@ -229,7 +230,7 @@ fn the_over_read_refusal_is_at_the_read() {
 
 /// FR-884-AC-4 (TC-2509): two protocols of one name in one unit refuse at
 /// each name; two different names check.
-#[trace("TC-2509", "FR-884-AC-4")]
+#[trace("TC-2509", "FR-884-AC-4", "FR-884-AC-5")]
 #[test]
 fn two_protocols_of_one_name_refuse_at_each_name() {
     let run = format!("sequence Main {{ {TRIED} }}");

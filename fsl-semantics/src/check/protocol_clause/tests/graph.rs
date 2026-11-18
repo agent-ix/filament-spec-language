@@ -190,7 +190,7 @@ fn only(source: &str) -> (String, CheckRefusal, ProtocolAnchorCause) {
 /// variant each has; a `repeat` whose body is only a `check`, or a `choice`
 /// with an attempt in one case and an empty `sequence` in the other, refuses
 /// `unsupported_construct`/`declaration-form` at the `repeat`, naming it.
-#[trace("TC-663", "FR-218-AC-5")]
+#[trace("TC-663", "FR-218-AC-5", "FR-884-AC-5")]
 #[test]
 fn a_repeat_records_its_parts_and_needs_progress() {
     let body = attempt("Work");
@@ -269,7 +269,7 @@ fn a_repeat_records_its_parts_and_needs_progress() {
 /// same thread, while `Rx` receives only from `Tx`, refuses
 /// `invalid_package`/`definition-cycle` naming `Tx` and `Rx`; with `Tx` on
 /// one branch and `Rx` on another the protocol checks.
-#[trace("TC-663", "FR-218-AC-6")]
+#[trace("TC-663", "FR-218-AC-6", "FR-884-AC-5")]
 #[test]
 fn a_receive_before_its_own_send_is_a_causal_cycle() {
     let source = flow(
@@ -311,7 +311,7 @@ fn await_control(name: &str, after: &str) -> String {
 /// `unsupported_construct`/`declaration-form` at the outer `repeat`; a
 /// `repeat` whose body is one `await` with a `timeout` control, or one
 /// `parallel` with a `join`, checks.
-#[trace("TC-663", "FR-218-AC-7")]
+#[trace("TC-663", "FR-218-AC-7", "FR-884-AC-5")]
 #[test]
 fn a_skippable_nested_repeat_gives_no_progress() {
     let source = flow(
@@ -356,7 +356,7 @@ fn a_skippable_nested_repeat_gives_no_progress() {
 /// as FR-218 states it), and the `repeat` back edge is not one.
 /// FR-218-AC-35 states this cycle and repeat-back-edge pair as its last
 /// sentence.
-#[trace("TC-663", "FR-218-AC-35")]
+#[trace("TC-663", "FR-218-AC-35", "FR-884-AC-5")]
 #[test]
 fn an_await_after_a_later_control_is_a_cycle() {
     let source = flow(
@@ -412,7 +412,7 @@ fn awaiting(members: &str, within: &str, matched: &str) -> String {
 /// `MissingProfile` at the undeclared alias the `await` names. The `receive`
 /// and `effect` matches FR-218-AC-35 also states are in
 /// `an_await_matches_a_receive_and_an_effect_as_it_matches_an_event`.
-#[trace("TC-663", "FR-218-AC-35")]
+#[trace("TC-663", "FR-218-AC-35", "FR-884-AC-5")]
 #[test]
 fn an_await_matches_an_event_in_a_closed_window_under_a_temporal_profile() {
     let event = "event Seen by R as (seen: Boolean) { true };";
@@ -560,7 +560,7 @@ fn an_await_matches_an_event_in_a_closed_window_under_a_temporal_profile() {
 /// checks and records the same `Wait` (clock `wall`, window 2 to 5, the
 /// selected temporal profile) when it matches a `receive` over a channel
 /// of a `send`, and when it matches an `effect` of an `attempt`.
-#[trace("TC-663", "FR-218-AC-35")]
+#[trace("TC-663", "FR-218-AC-35", "FR-884-AC-5")]
 #[test]
 fn an_await_matches_a_receive_and_an_effect_as_it_matches_an_event() {
     let received = flow(
@@ -606,7 +606,7 @@ fn an_await_matches_a_receive_and_an_effect_as_it_matches_an_event() {
 /// expected and actual; the same nodes with the channel's type check, and a
 /// `receive` via another channel than its `send`'s still refuses as
 /// FR-113-AC-7 states.
-#[trace("TC-1056", "FR-218-AC-11")]
+#[trace("TC-1056", "FR-218-AC-11", "FR-884-AC-5")]
 #[test]
 fn a_message_names_a_channel_and_carries_its_type() {
     let members = format!("{}\n{}", channel("ch", "Plain"), channel("other", "Plain"));
@@ -675,7 +675,7 @@ fn a_message_names_a_channel_and_carries_its_type() {
 /// `undefined_expression`/`unproved-exhaustiveness` with `duplicate-arm`,
 /// guards that both fail with `missing-arm`, each naming the cases; one true
 /// and one false check and are recorded.
-#[trace("TC-1056")]
+#[trace("TC-1056", "FR-884-AC-5")]
 #[test]
 fn a_choice_owner_is_a_role_and_its_constant_guards_partition() {
     let choice = |owner: &str, first: &str, second: &str| {
@@ -835,7 +835,13 @@ fn located_causes(source: &str) -> Vec<(ProtocolAnchorCause, String)> {
 /// a discarded `let` that reads a fact still needs the fact listed; a read
 /// of the `over` input refuses `ill_typed`/`operator-ineligible` at the read,
 /// naming the guard; a read of a protocol capture checks without listing.
-#[trace("TC-1056", "FR-218-AC-17", "FR-218-AC-18", "FR-884-AC-1")]
+#[trace(
+    "TC-1056",
+    "FR-218-AC-17",
+    "FR-218-AC-18",
+    "FR-884-AC-1",
+    "FR-884-AC-5"
+)]
 #[test]
 fn a_decision_reads_only_listed_facts_of_its_owner() {
     let graph = checks(&received(&pick(
@@ -1097,7 +1103,7 @@ fn a_decision_reads_only_listed_facts_of_its_owner() {
 /// choice branch's record and an `await` match read after the `await` refuse
 /// `missing_declaration`/`missing-name` at every original use, retaining
 /// `name`.
-#[trace("TC-1056", "FR-218-AC-18")]
+#[trace("TC-1056", "FR-218-AC-18", "FR-884-AC-5")]
 #[test]
 fn a_record_outside_its_scope_is_an_unresolved_name() {
     let reader = |binder: &str| {
@@ -1176,7 +1182,7 @@ fn a_record_outside_its_scope_is_an_unresolved_name() {
 /// FR-218-AC-33: a repeat's own visible clause and guard read the body
 /// binder from the most recently completed iteration; its guard makes it a
 /// post-test repeat. A guard that reads no body binder remains pre-test.
-#[trace("TC-1268", "FR-218-AC-33")]
+#[trace("TC-1268", "FR-218-AC-33", "FR-884-AC-5")]
 #[test]
 fn repeat_decisions_read_the_latest_body_output_and_classify_the_guard() {
     let source = flow(
@@ -1261,7 +1267,7 @@ fn repeat_decisions_read_the_latest_body_output_and_classify_the_guard() {
 /// `undefined_expression`/`unproved-exhaustiveness` at the choice, retaining
 /// `failed` and the case names; complementary guards over the individually
 /// listed facts check.
-#[trace("TC-1056", "FR-218-AC-19")]
+#[trace("TC-1056", "FR-218-AC-19", "FR-884-AC-5")]
 #[test]
 fn guards_partition_the_visible_facts() {
     let facts = "rx.ready, rx.done";
