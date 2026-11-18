@@ -16,9 +16,9 @@ use filament_exact::NodeKey;
 use filament_exact::{Cancel, CancelCause};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::{
-    emit_checked_with_temporal_selections_and_cancel, read_import_view, resolve_clause_root,
-    resolve_hyper_root, resolve_state_graph_root, AdmittedPackages, CheckedPackage,
-    ClauseRootUnresolved, EmitRefusal, TemporalClockSelection, V2ReadLimits,
+    AdmittedPackages, CheckedPackage, ClauseRootUnresolved, EmitRefusal, TemporalClockSelection,
+    V2ReadLimits, emit_checked_with_temporal_selections_and_cancel, read_import_view,
+    resolve_clause_root, resolve_hyper_root, resolve_state_graph_root,
 };
 use fsl_semantics::check::{
     CheckedHyperClause, CheckedStateGraphClaim, CheckedTemporalClause, TemporalClauseNode,
@@ -125,6 +125,17 @@ impl ClauseIdentity {
                 name: clause.name().to_owned(),
             })?;
         let triple = node_occurrence(node);
+        // FR-1000's pending reference-literal node lowers to a typed literal
+        // leaf which the current I2 expression vocabulary cannot admit yet.
+        // This identity and `over` are already in the immutable S3-checked
+        // package, so resolve them directly when this clause contains that
+        // node instead of round-tripping a representation I2 cannot express.
+        if temporal_clause_has_reference_literal(node) {
+            return Ok(Self {
+                occurrence: triple,
+                over: Some(node.over()),
+            });
+        }
         let (admitted, library) = read_back(
             package,
             domain_packages,
@@ -287,6 +298,13 @@ impl HyperIdentity {
                 name: clause.name().to_owned(),
             }
         })?;
+        // As for temporal clauses above, keep a hyper clause's pending
+        // reference literal in its checked representation. The checked
+        // assembled occurrence is package-owned and does not come from the
+        // replay request.
+        if hyper_clause_has_reference_literal(clause) {
+            return Ok(Self { occurrence });
+        }
         let (admitted, library) = read_back(
             package,
             domain_packages,
@@ -306,6 +324,52 @@ impl HyperIdentity {
         }
         Ok(Self { occurrence })
     }
+}
+
+fn node_has_reference_literal(root: fsl_semantics::check::CheckedNode<'_>) -> bool {
+    std::iter::once(root).chain(root.descendants()).any(|node| {
+        matches!(
+            node.kind(),
+            filament_checked::NodeKind::ReferenceLiteral { .. }
+        )
+    })
+}
+
+fn temporal_clause_has_reference_literal(node: &fsl_semantics::check::TemporalClauseNode) -> bool {
+    let clause = node.clause();
+    let formula = clause.formula();
+    let atom_has_literal = (0..formula.nodes().len()).any(|index| {
+        let Some(atom) = formula.node_id(index) else {
+            return false;
+        };
+        node.condition(atom)
+            .is_some_and(|(root, _)| node_has_reference_literal(root))
+            || node.aggregate_conditions(atom).is_some_and(|conditions| {
+                [conditions.value, conditions.filter, conditions.predicate]
+                    .into_iter()
+                    .flatten()
+                    .chain([conditions.threshold])
+                    .any(|(root, _)| node_has_reference_literal(root))
+            })
+    });
+    atom_has_literal
+        || node
+            .guard()
+            .is_some_and(|(root, _)| node_has_reference_literal(root))
+        || (0..clause.captures().len()).any(|index| {
+            node.capture(index)
+                .is_some_and(|(root, _)| node_has_reference_literal(root))
+        })
+}
+
+fn hyper_clause_has_reference_literal(clause: &CheckedHyperClause) -> bool {
+    (0..clause.body().nodes().len()).any(|index| {
+        clause
+            .body()
+            .node_id(index)
+            .and_then(|atom| clause.condition(atom))
+            .is_some_and(|(root, _)| node_has_reference_literal(root))
+    })
 }
 
 /// `clause-root-unresolved` (FR-337 "Behavior", FR-338): the request's
