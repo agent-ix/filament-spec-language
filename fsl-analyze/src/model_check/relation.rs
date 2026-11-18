@@ -155,8 +155,7 @@ pub fn check_model_relation(
             ModelRelationRefusal::Model(ModelCheckRefusal::Admission(Box::new(failure)))
         })?;
         let found = system.model().unwrap_or_default();
-        let expected_package = subject
-            .simulation
+        let expected_package = request
             .package
             .graph()
             .model_package_identity(expected)
