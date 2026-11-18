@@ -32,7 +32,7 @@ pub use witness::{
 };
 
 /// How a request decides a claim from its samples (FR-189, FR-190;
-/// ADR-024 ST-4, ST-5, ST-7). A request setting, outside the obligation
+/// ADR-024 ST-4, ST-5, ST-7, ST-11). A request setting, outside the obligation
 /// identity (ST-8).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum StatisticalMethod {
@@ -40,6 +40,8 @@ pub enum StatisticalMethod {
     Okamoto,
     /// Wald's sequential probability ratio test (ST-5).
     Sprt,
+    /// The exact binomial (Clopper–Pearson) test (ST-11).
+    ClopperPearson,
     /// The regenerative ratio estimator for a long-run fraction (ST-7),
     /// closing at least `min_cycles` cycles per test before it decides.
     Regenerative {
@@ -53,7 +55,7 @@ impl StatisticalMethod {
     /// for the regenerative method, `FiniteSample` for the others.
     pub const fn coverage(self) -> Coverage {
         match self {
-            Self::Okamoto | Self::Sprt => Coverage::FiniteSample,
+            Self::Okamoto | Self::Sprt | Self::ClopperPearson => Coverage::FiniteSample,
             Self::Regenerative { .. } => Coverage::Asymptotic,
         }
     }
@@ -87,23 +89,32 @@ pub enum ClaimForm {
 
 impl ClaimForm {
     /// Whether `method` decides this form (FR-189 "Methods", FR-190):
-    /// the regenerative method decides exactly a long-run fraction, SPRT a
-    /// probability bound or a quantile, Okamoto every form but a long-run
-    /// fraction.
+    /// regeneration decides exactly a long-run fraction, SPRT and
+    /// Clopper–Pearson decide a probability bound or quantile, and Okamoto
+    /// decides every form but a long-run fraction.
     pub const fn admits(self, method: StatisticalMethod) -> bool {
         match (self, method) {
             (Self::LongRunFraction, StatisticalMethod::Regenerative { .. })
             | (Self::Probability | Self::Quantile, StatisticalMethod::Sprt)
+            | (Self::Probability | Self::Quantile, StatisticalMethod::ClopperPearson)
             | (
                 Self::Probability | Self::Quantile | Self::MeanOfFraction,
                 StatisticalMethod::Okamoto,
             ) => true,
-            (Self::LongRunFraction, StatisticalMethod::Okamoto | StatisticalMethod::Sprt)
+            (
+                Self::LongRunFraction,
+                StatisticalMethod::Okamoto
+                    | StatisticalMethod::Sprt
+                    | StatisticalMethod::ClopperPearson,
+            )
             | (
                 Self::Probability | Self::Quantile | Self::MeanOfFraction,
                 StatisticalMethod::Regenerative { .. },
             )
-            | (Self::MeanOfFraction, StatisticalMethod::Sprt) => false,
+            | (
+                Self::MeanOfFraction,
+                StatisticalMethod::Sprt | StatisticalMethod::ClopperPearson,
+            ) => false,
         }
     }
 }
@@ -712,17 +723,25 @@ mod tests {
     #[test]
     fn each_form_admits_exactly_its_methods() {
         let regenerative = StatisticalMethod::Regenerative { min_cycles: 1 };
-        for (form, okamoto, sprt, regenerates) in [
-            (ClaimForm::Probability, true, true, false),
-            (ClaimForm::Quantile, true, true, false),
-            (ClaimForm::MeanOfFraction, true, false, false),
-            (ClaimForm::LongRunFraction, false, false, true),
+        for (form, okamoto, sprt, clopper_pearson, regenerates) in [
+            (ClaimForm::Probability, true, true, true, false),
+            (ClaimForm::Quantile, true, true, true, false),
+            (ClaimForm::MeanOfFraction, true, false, false, false),
+            (ClaimForm::LongRunFraction, false, false, false, true),
         ] {
             assert_eq!(form.admits(StatisticalMethod::Okamoto), okamoto);
             assert_eq!(form.admits(StatisticalMethod::Sprt), sprt);
+            assert_eq!(
+                form.admits(StatisticalMethod::ClopperPearson),
+                clopper_pearson
+            );
             assert_eq!(form.admits(regenerative), regenerates);
         }
         assert_eq!(regenerative.coverage(), Coverage::Asymptotic);
         assert_eq!(StatisticalMethod::Sprt.coverage(), Coverage::FiniteSample);
+        assert_eq!(
+            StatisticalMethod::ClopperPearson.coverage(),
+            Coverage::FiniteSample
+        );
     }
 }

@@ -154,6 +154,7 @@ mod state_graph_certificate;
 mod state_graph_settle;
 mod state_probabilistic_replay;
 mod statistical_manifest;
+mod statistical_coverage;
 mod statistical_model;
 mod statistical_witness_replay;
 mod step_simulation;

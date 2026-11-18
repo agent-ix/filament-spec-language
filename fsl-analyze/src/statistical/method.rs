@@ -6,9 +6,17 @@
 use filament_exact::{Integer, Rational};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_replay::statistical::{Decision, UndecidedCause};
+use num_bigint::BigInt;
+use num_integer::Integer as _;
+use num_traits::{One, ToPrimitive, Zero};
 
 use super::bounds::{ceil, int, ln, quotient, Bounds};
 use super::claim::{Bound, Comparison};
+
+const BINOMIAL_SCALE: InternalFault = InternalFault::new("statistical-binomial", "positive-scale");
+const BINOMIAL_DENOMINATOR: InternalFault =
+    InternalFault::new("statistical-binomial", "positive-denominator");
+const BINOMIAL_MODE: InternalFault = InternalFault::new("statistical-binomial", "mode-in-range");
 
 /// Decide `bound` over the interval `[estimate − half_width, estimate +
 /// half_width]` (ADR-024 ST-4): a `>= θ` bound accepts when the interval
@@ -57,6 +65,260 @@ pub(crate) fn okamoto_sample_count(
 ) -> Result<Integer, InternalFault> {
     let log = ln(&quotient(&int(1), least(alpha, beta))?)?.upper;
     Ok(ceil(&quotient(&log, &int(2).mul(&iota.mul(iota)))?))
+}
+
+/// The Clopper–Pearson method uses Okamoto's fixed sample count (ADR-024
+/// ST-11).
+pub(crate) fn clopper_pearson_sample_count(
+    alpha: &Rational,
+    beta: &Rational,
+    iota: &Rational,
+) -> Result<Integer, InternalFault> {
+    okamoto_sample_count(alpha, beta, iota)
+}
+
+/// A fixed-point interval `[lower, upper] / scale` for a nonnegative value.
+#[derive(Clone, Debug)]
+struct BinaryInterval {
+    lower: BigInt,
+    upper: BigInt,
+    scale: BigInt,
+}
+
+impl BinaryInterval {
+    fn zero(scale: &BigInt) -> Self {
+        Self {
+            lower: BigInt::zero(),
+            upper: BigInt::zero(),
+            scale: scale.clone(),
+        }
+    }
+
+    fn one(scale: &BigInt) -> Self {
+        Self {
+            lower: scale.clone(),
+            upper: scale.clone(),
+            scale: scale.clone(),
+        }
+    }
+
+    fn add_assign(&mut self, other: &Self) {
+        self.lower += &other.lower;
+        self.upper += &other.upper;
+    }
+
+    fn multiplied_by_ratio(
+        &self,
+        numerator: &BigInt,
+        denominator: &BigInt,
+    ) -> Result<Self, InternalFault> {
+        if denominator <= &BigInt::zero() || numerator < &BigInt::zero() {
+            return Err(BINOMIAL_DENOMINATOR);
+        }
+        Ok(Self {
+            lower: (&self.lower * numerator).div_floor(denominator),
+            upper: (&self.upper * numerator).div_ceil(denominator),
+            scale: self.scale.clone(),
+        })
+    }
+}
+
+/// Which inclusive binomial tail is being bounded.
+#[derive(Clone, Copy)]
+enum Tail {
+    /// `Pr(X >= k)`.
+    Upper,
+    /// `Pr(X <= k)`.
+    Lower,
+}
+
+/// The precision specified by ADR-024 ST-9: 96 guard bits plus the ceiling
+/// of `log2(n + 1)`.
+fn binomial_precision(n: u64) -> u64 {
+    96 + u64::from(u64::BITS - n.leading_zeros())
+}
+
+/// One outward-rounded binomial tail. The fixed-point weights are scaled
+/// relative to the largest term in the requested tail, which preserves
+/// relative precision even for a small tail.
+fn binomial_tail(
+    k: u64,
+    n: u64,
+    p: &Rational,
+    tail_kind: Tail,
+) -> Result<BinaryInterval, InternalFault> {
+    if k > n {
+        return Err(BINOMIAL_MODE);
+    }
+    let scale = BigInt::one() << binomial_precision(n);
+    let zero = int(0);
+    let one = int(1);
+    if *p < zero || *p > one {
+        return Err(BINOMIAL_DENOMINATOR);
+    }
+    if *p == zero {
+        let probability = match tail_kind {
+            Tail::Upper => u64::from(k == 0),
+            Tail::Lower => 1,
+        };
+        return Ok(if probability == 1 {
+            BinaryInterval::one(&scale)
+        } else {
+            BinaryInterval::zero(&scale)
+        });
+    }
+    if *p == one {
+        let probability = match tail_kind {
+            Tail::Upper => 1,
+            Tail::Lower => u64::from(k == n),
+        };
+        return Ok(if probability == 1 {
+            BinaryInterval::one(&scale)
+        } else {
+            BinaryInterval::zero(&scale)
+        });
+    }
+
+    let probability_numerator = p.numerator().as_big();
+    let probability_denominator = p.denominator().as_big();
+    let failure_numerator = probability_denominator - probability_numerator;
+    let mode_product = (BigInt::from(n) + BigInt::one()) * probability_numerator;
+    let mode = mode_product
+        .div_floor(probability_denominator)
+        .to_u64()
+        .ok_or(BINOMIAL_MODE)?
+        .min(n);
+    let start = match tail_kind {
+        Tail::Upper => k.max(mode),
+        Tail::Lower => k.min(mode),
+    };
+    let in_tail = |index: u64| match tail_kind {
+        Tail::Upper => index >= k,
+        Tail::Lower => index <= k,
+    };
+
+    let mut total = BinaryInterval::zero(&scale);
+    let mut selected = BinaryInterval::zero(&scale);
+    let mut add = |index: u64, weight: &BinaryInterval| {
+        total.add_assign(weight);
+        if in_tail(index) {
+            selected.add_assign(weight);
+        }
+    };
+
+    let start_weight = BinaryInterval::one(&scale);
+    add(start, &start_weight);
+
+    let mut weight = start_weight;
+    for index in start..n {
+        let numerator = BigInt::from(n - index) * probability_numerator;
+        let denominator = BigInt::from(index + 1) * &failure_numerator;
+        weight = weight.multiplied_by_ratio(&numerator, &denominator)?;
+        add(index + 1, &weight);
+    }
+
+    weight = BinaryInterval::one(&scale);
+    for index in (1..=start).rev() {
+        let numerator = BigInt::from(index) * &failure_numerator;
+        let denominator = BigInt::from(n - index + 1) * probability_numerator;
+        weight = weight.multiplied_by_ratio(&numerator, &denominator)?;
+        add(index - 1, &weight);
+    }
+    drop(add);
+
+    if total.lower <= BigInt::zero() {
+        return Err(BINOMIAL_SCALE);
+    }
+    let lower = (&selected.lower * &scale).div_floor(&total.upper);
+    let upper = (&selected.upper * &scale)
+        .div_ceil(&total.lower)
+        .min(scale.clone());
+    Ok(BinaryInterval {
+        lower,
+        upper,
+        scale,
+    })
+}
+
+impl BinaryInterval {
+    fn upper_le(&self, threshold: &Rational, strict: bool) -> bool {
+        let left = &self.upper * threshold.denominator().as_big();
+        let right = threshold.numerator().as_big() * &self.scale;
+        if strict {
+            left < right
+        } else {
+            left <= right
+        }
+    }
+}
+
+/// The exact Clopper–Pearson decision for one binomial count. Only the
+/// outward upper tail bounds participate in the decision (ADR-024 ST-9,
+/// ST-11).
+pub(crate) fn clopper_pearson_decision(
+    bound: &Bound,
+    held: u64,
+    samples: u64,
+    alpha: &Rational,
+    beta: &Rational,
+) -> Result<Decision, InternalFault> {
+    let lower = binomial_tail(held, samples, &bound.threshold, Tail::Lower)?;
+    let upper = binomial_tail(held, samples, &bound.threshold, Tail::Upper)?;
+    let (accepted, rejected) = match bound.comparison {
+        Comparison::AtLeast => (upper.upper_le(beta, false), lower.upper_le(alpha, false)),
+        Comparison::AtMost => (lower.upper_le(beta, false), upper.upper_le(alpha, false)),
+        Comparison::Below => (lower.upper_le(beta, true), upper.upper_le(alpha, false)),
+    };
+    Ok(if accepted {
+        Decision::Accepted
+    } else if rejected {
+        Decision::Rejected
+    } else {
+        Decision::Undecided(UndecidedCause::IndifferenceRegion)
+    })
+}
+
+/// The outward Clopper–Pearson interval found with 64 bisection steps
+/// (ADR-024 ST-11). The lower endpoint uses `β`; the upper endpoint uses
+/// `α`.
+pub(crate) fn clopper_pearson_interval(
+    held: u64,
+    samples: u64,
+    alpha: &Rational,
+    beta: &Rational,
+) -> Result<(Rational, Rational), InternalFault> {
+    if samples == 0 || held > samples {
+        return Err(BINOMIAL_MODE);
+    }
+    let mut lower = int(0);
+    let mut upper = int(1);
+    if held > 0 {
+        for _ in 0..64 {
+            let middle = lower.add(&upper).divided_by_power_of_two(1);
+            let tail = binomial_tail(held, samples, &middle, Tail::Upper)?;
+            if tail.upper_le(beta, false) {
+                lower = middle;
+            } else {
+                upper = middle;
+            }
+        }
+    }
+    let lower_endpoint = lower;
+
+    lower = int(0);
+    upper = int(1);
+    if held < samples {
+        for _ in 0..64 {
+            let middle = lower.add(&upper).divided_by_power_of_two(1);
+            let tail = binomial_tail(held, samples, &middle, Tail::Lower)?;
+            if tail.upper_le(alpha, false) {
+                upper = middle;
+            } else {
+                lower = middle;
+            }
+        }
+    }
+    Ok((lower_endpoint, upper))
 }
 
 /// SPRT's thresholds, each rounded away from zero: the rejection threshold
@@ -155,6 +417,73 @@ mod tests {
 
     fn ratio(numerator: i64, denominator: i64) -> Rational {
         quotient(&int(numerator), &int(denominator)).expect("nonzero denominator")
+    }
+
+    fn decimal(digits: &str, scale: u64) -> Rational {
+        let value: Integer = digits.parse().expect("decimal digits");
+        Rational::from_integer(value).divided_by_power_of_ten(scale)
+    }
+
+    /// FR-189-AC-16: the exact binomial tails decide strictly more counts
+    /// than Okamoto at the same sample count, and remain undecided in the
+    /// gap between their error thresholds.
+    #[trace("TC-624", "FR-189-AC-16")]
+    #[test]
+    fn clopper_pearson_decisions_match_the_fixed_sample_vector() {
+        let bound = Bound {
+            comparison: Comparison::AtLeast,
+            threshold: ratio(9, 10),
+        };
+        let alpha = ratio(1, 100);
+        let beta = ratio(1, 100);
+        let cases = [
+            (231, Decision::Accepted),
+            (219, Decision::Accepted),
+            (
+                218,
+                Decision::Undecided(UndecidedCause::IndifferenceRegion),
+            ),
+            (
+                197,
+                Decision::Undecided(UndecidedCause::IndifferenceRegion),
+            ),
+            (196, Decision::Rejected),
+            (184, Decision::Rejected),
+        ];
+        for (held, expected) in cases {
+            assert_eq!(
+                clopper_pearson_decision(&bound, held, 231, &alpha, &beta)
+                    .expect("binomial tails"),
+                expected,
+                "held count {held}"
+            );
+        }
+    }
+
+    /// FR-189-AC-16: the outward 64-step interval brackets the published
+    /// Clopper–Pearson endpoints at `k = 219`, `N = 231`.
+    #[trace("TC-624", "FR-189-AC-16")]
+    #[test]
+    fn clopper_pearson_known_intervals() {
+        let alpha = ratio(1, 100);
+        let beta = ratio(1, 100);
+        let (lower, upper) =
+            clopper_pearson_interval(219, 231, &alpha, &beta).expect("interval");
+        let published_lower = decimal("90351472792271070929", 20);
+        let published_upper = decimal("97621175445884490995", 20);
+        let printed_unit = int(1).divided_by_power_of_ten(20);
+        let precision = int(1).divided_by_power_of_two(64);
+
+        assert!(lower <= published_lower.add(&printed_unit));
+        assert!(
+            published_lower.sub(&lower) < precision.add(&printed_unit),
+            "lower endpoint is too far below the published value: {lower}"
+        );
+        assert!(upper >= published_upper);
+        assert!(
+            upper.sub(&published_upper) < precision.add(&printed_unit),
+            "upper endpoint is too far above the published value: {upper}"
+        );
     }
 
     /// `N` is 23,026 at `α' = β' = ι = 1/100`, 26,492 at `α' = 1/200` (two

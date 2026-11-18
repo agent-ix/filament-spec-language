@@ -59,7 +59,10 @@ pub use model::{
 
 use bounds::{int, normal_quantile_upper, quotient, QuantileFailure};
 use claim::Comparison as Cmp;
-use method::{interval_decision, least, okamoto_sample_count, Sprt};
+use method::{
+    clopper_pearson_decision, clopper_pearson_interval, clopper_pearson_sample_count,
+    interval_decision, least, okamoto_sample_count, Sprt,
+};
 use regenerative::Cycles;
 
 /// One statistical test's subject: an (initial state, `over` binding) pair
@@ -574,25 +577,67 @@ impl Plan<'_> {
             StatisticalMethod::Sprt => {
                 Some(Sprt::new(claim.bound(), iota, &self.alpha, &self.beta).map_err(fault)?)
             }
-            StatisticalMethod::Okamoto | StatisticalMethod::Regenerative { .. } => None,
+            StatisticalMethod::Okamoto
+            | StatisticalMethod::ClopperPearson
+            | StatisticalMethod::Regenerative { .. } => None,
         };
         // `None` when `N` exceeds every count a test can reach, so only a
         // budget ends the test.
         let fixed = match sequential {
             Some(_) => None,
-            None => okamoto_sample_count(&self.alpha, &self.beta, iota)
+            None => match self.request.method {
+                StatisticalMethod::ClopperPearson => clopper_pearson_sample_count(
+                    &self.alpha,
+                    &self.beta,
+                    iota,
+                )
                 .map_err(fault)?
                 .to_u64(),
+                StatisticalMethod::Okamoto | StatisticalMethod::Regenerative { .. } => {
+                    okamoto_sample_count(&self.alpha, &self.beta, iota)
+                        .map_err(fault)?
+                        .to_u64()
+                }
+                StatisticalMethod::Sprt => None,
+            },
         };
         let stride = u64::from(self.tests);
         loop {
             if fixed == Some(tally.counted) {
                 let estimate = tally.estimate().ok_or(fault(EMPTY_FIXED_SAMPLE))?;
-                let (decision, interval) = interval_decision(claim.bound(), &estimate, iota);
+                let (decision, interval) = match self.request.method {
+                    StatisticalMethod::ClopperPearson => (
+                        clopper_pearson_decision(
+                            claim.bound(),
+                            tally.held,
+                            tally.counted,
+                            &self.alpha,
+                            &self.beta,
+                        )
+                        .map_err(fault)?,
+                        Some(
+                            clopper_pearson_interval(
+                                tally.held,
+                                tally.counted,
+                                &self.alpha,
+                                &self.beta,
+                            )
+                            .map_err(fault)?,
+                        ),
+                    ),
+                    StatisticalMethod::Okamoto | StatisticalMethod::Regenerative { .. } => {
+                        let (decision, interval) =
+                            interval_decision(claim.bound(), &estimate, iota);
+                        (decision, Some(interval))
+                    }
+                    StatisticalMethod::Sprt => {
+                        return Err(fault("sprt-has-no-fixed-sample-count"));
+                    }
+                };
                 return Ok(TestEnd::Decided(Decided {
                     decision,
                     estimate: Some(estimate),
-                    interval: Some(interval),
+                    interval,
                     undefined: None,
                 }));
             }
@@ -939,7 +984,9 @@ pub fn check_sampled<S: BehaviourSampler>(
                 min_cycles,
             })
         }
-        StatisticalMethod::Okamoto | StatisticalMethod::Sprt => None,
+        StatisticalMethod::Okamoto | StatisticalMethod::Sprt | StatisticalMethod::ClopperPearson => {
+            None
+        }
     };
 
     let mut results = Vec::with_capacity(request.tests.len());

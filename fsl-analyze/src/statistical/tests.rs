@@ -1252,6 +1252,39 @@ fn provenance_records_each_test_and_its_trace_range() {
     assert_eq!(sprt.basis.method, StatisticalMethod::Sprt);
 }
 
+/// FR-189-AC-16: Clopper–Pearson is selectable for an event claim, uses
+/// Okamoto's fixed sample count, and records its finite-sample interval.
+#[trace("TC-624", "FR-189-AC-16")]
+#[test]
+fn clopper_pearson_selectable() {
+    let claim = claim(
+        ClaimForm::Probability,
+        Comparison::AtLeast,
+        ratio(9, 10),
+        ratio(1, 10),
+    );
+    let sampler = sampler_ref();
+    let tests = one_test();
+    let mut always_holds = fixed(Ok(Sample::Event(true)));
+    let verdict = completed(run(
+        request(
+            &claim,
+            &tests,
+            StatisticalMethod::ClopperPearson,
+            &sampler,
+        ),
+        &mut always_holds,
+    ));
+
+    assert_eq!(verdict.decision, Decision::Accepted);
+    assert_eq!(verdict.basis.method, StatisticalMethod::ClopperPearson);
+    assert_eq!(verdict.basis.coverage, Coverage::FiniteSample);
+    assert_eq!(verdict.basis.samples, 231);
+    assert_eq!(verdict.tests[0].samples, 231);
+    assert!(verdict.tests[0].interval.is_some());
+    assert_eq!(always_holds.calls, 231);
+}
+
 /// A request is refused before any draw for no test (FR-189-AC-11's
 /// refusal; its `no-initial-state` settlement is FR-192's) or a trace-index
 /// overflow, and on the sampler's generator mismatch; a claim whose
