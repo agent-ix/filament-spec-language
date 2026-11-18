@@ -62,7 +62,7 @@ pub(crate) fn subjects<'a>(
     (0..1)
         .map(|_| ModelSubject {
             simulation: ModelSimulationRequest {
-                package,
+                input: fsl_eval::simulation::model::ModelCheckInput::source(package),
                 packages: package_input,
                 normalization: ModelNormalizationLimits::default(),
                 snapshots,

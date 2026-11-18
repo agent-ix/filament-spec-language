@@ -33,7 +33,7 @@ fn explicit_relation_refutation_matches_the_smt_query_for_its_tuple() {
     ];
     let subject = ModelSubject {
         simulation: ModelSimulationRequest {
-            package: &package,
+            input: fsl_eval::simulation::model::ModelCheckInput::source(&package),
             packages: &packages,
             normalization: ModelNormalizationLimits::default(),
             snapshots: &snapshots,
