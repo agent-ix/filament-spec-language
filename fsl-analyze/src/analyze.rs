@@ -34,6 +34,7 @@
 
 mod clause_item;
 mod derived_item;
+mod digital_item;
 pub mod document;
 mod exact;
 mod invariant_item;
