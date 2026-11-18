@@ -1431,6 +1431,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             super::TemporalValuation {
                 clause: clause.clone(),
                 positions: None,
+                behaviours: None,
             },
         )));
     }
@@ -1818,6 +1819,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
                 super::TemporalValuation {
                     clause: clause.clone(),
                     positions: Some(positions),
+                    behaviours: None,
                 },
             ))),
             Err(fsl_eval::temporal::ValuationStop::NotFinite) => early(refused(

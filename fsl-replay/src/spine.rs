@@ -251,7 +251,7 @@ pub use clause::{
     incomplete_of, name_clause_atom, pending_report, read_evidence_ledger, read_ledger, run_clause,
     run_clause_batch, run_clause_with_temporal_selections, run_package_temporal,
     run_package_temporal_bounded, run_package_trace_subject, run_program_batch,
-    run_temporal_valuation, run_trace_subject_clause, sample_position, settle_correction,
+    run_temporal_behaviours, run_temporal_valuation, run_trace_subject_clause, sample_position, settle_correction,
     settle_run_correction, temporal_batch_exit_code, temporal_batch_outcome, write_ledger,
 };
 mod refinement;

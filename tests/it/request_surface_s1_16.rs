@@ -972,7 +972,6 @@ fn tla_export_agrees_with_fsl_exploration() {
 #[test]
 #[trace("TC-2107", "FR-757-AC-2")]
 #[trace("TC-2107", "FR-757-AC-3")]
-#[ignore = "QSL-2147: cross_evaluate.initial (behaviour enumeration) is not implemented yet"]
 fn tl_cross_evaluation_agrees_and_timed_clauses_do_not_lower() {
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
          profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
@@ -1267,7 +1266,6 @@ fn a_malformed_tl_lowering_member_is_refused() {
 /// FR-931-AC-4: cross-evaluation agrees on the spine's behaviours.
 #[test]
 #[trace("TC-2603", "FR-931-AC-4")]
-#[ignore = "QSL-2147: cross_evaluate.initial (behaviour enumeration from a snapshot) is not implemented yet"]
 fn tl_cross_evaluation_agrees_on_the_spine_behaviours() {
     let unit = low(EVENT_POSITION, LOW_BODY);
     let (code, value) = run(
@@ -1327,7 +1325,6 @@ fn only_fsl_command_names_the_tl_crates() {
 /// steps as its own closed trace, so the trace count grows with `max_steps`.
 #[test]
 #[trace("TC-2962", "FR-931-AC-6")]
-#[ignore = "QSL-2147: cross_evaluate.initial instance enumeration and closed-trace reading are not implemented yet"]
 fn tl_cross_evaluation_reads_each_behaviour_as_a_closed_trace() {
     let unit = low(EVENT_POSITION, LOW_BODY);
     let traces = |max_steps: u64| {
@@ -1357,7 +1354,6 @@ fn tl_cross_evaluation_reads_each_behaviour_as_a_closed_trace() {
 /// FR-931-AC-7 (negative): `over` beside `initial` refuses naming it.
 #[test]
 #[trace("TC-2962", "FR-931-AC-7")]
-#[ignore = "QSL-2147: cross_evaluate.initial refusals are not implemented yet"]
 fn tl_cross_evaluation_refuses_over_beside_initial() {
     let unit = low(EVENT_POSITION, LOW_BODY);
     let (code, value) = run(

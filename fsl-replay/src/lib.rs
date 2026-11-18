@@ -268,7 +268,7 @@ pub use model_check::refinement_settle::{
 #[doc(hidden)]
 pub use model_check::replay::replay_timed_counterexample;
 pub use model_check::replay::{
-    evaluate_model_trace, replay_model_trace, replay_model_trace_with_temporal_selections,
+    behaviour_valuations, evaluate_model_trace, BehaviourValuationEnd, BehaviourValuations, replay_model_trace, replay_model_trace_with_temporal_selections,
     replay_protocol_trace, replay_protocol_trace_with_temporal_selections, DelayBar, ModelTraceEnd,
     ModelTraceRefusal, ModelTraceReplayResult, ModelTraceRun, ModelTraceSettlement,
     ModelTraceSubject, ModelTraceValue, ProtocolTraceSubject, StrongFairnessHint, TimedReplay,

@@ -485,6 +485,10 @@ pub struct TemporalValuation {
     /// The valuation over the supplied trace; `None` when the trace is an
     /// empty finite trace, which asks for the clause alone.
     pub positions: Option<fsl_eval::temporal::ObservedValuation>,
+    /// FR-931 `cross_evaluate.initial`: the valuation of every (instance,
+    /// behaviour) closed trace of the model subject a snapshot builds;
+    /// `None` for a supplied trace.
+    pub behaviours: Option<crate::BehaviourValuations>,
 }
 
 impl ClauseDisposition {
@@ -1350,7 +1354,7 @@ pub fn run_clause_with_temporal_selections(
     request: ClauseRunRequest,
     temporal_selections: &[fsl_package::TemporalClockSelection],
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
-    run_clause_reading(request, temporal_selections, false, None)
+    run_clause_reading(request, temporal_selections, false, None, None)
 }
 
 #[cfg(test)]
@@ -1359,7 +1363,7 @@ pub(crate) fn run_clause_with_function_modes(
     temporal_selections: &[fsl_package::TemporalClockSelection],
     function_modes: &BTreeMap<String, filament_semantic_value::checking::CheckMode>,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
-    run_clause_reading(request, temporal_selections, false, Some(function_modes))
+    run_clause_reading(request, temporal_selections, false, Some(function_modes), None)
 }
 
 /// FR-757 "Cross-evaluation", FR-931: compile the unit as [`run_clause`]
@@ -1372,7 +1376,21 @@ pub(crate) fn run_clause_with_function_modes(
 pub fn run_temporal_valuation(
     request: ClauseRunRequest,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
-    run_clause_reading(request, &[], true, None)
+    run_clause_reading(request, &[], true, None, None)
+}
+
+/// FR-931 `cross_evaluate.initial`: compile the unit as [`run_temporal_valuation`]
+/// does and report [`ClauseDisposition::TemporalValuation`] holding the
+/// valuation of the selected temporal clause over every behaviour of 1 to
+/// `max_steps` steps of the model subject the snapshot `initial` builds, for
+/// every instance of its `over` parameter ([`TemporalValuation::behaviours`]).
+/// The selection names the clause; its trace is not read.
+pub fn run_temporal_behaviours(
+    request: ClauseRunRequest,
+    initial: &DocumentRef,
+    max_steps: usize,
+) -> Result<ClauseRunReport, ClauseRunRefusal> {
+    run_clause_reading(request, &[], true, None, Some((initial, max_steps)))
 }
 
 fn run_clause_reading(
@@ -1380,6 +1398,7 @@ fn run_clause_reading(
     temporal_selections: &[fsl_package::TemporalClockSelection],
     valuation: bool,
     function_modes: Option<&BTreeMap<String, filament_semantic_value::checking::CheckMode>>,
+    behaviours: Option<(&DocumentRef, usize)>,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
     let unit = request.source.unit();
     if unit.bytes.is_empty() {
@@ -1547,6 +1566,20 @@ fn run_clause_reading(
     } else {
         None
     };
+    if let Some((initial, max_steps)) = behaviours {
+        return Ok(run.report(match &request.selection {
+            ClauseRunSelection::Temporal { name, .. }
+            | ClauseRunSelection::SampledTemporal { name, .. } => {
+                model_trace::run_behaviours(&run, name, initial, max_steps)
+            }
+            _ => ClauseDisposition::EvaluateFault(
+                filament_semantic_value::catalog::InternalFault::new(
+                    "temporal",
+                    "behaviour-valuation-selects-a-temporal-clause",
+                ),
+            ),
+        }));
+    }
     match request.selection {
         ClauseRunSelection::Clause(ref selection) => {
             let Some(clause) = package.graph().state_clause(&selection.name) else {
