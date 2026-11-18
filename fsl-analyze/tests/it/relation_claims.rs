@@ -287,7 +287,7 @@ fn relation_tuple_witness_preserves_coalesced_operation_results() {
         (x: V::Vault::step, y: V::Vault::step) { x.result = y.result }";
     let (package, relation, document) = package_and_relation_with_document(
         step_with_result_document(),
-        Vault::Secure,
+        Vault::Custom("post Step using v on V::Vault::step { result = i and self.l = 0 }\n"),
         relation_text,
     );
     let (packages, snapshots, initial) = initial_world(&document);
@@ -310,7 +310,7 @@ fn relation_tuple_witness_preserves_coalesced_operation_results() {
     else {
         panic!("different result pairs refute equality: {outcome:?}");
     };
-    assert_eq!(stats.transitions, 16);
+    assert_eq!(stats.transitions, 8);
     assert_eq!(
         counterexample.traces[0].results.last().cloned().flatten(),
         Some(r#"{"type":"integer","value":"0"}"#.to_owned())
