@@ -33,9 +33,11 @@ use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
 use crate::counter::{
-    document, document_with_ranged_parameter, instance, package, package_with_clauses, subject,
-    universe, value, Documents, Letters, CONTRACT, UNLIMITED, ZERO,
+    document, document_with_ranged_parameter, instance, package_with_clauses,
+    package_with_clauses_mode, package_with_mode, subject, universe, value, Documents, Letters,
+    CONTRACT, UNLIMITED, ZERO,
 };
+use filament_semantic_value::checking::CheckMode;
 
 const WHEN: &str = "terminal Done using v on M when { self.value = 3 };\n";
 const ANY: &str = "terminal Halt using v on M any;\n";
@@ -53,8 +55,29 @@ fn world(terminal: &str, starts: &[&[(&str, i64)]]) -> World {
     world_with(document(false), &format!("{CONTRACT}{terminal}"), starts)
 }
 
+/// The pure function whose divisor may be zero, which the Kernel checks
+/// (FR-495-AC-3).
+const DIVIDE: &str = "function q using v(x: Integer): Integer pure { 6 mod x }\n";
+
+/// [`world`] with [`DIVIDE`], checked under `CheckMode::Kernel`.
+fn kernel_world(terminal: &str, starts: &[&[(&str, i64)]]) -> World {
+    let body = format!("{CONTRACT}{terminal}{DIVIDE}");
+    world_in_mode(document(false), &body, starts, CheckMode::Kernel)
+}
+
 fn world_with(document: Vec<u8>, body: &str, starts: &[&[(&str, i64)]]) -> World {
-    let package = package(&document, body);
+    world_in_mode(document, body, starts, CheckMode::Linked)
+}
+
+/// [`world_with`] checked under `mode`: a unit whose divisor may be zero is
+/// checked by the Kernel (FR-495-AC-3).
+fn world_in_mode(
+    document: Vec<u8>,
+    body: &str,
+    starts: &[&[(&str, i64)]],
+    mode: CheckMode,
+) -> World {
+    let package = package_with_mode(&document, body, mode);
     let mut documents = Documents::new(document);
     let initial = starts
         .iter()
@@ -352,10 +375,22 @@ fn invariant(
     formula: &str,
     atom: fn(i64) -> Option<bool>,
 ) -> ModelCheckOutcome {
-    let (package, clauses) = package_with_clauses(
+    invariant_in_mode(world, keys, formula, atom, CheckMode::Linked)
+}
+
+/// [`invariant`] with the clause checked under `mode`.
+fn invariant_in_mode(
+    world: &World,
+    keys: &[&str],
+    formula: &str,
+    atom: fn(i64) -> Option<bool>,
+    mode: CheckMode,
+) -> ModelCheckOutcome {
+    let (package, clauses) = package_with_clauses_mode(
         &world.documents.document,
         &world.body,
         &[("C", "", formula)],
+        mode,
     );
     let [clause] = clauses.as_slice() else {
         panic!("one declared clause");
@@ -468,19 +503,24 @@ fn a_violation_names_the_first_bound_instance_that_is_false() {
 
 /// Verifies the TP-1 half of FR-126-AC-9; its TP-4 claim, the `kind:
 /// Formula` conjunction and the TP-2 `Holds` are not verified. Over the
-/// Counter subject: `always holds(6 mod (2 -
+/// Counter subject: `always holds(q(2 -
 /// c.value) >= 0)` (the spec writes the division `/`; S3 types `mod`, not
-/// `/`, over integers, so the test uses `mod`) is violated with the prefix `0 -inc-> 1 -inc-> 2` and
+/// `/`, over integers, so the test uses `mod` inside the Kernel-checked
+/// function `q`, FR-495-AC-3) is violated with the prefix `0 -inc-> 1 -inc-> 2` and
 /// `kind: UndefinedEvaluation{where: position 2, cause: division-by-zero}`,
 /// at the clause's atom.
 #[trace("TC-537")]
 #[test]
 fn an_undefined_atom_refutes_at_the_first_position_it_is_undefined() {
-    let world = self::world("", &[&[("c", 0)]]);
-    let formula = "always holds(6 mod (2 - c.value) >= 0)";
-    let outcome = invariant(&world, &["c"], formula, |v| {
-        (v != 2).then(|| 6 % (2 - v) >= 0)
-    });
+    let world = kernel_world("", &[&[("c", 0)]]);
+    let formula = "always holds(q(2 - c.value) >= 0)";
+    let outcome = invariant_in_mode(
+        &world,
+        &["c"],
+        formula,
+        |v| (v != 2).then(|| 6 % (2 - v) >= 0),
+        CheckMode::Kernel,
+    );
     let counterexample = violated(&outcome);
     assert_eq!(values(&world, counterexample, "c"), [0, 1, 2]);
     let CounterexampleKind::UndefinedEvaluation(evaluation) = &counterexample.kind else {
@@ -502,9 +542,8 @@ fn an_undefined_atom_refutes_at_the_first_position_it_is_undefined() {
 }
 
 /// Verifies the deadlock half of FR-126-AC-9 (its other halves are listed
-/// above), its division written `mod`, which S3
-/// types over integers with no division law: with `terminal when 6 mod (3 -
-/// self.value) = 0`, the deadlock-freedom item is violated with the prefix to value 3 and
+/// above), its division written `mod` inside a Kernel-checked function
+/// (FR-495-AC-3): with `terminal when q(3 - self.value) = 0`, `q(x) = 6 mod x`, the deadlock-freedom item is violated with the prefix to value 3 and
 /// `kind: UndefinedEvaluation{where: position 3, cause: division-by-zero}`
 /// at the declaration of `M`. ADR-018 UE-6: an undefined precondition
 /// guard refutes the item at the expanded state, naming the guarded
@@ -512,8 +551,8 @@ fn an_undefined_atom_refutes_at_the_first_position_it_is_undefined() {
 #[trace("TC-537")]
 #[test]
 fn an_undefined_model_side_expression_refutes_the_deadlock_item() {
-    let world = self::world(
-        "terminal Done using v on M when { 6 mod (3 - self.value) = 0 };\n",
+    let world = kernel_world(
+        "terminal Done using v on M when { q(3 - self.value) = 0 };\n",
         &[&[("c", 0)]],
     );
     let outcome = deadlock(&world);
@@ -532,9 +571,14 @@ fn an_undefined_model_side_expression_refutes_the_deadlock_item() {
         UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
     );
 
-    let guarded = "pre CanInc using v on M::Counter::inc { 6 mod (2 - self.value) >= 0 }\n\
+    let guarded = "pre CanInc using v on M::Counter::inc { q(2 - self.value) >= 0 }\n\
                    post Inc using v on M::Counter::inc { self.value - pre(self.value) = 1 }\n";
-    let world = world_with(document(false), guarded, &[&[("c", 0)]]);
+    let world = world_in_mode(
+        document(false),
+        &format!("{guarded}{DIVIDE}"),
+        &[&[("c", 0)]],
+        CheckMode::Kernel,
+    );
     let outcome = deadlock(&world);
     let counterexample = violated(&outcome);
     assert_eq!(values(&world, counterexample, "c"), [0, 1, 2]);
