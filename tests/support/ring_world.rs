@@ -351,6 +351,16 @@ fn packages(variant: Variant) -> fsl_semantics::model::intake::PackageInput {
 
 /// The checked graph of the unit with `refinement`, or its refusals.
 pub fn check(variant: Variant, refinement: &str) -> Result<CheckedGraph, String> {
+    check_in(CheckMode::Linked, variant, refinement)
+}
+
+/// The checked graph of the unit with `refinement` under `mode`, or its
+/// refusals.
+pub fn check_in(
+    mode: CheckMode,
+    variant: Variant,
+    refinement: &str,
+) -> Result<CheckedGraph, String> {
     let documents = packages(variant);
     let text = unit_text(&documents, refinement, variant);
     let parsed = fsl_cst::parse(
@@ -382,7 +392,7 @@ pub fn check(variant: Variant, refinement: &str) -> Result<CheckedGraph, String>
     .expect("the unit assembles");
     declarations
         .with_unwritten_refinements()
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(mode, CheckingLimits::default())
         .map_err(|refusals| format!("{refusals:?}"))
 }
 
@@ -426,7 +436,13 @@ pub struct RingWorld {
 impl RingWorld {
     /// The world of the unit of `variant` with `refinement`.
     pub fn with(variant: Variant, refinement: &str) -> Self {
-        let graph = check(variant, refinement).unwrap_or_else(|refusals| {
+        Self::with_mode(CheckMode::Linked, variant, refinement)
+    }
+
+    /// The world of the unit checked under `mode` (FR-068); a Kernel unit
+    /// may divide where Linked would demand a proved nonzero divisor.
+    pub fn with_mode(mode: CheckMode, variant: Variant, refinement: &str) -> Self {
+        let graph = check_in(mode, variant, refinement).unwrap_or_else(|refusals| {
             panic!("{refinement}: the unit checks: {refusals}");
         });
         let mut snapshots = BTreeMap::new();

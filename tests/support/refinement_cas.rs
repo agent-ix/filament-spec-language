@@ -607,7 +607,7 @@ pub fn check_with_internals(
         None => declarations.with_unwritten_refinements(),
     };
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(CheckMode::Kernel, CheckingLimits::default())
         .map_err(|refusals| format!("{refusals:?}"))
 }
 

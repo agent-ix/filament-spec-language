@@ -181,13 +181,11 @@ pub fn check(
         }
     }
 
-    let type_names = scope.for_declaration(&protocol.name.name);
     let (bound_attempts, contract_refusals) = bind_attempts(
         protocol,
         attempts,
         state_clauses,
         scope.types(),
-        &type_names,
     );
     refusals.extend(contract_refusals);
 

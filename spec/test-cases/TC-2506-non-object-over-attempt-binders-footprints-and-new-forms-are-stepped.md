@@ -22,6 +22,6 @@ Verify the remaining FR-882 rules. Scope: FR-882-AC-3, FR-882-AC-4, FR-882-AC-5,
 ## Expected Results
 
 - Step 1: four initial instances, two blocked at the `check`; deadlock freedom refuted first at `n = 0`; two initial instances over `Boolean`.
-- Step 2: `ill_typed`/`type-mismatch` at the binder for the first two, with `expected` and `actual`; the third checks and is bound.
+- Step 2: all three check; each attempt step binds its binder to the attempt's application record.
 - Step 3: both explore, with equal access classes.
 - Step 4: each settles; the post-test body's first step is enabled at entry.

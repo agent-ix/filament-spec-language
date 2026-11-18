@@ -1086,7 +1086,7 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
     let source = cas_twice(false, false)
         .replace(
             "protocol Twice",
-            "pre UnknownCommit using v on Impl::Counter::commitA { 6 mod (1 - self.value) >= 0 }\nprotocol Twice",
+            "pre UnknownCommit using v on Impl::Counter::commitA { mod_defined(self.value) }\nfunction mod_defined using v(n: Int[0, 2]): Boolean pure { 6 mod (1 - n) >= 0 }\nprotocol Twice",
         )
         .replace(
             "step Impl::Counter::commitB -> Spec::Counter::inc(self);",
@@ -1189,7 +1189,7 @@ fn an_undetermined_protocol_assumption_has_a_typed_finite_witness() {
     let source = cas_twice(false, false)
         .replace(
             "protocol Twice",
-            "pre UnknownProtocol using v on Spec::Counter::inc { 6 mod (1 - self.value) >= 0 }\n\
+            "pre UnknownProtocol using v on Spec::Counter::inc { mod_defined(self.value) }\nfunction mod_defined using v(n: Int[0, 2]): Boolean pure { 6 mod (1 - n) >= 0 }\n\
              temporal Left using inf over (k: Spec::Counter) clock \"model-steps\" on origin { fair weak whole Spec::Counter::inc; eventually holds(k.value >= 0) }\n\
              protocol Twice",
         )
