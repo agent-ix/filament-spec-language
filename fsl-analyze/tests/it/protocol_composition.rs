@@ -19,9 +19,14 @@ use crate::analyze_cli_support::{analyze, label, litmus_request, order_protocol,
 /// each step's transition identity, the key of its post-state and, for a
 /// `send`, its send record.
 fn order_steps(kinds: &[StepKind]) -> Vec<Value> {
-    let documents = crate::litmus::Documents::new();
     let package = crate::litmus::package_called("analyze-unit", &order_protocol(true));
-    let mut subject = documents.subject(&package, "Flow", &[]);
+    order_steps_over(&package, kinds)
+}
+
+/// [`order_steps`] over `package`, which declares the protocol `Flow`.
+fn order_steps_over(package: &fsl_package::CheckedPackage, kinds: &[StepKind]) -> Vec<Value> {
+    let documents = crate::litmus::Documents::new();
+    let mut subject = documents.subject(package, "Flow", &[]);
     subject.roles = ["Buyer", "Seller"]
         .map(|role| RoleBinding {
             role: role.to_owned(),
@@ -498,16 +503,12 @@ fn a_claim_with_a_formula_is_decided_over_the_replayed_behaviour() {
     );
 }
 
-/// FR-941-AC-5: a protocol expression undefined at a replayed state refutes
-/// the item there, cause `undefined-evaluation` with locus `protocol`, with
-/// a replayed counterexample, before a later stale step; a stale first step
-/// still declines at position 0.
-#[trace("TC-2965", "FR-941-AC-5")]
-#[test]
-#[ignore = "QSL-2272: spec gap - fsl analyze checks authored source in Linked mode only (a function body's mode comes from a package's recorded check_mode, read by replay requests, or the in-process CheckMode API), so a Kernel function q(x) = 6 mod x is refused unproved-nonzero and FR-941-AC-5 has no authorable CLI fixture"]
-fn an_undefined_protocol_expression_refutes_at_its_state() {
-    let steps = order_steps(&[StepKind::Send, StepKind::Receive, StepKind::Finish]);
-    let undefined_got = format!(
+/// The order protocol with a Kernel-checked function `q` (FR-952) called by
+/// the `receive` constraint over a capture equal to 0: Linked admits the
+/// call, and the body's `6 mod x` is undefined at run time, so the
+/// constraint has no value at the state after the send.
+fn undefined_receive_unit() -> String {
+    format!(
         "function q using v(x: Integer): Integer pure {{ 6 mod x }}\n{}",
         order_protocol(true)
             .replacen(
@@ -520,24 +521,137 @@ fn an_undefined_protocol_expression_refutes_at_its_state() {
                 "receive Got via Order of Placed as (got: Ack) { q(c) = 0 }",
                 1,
             )
+    )
+}
+
+/// The in-process `finite-replay` item over the Kernel-checked `body` and
+/// the trace document `trace`: the settled outcome items.
+fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> {
+    use fsl_analyze::analyze::document::{settle_run, AnalyzeRun, ResolvedClaim, ResolvedItem};
+    use fsl_analyze::analyze::{
+        AnalyzeLimits, ClaimItem, Engines, ItemOptions, SourceProvision, SubjectBinding,
+    };
+    use fsl_foundation::source::provenance::OccurrenceKey;
+    use fsl_foundation::RequestIndex;
+    use fsl_route::request::ExtentClassification;
+    use fsl_semantics::check::Capability;
+    use fsl_semantics::model::observation::DocumentRef;
+
+    let package = crate::litmus::package_kernel(body);
+    let mut documents = crate::litmus::Documents::new();
+    let reference = DocumentRef {
+        authority: "test".to_owned(),
+        identity: identity.to_owned(),
+    };
+    documents
+        .snapshots
+        .insert(reference.clone(), trace.to_string().into_bytes());
+    let anchor = package
+        .graph()
+        .protocol_node_keys("Flow")
+        .and_then(|keys| keys.clause.clone())
+        .expect("the protocol's clause node");
+    let claim = OccurrenceKey::new(
+        anchor,
+        filament_exact::Origin::new(filament_exact::Role::new("declaration"), 0),
     );
+    let engines = Engines::fsl().expect("the manifests register");
+    let mut registry = fsl_route::Registry::new();
+    for descriptor in engines.registrations() {
+        registry
+            .register(descriptor.clone())
+            .expect("a unique backend");
+    }
+    let candidates = registry.candidates_for_evidence(
+        Capability::FiniteReplay,
+        &fsl_route::ItemEvidence::Absent,
+        None,
+    );
+    let fsl_route::CandidateOutcome::Candidates(set) = &candidates else {
+        panic!("finite-replay has a candidate");
+    };
+    let item = ClaimItem {
+        request_index: RequestIndex::new(0),
+        claim,
+        kind: Capability::FiniteReplay,
+        extent: ExtentClassification::Bounded,
+        backend: None,
+        candidates: set.candidates().to_vec(),
+        options: ItemOptions {
+            required: true,
+            trace: Some(reference),
+            ..ItemOptions::default()
+        },
+        form: None,
+    };
+    let subject =
+        fsl_analyze::analyze::document::SubjectSelection::default_over(&documents.snapshots);
+    let settled = settle_run(
+        AnalyzeRun {
+            package: &package,
+            binding: SubjectBinding {
+                packages: &documents.packages,
+                snapshots: &documents.snapshots,
+                initial: vec![documents.initial.clone()],
+                universes: documents.universes(),
+            },
+            provision: SourceProvision::single(
+                package.graph().source(),
+                crate::litmus::unit_text(body).as_bytes(),
+            ),
+            items: vec![ResolvedItem::Claim(Box::new(ResolvedClaim {
+                item,
+                claim_name: "Flow".to_owned(),
+                candidates,
+                subject,
+                unrouted: false,
+            }))],
+            engines: &engines,
+            limits: AnalyzeLimits::unbounded(),
+        },
+        &crate::analyze_cli_support::Fr290,
+        &filament_exact::Cancel::new(),
+    )
+    .expect("a settled run");
+    settled.items
+}
+
+/// FR-941-AC-5: a protocol expression undefined at a replayed state refutes
+/// the item there, cause `undefined-evaluation` with locus `protocol`, with
+/// a replayed counterexample, before a later stale step; a stale first step
+/// still declines at position 0. The function's Kernel check (FR-952) is
+/// selected through the in-process analyze entry point, as the CLI checks
+/// authored source Linked only.
+#[trace("TC-2965", "FR-941-AC-5")]
+#[test]
+fn an_undefined_protocol_expression_refutes_at_its_state() {
+    let body = undefined_receive_unit();
+    let package = crate::litmus::package_kernel(&body);
+    let sent = order_steps_over(&package, &[StepKind::Send]);
 
     let refuted_at_one = |item: &Value| {
-        assert_eq!(label(item), "refuted", "{item}");
+        assert_eq!(item["record"]["result"], "refuted", "{item}");
         let cause = &item["record"]["cause"];
         assert_eq!(cause["kind"], "undefined-evaluation", "{item}");
         assert_eq!(cause["where"]["position"], 1, "{item}");
         assert_eq!(cause["where"]["locus"], "protocol", "{item}");
-        assert_eq!(cause["cause"], "division-by-zero", "{item}");
+        assert_eq!(
+            item["counterexample"]["kind"]["type"], "undefined-evaluation",
+            "{item}"
+        );
+        assert_eq!(
+            item["counterexample"]["kind"]["cause"], "division-by-zero",
+            "{item}"
+        );
     };
 
-    let run = replay_item_over(
+    let items = kernel_replay_items(
+        &body,
         "undefined-step",
-        &undefined_got,
-        &trace_document("undefined-step", &steps),
+        &trace_document("undefined-step", &sent),
     );
-    let item = run.item(0);
-    refuted_at_one(&item);
+    let item = &items[0];
+    refuted_at_one(item);
     assert_eq!(
         item["counterexample"]["prefix"].as_array().map(Vec::len),
         Some(1),
@@ -545,28 +659,72 @@ fn an_undefined_protocol_expression_refutes_at_its_state() {
     );
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
 
-    let mut moved = steps.clone();
-    moved[2]["post_state"]["key"] = json!("AAAA");
-    let run = replay_item_over(
+    let mut stale_later = sent.clone();
+    let mut bogus = sent[0].clone();
+    bogus["post_state"]["key"] = json!("AAAA");
+    stale_later.push(bogus);
+    let items = kernel_replay_items(
+        &body,
         "undefined-before-stale",
-        &undefined_got,
-        &trace_document("undefined-before-stale", &moved),
+        &trace_document("undefined-before-stale", &stale_later),
     );
-    refuted_at_one(&run.item(0));
+    refuted_at_one(&items[0]);
 
-    let run = replay_item_over(
+    let mut stale_first = sent.clone();
+    stale_first[0]["post_state"]["key"] = json!("AAAA");
+    let items = kernel_replay_items(
+        &body,
         "undefined-stale-first",
-        &undefined_got,
-        &trace_document("undefined-stale-first", &steps[1..]),
+        &trace_document("undefined-stale-first", &stale_first),
     );
-    let item = run.item(0);
-    assert_eq!(label(&item), "declined", "{item}");
+    let item = &items[0];
+    assert_eq!(item["record"]["result"], "declined", "{item}");
     assert_eq!(
         item["record"]["diagnostic"]["cause"], "invalid-value",
         "{item}"
     );
     assert_eq!(
         item["record"]["diagnostic"]["detail"]["position"], 0,
+        "{item}"
+    );
+}
+
+/// FR-941-AC-4's `undefined` row: a required clause whose atom reads the
+/// Kernel-checked function at a zero divisor is undefined at the position
+/// the evaluator names, and the item refutes with that reading.
+#[trace("TC-2965", "FR-941-AC-4")]
+#[test]
+fn a_required_clause_over_an_undefined_atom_is_refuted_as_undefined() {
+    let body = format!(
+        "function q using v(x: Integer): Integer pure {{ 6 mod x }}\n{}",
+        order_requiring(&[("R", "always holds(q(k.r1 - k.r1) >= 0)")])
+    );
+    let package = crate::litmus::package_kernel(&body);
+    let steps = order_steps_over(
+        &package,
+        &[StepKind::Send, StepKind::Receive, StepKind::Finish],
+    );
+    let items = kernel_replay_items(
+        &body,
+        "formula-undefined",
+        &trace_document("formula-undefined", &steps),
+    );
+    let item = &items[0];
+    assert_eq!(item["record"]["result"], "refuted", "{item}");
+    assert_eq!(
+        item["disposition"]["temporal"]["kind"], "undefined",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["cause"]["kind"], "undefined-evaluation",
+        "{item}"
+    );
+    assert_eq!(
+        item["counterexample"]["kind"]["cause"], "division-by-zero",
+        "{item}"
+    );
+    assert_eq!(
+        item["counterexample"]["kind"]["where"]["position"], 0,
         "{item}"
     );
 }
