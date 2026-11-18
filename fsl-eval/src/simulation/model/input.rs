@@ -193,6 +193,13 @@ pub enum PendingPackageForm {
     /// type (FR-120 "Operations").
     #[error("the selected domain packages' operations are not typed: {0:?}")]
     Operations(fsl_semantics::check::AssemblyRefusal),
+    /// The package's `probabilistic` nodes do not read (FSL FR-740).
+    #[error("the package's probabilistic nodes are not readable: {0}")]
+    ProbabilisticNodes(fsl_package::ProbabilisticReadFault),
+    /// The package's random parameters and workloads do not rebuild against
+    /// the selected domain packages (FSL FR-740).
+    #[error("the package's probabilistic model does not rebuild: {0}")]
+    Probabilistic(fsl_semantics::check::PackageProbabilisticRefusal),
 }
 
 /// Why the package route built no package form of a temporal clause (FR-940).
@@ -242,8 +249,10 @@ impl<'p> PackageModelInput<'p> {
     /// those packages ([`fsl_semantics::check::model_operation_table`]), so a
     /// step applies the operations and effects the source route applies.
     ///
-    /// A package never carries a probabilistic model (S4 refuses to emit one),
-    /// so its probabilistic tables are empty.
+    /// Its random parameters and workloads are the ones the package's
+    /// `probabilistic` nodes carry, rebuilt as S3 records them against the
+    /// selected domain packages (FSL FR-740). A package carries no reward,
+    /// delay or claim of the model, so those tables are empty.
     ///
     /// # Errors
     ///
@@ -279,13 +288,19 @@ impl<'p> PackageModelInput<'p> {
         let operations = model
             .operation_table(&std::collections::BTreeMap::new())
             .map_err(PendingPackageForm::Operations)?;
+        let nodes = package
+            .probabilistic()
+            .map_err(PendingPackageForm::ProbabilisticNodes)?;
+        let probabilistic = model
+            .probabilistic_model(&operations, &nodes)
+            .map_err(PendingPackageForm::Probabilistic)?;
         Ok(Self {
             package,
             world,
             model,
             model_selections,
             operations,
-            probabilistic: CheckedProbabilisticModel::default(),
+            probabilistic,
         })
     }
 

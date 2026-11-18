@@ -23,9 +23,13 @@ pub(crate) use base::{id, PACKAGE};
 const INTEGER: &str = "ix://filament/native/Integer";
 
 fn parameter(operation: &str, name: &str) -> Value {
+    typed_parameter(operation, name, INTEGER)
+}
+
+fn typed_parameter(operation: &str, name: &str, type_ref: &str) -> Value {
     let node = format!("{operation}/{name}");
     json!({
-        "identity": id(&node), "name": name, "typeRef": INTEGER,
+        "identity": id(&node), "name": name, "typeRef": type_ref,
         "presence": "required", "nullable": false, "defaultKind": "none",
         "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
         "origin": base::origin(&node),
@@ -116,4 +120,42 @@ pub(crate) fn document() -> Value {
         "origin": base::origin("configs"),
     }]);
     document
+}
+
+/// A domain package whose object type `Leaf` extends `Base`, each declaring
+/// one operation: the one type whose supertype lineage declares every
+/// operation of the package is `Leaf`.
+pub(crate) fn lineage_document() -> Value {
+    let nothing = json!({"modifies": [], "creates": [], "deletes": []});
+    let types = vec![
+        object_type(
+            "Base",
+            &[],
+            &["f"],
+            vec![operation("Base", "op", &[], &nothing)],
+        ),
+        object_type(
+            "Leaf",
+            &["Base"],
+            &[],
+            vec![operation("Leaf", "step", &[], &nothing)],
+        ),
+    ];
+    base::domain_document(types, vec![base::construct("thing", meaning::OBJECT_TYPE)])
+}
+
+/// A domain package whose object type `Timer` declares `wait(d)`, `d` a
+/// quantity of milliseconds.
+pub(crate) fn quantity_document() -> Value {
+    let nothing = json!({"modifies": [], "creates": [], "deletes": []});
+    let node = "Timer/wait";
+    let wait = json!({
+        "identity": id(node), "name": "wait",
+        "params": [typed_parameter("Timer/wait", "d", "ix://filament/unit/ms")],
+        "pre": [], "post": [], "frame": nothing, "origin": base::origin(node),
+    });
+    base::domain_document(
+        vec![object_type("Timer", &[], &["f"], vec![wait])],
+        vec![base::construct("thing", meaning::OBJECT_TYPE)],
+    )
 }

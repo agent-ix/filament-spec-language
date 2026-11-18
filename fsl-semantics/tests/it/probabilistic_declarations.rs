@@ -3867,3 +3867,149 @@ fn a_comparison_operand_types_a_bare_decimal_literal() {
         );
     }
 }
+
+/// The package spelling of `value`, as a `probabilistic` node carries it.
+fn spelled(value: &filament_exact::Value) -> fsl_semantics::check::PackageLiteral {
+    use filament_exact::Value;
+    use fsl_semantics::check::PackageLiteral as Literal;
+    match value {
+        Value::Boolean(value) => Literal::Boolean(*value),
+        Value::Integer(value) => Literal::Integer(value.clone()),
+        Value::Rational(value) => Literal::Rational(value.clone()),
+        Value::Quantity(value) => Literal::Quantity(value.magnitude().clone()),
+        Value::Text(value) => Literal::Text(value.retained().to_owned()),
+        Value::Enum(member) => Literal::Enum(member.variant().case().to_owned()),
+        other => panic!("a support value a package can spell: {other:?}"),
+    }
+}
+
+/// FSL FR-740: the random parameters and workloads a package spells (their
+/// model nodes, operation and parameter names, values and weights), joined to
+/// the selected domain packages' views, rebuild the records S3 checked:
+/// operations, positions, parameter types, support values with their
+/// weights and probabilities (enum ranks, units and text profiles rebuilt
+/// from the type), and workloads.
+fn assert_rebuilds_s3(document: &[u8], body: &str) {
+    use fsl_semantics::check::{
+        PackageProbabilistic, PackageRandomParameter, PackageSupport, PackageWeight,
+        PackageWorkload,
+    };
+    use fsl_semantics::model::key::object_type_node_key;
+    use fsl_semantics::model::state::StateModel;
+
+    let graph = assemble_over(document, body)
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
+    let (_, packages) = service_unit_over(document, body);
+    let model = StateModel::new(
+        graph.model_selections(),
+        graph.scope().types(),
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the selected model");
+    let checked = graph.probabilistic_model();
+    let package = PackageProbabilistic {
+        random_parameters: checked
+            .random_parameters()
+            .iter()
+            .map(|random| PackageRandomParameter {
+                declaring: object_type_node_key(random.operation().declaring_key().unwrap())
+                    .unwrap(),
+                operation: random.operation().name().to_owned(),
+                parameter: random.parameter().to_owned(),
+                support: random
+                    .support()
+                    .iter()
+                    .map(|support| PackageSupport {
+                        value: spelled(&support.value.0),
+                        weight: support.weight.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+        workloads: checked
+            .workloads()
+            .iter()
+            .map(|workload| PackageWorkload {
+                name: workload.name().to_owned(),
+                model: object_type_node_key(workload.model_key().expect("a model type")).unwrap(),
+                weights: workload
+                    .weights()
+                    .iter()
+                    .map(|(operation, weight)| PackageWeight {
+                        declaring: object_type_node_key(operation.declaring_key().unwrap())
+                            .unwrap(),
+                        operation: operation.name().to_owned(),
+                        weight: weight.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    };
+    let read = model
+        .probabilistic_model(graph.scope().operations(), &package)
+        .unwrap_or_else(|refusal| panic!("{body}: the records rebuild: {refusal}"));
+    let content = |operation: &fsl_semantics::check::ProbabilisticOperation| {
+        (
+            operation.key().clone(),
+            operation.declaring(),
+            operation.declaring_key().cloned(),
+            operation.name().to_owned(),
+        )
+    };
+    assert_eq!(
+        read.random_parameters().len(),
+        checked.random_parameters().len()
+    );
+    for (read, checked) in read
+        .random_parameters()
+        .iter()
+        .zip(checked.random_parameters())
+    {
+        assert_eq!(content(read.operation()), content(checked.operation()));
+        assert_eq!(read.parameter(), checked.parameter());
+        assert_eq!(read.position(), checked.position());
+        assert_eq!(read.value_type(), checked.value_type());
+        assert_eq!(read.support(), checked.support());
+    }
+    assert_eq!(read.workloads().len(), checked.workloads().len());
+    for (read, checked) in read.workloads().iter().zip(checked.workloads()) {
+        assert_eq!(read.name(), checked.name());
+        assert_eq!(read.model_key(), checked.model_key());
+        let weights = |workload: &fsl_semantics::check::Workload| {
+            workload
+                .weights()
+                .iter()
+                .map(|(operation, weight)| (content(operation), weight.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(weights(read), weights(checked));
+    }
+}
+
+/// FSL FR-740 (TC-2062): an integer-valued and an enum-valued random
+/// parameter and a workload rebuild as S3 records, each enum case with the
+/// rank its enumeration gives it.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+fn an_enum_valued_package_rebuilds_the_s3_records() {
+    assert_rebuilds_s3(&service_document(), &service(None, ""));
+}
+
+/// FSL FR-740 (TC-2062): a quantity-valued random parameter rebuilds as the
+/// S3 record, each value in the unit its parameter's type names.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+fn a_quantity_valued_package_rebuilds_the_s3_records() {
+    assert_rebuilds_s3(
+        &service_document_with_quantity_duration(),
+        &service(
+            Some((
+                D,
+                "random Server::attempt(d) ~ { 1 ms: 90, 3 ms: 7, 12 ms: 3 };",
+            )),
+            "",
+        ),
+    );
+}

@@ -446,12 +446,13 @@ fn the_support_graph_is_the_state_graph() {
 }
 
 /// FR-185-AC-7 (TC-620 step 7): `Service`, with `d` typed `Millis = Int[1,
-/// 12]`, checks at S3 with its record intact and refuses at S4
-/// `unsupported_construct`/`not-yet-implemented`, naming its first random
-/// parameter in source order, `random-parameter` and the selected profile.
-#[trace("TC-620", "FR-185-AC-7")]
+/// 12]`, checks at S3 with its record intact; S4 writes its random
+/// parameters and workload and refuses at `unsupported_construct`/
+/// `not-yet-implemented`, naming its reward, `reward` and the selected
+/// profile.
+#[trace("TC-2062", "FR-185-AC-12")]
 #[test]
-fn service_checks_and_refuses_emission_naming_its_first_random_parameter() {
+fn service_checks_and_refuses_emission_naming_its_reward() {
     let world = World::new(&world::service(""));
     let model = world.package.graph().probabilistic_model();
     assert_eq!(model.random_parameters().len(), 2);
@@ -463,10 +464,10 @@ fn service_checks_and_refuses_emission_naming_its_first_random_parameter() {
         &refusal,
         fsl_package::EmitRefusal::ProbabilisticModelNotEmitted {
             declaration,
-            feature: fsl_semantics::check::ProbabilisticFeature::RandomParameter,
+            feature: fsl_semantics::check::ProbabilisticFeature::Reward,
             profile: Some("filament.model.complete/v1"),
             region,
-        } if declaration == "attempt(d)" && region.start() < region.end()
+        } if declaration == "duration" && region.start() < region.end()
     ));
     assert_eq!(
         (refusal.code(), refusal.cause()),
@@ -663,7 +664,7 @@ fn zero_weight_workloads_follow_enabled_operation_weights() {
 #[trace("TC-2062", "FR-740-AC-2")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-5")]
 #[test]
-#[ignore = "QSL-2000: Service emitted as v2 probabilistic nodes not implemented yet"]
+#[ignore = "QSL-2440: the reward of Service is emitted as a v2 probabilistic node"]
 fn service_is_emitted_and_its_steps_hold_for_the_emitted_model() {
     let world = World::new(&world::service(""));
     let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
@@ -688,6 +689,137 @@ fn service_is_emitted_and_its_steps_hold_for_the_emitted_model() {
     let busy = steps(&system, &request.post, &world, "Steady");
     assert_eq!(busy.len(), 6);
     assert_eq!(sum(&busy), ratio(1, 1));
+}
+
+/// `Service` without its reward, and without the Boolean `ok` random
+/// parameter when `boolean` is false.
+fn service_without_reward(boolean: bool) -> crate::simulation::sampled::world::Model {
+    let mut model = world::service("");
+    model.body = model
+        .body
+        .replace("reward duration on Server::attempt = d;\n", "");
+    if !boolean {
+        model.body = model
+            .body
+            .replace("random Server::attempt(ok) ~ { true: 98, false: 2 };\n", "");
+    }
+    model
+}
+
+/// FR-740-AC-1 (TC-2062): `Service` without its reward and its Boolean
+/// parameter emits the `Millis`-typed random parameter `d` and the `Steady`
+/// workload node.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+fn service_random_parameter_and_workload_are_emitted() {
+    let world = World::new(&service_without_reward(false));
+    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .unwrap_or_else(|refusal| panic!("S4 emits the random parameter: {refusal:?}"));
+    let wire: serde_json::Value =
+        serde_json::from_slice(emission.package().bytes()).expect("JSON bytes");
+    let count = |form: &str| {
+        wire["semantic_graph"]["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .filter(|node| node["node_tag"] == "probabilistic" && node["semantic_form"] == form)
+            .count()
+    };
+    assert_eq!((count("random_parameter"), count("workload")), (1, 1));
+}
+
+/// FR-185-AC-12 (TC-2062): the Boolean random parameter `ok` of `Service` is
+/// refused at emission with its locus, because IR's reader admits no Boolean
+/// support value (its join refuses every non-string literal payload).
+#[trace("TC-2062", "FR-185-AC-12")]
+#[test]
+fn service_refuses_emission_naming_its_boolean_random_parameter() {
+    let world = World::new(&service_without_reward(true));
+    let refusal = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .expect_err("emission refuses the Boolean support");
+    assert!(matches!(
+        &refusal,
+        fsl_package::EmitRefusal::ProbabilisticModelNotEmitted {
+            declaration,
+            feature: fsl_semantics::check::ProbabilisticFeature::RandomParameter,
+            region,
+            ..
+        } if declaration == "attempt(ok)" && region.start() < region.end()
+    ));
+}
+
+/// FSL FR-740 (TC-2062): the package route's input over the emitted
+/// `Service` package carries the random parameters and the workload its nodes
+/// hold, rebuilt as S3 recorded them: the same operations, positions, types,
+/// support values, weights and probabilities.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+fn the_package_route_rebuilds_the_probabilistic_model_of_the_emitted_package() {
+    // The package route reads no state frame yet, so the unit holds only the
+    // probabilistic declarations.
+    let mut model = world::service("");
+    model.body = "random Server::attempt(d) ~ { 1: 90, 3: 7, 12: 3 };\n\
+                  workload Steady on M { weight Server::request = 1; \
+                  weight Server::attempt = 1; weight Server::reset = 1; }\n"
+        .to_owned();
+    let world = World::new(&model);
+    let source = world.package.graph().probabilistic_model();
+    let read = fsl_package::read_evaluation_package(
+        &world.package,
+        fsl_semantics::library::LibraryName::new("fixture").expect("a library name"),
+        world.packages(),
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+    )
+    .expect("the package emits and its bytes are admitted");
+    let admitted = read.admitted();
+    let mut rows_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let rows = read
+        .emission()
+        .identity_rows(admitted, &mut rows_budget)
+        .expect("the identity rows join the package");
+    let mut join_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let bare = fsl_package::BarePackage::new(admitted)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &rows,
+                equality: None,
+            },
+            &mut join_budget,
+        )
+        .expect("the bytes view admits its supply");
+    let input = crate::simulation::model::PackageModelInput::of(
+        &bare,
+        world.packages(),
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .unwrap_or_else(|pending| panic!("the package route builds its input: {pending}"));
+    let rebuilt = input.input().probabilistic;
+    assert_eq!(rebuilt.random_parameters().len(), 1);
+    for expected in source.random_parameters() {
+        let found = rebuilt
+            .random_parameter(expected.operation().key(), expected.parameter())
+            .expect("the random parameter is rebuilt");
+        assert_eq!(
+            found.operation().declaring(),
+            expected.operation().declaring()
+        );
+        assert_eq!(found.operation().name(), expected.operation().name());
+        assert_eq!(found.position(), expected.position());
+        assert_eq!(found.value_type(), expected.value_type());
+        assert_eq!(found.support(), expected.support());
+    }
+    let steady = rebuilt.workload("Steady").expect("the workload is rebuilt");
+    let expected = source.workload("Steady").expect("the source workload");
+    assert_eq!(steady.weights().len(), expected.weights().len());
+    for (expected, expected_weight) in expected.weights() {
+        let (_, found_weight) = steady
+            .weights()
+            .iter()
+            .find(|(found, _)| found.key() == expected.key())
+            .expect("the operation is weighted");
+        assert_eq!(found_weight, expected_weight);
+    }
 }
 
 /// FSpec FR-406-AC-6 (TC-351): under a workload that gives `send_b` weight

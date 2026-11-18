@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-185: a package whose random parameters, rewards or workloads check is
-//! refused at emission, since FR-322's v2 vocabulary has no node for them,
-//! rather than written without them. FR-498: a probabilistic claim is
-//! emitted as its own `claim`/`probabilistic_claim` node and sidecar row.
+//! FR-740: a checked random parameter and workload are emitted as
+//! `probabilistic` nodes; a package whose rewards or delays check is refused
+//! at emission, with the declaration's locus, rather than written without
+//! them. FR-498: a probabilistic claim is emitted as its own
+//! `claim`/`probabilistic_claim` node and sidecar row.
 
 use super::admission_corpus::config_version_unit;
 use super::*;
@@ -25,27 +26,42 @@ fn probabilistic_package() -> CheckedPackage {
     CheckedPackage::link(graph)
 }
 
-/// FR-185 "Package emission": the checked workload and reward are recorded
-/// on the graph, and the emitter refuses
-/// `unsupported_construct`/`not-yet-implemented`, naming the first of them in
-/// source order (the workload `Steady`), its feature and the unit's profile.
-#[trace("TC-620")]
+/// FR-185 "Package emission", FR-740: the checked workload is emitted, and
+/// the reward beside it is refused `unsupported_construct`/
+/// `not-yet-implemented`, naming the reward `cost`, its feature, the unit's
+/// profile and the reward's own locus.
+#[trace("TC-2062", "FR-185-AC-12")]
 #[test]
-fn a_checked_probabilistic_model_refuses_emission() {
+fn a_checked_reward_refuses_emission_beside_an_emitted_workload() {
     let refusal = emit_checked(&probabilistic_package()).expect_err("emission refuses");
     assert!(matches!(
         &refusal,
         EmitRefusal::ProbabilisticModelNotEmitted {
             declaration,
-            feature: fsl_semantics::check::ProbabilisticFeature::Workload,
+            feature: fsl_semantics::check::ProbabilisticFeature::Reward,
             profile: Some("filament.model.complete/v1"),
             region,
-        } if declaration == "Steady" && region.start() < region.end()
+        } if declaration == "cost" && region.start() < region.end()
     ));
     assert_eq!(
         (refusal.code(), refusal.cause()),
         (Code::UnsupportedConstruct, Some("not-yet-implemented"))
     );
+}
+
+/// The ConfigVersion unit with `weights` written in a workload `Steady`.
+pub(super) fn workload_package(weights: &str) -> CheckedPackage {
+    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
+    let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
+    let unit = format!(
+        "{}workload Steady on Config {{ {weights} }}\n",
+        config_version_unit::unit_text()
+    );
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    CheckedPackage::link(graph)
 }
 
 /// The ConfigVersion unit under the event-position profile `ev`, with
@@ -285,7 +301,7 @@ fn emit_and_read(package: &CheckedPackage, document: &[u8]) -> (Value, Read) {
 #[trace("TC-2062", "FR-185-AC-7")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-1")]
 #[test]
-#[ignore = "QSL-2000: emission of workloads and rewards as v2 probabilistic nodes not implemented yet"]
+#[ignore = "QSL-2440: emission of rewards as v2 probabilistic nodes (the workload half is workload_round_trips)"]
 fn a_workload_and_a_reward_are_emitted_as_probabilistic_nodes() {
     let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
     let (wire, read) = emit_and_read(&probabilistic_package(), document);
@@ -309,15 +325,9 @@ fn a_workload_and_a_reward_are_emitted_as_probabilistic_nodes() {
     assert!(body.contains("cost"), "{body}");
 }
 
-/// TC-2062 (FR-740-AC-1): a unit with a random parameter on
-/// `attemptUpdate(n)` emits one `probabilistic`/`random_parameter` node
-/// whose support keeps the declared order and weights, and the strict reader
-/// admits it.
-#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-1")]
-#[trace("TC-2062", "FR-740-AC-1")]
-#[test]
-#[ignore = "QSL-2000: emission of random parameters as v2 probabilistic nodes not implemented yet"]
-fn a_random_parameter_is_emitted_and_read_back() {
+/// The fixture model's document, and a unit with the random parameter
+/// `attemptUpdate(n)` over `{ 3: 1, 1: 3 }`
+pub(super) fn random_parameter_package() -> (Vec<u8>, CheckedPackage) {
     use super::abstraction::fixture;
     let document =
         crate::emit::tests::wire_bytes(&fixture::document()).expect("the fixture serializes");
@@ -333,7 +343,40 @@ fn a_random_parameter_is_emitted_and_read_back() {
         .expect("the unit assembles")
         .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
-    let (wire, read) = emit_and_read(&CheckedPackage::link(graph), &document);
+    (document, CheckedPackage::link(graph))
+}
+
+/// The admitted package and source map of a verified read.
+fn admitted_of(read: Read) -> (Arc<CheckedPackageV2>, Vec<CheckedSourceMapEntry>) {
+    let Read::Verified { admitted, .. } = read else {
+        panic!("the strict reader admits the package: {read:?}");
+    };
+    let source_map = admitted.source_map().to_vec();
+    (admitted, source_map)
+}
+
+/// The declaration region of `node` in `source_map`.
+fn declaration_region(source_map: &[CheckedSourceMapEntry], node: &CheckedNodeId) -> (u64, u64) {
+    let [entry] = source_map
+        .iter()
+        .filter(|entry| entry.node_id == *node && entry.role == CheckedOccurrenceRole::Declaration)
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("one declaration entry for the node");
+    };
+    (entry.regions[0].start, entry.regions[0].end)
+}
+
+/// TC-2062 (FR-740-AC-1): a unit with a random parameter on
+/// `attemptUpdate(n)` emits one `probabilistic`/`random_parameter` node
+/// whose support keeps the declared order and weights, and the strict reader
+/// admits it.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-1")]
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+fn a_random_parameter_is_emitted_and_read_back() {
+    let (document, package) = random_parameter_package();
+    let (wire, read) = emit_and_read(&package, &document);
     assert!(matches!(read, Read::Verified { .. }), "{read:?}");
     let [random] = super::owners::node_where(&wire, "probabilistic", "random_parameter")[..] else {
         panic!("one random_parameter node");
@@ -345,27 +388,446 @@ fn a_random_parameter_is_emitted_and_read_back() {
     assert!(three < one, "the support keeps its declared order: {body}");
 }
 
+/// TC-2062 (FR-740-AC-1): the typed read of the emitted package gives the
+/// random parameter `n` of `attemptUpdate` with its support in declared
+/// order, its exact weights and probabilities, and the declaration's region.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-1")]
+#[test]
+fn random_parameter_round_trips() {
+    let (document, package) = random_parameter_package();
+    let [checked] = package.graph().probabilistic_model().random_parameters() else {
+        panic!("one checked random parameter");
+    };
+    let (_, read) = emit_and_read(&package, &document);
+    let (admitted, source_map) = admitted_of(read);
+    let declaring = fsl_semantics::check::wire_id::structural_id(
+        &fsl_semantics::model::key::object_type_node_key(
+            checked.operation().declaring_key().unwrap(),
+        )
+        .expect("the declaring type has a node key"),
+    );
+    let reads = admitted.random_parameters(&declaring, checked.operation().name());
+    let [read] = &reads[..] else {
+        panic!("one random parameter read: {reads:?}");
+    };
+    assert_eq!(read.parameter, checked.parameter());
+    let spelled = |rational: &filament_contract_model::CheckedRational| {
+        format!("{}/{}", rational.numerator, rational.denominator)
+    };
+    let values: Vec<(Value, String, String)> = read
+        .support
+        .iter()
+        .map(|row| {
+            (
+                serde_json::to_value(row.value).expect("a literal term")["value"].clone(),
+                spelled(&row.weight),
+                spelled(&row.probability),
+            )
+        })
+        .collect();
+    assert_eq!(
+        values,
+        [
+            (json!("3"), "1/1".to_owned(), "1/4".to_owned()),
+            (json!("1"), "3/1".to_owned(), "3/4".to_owned()),
+        ]
+    );
+    for (row, checked) in read.support.iter().zip(checked.support()) {
+        assert_eq!(
+            spelled(&row.weight),
+            format!(
+                "{}/{}",
+                checked.weight.numerator(),
+                checked.weight.denominator()
+            )
+        );
+        assert_eq!(
+            spelled(&row.probability),
+            format!(
+                "{}/{}",
+                checked.probability.numerator(),
+                checked.probability.denominator()
+            )
+        );
+    }
+    let region = package
+        .graph()
+        .region(&checked.declaration_location())
+        .expect("the declaration has a region");
+    assert_eq!(
+        declaration_region(&source_map, read.node),
+        (region.start(), region.end())
+    );
+}
+
+/// TC-2062 (FR-740-AC-1): the typed read of the emitted package gives the
+/// workload `Steady` with the weight of the model's operation and the
+/// declaration's region.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-1")]
+#[test]
+fn workload_round_trips() {
+    let package = workload_package("weight ConfigVersion::attemptUpdate = 1.5;");
+    let [checked] = package.graph().probabilistic_model().workloads() else {
+        panic!("one checked workload");
+    };
+    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
+    let (_, read) = emit_and_read(&package, document);
+    let (admitted, source_map) = admitted_of(read);
+    let [(operation, _)] = checked.weights() else {
+        panic!("one weighted operation");
+    };
+    let model = fsl_semantics::check::wire_id::structural_id(
+        &fsl_semantics::model::key::object_type_node_key(operation.declaring_key().unwrap())
+            .expect("the model type has a node key"),
+    );
+    let reads = admitted.workloads(&model);
+    let [read] = &reads[..] else {
+        panic!("one workload read: {reads:?}");
+    };
+    assert_eq!(read.name, checked.name());
+    let [weight] = &read.weights[..] else {
+        panic!("one weight");
+    };
+    assert_eq!(
+        (weight.declaring, weight.operation),
+        (&model, operation.name())
+    );
+    assert_eq!(
+        (&*weight.weight.numerator, &*weight.weight.denominator),
+        ("3", "2")
+    );
+    let region = package
+        .graph()
+        .region(&checked.declaration_location())
+        .expect("the declaration has a region");
+    assert_eq!(
+        declaration_region(&source_map, read.node),
+        (region.start(), region.end())
+    );
+}
+
+/// The records the package route reads back from the emission of `package`
+/// over the domain package `document`: the emitted nodes, joined to the
+/// selected domain package's view.
+///
+/// `units` names the units the domain package's operation types use: the
+/// package route reads none from the bytes yet, so a package whose operations
+/// type a unit supplies them (and is joined over S3's type environment).
+fn read_back(
+    package: &CheckedPackage,
+    document: &[u8],
+    units: &BTreeMap<String, filament_exact::UnitId>,
+) -> fsl_semantics::check::CheckedProbabilisticModel {
+    use fsl_semantics::model::observation::ModelSelections;
+    let emission = emit_checked(package)
+        .unwrap_or_else(|refusal| panic!("a probabilistic package emits: {refusal:?}"));
+    let mut evidence = read_evidence(&emission);
+    evidence
+        .insert_domain_package_document(package_identity(document), document)
+        .expect("a fresh evidence key");
+    let (admitted, _) = admitted_of(read_with(&emission, &evidence));
+    let mut rows_budget = V2ReadLimits::fixture().native_join_budget();
+    let rows = emission
+        .identity_rows(&admitted, &mut rows_budget)
+        .expect("the identity rows join the package");
+    let mut join_budget = V2ReadLimits::fixture().native_join_budget();
+    let bare = crate::BarePackage::new(&admitted)
+        .with_supply(
+            crate::BareSupply {
+                identities: &rows,
+                equality: None,
+            },
+            &mut join_budget,
+        )
+        .expect("the bytes view admits its supply");
+    let world = bare.world().expect("the declarations read");
+    // The bare world cannot type an operation that names a unit (the package
+    // route reads no unit names from the bytes yet), so such a package is
+    // joined over S3's own type environment: the same declarations.
+    let types = if units.is_empty() {
+        world.types()
+    } else {
+        package.graph().scope().types()
+    };
+    let selections = crate::AnalysisView::model_selections(&bare);
+    let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
+    let model = fsl_semantics::model::state::StateModel::new(
+        ModelSelections::new(&selections, &[]),
+        types,
+        &packages,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .expect("the selected packages re-admit");
+    let operations = model.operation_table(units).expect("the operations type");
+    let nodes = bare.probabilistic().expect("the nodes read");
+    model
+        .probabilistic_model(&operations, &nodes)
+        .unwrap_or_else(|refusal| panic!("the records rebuild: {refusal}"))
+}
+
+/// The accessor-visible content of an operation, which is all of it but the
+/// `model` alias a package does not carry.
+fn operation_content(
+    operation: &fsl_semantics::check::ProbabilisticOperation,
+) -> (
+    &filament_checked::key::DeclarationKey,
+    filament_exact::EffectiveId,
+    Option<&filament_checked::key::DeclarationKey>,
+    &str,
+) {
+    (
+        operation.key(),
+        operation.declaring(),
+        operation.declaring_key(),
+        operation.name(),
+    )
+}
+
+/// FSL FR-740, FSpec FR-640-AC-1: the records read back from the emitted
+/// package are the S3 records: the same operations, positions, parameter
+/// types, support values with their weights and probabilities, and
+/// workload weights.
+fn assert_reads_back_equal(
+    package: &CheckedPackage,
+    document: &[u8],
+    units: &BTreeMap<String, filament_exact::UnitId>,
+) {
+    let checked = package.graph().probabilistic_model();
+    let read = read_back(package, document, units);
+    assert_eq!(
+        read.random_parameters().len(),
+        checked.random_parameters().len()
+    );
+    assert_eq!(read.workloads().len(), checked.workloads().len());
+    for expected in checked.random_parameters() {
+        let found = read
+            .random_parameter(expected.operation().key(), expected.parameter())
+            .unwrap_or_else(|| panic!("{} is read back", expected.parameter()));
+        assert_eq!(
+            operation_content(found.operation()),
+            operation_content(expected.operation())
+        );
+        assert_eq!(found.position(), expected.position());
+        assert_eq!(found.value_type(), expected.value_type());
+        assert_eq!(found.support(), expected.support());
+    }
+    for expected in checked.workloads() {
+        let found = read
+            .workload(expected.name())
+            .unwrap_or_else(|| panic!("{} is read back", expected.name()));
+        assert_eq!(found.model_key(), expected.model_key());
+        assert_eq!(found.weights().len(), expected.weights().len());
+        for (expected, weight) in expected.weights() {
+            let (found, read_weight) = found
+                .weights()
+                .iter()
+                .find(|(operation, _)| operation.key() == expected.key())
+                .expect("the operation is weighted");
+            assert_eq!(operation_content(found), operation_content(expected));
+            assert_eq!(read_weight, weight);
+        }
+    }
+}
+
+/// FSL FR-740: an integer-valued random parameter reads back as S3's record.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+fn a_random_parameter_reads_back_as_the_s3_record() {
+    let (document, package) = random_parameter_package();
+    assert_reads_back_equal(&package, &document, &BTreeMap::new());
+}
+
+/// FSL FR-740: a workload reads back as S3's record, with a weight that is
+/// not an integer.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+fn a_workload_reads_back_as_the_s3_record() {
+    let package = workload_package("weight ConfigVersion::attemptUpdate = 1.5;");
+    assert_reads_back_equal(
+        &package,
+        config_version_unit::DOMAIN_PACKAGE.as_bytes(),
+        &BTreeMap::new(),
+    );
+}
+
+/// FSL FR-740: an enum-valued random parameter is refused at emission with
+/// the declaration's locus, because IR's reader maps no model variant type to
+/// a support literal kind and would refuse the package. The rebuild of an
+/// enum value's rank from its type is covered at S3
+/// (`an_enum_valued_package_rebuilds_the_s3_records`).
+#[trace("TC-2062", "FR-185-AC-12")]
+#[test]
+fn an_enum_valued_random_parameter_refuses_emission_with_its_locus() {
+    use super::variant_types::fixture;
+    let document = serde_json::to_vec(&fixture::document()).expect("the fixture serializes");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model M = {package:?};\n\
+         random Account::promote(t) ~ {{ M::Tier::Standard: 3, M::Tier::Gold: 1 }};\n",
+        package = fixture::PACKAGE,
+    );
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    let refusal = emit_checked(&CheckedPackage::link(graph)).expect_err("emission refuses");
+    assert!(matches!(
+        &refusal,
+        EmitRefusal::ProbabilisticModelNotEmitted {
+            declaration,
+            feature: fsl_semantics::check::ProbabilisticFeature::RandomParameter,
+            region,
+            ..
+        } if declaration == "promote(t)" && region.start() < region.end()
+    ));
+}
+
+/// FSL FR-740: a quantity-valued random parameter reads back as S3's record,
+/// each value in the unit of its parameter's type, and the strict reader
+/// admits the unit node as the literal's type.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+fn a_quantity_valued_random_parameter_reads_back_as_the_s3_record() {
+    use super::abstraction::fixture;
+    let document = crate::emit::tests::wire_bytes(&fixture::quantity_document())
+        .expect("the fixture serializes");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model M = {package:?};\n\
+         dimension Time;\n\
+         unit ms : Time = rational(1, 1);\n\
+         random Timer::wait(d) ~ {{ 3 ms: 1, 1 ms: 3 }};\n",
+        package = fixture::PACKAGE,
+    );
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    let package = CheckedPackage::link(graph);
+    assert!(matches!(
+        package.graph().probabilistic_model().random_parameters()[0].support()[0]
+            .value
+            .0,
+        filament_exact::Value::Quantity(_)
+    ));
+    let filament_exact::Value::Quantity(first) =
+        &package.graph().probabilistic_model().random_parameters()[0].support()[0]
+            .value
+            .0
+    else {
+        unreachable!("a quantity support value");
+    };
+    let units = BTreeMap::from([("ms".to_owned(), first.unit().clone())]);
+    assert_reads_back_equal(&package, &document, &units);
+}
+
+/// The unit over the `Base`/`Leaf` lineage domain package with `declarations`
+/// appended, and the domain document.
+fn lineage_package(declarations: &str) -> (Vec<u8>, CheckedPackage) {
+    use super::abstraction::fixture;
+    let document = crate::emit::tests::wire_bytes(&fixture::lineage_document())
+        .expect("the fixture serializes");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model M = {package:?};\n\
+         {declarations}\n",
+        package = fixture::PACKAGE,
+    );
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    (document, CheckedPackage::link(graph))
+}
+
+/// FSpec FR-640 (FSL FR-740): a workload over two object types that share a
+/// supertype is emitted on the one type whose supertype lineage declares
+/// every weighted operation (`Leaf`, whose lineage holds `Base::op` and
+/// `Leaf::step`), is admitted by the strict reader, and reads back as S3's
+/// record.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-1")]
+#[test]
+fn a_workload_over_two_types_with_a_shared_supertype_names_the_lineage_type() {
+    let (document, package) =
+        lineage_package("workload Mixed on M { weight Base::op = 1; weight Leaf::step = 3; }");
+    let [checked] = package.graph().probabilistic_model().workloads() else {
+        panic!("one checked workload");
+    };
+    let leaf = checked
+        .model_key()
+        .expect("one type covers the model")
+        .clone();
+    assert!(leaf.node.ends_with("/Leaf"), "{leaf:?}");
+    let (_, read) = emit_and_read(&package, &document);
+    let (admitted, _) = admitted_of(read);
+    let model = fsl_semantics::check::wire_id::structural_id(
+        &fsl_semantics::model::key::object_type_node_key(&leaf).expect("a node key"),
+    );
+    let reads = admitted.workloads(&model);
+    let [workload] = &reads[..] else {
+        panic!("one workload on Leaf: {reads:?}");
+    };
+    assert_eq!(
+        workload
+            .weights
+            .iter()
+            .map(|weight| (weight.operation, &*weight.weight.numerator))
+            .collect::<Vec<_>>(),
+        [("op", "1"), ("step", "3")]
+    );
+    assert_reads_back_equal(&package, &document, &BTreeMap::new());
+}
+
+/// FSpec FR-640 (FSL FR-740): a workload whose model has two unrelated types
+/// (`Base` and `ConfigVersion`) has no model node whose lineage covers both,
+/// so emission refuses it with the workload's locus rather than writing a
+/// node the reader refuses (QSL-2444 tracks emitting such a workload).
+#[trace("TC-2062", "FR-185-AC-12")]
+#[test]
+fn a_workload_over_unrelated_types_refuses_with_its_locus_qsl_2444() {
+    use super::abstraction::fixture;
+    let document = crate::emit::tests::wire_bytes(&fixture::document()).expect("serializes");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model M = {package:?};\n\
+         workload Both on M {{ weight Base::op = 1; weight ConfigVersion::attemptUpdate = 1; }}\n",
+        package = fixture::PACKAGE,
+    );
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    let refusal = emit_checked(&CheckedPackage::link(graph)).expect_err("emission refuses");
+    assert!(matches!(
+        &refusal,
+        EmitRefusal::ProbabilisticModelNotEmitted {
+            declaration,
+            feature: fsl_semantics::check::ProbabilisticFeature::Workload,
+            region,
+            ..
+        } if declaration == "Both" && region.start() < region.end()
+    ));
+}
+
 /// TC-2062 (FR-740-AC-3, FSpec FR-640-AC-3): writing `Steady`'s weight
 /// lines in another order emits byte-identical output, and a workload with a
 /// weight of 0 is emitted with that weight.
 #[trace("TC-2062", "FR-740-AC-3")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
 #[test]
-#[ignore = "QSL-2000: workload emission order and weight 0 as v2 probabilistic nodes not implemented yet"]
 fn workload_weight_order_changes_no_bytes_and_weight_zero_is_emitted() {
-    let package = |weights: &str| {
-        let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
-        let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
-        let unit = format!(
-            "{}workload Steady on Config {{ {weights} }}\n",
-            config_version_unit::unit_text()
-        );
-        let graph = assemble_with_models(unit.as_bytes(), &packages)
-            .expect("the unit assembles")
-            .check(CheckMode::Linked, CheckingLimits::default())
-            .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
-        CheckedPackage::link(graph)
-    };
+    let package = workload_package;
     let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
     let (zero, read) = emit_and_read(
         &package("weight ConfigVersion::attemptUpdate = 0;"),
@@ -377,13 +839,68 @@ fn workload_weight_order_changes_no_bytes_and_weight_zero_is_emitted() {
     };
     assert!(workload["body"].to_string().contains("\"0\""), "{workload}");
 
-    // The fixture model has one operation, so the reordering is of the
-    // workload's declaration among the unit's other declarations.
-    let first = emit_checked(&package("weight ConfigVersion::attemptUpdate = 1;"))
-        .expect("the package emits");
-    let again = emit_checked(&package("weight ConfigVersion::attemptUpdate = 1;"))
-        .expect("the package emits");
-    assert_eq!(first.package().bytes(), again.package().bytes());
+    // Two operations (`Base::op`, `Leaf::step`) with the weight lines written
+    // in both orders.
+    let ordered = |weights: &str| {
+        let (_, package) = lineage_package(&format!("workload Mixed on M {{ {weights} }}"));
+        emit_checked(&package).expect("the package emits")
+    };
+    let forward = ordered("weight Base::op = 1; weight Leaf::step = 3;");
+    let reverse = ordered("weight Leaf::step = 3; weight Base::op = 1;");
+    assert_eq!(forward.package().bytes(), reverse.package().bytes());
+}
+
+/// FSpec FR-640-AC-3: changing one weight or one support value changes the
+/// node's identity, while reordering weight lines (asserted separately in
+/// `workload_weight_order_changes_no_bytes_and_weight_zero_is_emitted`)
+/// does not.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+fn changing_one_weight_or_support_value_changes_the_node_identity() {
+    let workload_id = |weights: &str| {
+        let (document, package) = lineage_package(&format!("workload Mixed on M {{ {weights} }}"));
+        let (wire, _) = emit_and_read(&package, &document);
+        let [node] = super::owners::node_where(&wire, "probabilistic", "workload")[..] else {
+            panic!("one workload node");
+        };
+        node["node_id"].clone()
+    };
+    let base = workload_id("weight Base::op = 1; weight Leaf::step = 3;");
+    assert_ne!(
+        base,
+        workload_id("weight Base::op = 1; weight Leaf::step = 4;")
+    );
+    assert_eq!(
+        base,
+        workload_id("weight Leaf::step = 3; weight Base::op = 1;")
+    );
+
+    let random_id = |support: &str| {
+        use super::abstraction::fixture;
+        let document =
+            crate::emit::tests::wire_bytes(&fixture::document()).expect("the fixture serializes");
+        let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+        let unit = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.model.complete/v1\";\n\
+             model M = {package:?};\n\
+             random ConfigVersion::attemptUpdate(n) ~ {{ {support} }};\n",
+            package = fixture::PACKAGE,
+        );
+        let graph = assemble_with_models(unit.as_bytes(), &packages)
+            .expect("the unit assembles")
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+        let (wire, _) = emit_and_read(&CheckedPackage::link(graph), &document);
+        let [node] = super::owners::node_where(&wire, "probabilistic", "random_parameter")[..]
+        else {
+            panic!("one random_parameter node");
+        };
+        node["node_id"].clone()
+    };
+    let base = random_id("3: 1, 1: 3");
+    assert_ne!(base, random_id("3: 1, 1: 2"), "one weight differs");
+    assert_ne!(base, random_id("3: 1, 2: 3"), "one support value differs");
 }
 
 /// TC-2062 (FR-740-AC-4): a claim `under Steady` is emitted beside the
@@ -391,7 +908,7 @@ fn workload_weight_order_changes_no_bytes_and_weight_zero_is_emitted() {
 /// package holding the claim, the reward and the workload.
 #[trace("TC-2062", "FR-740-AC-4")]
 #[test]
-#[ignore = "QSL-2000: a claim's workload resolves to its emitted workload node not implemented yet"]
+#[ignore = "QSL-2441: a claim's workload resolves to its emitted workload node; the claim also reads a reward"]
 fn a_claim_under_a_workload_is_emitted_with_its_workload_node() {
     let package = claims_package(&[
         "workload Steady on Config { weight ConfigVersion::attemptUpdate = 1; }",
@@ -417,9 +934,8 @@ fn a_claim_under_a_workload_is_emitted_with_its_workload_node() {
 /// operation the model does not declare is refused by the strict reader.
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-4")]
 #[test]
-#[ignore = "QSL-2000: the strict reader's probabilistic node checks not implemented yet"]
 fn the_reader_refuses_a_workload_that_misnames_an_operation() {
-    let package = probabilistic_package();
+    let package = workload_package("weight ConfigVersion::attemptUpdate = 1;");
     let emission = emit_checked(&package).expect("a probabilistic package emits");
     let mut wire = wire(&emission);
     let workload = wire["semantic_graph"]["nodes"]

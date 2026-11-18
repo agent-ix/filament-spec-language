@@ -7002,6 +7002,7 @@ fn emit_package_inner(
         &mut nodes,
         &mut source_map,
     );
+    probabilistic::append_probabilistic_nodes(ids, graph, &mut nodes, &mut source_map)?;
     let mut schedulability_claim_rows = append_schedulability_claims(
         ids,
         graph,
@@ -9157,6 +9158,7 @@ fn own_evidence(lock: &CheckedPackageLockV2) -> CheckedPackageEvidence {
     evidence
 }
 
+mod probabilistic;
 mod selected_rows;
 
 #[cfg(test)]
