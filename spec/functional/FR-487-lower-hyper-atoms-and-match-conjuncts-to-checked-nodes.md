@@ -21,6 +21,8 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-093
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-1000
+    type: references
   - target: ix://agent-ix/filament-spec-language/FR-175
     type: traces_to
   - target: ix://agent-ix/filament-spec-language/FR-176
@@ -256,6 +258,14 @@ fn evaluate_step_predicate(
   `components[r]`, `r` being the component that `component_reads(atom)`
   records for that read. References compare by (universe, object type,
   key), ignoring the component (FR-107).
+- A reference literal in the condition is not a model read and has no
+  entry in `component_reads`. `evaluate_hyper_holds` SHALL read it from the
+  `ReferenceBindings` of the component systems
+  ([FR-1000](FR-1000-keep-a-reference-literal-pending-until-subject-binding.md)
+  "In a hyper atom"): a `Fixed` literal is the same reference in every
+  component, and a `CreatedObject` literal is looked up in the one component
+  that `component_reads(atom)` records. An atom whose reads span several
+  components, or none, admits no `CreatedObject` literal; binding refuses it.
 - For a slot bound `HyperSlot::Absent { key, population }`, the evaluator
   SHALL read the slot as `evaluate_state_predicate_at_absent_key` reads its
   slot 0. It binds `Value::Reference(key)` and marks the slot as
