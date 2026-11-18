@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! O-09: structural identity of one checked obligation.
 
-use std::fmt;
+use alloc::string::String;
+use core::fmt;
 
 use filament_exact::NodeKey;
 
@@ -107,10 +108,7 @@ mod tests {
 
     #[test]
     fn claim_occurrence_mints_the_obligation_identity() {
-        let claim = OccurrenceKey::new(
-            node(3),
-            Origin::new(Role::new("claim"), 17),
-        );
+        let claim = OccurrenceKey::new(node(3), Origin::new(Role::new("claim"), 17));
         assert_eq!(
             ObligationIdentity::from_claim_occurrence(&claim),
             ObligationIdentity::new(node(3), None, 17)

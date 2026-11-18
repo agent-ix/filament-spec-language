@@ -38,17 +38,35 @@ pub enum CertificateRefusal {
     TaskSet(TaskSetRefusal),
     /// A checked identifier cannot be represented by the replay API.
     InvalidIdentifier(String),
+    /// The selected item, reported outcome, and claim occurrence do not
+    /// identify the same schedulability obligation.
+    ObligationIdentityMismatch {
+        /// The identity selected by the caller.
+        item: fsl_package::ObligationIdentity,
+        /// The identity carried by the closed-form result.
+        result: fsl_package::ObligationIdentity,
+        /// The identity derived from the selected claim occurrence.
+        claim: fsl_package::ObligationIdentity,
+    },
 }
 
 /// Recompile the request, read the task set and claim at `claim`, and
 /// independently check the evidence in exact rationals (FR-248).
 pub fn check_closed_form(
     request: ReplayRequest,
-    _item: &fsl_package::ObligationIdentity,
+    item: &fsl_package::ObligationIdentity,
     claim: &ClaimTriple,
     result: &ClosedFormResult,
     cancel: &Cancel,
 ) -> Result<ClosedFormCheck, CertificateRefusal> {
+    let claim_identity = fsl_package::ObligationIdentity::from_claim_occurrence(claim);
+    if item != &result.originating_obligation || result.originating_obligation != claim_identity {
+        return Err(CertificateRefusal::ObligationIdentityMismatch {
+            item: item.clone(),
+            result: result.originating_obligation.clone(),
+            claim: claim_identity,
+        });
+    }
     let caller = execute::request_limits(
         request.stage_limits(),
         request.accounting_limits(),
@@ -92,7 +110,6 @@ pub fn check_closed_form(
         },
     };
     let subject = ScheduleSubject::new(task_set, claim).map_err(CertificateRefusal::TaskSet)?;
-    let _originating_obligation = &result.originating_obligation;
     Ok(crate::recompute(&subject, &result.outcome, cancel))
 }
 

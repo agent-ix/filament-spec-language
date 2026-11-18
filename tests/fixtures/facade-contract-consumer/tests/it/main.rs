@@ -156,7 +156,7 @@ mod code_generation {
     fn cf_cg_01_01_call_site_returns_the_selected_function_and_package() {
         let source = fsl_replay::SourceIdentity::new("consumer", "call-site");
         let selected = fsl_replay::QualifiedName::new(vec![
-            filament_exact::Identifier::new("f").expect("identifier"),
+            filament_exact::Identifier::new("f").expect("identifier")
         ])
         .expect("qualified name");
         let site = fsl_replay::call_site(
@@ -258,7 +258,7 @@ schedulable CtlFp on Ctl under fixed_priority;\n\
 function f using v(x: Integer): Integer pure { x }\n";
         let source = fsl_replay::SourceIdentity::new("consumer", "closed-form-check");
         let function = fsl_replay::QualifiedName::new(vec![
-            filament_exact::Identifier::new("f").expect("function name"),
+            filament_exact::Identifier::new("f").expect("function name")
         ])
         .expect("qualified function name");
         let site = fsl_replay::call_site(
@@ -342,7 +342,7 @@ function f using v(x: Integer): Integer pure { x }\n";
         let subject = fsl_replay::ScheduleSubject::new(
             fsl_replay::TaskSet::new(
                 fsl_replay::QualifiedName::new(vec![
-                    filament_exact::Identifier::new("Ctl").expect("task-set name"),
+                    filament_exact::Identifier::new("Ctl").expect("task-set name")
                 ])
                 .expect("qualified task-set name"),
                 vec![fsl_replay::Task {
@@ -370,8 +370,39 @@ function f using v(x: Integer): Integer pure { x }\n";
         );
         let result = fsl_replay::ClosedFormResult {
             originating_obligation: obligation.clone(),
+            outcome: outcome.clone(),
+        };
+
+        let wrong_obligation = fsl_package::ObligationIdentity::new(
+            obligation.node().clone(),
+            obligation.model().cloned(),
+            obligation.ordinal() + 1,
+        );
+        assert!(matches!(
+            fsl_replay::check_closed_form(
+                request.clone(),
+                &wrong_obligation,
+                &claim,
+                &result,
+                &cancel,
+            ),
+            Err(fsl_replay::CertificateRefusal::ObligationIdentityMismatch { .. }),
+        ));
+
+        let wrong_result = fsl_replay::ClosedFormResult {
+            originating_obligation: wrong_obligation.clone(),
             outcome,
         };
+        assert!(matches!(
+            fsl_replay::check_closed_form(
+                request.clone(),
+                &wrong_obligation,
+                &claim,
+                &wrong_result,
+                &cancel,
+            ),
+            Err(fsl_replay::CertificateRefusal::ObligationIdentityMismatch { .. }),
+        ));
 
         assert!(matches!(
             fsl_replay::check_closed_form(request, &obligation, &claim, &result, &cancel),

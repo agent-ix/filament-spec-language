@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn test_prefix_is_the_lowercase_fact_id() {
         assert_eq!(
-            fact_id("pr_03_reads_endpoints").as_deref(),
+            fact_id("cf_pr_03_reads_endpoints").as_deref(),
             Some("CF-PR-03")
         );
         assert_eq!(fact_id("x_03_bad"), None);
@@ -341,21 +341,21 @@ mod tests {
         assert!(
             functions
                 .iter()
-                .find(|item| item.name == "pr_01_live")
+                .find(|item| item.name == "cf_pr_01_live")
                 .unwrap()
                 .live
         );
         assert!(
             !functions
                 .iter()
-                .find(|item| item.name == "pr_02_ignored")
+                .find(|item| item.name == "cf_pr_02_ignored")
                 .unwrap()
                 .live
         );
         assert!(
             !functions
                 .iter()
-                .find(|item| item.name == "pr_03_hidden")
+                .find(|item| item.name == "cf_pr_03_hidden")
                 .unwrap()
                 .live
         );
