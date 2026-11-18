@@ -37,6 +37,8 @@ use serde_json::{json, Value as Json};
 mod mbt_generate;
 #[path = "mbt_shrink.rs"]
 mod mbt_shrink;
+#[path = "model_simulation/reference_literals.rs"]
+mod reference_literals;
 
 pub(crate) const PACKAGE: &str = "test/counters";
 
@@ -361,10 +363,20 @@ fn build_world_document(
     extras: bool,
     enum_mode: bool,
 ) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
+    build_world_document_with_profiles(document, "", clauses, extras, enum_mode)
+}
+
+fn build_world_document_with_profiles(
+    document: Vec<u8>,
+    profiles: &str,
+    clauses: &str,
+    extras: bool,
+    enum_mode: bool,
+) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
     let packages = package_input([document.as_slice()]).unwrap();
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n\
-         model M = \"{PACKAGE}\";\nfunction Noop using v(): Boolean pure {{ true }}\n{clauses}\n",
+         {profiles}model M = \"{PACKAGE}\";\nfunction Noop using v(): Boolean pure {{ true }}\n{clauses}\n",
     );
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("test", "fr-120"),

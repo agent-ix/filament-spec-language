@@ -145,51 +145,6 @@ fn hyper(name: &str, formula: &str) -> String {
     )
 }
 
-/// FR-1000-AC-8: a fixed literal is admitted in a hyper atom over two
-/// components.
-#[trace("TC-2957", "FR-1000-AC-8")]
-#[test]
-fn a_fixed_literal_is_admitted_in_a_hyper_atom() {
-    let run = over_wide_universe(
-        "reflit-hyper-fixed",
-        &hyper(
-            "HF",
-            "always holds(c.value @ a <= 3 or c.value @ b <= 3 or c = M::Counter#\"a\")",
-        ),
-        "HF",
-    );
-    let text = run.document().to_string();
-    assert_eq!(run.exit, 0, "{text}");
-    assert!(!text.contains("operator-ineligible"), "{text}");
-}
-
-/// FR-1000-AC-9: a created-object literal is looked up in the component of
-/// its innermost enclosing `@ t`, whatever the atom's other reads.
-#[trace("TC-2957", "FR-1000-AC-9")]
-#[test]
-fn a_created_object_literal_resolves_in_its_enclosing_component() {
-    let cases = [
-        (
-            "single",
-            "always holds((deref(M::Counter#\"b\").value = 0) @ a)",
-        ),
-        (
-            "spanning",
-            "always holds((deref(M::Counter#\"b\").value) @ a = c.value @ b)",
-        ),
-    ];
-    for (name, formula) in cases {
-        let run = over_wide_universe(
-            &format!("reflit-hyper-created-{name}"),
-            &hyper("HC", formula),
-            "HC",
-        );
-        let text = run.document().to_string();
-        assert!(text.contains("absent-key"), "{text}");
-        assert!(!text.contains("operator-ineligible"), "{text}");
-    }
-}
-
 /// FR-1000-AC-10: a created-object literal that no `@ t` encloses refuses at
 /// binding, even when the atom reads a component elsewhere; a fixed one there
 /// is admitted.
