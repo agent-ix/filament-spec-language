@@ -2073,9 +2073,11 @@ fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
             "Nowhere",
         ),
         (
-            FINITE_DET.replace("in Obs", "in V"),
+            FINITE_DET
+                .replace("hyper Det", "tuple NotRecord(Int[0, 3]);\nhyper Det")
+                .replace("in Obs", "in NotRecord"),
             Code::InvalidModelBinding,
-            "V",
+            "NotRecord",
         ),
         (
             FINITE_DET.replace("forall trace b", "forall trace a"),
