@@ -105,6 +105,7 @@ mod provision_contract;
 mod quotient;
 mod race_freedom;
 mod rc11_oracle;
+mod recording_population;
 #[path = "../support/rc11.rs"]
 mod rc11_support;
 mod reduction;
