@@ -115,28 +115,6 @@ fn gate_over(directory: &Path) -> Output {
 }
 
 #[test]
-#[trace("TC-2578", "FR-912-AC-1")]
-fn test_prefix_is_the_lowercase_fact_id() {
-    assert_eq!(test_prefix("CF-PR-03"), "cf_pr_03_");
-    for fact in [
-        "CF-IR-01", "CF-PR-07", "CF-CG-04", "CF-RT-02", "CF-DR-03", "CF-OB-01",
-    ] {
-        let prefix = test_prefix(fact);
-        let parts: Vec<&str> = prefix.trim_end_matches('_').split('_').collect();
-        assert_eq!(parts.len(), 3, "{fact} is CF-<code>-<nn>");
-        assert_eq!(parts[0], "cf");
-        assert!(
-            ["ir", "pr", "cg", "rt", "dr", "ob"].contains(&parts[1]),
-            "{fact}"
-        );
-        assert!(
-            parts[2].len() == 2 && parts[2].bytes().all(|byte| byte.is_ascii_digit()),
-            "{fact}"
-        );
-    }
-}
-
-#[test]
 #[trace("TC-2574", "FR-911-AC-1")]
 fn the_contract_consumer_sees_only_default_features() {
     let output = cargo(&["metadata", "--locked", "--offline", "--format-version", "1"]);
@@ -148,10 +126,12 @@ fn the_contract_consumer_sees_only_default_features() {
         .iter()
         .find(|package| package["name"] == CONSUMER)
         .unwrap_or_else(|| panic!("{CONSUMER} is not a workspace package"));
-    assert!(package["manifest_path"]
-        .as_str()
-        .expect("manifest path")
-        .contains(CONSUMER_DIR));
+    assert!(
+        package["manifest_path"]
+            .as_str()
+            .expect("manifest path")
+            .contains(CONSUMER_DIR)
+    );
     for dependency in package["dependencies"].as_array().expect("dependencies") {
         let name = dependency["name"].as_str().expect("dependency name");
         if name.starts_with("fsl-") {
@@ -231,6 +211,23 @@ fn a_private_item_is_not_reachable_from_the_consumer_crate() {
 #[test]
 #[trace("TC-2578", "FR-912-AC-1")]
 fn gate_passes_when_every_fact_has_a_live_test() {
+    assert_eq!(test_prefix("CF-PR-03"), "cf_pr_03_");
+    for fact in [
+        "CF-IR-01", "CF-PR-07", "CF-CG-04", "CF-RT-02", "CF-DR-03", "CF-OB-01",
+    ] {
+        let prefix = test_prefix(fact);
+        let parts: Vec<&str> = prefix.trim_end_matches('_').split('_').collect();
+        assert_eq!(parts.len(), 3, "{fact} is CF-<code>-<nn>");
+        assert_eq!(parts[0], "cf");
+        assert!(
+            ["ir", "pr", "cg", "rt", "dr", "ob"].contains(&parts[1]),
+            "{fact}"
+        );
+        assert!(
+            parts[2].len() == 2 && parts[2].bytes().all(|byte| byte.is_ascii_digit()),
+            "{fact}"
+        );
+    }
     let scratch = scratch_tests("", None, "");
     let output = gate_over(scratch.path());
     assert_eq!(output.status.code(), Some(0), "{}", report(&output));
@@ -261,7 +258,7 @@ fn gate_fails_on_fact_without_test() {
 #[test]
 #[trace("TC-2580", "FR-912-AC-3")]
 fn gate_fails_on_ignored_contract_test() {
-    for attribute in ["#[ignore]", "#[cfg(any())]"] {
+    for attribute in ["#[ignore]", "#[cfg(any())]", "#[ignore = \"QSL-1109\"]"] {
         let scratch = scratch_tests("", None, attribute);
         let output = gate_over(scratch.path());
         assert_eq!(
@@ -291,14 +288,4 @@ fn gate_fails_on_test_for_unlisted_fact() {
     assert!(text.contains("CF-PR-99"));
     let makefile = fs::read_to_string(workspace_root().join("Makefile")).expect("Makefile");
     assert!(makefile.contains("cargo run --locked --package xtask -- facade-tests"));
-}
-
-#[test]
-#[trace("TC-2582", "FR-912-AC-3")]
-fn gate_does_not_allow_an_issue_key_to_exempt_an_ignored_test() {
-    let scratch = scratch_tests("", None, "#[ignore = \"QSL-1109\"]");
-    let output = gate_over(scratch.path());
-    assert_eq!(output.status.code(), Some(1), "{}", report(&output));
-    assert!(report(&output).contains("function is ignored"));
-    assert!(report(&output).contains("CF-PR-03"));
 }
