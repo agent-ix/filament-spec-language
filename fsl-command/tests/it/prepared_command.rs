@@ -562,6 +562,65 @@ fn observation_override_conflict_refuses_before_observation_read() {
 }
 
 #[test]
+#[trace("TC-2982", "FR-312-AC-10")]
+fn observation_override_matches_the_in_request_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    crate::config_version_spine::spine::write(
+        directory.path(),
+        crate::config_version_spine::Case::Healthy,
+    )
+    .unwrap();
+    let bytes = std::fs::read(directory.path().join("spine-snapshot.json")).unwrap();
+    let maximum = (bytes.len() - 1) as u64;
+    let request = |with_limit| {
+        let mut clause = json!({
+            "selection": {"clause": {
+                "name": "ParentOrder",
+                "observation": "current",
+                "self": {"population": "ix://example/config-version/config_history", "key": "child"},
+                "anchor": {"kind": "handler", "name": "validate"}
+            }},
+            "observations": {"current": "spine-snapshot.json"}
+        });
+        if with_limit {
+            clause["observation_limits"] = json!({"document_bytes": maximum});
+        }
+        json!({
+            "format": "native-run/1",
+            "request": {
+                "models": [{"format": "semantic-ir/2.0.0", "source": {
+                    "file": "spine-model.semantic-ir.json", "authority": "agent-ix",
+                    "identity": "example:spine-model.semantic-ir.json", "document": "SpineModel",
+                    "formal_revision": 1
+                }}],
+                "program": {"source": {
+                    "file": "spine-unit.native", "authority": "agent-ix",
+                    "identity": "example:spine-unit.native", "document": "SpineUnit",
+                    "formal_revision": 1
+                }},
+                "clause": clause
+            }
+        })
+    };
+    let member = write_request(directory.path(), "member.json", request(true));
+    let bare = write_request(directory.path(), "bare.json", request(false));
+    let expected = command::run(&member, &crate::negotiation::Fr290).unwrap();
+    let limits = fsl_semantics::model::observation::ObservationLimits::default()
+        .with_document_bytes(maximum);
+    let actual = command::run_with_overrides(
+        &bare,
+        &command::RequestOverrides {
+            observation: Some(&limits),
+            ..Default::default()
+        },
+        &crate::negotiation::Fr290,
+    )
+    .unwrap();
+    assert_eq!(actual.value.as_value(), expected.value.as_value());
+    assert_eq!(actual.exit_code, expected.exit_code);
+}
+
+#[test]
 #[trace("TC-2455", "FR-865-AC-5")]
 fn run_error_exposes_admitted_sources_for_text_rendering() {
     let source = Source::read_typed(
