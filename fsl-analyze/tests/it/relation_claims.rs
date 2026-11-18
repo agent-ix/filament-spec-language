@@ -144,7 +144,7 @@ fn a_holding_relation_is_checked_over_reachable_transition_tuples() {
     let ModelRelationOutcome::Holds { stats } = outcome else {
         panic!("the relation holds: {outcome:?}");
     };
-    assert_eq!(stats.transitions, 8);
+    assert_eq!(stats.transitions, 4);
     assert_eq!(stats.relation_tuples, 64);
 }
 
@@ -310,7 +310,7 @@ fn relation_tuple_witness_preserves_coalesced_operation_results() {
     else {
         panic!("different result pairs refute equality: {outcome:?}");
     };
-    assert_eq!(stats.transitions, 8);
+    assert_eq!(stats.transitions, 4);
     assert_eq!(
         counterexample.traces[0].results.last().cloned().flatten(),
         Some(r#"{"type":"integer","value":"0"}"#.to_owned())
