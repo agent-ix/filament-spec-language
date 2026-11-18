@@ -702,7 +702,8 @@ keep every result the enumeration would give:
   solver would not generate). An equation is a conjunct `self.f = e` (or the
   equation with its sides swapped) of an applicable `post` clause, where `f` is a field its frame `modifies` and whose type's `=` is
   decided by the canonical bytes of its value domain (every value domain
-  of FR-120 "Bounds" except a `float64`-bearing or clock-bearing one) and
+  of FR-120 "Bounds" except a clock-bearing one and a composite that holds a
+  float leaf), or is a bare `Float32` or `Float64` (below), and
   `e` reads only `pre(...)` terms (a field read `pre(self.g)` or a dispatched
   query call on the pre-state, such as `pre(self.q())`), the operation's
   arguments and literals: not `self.g` outside `pre(...)`, not
@@ -729,6 +730,14 @@ keep every result the enumeration would give:
   candidate set is empty, which is also what the enumeration yields, since
   its postcondition is false on every candidate: the application has no
   successor and no finding.
+- *Float fields.* A bare `Float32` or `Float64` field is solved by FSpec
+  FR-148 `numericEqual`, which is not byte equality. The solved candidates of
+  `f` are the bit patterns `numericEqual` to `v`: the bits of `v` when `v` is
+  neither a zero nor a NaN, both zeros (`+0` then `-0`, ascending bits) when
+  `v` is a zero, and none when `v` is a NaN, since `numericEqual` is false
+  for a NaN operand. These are exactly the candidates the enumeration keeps,
+  so a solved float assignment keeps no other candidate and never rounds or
+  samples. A composite that holds a float leaf is enumerated.
 - *What is counted.* A candidate is counted when the generator generates
   it. A solved assignment generates only the candidates whose `f` equals
   `v`, so the count is the number of enumeration candidates with `f` equal to
@@ -890,6 +899,7 @@ identity text of operation `op`.
 | FR-120-AC-31 | Over AC-29's `Cell`, each of these models holds the one operation named and is ineligible, so it charges the 10^4 candidates of its enumeration and stops with `MaxCandidates` at `max_candidates` 1,000: `post A { self.a = self.b }` (reads the post-state); two clauses `post A { self.a = 1 }` and `post B { self.a = 2 }` (the same field); a frame `modifies a, b` and `deletes Cell` with `post A { self.a = pre(self.b) }`; and a clause that names `result` on an operation that declares a result. Separately, in a model whose one operation is `post A { self.a = pre(self.b) + 1 }`, the state with `b` 99 gives an eligible equation whose value 100 equals no value of `a`: the expansion has no successor and no finding, as the enumeration has no successor and no finding, and charges 1, the argument vector. A second clause does not by itself make an application ineligible: a clause is read as its conjuncts, so `post A { self.a = pre(self.b) }` with a second clause `post C { self.b > 0 }` solves `a` and narrows `b` to 1 to 99 by the FR-851 bound `C`, charges 100 (one argument vector and 99 candidates) and completes under `max_candidates` 1,000 with its enumeration's successor set; with `C` written `post C { self.b * 1 > 0 }`, which is no bound, `a` is still solved and `b` enumerated, charging 101. | Test (TC-1418) |
 | FR-120-AC-32 | Over AC-29's `Cell`, in a model where `Cell` also declares the query operation `succ(): Int[0, 100]`, whose body is `self.a + 1` and whose precondition is `self.b != 5`, and whose one other operation has the equation clause `post A { self.a = pre(self.succ()) }`, from the state with `a` 3 and `b` 5, where the dispatched call's precondition is false and so `e` is `Undefined` with reason `precondition-false` (FR-301-AC-2; the `succ` application itself is not enabled and charges its one argument vector in both forms), and in one whose equation evaluation is `Incomplete` under a meter budget whose `work_units` is 0, the application is not solved. Each gives the result of its enumerated reference form (`(self.a = ...) = true`, as in AC-30): the `Undefined` case records `ContractUndetermined` for `A` with the candidate's state key and the same charge, and the `Incomplete` case stops with `resource_exhausted`/`insufficient-next-charge` naming `EvaluationMeter` with counter `work_units`. | Test (TC-1418) |
 | FR-120-AC-33 | The `mc/frame_candidates` axis of `fsl-bench`, which QSL-1906 creates and which does not exist before it, builds AC-29's `swap` and AC-30's `step` models, each with its one operation, in a solved form and in the ineligible reference form. Its smallest-size test asserts, for the same state, the charges of AC-29 and AC-30 (2 and 101 solved, 10,001 enumerated for each) and equal successor sets of state keys; it asserts charges, not times. A speed claim rests on the A/B comparison of BENCHMARKING.md, and no stored figure is a threshold. | Test (TC-1418) |
+| FR-120-AC-34 | A `Cell` with a `Float64` field `a` and an operation whose frame is `modifies a` and whose clause is `post F { self.a = e }` has, as the solved candidates of `a`: the one candidate `3ff0000000000000` for `e` `float64(bits: 0x3ff0000000000000)`; the two candidates `0000000000000000` then `8000000000000000` for `e` `float64(bits: 0x8000000000000000)` or `float64(bits: 0x0000000000000000)`; and none for `e` `float64(bits: 0x7ff8000000000000)`, an application with no successor and no finding. Each count equals the enumeration's for the same application, and the enumerated domain of `a` is never generated. A field typed by a record holding a `Float64` member is enumerated. | Test (TC-3006) |
 
 ## Dependencies
 

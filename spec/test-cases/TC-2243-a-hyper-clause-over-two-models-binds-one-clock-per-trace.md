@@ -21,7 +21,7 @@ Verify FR-640's per-trace clock bindings for hyper clauses. Scope: FR-640-AC-12.
 
 ## Expected Results
 
-- Step 1: exit 0; two body-wrapper rows, `trace` `s` then `n`, each `event_position` with its own model's `ConfigVersion` declaration identity text as `sequence_authority`.
+- Step 1: exit 0; two rows keyed by the `hyperproperty` node and its `claim` occurrence, none by the body wrapper, `trace` `s` then `n`, each `event_position` with its own model's `ConfigVersion` declaration identity text as `sequence_authority`.
 - Step 2: two rows with equal configurations.
 - Step 3: a verdict, never `not-yet-implemented`; a refuted counterexample replays under the two rows' configurations.
-- Step 4: the package reader refuses it before any recompile.
+- Step 4: the package reader refuses it at the `hyperproperty` node's body before any recompile.

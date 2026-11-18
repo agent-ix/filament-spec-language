@@ -2493,3 +2493,94 @@ fn a_repeated_extent_pair_is_a_different_state() {
     assert!(first != second, "one pair and a repeated pair are two keys");
     assert_eq!(stats(&explore(&system)).0, 2);
 }
+
+// ---------------------------------------------------------------------------
+// FR-056-AC-60 (TC-3006): a Float64 model field explored by its IEEE bits
+// ---------------------------------------------------------------------------
+
+/// The `Float64` bits of `Counter.a` in `state`'s object `object`.
+fn float_bits(state: &ModelState, object: &str) -> u64 {
+    match state.populations[&counters()][object]
+        .fields
+        .get(&field("a"))
+    {
+        Some(Value::Float(value)) => value.bits(),
+        other => panic!("{object}.a is not a float: {other:?}"),
+    }
+}
+
+/// The counter fixture with a `Float64` field `a` and the operation `flip()`
+/// (`modifies a`, `post Flip { self.a = -pre(self.a) }`).
+fn float_world() -> World {
+    let flip = operation("flip", &[], None, frame(&["a"], false, false));
+    let mut document: Json =
+        serde_json::from_slice(&counters_document_with(vec![flip], false, Vec::new()))
+            .expect("fixture JSON");
+    let counter = document["types"]
+        .as_array_mut()
+        .expect("types array")
+        .iter_mut()
+        .find(|ty| ty["identity"] == ident("Counter"))
+        .expect("Counter declaration");
+    counter["fields"]
+        .as_array_mut()
+        .expect("fields")
+        .push(wire_field("a", "ix://filament/native/Float64", "required"));
+    build_world_document(
+        serde_json::to_vec(&document).expect("fixture serializes"),
+        "post Flip using v on M::Counter::flip { self.a = -pre(self.a) }",
+        false,
+        false,
+    )
+    .expect("the float unit checks")
+}
+
+/// An initial snapshot of `c1` (value 0, label 0) whose `a` holds `bits`.
+fn float_start(world: &mut World, name: &str, bits: &str) -> DocumentRef {
+    let mut object = object_json(&Obj("c1", 0, 0, None), false, false);
+    object["fields"]["a"] = json!({"kind": "float64", "bits": bits});
+    let document = json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "test", "identity": name},
+        "observation": "current", "model": world.header,
+        "anchor": {"kind": "initialization", "name": "start"},
+        "populations": [{"population": ident("counters"), "complete": true,
+            "objects": [object]}],
+    });
+    let bytes = document.to_string().into_bytes();
+    world.snapshots.insert(
+        fsl_semantics::model::observation::document_reference(&bytes)
+            .expect("a document names itself"),
+        bytes,
+    );
+    DocumentRef {
+        authority: "test".to_owned(),
+        identity: name.to_owned(),
+    }
+}
+
+#[trace("TC-3006", "FR-056-AC-60")]
+#[test]
+#[ignore = "QSL-2176: float model fields explored by their IEEE bits, with a float equation solved by numericEqual, not implemented yet"]
+fn a_float_field_model_explores_by_its_ieee_bits() {
+    let mut world = float_world();
+    let one = float_start(&mut world, "one", "3ff0000000000000");
+    let zero = float_start(&mut world, "zero", "0000000000000000");
+
+    let from_one = system(&world, vec![one], &["c1"], UNLIMITED);
+    let successors: Vec<u64> = successors_of(&from_one, 0)
+        .iter()
+        .map(|(_, state)| float_bits(&state.0, "c1"))
+        .collect();
+    assert_eq!(successors, [0xbff0_0000_0000_0000]);
+    assert_eq!(stats(&explore(&from_one)).0, 2);
+
+    let from_zero = system(&world, vec![zero], &["c1"], UNLIMITED);
+    let mut successors: Vec<u64> = successors_of(&from_zero, 0)
+        .iter()
+        .map(|(_, state)| float_bits(&state.0, "c1"))
+        .collect();
+    successors.sort_unstable();
+    assert_eq!(successors, [0x0000_0000_0000_0000, 0x8000_0000_0000_0000]);
+    assert_eq!(stats(&explore(&from_zero)).0, 2);
+}
