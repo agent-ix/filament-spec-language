@@ -152,7 +152,7 @@ mod code_generation {
     }
 
     #[test]
-    #[trace("TC-2583", "FR-911-AC-1")]
+    #[trace("TC-2575", "FR-911-AC-2")]
     fn cf_cg_01_01_call_site_returns_the_selected_function_and_package() {
         let source = fsl_replay::SourceIdentity::new("consumer", "call-site");
         let selected = fsl_replay::QualifiedName::new(vec![
@@ -176,7 +176,7 @@ mod code_generation {
     }
 
     #[test]
-    #[trace("TC-2583", "FR-911-AC-1")]
+    #[trace("TC-2575", "FR-911-AC-2")]
     fn cf_cg_02_01_imported_function_site_exposes_library_package_and_function() {
         let dependencies = fsl_replay::DependencyInput::new([fsl_replay::SuppliedLibrary {
             identity: "test/math".into(),
@@ -206,7 +206,7 @@ mod code_generation {
     }
 
     #[test]
-    #[trace("TC-2583", "FR-911-AC-1")]
+    #[trace("TC-2575", "FR-911-AC-2")]
     fn cf_cg_03_01_operation_site_exposes_its_obligation_identity() {
         let function_selection = fsl_replay::QualifiedName::new(vec![
             filament_exact::Identifier::new("f").expect("function name"),
