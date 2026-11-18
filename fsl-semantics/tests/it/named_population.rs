@@ -492,31 +492,30 @@ fn a_protocol_slot_that_reads_model_state_names_a_population() {
 #[trace("TC-2834", "FR-1000-AC-2", "FSpec-TC-965", "FSpec-FR-480-AC-2")]
 #[test]
 fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
-    let clause = |body: &str| format!("invariant R using v on M::Counter at current {{ {body} }}");
-    checked(
-        false,
-        &clause("M::Counter#\"a\" = M::Counter#\"a\""),
-    );
-    for (body, expected, at) in [
+    let function = |literal: &str| {
+        format!("function R using v(): Reference<M::Counter> pure {{ {literal} }}")
+    };
+    checked(false, &function("M::Counter#\"a\""));
+    for (literal, expected, at) in [
         (
-            "self = M::Nothing#\"a\"",
+            "M::Nothing#\"a\"",
             ("missing_declaration", "missing-name"),
             "M::Nothing#\"a\"",
         ),
         (
-            "self = M::Level#\"a\"",
+            "M::Level#\"a\"",
             ("ill_typed", "type-mismatch"),
             "M::Level",
         ),
         (
-            "self = M::Counter#\"\"",
+            "M::Counter#\"\"",
             ("invalid_package", "invalid-value"),
             "\"\"",
         ),
     ] {
-        let (code, cause, text) = refused(false, &clause(body));
-        assert_eq!((code.as_str(), cause.as_str()), expected, "{body}");
-        assert_eq!(text, at, "{body}");
+        let (code, cause, text) = refused(false, &function(literal));
+        assert_eq!((code.as_str(), cause.as_str()), expected, "{literal}");
+        assert_eq!(text, at, "{literal}");
     }
     checked(
         false,
