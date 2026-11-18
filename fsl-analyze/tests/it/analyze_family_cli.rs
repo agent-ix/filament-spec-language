@@ -22,21 +22,69 @@ fn results(run: &crate::analyze_cli_support::Run, count: usize) -> Vec<String> {
 /// A refinement of the Counter by an abstract Counter selected as `Spec`,
 /// with the extra rows `rows` and the abstract value given by `mapped`.
 fn refinement(name: &str, mapped: &str, rows: &str) -> String {
+    refinement_stepping(name, mapped, "Spec::Counter::inc(self)", rows)
+}
+
+/// [`refinement`] with the concrete `inc` mapped to the abstract `step`.
+fn refinement_stepping(name: &str, mapped: &str, step: &str, rows: &str) -> String {
     format!(
-        "refinement {name} using v of M as Spec {{\n\
+        "refinement {name} using t0 abstract Spec concrete M {{\n\
+         population Spec::counters from M::counters;\n\
          object Spec::Counter from M::Counter {{ value = {mapped}; }}\n\
-         step M::Counter::inc as Spec::Counter::inc;\n{rows}}}\n"
+         step M::Counter::inc -> {step};\n{rows}}}\n"
     )
 }
 
-/// The Counter request with the abstract `Spec` model (the same domain
-/// package under alias `Spec`) declared in the unit.
+/// The abstract Counter package: the Counter domain package under its own
+/// identity, which the unit selects as `Spec`.
+const SPEC: &str = "test/counter-spec";
+
+/// The Counter request with the abstract `Spec` model, a copy of the Counter
+/// domain package under [`SPEC`], selected in the unit header. The concrete
+/// subject is counter `a` at 0; each item's `abstract_subject` (FSpec
+/// FR-368) names the abstract snapshot, counter `a` at 0 in [`SPEC`].
 fn refinement_request(ws: &Workspace, body: &str, items: Value) -> std::path::PathBuf {
-    counter_request(
-        ws,
-        &format!("model Spec = \"test/counter\";\n{body}"),
-        items,
-    )
+    // The abstract `inc` carries the concrete one's contract.
+    let contract = crate::counter::CONTRACT.replace("M::", "Spec::").replace("CanInc", "SpecCanInc").replace("post Inc", "post SpecInc");
+    let unit = crate::counter::unit_text(&format!("{}{contract}{body}", crate::counter::CONTRACT))
+        .replacen(
+            "model M = \"test/counter\";\n",
+            &format!("model M = \"test/counter\";\nmodel Spec = \"{SPEC}\";\n"),
+            1,
+        );
+    let spec = |bytes: Vec<u8>| -> Vec<u8> {
+        String::from_utf8(bytes)
+            .expect("the fixture is UTF-8")
+            .replace("test/counter", SPEC)
+            .into_bytes()
+    };
+    let snapshot = crate::analyze_cli_support::counter_snapshot(&[("a", 0)]);
+    let spec_snapshot = String::from_utf8(spec(snapshot.clone()))
+        .expect("the fixture is UTF-8")
+        .replace("\"identity\":\"start\"", "\"identity\":\"spec-start\"")
+        .into_bytes();
+    ws.write("program.fsl", unit.as_bytes());
+    ws.write("model.json", &crate::counter::document(false));
+    ws.write("spec.json", &spec(crate::counter::document(false)));
+    ws.write("start.json", &snapshot);
+    ws.write("spec-start.json", &spec_snapshot);
+    let mut items = items;
+    for item in items.as_array_mut().expect("items") {
+        item["temporal"]["abstract_subject"] = json!({"identity": SPEC,
+            "initial_states": [{"authority": "test", "identity": "spec-start"}]});
+    }
+    let mut request = request_members(Some(items));
+    request["models"]
+        .as_array_mut()
+        .expect("models")
+        .push(json!({"format": "semantic-ir/2.0.0", "source": {"file": "spec.json",
+            "authority": "test", "identity": "counter-spec-model", "document": "Counter",
+            "formal_revision": 1}}));
+    request["documents"] = json!([{"file": "start.json"}, {"file": "spec-start.json"}]);
+    let start = json!([{"authority": "test", "identity": "start"}]);
+    request["subject"] = json!({"initial_states": start, "universes": start, "proof_bounds": []});
+    let document = json!({"format": "native-analyze/1", "request": request});
+    ws.write("analyze.json", document.to_string().as_bytes())
 }
 
 /// FR-630-AC-1: a correct mapping proves and a wrong one refutes with a
@@ -45,7 +93,7 @@ fn refinement_request(ws: &Workspace, body: &str, items: Value) -> std::path::Pa
 #[test]
 #[ignore = "QSL-2127: refinement items are not reachable through fsl analyze yet"]
 fn a_refinement_proves_and_a_wrong_mapping_refutes() {
-    let body = refinement("Same", "self.value", "") + &refinement("Off", "3 - self.value", "");
+    let body = refinement("Same", "self.value", "") + &refinement_stepping("Off", "self.value", "stutter", "");
     let ws = Workspace::new("family-refinement");
     let run = analyze(&refinement_request(
         &ws,
@@ -53,6 +101,7 @@ fn a_refinement_proves_and_a_wrong_mapping_refutes() {
         json!([{"claim": "Same", "kind": "refinement", "temporal": {"item_kind": "refinement"}},
             {"claim": "Off", "kind": "refinement", "temporal": {"item_kind": "refinement"}}]),
     ));
+    eprintln!("DOC {}", run.document());
     assert_eq!(results(&run, 2), ["proved", "refuted"]);
     assert_eq!(run.item(0)["record"]["certification"], "certified");
     let refuted = run.item(1);

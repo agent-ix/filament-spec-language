@@ -20,6 +20,7 @@
 //! under a workload (FR-188), over FR-187's step structure.
 
 mod choice;
+mod discovery;
 mod expansion;
 mod explore;
 mod footprint;
@@ -37,6 +38,10 @@ mod subject;
 mod trace;
 
 pub use choice::{weighted_choice, ChoicePoint, TotalAboveDrawRange, Weights, WeightsRefusal};
+pub use discovery::{
+    enumerate_request, sampled_coverage, Coverage, Discovered, Enumeration, EnumerationBounds,
+    EnumerationEnd, EnumerationRequest, FrontierPosition,
+};
 pub use expansion::{Expansion, ExpansionLimit, ExpansionStop, StateFindings};
 pub use explore::{explore_request, Exploration, Limits, Outcome, Stats, TransitionSystem};
 pub use footprint::{any_affects, independent, Footprint, Location};

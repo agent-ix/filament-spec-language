@@ -405,6 +405,18 @@ impl TemporalLimitsSelection {
     }
 }
 
+/// A refinement item's abstract subject, FSpec FR-368's `{identity,
+/// initial_states}`: the abstract model's domain package identity and the
+/// snapshots its initial states are read from.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AbstractSubjectSelection {
+    /// The abstract model's domain package identity.
+    pub identity: String,
+    /// The abstract subject's initial-state snapshots, in request order.
+    pub initial_states: Vec<DocumentSelection>,
+}
+
 /// FSpec FR-331's `temporal` member of a document item, without the
 /// `fairness` FSL resolves from the checked clause.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -416,9 +428,9 @@ pub struct TemporalSelection {
     /// The item's model subject; the request's when absent.
     #[serde(default)]
     pub subject: Option<SubjectSelection>,
-    /// A refinement item's abstract subject.
+    /// A refinement item's abstract subject (FR-630, FSpec FR-368).
     #[serde(default)]
-    pub abstract_subject: Option<Value>,
+    pub abstract_subject: Option<AbstractSubjectSelection>,
     /// The stutter-closure premise.
     #[serde(default)]
     pub stutter_closure: Option<bool>,
@@ -554,7 +566,8 @@ impl ItemSelection {
                     .as_ref()
                     .is_some_and(|options| !options.is_empty()))
             || temporal.is_some_and(|temporal| {
-                temporal.abstract_subject.is_some()
+                (temporal.abstract_subject.is_some()
+                    && !matches!(temporal.item_kind, Some(ItemKindSelection::Refinement)))
                     || temporal.smt_encoding.is_some()
                     || temporal
                         .limits
@@ -691,6 +704,9 @@ fn unknown_option(
         )),
     })
 }
+
+/// FR-630: the request kind of a refinement item.
+const REFINEMENT_KIND: &str = "refinement";
 
 /// The checked declarations by their declared qualified name.
 fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::NodeKey> {
@@ -1048,6 +1064,14 @@ fn resolve_one(
         .filter(|record| record.node() == &node || record.occurrence() == &claim)
         .collect();
     let kind = match selection.kind.as_deref() {
+        // FR-630 "Request item": a refinement item names kind `refinement`,
+        // the `temporal-satisfaction` record S3 writes for the declaration
+        // (FR-144).
+        Some(REFINEMENT_KIND)
+            if super::refinement_item::refinement_at(package, &claim).is_some() =>
+        {
+            Capability::TemporalSatisfaction
+        }
         Some(label) => match Capability::from_wire(label) {
             Ok(kind) => kind,
             Err(_) => return invalid_kind(index, Some(name), "unknown-kind"),
@@ -1066,6 +1090,31 @@ fn resolve_one(
             }
         }
     };
+    // FSpec FR-368: a refinement item's `abstract_subject.identity` names
+    // the refinement's abstract model package.
+    if let (Some(abstract_subject), Some(refinement)) = (
+        selection
+            .temporal
+            .as_ref()
+            .and_then(|temporal| temporal.abstract_subject.as_ref()),
+        super::refinement_item::refinement_at(package, &claim),
+    ) {
+        if abstract_subject.identity != refinement.abstract_model_selection().identity {
+            let mut detail = Map::new();
+            detail.insert(
+                "member".to_owned(),
+                json!("temporal.abstract_subject.identity"),
+            );
+            return ResolvedItem::Settled {
+                claim_name: Some(name.to_owned()),
+                record: Box::new(TerminalRecord::disposition_invalid_request(
+                    index,
+                    CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                    detail,
+                )),
+            };
+        }
+    }
     let record = own.iter().find(|record| record.kind() == kind);
     // FR-967: options are checked after kind admission and the
     // inapplicable-kind rule, which `analyze` applies to an item whose kind
@@ -1355,6 +1404,13 @@ fn temporal_item(
             .map(|depth| usize::try_from(depth).unwrap_or(usize::MAX)),
         witness_samples: selection.witness_samples,
         seed: selection.seed_count(),
+        abstract_initial: selection.abstract_subject.as_ref().map(|subject| {
+            subject
+                .initial_states
+                .iter()
+                .map(DocumentSelection::reference)
+                .collect()
+        }),
         ..TemporalItem::default()
     };
     if item.item_kind == ItemKind::Formula {
