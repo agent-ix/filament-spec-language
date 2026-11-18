@@ -73,7 +73,9 @@ fn pin_check_passes_the_workspace_and_refuses_a_branch_dependency() {
     fs::write(
         &manifest,
         "[package]\nname = \"scratch\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
-         [dependencies]\nfilament-contract-model = { git = \"https://github.com/agent-ix/filament-contract-ir\", branch = \"main\" }\n",
+         [dependencies]\nfilament-contract-model = { git = \"https://github.com/agent-ix/filament-contract-ir\", branch = \"main\" }\n\n\
+         [patch.\"https://github.com/agent-ix/filament-contract-ir\"]\nfilament-contract-model = { git = \"https://github.com/agent-ix/filament-contract-ir\", branch = \"main\" }\n\n\
+         [replace]\n\"filament-contract-model:0.1.0\" = { git = \"https://github.com/agent-ix/filament-contract-ir\", rev = \"deadbeef\" }\n",
     )
     .expect("write scratch manifest");
     fs::create_dir(scratch.path().join("src")).expect("src");

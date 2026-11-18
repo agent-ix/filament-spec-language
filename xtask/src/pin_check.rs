@@ -100,6 +100,17 @@ fn inspect_manifest(
             inspect_dependencies(table, section, path, dependency_count, findings);
         }
     }
+    for section in ["patch", "replace"] {
+        if let Some(sources) = root.get(section).and_then(toml::Value::as_table) {
+            for (source, dependencies) in sources {
+                let Some(dependencies) = dependencies.as_table() else {
+                    continue;
+                };
+                let name = format!("{section}.{source}");
+                inspect_dependencies(dependencies, &name, path, dependency_count, findings);
+            }
+        }
+    }
     if let Some(workspace) = root.get("workspace").and_then(toml::Value::as_table) {
         if let Some(table) = workspace
             .get("dependencies")
@@ -137,6 +148,9 @@ fn inspect_dependencies(
     findings: &mut Vec<String>,
 ) {
     for (name, dependency) in dependencies {
+        // Cargo's string shorthand is only a version requirement; it has no
+        // source selector to validate. Inline tables are represented as TOML
+        // tables here, the same as expanded dependency tables.
         let Some(dependency) = dependency.as_table() else {
             continue;
         };
