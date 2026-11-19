@@ -1488,7 +1488,7 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
         .expect("one initial state");
     for kind in [StepKind::Attempt, StepKind::Event, StepKind::CAttempt] {
         let expansion = system.successors(&state).expect("the bounded path expands");
-        let (transition, next) = expansion
+        let (_, next) = expansion
             .successors
             .into_iter()
             .find(|(transition, _)| transition.kind() == kind)
