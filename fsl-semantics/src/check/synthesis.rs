@@ -98,7 +98,14 @@ fn check_expression(
         &mut scopes,
     ));
     super::bind_parameters(&mut typer, parameters, &location)?;
-    typer.check_as(expression, expected, &location).map(|_| ())
+    let body = typer.infer(expression, Some(expected), &location)?;
+    if expected == &ValueType::Boolean && body.root().value_type() != expected {
+        return Err(CheckRefusal {
+            location,
+            cause: CheckCause::NonBooleanRoot,
+        });
+    }
+    Ok(())
 }
 
 /// Return the first component of `value_type` whose value set is unbounded.
