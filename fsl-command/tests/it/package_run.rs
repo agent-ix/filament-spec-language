@@ -356,7 +356,7 @@ fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
         .expect("the atom has canonical checked text");
     assert_eq!(
         atom,
-        "holds(if ix://test:package-run:library.native/positive(2) then ix://test:package-run:unit.native/Mode::On = ix://test:package-run:unit.native/Mode::On else ix://test:package-run:unit.native/Mode::Off = ix://test:package-run:unit.native/Mode::Off)",
+        "holds(if ix://test/lib/positive(2) then ix://test:package-run:unit.native/Mode::On = ix://test:package-run:unit.native/Mode::On else ix://test:package-run:unit.native/Mode::Off = ix://test:package-run:unit.native/Mode::Off)",
         "{value}"
     );
     assert_eq!(
