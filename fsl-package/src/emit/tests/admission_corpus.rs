@@ -123,11 +123,13 @@ enum Fixture {
     Workload,
     /// TC-2062: a `discrete` delay on a `time dense` ConfigVersion unit.
     Delay,
+    /// TC-2062: a reward over the ConfigVersion domain package.
+    Reward,
 }
 
 impl Fixture {
     /// Every fixture; each must back at least one row.
-    const ALL: [Self; 34] = [
+    const ALL: [Self; 35] = [
         Self::Tc416Functions,
         Self::RecursiveF,
         Self::Tree,
@@ -162,6 +164,7 @@ impl Fixture {
         Self::RandomParameter,
         Self::Workload,
         Self::Delay,
+        Self::Reward,
     ];
 }
 
@@ -467,6 +470,12 @@ impl Fixture {
                 );
                 Emitted::placed_owned(package, vec![document])
             }
+            Self::Reward => Emitted::placed(
+                super::probabilistic::reward_package(
+                    "reward cost on ConfigVersion::attemptUpdate = 1;",
+                ),
+                vec![config_version_unit::DOMAIN_PACKAGE.as_bytes()],
+            ),
             Self::ExtentRecords => whole(package_declaring(
                 TypeEnvironment::new(records(), []).expect("FR-143 admits the records"),
             )),
@@ -758,6 +767,7 @@ fn rows() -> Vec<Row> {
             K::Probabilistic(ProbabilisticForm::DelayDistribution),
             F::Delay,
         ),
+        row(K::Probabilistic(ProbabilisticForm::Reward), F::Reward),
     ]
 }
 
@@ -818,10 +828,6 @@ const NOT_EMITTED_BY_QSL: &[(CheckedNodeKind, &str)] = {
         (
             K::Claim(ClaimForm::ProbabilisticClaim),
             "lowering builds no probabilistic claim node yet",
-        ),
-        (
-            K::Probabilistic(ProbabilisticForm::Reward),
-            "FSL's emitter refuses checked rewards as ProbabilisticModelNotEmitted (QSL-2440)",
         ),
         (
             K::ScalarType(ScalarTypeForm::Bytes),

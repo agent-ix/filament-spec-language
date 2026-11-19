@@ -210,8 +210,8 @@ pub use probabilistic::{
 };
 pub use probabilistic::{
     PackageDelay, PackageDelayFamily, PackageLiteral, PackageProbabilistic,
-    PackageProbabilisticRefusal, PackageRandomParameter, PackageSupport, PackageWeight,
-    PackageWorkload,
+    PackageProbabilisticRefusal, PackageRandomParameter, PackageReward, PackageSupport,
+    PackageWeight, PackageWorkload, ReadReward,
 };
 pub use state_model::StateModelRefusal;
 pub use sum_case::{mint_union_member_key, ExhaustivenessObligation, SumCaseCause};
@@ -6312,9 +6312,13 @@ impl PackageDeclarations {
         }
         // FSpec FR-640: the nodes each checked random parameter and
         // workload refers to.
-        if let Err(refusal) = lowering.probabilistic_declarations(&probabilistic_model) {
-            refusals.push(refusal);
-        }
+        let lowered_rewards = match lowering.probabilistic_declarations(&probabilistic_model) {
+            Ok(keys) => keys,
+            Err(refusal) => {
+                refusals.push(refusal);
+                Vec::new()
+            }
+        };
         // FR-498: each checked probabilistic claim's node.
         let lowered_probabilistic =
             match lowering.probabilistic_claims(probabilistic_model.claims()) {
@@ -7063,6 +7067,13 @@ impl PackageDeclarations {
         // FR-498 "Outputs": each probabilistic claim carries its node's one
         // `claim` occurrence.
         let mut probabilistic_model = probabilistic_model;
+        for (reward, function) in probabilistic_model
+            .rewards_mut()
+            .iter_mut()
+            .zip(lowered_rewards)
+        {
+            reward.set_function(function);
+        }
         for (claim, (key, over_node)) in probabilistic_model
             .claims_mut()
             .iter_mut()

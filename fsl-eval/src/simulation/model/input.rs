@@ -251,8 +251,9 @@ impl<'p> PackageModelInput<'p> {
     ///
     /// Its random parameters and workloads are the ones the package's
     /// `probabilistic` nodes carry, rebuilt as S3 records them against the
-    /// selected domain packages (FSL FR-740). A package carries no reward,
-    /// delay or claim of the model, so those tables are empty.
+    /// selected domain packages (FSL FR-740). A package route reads no
+    /// reward (a `reward` node refuses as an unread form, below) and carries
+    /// no claim of the model, and its delay tables are empty.
     ///
     /// # Errors
     ///

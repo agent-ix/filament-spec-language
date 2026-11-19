@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FSL FR-740: the random parameters, workloads and delays of an admitted
+//! FSL FR-740: the random parameters, workloads, delays and rewards of an admitted
 //! package, read from its `probabilistic` nodes.
 //!
 //! The IR's typed reads (such as [`CheckedPackageV2::random_parameters`] and
@@ -17,7 +17,7 @@ use filament_contract_model::{
 use filament_exact::{Integer, Rational};
 use fsl_semantics::check::{
     PackageDelay, PackageDelayFamily, PackageLiteral, PackageProbabilistic, PackageRandomParameter,
-    PackageSupport, PackageWeight, PackageWorkload,
+    PackageReward, PackageSupport, PackageWeight, PackageWorkload,
 };
 
 use crate::checked_v2::wire_graph;
@@ -180,6 +180,27 @@ fn read(package: &CheckedPackageV2) -> Result<PackageProbabilistic, Probabilisti
                         .ok_or(fault("delay-operation"))?
                         .to_owned(),
                     family: delay_family(body).ok_or(fault("delay-family"))?,
+                });
+            }
+            CheckedNodeKind::Probabilistic(ProbabilisticForm::Reward) => {
+                read.rewards.push(PackageReward {
+                    declaring: bound(body, 0)
+                        .and_then(key)
+                        .ok_or(fault("reward-declaring"))?,
+                    operation: bound(body, 1)
+                        .and_then(text)
+                        .ok_or(fault("reward-operation"))?
+                        .to_owned(),
+                    name: bound(body, 2)
+                        .and_then(text)
+                        .ok_or(fault("reward-name"))?
+                        .to_owned(),
+                    value_type: bound(body, 3)
+                        .and_then(key)
+                        .ok_or(fault("reward-value-type"))?,
+                    function: bound(body, 4)
+                        .and_then(key)
+                        .ok_or(fault("reward-expression"))?,
                 });
             }
             _ => {}

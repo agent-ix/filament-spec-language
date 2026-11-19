@@ -447,12 +447,12 @@ fn the_support_graph_is_the_state_graph() {
 
 /// FR-185-AC-7 (TC-620 step 7): `Service`, with `d` typed `Millis = Int[1,
 /// 12]`, checks at S3 with its record intact; S4 writes its random
-/// parameters and workload and refuses at `unsupported_construct`/
-/// `not-yet-implemented`, naming its reward, `reward` and the selected
-/// profile.
+/// parameters, workload and reward, and refuses at `unsupported_construct`/
+/// `not-yet-implemented`, naming its Boolean random parameter `ok` (IR-1569),
+/// `random-parameter` and the selected profile.
 #[trace("TC-2062", "FR-185-AC-12")]
 #[test]
-fn service_checks_and_refuses_emission_naming_its_reward() {
+fn service_checks_and_refuses_emission_naming_its_boolean_random_parameter() {
     let world = World::new(&world::service(""));
     let model = world.package.graph().probabilistic_model();
     assert_eq!(model.random_parameters().len(), 2);
@@ -464,10 +464,10 @@ fn service_checks_and_refuses_emission_naming_its_reward() {
         &refusal,
         fsl_package::EmitRefusal::ProbabilisticModelNotEmitted {
             declaration,
-            feature: fsl_semantics::check::ProbabilisticFeature::Reward,
+            feature: fsl_semantics::check::ProbabilisticFeature::RandomParameter,
             profile: Some("filament.model.complete/v1"),
             region,
-        } if declaration == "duration" && region.start() < region.end()
+        } if declaration == "attempt(ok)" && region.start() < region.end()
     ));
     assert_eq!(
         (refusal.code(), refusal.cause()),
@@ -664,7 +664,7 @@ fn zero_weight_workloads_follow_enabled_operation_weights() {
 #[trace("TC-2062", "FR-740-AC-2")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-5")]
 #[test]
-#[ignore = "QSL-2440: the reward of Service is emitted as a v2 probabilistic node"]
+#[ignore = "IR-1569: Service's Boolean random parameter `ok` is refused by IR's reader until it admits Boolean support values"]
 fn service_is_emitted_and_its_steps_hold_for_the_emitted_model() {
     let world = World::new(&world::service(""));
     let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
@@ -704,6 +704,65 @@ fn service_without_reward(boolean: bool) -> crate::simulation::sampled::world::M
             .replace("random Server::attempt(ok) ~ { true: 98, false: 2 };\n", "");
     }
     model
+}
+
+/// FR-740-AC-1 (TC-2062), FSpec FR-640-AC-1: `Service` without its Boolean
+/// parameter emits its `duration` reward, typed `Millis = Int[1, 12]`, as a
+/// `reward` node beside the `d` random parameter and the `Steady` workload.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-1")]
+#[test]
+fn service_reward_is_emitted_beside_its_random_parameter_and_workload() {
+    let mut model = world::service("");
+    model.body = model
+        .body
+        .replace("random Server::attempt(ok) ~ { true: 98, false: 2 };\n", "");
+    let world = World::new(&model);
+    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .unwrap_or_else(|refusal| panic!("S4 emits the reward: {refusal:?}"));
+    let wire: serde_json::Value =
+        serde_json::from_slice(emission.package().bytes()).expect("JSON bytes");
+    let rewards: Vec<&serde_json::Value> = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .filter(|node| node["node_tag"] == "probabilistic" && node["semantic_form"] == "reward")
+        .collect();
+    let [reward] = &rewards[..] else {
+        panic!("one reward node: {rewards:?}");
+    };
+    let member = |term: &serde_json::Value, name: &str| -> serde_json::Value {
+        term["members"]
+            .as_array()
+            .and_then(|members| members.iter().find(|member| member["name"] == name))
+            .map(|member| member["value"].clone())
+            .unwrap_or_else(|| panic!("binding `{name}` in {term}"))
+    };
+    assert_eq!(member(&reward["body"], "name")["value"], "duration");
+    let node_of = |id: &serde_json::Value| -> serde_json::Value {
+        wire["semantic_graph"]["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|node| &node["node_id"] == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("a node with id {id}"))
+    };
+    let function = node_of(&member(&reward["body"], "expression")["target"]);
+    let returned = node_of(&member(&function["body"], "body")["target"]);
+    assert_eq!(
+        member(&returned["body"], "name")["value"],
+        "d",
+        "the function returns its parameter `d`"
+    );
+    fsl_package::read_evaluation_package(
+        &world.package,
+        fsl_semantics::library::LibraryName::new("fixture").expect("a library name"),
+        world.packages(),
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+    )
+    .expect("the reader admits the package with its reward");
 }
 
 /// FR-740-AC-1 (TC-2062): `Service` without its reward and its Boolean
@@ -820,6 +879,60 @@ fn the_package_route_rebuilds_the_probabilistic_model_of_the_emitted_package() {
             .expect("the operation is weighted");
         assert_eq!(found_weight, expected_weight);
     }
+}
+
+/// FSL FR-740: no engine reads the reward a package carries yet, so the
+/// package route refuses a package with a `reward` node at that node, naming
+/// the form, instead of building an input whose model has no reward.
+#[test]
+fn the_package_route_refuses_a_package_with_a_reward_node() {
+    let mut model = world::service("");
+    model.body = "random Server::attempt(d) ~ { 1: 90, 3: 7, 12: 3 };\n\
+                  workload Steady on M { weight Server::request = 1; \
+                  weight Server::attempt = 1; weight Server::reset = 1; }\n\
+                  reward duration on Server::attempt = d;\n"
+        .to_owned();
+    let world = World::new(&model);
+    let read = fsl_package::read_evaluation_package(
+        &world.package,
+        fsl_semantics::library::LibraryName::new("fixture").expect("a library name"),
+        world.packages(),
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+    )
+    .expect("the package emits and its bytes are admitted");
+    let admitted = read.admitted();
+    let mut rows_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let rows = read
+        .emission()
+        .identity_rows(admitted, &mut rows_budget)
+        .expect("the identity rows join the package");
+    let mut join_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let bare = fsl_package::BarePackage::new(admitted)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &rows,
+                equality: None,
+            },
+            &mut join_budget,
+        )
+        .expect("the bytes view admits its supply");
+    let Err(crate::simulation::model::PendingPackageForm::Form { form, node }) =
+        crate::simulation::model::PackageModelInput::of(
+            &bare,
+            world.packages(),
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        )
+    else {
+        panic!("the package route refuses the reward node");
+    };
+    assert_eq!(form, fsl_package::UnreadModelForm::Reward);
+    assert!(
+        admitted.resolved_graph().nodes.iter().any(|candidate| {
+            candidate.node_id == node && candidate.semantic_form.as_ref() == "reward"
+        }),
+        "the refusal names the reward node {node:?}"
+    );
 }
 
 /// FSpec FR-406-AC-6 (TC-351): under a workload that gives `send_b` weight

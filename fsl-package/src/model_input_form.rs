@@ -8,7 +8,7 @@
 
 use filament_contract_model::{
     CheckedNodeId, CheckedNodeKind, CheckedNodeTag, CheckedSemanticNodeV2, CompositeTypeForm,
-    ModelForm, ScalarTypeForm, TemporalForm,
+    ModelForm, ProbabilisticForm, ScalarTypeForm, TemporalForm,
 };
 
 use crate::BarePackage;
@@ -31,6 +31,11 @@ pub enum UnreadModelForm {
     Variant,
     /// An enumeration, which a value's canonical form names.
     Enumeration,
+    /// A `reward` node of a `probabilistic` declaration: the package route
+    /// rebuilds it as a `ReadReward` record, but no
+    /// engine reads that record, so a model check over the package would run
+    /// without the reward.
+    Reward,
     /// An `object` declaration of the unit's own source package (FR-569).
     SourceObject,
 }
@@ -46,6 +51,7 @@ impl UnreadModelForm {
             Self::Hybrid => "hybrid",
             Self::Variant => "variant",
             Self::Enumeration => "enumeration",
+            Self::Reward => "reward",
             Self::SourceObject => "source-object",
         }
     }
@@ -63,6 +69,7 @@ fn unread(node: &CheckedSemanticNodeV2) -> Option<UnreadModelForm> {
         CheckedNodeKind::CompositeType(CompositeTypeForm::Union)
         | CheckedNodeKind::Model(ModelForm::VariantType) => Some(UnreadModelForm::Variant),
         CheckedNodeKind::ScalarType(ScalarTypeForm::Enum) => Some(UnreadModelForm::Enumeration),
+        CheckedNodeKind::Probabilistic(ProbabilisticForm::Reward) => Some(UnreadModelForm::Reward),
         _ => None,
     }
 }

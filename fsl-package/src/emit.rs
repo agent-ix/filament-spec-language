@@ -1879,7 +1879,10 @@ impl<'g> Candidate<'g> {
     /// function's body. `None` for every other node.
     fn function_check_mode(
         &self,
-        function_modes: &dyn Fn(usize) -> Option<filament_semantic_value::checking::CheckMode>,
+        function_modes: &dyn Fn(
+            Option<usize>,
+            &NodeKey,
+        ) -> Option<filament_semantic_value::checking::CheckMode>,
     ) -> Result<Option<filament_contract_model::CheckMode>, EmitRefusal> {
         use filament_semantic_value::checking::CheckMode as Checked;
         use filament_semantic_value::location::ExpressionOwner;
@@ -1902,8 +1905,7 @@ impl<'g> Candidate<'g> {
                 },
                 RecordedLocation::Parameter(_) => None,
             });
-        let mode = index
-            .and_then(function_modes)
+        let mode = function_modes(index, &self.key)
             .ok_or_else(|| encoding("a function node has no recorded check mode"))?;
         Ok(Some(match mode {
             Checked::Linked => filament_contract_model::CheckMode::Linked,
@@ -1915,7 +1917,10 @@ impl<'g> Candidate<'g> {
     fn wire_node(
         &self,
         ids: &StructuralIds,
-        function_modes: &dyn Fn(usize) -> Option<filament_semantic_value::checking::CheckMode>,
+        function_modes: &dyn Fn(
+            Option<usize>,
+            &NodeKey,
+        ) -> Option<filament_semantic_value::checking::CheckMode>,
     ) -> Result<CheckedSemanticNodeV2, EmitRefusal> {
         let node = self.node;
         Ok(CheckedSemanticNodeV2 {
@@ -6523,23 +6528,6 @@ fn emit_package_inner(
         .map(|relation| graph.abstraction_nodes(relation))
         .transpose()
         .map_err(EmitRefusal::Abstraction)?;
-    if let Some((feature, declaration)) = graph.probabilistic_model().first_declaration() {
-        let location = graph
-            .probabilistic_model()
-            .first_declaration_location()
-            .ok_or(EmitRefusal::SourceMapInvariant)?;
-        let region = graph
-            .region(&location)
-            .ok_or(EmitRefusal::SourceMapInvariant)?;
-        return Err(EmitRefusal::ProbabilisticModelNotEmitted {
-            declaration,
-            feature,
-            // The header layers ascend; the widest is the profile the unit
-            // selects its probabilistic declarations under.
-            profile: graph.header_layers().last().map(|layer| layer.identity()),
-            region,
-        });
-    }
     let candidates = candidates_of(ids, &foreign, graph, abstraction.as_ref(), &declared_forms)?;
     // Nodes the emitter writes beside the graph's own: each model root, and
     // each model-owned time unit node a `duration` window is typed by.
@@ -6658,7 +6646,10 @@ fn emit_package_inner(
         .map(
             |candidate| match denied().or_else(|| fault(&candidate.id)) {
                 Some(refusal) => Err(refusal),
-                None => candidate.wire_node(ids, &|index| graph.function_check_mode(index)),
+                None => candidate.wire_node(ids, &|index, key| match index {
+                    Some(index) => graph.function_check_mode(index),
+                    None => graph.probabilistic_model().reward_function_check_mode(key),
+                }),
             },
         )
         .collect::<Result<Vec<_>, _>>()?;

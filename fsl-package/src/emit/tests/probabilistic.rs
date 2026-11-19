@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-740: a checked random parameter and workload are emitted as
-//! `probabilistic` nodes; a package whose rewards or delays check is refused
-//! at emission, with the declaration's locus, rather than written without
-//! them. FR-498: a probabilistic claim is emitted as its own
-//! `claim`/`probabilistic_claim` node and sidecar row.
+//! FR-740: a checked random parameter, workload, delay and reward are emitted
+//! as `probabilistic` nodes; a declaration that cannot be written is refused
+//! at emission, with its locus, rather than written without it. FR-498: a
+//! probabilistic claim is emitted as its own `claim`/`probabilistic_claim`
+//! node and sidecar row.
 
 use super::admission_corpus::config_version_unit;
 use super::*;
@@ -30,27 +30,20 @@ fn probabilistic_package() -> CheckedPackage {
     CheckedPackage::link(graph)
 }
 
-/// FR-185 "Package emission", FR-740: the checked workload is emitted, and
-/// the reward beside it is refused `unsupported_construct`/
-/// `not-yet-implemented`, naming the reward `cost`, its feature, the unit's
-/// profile and the reward's own locus.
-#[trace("TC-2062", "FR-185-AC-12")]
-#[test]
-fn a_checked_reward_refuses_emission_beside_an_emitted_workload() {
-    let refusal = emit_checked(&probabilistic_package()).expect_err("emission refuses");
-    assert!(matches!(
-        &refusal,
-        EmitRefusal::ProbabilisticModelNotEmitted {
-            declaration,
-            feature: fsl_semantics::check::ProbabilisticFeature::Reward,
-            profile: Some("filament.model.complete/v1"),
-            region,
-        } if declaration == "cost" && region.start() < region.end()
-    ));
-    assert_eq!(
-        (refusal.code(), refusal.cause()),
-        (Code::UnsupportedConstruct, Some("not-yet-implemented"))
-    );
+/// The ConfigVersion unit with `declarations` appended.
+pub(super) fn reward_package(declarations: &str) -> CheckedPackage {
+    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
+    let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
+    let unit = format!("{}{declarations}\n", config_version_unit::unit_text());
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    CheckedPackage::link(graph)
 }
 
 /// The ConfigVersion unit with `weights` written in a workload `Steady`.
@@ -163,10 +156,10 @@ fn emitted_claims(package: &CheckedPackage) -> (Vec<Value>, Vec<(Value, Value)>)
 
 /// FR-186 "Outputs", FR-498: a package whose only probabilistic declaration
 /// is a checked claim is emitted with the claim's node; one that also
-/// declares a reward after it is refused naming the reward.
+/// declares a reward after it is emitted with the reward's node too.
 #[trace("TC-621", "FR-186-AC-5")]
 #[test]
-fn a_checked_claim_is_emitted_and_a_reward_still_refuses() {
+fn a_checked_claim_and_a_reward_are_both_emitted() {
     let package = claims_package(&[&claim("Stable", "0.5")]);
     assert_eq!(package.graph().probabilistic_model().claims().len(), 1);
     let (rows, nodes) = emitted_claims(&package);
@@ -176,16 +169,14 @@ fn a_checked_claim_is_emitted_and_a_reward_still_refuses() {
         &claim("Stable", "0.5"),
         "reward cost on ConfigVersion::attemptUpdate = 1;",
     ]);
-    let refusal = emit_checked(&package).expect_err("the reward refuses emission");
-    assert!(matches!(
-        refusal,
-        EmitRefusal::ProbabilisticModelNotEmitted {
-            declaration,
-            feature: fsl_semantics::check::ProbabilisticFeature::Reward,
-            profile: Some("filament.model.complete/v1"),
-            region,
-        } if declaration == "cost" && region.start() < region.end()
-    ));
+    let (rows, nodes) = emitted_claims(&package);
+    assert_eq!((rows.len(), nodes.len()), (1, 1));
+    let emission = emit_checked(&package).expect("the reward emits beside the claim");
+    let wire = wire(&emission);
+    assert_eq!(
+        super::owners::node_where(&wire, "probabilistic", "reward").len(),
+        1
+    );
 }
 
 /// FR-186 Activation and FR-498: the checked package retains the `on each`
@@ -314,7 +305,11 @@ fn a_second_same_named_probabilistic_claim_is_ambiguous() {
     );
     let refusals = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .map(|_| ())
         .expect_err("two claims named Stable are ambiguous");
     let [refusal] = refusals.as_slice() else {
@@ -363,7 +358,6 @@ fn emit_and_read(package: &CheckedPackage, document: &[u8]) -> (Value, Read) {
 #[trace("TC-2062", "FR-185-AC-7")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-1")]
 #[test]
-#[ignore = "QSL-2440: emission of rewards as v2 probabilistic nodes (the workload half is workload_round_trips)"]
 fn a_workload_and_a_reward_are_emitted_as_probabilistic_nodes() {
     let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
     let (wire, read) = emit_and_read(&probabilistic_package(), document);
@@ -385,6 +379,7 @@ fn a_workload_and_a_reward_are_emitted_as_probabilistic_nodes() {
     assert!(body.contains("attemptUpdate"), "{body}");
     let body = reward["body"].to_string();
     assert!(body.contains("cost"), "{body}");
+    assert!(body.contains("attemptUpdate"), "{body}");
 }
 
 /// The fixture model's document, and a unit with the random parameter
@@ -1449,4 +1444,480 @@ fn a_delay_on_a_timed_source_model_refuses_emission_with_its_locus() {
             (Code::UnsupportedConstruct, Some("not-yet-implemented"))
         );
     }
+}
+
+/// The abstraction fixture's unit with the random parameter `attemptUpdate(n)`
+/// over `{ 3: 1, 1: 3 }` and `declarations` after it.
+fn reward_over_parameter(declarations: &str) -> (Vec<u8>, CheckedPackage) {
+    use super::abstraction::fixture;
+    let document =
+        crate::emit::tests::wire_bytes(&fixture::document()).expect("the fixture serializes");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model M = {package:?};\n\
+         random ConfigVersion::attemptUpdate(n) ~ {{ 3: 1, 1: 3 }};\n\
+         {declarations}\n",
+        package = fixture::PACKAGE,
+    );
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    (document, CheckedPackage::link(graph))
+}
+
+/// The value of the body binding `name` of the aggregate `term`.
+fn bound<'t>(term: &'t Value, name: &str) -> &'t Value {
+    term["members"]
+        .as_array()
+        .and_then(|members| members.iter().find(|member| member["name"] == name))
+        .map(|member| &member["value"])
+        .unwrap_or_else(|| panic!("binding `{name}` in {term}"))
+}
+
+/// The node of `wire` with `id`.
+fn node_by_id<'w>(wire: &'w Value, id: &Value) -> &'w Value {
+    super::nodes(wire)
+        .iter()
+        .find(|node| &node["node_id"] == id)
+        .unwrap_or_else(|| panic!("a node with id {id}"))
+}
+
+/// TC-2062 (FR-740-AC-1, FR-185-AC-7), FSpec FR-640-AC-1: `reward cost on
+/// ConfigVersion::attemptUpdate = n + 1` is emitted as a `reward` node whose
+/// bindings are `declaring`, `operation`, `name`, `value_type` and
+/// `expression`, in that order, and whose `expression` is a clause function
+/// owned by the operation member with the operation's parameter `n`, the
+/// random one included, and the clause kind `precondition`, which stands in
+/// for a kind of its own until QSL-2535 adds `reward`.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[trace("TC-2062", "FR-185-AC-7")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-1")]
+#[test]
+fn a_reward_is_emitted_with_its_clause_function() {
+    let (document, package) =
+        reward_over_parameter("reward cost on ConfigVersion::attemptUpdate = n + 1;");
+    let (wire, read) = emit_and_read(&package, &document);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    let [reward] = super::owners::node_where(&wire, "probabilistic", "reward")[..] else {
+        panic!("one reward node");
+    };
+    let names: Vec<&str> = reward["body"]["members"]
+        .as_array()
+        .expect("the body is an aggregate")
+        .iter()
+        .map(|member| member["name"].as_str().expect("a binding"))
+        .collect();
+    assert_eq!(
+        names,
+        ["declaring", "operation", "name", "value_type", "expression"]
+    );
+    let body = &reward["body"];
+    assert_eq!(bound(body, "operation")["value"], "attemptUpdate");
+    assert_eq!(bound(body, "name")["value"], "cost");
+    let declaring = &bound(body, "declaring")["target"];
+    assert_eq!(node_by_id(&wire, declaring)["semantic_form"], "object_type");
+
+    let function = node_by_id(&wire, &bound(body, "expression")["target"]);
+    assert_eq!(function["node_tag"], "function");
+    assert_eq!(function["owner"]["kind"], "model");
+    assert_eq!(
+        function["semantic_type"],
+        bound(body, "value_type")["target"],
+        "the function is typed by the reward's value type"
+    );
+    assert_eq!(bound(&function["body"], "clause")["value"], "precondition");
+    let parameters = bound(&function["body"], "parameters")["members"]
+        .as_array()
+        .expect("the parameters are an aggregate");
+    let read: Vec<(&Value, &Value)> = parameters
+        .iter()
+        .map(|parameter| {
+            let parameter = node_by_id(&wire, &parameter["target"]);
+            (
+                &bound(&parameter["body"], "name")["value"],
+                &bound(&parameter["body"], "level")["value"],
+            )
+        })
+        .collect();
+    assert_eq!(
+        read,
+        [(&json!("n"), &json!("0")), (&json!("m"), &json!("1"))],
+        "every parameter of the operation in declared order"
+    );
+    assert_eq!(
+        reward["occurrences"],
+        json!([{"role": "declaration", "ordinal": 0}])
+    );
+}
+
+/// TC-2062 (FR-740-AC-1), FSpec FR-640-AC-1: the typed read of the emitted
+/// package gives the reward `cost` of `attemptUpdate` with its value type, its
+/// function, and the declaration's region.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-1")]
+#[test]
+fn reward_round_trips() {
+    let (document, package) =
+        reward_over_parameter("reward cost on ConfigVersion::attemptUpdate = n + 1;");
+    let [checked] = package.graph().probabilistic_model().rewards() else {
+        panic!("one checked reward");
+    };
+    let (wire, read) = emit_and_read(&package, &document);
+    let (admitted, source_map) = admitted_of(read);
+    let declaring = fsl_semantics::check::wire_id::structural_id(
+        &fsl_semantics::model::key::object_type_node_key(
+            checked.operation().declaring_key().unwrap(),
+        )
+        .expect("the declaring type has a node key"),
+    );
+    let reads = admitted.rewards(&declaring, checked.operation().name());
+    let [read] = &reads[..] else {
+        panic!("one reward read: {reads:?}");
+    };
+    assert_eq!(read.name, checked.name());
+    let [reward] = super::owners::node_where(&wire, "probabilistic", "reward")[..] else {
+        panic!("one reward node");
+    };
+    assert_eq!(
+        serde_json::to_value(read.function).unwrap(),
+        bound(&reward["body"], "expression")["target"]
+    );
+    let function = node_by_id(&wire, &serde_json::to_value(read.function).unwrap());
+    assert_eq!(
+        serde_json::to_value(read.value_type).unwrap(),
+        function["semantic_type"]
+    );
+    let region = package
+        .graph()
+        .region(&checked.declaration_location())
+        .expect("the declaration has a region");
+    assert_eq!(
+        declaration_region(&source_map, read.node),
+        (region.start(), region.end())
+    );
+}
+
+/// FSL FR-740: a reward reads back from the emitted package as S3's record:
+/// the same operation, name and parameters, with the function node S3 lowered
+/// the expression to and the reward's value type node.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+fn a_reward_reads_back_as_the_s3_record() {
+    let (document, package) =
+        reward_over_parameter("reward cost on ConfigVersion::attemptUpdate = n + 1;");
+    let checked = package.graph().probabilistic_model();
+    let read = read_back(&package, &document, &BTreeMap::new());
+    let [expected] = checked.rewards() else {
+        panic!("one checked reward");
+    };
+    let [found] = read.read_rewards() else {
+        panic!("one reward read back");
+    };
+    assert_eq!(found.name, expected.name());
+    assert_eq!(
+        operation_content(&found.operation),
+        operation_content(expected.operation())
+    );
+    assert_eq!(found.parameters, expected.parameters());
+    assert_eq!(Some(&found.function), expected.function());
+    let function = package
+        .graph()
+        .semantic_graph()
+        .node(found.function.clone())
+        .expect("the function node is in the graph");
+    assert_eq!(
+        function.semantic_type().as_ref(),
+        Some(&found.value_type),
+        "the value type is the function's type node"
+    );
+}
+
+/// FSpec FR-640 Reader rule 4, FSL FR-740: a package whose rewards repeat a
+/// name on one operation, or name an operation the object type does not
+/// declare, is refused on read-back.
+#[test]
+fn a_package_reward_that_breaks_the_reader_rules_is_refused_on_read_back() {
+    use fsl_semantics::check::PackageProbabilisticRefusal as Refusal;
+    let (document, package) =
+        reward_over_parameter("reward cost on ConfigVersion::attemptUpdate = n + 1;");
+    let refused = |edit: fn(&mut fsl_semantics::check::PackageProbabilistic)| {
+        try_read_back(&package, &document, &BTreeMap::new(), edit)
+            .expect_err("the edited rewards are refused")
+    };
+    assert_eq!(
+        refused(|nodes| {
+            let again = nodes.rewards[0].clone();
+            nodes.rewards.push(again);
+        }),
+        Refusal::DuplicateReward {
+            operation: "attemptUpdate".into(),
+            reward: "cost".into(),
+        }
+    );
+    assert_eq!(
+        refused(|nodes| nodes.rewards[0].operation = "missing".into()),
+        Refusal::UnknownOperation("missing".into())
+    );
+}
+
+/// FSpec FR-640-AC-3: writing the rewards in another order emits the same
+/// nodes in the same order, and changing the expression changes the reward's
+/// identity. The function's own key holds no content (it ranks equal paths by
+/// lowering order), so the function's id is not asserted to change.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+fn reward_order_changes_no_node_and_the_expression_changes_the_identity() {
+    let nodes_of = |declarations: &str| {
+        let (document, package) = reward_over_parameter(declarations);
+        let (wire, read) = emit_and_read(&package, &document);
+        assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+        super::nodes(&wire)
+            .iter()
+            .filter(|node| {
+                node["node_tag"] == "probabilistic"
+                    || (node["node_tag"] == "function" && node["owner"]["kind"] == "model")
+            })
+            .cloned()
+            .map(|mut node| {
+                node["resolved_id"] = resolved_id(&wire, &node["node_id"], 8);
+                node
+            })
+            .collect::<Vec<Value>>()
+    };
+    let first = "reward cost on ConfigVersion::attemptUpdate = n + 1;";
+    let second = "reward load on ConfigVersion::attemptUpdate = n;";
+    let forward = nodes_of(&format!("{first}\n{second}"));
+    let reverse = nodes_of(&format!("{second}\n{first}"));
+    assert_eq!(
+        forward.len(),
+        5,
+        "random parameter, two rewards, two functions"
+    );
+    let strip = |nodes: &[Value]| -> Vec<Value> {
+        nodes
+            .iter()
+            .map(|node| {
+                let mut node = node.clone();
+                node["occurrences"] = Value::Null;
+                node
+            })
+            .collect()
+    };
+    let ids = |nodes: &[Value]| -> Vec<Value> {
+        nodes.iter().map(|node| node["node_id"].clone()).collect()
+    };
+    assert_eq!(ids(&forward), ids(&reverse), "same nodes, same order");
+    for (forward, reverse) in strip(&forward).iter().zip(strip(&reverse)) {
+        assert_eq!(forward["node_id"], reverse["node_id"]);
+        assert_eq!(forward["body"], reverse["body"], "{}", forward["node_id"]);
+        assert_eq!(forward["owner"], reverse["owner"]);
+    }
+
+    let identity = |declaration: &str| {
+        let nodes = nodes_of(declaration);
+        let [reward] = nodes
+            .iter()
+            .filter(|node| node["semantic_form"] == "reward")
+            .collect::<Vec<_>>()[..]
+        else {
+            panic!("one reward");
+        };
+        reward["resolved_id"].clone()
+    };
+    let base = identity(first);
+    assert_ne!(
+        base,
+        identity("reward cost on ConfigVersion::attemptUpdate = n + 2;"),
+        "another expression is another reward"
+    );
+    assert_eq!(
+        base,
+        identity(first),
+        "an unchanged declaration keeps its identity"
+    );
+}
+
+/// `id` with each index segment `{"node": i}` of its path replaced by the
+/// resolved id of the node at position `i` of `wire`'s graph, `depth` levels
+/// deep: an index names a position, so two ids are the same identity only when
+/// their resolved forms are (FSpec FR-322 "Operand index segments").
+fn resolved_id(wire: &Value, id: &Value, depth: usize) -> Value {
+    let mut id = id.clone();
+    if depth == 0 {
+        return id;
+    }
+    let nodes = super::nodes(wire);
+    if let Some(path) = id["path"].as_array_mut() {
+        for segment in path {
+            if let Some(at) = segment["node"].as_u64() {
+                let target = &nodes[usize::try_from(at).expect("a small index")]["node_id"];
+                *segment = resolved_id(wire, target, depth - 1);
+            }
+        }
+    }
+    id
+}
+
+/// The emitted `probabilistic` nodes and model-owned functions of the
+/// ConfigVersion unit with `declarations` (claims use the profile `ev`), as
+/// wire JSON with occurrences removed.
+fn probabilistic_nodes_of(declarations: &[&str]) -> Vec<Value> {
+    let package = claims_package(declarations);
+    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
+    let (wire, read) = emit_and_read(&package, document);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    super::nodes(&wire)
+        .iter()
+        .filter(|node| {
+            node["node_tag"] == "probabilistic"
+                || node["node_tag"] == "claim"
+                || (node["node_tag"] == "function" && node["owner"]["kind"] == "model")
+        })
+        .cloned()
+        .map(|mut node| {
+            node["occurrences"] = Value::Null;
+            node["resolved_id"] = resolved_id(&wire, &node["node_id"], 8);
+            node
+        })
+        .collect()
+}
+
+/// FSL FR-740 Behavior, FSpec FR-640-AC-3: writing the rewards in any order
+/// relative to a workload and a claim, as well as to each other, emits the
+/// same nodes, ids and bodies in the same order; changing one reward's
+/// expression changes that reward's identity and no other node's.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+fn rewards_keep_their_nodes_whatever_unrelated_declarations_surround_them() {
+    let cost = "reward cost on ConfigVersion::attemptUpdate = 1;";
+    let load = "reward load on ConfigVersion::attemptUpdate = 7;";
+    let workload = "workload Steady on Config { weight ConfigVersion::attemptUpdate = 1; }";
+    let stable = claim("Stable", "0.5");
+    let base = probabilistic_nodes_of(&[cost, load, workload, &stable]);
+    assert_eq!(
+        base.iter()
+            .filter(|node| node["node_tag"] == "probabilistic")
+            .count(),
+        3,
+        "two rewards and a workload"
+    );
+    for order in [
+        [&stable[..], workload, load, cost],
+        [load, &stable, cost, workload],
+        [workload, load, &stable, cost],
+    ] {
+        assert_eq!(
+            probabilistic_nodes_of(&order),
+            base,
+            "the declaration order {order:?} changes no node"
+        );
+    }
+    let changed = probabilistic_nodes_of(&[
+        "reward cost on ConfigVersion::attemptUpdate = 2;",
+        load,
+        workload,
+        &stable,
+    ]);
+    let mut differing: Vec<&str> = base
+        .iter()
+        .filter(|node| !changed.contains(node))
+        .map(|node| node["semantic_form"].as_str().unwrap_or_default())
+        .collect();
+    differing.sort_unstable();
+    assert_eq!(base.len(), changed.len());
+    assert_eq!(
+        differing,
+        ["pure_function", "reward"],
+        "only the changed reward and the function that computes it differ"
+    );
+}
+
+/// FSpec FR-640-AC-3: changing a reward's expression changes the identity of
+/// every claim that reads it.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+#[ignore = "QSL-2441: a claim names no reward it reads yet; its node has an empty body"]
+fn a_claim_that_reads_a_reward_changes_identity_with_the_reward_expression() {
+    let claim_id = |reward: &str| {
+        probabilistic_nodes_of(&[reward, &claim("Stable", "0.5")])
+            .into_iter()
+            .find(|node| node["node_tag"] == "claim")
+            .map(|node| node["node_id"].clone())
+            .expect("the claim node")
+    };
+    assert_ne!(
+        claim_id("reward cost on ConfigVersion::attemptUpdate = 1;"),
+        claim_id("reward cost on ConfigVersion::attemptUpdate = 2;"),
+    );
+}
+
+/// A unit with source-declared objects and `declarations`, no model package.
+fn source_object_reward(declarations: &str) -> CheckedPackage {
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile P = \"filament.model.complete/v1\";\n\
+         object O {{ n: Integer; operation step(x: Integer) modifies self.n; }}\n\
+         {declarations}\n"
+    );
+    let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+        .expect("the package input is empty");
+    let graph = assemble_with_models(source.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("S3 accepts the reward: {refusals:?}"));
+    CheckedPackage::link(graph)
+}
+
+/// FSL FR-740 interim: a reward declared on a source-declared object has no
+/// `model` node to hang from (QSL-2463 emits source objects; contract-ir
+/// admits a source-owned declaring node only after #1053), so emission refuses
+/// it with the reward's locus rather than writing the package without it.
+#[trace("TC-2062", "FR-185-AC-12")]
+#[test]
+fn a_reward_on_a_source_object_refuses_emission_with_its_locus() {
+    let package = source_object_reward("reward cost on O::step = x;");
+    assert_eq!(package.graph().probabilistic_model().rewards().len(), 1);
+    let refusal = emit_checked(&package).expect_err("emission refuses");
+    assert!(
+        matches!(
+            &refusal,
+            EmitRefusal::ProbabilisticModelNotEmitted {
+                declaration,
+                feature: fsl_semantics::check::ProbabilisticFeature::Reward,
+                region,
+                ..
+            } if declaration == "cost" && region.start() < region.end()
+        ),
+        "{refusal:?}"
+    );
+    assert_eq!(
+        (refusal.code(), refusal.cause()),
+        (Code::UnsupportedConstruct, Some("not-yet-implemented"))
+    );
+}
+
+/// TC-2062 (FR-740-AC-1): QSL-2463 emits a reward on a source-declared object
+/// as a `reward` node the strict reader admits.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+#[ignore = "QSL-2463: source-declared objects emit as nodes IR can join (contract-ir #1053)"]
+fn a_reward_on_a_source_object_is_emitted() {
+    let package = source_object_reward("reward cost on O::step = x;");
+    let emission = emit_checked(&package).expect("the reward emits");
+    let wire = wire(&emission);
+    assert_eq!(
+        super::owners::node_where(&wire, "probabilistic", "reward").len(),
+        1
+    );
 }

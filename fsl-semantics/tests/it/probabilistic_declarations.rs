@@ -23,7 +23,7 @@ use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
     Bound, BoundedMeasure, CheckCause, CheckRefusal, CheckedGraph, CheckingLimitKind, Confidence,
     Event, PackageDeclarations, PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause,
-    ProbabilisticFeature, ReachTarget, Reward, RewardEvaluationFailure, RewardEvaluator,
+    ReachTarget, Reward, RewardEvaluationFailure, RewardEvaluator,
     SemanticNode, WeightOwner,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -1431,29 +1431,30 @@ fn the_adr_024_claims_check_and_record_their_forms() {
     );
 }
 
-/// FR-186 "Outputs", FR-498: a claim is emitted as its own node, so the
-/// first declaration S4 would refuse a package for is the first other
-/// probabilistic declaration, wherever the claim is declared.
+/// FR-186 "Outputs", FR-498, FSpec FR-640: a claim is emitted as its own
+/// node and a reward lowers to a clause function, wherever the claim is
+/// declared.
 #[trace("TC-621")]
 #[test]
-fn a_checked_claim_is_no_declaration_s4_would_refuse() {
-    let first = format!("{LATENCY}\n{}\n{}", no_fault(), service(None, ""));
-    let graph = checked(&first);
-    let model = graph.probabilistic_model();
-    assert!(!model.is_empty());
-    assert_eq!(
-        model.first_declaration(),
-        Some((ProbabilisticFeature::Reward, "latency".to_owned()))
-    );
-    let claim_first = format!("{}\n{LATENCY}\n{}", no_fault(), service(None, ""));
-    let graph = checked(&claim_first);
-    assert_eq!(
-        graph.probabilistic_model().first_declaration(),
-        Some((ProbabilisticFeature::Reward, "latency".to_owned()))
-    );
-    assert!(graph.probabilistic_model().claims()[0]
-        .occurrence()
-        .is_some());
+fn a_checked_claim_and_a_reward_are_both_lowered() {
+    for source in [
+        format!("{LATENCY}\n{}\n{}", no_fault(), service(None, "")),
+        format!("{}\n{LATENCY}\n{}", no_fault(), service(None, "")),
+    ] {
+        let graph = checked(&source);
+        let model = graph.probabilistic_model();
+        assert!(!model.is_empty());
+        assert!(model.claims()[0].occurrence().is_some());
+        assert!(!model.rewards().is_empty());
+        for reward in model.rewards() {
+            assert!(
+                reward.function().is_some(),
+                "{}: the expression is lowered",
+                reward.name()
+            );
+        }
+        assert!(model.rewards().iter().any(|reward| reward.name() == "latency"));
+    }
 }
 
 /// The checked claim `C` of `body`.
@@ -4188,6 +4189,7 @@ fn assert_rebuilds_s3(document: &[u8], body: &str) {
             })
             .collect(),
         delays: Vec::new(),
+        rewards: Vec::new(),
     };
     let read = model
         .probabilistic_model(graph.scope().operations(), &package)

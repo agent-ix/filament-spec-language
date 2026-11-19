@@ -42,8 +42,9 @@ pub(crate) use model::{check, precondition_reads, site_spans, ProbabilisticInput
 pub use model::{
     CheckedProbabilisticModel, Delay, DelayDistribution, PackageDelay, PackageDelayFamily,
     PackageLiteral, PackageProbabilistic, PackageProbabilisticRefusal, PackageRandomParameter,
-    PackageSupport, PackageWeight, PackageWorkload, PreconditionSite, ProbabilisticFeature,
-    ProbabilisticOperation, RandomParameter, Reward, SupportValue, Workload,
+    PackageReward, PackageSupport, PackageWeight, PackageWorkload, PreconditionSite,
+    ProbabilisticFeature, ProbabilisticOperation, RandomParameter, ReadReward, Reward,
+    SupportValue, Workload,
 };
 
 use filament_exact::Integer;

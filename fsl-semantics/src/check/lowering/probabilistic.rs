@@ -15,12 +15,16 @@
 use std::collections::hash_map;
 
 use filament_exact::{NodeKey, PathSegment};
+use fsl_forms::DeclaredClauseKind;
 
 use super::temporal::stage_fault;
-use super::{Lowering, NodeContent, NodeRef, SemanticNode};
+use super::{
+    literal_operand_text, FunctionInput, Lowering, ModelClause, NodeContent, NodeRef, SemanticNode,
+    FUNCTION_BODY,
+};
 use crate::check::family::OccurrenceRole;
-use crate::check::node_key::{BodyTerm, NodeTag};
-use crate::check::probabilistic::{CheckedProbabilisticClaim, CheckedProbabilisticModel};
+use crate::check::node_key::{Binding, BindingValue, BodyTerm, LeafTerm, MemberTerm, NodeTag};
+use crate::check::probabilistic::{CheckedProbabilisticClaim, CheckedProbabilisticModel, Reward};
 use crate::check::refusal::CheckRefusal;
 
 /// The semantic form of a probabilistic claim's node.
@@ -35,7 +39,7 @@ impl Lowering<'_> {
     pub(crate) fn probabilistic_declarations(
         &mut self,
         model: &CheckedProbabilisticModel,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<Vec<Option<(NodeKey, PathSegment)>>, CheckRefusal> {
         for random in model.random_parameters() {
             let at = random.declaration_location();
             self.charge(1, &at)?;
@@ -58,7 +62,21 @@ impl Lowering<'_> {
                 self.rooted_model_node(model, &at)?;
             }
         }
-        Ok(())
+        // Functions of one owner share a key path and take their ordinals in
+        // the order they are lowered, so the rewards are lowered by
+        // (operation, name), not by declaration order: writing them in
+        // another order changes no key.
+        let rewards = model.rewards();
+        let mut order: Vec<usize> = (0..rewards.len()).collect();
+        order.sort_by(|&left, &right| {
+            (rewards[left].operation().key(), rewards[left].name())
+                .cmp(&(rewards[right].operation().key(), rewards[right].name()))
+        });
+        let mut keys: Vec<Option<(NodeKey, PathSegment)>> = vec![None; rewards.len()];
+        for at in order {
+            keys[at] = self.reward_function(&rewards[at])?;
+        }
+        Ok(keys)
     }
 
     /// The model node of `declaration`, given a `generated` occurrence at
@@ -163,5 +181,97 @@ impl Lowering<'_> {
             })
             .transpose()?;
         Ok((key, over))
+    }
+}
+
+impl Lowering<'_> {
+    /// FSpec FR-640 `reward`: the clause function of `reward`'s expression,
+    /// owned by the operation member it is declared on (FR-094), with a
+    /// parameter for each of the operation's parameters in declared order,
+    /// the random ones included. A reward whose operation's declaring type
+    /// has no `model` node (a source-declared object type) lowers to
+    /// nothing, and emission refuses it with its locus.
+    ///
+    /// TEMPORARY (QSL-2535): FSpec FR-640 states no `clause` binding for this
+    /// function, and the reader joins a `ModelOwner` on an operation member
+    /// only for a `precondition` or a `body` clause. A `body` clause function
+    /// makes the operation's `operation_bodies` row a function row (FR-576),
+    /// which a reward must not do to an operation with no body, so until
+    /// QSL-2535 adds the clause kind `reward` (spec W75 and the contract-ir
+    /// reader) the function carries `precondition`, the one kind the join
+    /// admits for every operation. Every consumer that joins functions by
+    /// owner and clause kind therefore sees a rewarded operation as having an
+    /// integer-typed `precondition` until then; replace the kind, not the
+    /// shape, when QSL-2535 lands.
+    fn reward_function(
+        &mut self,
+        reward: &Reward,
+    ) -> Result<Option<(NodeKey, PathSegment)>, CheckRefusal> {
+        let at = reward.declaration_location();
+        self.charge(1, &at)?;
+        let operation = reward.operation();
+        let Some(declaring) = operation.declaring_key() else {
+            return Ok(None);
+        };
+        self.rooted_model_node(declaring, &at)?;
+        let clause = ModelClause {
+            declaration: operation.key().clone(),
+            kind: DeclaredClauseKind::Precondition,
+            source_declaration: None,
+        };
+        let location = reward.evaluation_location();
+        let name = format!("{}::{}", operation.name(), reward.name());
+        let input = FunctionInput {
+            name: &name,
+            kind: fsl_forms::DeclarationKind::Function,
+            location: &location,
+            parameters: reward.parameters(),
+            parameter_spans: None,
+            result: reward.value_type(),
+            body: reward.expression(),
+            body_slots: reward.slot_names(),
+            measure: None,
+            measure_slots: &[],
+            population_targets: &[],
+            result_population_target: None,
+            clause: Some(&clause),
+        };
+        // No function-table slot belongs to a reward.
+        let index = self.functions.len();
+        let NodeRef::Admitted(function) = self.function(index, &input)? else {
+            return Err(stage_fault(&at, "reward-function-is-keyed"));
+        };
+        let operand = self
+            .function_body_operand(&function)
+            .ok_or_else(|| stage_fault(&at, "reward-function-has-a-body"))?;
+        Ok(Some((function, operand)))
+    }
+
+    /// The operand that names what the function node `function` computes:
+    /// the key of the node its `body` binding references, which is keyed by
+    /// that expression's content, or a literal body's text. The expression
+    /// was lowered once, under the lowering's own charge, so this reads one
+    /// binding and walks nothing.
+    fn function_body_operand(&self, function: &NodeKey) -> Option<PathSegment> {
+        let BodyTerm::Aggregate(aggregate) = self.graph.nodes.get(function)?.body() else {
+            return None;
+        };
+        aggregate.members.iter().find_map(|member| {
+            let MemberTerm::Binding(Binding { name, value }) = member else {
+                return None;
+            };
+            if name != FUNCTION_BODY {
+                return None;
+            }
+            match value {
+                BindingValue::Leaf(LeafTerm::Reference {
+                    target: NodeRef::Admitted(key),
+                }) => Some(PathSegment::Node(key.clone())),
+                BindingValue::Leaf(LeafTerm::Literal { value, .. }) => {
+                    Some(PathSegment::Text(literal_operand_text(value)))
+                }
+                _ => None,
+            }
+        })
     }
 }
