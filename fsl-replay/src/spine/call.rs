@@ -51,6 +51,10 @@ use fsl_foundation::SourceIdentity;
 /// FR-100: the default `work_units` limit when a request omits it.
 pub const DEFAULT_WORK_UNITS: u64 = 1_000_000;
 
+/// NFR-130, FR-255: the default `evaluation.live_occurrences` limit when a
+/// request omits it.
+pub const DEFAULT_LIVE_OCCURRENCES: u64 = 1_048_576;
+
 /// FR-100's default `work_units` with every other accounting counter at
 /// `u64::MAX`.
 pub fn default_accounting(work_units: u64) -> ScalarLimits {
@@ -138,6 +142,10 @@ pub struct Call {
     /// clock-bearing declarations by clock name; empty when the request
     /// supplied none.
     pub clocks: super::RequestClocks,
+    /// NFR-130: the call's `evaluation.live_occurrences` limit, the frames
+    /// in progress and their bound argument values the evaluation may hold at
+    /// once. It is not an accounting counter.
+    pub live_occurrences: u64,
 }
 
 impl Call {
@@ -158,6 +166,7 @@ impl Call {
             supplied,
             backend: filament_eval::ExecutionBackendChoice::default(),
             clocks: super::RequestClocks::default(),
+            live_occurrences: DEFAULT_LIVE_OCCURRENCES,
         }
     }
 }

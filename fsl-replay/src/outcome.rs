@@ -3992,6 +3992,7 @@ mod tests {
                 accounting,
                 supplied: Default::default(),
                 backend: filament_eval::ExecutionBackendChoice::Interpreter,
+                live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
             };
             let outcome = run(
                 SourceIdentity::new("agent-ix", "test:outcome"),
@@ -4035,6 +4036,7 @@ mod tests {
             accounting: default_accounting(1_000_000),
             supplied: Default::default(),
             backend: filament_eval::ExecutionBackendChoice::Interpreter,
+            live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
         };
         let outcome = run(
             SourceIdentity::new("agent-ix", "test:outcome"),
@@ -4365,6 +4367,7 @@ mod tests {
                 accounting: default_accounting(1_000_000),
                 supplied: Default::default(),
                 backend: filament_eval::ExecutionBackendChoice::Interpreter,
+                live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
             },
             &ObjectEnvironment::default(),
             cancel,
