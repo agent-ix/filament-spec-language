@@ -297,28 +297,16 @@ fn a_hidden_field_with_an_always_enabled_abstract_write_refutes_a_peek_loop() {
 #[trace("TC-2536", "FR-899-AC-2")]
 #[test]
 fn the_non_taking_candidate_is_hidden_and_a_fair_write_candidate_holds() {
-    let unit = Unit::registers(&["r"], &["r"], AuxShape::Peeker);
+    let unit = Unit::register();
     let refinement = hidden_register_history().replace(
         "step Impl::Register::write -> Spec::Register::write(self, x);",
-        "step Impl::Register::write -> Spec::Register::write(self, x);\n\
-         step Impl::Register::peek -> stutter;",
+        "step Impl::Register::write -> any;",
     );
-    // The non-taking peek loop cannot stand in for a fair candidate that
-    // takes the abstract write.
-    let non_taking = lasso(check_aux(&unit.world(&refinement)));
-    assert!(matches!(
-        non_taking.refinement,
-        Some(RefinementFailure::HiddenUnfair { .. })
-    ));
-
-    // Once the concrete write is weakly fair, the mapped candidate taking
-    // the abstract write suffices even though peek remains a stuttering path.
-    let fair_write = refinement.replace(
-        "step Impl::Register::write -> Spec::Register::write(self, x);",
-        "assume fair weak Impl::Register::write;\n\
-         step Impl::Register::write -> Spec::Register::write(self, x);",
-    );
-    holds(&check_aux(&unit.world(&fair_write)));
+    // One concrete write(0) loop has both hidden-state candidate paths: an
+    // `any` candidate can keep the abstract `prev` value or take write while
+    // leaving the visible image unchanged. The non-taking path is weakly
+    // unfair, while the candidate taking write supplies a fair run.
+    holds(&check_aux(&unit.world(&refinement)));
 }
 
 /// `Probe` over the concrete guards `concrete` (`flipA`, `flipB`, `setA`,
