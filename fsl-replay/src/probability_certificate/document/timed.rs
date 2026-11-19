@@ -46,9 +46,6 @@ pub(super) fn check(
     {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
-    if route != TimedProbabilityRoute::Region {
-        return Err(ProbabilityDocumentError::Unsupported);
-    }
     let Some((bound, predicate)) = deadline_event(claim) else {
         return Err(ProbabilityDocumentError::Unsupported);
     };
@@ -87,19 +84,32 @@ pub(super) fn check(
     let binding = claim_binding(system, claim)
         .map_err(|_| ProbabilityDocumentError::Unsupported)?
         .map(|binding| binding.reference);
-    let graph = enumerate_region_deadline(
-        system,
-        &timed,
-        claim,
-        binding.as_ref(),
-        predicate,
-        objective.scale,
-        scale,
-        limits,
-        cancel,
-        &mut meter,
-        &mut storage,
-    )?;
+    let graph = match route {
+        TimedProbabilityRoute::Digital => enumerate_digital_deadline(
+            system,
+            &timed,
+            binding.as_ref(),
+            predicate,
+            objective.scale,
+            limits,
+            cancel,
+            &mut meter,
+            &mut storage,
+        )?,
+        TimedProbabilityRoute::Region => enumerate_region_deadline(
+            system,
+            &timed,
+            claim,
+            binding.as_ref(),
+            predicate,
+            objective.scale,
+            scale,
+            limits,
+            cancel,
+            &mut meter,
+            &mut storage,
+        )?,
+    };
     if target_keys(&graph) != document.targets {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
@@ -161,6 +171,231 @@ struct RegionState {
     timed: TimedState,
     elapsed: u64,
     phase: Phase,
+}
+
+fn enumerate_digital_deadline(
+    system: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    binding: Option<&filament_exact::ObjectReference>,
+    predicate: &fsl_semantics::check::CheckedPredicate,
+    key_scale: u64,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+) -> Result<CheckerGraph, ProbabilityDocumentError> {
+    let deadline = time_bound(claim, key_scale)?;
+    let mut caps = Vec::with_capacity(timed.places().len());
+    for place in timed.places() {
+        let mut largest = 0_u64;
+        for constraint in clock_constraints(timed)
+            .into_iter()
+            .filter(|constraint| constraint.clock() == place.clock())
+        {
+            largest = largest.max(
+                time_units(constraint.bound(), key_scale)
+                    .ok_or(ProbabilityDocumentError::Unsupported)?,
+            );
+        }
+        caps.push(
+            largest
+                .checked_add(1)
+                .ok_or(ProbabilityDocumentError::Unsupported)?,
+        );
+    }
+    let mut initial = timed.initial();
+    if initial.len() != 1 {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    let state = initial.pop().ok_or(ProbabilityDocumentError::Unsupported)?;
+    let phase = phase_at(
+        system,
+        predicate,
+        binding,
+        state.discrete(),
+        0,
+        deadline,
+        cancel,
+    )?;
+    let first = RegionState {
+        timed: state,
+        elapsed: 0,
+        phase,
+    };
+    let first_key = digital_key(system, timed, binding, &first, &caps, key_scale, deadline)?;
+    reserve_storage(
+        storage,
+        first_key
+            .as_bytes()
+            .len()
+            .saturating_add(std::mem::size_of::<(ProbabilityProductKey, RegionState)>()),
+        limits,
+    )?;
+    let mut pending = VecDeque::from([first_key.clone()]);
+    let mut reached = BTreeMap::from([(first_key.clone(), first)]);
+    let mut states = BTreeMap::new();
+    let mut edges = 0_u64;
+    while let Some(key) = pending.pop_front() {
+        charge_work(meter, cancel, 1)?;
+        if let Some(cause) = cancel.tripped() {
+            return Err(ProbabilityDocumentError::Cancelled(cause));
+        }
+        let current = reached
+            .get(&key)
+            .cloned()
+            .ok_or(ProbabilityDocumentError::Malformed)?;
+        match current.phase {
+            Phase::Accepted => {
+                insert_checker_state(
+                    key,
+                    CheckerState {
+                        terminal: Some(true),
+                        choices: Vec::new(),
+                    },
+                    &mut states,
+                    storage,
+                    limits,
+                )?;
+                continue;
+            }
+            Phase::Rejected => {
+                insert_checker_state(
+                    key,
+                    CheckerState {
+                        terminal: Some(false),
+                        choices: Vec::new(),
+                    },
+                    &mut states,
+                    storage,
+                    limits,
+                )?;
+                continue;
+            }
+            Phase::Pending => {}
+        }
+        if timed
+            .is_quiescent(current.timed.discrete())
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?
+        {
+            return Err(ProbabilityDocumentError::Unsupported);
+        }
+        let mut choices = Vec::new();
+        if let Some((delayed_key, delayed)) = next_digital_delay(
+            system, timed, predicate, binding, &current, &caps, key_scale, deadline, cancel,
+        )? {
+            admit_region_state(
+                delayed_key.clone(),
+                delayed,
+                &mut reached,
+                &mut pending,
+                limits,
+                storage,
+            )?;
+            choices.push(vec![ProbabilityEdge {
+                target: delayed_key,
+                probability: one(),
+            }]);
+            edges = edges.saturating_add(1);
+            charge_work(meter, cancel, 1)?;
+        }
+        let clocked_steps = timed
+            .steps(&current.timed)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+        let actions = system
+            .actions_with_cancel(current.timed.discrete(), cancel)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+        for action in actions {
+            charge_work(meter, cancel, 1)?;
+            let mut choice: Vec<ProbabilityEdge> = Vec::new();
+            let mut enabled = true;
+            for draw in action.draws {
+                if draw.successors.len() != 1 {
+                    return Err(ProbabilityDocumentError::Unsupported);
+                }
+                let (transition, discrete_post) = &draw.successors[0];
+                let Some((_, timed_post)) = clocked_steps.iter().find(|(step, post)| {
+                    step.transition() == transition
+                        && system
+                            .state_key(post.discrete())
+                            .ok()
+                            .zip(system.state_key(discrete_post).ok())
+                            .is_some_and(|(left, right)| left.0 == right.0)
+                }) else {
+                    enabled = false;
+                    break;
+                };
+                let clocks = quantized_clocks(timed_post, &caps, key_scale)?;
+                let post =
+                    TimedState::new(timed_post.discrete().clone(), ClockValuation::new(clocks));
+                let phase = phase_at(
+                    system,
+                    predicate,
+                    binding,
+                    post.discrete(),
+                    current.elapsed,
+                    deadline,
+                    cancel,
+                )?;
+                let reached_state = RegionState {
+                    timed: post,
+                    elapsed: current.elapsed,
+                    phase,
+                };
+                let target = digital_key(
+                    system,
+                    timed,
+                    binding,
+                    &reached_state,
+                    &caps,
+                    key_scale,
+                    deadline,
+                )?;
+                admit_region_state(
+                    target.clone(),
+                    reached_state,
+                    &mut reached,
+                    &mut pending,
+                    limits,
+                    storage,
+                )?;
+                if let Some(edge) = choice.iter_mut().find(|edge| edge.target == target) {
+                    edge.probability = edge.probability.add(&draw.probability);
+                } else {
+                    choice.push(ProbabilityEdge {
+                        target,
+                        probability: draw.probability.clone(),
+                    });
+                }
+                edges = edges.saturating_add(1);
+                charge_work(meter, cancel, 1)?;
+            }
+            if enabled && !choice.is_empty() {
+                choices.push(choice);
+            }
+        }
+        if edges > u64::try_from(limits.edges).unwrap_or(u64::MAX) {
+            return Err(ProbabilityDocumentError::Limit {
+                limit: ProbabilityDocumentLimit::Edges,
+                bound: u64::try_from(limits.edges).unwrap_or(u64::MAX),
+                actual: edges,
+            });
+        }
+        insert_checker_state(
+            key,
+            CheckerState {
+                terminal: choices.is_empty().then_some(false),
+                choices,
+            },
+            &mut states,
+            storage,
+            limits,
+        )?;
+    }
+    Ok(CheckerGraph {
+        initial: first_key,
+        states,
+    })
 }
 
 fn enumerate_region_deadline(
@@ -685,6 +920,141 @@ fn region_key(
     super::super::canonical_json(&product)
         .map(ProbabilityProductKey::from_canonical_bytes)
         .map_err(ProbabilityDocumentError::Graph)
+}
+
+fn digital_key(
+    system: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    binding: Option<&filament_exact::ObjectReference>,
+    state: &RegionState,
+    caps: &[u64],
+    scale: u64,
+    deadline: u64,
+) -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
+    let (discrete_bytes, _) = system
+        .state_key(state.timed.discrete())
+        .map_err(ProbabilityDocumentError::KeyEncoding)?;
+    let discrete: JsonValue =
+        serde_json::from_slice(&discrete_bytes).map_err(|_| ProbabilityDocumentError::Malformed)?;
+    let binding: Option<JsonValue> = binding
+        .map(|reference| {
+            let text = fsl_eval::simulation::model::reference_canonical_text(reference)
+                .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+            serde_json::from_str(&text).map_err(|_| ProbabilityDocumentError::Malformed)
+        })
+        .transpose()?;
+    let unit = json!([
+        "declared",
+        fsl_foundation::node_wire::node_key_to_json(&timed.source().unit_node)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?
+    ]);
+    let mut clocks = Vec::with_capacity(timed.places().len());
+    for ((place, value), cap) in timed
+        .places()
+        .iter()
+        .zip(state.timed.clocks().values())
+        .zip(caps)
+    {
+        let field = timed
+            .model()
+            .clock(place.clock())
+            .ok_or(ProbabilityDocumentError::Unsupported)?;
+        let owner = field.owner().original();
+        let declaring = fsl_semantics::model::key::model_node_key(
+            owner.package(),
+            "model",
+            "object_type",
+            owner.node(),
+        )
+        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+        let declaring = fsl_foundation::node_wire::node_key_to_json(&declaring)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+        let receiver = fsl_eval::simulation::model::reference_canonical_text(place.object())
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+        let receiver: JsonValue =
+            serde_json::from_str(&receiver).map_err(|_| ProbabilityDocumentError::Malformed)?;
+        let identity = json!([declaring, field.name(), receiver]);
+        let value = time_units(value, scale).ok_or(ProbabilityDocumentError::Unsupported)?;
+        clocks.push(DigitalClockKey {
+            identity,
+            value,
+            cap: *cap,
+        });
+    }
+    let phase = match state.phase {
+        Phase::Pending => "pending",
+        Phase::Accepted => "accept",
+        Phase::Rejected => "reject",
+    };
+    digital_probability_product_key(DigitalProductKeyInput {
+        binding,
+        discrete,
+        unit,
+        scale,
+        clocks,
+        deadline: Some(DigitalDeadlineKey {
+            limit: deadline,
+            elapsed: state.elapsed,
+        }),
+        tail: DigitalTail::Running,
+        monitor: Some(json!(["deadline", "eventually", phase])),
+        accumulator: None,
+        pending: None,
+    })
+    .map_err(ProbabilityDocumentError::Graph)
+}
+
+fn next_digital_delay(
+    system: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    predicate: &fsl_semantics::check::CheckedPredicate,
+    binding: Option<&filament_exact::ObjectReference>,
+    current: &RegionState,
+    caps: &[u64],
+    scale: u64,
+    deadline: u64,
+    cancel: &Cancel,
+) -> Result<Option<(ProbabilityProductKey, RegionState)>, ProbabilityDocumentError> {
+    let current_key = digital_key(system, timed, binding, current, caps, scale, deadline)?;
+    let delta = rational_units(1, scale)?;
+    let mut state = current.clone();
+    while state.elapsed <= deadline {
+        if let Some(cause) = cancel.tripped() {
+            return Err(ProbabilityDocumentError::Cancelled(cause));
+        }
+        let Some(delayed) = timed
+            .delay(&state.timed, &delta)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?
+        else {
+            return Ok(None);
+        };
+        let elapsed = state
+            .elapsed
+            .saturating_add(1)
+            .min(deadline.saturating_add(1));
+        let clocks = quantized_clocks(&delayed, caps, scale)?;
+        let delayed = TimedState::new(delayed.discrete().clone(), ClockValuation::new(clocks));
+        let phase = phase_at(
+            system,
+            predicate,
+            binding,
+            delayed.discrete(),
+            elapsed,
+            deadline,
+            cancel,
+        )?;
+        let reached = RegionState {
+            timed: delayed,
+            elapsed,
+            phase,
+        };
+        let key = digital_key(system, timed, binding, &reached, caps, scale, deadline)?;
+        if key != current_key {
+            return Ok(Some((key, reached)));
+        }
+        state = reached;
+    }
+    Ok(None)
 }
 
 fn next_region_delay(
