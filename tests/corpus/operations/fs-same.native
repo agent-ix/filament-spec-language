@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+model Config = "example/config-version";
+function same using v(a: Config::ConfigVersion,b: Config::ConfigVersion): Boolean pure { a=b }
+function seven using v(): Integer pure { 7 }
