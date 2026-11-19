@@ -13,7 +13,7 @@ relationships:
 Verify that the hyper form read through the analysis view is equal over the
 source route's admitted read-back and the package route's bare package, and
 that the clause rebuilt from it equals S3's checked clause in every member
-the engines read. Scope: FR-940-AC-16.
+the engines read. Scope: FR-940-AC-16 and FR-940-AC-20.
 
 ## Test Procedure
 
@@ -29,6 +29,11 @@ the engines read. Scope: FR-940-AC-16.
    atoms by FR-532's atom index.
 4. Repeat step 3 with a test-only view that files the existential conjunct
    under `μ_U`.
+5. Compile the unit with `Called`, `Selected`, `Indexed`, `LetBound`,
+   `CaseBound` and `Converted`; compare each rebuilt copy group with S3's
+   record; analyze each by a `program` and a `package` request with
+   copy-swap `symmetry`; repeat `Called` with a test-only normal form that
+   treats `filament.op.function.call` as opaque.
 
 ## Expected Results
 
@@ -42,3 +47,9 @@ the engines read. Scope: FR-940-AC-16.
   indices and copy generators are equal; `condition` of every rebuilt atom
   is `None`.
 - Step 4: the comparison reports the conjunct partition as different.
+- Step 5: `Called`, `Selected` and `Indexed` have the class `[a, b]` on both
+  sides and settle `proved`, basis `reduced`, `certified`, with equal
+  certificates; `LetBound` and `CaseBound` have no class and settle
+  `proved`, basis `exhaustive`; `Converted` has no class in S3's record and
+  the class `[a, b]` rebuilt, and settles `reduced` with equal certificates
+  on both routes; the test-only normal form gives `Called` no class.

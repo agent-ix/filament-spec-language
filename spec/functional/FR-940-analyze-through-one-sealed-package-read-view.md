@@ -484,15 +484,60 @@ node key.
     encodings, after each operand is encoded under `σ` and before the parent
     is encoded.
   - The `match` conjunction is the `μ_U` conjuncts' encodings, sorted.
-  - An opaque node (a call, a select, an index or another node FR-174 does
-    not normalize) whose subtree reads a slot makes the clause not
-    swappable for that pair, as on the source route.
+  - An **opaque** node is a node whose operand subtree reads a slot and
+    whose form is in the opaque table below. Such a node makes the pair
+    not swappable, because S3 does not normalize through the source form
+    it lowers from. Every other node is encoded by its tag and normalized
+    through as above. That includes the forms S3 also normalizes through:
+    `if`, `call`, field select, index, `value`, `deref`, `ref`, `present`,
+    `size`, `contains`, `drop first`, `remove one`, `pre`, negation,
+    `not` and every binary operator.
+
+    | S3 opaque source form (FR-174, `is_opaque`) | Package node it lowers to (FR-093) |
+    | --- | --- |
+    | `case` | `filament.op.control.case` |
+    | `let` | `filament.op.control.let` |
+    | record construction | the record `value` node S4 writes for the construction |
+    | collection literal | the constructor application `filament.op.collection.<kind>` of its collection kind |
+    | query (`map`, `filter`, `forall`, `exists`, `count`, `only`, `sum`) and the aggregate `count` and `sum` | `filament.op.collection.map`, `.filter`, `.forall`, `.exists`, `.count`, `.only`, `.sum.<carrier>` |
+    | `flatten` | `filament.op.collection.flatten`, `filament.op.collection.flat_map` |
+    | `accumulate` | `filament.op.collection.fold` |
+    | `seq` | `filament.op.collection.map` over an `integer_range` bounded domain |
+    | `lookup`, all instances | `filament.op.model.lookup` |
+    | `dispatch` | `filament.op.model.dispatch_call` |
+    | power | `filament.op.quantity.pow` |
+    | `reaches` | `filament.op.model.reaches`, `filament.op.model.reaches_field` |
+    | population, quantity literal, reference literal, protocol reference | leaf nodes with no operand (a population reference, a quantity `literal`, a reference literal), which never hold a slot read and so are never opaque |
+    | `convert` | none: see the next item |
+
+  - **Conversions are normalized through on both routes.** S3 treats an
+    explicit `convert` as opaque, but an implicit conversion that S3 types
+    into an equality operand (FR-397) is not an S3 expression node, so S3
+    normalizes through it. Both lower to the same package conversion
+    applications: `filament.op.numeric.convert`,
+    `numeric.convert_rounding`, `numeric.narrow`, `quantity.convert`,
+    `collection.convert`, the `ieee.to_*`, `ieee.from_exact` and
+    `<family>.to_<kind>` text conversions. So the package cannot tell the
+    two apart. A conversion is a total, deterministic function of its one
+    operand, so exchanging two traces commutes with it, and normalizing
+    through it is sound. The package normal form therefore encodes every
+    conversion by its tag and normalizes through it. A clause whose only
+    obstacle to a swap in S3 is an explicit `convert` over a slot read
+    therefore has a larger copy group on the rebuilt clause than in S3's
+    record. The engines read the rebuilt clause on both routes, so the two
+    routes still agree.
+  - S4 SHALL NOT lower a node that S3 normalizes through to an application
+    of the opaque table, and SHALL NOT lower a source form of the opaque
+    table to any other form, so the table decides opacity from the package
+    alone.
+
 - Two operands then have equal encodings exactly when the source route's
   operands have equal checked encodings, because both encodings are
   injective on structurally equal terms and each read of `x @ t` is a slot
   of (`x`, `t`). The swappable relation, the classes and each generator's
   atom exchange (equal encodings paired in atom-index order) are therefore
-  S3's, with S3's atoms renumbered by FR-532's atom index.
+  S3's, with S3's atoms renumbered by FR-532's atom index. The one exception
+  is the conversion rule above.
 - Worked example. AC-16's `Equal` has atom slots `slot_sc_sa` (level 0)
   and `slot_sc_sb` (level 1) and one atom,
   `and(<=(value(slot(c, a)), 3), <=(value(slot(c, b)), 3))`. Under
@@ -519,7 +564,7 @@ node key.
   and occurrence SHALL equal S3's checked clause for the package and the
   source it was compiled from. Its formula arena, atom indices and copy
   generators SHALL equal S3's after S3's atoms are renumbered by FR-532's
-  atom index. The copy group is equal to S3's by "The package normal form".
+  atom index. The copy group is equal to S3's by "The package normal form", except for a clause that an explicit `convert` over a slot read alone keeps from a swap in S3.
 - `CheckedHyperLetters::new`, `CheckedStepMatch::new` and
   `ProductClosureRequest` SHALL take the route's `ModelEvaluator` in place of
   a `CheckedPackage`, and SHALL read reference literals, component reads and
@@ -629,6 +674,7 @@ hyper engines produce, and leaves S3 and S4 unchanged.
 | FR-940-AC-17 | A `program` request and a `package` request over the handoff directory of AC-16's unit, written by its compile request's `handoff` member, with the items `Equal`, `Partner`, `CanReachThree` and the projection-aligned clause, and the same items over the unit with `Equal`'s bound lowered to `c.value @ b <= 2` so it refutes, give equal item records, counterexamples (one trace per copy; for `Partner` the exhausted witness set), copy-by-copy replays with `reproduced` `true` and product-closure certificates accepted by FR-163's checker; `Equal` settles `proved` with certification `certified` on both routes; no record is `unsupported` and no diagnostic is `not-yet-implemented`. Each atom and conjunct evaluated through the `ModelEvaluator` at each explored joint state gives the same value and charge log on both routes. | Test (TC-3127) |
 | FR-940-AC-18 | AC-17's `package` request run after the unit's source file is overwritten with bytes that are not a native unit and the handoff directory's `sources/` is deleted settles `Equal` `proved` with the record of AC-17's source request; FR-163's checker run on that route accepts the certificate with no source present. | Test (TC-2958) |
 | FR-940-AC-19 | Test-only packages of AC-16's unit pass the strict reader, because it reads no slot node names or levels. Four variants change `Equal`: its slot node `slot_sc_sb` is renamed `slot_sc_sz` (`z` is declared by no Group); its slot node `slot_sc_sb` is written at level 0 in place of level 1, leaving two atom slot nodes at level 0 and none at level 1; the atom's `c.value` read is rewritten so its operand roots in both `slot_sc_sa` and `slot_sc_sb`; or a conjunct slot of the projection-aligned clause's `match` is renamed `opx_sa`. In each variant, `Equal` (or the projection-aligned clause in the last) settles `failed` with `MalformedNode` naming its `hyperproperty` node key and no verdict, while a sibling `Partner` item settles as in AC-17. The unmodified projection-aligned clause has one atom slot and one conjunct slot at level 0, and its item settles as in AC-17, so a level rule that does not separate atom slots from conjunct slots fails. A handoff directory whose package's `Equal` `body` binding references the atom's `expression` node, and one whose `quantifiers` Tuple is removed, each refuse the whole request at the request stage with the reader's code, cause and pointer (`ill_typed`/`operator-ineligible` at the `hyperproperty` node for the first), `items` `[]`, `last_stage` `null`, exit `20`, compiling no source. | Test (TC-3127) |
+| FR-940-AC-20 | AC-4's Counter unit, extended with a record field `pos` and a sequence field `log` and with the function `f`, declares six two-trace universal clauses under the infinite-trace profile. The first three use only forms S3 normalizes through: `Called`, `always holds(f(c.value @ a) = f(c.value @ b))` (call); `Selected`, `always holds(c.pos.x @ a = c.pos.x @ b)` (field select); and `Indexed`, `always holds(c.log[0] @ a = c.log[0] @ b)` (index). Each has the copy-group class `[a, b]` in S3's record and in the clause rebuilt from the package. A `program` request and a `package` request with copy-swap `symmetry` settle each `proved` with basis `reduced`, certification `certified` and equal certificates. `LetBound`, `always holds((let v = c.value @ a in v <= 3) and (let w = c.value @ b in w <= 3))`, and `CaseBound`, the same body with each conjunct a `case` over a union field, have an empty copy group in S3's record and in the rebuilt clause, and settle `proved` with basis `exhaustive` on both routes. `Converted`, `always holds(convert(c.value @ a) = convert(c.value @ b))` with an explicit rational conversion, has an empty copy group in S3's record and the class `[a, b]` in the rebuilt clause, and settles `proved` with basis `reduced` and equal certificates on both routes. A test-only package normal form that treats `filament.op.function.call` as opaque gives `Called` an empty copy group, so the comparison can fail. | Test (TC-3126) |
 
 ## Dependencies
 
