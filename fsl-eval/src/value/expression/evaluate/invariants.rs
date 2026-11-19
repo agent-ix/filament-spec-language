@@ -302,6 +302,7 @@ fn checked_dispatch_package() -> fsl_package::CheckedPackage {
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
             )
             .unwrap(),
     )
@@ -622,6 +623,7 @@ fn imported_callable_consumer_uses_a_real_emitted_and_admitted_library() {
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
             )
             .unwrap(),
     );
@@ -643,6 +645,7 @@ fn imported_callable_consumer_uses_a_real_emitted_and_admitted_library() {
         "fixture".to_owned(),
         fsl_foundation::IdentityLimits::default(),
     );
+    declarations.types = a_declared_type();
     declarations.imports.insert(
         "lib".to_owned(),
         AdmittedImport {
@@ -656,6 +659,7 @@ fn imported_callable_consumer_uses_a_real_emitted_and_admitted_library() {
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
             )
             .unwrap(),
     );
@@ -836,6 +840,7 @@ fn query_stop_provenance_rejects_a_missing_selected_position_at_the_real_quantif
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
             )
             .unwrap(),
     );
@@ -1081,11 +1086,13 @@ fn both_ieee_profile_checks_and_conversion_operand_check_are_real_producers() {
             fsl_foundation::IdentityLimits::default(),
         );
         declarations.ieee_profile = Some(profile);
+        declarations.types = a_declared_type();
         declarations
     }
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &crate::value::S6aRewardEvaluator,
     )
     .unwrap();
     let package = fsl_package::CheckedPackage::link(graph);
@@ -1106,6 +1113,17 @@ fn both_ieee_profile_checks_and_conversion_operand_check_are_real_producers() {
             m.apply(ieee.root())
         }
     );
+}
+
+/// One declared type: FR-746 admits no empty checked graph, and these
+/// packages otherwise declare nothing the probe reads.
+fn a_declared_type() -> filament_semantic_value::declaration::TypeEnvironment {
+    let declaration = filament_semantic_value::declaration::CompositeDeclaration::new(
+        crate::test_ids::node_key([9]),
+        "Placeholder",
+        CompositeShape::Record(vec![]),
+    );
+    filament_semantic_value::declaration::TypeEnvironment::new([declaration], []).unwrap()
 }
 
 #[test]
@@ -1151,6 +1169,7 @@ fn field_slot_and_record_constructor_fail_at_the_actual_application_sites() {
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &crate::value::S6aRewardEvaluator,
     )
     .unwrap();
     let package = fsl_package::CheckedPackage::link(graph);
@@ -1188,6 +1207,7 @@ fn object_package(
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &crate::value::S6aRewardEvaluator,
     )
     .unwrap();
     fsl_package::CheckedPackage::link(graph)
@@ -1551,6 +1571,7 @@ fn an_out_of_type_stored_value_is_refused_at_the_public_call_and_evaluate_entrie
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
             )
             .unwrap(),
     );
