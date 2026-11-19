@@ -61,7 +61,7 @@ impl Body for RequestBody {
                 site: ExpressionLocation::at(ExpressionOwner::Expression, &[]),
             })),
             Resume::Child(result) => Ok(Transition::Done(*result)),
-            Resume::Again => Ok(Transition::Continue),
+            Resume::Again => panic!("requesting host body resumes with its child result"),
         }
     }
 }
@@ -226,6 +226,7 @@ fn live_occurrences_aggregate_across_host_and_interpreted_roots() {
     let host_stop = run(&three, true, true, 10);
     assert_incomplete(&interpreted_stop, 10, 7, 4);
     assert_incomplete(&host_stop, 10, 7, 4);
+    assert_eq!(interpreted_stop.outcome, host_stop.outcome);
     assert_eq!(interpreted_stop.location, host_stop.location);
     assert_eq!(interpreted_stop.frame_depth, host_stop.frame_depth);
     assert!(interpreted_stop.location.is_some());
