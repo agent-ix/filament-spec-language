@@ -20,8 +20,8 @@ use super::syntax::{
 };
 use super::temporal_clause::{expression_form, interval_form, parameter_form};
 use super::value::{
-    declared_name, has_token, items, name_form, nodes_of, only, text, tokens_of, type_form,
-    unexpected, Item,
+    Item, declared_name, has_token, items, name_form, nodes_of, only, text, tokens_of, type_form,
+    unexpected,
 };
 
 /// How a channel orders its messages.
@@ -758,7 +758,15 @@ pub(crate) fn role_form(cst: &LosslessCst, role: &CstNode) -> Result<RoleForm, F
     let replicated = if has_token(&role_items, b"each") {
         // `role R each M::T from p max n lifetime l;`: the role's name and
         // the population are its only direct identifier tokens.
-        let [_, population] = tokens_of(&role_items, TokenKind::Identifier)[..] else {
+        let observe_marker = own_tokens(&role_items)
+            .first()
+            .copied()
+            .filter(|token| token.spelling() == b"observe");
+        let identifiers: Vec<_> = tokens_of(&role_items, TokenKind::Identifier)
+            .into_iter()
+            .filter(|token| observe_marker.is_none_or(|marker| marker.span() != token.span()))
+            .collect();
+        let [_, population] = identifiers.as_slice() else {
             return Err(unexpected(role));
         };
         let [max] = tokens_of(&role_items, TokenKind::Integer)[..] else {
@@ -786,9 +794,20 @@ pub(crate) fn role_form(cst: &LosslessCst, role: &CstNode) -> Result<RoleForm, F
         None
     };
     Ok(RoleForm {
-        name: declared_name(&role_items, role)?,
+        name: {
+            let token = own_tokens(&role_items)
+                .into_iter()
+                .skip_while(|token| token.spelling() != b"role")
+                .nth(1)
+                .filter(|token| token.kind() == TokenKind::Identifier)
+                .ok_or_else(|| unexpected(role))?;
+            declared(token, role)?
+        },
         context,
         replicated,
+        observe_only: own_tokens(&role_items)
+            .first()
+            .is_some_and(|token| token.spelling() == b"observe"),
         span: role.span(),
     })
 }

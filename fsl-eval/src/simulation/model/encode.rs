@@ -735,6 +735,7 @@ pub(crate) struct Typing<'t> {
     names: Option<&'t KeyNames>,
     /// Effective fields retained by the model system, including synthetic clock entries.
     state_fields: Option<&'t BTreeMap<DeclarationKey, Vec<StateField>>>,
+    tuple_positions: Option<&'t BTreeMap<NodeKey, Vec<Option<usize>>>>,
 }
 
 /// The names a run's state keys write as map keys, each with the RFC 8785
@@ -816,6 +817,7 @@ impl<'t> Typing<'t> {
             clock_bits: &[],
             names: None,
             state_fields: None,
+            tuple_positions: None,
         }
     }
 
@@ -833,6 +835,7 @@ impl<'t> Typing<'t> {
             clock_bits: &[],
             names: None,
             state_fields: None,
+            tuple_positions: None,
         }
     }
 
@@ -875,21 +878,45 @@ impl<'t> Typing<'t> {
         }
     }
 
-    /// The present value of the record field `name` of the record value
+    /// Authored tuple positions mapped to their data slots.
+    pub(crate) fn with_tuple_positions(
+        self,
+        positions: &'t BTreeMap<NodeKey, Vec<Option<usize>>>,
+    ) -> Self {
+        Self {
+            tuple_positions: Some(positions),
+            ..self
+        }
+    }
+
+    /// The present value of the record field or authored tuple position `name`.
     /// `value`; `None` when `value` is no record, the field is absent or
     /// its declaration is not in these types.
+    #[ix_trace_rs::string_edge]
     pub(crate) fn component<'v>(&self, value: &'v Value, name: &str) -> Option<&'v Value> {
         let Value::Composite(composite) = value else {
             return None;
         };
-        let Some(CompositeShape::Record(fields)) = self
+        let shape = self
             .types?
             .composite(composite.declaration().clone())
-            .map(CompositeDeclaration::shape)
-        else {
-            return None;
+            .map(CompositeDeclaration::shape)?;
+        let position = match shape {
+            CompositeShape::Record(fields) => {
+                fields.iter().position(|field| field.name() == name)?
+            }
+            CompositeShape::Tuple(_) => {
+                let authored = name.parse::<usize>().ok()?;
+                match self
+                    .tuple_positions
+                    .and_then(|positions| positions.get(&composite.declaration()))
+                {
+                    Some(positions) => positions.get(authored).copied().flatten()?,
+                    None => authored,
+                }
+            }
+            CompositeShape::Union(_) => return None,
         };
-        let position = fields.iter().position(|field| field.name() == name)?;
         match composite.slots().get(position)? {
             FieldValue::Present(value) => Some(value),
             FieldValue::Absent | FieldValue::Null => None,

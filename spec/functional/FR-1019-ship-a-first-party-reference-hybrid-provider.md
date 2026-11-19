@@ -40,8 +40,8 @@ FSL SHALL ship `fsl-hybrid-reference`, a first-party hybrid provider that implem
 
 ### Class
 
-- The provider SHALL decide hybrid models whose every flow right-hand side, after `let` substitution and expansion of non-recursive calls, is a polynomial with exact rational coefficients over the continuous variables (built from constants, variables, unary `-`, `+`, `-` and `*`), and whose guards, resets, invariants and initial conditions are Boolean combinations of polynomial (in)equalities. A flow whose rates depend on one another cyclically, such as `v' = v`, is in the class. Claim atoms take every FSpec FR-193 expression form; a `/` in an atom is read by interval evaluation, and a box over which its divisor can be 0 is a possible `undefined-evaluation` violation.
-- For any other model it SHALL return FSpec FR-331 `unsupported` with `unsupported_construct`/`expression-form` located at the first construct outside the class in source order, naming its mode and, for a flow, its variable; that cause is typed and located, never a bare `unsupported`. The provider answers `HybridVerdict::Unsupported` (FR-750), which settles the item `unsupported` with that diagnostic and runs no replay.
+- The provider SHALL decide hybrid models in a syntactic class, read after `let` substitution and expansion of non-recursive calls in every position (flow, guard, reset, invariant and initial condition). In it, every flow right-hand side is a polynomial with exact rational coefficients over the continuous variables, built only from constants, variables, unary `-`, `+`, `-` and `*`; every guard, invariant and initial condition is a Boolean combination (by `not`, `and`, `or`, `implies` and a Boolean-valued `if c then a else b`, read as `(c and a) or (not c and b)`) of `true`, `false` and comparisons `=`, `!=`, `<`, `<=`, `>=`, `>` between such polynomials; and every reset has FSpec FR-193 "Resets"' form, `true` or a conjunction of conjuncts `x ~ e`, with each `e` such a polynomial. A `/`, a numeric-valued `if` or a recursive call in a flow, guard, reset, invariant or initial condition is outside the class; a rational coefficient is written `rational(n, d)` or as a decimal literal. The class is syntactic, as FSpec FR-193's polynomial flow is (constants, variables, unary `-`, `+`, `-` and `*`): a `/` is outside it whether or not its divisor is a constant, and a numeric `if` is outside it, because the flowpipe and "Refutations" step 3's jump-time computation are defined over these forms and have no branch for a quotient or a piecewise term. A rational coefficient loses nothing, since `rational(n, d)` and a decimal literal are constants (FSpec FR-193 "Continuous values and expressions"), and a Boolean-valued `if` is a Boolean combination, so neither excludes a model. A flow whose rates depend on one another cyclically, such as `v' = v`, is in the class. Claim atoms take every FSpec FR-193 expression form; a `/` in an atom is read by interval evaluation, and a box over which its divisor can be 0 is a possible `undefined-evaluation` violation.
+- For any other model it SHALL return FSpec FR-331 `unsupported` with `unsupported_construct`/`expression-form` located at the first construct outside the class in source order, naming its mode and, for a flow, its variable; that cause is typed and located, never a bare `unsupported`. The provider answers `HybridVerdict::Unsupported` (FR-750), which settles the item `unsupported` with that diagnostic and runs no replay. Source order is the declaration's text order: the `initial` entries in order, then each mode in declared order (its invariant, its flow equations as written, then each transition's guard and then its reset); within one expression the first construct of a pre-order walk, a node before its operands and operands left to right, so the outermost of nested constructs is reported. A call expands in place in that walk: a construct outside the class that is reached through an expanded non-recursive call is ordered at the position of the call, and is reported at its own source span inside the called function's body, in that function's declaration, naming the mode (and, for a flow, the variable) whose entry holds the call.
 
 ### Options
 
@@ -83,6 +83,30 @@ Over `Braking` against `TooSlow`, the first step of `Moving` meets `v <= 5`, and
 
 `examples/hybrid-braking/` SHALL hold `braking.native`, the `Braking` model without `t` with `SlowEnough` (`always [0, 10] holds(h.v < 30)`, which holds) and `TooSlow` (`always [0, 10] holds(h.v > 5)`, violated); `slow-enough.analyze.json` and `too-slow.analyze.json`, each a `native-analyze/1` document (FR-620) whose `program.source` names `braking.native` relative to the document and whose one item is `{"claim": "SlowEnough"}` or `{"claim": "TooSlow"}`, naming no backend; and a `README.md` stating how to run them. Read through `fsl_command::command::analyze_with_providers` with `Engine::hybrid_reference()` as the one provider, which is what `fsl analyze` passes by default, the first settles `proved`, `certified` and the second `refuted`, each with no external provider configured.
 
+The class fixtures are one template, `BrakingC`, with its claim `SlowEnoughC` and the function `half`, after `braking.native`'s `language` and `profile p` lines, where `I` is the whole condition of the one initial entry, `F` the right side of `Moving`'s flow for `v` and `G` the whole guard of `Moving`'s transition:
+
+```
+hybrid BrakingC using p {
+  initial { mode Moving when { I }; }
+  mode Moving invariant { v >= 0 and v <= 20 and a >= 1 and a <= 2 }
+    flow { v' = F; a' = 0; }
+    transition to Stopped when { G } reset { v = 0 };
+  mode Stopped invariant { v = 0 }
+    flow { v' = 0; a' = 0; }
+}
+function half using p(x: Rational[0, 20; 1, 2]): Rational[0, 10; 1, 4] pure { x / 2 }
+temporal SlowEnoughC using p over (h: BrakingC) clock "model-time" on origin { always [0, 10] holds(h.v < 30) }
+```
+
+| Fixture | `I` | `F` | `G` | `SlowEnoughC` from the reference provider |
+| --- | --- | --- | --- | --- |
+| C1 | `v = 40 / 2 and a = 1` | `-a / (1 + v)` | `v = 0` | `unsupported`, located at the `/` of `40 / 2`, mode `Moving`, no variable |
+| C2 | `v = 20 and a = 1` | `-a / (1 + v / 2)` | `v = 0` | `unsupported`, located at the outer `/`, mode `Moving`, variable `v` |
+| C3 | `v = 20 and a = 1` | `if v > 1 then -a else 0` | `v = 0` | `unsupported`, located at the `if`, mode `Moving`, variable `v` |
+| C4 | `v = 20 and a = 1` | `-a` | `half(v) <= 0` | `unsupported`, located at the `/` in `half`'s body, mode `Moving`, no variable |
+| C5 | `v = 20 and a = 1` | `-rational(1, 2) * a` | `v = 0` | not `unsupported` |
+| C6 | `v = 20 and a = 1` | `-a` | `if a > 1 then v = 0 else v <= 0` | not `unsupported` |
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -100,6 +124,7 @@ Over `Braking` against `TooSlow`, the first step of `Moving` meets `v <= 5`, and
 | FR-1019-AC-11 | A model `Grow` with flow `v' = v`, invariant `v >= 1 and v <= 100` and `initial { mode Grow when { v = 1 }; }` refutes `always [0, 5] holds(h.v < 30)` through a `validated-witness` that FR-751 accepts, and the trace is recorded as its counterexample. | Test (TC-2869) |
 | FR-1019-AC-12 | `fsl-hybrid-reference`'s `[dependencies]` name only crates in layer H's ADR-011 cell, `fsl-analyze` depends on it, and no crate of the qualified core depends on it. | Test (TC-2869) |
 | FR-1019-AC-13 | `examples/hybrid-braking/slow-enough.analyze.json` and `too-slow.analyze.json`, read through `fsl_command::command::analyze_with_providers` with `Engine::hybrid_reference()` as the one provider and no external provider configured, settle `proved`, `certified` and `refuted` respectively, each with backend `fsl-hybrid-reference`. | Test (TC-2997) |
+| FR-1019-AC-14 | `SlowEnoughC` over the class fixtures (Examples) from the reference provider: C1 settles `unsupported` with `unsupported_construct`/`expression-form` located at the initial entry's `/` of `40 / 2`, mode `Moving`, and not at the later flow's division; C2 is located at the outer `/` and C3 at the `if`, each naming `Moving` and `v`; C4 is located at the `/` in `half`'s body, its own source span, naming `Moving`; C5 (a `rational(1, 2)` coefficient) and C6 (a Boolean-valued `if` guard) each do not settle `unsupported`. | Test (TC-2869) |
 
 ## Dependencies
 

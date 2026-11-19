@@ -1,0 +1,16 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+object Cell {
+  ready: Boolean;
+  population cells;
+  operation flag(): Boolean;
+}
+protocol ResultRead using p over (cell: Cell) on origin {
+  role Worker on Cell;
+  run sequence Main {
+    attempt Read by Worker on Cell::flag contracts [] as (reading: Boolean) { true };
+    check Gate using v { reading = reading };
+  }
+  finish Done as (done: Boolean) { true };
+}

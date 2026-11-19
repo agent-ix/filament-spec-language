@@ -1,0 +1,15 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+object Job { ready: Boolean; population jobs; }
+object Planner { alive: Boolean; population planners; }
+object Machine { busy: Boolean; population machines; }
+record Note { ok: Boolean; }
+protocol Exchange using p over (job: Job) on origin {
+  role Sender on Planner;
+  role Receiver on Machine;
+  channel Queue from Sender to Receiver carries Note
+    ordering unordered delivery exactly-once-premise capacity 1 overflow block;
+run parallel Both { branch A sequence First { commit One by Sender as (one: Boolean) { true }; } branch B sequence Second { commit Two by Receiver as (two: Boolean) { true }; } } join all [A, B];
+  finish Done as (done: Boolean) { true };
+}

@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile m = "filament.model.complete/v1";
+model M = "example/config-version";
+invariant Q using m on M::ConfigVersion at current { count(x in M::config_history where x.versionNumber >= 1) = 2 }

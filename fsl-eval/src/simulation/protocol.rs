@@ -60,12 +60,12 @@ use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::explore::TransitionSystem;
 use crate::simulation::footprint::Location;
 use crate::simulation::key::{self, EncodingRefusal};
-use crate::simulation::model::encode::{map_enc, reference_enc, value_enc, Canonicalizer, Enc};
+use crate::simulation::model::encode::{Canonicalizer, Enc, map_enc, reference_enc, value_enc};
 use crate::simulation::model::{
-    verdict, ClauseOutcome, ModelEvaluator, ModelFinding, ModelSimState, ModelSystem, Observed,
-    TerminalClass, Verdict, BROKEN,
+    BROKEN, ClauseOutcome, ModelEvaluator, ModelFinding, ModelSimState, ModelSystem, Observed,
+    TerminalClass, Verdict, verdict,
 };
-use crate::simulation::not_simulated::{check_requires_bound, NotSimulated, RequiresBound};
+use crate::simulation::not_simulated::{NotSimulated, RequiresBound, check_requires_bound};
 use crate::simulation::progress::ZeroProgressError;
 use crate::simulation::subject::ConstraintError;
 use crate::simulation::subject::{Bounded, Cut, SubjectSystem};
@@ -76,18 +76,19 @@ pub use access::{
     AccessShape, AttemptInstance, InstanceAccess, LoadBufferingShape, WeakAccessFailure,
     WeakAccessShape, WeakAccesses, WeakAttempt,
 };
-pub use capacity::{capacity_value, Capacities, CapacityRefusal, UnboundCapacity};
+pub use capacity::{Capacities, CapacityRefusal, UnboundCapacity, capacity_value};
 pub use fairness::{
-    protocol_constraints, FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError,
-    ProtocolTarget,
+    FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError, ProtocolTarget,
+    protocol_constraints,
 };
 pub use footprint::{
-    visible, AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation,
+    AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation, visible,
 };
 pub use identity::{
     Actor, BlockedThread, BusinessEffectOccurrence, CarriedComponent, DeliveryIdentity,
-    MessageOccurrence, PathStep, PositionAnchor, ProtocolTransition, QueueFlow, RegistrationKey,
-    RestKind, RestPoint, SendOutcome, SendRecord, StepKind, ThreadPath, WaitCause,
+    MessageOccurrence, PathStep, PositionAnchor, ProtocolRecommendation, ProtocolTransition,
+    QueueFlow, RegistrationKey, RestKind, RestPoint, SendOutcome, SendRecord, StepKind, ThreadPath,
+    WaitCause,
 };
 pub use memory::{
     Access, CarriedKey, Chosen, FootprintStep, GatedStep, MemoryBranch, MemoryChoice, MemoryModel,
@@ -100,7 +101,7 @@ pub use reach::{ReachRefusal, Reachable, ReachedState};
 pub use selection::{
     MemorySelection, MemorySelectionRefusal, ResolvedMemory, ResolvedParallel, SubjectMemory,
 };
-pub use tso::{Buffered, Tso, TsoComponent, DEFAULT_MEMORY_BOUND};
+pub use tso::{Buffered, DEFAULT_MEMORY_BOUND, Tso, TsoComponent};
 pub use wire::{
     blocked_json, fairness_json, location_json, over_reference, send_record_json, transition_json,
 };
@@ -1064,6 +1065,8 @@ pub struct ProtocolSystem<'a, M: MemoryModel> {
     /// An explicit delivery read set for cycle exploration; `None` keeps
     /// the concrete transition system used by execution and replay.
     delivery_reads: Option<BTreeSet<String>>,
+    /// An explicit message identity read set for cycle exploration.
+    message_reads: Option<BTreeSet<String>>,
     /// The model governing each `parallel`: its outermost `parallel`'s
     /// resolved model (FR-219, ADR-025 MM-3).
     governing: BTreeMap<fsl_semantics::check::ProtocolNodeId, fsl_foundation::MemoryModelName>,
@@ -1268,6 +1271,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             memory,
             channel_message_bound: None,
             delivery_reads: None,
+            message_reads: None,
             governing,
             weak_ancestors,
             weak_parallel_paths,
@@ -2291,9 +2295,11 @@ impl<M: MemoryModel> SubjectSystem for ProtocolSystem<'_, M> {
         &self,
         state: &Self::State,
     ) -> Result<crate::simulation::StateKey, EncodingRefusal> {
-        // Checked temporal atoms currently have no delivery-index read form.
-        self.cycle_key(
+        // Checked temporal atoms currently have no message- or delivery-index
+        // read form; keep the explicit seams for future checked-item reads.
+        self.cycle_key_with_reads(
             state,
+            self.message_reads.as_ref().unwrap_or(&BTreeSet::new()),
             self.delivery_reads.as_ref().unwrap_or(&BTreeSet::new()),
         )
     }

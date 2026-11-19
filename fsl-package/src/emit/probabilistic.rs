@@ -492,12 +492,11 @@ fn reward_node(
         )
     };
     let region = region_of(graph, &location)?;
-    let (_, declaring) = model_node(
-        ids,
-        nodes,
-        operation.declaring_key().ok_or_else(unwritable)?,
-    )
-    .ok_or_else(unwritable)?;
+    let declaring_key = reward.declaring_node().ok_or_else(unwritable)?.clone();
+    let declaring = node_id(ids, declaring_key.clone());
+    if !nodes.iter().any(|node| node.node_id == declaring) {
+        return Err(unwritable());
+    }
     // The key carries the content operand: the key of the expression node the
     // function computes (keyed by that expression's content), or a literal
     // body's text, because the function's own key holds no content. Changing

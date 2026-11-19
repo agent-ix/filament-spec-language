@@ -235,9 +235,9 @@ pub use refinement::{
     StepRow, StepTarget, UnsupportedFeature,
 };
 pub use terminal::{
-    CheckedTerminal, CheckedTerminalPredicate, TerminalClauseDeclaration, TerminalClauseKind,
-    TerminalDeclaration, TerminalKeys, TerminalMismatch, TerminalMode, TerminalNode,
-    TerminalRefusal, terminal_predicate_site,
+    terminal_predicate_site, CheckedTerminal, CheckedTerminalPredicate, TerminalClauseDeclaration,
+    TerminalClauseKind, TerminalDeclaration, TerminalKeys, TerminalMismatch, TerminalMode,
+    TerminalNode, TerminalRefusal,
 };
 mod type_form;
 mod type_invariant;
@@ -496,7 +496,6 @@ pub use field_refinement::RefinementObligation;
 pub use fsl_forms::{
     AccessOrdering, ChannelCapacity, ChannelDelivery, ChannelOverflow, LossSelector,
 };
-pub use hybrid_locus::{HybridTermHome, HybridTermNode};
 pub use hybrid::{
     hybrid_horizon, ArithmeticOp, CaptureIndex, CheckedFunctionRef, CheckedHybridClaim,
     CheckedHybridModel, CheckedMode, CheckedTransition, CompareOp, ContinuousVariable,
@@ -505,6 +504,7 @@ pub use hybrid::{
     HybridModelIndex, HybridTerm, InitialEntry, LogicOp, MalformedReason, ModeIndex,
     ResetConstraint, TransitionIndex, VariableClass, VariableIndex,
 };
+pub use hybrid_locus::{HybridTermHome, HybridTermNode};
 #[cfg(any(test, feature = "test-support"))]
 pub use hyper_clause::check_hyper_clauses;
 pub use hyper_clause::{
@@ -559,10 +559,10 @@ pub use refusal::{
     TimeUnitCause, TimedConstruct, TimedOmission, UnwrittenTimedMember,
 };
 pub use state_graph_claim::{
-    CheckedPredicateBody, CheckedStateGraphClaim, CheckedStatePredicate, OverParameter,
-    PackagePredicate, PackageStateGraphForm, PackageStateGraphKind, PackageStatePredicate,
-    state_graph_predicate_site,
-    StateGraphClaim, StateGraphDeclaration, StateGraphFamily, StateGraphForm, StatePredicate,
+    state_graph_predicate_site, CheckedPredicateBody, CheckedStateGraphClaim,
+    CheckedStatePredicate, OverParameter, PackagePredicate, PackageStateGraphForm,
+    PackageStateGraphKind, PackageStatePredicate, StateGraphClaim, StateGraphDeclaration,
+    StateGraphFamily, StateGraphForm, StatePredicate,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use temporal_clause::check_clauses;
@@ -1314,7 +1314,10 @@ impl DebugWith for CheckedGraph {
             .field("compositions", &compositions)
             .field("composition_lattice", &composition_lattice)
             .field("verification_plans", &verification_plans)
-            .field("verification_plan_domain_keys", &verification_plan_domain_keys)
+            .field(
+                "verification_plan_domain_keys",
+                &verification_plan_domain_keys,
+            )
             .field("temporal_subject_aliases", &temporal_subject_aliases)
             .field("predicate_names", &predicate_names)
             .field("protocols", &Seq(protocols, table))
@@ -1884,7 +1887,10 @@ fn verification_plan_cycle(
 /// references that do not require the completed clause graph; the graph
 /// itself is checked separately before clause assembly (FR-753/FSpec FR-192).
 fn verification_plan_claim_exists(package: &PackageDeclarations, name: &str) -> bool {
-    package.state_clauses.iter().any(|clause| clause.name == name)
+    package
+        .state_clauses
+        .iter()
+        .any(|clause| clause.name == name)
         || package
             .temporal_clauses
             .iter()
@@ -1897,18 +1903,24 @@ fn verification_plan_claim_exists(package: &PackageDeclarations, name: &str) -> 
             .hybrid_claims
             .iter()
             .any(|claim| claim.form.name.name == name)
-        || package.hyper_clauses.iter().any(|claim| claim.name() == name)
+        || package
+            .hyper_clauses
+            .iter()
+            .any(|claim| claim.name() == name)
         || package
             .refinements
             .iter()
             .any(|claim| claim.form.name.name == name)
-        || package.probabilistic.iter().any(|declaration| match declaration {
-            ProbabilisticDeclaration::Claim(claim) => claim.name.name == name,
-            ProbabilisticDeclaration::Random(_)
-            | ProbabilisticDeclaration::Reward(_)
-            | ProbabilisticDeclaration::Delay(_)
-            | ProbabilisticDeclaration::Workload(_) => false,
-        })
+        || package
+            .probabilistic
+            .iter()
+            .any(|declaration| match declaration {
+                ProbabilisticDeclaration::Claim(claim) => claim.name.name == name,
+                ProbabilisticDeclaration::Random(_)
+                | ProbabilisticDeclaration::Reward(_)
+                | ProbabilisticDeclaration::Delay(_)
+                | ProbabilisticDeclaration::Workload(_) => false,
+            })
 }
 
 fn verification_plan_refusal(
@@ -4007,9 +4019,9 @@ impl PackageDeclarations {
                 else {
                     refusals.push(CheckRefusal {
                         location: Location::root(Origin::Expression),
-                        cause: CheckCause::InternalFault(Box::new(
-                            KeyFault::MissingAdmittedModel(alias.clone()),
-                        )),
+                        cause: CheckCause::InternalFault(Box::new(KeyFault::MissingAdmittedModel(
+                            alias.clone(),
+                        ))),
                     });
                     return Err(refusals);
                 };
@@ -4204,15 +4216,6 @@ impl PackageDeclarations {
                 check_one_refinement!(index, refinement, &[], false);
             }
         }
-        // FR-218: a second reference to one protocol in the unit refuses at
-        // the second: the function bodies in declaration order, then the
-        // state clauses.
-        refusals.extend(protocol_reference::repeated(
-            drafts
-                .iter()
-                .map(|(_, body, _)| &body.body)
-                .chain(typed_clauses.iter().map(|clause| &clause.body)),
-        ));
         let deferred: Vec<CheckRefusal> = protocol_refinements
             .iter()
             .flat_map(|(_, pending)| pending.refusals().iter().cloned())
@@ -5133,28 +5136,38 @@ impl PackageDeclarations {
         // them a state-graph claim, is refused at its name, naming both; the
         // later is the one that follows in source order.
         let mut named: Vec<(&str, fsl_foundation::Span, Option<usize>)> = Vec::new();
-        named.extend(
-            self.temporal_clauses
-                .iter()
-                .map(|temporal| (temporal.form.name.name.as_str(), temporal.form.name.span, None)),
-        );
+        named.extend(self.temporal_clauses.iter().map(|temporal| {
+            (
+                temporal.form.name.name.as_str(),
+                temporal.form.name.span,
+                None,
+            )
+        }));
         named.extend(
             state_clause_names
                 .iter()
                 .map(|(name, span)| (name.as_str(), *span, None)),
         );
-        named.extend(self.probabilistic.iter().filter_map(|declaration| match declaration {
-            ProbabilisticDeclaration::Claim(claim) => {
-                Some((claim.name.name.as_str(), claim.name.span, None))
-            }
-            _ => None,
-        }));
+        named.extend(
+            self.probabilistic
+                .iter()
+                .filter_map(|declaration| match declaration {
+                    ProbabilisticDeclaration::Claim(claim) => {
+                        Some((claim.name.name.as_str(), claim.name.span, None))
+                    }
+                    _ => None,
+                }),
+        );
         named.extend(
             self.state_graph_claims
                 .iter()
                 .enumerate()
                 .map(|(position, claim)| {
-                    (claim.form.name.name.as_str(), claim.form.name.span, Some(position))
+                    (
+                        claim.form.name.name.as_str(),
+                        claim.form.name.span,
+                        Some(position),
+                    )
                 }),
         );
         named.sort_by_key(|(_, span, _)| span.start);
@@ -6833,6 +6846,14 @@ impl PackageDeclarations {
         let lowered = lowering
             .finish(&generated)
             .map_err(|refusal| vec![refusal])?;
+        let settled_clause_keys: Option<Vec<filament_exact::NodeKey>> = lowered_clauses
+            .iter()
+            .map(|clause| {
+                clause
+                    .as_ref()
+                    .and_then(|clause| lowered.resolve_node_ref(&clause.key))
+            })
+            .collect();
         // FR-380: a population node's `Type` occurrences take their ordinals
         // in ascending source order, whichever writer recorded one first.
         occurrences.order_by(
@@ -6867,10 +6888,7 @@ impl PackageDeclarations {
             .ok_or_else(unlowered)?;
         // Each contract entry's own checked identity (FR-114 "Outputs"),
         // captured before `lowered_clauses` is consumed below.
-        let lowered_clause_keys: Vec<filament_exact::NodeKey> = lowered_clauses
-            .iter()
-            .map(|lowered| lowered.key.clone())
-            .collect();
+        let lowered_clause_keys = settled_clause_keys.ok_or_else(unlowered)?;
         // FR-115: each operation a `pre`/`post` clause or an attempt names,
         // with the frame node lowering bound it to (FR-105, FR-114).
         let clause_frames =
@@ -7014,6 +7032,7 @@ impl PackageDeclarations {
             .zip(lowered_clauses)
             .enumerate()
             .map(|(index, ((form, typed), lowered))| {
+                let clause_key = &lowered_clause_keys[index];
                 let location = clause_location(index, &form.name);
                 let unkeyable = || {
                     vec![CheckRefusal {
@@ -7022,7 +7041,7 @@ impl PackageDeclarations {
                     }]
                 };
                 let claim = occurrences
-                    .first_origin(&lowered.key, family::OccurrenceRole::Claim, |at| {
+                    .first_origin(clause_key, family::OccurrenceRole::Claim, |at| {
                         *at == location
                     })
                     .ok_or_else(unkeyable)?;
@@ -7039,7 +7058,7 @@ impl PackageDeclarations {
                         .extend(ranged.iter().cloned());
                 }
                 clause_populations
-                    .entry(lowered.key.clone())
+                    .entry(clause_key.clone())
                     .or_default()
                     .extend(ranged);
                 let keyed = state_clause::clause_records(
@@ -7047,6 +7066,7 @@ impl PackageDeclarations {
                     &claims,
                     &form,
                     &lowered,
+                    clause_key,
                     &claim,
                     scope.types(),
                     limits.nodes(),
@@ -7067,7 +7087,7 @@ impl PackageDeclarations {
                         // Every clause naming one operation keys the same
                         // frame record; any other collision is a fault.
                         std::collections::hash_map::Entry::Occupied(existing)
-                            if node != lowered.key && *existing.get() == record => {}
+                            if node != *clause_key && *existing.get() == record => {}
                         std::collections::hash_map::Entry::Occupied(_) => return Err(unkeyable()),
                     }
                 }
@@ -7080,7 +7100,7 @@ impl PackageDeclarations {
                     body: typed.body,
                     slots: typed.slots,
                     observations: typed.observations,
-                    identity: lowered.key,
+                    identity: clause_key.clone(),
                     claim,
                     spans: form.spans,
                     has_result: typed.has_result,
@@ -7663,6 +7683,7 @@ impl PackageDeclarations {
             .zip(checked_protocols.iter_mut())
         {
             let mut attempts = Vec::with_capacity(bindings.len());
+            let mut recommendations = Vec::new();
             for ((bound, lowered_attempt), location) in bindings.iter().zip(lowered).zip(locations)
             {
                 let unkeyable = || {
@@ -7710,6 +7731,26 @@ impl PackageDeclarations {
                     .map(|&index| lowered_clause_keys.get(index).cloned())
                     .collect::<Option<Vec<_>>>()
                     .ok_or_else(unkeyable)?;
+                let form = self
+                    .protocols
+                    .iter()
+                    .find(|protocol| protocol.name.name == checked.name)
+                    .and_then(|protocol| {
+                        protocol.attempts.iter().find(|form| {
+                            form.declaration == bound.declaration && form.recommendation
+                        })
+                    });
+                if let Some(form) = form {
+                    recommendations.push(protocol_clause::CheckedRecommendation {
+                        declaration: bound.declaration,
+                        role: form.role.name.clone(),
+                        operation: bound.operation.clone(),
+                        receiver: bound.receiver.clone(),
+                        anchor,
+                        contracts,
+                    });
+                    continue;
+                }
                 attempts.push(protocol_clause::CheckedAttempt {
                     declaration: bound.declaration,
                     operation: bound.operation.clone(),
@@ -7720,6 +7761,7 @@ impl PackageDeclarations {
                 });
             }
             checked.attempts = attempts;
+            checked.recommendations = recommendations;
         }
         // FR-381 "Compensation registration": each template bound to its
         // operation's one anchor and frame node, with the one frame record
@@ -8068,10 +8110,7 @@ impl PackageDeclarations {
                             .split_once("::")
                             .unwrap_or(("", step.domain.name.as_str()));
                         let object = Identifier::new(object.to_owned()).ok()?;
-                        model_objects
-                            .get(alias)?
-                            .get(&object)
-                            .cloned()
+                        model_objects.get(alias)?.get(&object).cloned()
                     })
                     .collect()
             })

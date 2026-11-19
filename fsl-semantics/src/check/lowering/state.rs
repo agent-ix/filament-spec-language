@@ -237,10 +237,10 @@ pub(crate) struct LoweredAttempt {
 /// A lowered state clause's keys.
 pub(crate) struct LoweredClause {
     /// The `state_clause` node: the clause's identity.
-    pub(crate) key: NodeKey,
+    pub(crate) key: NodeRef,
     /// The lowered Boolean condition node the `state_clause` application
     /// holds as its third argument.
-    pub(crate) condition: NodeKey,
+    pub(crate) condition: NodeRef,
     /// Each parameter's `value`/`parameter` node, in slot order.
     pub(crate) parameters: Vec<NodeKey>,
     /// The anchor and frame nodes of the operation a `pre` or `post` clause
@@ -331,6 +331,18 @@ impl Lowering<'_> {
             .collect::<Result<_, _>>()?;
         let mut binders = Binders::new(clause.body_slots, &scope);
         let condition = self.expression(clause.body, &mut binders)?;
+        let condition = match condition {
+            LeafTerm::Reference { target } => target,
+            LeafTerm::Literal { .. } | LeafTerm::DependencyReference { .. } => {
+                return Err(fault(
+                    location,
+                    KeyFault::StageFault(filament_semantic_value::catalog::InternalFault::new(
+                        "S4",
+                        "state-clause-condition-is-a-node",
+                    )),
+                ))
+            }
+        };
         let boolean = self.type_node(&ValueType::Boolean, location)?;
         let (anchor, binding) = match &clause.anchor {
             None => (self.object_node(clause.context.clone(), location)?, None),
@@ -351,11 +363,11 @@ impl Lowering<'_> {
         // anchor and the condition. `result_type` names the same `Boolean`
         // node as `semantic_type` (FR-341 "the application's `result_type`
         // names the same node").
-        let key = self.insert(
+        let key = self.insert_ref(
             location,
             NodeTag::State,
             "state_clause",
-            Some(boolean.clone()),
+            Some(boolean.clone().into()),
             None,
             BodyTerm::application(
                 Operator::StateClause,
@@ -370,7 +382,7 @@ impl Lowering<'_> {
                 vec![
                     MemberTerm::Group(GroupTerm::references(parameters.iter().cloned())),
                     MemberTerm::reference(anchor),
-                    MemberTerm::Leaf(condition.clone()),
+                    MemberTerm::Leaf(LeafTerm::reference_node(condition.clone())),
                 ],
             ),
         )?;
@@ -383,21 +395,6 @@ impl Lowering<'_> {
             self.record(object.clone(), OccurrenceRole::Type, location.clone());
             population_objects.push(object);
         }
-        let condition = match condition {
-            LeafTerm::Reference { target } => target
-                .admitted()
-                .cloned()
-                .ok_or_else(|| fault(location, KeyFault::UnresolvedDraft))?,
-            LeafTerm::Literal { .. } | LeafTerm::DependencyReference { .. } => {
-                return Err(fault(
-                    location,
-                    KeyFault::StageFault(filament_semantic_value::catalog::InternalFault::new(
-                        "S4",
-                        "state-clause-condition-is-a-node",
-                    )),
-                ))
-            }
-        };
         Ok(LoweredClause {
             key,
             condition,

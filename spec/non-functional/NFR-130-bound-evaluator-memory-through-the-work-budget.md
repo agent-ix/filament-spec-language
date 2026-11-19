@@ -32,7 +32,11 @@ argument value bound in it. When that count exceeds the
 evaluation SHALL stop `incomplete` with `stage_limit_exceeded` naming
 `evaluation.live_occurrences`, its configured value and the count reached, at
 that call, before the frame is pushed. A frame's occurrences leave the count
-when its call returns. Both the std evaluator and the no-std evaluator
+when its call returns. The count is one sum per application: the frames of
+registered host bodies, of interpreted functions and of calls an evaluator
+runs inside one step of a frame all add to it, so the limit stops a call at
+the same count whether the application began at an interpreted function or
+at a registered host body (FR-485). Both the std evaluator and the no-std evaluator
 (FR-402) SHALL count and stop identically.
 
 ## Rationale
@@ -85,6 +89,7 @@ high-water count. A run-level test drives the same function through the
 | NFR-130-AC-2 | For the call of AC-1 with `n = 1000000` on unlimited `work_units` and unlimited `evaluation.live_occurrences`, the growth of the process's peak resident set across the evaluation divided by the `work_units` it consumed is at most 1 KiB, and divided by the largest live-occurrence count reached is at most 1 KiB. | Test (TC-1931) |
 | NFR-130-AC-3 | Through the `run` operation, `d` called with `n = 1000000` and `accounting.work_units` raised to `100000000000` under the default `evaluation.live_occurrences` (1048576; each frame holds two occurrences) stops with exit 22 and the outcome `{"kind": "incomplete", "limit": "evaluation.live_occurrences"}`; with `call.evaluation.live_occurrences` 4000000 the same call completes with `0`. | Test (TC-2164) |
 | NFR-130-AC-4 | Through the `run` operation under default limits, `d` called with `n = 1000` completes with `0`; with `call.evaluation.live_occurrences` 0 it stops incomplete at its first call, because zero is a real limit; a `call.evaluation` with `live_occurrences` `-1`, `1.5` or `"x"`, or with an unknown member, refuses `invalid-request` at stage `request`, exit 20, naming the member. | Test (TC-2165) |
+| NFR-130-AC-5 | An application whose root frame holds 3 live occurrences calls a function whose frame holds 4, and that function calls one whose frame holds 4, under an `evaluation.live_occurrences` limit of 10. Whether the root is an interpreted function or a registered host body, the application stops `incomplete` at the third call with the limit 10 and the count 7 reached before it, and the two outcomes are equal; with the middle frame holding 3 both complete, reaching 10. | Test (TC-3124) |
 
 ## Dependencies
 

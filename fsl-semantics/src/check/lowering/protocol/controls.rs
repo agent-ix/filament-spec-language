@@ -61,7 +61,7 @@ pub(crate) struct AttemptNodes {
     /// The operation's `operation_anchor` node.
     pub(crate) anchor: NodeKey,
     /// The state clauses the attempt lists.
-    pub(crate) contracts: Vec<NodeKey>,
+    pub(crate) contracts: Vec<NodeRef>,
 }
 
 /// The operation anchor of a checked compensation template.
@@ -330,7 +330,7 @@ impl Lowering<'_> {
         let entry = checked.slots.entries.get(&node).ok_or_else(unchecked)?;
         let related = self.related_arguments(controls, node, entry, location)?;
 
-        Ok(match control.kind {
+        let mut result = match control.kind {
             ProtocolNodeKind::Sequence => {
                 let children = control
                     .children
@@ -410,7 +410,7 @@ impl Lowering<'_> {
                         MemberTerm::binding("ordering", ordering),
                         MemberTerm::binding(
                             "contracts",
-                            BindingValue::Group(GroupTerm::references(sorted(
+                            BindingValue::Group(GroupTerm::references_nodes(sorted_node_refs(
                                 nodes.contracts.iter().cloned(),
                             ))),
                         ),
@@ -426,6 +426,41 @@ impl Lowering<'_> {
                     "effect",
                     vec![
                         MemberTerm::bound("of", LeafTerm::reference_node(anchor_of()?)),
+                        binder()?,
+                        related,
+                        MemberTerm::bound("constraint", constraint),
+                    ],
+                )
+            }
+            ProtocolNodeKind::Event
+                if form
+                    .attempts
+                    .iter()
+                    .any(|attempt| attempt.declaration == node.0 && attempt.recommendation) =>
+            {
+                let form = form
+                    .attempts
+                    .iter()
+                    .find(|attempt| attempt.declaration == node.0 && attempt.recommendation)
+                    .ok_or_else(unchecked)?;
+                let nodes = controls
+                    .inputs
+                    .attempts
+                    .iter()
+                    .find(|nodes| nodes.declaration == node.0)
+                    .ok_or_else(unchecked)?;
+                let constraint = self.control_body(controls, node, entry, true, location)?;
+                (
+                    "recommend",
+                    vec![
+                        role(Some(&form.role.name))?,
+                        MemberTerm::bound("operation", LeafTerm::reference(nodes.anchor.clone())),
+                        MemberTerm::binding(
+                            "contracts",
+                            BindingValue::Group(GroupTerm::references_nodes(sorted_node_refs(
+                                nodes.contracts.iter().cloned(),
+                            ))),
+                        ),
                         binder()?,
                         related,
                         MemberTerm::bound("constraint", constraint),
@@ -521,7 +556,14 @@ impl Lowering<'_> {
             | ProtocolNodeKind::Case
             | ProtocolNodeKind::Finish
             | ProtocolNodeKind::CompensateTemplate => return Err(unchecked()),
-        })
+        };
+        if control.observe_only {
+            result.1.push(MemberTerm::bound(
+                "boundary",
+                self.text_literal("observe-only", location)?,
+            ));
+        }
+        Ok(result)
     }
 
     /// The arguments of the `parallel` `control` (FR-466 "Control layouts"):
@@ -985,6 +1027,13 @@ impl Lowering<'_> {
         let mut binders = Binders::new(slot_names, &scope);
         self.expression(body.body.root(), &mut binders)
     }
+}
+
+fn sorted_node_refs(nodes: impl IntoIterator<Item = NodeRef>) -> Vec<NodeRef> {
+    let mut nodes: Vec<_> = nodes.into_iter().collect();
+    nodes.sort();
+    nodes.dedup();
+    nodes
 }
 
 /// Each control's declaration path (FR-464 "Control tree"): the root's is

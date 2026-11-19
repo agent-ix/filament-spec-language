@@ -1,0 +1,7 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+dimension Length;
+dimension Time;
+unit m : Length = rational(1,1);
+unit s : Time = rational(1,1);
+function square using v(a: Quantity<m>): Quantity<m^2> pure { a^2 }

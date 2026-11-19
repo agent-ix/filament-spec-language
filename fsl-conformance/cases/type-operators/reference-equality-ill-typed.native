@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+profile mdl = "filament.model.complete/v1";
+object Node identity (id) { id: Int[0,9]; population nodes; }
+function bad using mdl(a: Reference<Node>,b: Reference<Node>): Boolean pure { a<b }

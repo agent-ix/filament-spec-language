@@ -854,6 +854,7 @@ pub(crate) fn projections(reached: &[Reached]) -> std::collections::BTreeSet<Vec
         for (transition, next) in &reached[at].steps {
             let named = match transition.kind() {
                 StepKind::Attempt
+                | StepKind::Recommend
                 | StepKind::Event
                 | StepKind::Send
                 | StepKind::Receive

@@ -20,6 +20,7 @@ fsl-replay = { path = "../fsl-replay" }
 fsl-eval = { path = "../fsl-eval" }
 filament-eval = { workspace = true }
 fsl-semantics = { path = "../fsl-semantics" }
+filament-checked = { workspace = true }
 fsl-analyze = { path = "../fsl-analyze" }
 fsl-inspect = { path = "../fsl-inspect" }
 fsl-route = { path = "../fsl-route" }
@@ -43,7 +44,6 @@ tl-syntax = { git = "https://github.com/agent-ix/tl-syntax.git", tag = "v0.4.0",
 
 [dev-dependencies]
 tempfile = "3.27.0"
-filament-checked = { workspace = true, features = ["test-support"] }
 
 [[test]]
 name = "it"

@@ -154,19 +154,23 @@ impl Reward {
     /// `model` node.
     #[must_use]
     pub fn node_key(&self, package: &str) -> Option<NodeKey> {
-        self.node_key_over(package, self.expression_operand()?)
+        self.node_key_over(package, self.declaring_node()?, self.expression_operand()?)
     }
 
     /// [`Self::node_key`] with the `expression` operand its lowering produced,
     /// for the lowering that has not recorded it on the reward yet.
-    pub(crate) fn node_key_over(&self, package: &str, expression: &PathSegment) -> Option<NodeKey> {
+    pub(crate) fn node_key_over(
+        &self,
+        package: &str,
+        declaring: &NodeKey,
+        expression: &PathSegment,
+    ) -> Option<NodeKey> {
         let operation = self.operation();
-        let declaring = object_type_node_key(operation.declaring_key()?).ok()?;
         key(
             package,
             "reward",
             vec![
-                PathSegment::Node(declaring),
+                PathSegment::Node(declaring.clone()),
                 PathSegment::Text(operation.name().into()),
                 PathSegment::Text(self.name().into()),
                 expression.clone(),

@@ -766,7 +766,6 @@ fn an_export_outcome_document_has_operation_export() {
 /// written and output path, and no other line.
 #[test]
 #[trace("TC-2996", "FR-865-AC-7")]
-#[ignore = "QSL-1979: the export text form is not implemented yet"]
 fn an_export_outcome_renders_as_four_lines() {
     use filament_exact::Cancel;
     use fsl_inspect::{render_outcome, RenderForm, RenderSources};

@@ -298,6 +298,10 @@ pub(super) struct Request {
     /// each refusal names its member path; none when absent.
     #[serde(default, deserialize_with = "present_json_value")]
     pub tl_lowering: Option<serde_json::Value>,
+    /// FR-1036: a synthesis request. The checked-package route is held at
+    /// QSL-2235 until synthesis lowering can admit its S1-S3 records.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub synthesis: Option<serde_json::Value>,
 }
 
 fn from_object_opt<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
@@ -613,6 +617,9 @@ pub(super) struct RunPackageSelection {
     pub file: Option<String>,
     #[serde(default)]
     pub directory: Option<String>,
+    /// The exact source reference required when this package is exported.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub source_package: Option<serde_json::Value>,
 }
 
 /// A supplied document and its optional FR-821 provision identity.

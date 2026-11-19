@@ -233,6 +233,7 @@ fn a_terminal_declaration_emits_its_node_and_the_i2_read_returns_it() {
         read.node,
         key(&when.wire, &terminal_node(&when.wire)["node_id"])
     );
+    assert_eq!(read.ordinal, 0);
     assert_eq!(
         read.declaration,
         ReadTerminalDeclaration::When {
@@ -244,7 +245,7 @@ fn a_terminal_declaration_emits_its_node_and_the_i2_read_returns_it() {
         }
     );
     assert_eq!(
-        read_terminal(&package, &model),
+        read_terminal(&package, &model, 0),
         Ok(read.declaration.clone())
     );
 
@@ -254,14 +255,14 @@ fn a_terminal_declaration_emits_its_node_and_the_i2_read_returns_it() {
     };
     assert_eq!(read.declaration, ReadTerminalDeclaration::Any);
     assert_eq!(
-        read_terminal(&package, &any_model.expect("one terminal")),
+        read_terminal(&package, &any_model.expect("one terminal"), 0),
         Ok(ReadTerminalDeclaration::Any)
     );
 
     let package = admit(&none);
     assert_eq!(read_terminals(&package), Ok(Vec::new()));
     assert_eq!(
-        read_terminal(&package, &model),
+        read_terminal(&package, &model, 0),
         Ok(ReadTerminalDeclaration::None)
     );
 }

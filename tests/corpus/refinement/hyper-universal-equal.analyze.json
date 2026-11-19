@@ -1,0 +1,54 @@
+{
+  "format": "native-analyze/1",
+  "request": {
+    "program": {
+      "source": {
+        "file": "hyper-universal-equal.native",
+        "authority": "test",
+        "identity": "test:corpus/hyper-universal-equal",
+        "document": "hyper-universal-equal",
+        "formal_revision": 1
+      }
+    },
+    "models": [
+      {
+        "format": "semantic-ir/2.0.0",
+        "source": {
+          "file": "../../../fsl-conformance/cases/counter-step-package.json",
+          "authority": "test",
+          "identity": "test:counter-step-package",
+          "document": "Package",
+          "formal_revision": 1
+        }
+      }
+    ],
+    "documents": [
+      {
+        "file": "../../../fsl-conformance/cases/counter-step-v0.json"
+      }
+    ],
+    "items": [
+      {
+        "claim": "Equal",
+        "kind": "temporal-satisfaction",
+        "temporal": {
+          "item_kind": "formula",
+          "subject": {
+            "initial_states": [
+              {
+                "authority": "test",
+                "identity": "v0"
+              }
+            ],
+            "universes": [
+              {
+                "authority": "test",
+                "identity": "v0"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

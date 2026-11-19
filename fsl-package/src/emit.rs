@@ -17,19 +17,18 @@ use filament_contract_model::{
     CheckedAbstractionPopulation, CheckedArtifactRef, CheckedCapability,
     CheckedCapabilityDisposition, CheckedComponentClause, CheckedCompositionComponent,
     CheckedCompositionPremise, CheckedDeclaration, CheckedDependencyClockSelection,
-    CheckedDependencySelection,
-    CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEffectiveId, CheckedEnvironmentEntry,
-    CheckedEnvironmentSupplies, CheckedFairnessGranularity, CheckedFairnessKind,
-    CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification, CheckedGuaranteeMeasure,
-    CheckedGuaranteeProgress, CheckedJson, CheckedNodeId, CheckedNodeKind, CheckedNodeOwner,
-    CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry,
-    CheckedOperationAnchorBody, CheckedOriginalDeclarationId, CheckedPackageEvidence,
-    CheckedPackageLockV2, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
-    CheckedPackageV2, CheckedRational, CheckedRefinementStepRowRegion, CheckedScopedDeletion,
-    CheckedSelection, CheckedSelectionRole, CheckedSemanticGraphV2, CheckedSemanticNodeV2,
-    CheckedSourceMapEntry, CheckedSourceRef, CheckedSourceRegion, CheckedTerm, DimensionTerm,
-    LiteralKind, NominalBody, OperationBody, OperationBodyRow, ProtocolForm, ScalarTypeForm,
-    StateForm, ValueForm,
+    CheckedDependencySelection, CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEffectiveId,
+    CheckedEnvironmentEntry, CheckedEnvironmentSupplies, CheckedFairnessGranularity,
+    CheckedFairnessKind, CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification,
+    CheckedGuaranteeMeasure, CheckedGuaranteeProgress, CheckedJson, CheckedNodeId, CheckedNodeKind,
+    CheckedNodeOwner, CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole,
+    CheckedOperandEntry, CheckedOperationAnchorBody, CheckedOriginalDeclarationId,
+    CheckedPackageEvidence, CheckedPackageLockV2, CheckedPackageSidecarsRef,
+    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedRational,
+    CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection, CheckedSelectionRole,
+    CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef,
+    CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody, OperationBody,
+    OperationBodyRow, ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
 };
 use serde::Deserialize;
 
@@ -3007,38 +3006,92 @@ fn stale_protocol_reference(
     Ok(())
 }
 
-/// FR-093's graph order: ascending by node id, except that a recursion
-/// group's members are written together, in ordinal order, where the group's
-/// first member by node id would be.
+/// Write every local dependency before the node that names it. Among nodes
+/// ready to write, use ascending node id; emit each recursion group together
+/// with its members in ascending `Candidate` `NodeKey` order.
 fn graph_order<'c, 'g>(kept: &[&'c Candidate<'g>]) -> Vec<&'c Candidate<'g>> {
-    let mut groups: HashMap<NodeKey, Vec<Option<&'c Candidate<'g>>>> = HashMap::new();
+    let mut recursion_groups: HashMap<NodeKey, Vec<Option<&'c Candidate<'g>>>> = HashMap::new();
     for candidate in kept {
         let Some(recursion) = candidate.node.recursion() else {
             continue;
         };
-        let members = groups
+        let members = recursion_groups
             .entry(recursion.anchor().clone())
             .or_insert_with(|| vec![None; recursion.size()]);
         if let Some(member) = members.get_mut(recursion.ordinal()) {
             *member = Some(*candidate);
         }
     }
-    let mut order = Vec::with_capacity(kept.len());
+
+    let mut units: Vec<(NodeKey, Vec<&'c Candidate<'g>>)> = Vec::new();
     let mut emitted_groups = HashSet::new();
     for candidate in kept {
         match candidate.node.recursion() {
-            None => order.push(*candidate),
+            None => units.push((candidate.key.clone(), vec![*candidate])),
             Some(recursion) => {
                 let group = recursion.anchor().clone();
                 if emitted_groups.insert(group.clone()) {
-                    if let Some(members) = groups.remove(&group) {
-                        order.extend(members.into_iter().flatten());
+                    if let Some(members) = recursion_groups.remove(&group) {
+                        let mut members: Vec<_> = members.into_iter().flatten().collect();
+                        members.sort_by(|left, right| left.key.cmp(&right.key));
+                        if let Some(first) = members.iter().map(|member| &member.key).min() {
+                            units.push((first.clone(), members));
+                        }
                     }
                 }
             }
         }
     }
-    order
+
+    let unit_of: HashMap<NodeKey, usize> = units
+        .iter()
+        .enumerate()
+        .flat_map(|(unit, (_, members))| {
+            members.iter().map(move |member| (member.key.clone(), unit))
+        })
+        .collect();
+    let mut dependents = vec![BTreeSet::new(); units.len()];
+    let mut incoming = vec![0usize; units.len()];
+    for (dependent, (_, members)) in units.iter().enumerate() {
+        for member in members {
+            for dependency in &member.names {
+                let Some(&dependency_unit) = unit_of.get(dependency) else {
+                    continue;
+                };
+                if dependency_unit != dependent && dependents[dependency_unit].insert(dependent) {
+                    incoming[dependent] += 1;
+                }
+            }
+        }
+    }
+
+    let mut ready: BTreeSet<(NodeKey, usize)> = units
+        .iter()
+        .enumerate()
+        .filter(|(unit, _)| incoming[*unit] == 0)
+        .map(|(unit, (key, _))| (key.clone(), unit))
+        .collect();
+    let mut order = Vec::with_capacity(kept.len());
+    while let Some((_, unit)) = ready.pop_first() {
+        if let Some((_, members)) = units.get(unit) {
+            order.extend(members.iter().copied());
+        }
+        for dependent in dependents.get(unit).into_iter().flatten() {
+            if let Some(count) = incoming.get_mut(*dependent) {
+                *count -= 1;
+                if *count == 0 {
+                    if let Some((key, _)) = units.get(*dependent) {
+                        ready.insert((key.clone(), *dependent));
+                    }
+                }
+            }
+        }
+    }
+    if order.len() == kept.len() {
+        order
+    } else {
+        kept.to_vec()
+    }
 }
 
 /// `reference` as the wire's `DefinitionRef`, `{authority, identity}`.
@@ -3760,10 +3813,9 @@ fn checked_equality_term_data(
         };
         let operation = application_body.operation.identity();
         let operator_matches = match (row.producer_data.schedule(), row.producer_data.operator()) {
-            (
-                filament_semantic_value::declaration::EqualitySchedule::Float,
-                _,
-            ) => operation == "filament.op.ieee.numeric_equal",
+            (filament_semantic_value::declaration::EqualitySchedule::Float, _) => {
+                operation == "filament.op.ieee.numeric_equal"
+            }
             (_, filament_semantic_value::declaration::EqualityOperator::Equal) => {
                 OperationSuffix::of(operation) == Some(OperationSuffix::Eq)
             }
@@ -7667,7 +7719,8 @@ fn source_object_rows(
                 .parameters
                 .iter()
                 .filter(|parameter| {
-                    parameter.value_type == fsl_semantics::model::domain_package::ValueTypeRef::Clock
+                    parameter.value_type
+                        == fsl_semantics::model::domain_package::ValueTypeRef::Clock
                 })
                 .map(|parameter| {
                     parameter
@@ -8537,9 +8590,26 @@ fn claim_name_rows(
             }
         }
     }
-    rows.sort_by(|left, right| {
-        (&left.declaration, &left.occurrence).cmp(&(&right.declaration, &right.occurrence))
+    // The reader orders rows by the graph's own node order, which resolves
+    // operand IDs and so need not agree with the plain `CheckedNodeId` order.
+    let position: BTreeMap<&CheckedNodeId, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(at, node)| (&node.node_id, at))
+        .collect();
+    // Every row's declaration was taken from an emitted node, so a miss is an
+    // emitter fault, not an ordering to guess.
+    let mut ranked = Vec::with_capacity(rows.len());
+    for row in rows {
+        let at = *position
+            .get(&row.declaration)
+            .ok_or(EmitRefusal::UnresolvedNodeReference)?;
+        ranked.push((at, row));
+    }
+    ranked.sort_by(|(left_at, left), (right_at, right)| {
+        (left_at, &left.occurrence).cmp(&(right_at, &right.occurrence))
     });
+    let mut rows: Vec<_> = ranked.into_iter().map(|(_, row)| row).collect();
     rows.dedup_by(|later, earlier| {
         later.declaration == earlier.declaration && later.occurrence == earlier.occurrence
     });

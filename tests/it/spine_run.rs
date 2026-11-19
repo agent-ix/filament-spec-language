@@ -123,6 +123,55 @@ fn call(function: &str, arguments: Value) -> Value {
     json!({"function": function, "arguments": arguments})
 }
 
+#[test]
+#[trace("TC-3063", "FR-680-AC-8")]
+fn matching_map_key_guards_evaluate_present_and_absent_keys() {
+    for body in [
+        "if contains(m,1) then m[1] else -1",
+        "if not contains(m,1) then -1 else m[1]",
+        "if contains(m,1) or contains(m,1) then m[1] else -1",
+        "if contains(m,k) then m[k] else -1",
+    ] {
+        let program = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             function f using v(m: Map<Int[0,9],Integer>[0,3], k: Int[0,9]): Integer pure {{ {body} }}"
+        );
+        for (entries, expected) in [
+            (
+                json!([{ "key": {"integer":"1"}, "value": {"integer":"8"}}]),
+                "8",
+            ),
+            (json!([]), "-1"),
+            (
+                json!([{ "key": {"integer":"2"}, "value": {"integer":"9"}}]),
+                "-1",
+            ),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            spine_run_request(
+                directory.path(),
+                program.as_bytes(),
+                call(
+                    "f",
+                    json!([
+                        {"parameter":"m", "value":{"map":entries}},
+                        {"parameter":"k", "value":{"integer":"1"}}
+                    ]),
+                ),
+            );
+            let output = run(directory.path());
+            assert_eq!(output.status.code(), Some(0), "{body}: {output:?}");
+            let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(
+                value["outcome"],
+                json!({"kind":"completed", "value":{"integer":expected}}),
+                "{body}: {value}"
+            );
+        }
+    }
+}
+
 /// FR-267-AC-3: the clause-run transition changes command failures to the
 /// closed /2 envelope, including failures before the source can compile.
 #[test]

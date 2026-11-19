@@ -115,58 +115,16 @@ fn a_non_control_root_emits_a_protocol_node_with_a_valid_profile_alias() {
         .any(|node| node.node_tag() == fsl_semantics::check::NodeTag::Protocol));
 }
 
-/// With a protocol profile selected, a protocol that names a construct
-/// whose node is not written yet refuses `unsupported_construct`/
-/// `not-yet-implemented` at its declaration, once for each such construct and
-/// naming the ticket that writes it, never an internal fault; a reference to
-/// it refuses with the first of them at the reference.
-#[trace("FR-092-AC-18", "FR-218-AC-8", "TC-1021")]
+/// FR-880-AC-8: a post-test repeat in an attempt-bearing protocol is admitted
+/// and emitted after its protocol node is written.
+#[trace("FR-880-AC-8", "TC-2502", "FSpec-FR-729-AC-1")]
 #[test]
-fn an_unwritten_construct_refuses_a_selected_profile_and_a_reference_to_it() {
-    let attempt = not_emitted(ProtocolConstruct::PostTestRepeat);
-    assert_eq!(attempt.code(), fsl_foundation::Code::UnsupportedConstruct);
-    assert_eq!(attempt.cause(), Some("not-yet-implemented"));
-    for (construct, ticket) in [
-        (ProtocolConstruct::Relationships, "QSL-1141"),
-        (ProtocolConstruct::ChannelKeyNotEqualityStable, "QSL-1142"),
-        (ProtocolConstruct::Control("parallel"), "QSL-1126"),
-        (ProtocolConstruct::PostTestRepeat, "STD-539"),
-        (ProtocolConstruct::ReferenceCycle, "QSL-844"),
-    ] {
-        assert_eq!(construct.tracking(), ticket, "{construct:?}");
-    }
-
-    let declared = check_attempt_unit(&rooted(POST_TEST_ROOT, true, false), false)
-        .expect_err("the protocol names an unwritten construct");
-    assert_eq!(
-        declared.iter().map(|r| &r.cause).collect::<Vec<_>>(),
-        [&attempt]
-    );
-
-    let referred = check_attempt_unit(&rooted(POST_TEST_ROOT, true, true), false)
-        .expect_err("the reference refuses too");
-    assert_eq!(referred.len(), 2, "{referred:?}");
-    assert!(referred.iter().all(|r| r.cause == attempt));
-    assert_ne!(referred[0].location, referred[1].location);
-}
-
-/// A protocol with an `attempt` is written after the state clauses its
-/// `contracts` name, so a function that refers to it cannot be keyed before
-/// the clauses: the reference refuses typed (`not-yet-implemented`,
-/// QSL-1121g), while the protocol alone checks.
-#[trace("FR-092-AC-18", "TC-1021")]
-#[test]
-fn a_function_referring_to_a_protocol_with_an_attempt_refuses_typed() {
-    check_attempt_unit(&rooted(ATTEMPT_ROOT, true, false), false)
-        .unwrap_or_else(|refusals| panic!("the attempt protocol checks: {refusals:?}"));
-    let construct = ProtocolConstruct::ReferenceToAttemptProtocol;
-    assert_eq!(construct.tracking(), "QSL-1121g");
-    let refusals = check_attempt_unit(&rooted(ATTEMPT_ROOT, true, true), false)
-        .expect_err("the reference refuses");
-    assert_eq!(
-        refusals.iter().map(|r| &r.cause).collect::<Vec<_>>(),
-        [&not_emitted(construct)]
-    );
+fn a_post_test_repeat_in_an_attempt_protocol_emits() {
+    let graph = check_attempt_unit(&rooted(POST_TEST_ROOT, true, false), false)
+        .unwrap_or_else(|refusals| panic!("the post-test repeat checks: {refusals:?}"));
+    let package = CheckedPackage::link(graph);
+    let emission = emit_checked(&package).expect("the post-test repeat emits");
+    assert_eq!(emission.omitted, []);
 }
 
 /// FR-383-AC-18, TC-1297: a refused earlier declaration does not shift the
@@ -495,6 +453,86 @@ fn a_reference_emits_the_target_node_and_one_carrier_the_reader_admits() {
     let start = usize::try_from(region["start"].as_u64().unwrap()).unwrap();
     let end = usize::try_from(region["end"].as_u64().unwrap()).unwrap();
     assert_eq!(&text[start..end], "protocol Fill");
+}
+
+/// FR-218-AC-8: a repeated reference shares its target and carrier, adding a
+/// second expression occurrence in source order without changing the body.
+#[trace("FR-218-AC-8", "TC-1021", "FSpec-FR-322-AC-66")]
+#[test]
+fn repeated_references_share_one_carrier_and_retain_both_occurrences() {
+    let text = selecting(&format!(
+        "{REFERS_TO_FILL}function refers_again using v(): Boolean pure {{ protocol Fill }}\n{}",
+        protocol("Fill")
+    ));
+    let (emission, wire, read) = emit_model_unit(&text, None);
+    assert_eq!(emission.omitted, []);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+
+    let clauses: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| node["node_tag"] == "protocol" && node["semantic_form"] == "protocol_clause")
+        .collect();
+    assert_eq!(clauses.len(), 1);
+    let carriers: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| {
+            node["node_tag"] == "protocol" && node["semantic_form"] == "protocol_reference"
+        })
+        .collect();
+    let [carrier] = carriers.as_slice() else {
+        panic!("one shared protocol-reference carrier: {carriers:?}");
+    };
+    let single_text = selecting(&format!("{REFERS_TO_FILL}{}", protocol("Fill")));
+    let (_, single_wire, single_read) = emit_model_unit(&single_text, None);
+    assert!(
+        matches!(single_read, Read::Verified { .. }),
+        "{single_read:?}"
+    );
+    let single_carrier = node_of(&single_wire, "protocol", "protocol_reference");
+    assert_eq!(
+        carrier["node_id"], single_carrier["node_id"],
+        "adding another occurrence preserves the one-reference carrier key"
+    );
+    assert_eq!(
+        carrier["body"],
+        json!({"term": "reference", "target": clauses[0]["node_id"]})
+    );
+    assert_eq!(carrier["dependencies"], json!([clauses[0]["node_id"]]));
+    let occurrences = carrier["occurrences"]
+        .as_array()
+        .expect("the carrier occurrences");
+    assert_eq!(occurrences.len(), 2);
+    assert!(occurrences
+        .iter()
+        .all(|occurrence| occurrence["role"] == "expression"));
+    let ordinals: Vec<_> = occurrences
+        .iter()
+        .map(|occurrence| occurrence["ordinal"].as_u64().expect("ordinal"))
+        .collect();
+    assert_eq!(ordinals, [0, 1]);
+    let source_rows: Vec<&Value> = wire["source_map"]
+        .as_array()
+        .expect("source map rows")
+        .iter()
+        .filter(|row| row["node_id"] == carrier["node_id"])
+        .collect();
+    assert_eq!(source_rows.len(), 2, "each occurrence has a source-map row");
+    for (ordinal, row) in source_rows.iter().enumerate() {
+        assert_eq!(row["role"], "expression");
+        assert_eq!(row["ordinal"].as_u64(), Some(ordinal as u64));
+        let regions = row["regions"].as_array().expect("source regions");
+        let [region] = regions.as_slice() else {
+            panic!("one occurrence region: {regions:?}");
+        };
+        let start =
+            usize::try_from(region["start"].as_u64().expect("start")).expect("start fits usize");
+        let end = usize::try_from(region["end"].as_u64().expect("end")).expect("end fits usize");
+        assert_eq!(&text[start..end], "protocol Fill");
+    }
+    assert_ne!(
+        source_rows[0]["regions"][0]["start"], source_rows[1]["regions"][0]["start"],
+        "the two source-map rows point to distinct occurrences"
+    );
 }
 
 /// FR-092-AC-16, FR-092-AC-18: an `each` trigger, a nested `run` tree, two
@@ -928,11 +966,10 @@ fn protocol_nodes_are_stable_around_unrelated_declarations() {
     );
 }
 
-/// FR-218-AC-8 (TC-1021 step 4): an unknown name, a name only qualified, a
-/// name that resolves to a function and a second reference to one target.
+/// FR-218-AC-8 (TC-1021 step 4): unknown and non-protocol names refuse by cause.
 #[trace("FR-218-AC-8", "TC-1021")]
 #[test]
-fn unresolved_non_protocol_and_repeated_references_refuse_by_cause() {
+fn unresolved_and_non_protocol_references_refuse_by_cause() {
     let flow = protocol("Fill");
     let missing = refusals(&selecting(&format!(
         "function refers using v(): Boolean pure {{ protocol Missing }}\n{flow}"
@@ -962,26 +999,6 @@ fn unresolved_non_protocol_and_repeated_references_refuse_by_cause() {
     };
     assert_eq!(function.cause.code(), fsl_foundation::Code::IllTyped);
     assert_eq!(function.cause.cause(), Some("operator-ineligible"));
-
-    let twice = refusals(&selecting(&format!(
-        "function refers using v(): Boolean pure {{ protocol Fill and protocol Fill }}\n{flow}"
-    )));
-    let [twice] = twice.as_slice() else {
-        panic!("one refusal: {twice:?}");
-    };
-    assert_eq!(
-        twice.cause.code(),
-        fsl_foundation::Code::UnsupportedConstruct
-    );
-    assert_eq!(twice.cause.cause(), Some("expression-form"));
-    let CheckCause::ProtocolReference(cause) = &twice.cause else {
-        panic!("a protocol reference cause: {twice:?}");
-    };
-    assert_ne!(
-        cause.first(),
-        Some(&twice.location),
-        "names the first reference"
-    );
 }
 
 /// FR-508: a protocol whose `using` alias is absent keeps the existing
@@ -1107,24 +1124,95 @@ fn a_whole_model_role_round_trips() {
     );
 }
 
-/// FR-880-AC-4: a function that refers to a protocol with an `attempt` is
-/// written after that protocol, and the protocol's key is unchanged by the
-/// reference.
+/// FR-880-AC-4, TC-2501: function and predicate references to a protocol with
+/// an attempt are admitted. Its contract node precedes the protocol, both
+/// referrers follow it, and its key is independent of the referrers.
 #[test]
-#[trace("TC-2501", "FR-880-AC-4")]
-#[ignore = "QSL-2219: a reference to a protocol that holds an attempt is refused at S4 instead of written in dependency order"]
+#[trace("TC-2501", "FR-880-AC-4", "FR-092-AC-18")]
 fn a_reference_to_an_attempt_protocol_is_written() {
-    let alone = check_attempt_unit(&rooted(ATTEMPT_ROOT, true, false), false)
+    let base = attempt_frame_unit(
+        VERSION_UNCHANGED,
+        "Config::ConfigVersion::attemptUpdate",
+        "VersionUnchanged",
+    );
+    let referrers = "function refers using v(): Boolean pure { protocol Flow }\n\
+         predicate agrees using v(): Boolean { protocol Flow }\n";
+    let referred_source = base.replace(
+        VERSION_UNCHANGED,
+        &format!("{VERSION_UNCHANGED}\n{referrers}"),
+    );
+
+    let alone = check_attempt_unit(&base, false)
         .unwrap_or_else(|refusals| panic!("the attempt protocol checks: {refusals:?}"));
-    let referred = check_attempt_unit(&rooted(ATTEMPT_ROOT, true, true), false)
-        .unwrap_or_else(|refusals| panic!("the reference is written: {refusals:?}"));
-    let clause_keys = |graph: &fsl_semantics::check::CheckedGraph| {
-        graph
-            .semantic_graph()
-            .nodes()
-            .filter(|node| node.semantic_form() == "protocol_clause")
-            .map(|node| format!("{:?}", node.key()))
-            .collect::<Vec<_>>()
+    let alone_clause = alone
+        .semantic_graph()
+        .nodes()
+        .find(|node| {
+            node.node_tag() == fsl_semantics::check::NodeTag::Protocol
+                && node.semantic_form() == "protocol_clause"
+        })
+        .expect("the attempt protocol has a clause node")
+        .key()
+        .clone();
+
+    let referred = check_attempt_unit(&referred_source, false)
+        .unwrap_or_else(|refusals| panic!("the references are written: {refusals:?}"));
+    let referred_clause = referred
+        .semantic_graph()
+        .nodes()
+        .find(|node| {
+            node.node_tag() == fsl_semantics::check::NodeTag::Protocol
+                && node.semantic_form() == "protocol_clause"
+        })
+        .expect("the referred attempt protocol has a clause node")
+        .key()
+        .clone();
+    assert_eq!(
+        alone_clause, referred_clause,
+        "referrers do not change its key"
+    );
+
+    let package = CheckedPackage::link(referred);
+    let emission = emit_checked(&package).expect("the attempt references emit");
+    assert_eq!(emission.omitted, []);
+    let wire = wire(&emission);
+    let nodes = nodes(&wire);
+    let position = |matches: &dyn Fn(&Value) -> bool, description: &str| {
+        nodes
+            .iter()
+            .position(|node| matches(node))
+            .unwrap_or_else(|| panic!("{description} is written: {nodes:?}"))
     };
-    assert_eq!(clause_keys(&alone), clause_keys(&referred));
+    let state_clause = position(
+        &|node| node["node_tag"] == "state" && node["semantic_form"] == "state_clause",
+        "attempt contract state clause",
+    );
+    let protocol = position(
+        &|node| {
+            node["node_tag"] == "protocol"
+                && node["semantic_form"] == "protocol_clause"
+                && node["declaration"]["qualified_name"] == json!(["Flow"])
+        },
+        "attempt protocol",
+    );
+    let function = position(
+        &|node| {
+            node["node_tag"] == "function"
+                && node["declaration"]["qualified_name"] == json!(["refers"])
+        },
+        "function referrer",
+    );
+    let predicate = position(
+        &|node| {
+            node["node_tag"] == "function"
+                && node["declaration"]["qualified_name"] == json!(["agrees"])
+        },
+        "predicate referrer",
+    );
+    assert!(
+        state_clause < protocol,
+        "contract precedes its protocol node"
+    );
+    assert!(protocol < function, "function follows its protocol node");
+    assert!(protocol < predicate, "predicate follows its protocol node");
 }

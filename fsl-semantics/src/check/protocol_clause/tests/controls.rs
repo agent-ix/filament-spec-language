@@ -13,6 +13,7 @@ fn control(kind: fsl_forms::ProtocolNodeKind) -> CheckedControl {
         name: kind.label().to_owned(),
         path: Vec::new(),
         children: Vec::new(),
+        observe_only: false,
     }
 }
 

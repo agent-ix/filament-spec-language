@@ -338,7 +338,7 @@ pub enum CompileRefusal {
         region: Option<SourceRegion>,
     },
     /// I1: a `model` declaration's domain package did not admit.
-    #[error("domain package intake refused `model {}`: {}", .refusal.alias, intake_message(&.refusal.cause))]
+    #[error("{}", intake_refusal_message(.refusal))]
     Intake {
         /// The intake refusal.
         refusal: UnitIntakeRefusal,
@@ -388,6 +388,8 @@ pub enum CompileRefusal {
         refusal: AssemblyRefusal,
         /// The region of the first error.
         region: Option<SourceRegion>,
+        /// The region of each error, in assembly order.
+        regions: Vec<Option<SourceRegion>>,
     },
     /// E3: the checker refused the package.
     #[error("{}", check_message(.refusals))]
@@ -716,7 +718,7 @@ impl CompileRefusal {
     }
 
     /// Project every retained cause as an outcome diagnostic in source or
-    /// checker order.
+    /// intake, assembly or checker order.
     pub fn outcome_diagnostics(&self) -> Vec<crate::outcome::OutcomeDiagnostic> {
         use crate::outcome::{OutcomeDiagnostic, OutcomeLocus};
 
@@ -724,6 +726,40 @@ impl CompileRefusal {
             Self::SourceDiagnostics { diagnostics } => diagnostics
                 .iter()
                 .map(OutcomeDiagnostic::from_source_diagnostic)
+                .collect(),
+            Self::Intake { refusal, region } => match &refusal.cause {
+                UnitIntakeCause::Refused(refusals) => refusals
+                    .iter()
+                    .map(|entry| {
+                        OutcomeDiagnostic::new(
+                            Some(entry.cause.as_str()),
+                            entry.code.as_str(),
+                            region
+                                .as_ref()
+                                .map(|region| OutcomeLocus::from(&Locus::Region(region.clone()))),
+                            intake_entry_message(&refusal.alias, entry),
+                        )
+                    })
+                    .collect(),
+                _ => vec![OutcomeDiagnostic::from_compile_refusal(self)],
+            },
+            Self::Assembly {
+                refusal, regions, ..
+            } => refusal
+                .errors
+                .iter()
+                .enumerate()
+                .map(|(index, error)| {
+                    OutcomeDiagnostic::new(
+                        Some(error.cause.catalog_code().cause()),
+                        error.cause.code().as_str(),
+                        regions
+                            .get(index)
+                            .and_then(Option::as_ref)
+                            .map(|region| OutcomeLocus::from(&Locus::Region(region.clone()))),
+                        assembly_error_message(&error.cause),
+                    )
+                })
                 .collect(),
             Self::CheckDiagnostics { refusals, regions } => refusals
                 .iter()
@@ -968,18 +1004,18 @@ fn forms_refusal_message(refusal: &FormsRefusal) -> String {
 /// A readable account of an I1 refusal.
 pub(crate) fn intake_message(cause: &UnitIntakeCause) -> String {
     match cause {
-        UnitIntakeCause::Refused(refusals) => {
-            let first = &refusals[0];
-            with_more(
+        UnitIntakeCause::Refused(refusals) => refusals
+            .iter()
+            .map(|entry| {
                 format!(
                     "{} ({}): {}",
-                    first.code.as_str(),
-                    first.cause.as_str(),
-                    first.detail
-                ),
-                refusals.len(),
-            )
-        }
+                    entry.code.as_str(),
+                    entry.cause.as_str(),
+                    entry.detail
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
         UnitIntakeCause::Invariant => "the record reader refused with no refusal".to_owned(),
         UnitIntakeCause::Limit(incomplete) => format!(
             "model normalization reached its `{}` limit ({})",
@@ -989,12 +1025,48 @@ pub(crate) fn intake_message(cause: &UnitIntakeCause) -> String {
     }
 }
 
-/// A readable account of the assembler's first error, and how many more.
+fn intake_entry_message(
+    alias: &str,
+    entry: &fsl_semantics::model::normalize::ModelRefusal,
+) -> String {
+    format!(
+        "domain package intake refused `model {alias}`: {} ({}): {}",
+        entry.code.as_str(),
+        entry.cause.as_str(),
+        entry.detail
+    )
+}
+
+fn intake_refusal_message(refusal: &UnitIntakeRefusal) -> String {
+    match &refusal.cause {
+        UnitIntakeCause::Refused(entries) => entries
+            .iter()
+            .map(|entry| intake_entry_message(&refusal.alias, entry))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        cause => format!(
+            "domain package intake refused `model {}`: {}",
+            refusal.alias,
+            intake_message(cause)
+        ),
+    }
+}
+
+/// A readable account of every assembler error in assembly order.
 fn assembly_message(refusal: &AssemblyRefusal) -> String {
-    let Some(first) = refusal.errors.first() else {
+    if refusal.errors.is_empty() {
         return "no error recorded".to_owned();
-    };
-    let message = match &first.cause {
+    }
+    refusal
+        .errors
+        .iter()
+        .map(|error| assembly_error_message(&error.cause))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn assembly_error_message(cause: &AssemblyCause) -> String {
+    match cause {
         AssemblyCause::Profile(refusal) => refusal.message(),
         AssemblyCause::EmptyUnitList => "the package has no source units".to_owned(),
         AssemblyCause::UnresolvedTypeName { name } => format!("no declaration is named `{name}`"),
@@ -1217,8 +1289,7 @@ fn assembly_message(refusal: &AssemblyRefusal) -> String {
         AssemblyCause::SynthesisNotChecked { name } => {
             format!("synthesis `{name}` builds but is not checked yet")
         }
-    };
-    with_more(message, refusal.errors.len())
+    }
 }
 
 /// Render a proved interval for a checker diagnostic.
@@ -1386,6 +1457,11 @@ fn check_message_one(first: &CheckRefusal) -> String {
         // name so a protocol refusal reads like a state clause's.
         CheckCause::ProtocolAnchor(cause) => {
             message = match cause.as_ref() {
+                ProtocolAnchorCause::ObserveOnlyAction {
+                    action, boundary, ..
+                } => format!(
+                    "{message}: `{action}` changes state behind observe-only boundary `{boundary}`"
+                ),
                 ProtocolAnchorCause::Missing { segment, .. } => {
                     format!("{message}: `{segment}`")
                 }
@@ -2384,14 +2460,6 @@ fn check_message_one(first: &CheckRefusal) -> String {
         _ => {}
     }
     message
-}
-
-/// `message`, noting the `total - 1` further errors it does not describe.
-fn with_more(message: String, total: usize) -> String {
-    match total.saturating_sub(1) {
-        0 => message,
-        more => format!("{message}, and {more} more"),
-    }
 }
 
 fn source_diagnostics_message(diagnostics: &[CompleteDiagnostic]) -> String {

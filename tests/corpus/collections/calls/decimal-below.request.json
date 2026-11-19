@@ -1,0 +1,1 @@
+{"format":"native-run/1","request":{"models":[],"program":{"source":{"file":"decimal-below.native","authority":"agent-ix","identity":"test:collections:calls:decimal-below","document":"decimal-below","formal_revision":1}},"call":{"function":"f","arguments":[{"parameter":"a","value":{"kind":"decimal","coefficient":"-101","scale":"2"}}]}}}

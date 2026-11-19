@@ -21,7 +21,7 @@ use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{EffectiveId, Identifier, NodeKey, Value, ValueType};
 use filament_semantic_value::location::ExpressionLocation as Location;
 
-use super::{refuse, require_admitted, Binder, Binders, Lowering, PlaceStep};
+use super::{Binder, Binders, Lowering, PlaceStep, refuse, require_admitted};
 use crate::check::family::OccurrenceRole;
 
 use crate::check::node_key::{
@@ -584,6 +584,7 @@ impl Lowering<'_> {
     /// entry of (a map slot step), read from the declared type of the field
     /// holding the place and followed down the path; `None` for any other
     /// step.
+    #[ix_trace_rs::string_edge]
     fn map_key_types(&self, clock: &ClockField) -> Vec<Option<ValueType>> {
         let types = self.scope.types();
         let mut keys = vec![None; clock.path().len()];
@@ -613,15 +614,47 @@ impl Lowering<'_> {
                     collection.element().clone()
                 }
                 (PlaceStep::Field(name), ValueType::Composite(handle)) => {
-                    let Some(filament_semantic_value::declaration::CompositeShape::Record(fields)) =
+                    match types.composite(handle.clone()).map(|c| c.shape()) {
+                        Some(filament_semantic_value::declaration::CompositeShape::Record(
+                            fields,
+                        )) => {
+                            let Some(found) = fields.iter().find(|f| f.name() == name) else {
+                                return keys;
+                            };
+                            found.value_type().clone()
+                        }
+                        Some(filament_semantic_value::declaration::CompositeShape::Tuple(
+                            positions,
+                        )) => {
+                            let Some(position) = name
+                                .parse::<usize>()
+                                .ok()
+                                .and_then(|position| {
+                                    self.scope.tuple_data_position(handle, position)
+                                })
+                                .and_then(|position| positions.get(position))
+                            else {
+                                return keys;
+                            };
+                            position.clone()
+                        }
+                        _ => return keys,
+                    }
+                }
+                (PlaceStep::Union(case), ValueType::Composite(handle)) => {
+                    let Some(filament_semantic_value::declaration::CompositeShape::Union(members)) =
                         types.composite(handle.clone()).map(|c| c.shape())
                     else {
                         return keys;
                     };
-                    let Some(found) = fields.iter().find(|f| f.name() == name) else {
+                    let Some(member) = members.iter().find(|member| member.identifier() == case)
+                    else {
                         return keys;
                     };
-                    found.value_type().clone()
+                    let [payload] = member.positions() else {
+                        return keys;
+                    };
+                    payload.clone()
                 }
                 _ => return keys,
             };
@@ -637,6 +670,7 @@ impl Lowering<'_> {
     /// each slot step's selector the `Integer` type node, and the place
     /// self-typed. The places are kept for the `presence_read` and the
     /// clauses that name them.
+    #[ix_trace_rs::string_edge]
     pub(crate) fn clock_places(
         &mut self,
         clocks: &[ClockField],
@@ -662,10 +696,16 @@ impl Lowering<'_> {
             let keys = self.map_key_types(clock);
             for (index, step) in clock.path().iter().enumerate() {
                 let members = match step {
-                    PlaceStep::Field(name) => vec![
-                        ("kind", self.text_literal("field", location)?),
-                        ("name", self.text_literal(name, location)?),
-                    ],
+                    PlaceStep::Field(name) => match name.parse::<u64>() {
+                        Ok(position) => vec![
+                            ("kind", self.text_literal("tuple", location)?),
+                            ("index", count(position)),
+                        ],
+                        Err(_) => vec![
+                            ("kind", self.text_literal("field", location)?),
+                            ("name", self.text_literal(name, location)?),
+                        ],
+                    },
                     PlaceStep::Union(case) => vec![
                         ("kind", self.text_literal("union", location)?),
                         ("case", self.text_literal(case, location)?),
@@ -693,7 +733,7 @@ impl Lowering<'_> {
                                         CheckCause::InternalFault(Box::new(
                                             KeyFault::UnknownDeclaration(clock.field().clone()),
                                         )),
-                                    ))
+                                    ));
                                 }
                                 (false, _) => LeafTerm::reference(integer.clone()),
                             },
@@ -764,6 +804,25 @@ impl Lowering<'_> {
         self.timed_places
             .iter()
             .find(|place| place.owner == owner && place.path == path)
+            .map(|place| place.node.clone())
+    }
+
+    /// The checked clock-place template selected by a `PlacePresence` node,
+    /// whose field/case pair is the stable key assigned from its full path.
+    pub(super) fn timed_place_presence(
+        &self,
+        owner: EffectiveId,
+        field: &str,
+        case: Option<&str>,
+    ) -> Option<NodeKey> {
+        self.timed_places
+            .iter()
+            .find(|place| {
+                place.owner == owner
+                    && crate::check::timed_model::place_presence_key(&place.path).is_some_and(
+                        |(root, nested_case)| root == field && nested_case.as_deref() == case,
+                    )
+            })
             .map(|place| place.node.clone())
     }
 

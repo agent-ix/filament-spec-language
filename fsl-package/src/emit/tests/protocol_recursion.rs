@@ -243,9 +243,9 @@ fn a_cyclic_predicate_join_protocol_is_grouped_and_reads_back() {
     );
 }
 
-#[trace("FR-383-AC-24")]
+#[trace("FR-880-AC-13", "TC-2501")]
 #[test]
-fn an_attempt_bearing_protocol_in_a_predicate_cycle_is_grouped_and_reads_back() {
+fn an_attempt_contract_state_clause_cycle_is_key_ordered_and_reads_back() {
     let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
     let packages = fsl_semantics::model::intake::package_input([document])
         .expect("the ConfigVersion model admits");
@@ -254,16 +254,13 @@ fn an_attempt_bearing_protocol_in_a_predicate_cycle_is_grouped_and_reads_back() 
          profile v = \"filament.model.complete/v1\";\n\
          profile p = \"{PROTOCOL_PROFILE}\";\n\
          model Config = \"example/config-version\";\n\
-         function refers(left: Boolean, right: Boolean): Boolean pure {{ protocol Flow }}\n\
+         predicate refers using v(): Boolean {{ protocol Flow }}\n\
+         pre S using v on Config::ConfigVersion::attemptUpdate {{ refers() }}\n\
          protocol Flow using p over (input: Config::ConfigVersion) on origin {{\n\
            role R on Config::ConfigVersion;\n\
            run sequence Main {{\n\
-             attempt Update by R on Config::ConfigVersion::attemptUpdate contracts [] \
+             attempt Update by R on Config::ConfigVersion::attemptUpdate contracts [S] \
                as (tried: Boolean) {{ true }};\n\
-             parallel Fork {{\n\
-               branch west sequence West {{ }}\n\
-               branch east sequence East {{ }}\n\
-             }} join predicate(refers) [west, east] outstanding cancel;\n\
            }}\n\
            finish End as (outcome: Boolean) {{ true }};\n\
          }}\n"
@@ -284,15 +281,118 @@ fn an_attempt_bearing_protocol_in_a_predicate_cycle_is_grouped_and_reads_back() 
         .nodes()
         .filter(|node| node.recursion().is_some())
         .collect();
+    let protocol_clause = cycle_nodes.iter().find(|node| {
+        node.node_tag().as_str() == "protocol" && node.semantic_form() == "protocol_clause"
+    });
+    let attempt = cycle_nodes.iter().find(|node| {
+        node.node_tag().as_str() == "protocol"
+            && node.semantic_form() == "control"
+            && node.declaration().is_some_and(|name| {
+                name.iter().map(|part| part.as_str()).collect::<Vec<_>>()
+                    == ["Flow", "run", "Main", "Update"]
+            })
+    });
+    let state_clause = cycle_nodes
+        .iter()
+        .find(|node| node.node_tag().as_str() == "state" && node.semantic_form() == "state_clause");
+    let predicate = cycle_nodes.iter().find(|node| {
+        node.node_tag().as_str() == "function"
+            && node.declaration().is_some_and(|name| {
+                name.iter().map(|part| part.as_str()).collect::<Vec<_>>() == ["refers"]
+            })
+    });
+    let carrier = cycle_nodes.iter().find(|node| {
+        node.node_tag().as_str() == "protocol" && node.semantic_form() == "protocol_reference"
+    });
+    for (description, member) in [
+        ("protocol clause P", protocol_clause),
+        ("attempt control", attempt),
+        ("state clause S", state_clause),
+        ("predicate f", predicate),
+        ("reference carrier to P", carrier),
+    ] {
+        assert!(
+            member.is_some(),
+            "{description} belongs to the checked cycle"
+        );
+    }
+    let group_anchor = cycle_nodes[0].recursion().unwrap().anchor().clone();
     assert!(cycle_nodes
         .iter()
-        .any(|node| node.semantic_form() == "protocol_clause"));
-    assert!(cycle_nodes
-        .iter()
-        .any(|node| node.semantic_form() == "protocol_reference"));
+        .all(|node| node.recursion().unwrap().anchor() == &group_anchor));
 
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("package emits");
     assert_eq!(emission.omitted, []);
+    let wire = wire(&emission);
+    let wire_nodes = nodes(&wire);
+    let emitted_named = |tag: &str, form: Option<&str>, name: &[&str]| {
+        wire_nodes
+            .iter()
+            .find(|node| {
+                node["node_tag"] == tag
+                    && form.is_none_or(|form| node["semantic_form"] == form)
+                    && node["declaration"]["qualified_name"] == json!(name)
+            })
+            .unwrap_or_else(|| panic!("{tag}/{form:?} {name:?} is emitted: {wire_nodes:?}"))
+    };
+    let emitted_protocol = emitted_named("protocol", Some("protocol_clause"), &["Flow"]);
+    let emitted_attempt = emitted_named(
+        "protocol",
+        Some("control"),
+        &["Flow", "run", "Main", "Update"],
+    );
+    let emitted_state = wire_nodes
+        .iter()
+        .find(|node| node["node_tag"] == "state" && node["semantic_form"] == "state_clause")
+        .expect("the named precondition S is emitted");
+    let emitted_predicate = emitted_named("function", None, &["refers"]);
+    let emitted_carrier = wire_nodes
+        .iter()
+        .find(|node| {
+            node["node_tag"] == "protocol" && node["semantic_form"] == "protocol_reference"
+        })
+        .expect("the protocol-reference carrier is emitted");
+    assert_eq!(
+        emitted_carrier["body"]["target"], emitted_protocol["node_id"],
+        "the carrier points to protocol P"
+    );
+    assert_eq!(
+        emitted_attempt["body"]["arguments"][3]["value"]["members"][0]["target"],
+        emitted_state["node_id"],
+        "attempt Update lists state clause S"
+    );
+    let emitted_members = [
+        emitted_protocol,
+        emitted_attempt,
+        emitted_state,
+        emitted_predicate,
+        emitted_carrier,
+    ];
+    assert!(emitted_members
+        .iter()
+        .all(|node| { node["recursion_group"] == emitted_protocol["recursion_group"] }));
+    let grouped: Vec<_> = wire_nodes
+        .iter()
+        .filter(|node| node["recursion_group"].is_string())
+        .collect();
+    assert!(
+        !grouped.is_empty(),
+        "the emitted recursion group has members"
+    );
+    let wire_graph = fsl_semantics::check::wire_id::WireGraph::of_package_value(&wire)
+        .expect("the package graph has node identities");
+    let keys: Vec<_> = grouped
+        .iter()
+        .map(|node| {
+            wire_graph
+                .key_of_value(&node["node_id"])
+                .expect("a recursion member has a key")
+        })
+        .collect();
+    assert!(
+        keys.windows(2).all(|pair| pair[0] < pair[1]),
+        "recursion-group members use ascending Candidate NodeKey order: {keys:?}"
+    );
     let mut evidence = read_evidence(&emission);
     evidence
         .insert_domain_package_document(model_digest.as_str(), document)

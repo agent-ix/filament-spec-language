@@ -584,7 +584,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         return Err(ProtocolRefusal::fault(
                             "a-weak-attempt-application-is-one-classified-access",
                         )
-                        .into())
+                        .into());
                     }
                 };
                 self.memory.footprint(
@@ -602,6 +602,9 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     // The record its binder holds (ST-1) and its effects read (ST-2).
                     built.write(self.binder(node, path)?);
                 }
+            }
+            StepKind::Recommend => {
+                self.binders_read(&mut built, path, node, Read::Enabling)?;
             }
             StepKind::Event | StepKind::Send | StepKind::Receive => {
                 self.binders_read(&mut built, path, node, Read::Enabling)?;
@@ -623,6 +626,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         .get(&node)
                         .map(|message| &message.record.record_type),
                     StepKind::Receive
+                    | StepKind::Recommend
                     | StepKind::Attempt
                     | StepKind::Duplicate
                     | StepKind::Lose
@@ -997,6 +1001,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 built.write(registration);
             }
             StepKind::Attempt
+            | StepKind::Recommend
             | StepKind::Event
             | StepKind::Send
             | StepKind::Receive
@@ -1185,6 +1190,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             .transpose()?;
         let matches = match step.kind() {
             StepKind::Attempt => kind == Some(ControlStep::Attempt),
+            StepKind::Recommend => kind == Some(ControlStep::Event),
             StepKind::Event => kind == Some(ControlStep::Event),
             StepKind::Send => kind == Some(ControlStep::Send),
             StepKind::Receive => kind == Some(ControlStep::Receive),

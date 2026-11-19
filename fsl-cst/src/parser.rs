@@ -951,7 +951,7 @@ fn declaration_starts(grammar: &Grammar) -> BTreeSet<String> {
         output: &mut BTreeSet<String>,
     ) {
         match rule {
-            Rule::Terminal(Terminal::Exact(word) | Terminal::Literal(word)) => {
+            Rule::Terminal(Terminal::Exact(word) | Terminal::Literal(word) | Terminal::ContextualWord(word)) => {
                 output.insert((*word).to_owned());
             }
             Rule::Terminal(Terminal::ExtensionKeyword(word)) => {
@@ -2670,7 +2670,7 @@ impl<'a> Engine<'a> {
                     return self.fail(Failure::expected(position, terminal.description()));
                 };
                 match terminal {
-                    Terminal::Exact(value) | Terminal::Literal(value) => {
+                    Terminal::Exact(value) | Terminal::Literal(value) | Terminal::ContextualWord(value) => {
                         token.spelling.as_ref() == *value
                     }
                     Terminal::Identifier => {
@@ -2732,7 +2732,7 @@ impl<'a> Engine<'a> {
 impl Terminal {
     fn description(&self) -> String {
         match self {
-            Self::Exact(value) | Self::Literal(value) => {
+            Self::Exact(value) | Self::Literal(value) | Self::ContextualWord(value) => {
                 format!("`{value}`")
             }
             Self::Identifier => "identifier".into(),

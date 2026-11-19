@@ -1,0 +1,1 @@
+{"format":"native-run/1","request":{"models":[],"program":{"source":{"file":"text-minimum.native","authority":"agent-ix","identity":"test:collections:calls:text-minimum","document":"text-minimum","formal_revision":1}},"call":{"function":"f","arguments":[{"parameter":"a","value":{"kind":"text","text":"a"}}]}}}

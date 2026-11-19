@@ -1,0 +1,675 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Original protocol source programs and authoritative parts-saga journeys.
+
+use filament_exact::Cancel;
+use fsl_command::command;
+use ix_trace_rs::trace;
+use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
+
+fn saga() -> PathBuf {
+    let root = std::env::var_os("FSL_EXAMPLES_DIR")
+        .map(PathBuf::from)
+        .expect("FSL_EXAMPLES_DIR must point to the authoritative filament-examples checkout");
+    root.join("examples/parts-saga")
+}
+
+fn corpus(file: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/corpus/protocol")
+        .join(file)
+}
+
+fn source(file: &Path) -> Value {
+    json!({"file":file,"authority":"test","identity":"test:protocol-corpus",
+        "document":"ProtocolCorpus","formal_revision":1})
+}
+
+fn compile_request(file: &Path) -> Value {
+    let text = std::fs::read_to_string(file).unwrap();
+    let clocks = ["timer", "line-clock"]
+        .into_iter()
+        .filter(|name| text.contains(&format!("clock \"{name}\"")))
+        .map(|name| {
+            (
+                name.to_owned(),
+                json!({"kind":"timestamped_event","timestamp_unit":"s"}),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    json!({"format":"native-compile/1","request":{
+        "program":{"source":source(file)},"clocks":clocks,
+        "models":[{"format":"semantic-ir/2.0.0",
+            "source":source(&saga().join("model/parts-saga.semantic-ir.json"))}]}})
+}
+
+fn write(directory: &Path, request: &Value) -> PathBuf {
+    let path = directory.join("request.json");
+    std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
+    path
+}
+
+fn compile(directory: &Path, file: &Path) {
+    let output = command::compile_outcome(&write(directory, &compile_request(file)))
+        .unwrap_or_else(|error| panic!("{}: {error}", file.display()));
+    assert!(!output.package_bytes().is_empty(), "{}", file.display());
+}
+
+fn refusal(directory: &Path, file: &Path, code: &str, cause: &str) {
+    let error = match command::compile_outcome(&write(directory, &compile_request(file))) {
+        Ok(_) => panic!("{} must refuse {code}/{cause}", file.display()),
+        Err(error) => error,
+    };
+    let artifact = error.artifact_value().unwrap();
+    assert_eq!(artifact["code"], code, "{}: {artifact}", file.display());
+    assert_eq!(artifact["cause"], cause, "{}: {artifact}", file.display());
+}
+
+#[test]
+#[trace("FR-218-AC-11", "FR-218-AC-24", "FR-884-AC-2")]
+fn original_protocol_declarations_communications_and_refusals() {
+    let directory = tempfile::tempdir().unwrap();
+    let original = std::fs::read_to_string(corpus("original/exchange.native")).unwrap();
+    compile(directory.path(), &corpus("original/exchange.native"));
+    // Each mutation retains the same accepted model, subject and surrounding source.
+    for (name, from, to, code, cause) in [
+        ("duplicate-role", "role Receiver on Factory::MachiningStation;",
+         "role Receiver on Factory::MachiningStation; role Receiver on Factory::MachiningStation;",
+         "ambiguous_declaration", "ambiguous-name"),
+        ("record-role", "role Receiver on Factory::MachiningStation;", "role Receiver on Note;",
+         "invalid_model_binding", "malformed-declaration"),
+        ("object-message", "carries Note", "carries Factory::Job",
+         "invalid_model_binding", "malformed-declaration"),
+        ("wrong-channel", "receive Seen via Queue", "receive Seen via Absent",
+         "ill_typed", "type-mismatch"),
+        ("effect-of-send", "receive Seen via Queue of Sent as (got: Note) { true };",
+         "effect Seen of Sent as (got: Note) { true };", "ill_typed", "type-mismatch"),
+    ] {
+        assert!(original.contains(from));
+        let file = directory.path().join(format!("{name}.native"));
+        std::fs::write(&file, original.replacen(from, to, 1)).unwrap();
+        refusal(directory.path(), &file, code, cause);
+    }
+}
+
+#[test]
+#[trace("FR-218-AC-12", "FR-218-AC-13", "FR-218-AC-28", "FR-381-AC-4")]
+fn authoritative_parts_saga_protocol_constructs_compile_from_their_own_repository() {
+    let directory = tempfile::tempdir().unwrap();
+    for file in [
+        "protocols/declaration/declaration-minimal.fsl",
+        "protocols/declaration/declaration-on-each.fsl",
+        "protocols/declaration/declaration-terminal-scheduling.fsl",
+        "protocols/roles-and-channels/roles-replicated.fsl",
+        "protocols/roles-and-channels/channels-loss-head.fsl",
+        "protocols/roles-and-channels/channels-fifo-by-part.fsl",
+    ] {
+        compile(directory.path(), &saga().join("rules").join(file));
+    }
+}
+
+#[test]
+#[trace("FR-218-AC-5", "FR-218-AC-11", "FR-218-AC-24")]
+fn authoritative_parts_saga_rejects_invalid_protocols_at_the_right_boundary() {
+    let directory = tempfile::tempdir().unwrap();
+    for (file, code, cause) in [
+        (
+            "protocols/declaration/declaration-no-finish.fsl",
+            "invalid_syntax",
+            "unexpected-token",
+        ),
+        (
+            "protocols/roles-and-channels/channels-object-payload.fsl",
+            "invalid_model_binding",
+            "malformed-declaration",
+        ),
+        (
+            "protocols/steps/steps-effect-of-send.fsl",
+            "ill_typed",
+            "type-mismatch",
+        ),
+        (
+            "protocols/steps/steps-receive-other-channel.fsl",
+            "ill_typed",
+            "type-mismatch",
+        ),
+        (
+            "protocols/control-flow/control-repeat-no-progress.fsl",
+            "unsupported_construct",
+            "declaration-form",
+        ),
+    ] {
+        refusal(
+            directory.path(),
+            &saga().join("rules").join(file),
+            code,
+            cause,
+        );
+    }
+}
+
+/// Resolve file references without reproducing an example's source or model.
+fn authoritative_request(path: &Path) -> Value {
+    let mut request: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let base = path.parent().unwrap();
+    let program = &mut request["request"]["program"]["source"]["file"];
+    *program = json!(base.join(program.as_str().unwrap()));
+    for model in request["request"]["models"].as_array_mut().unwrap() {
+        let file = &mut model["source"]["file"];
+        *file = json!(base.join(file.as_str().unwrap()));
+    }
+    for file in request["request"]["clause"]["observations"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+    {
+        *file = json!(base.join(file.as_str().unwrap()));
+    }
+    request
+}
+
+#[test]
+#[trace("FR-109-AC-1")]
+fn parts_saga_observations_distinguish_tracked_untracked_and_third_rework() {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, exit, result) in [
+        ("jobs-rework-tracked", 0, "tested"),
+        ("jobs-rework-untracked", 10, "refuted"),
+        ("jobs-third-rework", 10, "refuted"),
+    ] {
+        let request = authoritative_request(&saga().join(format!("requests/{name}.json")));
+        let output = command::run(
+            &write(directory.path(), &request),
+            &crate::negotiation::Fr290,
+        )
+        .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let native = output.value.as_value();
+        fsl_replay::spine::read_native_run_result(&serde_json::to_vec(native).unwrap())
+            .unwrap_or_else(|error| panic!("{name}: strict native result: {error}"));
+        assert_eq!(output.exit_code, exit, "{name}: {native}");
+        let lifecycle: Value =
+            serde_json::from_slice(&output.outcome.unwrap().to_bytes().unwrap()).unwrap();
+        assert_eq!(
+            lifecycle["items"][0]["result"], result,
+            "{name}: {lifecycle}"
+        );
+    }
+}
+
+fn assessed_root() -> fsl_replay::protocol_analysis::AssessedRootDraft {
+    use filament_exact::{
+        EffectiveId, NodeKey, ObjectId, ObjectReference, OriginalDeclarationKey, PathSegment,
+        UniverseId,
+    };
+    fsl_replay::protocol_analysis::AssessedRootDraft {
+        observation: Some(fsl_replay::ObservationIdentity {
+            authority: "example".into(),
+            identity: "ix://example/parts/data/saga-start".into(),
+        }),
+        object: Some(ObjectReference::new(
+            UniverseId::new(
+                NodeKey::new(
+                    "example/parts",
+                    vec![
+                        PathSegment::Text("model".into()),
+                        PathSegment::Text("object_type".into()),
+                        PathSegment::Text("ix://example/parts/Job".into()),
+                    ],
+                    0,
+                )
+                .unwrap(),
+            ),
+            EffectiveId::new(
+                None,
+                OriginalDeclarationKey::new("example/parts", "ix://example/parts/Job"),
+            ),
+            ObjectId::new("j1").unwrap(),
+        )),
+    }
+}
+
+fn handoff(directory: &Path, file: &Path) -> fsl_command::checked_handoff::CompiledHandoff {
+    let mut request = compile_request(file);
+    request["request"]["handoff"] = json!({"directory":"handoff","package_name":"protocol-corpus",
+        "native_join":{"work_units":1_u64<<28,"storage":1_u64<<24}});
+    command::compile_outcome(&write(directory, &request))
+        .expect("compile and emit the source handoff");
+    fsl_command::checked_handoff::compile(&directory.join("handoff"))
+        .expect("read and compile the real handoff")
+}
+
+fn project(
+    handoff: &fsl_command::checked_handoff::CompiledHandoff,
+    role: &str,
+) -> fsl_analyze::protocol_analysis::ProjectionOutcome {
+    use fsl_replay::protocol_analysis::{ProjectionBoundsDraft, RunBudget};
+    let package = handoff.admitted();
+    let protocol = package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| &*node.semantic_form == "protocol_clause")
+        .expect("source protocol");
+    let role = package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| {
+            node.declaration.as_ref().is_some_and(|declaration| {
+                declaration
+                    .qualified_name
+                    .last()
+                    .is_some_and(|name| &**name == role)
+            })
+        })
+        .expect("source role");
+    fsl_analyze::protocol_analysis::project(
+        package,
+        fsl_analyze::protocol_analysis::ProjectionRequest {
+            protocol: protocol.node_id.clone(),
+            definition_key: Some(
+                protocol
+                    .declaration
+                    .as_ref()
+                    .expect("named protocol")
+                    .qualified_name
+                    .iter()
+                    .map(|part| part.as_ref())
+                    .collect::<Vec<&str>>()
+                    .join("::"),
+            ),
+            role: role.node_id.clone(),
+            profile: Some("bounded-static".into()),
+            bounds: Some(ProjectionBoundsDraft {
+                max_depth: Some(64),
+            }),
+            assessed_root: Some(assessed_root()),
+            budget: RunBudget::default(),
+        },
+    )
+    .expect("well-formed source projection request")
+}
+
+#[test]
+#[trace("FR-570-AC-1", "FR-570-AC-2")]
+fn source_projection_preserves_send_receive_direction_and_local_order() {
+    use fsl_replay::protocol_analysis::{AnalysisOutcome, LocalEventKind};
+    let directory = tempfile::tempdir().unwrap();
+    let original = std::fs::read_to_string(corpus("original/exchange.native")).unwrap();
+    let file = directory.path().join("two-exchanges.native");
+    std::fs::write(
+        &file,
+        original.replace(
+            "receive Seen via Queue of Sent as (got: Note) { true };",
+            "receive Seen via Queue of Sent as (got: Note) { true };\n\
+         send Next via Queue as (next: Note) { true };\n\
+         receive Delivered via Queue of Next as (delivered: Note) { true };",
+        ),
+    )
+    .unwrap();
+    let package = handoff(directory.path(), &file);
+    for (role, sends) in [("Sender", true), ("Receiver", false)] {
+        let outcome = project(&package, role);
+        let AnalysisOutcome::Proved(witness) = outcome.outcome else {
+            panic!("{role}: expected a proved projection: {outcome:?}");
+        };
+        let node = |name: &str| {
+            package
+                .admitted()
+                .resolved_graph()
+                .nodes
+                .iter()
+                .find(|node| {
+                    let key = serde_json::to_value(&node.node_id).unwrap();
+                    key["path"]
+                        .as_array()
+                        .is_some_and(|path| path.last() == Some(&json!(name)))
+                })
+                .unwrap_or_else(|| panic!("source declaration {name}"))
+        };
+        let (first, second, peer) = if sends {
+            ("Sent", "Next", "Receiver")
+        } else {
+            ("Seen", "Delivered", "Sender")
+        };
+        let mapped = |name| {
+            let port = fsl_package::protocol_view::PortRef {
+                node: node(name).node_id.clone(),
+                port: fsl_package::protocol_view::Port::Enter,
+            };
+            *witness
+                .correspondence
+                .0
+                .get(&port)
+                .unwrap_or_else(|| panic!("{role}: missing source event {name}"))
+        };
+        let (first, second) = (mapped(first), mapped(second));
+        assert_ne!(
+            first, second,
+            "distinct source events require distinct local events"
+        );
+        assert_eq!(witness.local_graph.events.len(), 2, "{role}: {witness:?}");
+        assert_eq!(
+            witness.local_graph.edges,
+            vec![(first, second)],
+            "{role}: {witness:?}"
+        );
+        for id in [first, second] {
+            let event = witness
+                .local_graph
+                .events
+                .iter()
+                .find(|event| event.id == id)
+                .expect("mapped local event");
+            let expected = if sends {
+                LocalEventKind::Send {
+                    peer: node(peer).node_id.clone(),
+                    message_type: node("Note").node_id.clone(),
+                }
+            } else {
+                LocalEventKind::Receive {
+                    peer: node(peer).node_id.clone(),
+                    message_type: node("Note").node_id.clone(),
+                }
+            };
+            assert_eq!(event.kind, expected, "{role}: {event:?}");
+        }
+        assert_eq!(witness.correspondence.0.len(), 2, "{role}: {witness:?}");
+    }
+}
+
+fn analysis_request(file: &Path) -> Value {
+    let mut request = compile_request(file);
+    request["request"].as_object_mut().unwrap().remove("clocks");
+    request["format"] = json!("native-analyze/1");
+    request["request"]["documents"] = json!([{"file":saga().join("data/saga-start.json")}]);
+    let binding = json!({"type":"model-binding","selection":"example/parts"});
+    request["request"]["subject"] = json!({"protocol":{"protocol":"Exchange",
+        "over":{"reference":{"population":"ix://example/parts/jobs","key":"j1"}},
+        "roles":{"Sender":binding,"Receiver":binding}}});
+    request["request"]["items"] = json!([{"claim":"Exchange","kind":"global-conformance",
+        "temporal":{"item_kind":"deadlock-freedom"}}]);
+    request
+}
+
+#[test]
+#[trace("FR-636-AC-1")]
+fn public_source_analysis_distinguishes_consumed_and_stranded_messages() {
+    let directory = tempfile::tempdir().unwrap();
+    let original = std::fs::read_to_string(corpus("original/exchange.native")).unwrap();
+    let stranded = directory.path().join("stranded.native");
+    std::fs::write(
+        &stranded,
+        original.replace(
+            "receive Seen via Queue of Sent as (got: Note) { true };",
+            "send Second via Queue as (second: Note) { true };",
+        ),
+    )
+    .unwrap();
+    for (file, expected) in [
+        (corpus("original/exchange.native"), "proved"),
+        (stranded, "refuted"),
+    ] {
+        let output = command::analyze(
+            &write(directory.path(), &analysis_request(&file)),
+            &crate::negotiation::Fr290,
+            &Cancel::new(),
+        )
+        .expect("a protocol analysis settles");
+        let item = &output.value.as_value()["items"][0];
+        assert_eq!(item["record"]["result"], expected, "{item}");
+        assert_eq!(
+            output.exit_code,
+            if expected == "proved" { 0 } else { 10 },
+            "{item}"
+        );
+        if expected == "refuted" {
+            assert!(item.get("counterexample").is_some(), "{item}");
+        }
+    }
+}
+
+#[test]
+#[trace("FR-218-AC-5", "FR-218-AC-19", "FR-218-AC-33", "FR-218-AC-40")]
+fn original_choice_parallel_and_repeat_have_positive_negative_and_zero_bound_controls() {
+    let directory = tempfile::tempdir().unwrap();
+    let original = std::fs::read_to_string(corpus("original/exchange.native")).unwrap();
+    let marker = "receive Seen via Queue of Sent as (got: Note) { true };";
+    for (name, control) in [
+        ("exclusive-choice", "choice Decision by Receiver visible (got.ok) { case yes when { got.ok } sequence Yes {} case no when { not got.ok } sequence No {} }"),
+        ("zero-repeat", "repeat Again by Receiver visible (got.ok) max 0 while { got.ok } sequence Cycle { commit Tick by Receiver as (tick: Boolean) { true }; } exhausted sequence Exhausted {}"),
+        ("bounded-repeat", "repeat Again by Receiver visible (got.ok) max 2 while { got.ok } sequence Cycle { commit Tick by Receiver as (tick: Boolean) { true }; } exhausted sequence Exhausted {}"),
+    ] {
+        let file = directory.path().join(format!("{name}.native"));
+        std::fs::write(&file,original.replace(marker,&format!("{marker}\n{control}"))).unwrap();
+        compile(directory.path(),&file);
+    }
+    for (name, control, code, cause) in [
+        ("overlapping-choice", "choice Decision by Receiver visible (got.ok) { case a when { got.ok } sequence A {} case b when { got.ok } sequence B {} }", "undefined_expression", "unproved-exhaustiveness"),
+        ("nonexhaustive-choice", "choice Decision by Receiver visible (got.ok) { case a when { got.ok } sequence A {} case b when { false } sequence B {} }", "undefined_expression", "unproved-exhaustiveness"),
+        ("no-progress-repeat", "repeat Again by Receiver visible (got.ok) max 2 while { got.ok } sequence Cycle {} exhausted sequence Exhausted {}", "unsupported_construct", "declaration-form"),
+    ] {
+        let file = directory.path().join(format!("{name}.native"));
+        std::fs::write(&file,original.replace(marker,&format!("{marker}\n{control}"))).unwrap();
+        refusal(directory.path(),&file,code,cause);
+    }
+    let start = original.find("  run sequence Main {").unwrap();
+    let end = original.find("  finish Done").unwrap();
+    for (name, join) in [
+        ("all", "all [A, B]"),
+        ("any-cancel", "any [A, B] outstanding cancel"),
+        ("any-continue", "any [A, B] outstanding continue"),
+    ] {
+        let file = directory.path().join(format!("parallel-{name}.native"));
+        let program = format!("{} run parallel Both {{ branch A sequence First {{ commit One by Sender as (one: Boolean) {{ true }}; }} branch B sequence Second {{ commit Two by Receiver as (two: Boolean) {{ true }}; }} }} join {join};\n{}",&original[..start],&original[end..]);
+        std::fs::write(&file, program).unwrap();
+        compile(directory.path(), &file);
+    }
+}
+
+#[test]
+#[trace("FR-575-AC-1")]
+fn source_projection_names_each_construct_outside_bounded_static() {
+    use fsl_replay::protocol_analysis::AnalysisOutcome;
+    for (file, role, slug) in [
+        (
+            saga().join("rules/protocols/declaration/declaration-on-each.fsl"),
+            "Planning",
+            "activation-on-each",
+        ),
+        (
+            saga().join("rules/protocols/roles-and-channels/roles-replicated.fsl"),
+            "Worker",
+            "dynamic-role-population",
+        ),
+        (
+            corpus("original/parallel-any.native"),
+            "Sender",
+            "unsupported-join",
+        ),
+        (corpus("original/repeat.native"), "Receiver", "repeat"),
+        (
+            corpus("original/commit.native"),
+            "Receiver",
+            "unsupported-control",
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let package = handoff(directory.path(), &file);
+        let result = project(&package, role);
+        let AnalysisOutcome::Unsupported(cause) = result.outcome else {
+            panic!(
+                "{}: expected unsupported {slug}: {result:?}",
+                file.display()
+            );
+        };
+        assert_eq!(cause.slug.as_str(), slug, "{}: {cause:?}", file.display());
+        assert!(
+            package
+                .admitted()
+                .resolved_graph()
+                .nodes
+                .iter()
+                .any(|node| node.node_id == cause.node),
+            "{}: the refusal names the actual source construct",
+            file.display()
+        );
+    }
+}
+
+#[test]
+#[trace("FR-570-AC-4", "FR-570-AC-5")]
+fn source_projection_refutes_a_choice_hidden_from_the_target() {
+    use fsl_replay::protocol_analysis::AnalysisOutcome;
+    let directory = tempfile::tempdir().unwrap();
+    let package = handoff(directory.path(), &corpus("original/hidden-choice.native"));
+    let target = project(&package, "Target");
+    assert!(
+        matches!(target.outcome, AnalysisOutcome::Refuted(_)),
+        "{target:?}"
+    );
+    let owner = project(&package, "Picker");
+    let AnalysisOutcome::Proved(witness) = owner.outcome else {
+        panic!("the deciding role knows its own choice: {owner:?}");
+    };
+    assert_eq!(witness.merge_evidence.len(), 1, "{witness:?}");
+}
+
+fn root_wire() -> Value {
+    use filament_exact::{NodeKey, PathSegment};
+    let universe = NodeKey::new(
+        "example/parts",
+        vec![
+            PathSegment::Text("model".into()),
+            PathSegment::Text("object_type".into()),
+            PathSegment::Text("ix://example/parts/Job".into()),
+        ],
+        0,
+    )
+    .unwrap();
+    json!({"observation":{"authority":"example","identity":"ix://example/parts/data/saga-start"},
+        "subject":{"tag":"object","universe":fsl_foundation::node_wire::node_key_to_text(&universe).unwrap(),
+            "type":serde_json::to_string(&json!([{"package":"example/parts","node":"ix://example/parts/Job"}])).unwrap(),
+            "object_identity":"j1"}})
+}
+
+#[test]
+#[trace("FR-636-AC-2", "FR-636-AC-5")]
+fn public_source_projection_realizability_and_deadlock_agree_on_bounded_static_programs() {
+    let directory = tempfile::tempdir().unwrap();
+    for (file, protocol, roles) in [
+        (
+            corpus("original/exchange.native"),
+            "Exchange",
+            vec!["Sender", "Receiver"],
+        ),
+        (
+            saga().join("rules/protocols/declaration/declaration-minimal.fsl"),
+            "PartFlow",
+            vec!["Planning"],
+        ),
+    ] {
+        let mut request = analysis_request(&file);
+        let bindings = roles
+            .iter()
+            .map(|role| {
+                (
+                    (*role).to_owned(),
+                    json!({"type":"model-binding","selection":"example/parts"}),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        request["request"]["subject"]["protocol"]["protocol"] = json!(protocol);
+        request["request"]["subject"]["protocol"]["roles"] = json!(bindings);
+        let mut items = roles
+            .iter()
+            .map(|role| {
+                json!({"claim":protocol,"kind":"local-projection",
+            "options":{"role":role},"assessed_root":root_wire(),
+            "temporal":{"profile":"bounded-static","max_depth":64}})
+            })
+            .collect::<Vec<_>>();
+        items.push(
+            json!({"claim":protocol,"kind":"realizability","assessed_root":root_wire(),
+            "premises":{"role_knowledge":[],"environment":[]},
+            "temporal":{"profile":"bounded-static","max_depth":64,"max_history":16}}),
+        );
+        items.push(json!({"claim":protocol,"kind":"global-conformance","temporal":{"item_kind":"deadlock-freedom"}}));
+        request["request"]["items"] = json!(items);
+        let output = command::analyze(
+            &write(directory.path(), &request),
+            &crate::negotiation::Fr290,
+            &Cancel::new(),
+        )
+        .expect("public protocol analysis");
+        let records = output.value.as_value()["items"]
+            .as_array()
+            .expect("one result per requested analysis");
+        assert_eq!(records.len(), roles.len() + 2, "{}", output.value);
+        for item in records {
+            assert_eq!(item["record"]["result"], "proved", "{protocol}: {item}");
+        }
+        assert_eq!(output.exit_code, 0, "{}", output.value);
+    }
+}
+
+#[test]
+#[trace("FR-381-AC-7")]
+fn original_compensation_has_an_accepting_template_and_zero_attempt_refusal() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = corpus("original/compensation.native");
+    compile(directory.path(), &file);
+    let source = std::fs::read_to_string(&file).unwrap();
+    let zero = directory.path().join("zero-attempts.native");
+    std::fs::write(
+        &zero,
+        source.replace("attempts 1 of Completion", "attempts 0 of Completion"),
+    )
+    .unwrap();
+    refusal(directory.path(), &zero, "ill_typed", "type-mismatch");
+}
+
+#[test]
+#[trace("FR-575-AC-1", "FR-575-AC-2")]
+fn original_symbolic_capacity_is_admitted_and_projection_names_the_capacity() {
+    use fsl_replay::protocol_analysis::AnalysisOutcome;
+    let directory = tempfile::tempdir().unwrap();
+    let source = std::fs::read_to_string(corpus("original/exchange.native")).unwrap();
+    let file = directory.path().join("symbolic.native");
+    std::fs::write(
+        &file,
+        source.replace("capacity 1", "capacity symbolic(QueueSlots)"),
+    )
+    .unwrap();
+    let package = handoff(directory.path(), &file);
+    let result = project(&package, "Receiver");
+    let AnalysisOutcome::Unsupported(cause) = result.outcome else {
+        panic!("bounded-static needs a literal capacity: {result:?}");
+    };
+    assert_eq!(cause.slug.as_str(), "symbolic-queue-capacity");
+    assert_eq!(cause.detail.as_deref(), Some("QueueSlots"));
+}
+
+#[test]
+#[trace("FR-218-AC-44")]
+fn original_attempt_result_read_requires_the_operation_result_type() {
+    let directory = tempfile::tempdir().unwrap();
+    let control = corpus("original/attempt-result.native");
+    let request = |file: &Path| {
+        json!({"format":"native-compile/1","request":{
+        "models":[],"program":{"source":source(file)}}})
+    };
+    let accepted = command::compile_outcome(&write(directory.path(), &request(&control)))
+        .expect("a Boolean operation result can be read through its Boolean binder");
+    assert!(!accepted.package_bytes().is_empty());
+    let wrong = directory.path().join("wrong-result.native");
+    let text = std::fs::read_to_string(control).unwrap();
+    std::fs::write(&wrong, text.replace("reading: Boolean", "reading: Integer")).unwrap();
+    let error = match command::compile_outcome(&write(directory.path(), &request(&wrong))) {
+        Ok(_) => panic!("a mismatched Integer binder must not expose a Boolean operation result"),
+        Err(error) => error,
+    };
+    let artifact = error.artifact_value().unwrap();
+    assert_eq!(artifact["code"], "ill_typed", "{artifact}");
+    assert_eq!(artifact["cause"], "type-mismatch", "{artifact}");
+}

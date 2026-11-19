@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function equal0 using v(a: UUID,b: UUID): Boolean pure { a=b }
+function equal1 using v(a: Timestamp,b: Timestamp): Boolean pure { a=b }

@@ -419,6 +419,7 @@ fn systems_records_and_missing_names_are_not_value_types_on_the_spine() {
         let fsl_replay::spine::CompileRefusal::Assembly {
             refusal,
             region: Some(region),
+            ..
         } = refusal.as_ref()
         else {
             panic!("M::{record} refuses at the assembler: {refusal:?}");
