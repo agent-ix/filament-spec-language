@@ -32,7 +32,7 @@ impl Domain {
             }
             Self::Integers { current, upper } => {
                 let next = current.add(&Integer::one());
-                if next <= *upper {
+                if next <= upper.clone() {
                     *current = next;
                     true
                 } else {
