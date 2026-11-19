@@ -2564,11 +2564,10 @@ impl<O> Checker<'_, '_, O> {
                 let from = from.ok_or_else(|| fault(CheckerFault::Automaton))?;
                 let from_values = self.predicate_values(from, state_graph.over)?;
                 for (node, state) in self.states.iter().enumerate() {
-                    if state.is_some()
-                        && from_values[node]
-                        && self.transition_path_count(node, &target_values) != 1
-                    {
-                        return reject(CertificateRule::CountBroken, at_node(node));
+                    if state.is_some() && from_values[node] {
+                        if self.transition_path_count(node, &target_values)? != 1 {
+                            return reject(CertificateRule::CountBroken, at_node(node));
+                        }
                     }
                 }
                 Ok(())
@@ -2633,12 +2632,14 @@ impl<O> Checker<'_, '_, O> {
         }
     }
 
-    fn transition_path_count(&self, start: usize, target: &[bool]) -> u8 {
+    fn transition_path_count(&self, start: usize, target: &[bool]) -> Step<u8, O> {
         transition_sequence_count(
             start,
             target,
             &self.certificate.edges,
             &self.covers,
+            self.max_edges,
+            || self.poll(),
         )
     }
 
@@ -3081,15 +3082,22 @@ fn computed_bounds(
 /// component numbering, at their integers' magnitudes. It bounds the certificate's in-memory reading,
 /// not an encoding: FR-418's byte encoding of the certificate does not
 /// exist yet (spec gap STD-493).
-fn transition_sequence_count(
+/// Determinize the certificate's transition graph up to the checker's
+/// existing edge-work budget. Each scanned certificate edge and each
+/// generated automaton transition consumes one unit before it is expanded.
+fn transition_sequence_count<O>(
     start: usize,
     target: &[bool],
     edges: &[CertEdge],
     active: &[Option<usize>],
-) -> u8 {
+    max_work: u64,
+    mut poll: impl FnMut() -> Step<(), O>,
+) -> Step<u8, O> {
     let mut subsets = vec![vec![start]];
+    let mut subset_indices = BTreeMap::from([(vec![start], 0_usize)]);
     let mut transitions = vec![Vec::<(ModelTransition, usize)>::new()];
     let mut accepting = vec![false];
+    let mut work = 0_u64;
     let mut at = 0;
     while at < subsets.len() {
         for &node in &subsets[at] {
@@ -3097,9 +3105,11 @@ fn transition_sequence_count(
         }
         let mut symbols = BTreeMap::<ModelTransition, BTreeSet<usize>>::new();
         for (edge_index, edge) in edges.iter().enumerate() {
-            if active.get(edge_index).is_none_or(Option::is_none)
-                || !subsets[at].contains(&edge.from)
-            {
+            sequence_work(&mut work, max_work, &mut poll)?;
+            if active.get(edge_index).is_none_or(Option::is_none) {
+                continue;
+            }
+            if subsets[at].binary_search(&edge.from).is_err() {
                 continue;
             }
             if let Some(symbol) = &edge.transition {
@@ -3107,89 +3117,131 @@ fn transition_sequence_count(
             }
         }
         for (symbol, destinations) in symbols {
+            sequence_work(&mut work, max_work, &mut poll)?;
             let next = destinations.into_iter().collect::<Vec<_>>();
-            let next_state = if let Some(existing) = subsets.iter().position(|old| *old == next) {
+            let next_state = if let Some(existing) = subset_indices.get(&next).copied() {
                 existing
             } else {
                 let index = subsets.len();
-                subsets.push(next);
+                subsets.push(next.clone());
                 transitions.push(Vec::new());
                 accepting.push(false);
+                subset_indices.insert(next, index);
                 index
             };
             transitions[at].push((symbol, next_state));
         }
         at += 1;
     }
-    count_accepted_words(&transitions, &accepting)
+    count_accepted_words(&transitions, &accepting, max_work, &mut work, &mut poll)
 }
 
-fn count_accepted_words(
+fn sequence_work<O>(
+    work: &mut u64,
+    limit: u64,
+    poll: &mut impl FnMut() -> Step<(), O>,
+) -> Step<(), O> {
+    poll()?;
+    let next = work.saturating_add(1);
+    if next > limit {
+        return Err(Halt::Verdict(ZoneCertificateVerdict::Stopped(
+            IncompleteCause::LimitReached {
+                limit: ModelCheckLimit::CertificateMaxEdges,
+                value: limit,
+            },
+        )));
+    }
+    *work = next;
+    Ok(())
+}
+
+fn count_accepted_words<O>(
     transitions: &[Vec<(ModelTransition, usize)>],
     accepting: &[bool],
-) -> u8 {
-    let mut can_accept = accepting.to_vec();
-    loop {
-        let mut changed = false;
-        for (from, outgoing) in transitions.iter().enumerate() {
-            if !can_accept[from] && outgoing.iter().any(|(_, to)| can_accept[*to]) {
-                can_accept[from] = true;
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
+    max_work: u64,
+    work: &mut u64,
+    poll: &mut impl FnMut() -> Step<(), O>,
+) -> Step<u8, O> {
+    let mut reverse = vec![Vec::new(); transitions.len()];
+    for (from, outgoing) in transitions.iter().enumerate() {
+        for (_, to) in outgoing {
+            sequence_work(work, max_work, poll)?;
+            reverse[*to].push(from);
         }
     }
-    fn count(
-        node: usize,
-        transitions: &[Vec<(ModelTransition, usize)>],
-        accepting: &[bool],
-        can_accept: &[bool],
-        memo: &mut [Option<u8>],
-        visiting: &mut [bool],
-    ) -> u8 {
-        if !can_accept[node] {
-            return 0;
+    let mut can_accept = accepting.to_vec();
+    let mut queue = std::collections::VecDeque::new();
+    for (node, accepts_empty) in accepting.iter().copied().enumerate() {
+        if accepts_empty {
+            queue.push_back(node);
         }
-        if let Some(count) = memo[node] {
-            return count;
+    }
+    while let Some(node) = queue.pop_front() {
+        for &from in &reverse[node] {
+            sequence_work(work, max_work, poll)?;
+            if !can_accept[from] {
+                can_accept[from] = true;
+                queue.push_back(from);
+            }
         }
-        if visiting[node] {
-            return 2;
+    }
+    if !can_accept.first().copied().unwrap_or(false) {
+        return Ok(0);
+    }
+
+    let mut indegree = vec![0_usize; transitions.len()];
+    for (from, outgoing) in transitions.iter().enumerate() {
+        if !can_accept[from] {
+            continue;
         }
-        visiting[node] = true;
+        for (_, to) in outgoing {
+            sequence_work(work, max_work, poll)?;
+            if can_accept[*to] {
+                indegree[*to] = indegree[*to].saturating_add(1);
+            }
+        }
+    }
+
+    let mut ready = std::collections::VecDeque::new();
+    for (node, degree) in indegree.iter().copied().enumerate() {
+        if can_accept[node] && degree == 0 {
+            ready.push_back(node);
+        }
+    }
+    let mut topological = Vec::new();
+    while let Some(node) = ready.pop_front() {
+        topological.push(node);
+        for (_, next) in &transitions[node] {
+            sequence_work(work, max_work, poll)?;
+            if can_accept[*next] {
+                indegree[*next] -= 1;
+                if indegree[*next] == 0 {
+                    ready.push_back(*next);
+                }
+            }
+        }
+    }
+    if topological.len() != can_accept.iter().filter(|accepting| **accepting).count() {
+        // A reachable cycle with an accepting suffix spells arbitrarily many
+        // distinct transition sequences, so uniqueness is already refuted.
+        return Ok(2);
+    }
+
+    let mut counts = vec![0_u8; transitions.len()];
+    for node in topological.into_iter().rev() {
         let mut total = u8::from(accepting[node]);
         for (_, next) in &transitions[node] {
+            sequence_work(work, max_work, poll)?;
             if can_accept[*next] {
-                total = total
-                    .saturating_add(count(
-                        *next,
-                        transitions,
-                        accepting,
-                        can_accept,
-                        memo,
-                        visiting,
-                    ))
-                    .min(2);
+                total = total.saturating_add(counts[*next]).min(2);
                 if total == 2 {
                     break;
                 }
             }
         }
-        visiting[node] = false;
-        memo[node] = Some(total);
-        total
+        counts[node] = total;
     }
-    let mut memo = vec![None; transitions.len()];
-    count(
-        0,
-        transitions,
-        accepting,
-        &can_accept,
-        &mut memo,
-        &mut vec![false; transitions.len()],
-    )
+    Ok(counts[0])
 }
 
 fn certificate_bytes<O>(certificate: &ZoneCertificate<O>) -> u64 {
@@ -3356,12 +3408,92 @@ mod state_graph_sequence_tests {
             to,
             silent: None,
         };
-        let count = transition_sequence_count(
+        let count = transition_sequence_count::<()>(
             0,
             &[false, true, true],
             &[edge(1), edge(2)],
             &[Some(0), Some(1)],
+            u64::MAX,
+            || Ok(()),
         );
-        assert_eq!(count, 1);
+        assert!(matches!(count, Ok(1)));
+    }
+
+    #[test]
+    fn branching_subsets_stop_at_the_certificate_edge_work_budget() {
+        let transition = |name: &str| {
+            ModelTransition::new(
+                format!(r#"{{"name":"{name}"}}"#),
+                None,
+                Vec::new(),
+                quire_canonical::Limits::new(u64::MAX),
+            )
+            .expect("canonical transition")
+        };
+        let zero = transition("zero");
+        let one = transition("one");
+        // The NFA tracks the last `depth` bits and has 2^depth reachable
+        // subsets, while the checker is allowed only 256 work units.
+        let depth = 14_usize;
+        let mut edges = vec![
+            CertEdge {
+                from: 0,
+                transition: Some(zero.clone()),
+                part: None,
+                horizon: None,
+                to: 0,
+                silent: None,
+            },
+            CertEdge {
+                from: 0,
+                transition: Some(one.clone()),
+                part: None,
+                horizon: None,
+                to: 0,
+                silent: None,
+            },
+            CertEdge {
+                from: 0,
+                transition: Some(one.clone()),
+                part: None,
+                horizon: None,
+                to: 1,
+                silent: None,
+            },
+        ];
+        for state in 1..depth {
+            for symbol in [&zero, &one] {
+                edges.push(CertEdge {
+                    from: state,
+                    transition: Some(symbol.clone()),
+                    part: None,
+                    horizon: None,
+                    to: state + 1,
+                    silent: None,
+                });
+            }
+        }
+        let active = vec![Some(0); edges.len()];
+        let mut target = vec![false; depth + 1];
+        target[depth] = true;
+        let limit = 256;
+        let result = transition_sequence_count::<()>(
+            0,
+            &target,
+            &edges,
+            &active,
+            limit,
+            || Ok(()),
+        );
+
+        assert!(matches!(
+            result,
+            Err(Halt::Verdict(ZoneCertificateVerdict::Stopped(
+                IncompleteCause::LimitReached {
+                    limit: ModelCheckLimit::CertificateMaxEdges,
+                    value: 256,
+                }
+            )))
+        ));
     }
 }
