@@ -355,8 +355,8 @@ impl ReplayRequest {
     pub fn over(&self) -> Option<&ReplayOverBinding> {
         self.over.as_ref()
     }
-    /// The replay source: a witness transcript, canonical inputs, or an
-    /// observed temporal counterexample envelope (FR-331).
+    /// The replay source: a witness transcript, canonical inputs, or a typed
+    /// observed-temporal or hybrid counterexample (FR-331).
     pub fn source(&self) -> &ReplaySource {
         &self.source
     }
@@ -452,8 +452,8 @@ pub struct ReplayRequestWire {
     /// The replay target: the FSpec FR-323 target members, exactly one of
     /// which a decodable request carries.
     pub replay_target: RequestTargetWire,
-    /// The replay source: a witness transcript, canonical inputs, or an
-    /// observed temporal counterexample envelope (FR-331).
+    /// The replay source: a witness transcript, canonical inputs, or a typed
+    /// observed-temporal or hybrid counterexample (FR-331).
     pub source: ReplaySource,
     /// The obligation this request replays.
     pub obligation_identity: ObligationIdentity,
@@ -863,7 +863,9 @@ impl ReplayRequest {
         // FSpec FR-323 decode rule 1: before any byte-provision rule.
         let (replay_target, over) = if matches!(
             wire.source,
-            ReplaySource::ModelGraph(_) | ReplaySource::ProtocolAnalysis(_)
+            ReplaySource::ModelGraph(_)
+                | ReplaySource::ProtocolAnalysis(_)
+                | ReplaySource::Hybrid(_)
         ) {
             let target = std::mem::take(&mut wire.replay_target);
             let member = if target.members.function.is_some() {
@@ -1915,6 +1917,7 @@ mod tests {
             ReplaySource::ObservedTemporal(_) => panic!("expected the Input arm"),
             ReplaySource::ModelGraph(_) => panic!("expected the Input arm"),
             ReplaySource::ProtocolAnalysis(_) => panic!("expected the Input arm"),
+            ReplaySource::Hybrid(_) => panic!("expected the Input arm"),
         }
     }
 }

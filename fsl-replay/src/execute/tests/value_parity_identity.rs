@@ -325,6 +325,9 @@ fn tc_1252_the_input_arm_packet_round_trips_and_replays() {
             crate::ReplaySource::ProtocolAnalysis(_) => {
                 panic!("value-parity packets cannot carry protocol analysis sources")
             }
+            crate::ReplaySource::Hybrid(_) => {
+                panic!("value-parity packets cannot carry hybrid sources")
+            }
         };
         let packet = WitnessPacket {
             obligation_identity: Some(identity),

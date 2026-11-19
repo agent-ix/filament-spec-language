@@ -354,6 +354,7 @@ fn tc_1044_eight_retained_scalars_are_admitted_on_input_and_witness() {
             ReplayResult::ObservedTemporal(_) => panic!("scalar replay returned a temporal arm"),
             ReplayResult::ModelGraph(_) => panic!("scalar replay returned a state-graph arm"),
             ReplayResult::ProtocolAnalysis(_) => panic!("a protocol analysis arm"),
+            ReplayResult::Hybrid(_) => panic!("a hybrid arm"),
         };
         assert_eq!(evaluated, Some(EvaluatedValue::Boolean(false)), "{arm}");
     }

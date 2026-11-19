@@ -2152,7 +2152,6 @@ struct ExportedOutcome {
     export: serde_json::Value,
 }
 
-
 /// A replay outcome's `replayed` result: each entry is the row of the FSpec
 /// FR-323 `results` document, unchanged and in row order (FR-286).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -2965,6 +2964,7 @@ fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
         | ReplayRefusal::Cancelled(_)
         | ReplayRefusal::NativePayload { .. }
         | ReplayRefusal::ModelTrace(_)
+        | ReplayRefusal::HybridTrace(_)
         | ReplayRefusal::UnfairLasso { .. }
         | ReplayRefusal::MissingFairnessPremise { .. }
         | ReplayRefusal::ObservedTemporalMismatch { .. }

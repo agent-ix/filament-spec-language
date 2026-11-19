@@ -506,7 +506,8 @@ pub use request::{
 };
 pub use result::{
     read_bounded, runtime_value_path_json, CauseCodecError, DecidingElement, DisagreementCause,
-    EvaluatedValue, HybridTraceDisagreement, InputArmResult, InputSettlement,
+    EvaluatedValue, HybridReplayRecord, HybridReplayResult, HybridReplaySettlement,
+    HybridTraceDisagreement, InputArmResult, InputSettlement,
     ObservedTemporalParity, ObservedTemporalResult, ObservedTemporalSettlement, ReplayResult,
     SeparatingWitnessRecord, SeparationReason, SeparationRefusal, TemporalDecisive, Verdict,
     WitnessArmResult, WitnessCheck, WitnessFailure, WitnessSettlement,
