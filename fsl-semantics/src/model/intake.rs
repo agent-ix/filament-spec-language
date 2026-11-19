@@ -1919,6 +1919,24 @@ fn decimal_target(
             .is_some_and(|target| decimal_target(types, target, seen))
 }
 
+fn decimal_type_candidates(types: &[Value]) -> std::collections::BTreeSet<String> {
+    types
+        .iter()
+        .filter_map(|node| {
+            let identity = node.get("identity")?.as_str()?;
+            let scalar_decimal = node.get("scalar").and_then(Value::as_str) == Some("decimal");
+            let decimal_alias = node.get("kind").and_then(Value::as_str) == Some("alias")
+                && node
+                    .get("target")
+                    .and_then(Value::as_str)
+                    .is_some_and(|target| {
+                        decimal_target(types, target, &mut std::collections::BTreeSet::new())
+                    });
+            (scalar_decimal || decimal_alias).then(|| identity.to_owned())
+        })
+        .collect()
+}
+
 #[ix_trace_rs::string_edge]
 fn process_subtype_generalization_schema_diagnostic(
     document: &PackageDocument,
@@ -5506,6 +5524,9 @@ struct TypeNodeReader<'a> {
     /// Decimal type of each scalar Decimal declaration and policy-carrying
     /// alias, including bounds on every alias in its resolution walk.
     decimal_types: &'a HashMap<String, DecimalType>,
+    /// Decimal scalar and alias subjects, including malformed policies whose
+    /// validator refusal must not fall through to the clock-bound reader.
+    decimal_candidates: &'a std::collections::BTreeSet<String>,
     semantic: Option<&'a agent_ix_semantic_ir::rules::Document<'a>>,
     semantic_members: &'a HashMap<&'a str, &'a agent_ix_semantic_ir::json::Json>,
 }
@@ -5525,6 +5546,7 @@ fn read_type_node(
         rational_types,
         unbounded_rationals,
         decimal_types,
+        decimal_candidates,
         semantic,
         semantic_members,
     } = reader;
@@ -5651,7 +5673,7 @@ fn read_type_node(
         // An alias's `min`/`max` constraints bound the clocks or the
         // quantities it types (FR-230 "Clock constraints on a type", FSpec
         // FR-154 "Unit bounds").
-        let bounds = if decimal.is_some() {
+        let bounds = if decimal_candidates.contains(node) {
             Vec::new()
         } else {
             read_value_bounds(package, &ctx, at, node, Some((&key, &target)))?
@@ -6738,6 +6760,7 @@ fn read_nodes_partial(
         );
     };
     let decimal_types = decimal_type_domains(types);
+    let decimal_candidates = decimal_type_candidates(types);
     let populations = match root.array_field("populations") {
         Ok(populations) => populations,
         Err(refusal) => return (Vec::new(), vec![refusal]),
@@ -6845,6 +6868,7 @@ fn read_nodes_partial(
                         rational_types: &rational_types,
                         unbounded_rationals: &unbounded_rationals,
                         decimal_types: &decimal_types,
+                        decimal_candidates: &decimal_candidates,
                         semantic,
                         semantic_members: &semantic_members,
                     },
@@ -7280,6 +7304,7 @@ mod tests {
         let type_meanings = HashMap::new();
         let rational_types = std::collections::BTreeSet::new();
         let decimal_types = HashMap::new();
+        let decimal_candidates = std::collections::BTreeSet::new();
         let semantic_members = HashMap::new();
         let reader = TypeNodeReader {
             package: "acme/orders",
@@ -7289,6 +7314,7 @@ mod tests {
             rational_types: &rational_types,
             unbounded_rationals: &std::collections::BTreeSet::new(),
             decimal_types: &decimal_types,
+            decimal_candidates: &decimal_candidates,
             semantic: None,
             semantic_members: &semantic_members,
         };
