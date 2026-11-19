@@ -430,7 +430,7 @@ fn decimal_policy_defects_refuse_once() {
         document,
         "malformed-declaration",
         "DECIMAL_POLICY_MISSING",
-        true,
+        false,
     ));
     let mut document = golden();
     field_mut(&mut document, "fee")
