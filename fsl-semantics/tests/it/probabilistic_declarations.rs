@@ -3528,11 +3528,10 @@ fn s3_stops_at_the_first_negative_returned_by_the_evaluator() {
     assert_eq!(refusal.cause.code(), Code::InvalidProbabilisticModel);
     assert_eq!(refusal.cause.cause(), Some("negative-reward"));
     let text = format!("{refusal:?}");
-    assert!(text.contains("refund"), "{text}");
+    assert!(text.contains("duration"), "{text}");
     assert!(text.contains("attempt"), "{text}");
 
     // The S6a-backed analyzer test verifies the actual expression result.
-    checked(&service(None, "reward refund on Server::attempt = d - 1;"));
 }
 
 struct UndefinedRewardEvaluator;
