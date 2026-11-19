@@ -166,7 +166,10 @@ pub use protocol_selection::{ProtocolSlotDescriptor, SlotSelectionFailure};
 #[cfg(feature = "std")]
 pub use verification_plan::{
     emit_verification_plans, read_verification_plan, VerificationPlan, VerificationPlanEdge,
-    VerificationPlanNode, VerificationPlanRefusal, VERIFICATION_PLAN_FORMAT,
+    VerificationPlanClaim, VerificationPlanDeclarationKey, VerificationPlanIdentity,
+    VerificationPlanMethod, VerificationPlanNode, VerificationPlanNodeIdentity,
+    VerificationPlanPathSegment, VerificationPlanRefusal, VerificationPlanSource,
+    VerificationPlanSourceLocation, VERIFICATION_PLAN_FORMAT,
 };
 #[cfg(feature = "std")]
 pub use reader_protocol_projection::{

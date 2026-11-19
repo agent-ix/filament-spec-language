@@ -3,7 +3,7 @@
 
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_package::{
-    emit_verification_plans, read_verification_plan, CheckedPackage, VerificationPlanRefusal,
+    CheckedPackage, VerificationPlanRefusal, emit_verification_plans, read_verification_plan,
 };
 use fsl_semantics::check::PackageDeclarations;
 use ix_trace_rs::trace;
@@ -79,8 +79,55 @@ fn emission_keeps_package_identity_and_writes_the_plan_graph() {
     let plan = &plans[0];
     assert_eq!(plan.format, "filament.verification-plan/v1");
     assert_eq!(plan.package, "test/package");
-    assert_eq!(plan.name, "Release");
+    assert_eq!(plan.plan.name, "Release");
+    assert_eq!(plan.plan.qualified_name, ["Release"]);
+    assert_eq!(plan.plan.source_location.source.authority, "agent-ix");
+    assert_eq!(plan.plan.source_location.source.identity, "test:qsl-2509");
+    assert!(plan.plan.source_location.start < plan.plan.source_location.end);
+    assert!(
+        SOURCE_WITH_PLAN
+            [plan.plan.source_location.start as usize..plan.plan.source_location.end as usize]
+            .starts_with("verify Release")
+    );
     assert_eq!(plan.nodes.len(), 3);
+    let safe = &plan.nodes[0];
+    assert_eq!(safe.name, "safe");
+    assert_eq!(
+        safe.claim.occurrence.role,
+        fsl_package::CheckedOccurrenceRole::Claim
+    );
+    assert_eq!(safe.claim.occurrence.ordinal, 0);
+    assert_eq!(safe.claim.node.package, "test/package");
+    let checked_claim = with
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|clause| clause.clause().name() == "Reaches")
+        .expect("the package retains the checked claim");
+    assert_eq!(
+        serde_json::to_value(&safe.claim.node).expect("plan node identity serializes"),
+        serde_json::to_value(fsl_semantics::check::wire_id::structural_id(
+            &checked_claim.identity()
+        ))
+        .expect("checked node identity serializes")
+    );
+    assert_eq!(
+        safe.claim.occurrence.ordinal,
+        checked_claim.claim().ordinal()
+    );
+    assert_eq!(safe.method.name, "model_check");
+    assert_eq!(safe.method.kind, "temporal-satisfaction");
+    assert_eq!(safe.method.extent, "bounded");
+    assert_eq!(safe.method.evidence_kind, ["proof", "refutation"]);
+    assert_eq!(safe.domain.package, "acme/orders");
+    assert!(!safe.domain.node.is_empty());
+    assert_eq!(safe.bound.as_deref(), Some("20"));
+    let tested = &plan.nodes[1];
+    assert_eq!(tested.method.name, "model_based_test");
+    assert_eq!(tested.method.kind, "temporal-satisfaction");
+    assert_eq!(tested.method.extent, "bounded");
+    assert_eq!(tested.method.evidence_kind, ["tested", "refutation"]);
+    assert_eq!(plan.nodes[2].method.extent, "unbounded");
     assert_eq!(plan.edges.len(), 1);
     assert_eq!(plan.edges[0].from, "timely");
     assert_eq!(plan.edges[0].to, "safe");
