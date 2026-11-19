@@ -632,11 +632,6 @@ pub enum AssemblyCause {
         /// The synthesis declaration's authored name.
         name: String,
     },
-    /// A verification plan form whose FR-753 lowering is not installed yet.
-    VerificationPlanNotChecked {
-        /// The verification plan's authored name.
-        name: String,
-    },
 }
 
 impl AssemblyCause {
@@ -716,8 +711,7 @@ impl AssemblyCause {
             Self::UnsupportedLayerForm { .. }
             | Self::UnselectedModelConstruct(_)
             | Self::TimedNotChecked(_)
-            | Self::SynthesisNotChecked { .. }
-            | Self::VerificationPlanNotChecked { .. } => Code::UnsupportedConstruct,
+            | Self::SynthesisNotChecked { .. } => Code::UnsupportedConstruct,
         }
     }
 
@@ -831,8 +825,7 @@ impl AssemblyCause {
             Self::UnsupportedLayerForm { form, .. } => form.refusal_cause(),
             Self::UnselectedModelConstruct(refusal) => refusal.family.refusal_cause(),
             Self::TimedNotChecked(_)
-            | Self::SynthesisNotChecked { .. }
-            | Self::VerificationPlanNotChecked { .. } => "not-yet-implemented",
+            | Self::SynthesisNotChecked { .. } => "not-yet-implemented",
         };
         CatalogCode::new(self.code().as_str(), cause)
     }
@@ -1040,6 +1033,9 @@ struct Unit {
     /// Each state-graph claim's form, in source order, resolved by the
     /// caller into `StateGraphDeclaration`s (FR-165).
     state_graph_claims: Vec<fsl_forms::StateGraphClaimForm>,
+    /// Verification plan source forms, kept outside the checked clause graph
+    /// and checked at S3 (FR-753).
+    verification_plans: Vec<fsl_forms::VerificationPlanForm>,
 }
 
 impl Unit {
@@ -1099,6 +1095,7 @@ impl Unit {
             clock_reading: Vec::new(),
             task_sets: Vec::new(),
             state_graph_claims: Vec::new(),
+            verification_plans: Vec::new(),
         };
         unit.timed.extend(
             std::mem::take(&mut clock_forms.positions)
@@ -1227,6 +1224,9 @@ impl Unit {
                     .probabilistic
                     .push(super::ProbabilisticDeclaration::Claim(claim)),
                 DeclarationForm::StateGraphClaim(claim) => unit.state_graph_claims.push(*claim),
+                DeclarationForm::VerificationPlan(plan) => {
+                    unit.verification_plans.push(*plan);
+                }
                 DeclarationForm::Temporal(clause) => {
                     unit.temporal_clauses
                         .push(super::temporal_clause::TemporalDeclaration {
@@ -1234,7 +1234,7 @@ impl Unit {
                             span,
                         });
                 }
-                DeclarationForm::Synthesis(_) | DeclarationForm::VerificationPlan(_) => {}
+                DeclarationForm::Synthesis(_) => {}
             }
         }
         // The `Clock` type positions were listed first; FR-230's gate reads
@@ -4426,11 +4426,6 @@ impl PackageDeclarations {
                             name: synthesis.name.name.clone(),
                         })
                     }
-                    fsl_forms::DeclarationForm::VerificationPlan(plan) => {
-                        Some(AssemblyCause::VerificationPlanNotChecked {
-                            name: plan.name.name.clone(),
-                        })
-                    }
                     _ => None,
                 }?;
                 Some(AssemblyError {
@@ -6079,6 +6074,7 @@ impl PackageDeclarations {
         package.timed_forms = unit.timed;
         package.clock_reading = unit.clock_reading;
         package.task_set_forms = unit.task_sets;
+        package.verification_plans = unit.verification_plans;
         // FR-451: a declaration is located under its own spaced name.
         declared_type_spans.extend(unit.abstractions.iter().map(|abstraction| {
             (

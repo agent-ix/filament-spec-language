@@ -1228,9 +1228,6 @@ fn assembly_message(refusal: &AssemblyRefusal) -> String {
         AssemblyCause::SynthesisNotChecked { name } => {
             format!("synthesis `{name}` builds but is not checked yet")
         }
-        AssemblyCause::VerificationPlanNotChecked { name } => {
-            format!("verification plan `{name}` builds but is not checked yet")
-        }
     };
     with_more(message, refusal.errors.len())
 }

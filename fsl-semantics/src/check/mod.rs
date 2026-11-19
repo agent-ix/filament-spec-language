@@ -1806,6 +1806,170 @@ fn root(origin: Origin) -> Location {
     Location::root(origin)
 }
 
+/// The first directed prerequisite cycle in source order. A verification
+/// plan is a sidecar, so its graph is checked before clause checking begins
+/// (FR-753, FSpec FR-192).
+fn verification_plan_cycle(
+    plan: &fsl_forms::VerificationPlanForm,
+) -> Option<Vec<(String, String)>> {
+    let steps = &plan.steps;
+    let indices: BTreeMap<&str, usize> = steps
+        .iter()
+        .enumerate()
+        .map(|(index, step)| (step.name.name.as_str(), index))
+        .collect();
+    let mut state = vec![0_u8; steps.len()];
+    let mut next_dependency = vec![0_usize; steps.len()];
+    for start in 0..steps.len() {
+        if state[start] != 0 {
+            continue;
+        }
+        let mut active = vec![start];
+        state[start] = 1;
+        while let Some(&node) = active.last() {
+            let dependencies = &steps[node].depends;
+            if next_dependency[node] == dependencies.len() {
+                state[node] = 2;
+                active.pop();
+                continue;
+            }
+            let dependency_index = next_dependency[node];
+            next_dependency[node] += 1;
+            let dependency = dependencies.get(dependency_index)?;
+            let Some(&target) = indices.get(dependency.name.as_str()) else {
+                continue;
+            };
+            match state[target] {
+                0 => {
+                    state[target] = 1;
+                    active.push(target);
+                }
+                1 => {
+                    let cycle_start = active.iter().position(|&member| member == target)?;
+                    let members = active.get(cycle_start..)?;
+                    let mut edges: Vec<(String, String)> = members
+                        .windows(2)
+                        .filter_map(|edge| {
+                            Some((
+                                steps.get(*edge.first()?)?.name.name.clone(),
+                                steps.get(*edge.last()?)?.name.name.clone(),
+                            ))
+                        })
+                        .collect();
+                    edges.push((
+                        steps.get(node)?.name.name.clone(),
+                        steps.get(target)?.name.name.clone(),
+                    ));
+                    return Some(edges);
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// The first S3 refusal in one plan's source order. These checks resolve
+/// references that do not require the completed clause graph; the graph
+/// itself is checked separately before clause assembly (FR-753/FSpec FR-192).
+fn verification_plan_claim_exists(package: &PackageDeclarations, name: &str) -> bool {
+    package.state_clauses.iter().any(|clause| clause.name == name)
+        || package
+            .temporal_clauses
+            .iter()
+            .any(|clause| clause.form.name.name == name)
+        || package
+            .state_graph_claims
+            .iter()
+            .any(|claim| claim.form.name.name == name)
+        || package
+            .hybrid_claims
+            .iter()
+            .any(|claim| claim.form.name.name == name)
+        || package.hyper_clauses.iter().any(|claim| claim.name() == name)
+        || package
+            .refinements
+            .iter()
+            .any(|claim| claim.form.name.name == name)
+        || package.probabilistic.iter().any(|declaration| match declaration {
+            ProbabilisticDeclaration::Claim(claim) => claim.name.name == name,
+            ProbabilisticDeclaration::Random(_)
+            | ProbabilisticDeclaration::Reward(_)
+            | ProbabilisticDeclaration::Delay(_)
+            | ProbabilisticDeclaration::Workload(_) => false,
+        })
+}
+
+fn verification_plan_refusal(
+    package: &PackageDeclarations,
+    plan: &fsl_forms::VerificationPlanForm,
+) -> Option<CheckCause> {
+    let mut names = BTreeMap::new();
+    for step in &plan.steps {
+        if let Some(first) = names.insert(step.name.name.as_str(), step.name.span) {
+            return Some(CheckCause::DuplicateVerificationStep {
+                name: step.name.name.clone(),
+                first,
+                second: step.name.span,
+            });
+        }
+    }
+    for step in &plan.steps {
+        if !verification_plan_claim_exists(package, &step.claim.name) {
+            return Some(CheckCause::MissingQualifiedName(step.claim.clone()));
+        }
+        if !matches!(
+            step.method.name.as_str(),
+            "model_check"
+                | "contract_check"
+                | "value_check"
+                | "probabilistic_exact"
+                | "probabilistic_statistical"
+                | "hybrid_solver"
+                | "schedulability"
+                | "model_based_test"
+                | "simulate"
+                | "replay"
+        ) {
+            return Some(CheckCause::MissingQualifiedName(step.method.clone()));
+        }
+        if step.method.name == "schedulability"
+            && package
+                .temporal_clauses
+                .iter()
+                .any(|clause| clause.form.name.name == step.claim.name)
+        {
+            return Some(CheckCause::VerificationPlanInapplicableMethod {
+                method: step.method.name.clone(),
+                span: step.method.span,
+            });
+        }
+        if !package.declared_type_spans.contains_key(&step.domain.name)
+            && !package
+                .models
+                .iter()
+                .any(|model| model.object_type_named(&step.domain).is_some())
+        {
+            return Some(CheckCause::MissingQualifiedName(step.domain.clone()));
+        }
+        if step.bound.as_deref() == Some("0") {
+            return Some(CheckCause::VerificationPlanBoundZero {
+                span: step.bound_span.unwrap_or(step.span),
+            });
+        }
+        for dependency in &step.depends {
+            if !names.contains_key(dependency.name.as_str()) {
+                return Some(CheckCause::MissingQualifiedName(fsl_forms::NameForm {
+                    name: dependency.name.clone(),
+                    segments: vec![dependency.name.clone()].into(),
+                    span: dependency.span,
+                }));
+            }
+        }
+    }
+    None
+}
+
 /// Internal declared-span key for a timed source. Timed declarations have a
 /// source span but no distinct `Origin` variant; the spaced name cannot
 /// collide with an FSL declaration name.
@@ -2130,6 +2294,20 @@ impl PackageDeclarations {
         continue_state_clause_refusals: bool,
         protocol_check_refusals: &mut Vec<ProtocolCheckRefusal>,
     ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+        for plan in &self.verification_plans {
+            if let Some(cause) = verification_plan_refusal(&self, plan) {
+                return Err(vec![CheckRefusal {
+                    location: root(Origin::Expression),
+                    cause,
+                }]);
+            }
+            if let Some(edges) = verification_plan_cycle(plan) {
+                return Err(vec![CheckRefusal {
+                    location: root(Origin::Expression),
+                    cause: CheckCause::DefinitionCycle { edges },
+                }]);
+            }
+        }
         // FR-230: S2 retains every timed declaration independent of header
         // selection. S3 owns the facet gate and keeps incomplete timed
         // constructs from silently entering the checked package.

@@ -127,6 +127,7 @@ fn a_claim_inside_a_case_arm_is_requested_as_a_value_validity_item() {
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
     )
     .expect("the unit checks");
     let items = items_from_requirements(graph.requirements(), &registry, None);

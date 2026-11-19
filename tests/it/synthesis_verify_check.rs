@@ -8,7 +8,7 @@
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_foundation::SourceIdentity;
-use fsl_semantics::check::{CheckRefusal, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, CheckRefusal, PackageDeclarations};
 use ix_trace_rs::trace;
 
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -64,6 +64,24 @@ fn codes(refusals: &[CheckRefusal]) -> Vec<Option<CatalogCode>> {
         .collect()
 }
 
+fn assert_missing_name_span(refusals: &[CheckRefusal], source: &str, name: &str) {
+    let [CheckRefusal {
+        cause: CheckCause::MissingQualifiedName(missing),
+        ..
+    }] = refusals
+    else {
+        panic!("expected one missing-name refusal: {refusals:?}");
+    };
+    let start = source
+        .find(name)
+        .expect("the missing name is in the source");
+    assert_eq!(missing.name, name);
+    assert_eq!(
+        (missing.span.start, missing.span.end),
+        (start, start + name.len())
+    );
+}
+
 /// FR-754-AC-2: a `synthesis` whose `domain` names `Integer`, which has no
 /// finite bound, refuses `unsupported_projection`/`unbounded-extent`.
 #[trace("TC-2104", "FR-754-AC-2")]
@@ -105,7 +123,6 @@ fn a_bounded_synthesis_domain_checks() {
 #[trace("TC-2103", "FR-753-AC-2")]
 #[trace("FSpec-TC-1601", "FSpec-FR-192-AC-10")]
 #[test]
-#[ignore = "QSL-2236: S3 `verify` plan check not implemented yet"]
 fn a_plan_dependency_cycle_refuses_definition_cycle() {
     let refusals = check(
         "verify Loop using p {\n\
@@ -122,12 +139,25 @@ fn a_plan_dependency_cycle_refuses_definition_cycle() {
         ))],
         "{refusals:?}"
     );
+    let [CheckRefusal {
+        cause: CheckCause::DefinitionCycle { edges },
+        ..
+    }] = refusals.as_slice()
+    else {
+        panic!("the cycle refusal retains its edges: {refusals:?}");
+    };
+    assert_eq!(
+        edges,
+        &[
+            ("a".to_owned(), "b".to_owned()),
+            ("b".to_owned(), "a".to_owned())
+        ]
+    );
 }
 
 /// FR-753-AC-2 (positive half): an acyclic plan over `Reaches` checks.
 #[trace("TC-2103", "FR-753-AC-2")]
 #[test]
-#[ignore = "QSL-2236: S2/S3 `verify` plan not implemented yet"]
 fn an_acyclic_plan_checks() {
     let refusals = check(
         "verify Release using p {\n\
@@ -145,8 +175,13 @@ fn an_acyclic_plan_checks() {
 #[trace("TC-2103", "FR-753-AC-2")]
 #[trace("FSpec-TC-1601", "FSpec-FR-192-AC-9")]
 #[test]
-#[ignore = "QSL-2236: S3 `verify` plan check not implemented yet"]
 fn plan_step_name_and_method_refusals() {
+    let duplicate_source = format!(
+        "{HEADER}verify Twice using p {{\n\
+           check a claim Reaches method model_check domain Config::ConfigVersion;\n\
+           check a claim Reaches method model_check domain Config::ConfigVersion;\n\
+         }}"
+    );
     let duplicate = check(
         "verify Twice using p {\n\
            check a claim Reaches method model_check domain Config::ConfigVersion;\n\
@@ -162,6 +197,17 @@ fn plan_step_name_and_method_refusals() {
         ))],
         "{duplicate:?}"
     );
+    let [CheckRefusal {
+        cause: CheckCause::DuplicateVerificationStep { first, second, .. },
+        ..
+    }] = duplicate.as_slice()
+    else {
+        panic!("the duplicate refusal retains both spans: {duplicate:?}");
+    };
+    let first_start = duplicate_source.find("check a").unwrap() + "check ".len();
+    let second_start = duplicate_source.rfind("check a").unwrap() + "check ".len();
+    assert_eq!((first.start, first.end), (first_start, first_start + 1));
+    assert_eq!((second.start, second.end), (second_start, second_start + 1));
     let fuzz = check(
         "verify Fuzzed using p {\n\
            check a claim Reaches method fuzz domain Config::ConfigVersion;\n\
@@ -176,6 +222,150 @@ fn plan_step_name_and_method_refusals() {
         ))],
         "{fuzz:?}"
     );
+    assert_missing_name_span(
+        &fuzz,
+        &format!(
+            "{HEADER}verify Fuzzed using p {{\n\
+               check a claim Reaches method fuzz domain Config::ConfigVersion;\n\
+             }}"
+        ),
+        "fuzz",
+    );
+}
+
+/// FSpec FR-192-AC-9/10: a step resolves its claim, method, domain and
+/// prerequisite, and rejects a zero bound and an inapplicable method.
+#[trace("TC-2103", "FR-753-AC-2")]
+#[trace("FSpec-TC-1601", "FSpec-FR-192-AC-9", "FSpec-FR-192-AC-10")]
+#[test]
+fn plan_reference_bound_and_method_applicability_refusals() {
+    let missing_claim_source = format!(
+        "{HEADER}verify MissingClaim using p {{\n\
+           check a claim Never method model_check domain Config::ConfigVersion;\n\
+         }}"
+    );
+    let missing_claim = check(
+        "verify MissingClaim using p {\n\
+           check a claim Never method model_check domain Config::ConfigVersion;\n\
+         }",
+    )
+    .unwrap_or_else(|refusal| panic!("S1 and S2 admit `verify`: {refusal}"));
+    assert_eq!(
+        codes(&missing_claim),
+        [Some(CatalogCode::new(
+            "missing_declaration",
+            "missing-name"
+        ))],
+        "{missing_claim:?}"
+    );
+    assert_missing_name_span(&missing_claim, &missing_claim_source, "Never");
+
+    let missing_domain = check(
+        "verify MissingDomain using p {\n\
+           check a claim Reaches method model_check domain Nowhere;\n\
+         }",
+    )
+    .unwrap_or_else(|refusal| panic!("S1 and S2 admit `verify`: {refusal}"));
+    assert_eq!(
+        codes(&missing_domain),
+        [Some(CatalogCode::new(
+            "missing_declaration",
+            "missing-name"
+        ))],
+        "{missing_domain:?}"
+    );
+    assert_missing_name_span(
+        &missing_domain,
+        &format!(
+            "{HEADER}verify MissingDomain using p {{\n\
+               check a claim Reaches method model_check domain Nowhere;\n\
+             }}"
+        ),
+        "Nowhere",
+    );
+
+    let missing_step = check(
+        "verify MissingStep using p {\n\
+           check a claim Reaches method model_check domain Config::ConfigVersion depends [unknown_step];\n\
+         }",
+    )
+    .unwrap_or_else(|refusal| panic!("S1 and S2 admit `verify`: {refusal}"));
+    assert_eq!(
+        codes(&missing_step),
+        [Some(CatalogCode::new(
+            "missing_declaration",
+            "missing-name"
+        ))],
+        "{missing_step:?}"
+    );
+    assert_missing_name_span(
+        &missing_step,
+        &format!(
+            "{HEADER}verify MissingStep using p {{\n\
+               check a claim Reaches method model_check domain Config::ConfigVersion depends [unknown_step];\n\
+             }}"
+        ),
+        "unknown_step",
+    );
+
+    let zero_bound = check(
+        "verify ZeroBound using p {\n\
+           check a claim Reaches method model_check domain Config::ConfigVersion bound 0;\n\
+         }",
+    )
+    .unwrap_or_else(|refusal| panic!("S1 and S2 admit `verify`: {refusal}"));
+    assert_eq!(
+        codes(&zero_bound),
+        [Some(CatalogCode::new(
+            "invalid_model_binding",
+            "malformed-declaration"
+        ))],
+        "{zero_bound:?}"
+    );
+    let [CheckRefusal {
+        cause: CheckCause::VerificationPlanBoundZero { span },
+        ..
+    }] = zero_bound.as_slice()
+    else {
+        panic!("the bound refusal retains its span: {zero_bound:?}");
+    };
+    let zero_source = format!(
+        "{HEADER}verify ZeroBound using p {{\n\
+           check a claim Reaches method model_check domain Config::ConfigVersion bound 0;\n\
+         }}"
+    );
+    let zero_start = zero_source.find("bound 0").unwrap() + "bound ".len();
+    assert_eq!((span.start, span.end), (zero_start, zero_start + 1));
+
+    let inapplicable = check(
+        "verify WrongMethod using p {\n\
+           check a claim Reaches method schedulability domain Config::ConfigVersion;\n\
+         }",
+    )
+    .unwrap_or_else(|refusal| panic!("S1 and S2 admit `verify`: {refusal}"));
+    assert_eq!(
+        codes(&inapplicable),
+        [Some(CatalogCode::new(
+            "invalid_capability",
+            "inapplicable-kind"
+        ))],
+        "{inapplicable:?}"
+    );
+    let [CheckRefusal {
+        cause: CheckCause::VerificationPlanInapplicableMethod { span, .. },
+        ..
+    }] = inapplicable.as_slice()
+    else {
+        panic!("the inapplicable-method refusal retains its span: {inapplicable:?}");
+    };
+    let method_source = format!(
+        "{HEADER}verify WrongMethod using p {{\n\
+           check a claim Reaches method schedulability domain Config::ConfigVersion;\n\
+         }}"
+    );
+    let method_start = method_source.find("schedulability").unwrap();
+    let method_end = method_start + "schedulability".len();
+    assert_eq!((span.start, span.end), (method_start, method_end));
 }
 
 /// FSpec FR-194-AC-9: a `grammar` naming nothing refuses

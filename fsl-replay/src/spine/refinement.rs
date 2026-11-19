@@ -279,8 +279,7 @@ fn assembly_limit(cause: &AssemblyCause) -> Option<ReachedLimit> {
         | AssemblyCause::UnsupportedLayerForm { .. }
         | AssemblyCause::UnselectedModelConstruct(_)
         | AssemblyCause::TimedNotChecked(_)
-        | AssemblyCause::SynthesisNotChecked { .. }
-        | AssemblyCause::VerificationPlanNotChecked { .. } => None,
+        | AssemblyCause::SynthesisNotChecked { .. } => None,
     }
 }
 
@@ -370,6 +369,9 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::ReservedIntrinsicConflict(_)
         | CheckCause::UnrepresentableBound
         | CheckCause::DefinitionCycle { .. }
+        | CheckCause::DuplicateVerificationStep { .. }
+        | CheckCause::VerificationPlanBoundZero { .. }
+        | CheckCause::VerificationPlanInapplicableMethod { .. }
         | CheckCause::InvalidDispatchDeclaration(_)
         | CheckCause::MissingSelection { .. }
         | CheckCause::UnsupportedFeature { .. }

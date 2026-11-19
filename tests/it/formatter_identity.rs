@@ -93,6 +93,7 @@ fn private_state_source_identity(document: Vec<u8>, body: &str) {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("original private TC465 S3: {refusals:?}"));
     let original = fsl_package::emit_checked(
@@ -199,6 +200,7 @@ fn protocol_attempt_identity(declarations: &str) {
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
             )
             .unwrap_or_else(|refusals| panic!("{revision}: protocol S3 refuses: {refusals:?}"));
         let emission = fsl_package::emit_checked(
@@ -425,6 +427,7 @@ fn state_fixture_identity(case: usize) {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("state fixture {case}: original S3: {refusals:?}"));
     if case == 13 {
@@ -641,6 +644,7 @@ fn state_generated_occurrences_have_authored_regions() {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect("the original three clauses check before emission");
     let authored_names = ["ParentOrder", "NoCycle", "VersionUnchanged"];
@@ -901,6 +905,7 @@ fn ieee_fixture_identity(text: &str) {
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
             )
             .expect("the owning IEEE profile admits the fixture");
         let emission = fsl_package::emit_checked(
