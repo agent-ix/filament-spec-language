@@ -3018,8 +3018,8 @@ fn stale_protocol_reference(
 }
 
 /// Write every local dependency before the node that names it. Among nodes
-/// ready to write, use ascending node id; a recursion group's members stay
-/// together in ordinal order.
+/// ready to write, use ascending node id; emit each recursion group together
+/// with its members in ascending `Candidate` `NodeKey` order.
 fn graph_order<'c, 'g>(kept: &[&'c Candidate<'g>]) -> Vec<&'c Candidate<'g>> {
     let mut recursion_groups: HashMap<NodeKey, Vec<Option<&'c Candidate<'g>>>> = HashMap::new();
     for candidate in kept {
