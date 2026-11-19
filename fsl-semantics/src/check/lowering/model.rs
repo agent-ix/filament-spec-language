@@ -279,10 +279,16 @@ impl PackagePlace {
             let previous = rows.last().map(|row| row.member_type.clone());
             let (member_type, identity) = self.members.get(index).cloned().unwrap_or_default();
             let (declaring_type, member_identity) = match step {
-                PlaceStep::Field(_) => (
-                    previous.unwrap_or_else(|| self.declaring.clone()),
-                    identity.unwrap_or_default(),
-                ),
+                PlaceStep::Field(name) => {
+                    let declaring = previous.unwrap_or_else(|| self.declaring.clone());
+                    let identity = name
+                        .parse::<u64>()
+                        .ok()
+                        .map(|position| format!("{declaring}/tuple/{position}"))
+                        .or(identity)
+                        .unwrap_or_default();
+                    (declaring, identity)
+                }
                 PlaceStep::Slot(shape) if shape.map => {
                     let parent = previous.unwrap_or_default();
                     (parent.clone(), format!("{parent}[key]"))

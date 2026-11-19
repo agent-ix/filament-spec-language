@@ -415,9 +415,9 @@ fn model_tuple_and_union_clock_places_keep_resolved_rows() {
     use fsl_semantics::check::PlaceStep;
     let mut document: Value = serde_json::from_slice(&clocked_document_with(false)).expect("JSON");
     let identity = |name: &str| format!("ix://example/config-version/{name}");
-    let origin = |name: &str| {
-        json!({"source": {"sourceIdentity": identity(name),
-        "path": "clock-members.fspec", "startLine": 1, "startColumn": 1}})
+    let origin = |_name: &str| {
+        json!({"source": {"sourceIdentity": "ix://example/config-version/spec",
+        "path": "model.fspec", "startLine": 1, "startColumn": 1}})
     };
     let typed = |name: &str, kind: &str, extra: Value| {
         let mut ty = json!({"identity": identity(name), "displayName": name,
@@ -503,7 +503,7 @@ fn model_tuple_and_union_clock_places_keep_resolved_rows() {
         "{paths:?}"
     );
     for (root, member, declaring) in [
-        ("s", "Slot/p0", "Slot"),
+        ("s", "Slot/tuple/0", "Slot"),
         ("p", "variant/Phase-Armed", "Phase"),
     ] {
         let place = model
@@ -521,26 +521,38 @@ fn model_tuple_and_union_clock_places_keep_resolved_rows() {
         assert_eq!(terminal.declaring_type, identity(declaring));
         assert_eq!(terminal.member_identity, identity(member));
         assert_eq!(terminal.member_type, "ix://filament/native/Clock");
-        let origin_identity = if root == "s" {
+        let source_member = if root == "s" {
             document["types"]
                 .as_array()
-                .expect("types")
+                .unwrap()
                 .iter()
                 .find(|ty| ty["identity"] == identity("Slot"))
-                .expect("Slot declaration")["positions"][0]["origin"]["source"]["sourceIdentity"]
+                .unwrap()["positions"][0]["identity"]
                 .as_str()
-                .expect("tuple position origin")
+                .unwrap()
         } else {
             document["types"]
                 .as_array()
-                .expect("types")
+                .unwrap()
                 .iter()
                 .find(|ty| ty["identity"] == identity("Phase"))
-                .expect("Phase declaration")["variants"][0]["origin"]["source"]["sourceIdentity"]
+                .unwrap()["variants"][0]["identity"]
                 .as_str()
-                .expect("union case origin")
+                .unwrap()
         };
-        assert_eq!(origin_identity, terminal.member_identity);
+        if root == "s" {
+            assert_eq!(source_member, identity("Slot/p0"));
+            assert_eq!(
+                place.path(),
+                [
+                    PlaceStep::Field("s".to_owned()),
+                    PlaceStep::Field("0".to_owned())
+                ]
+            );
+        } else {
+            assert_eq!(source_member, identity("variant/Phase-Armed"));
+        }
+        assert_eq!(terminal.member_type, "ix://filament/native/Clock");
     }
 }
 
