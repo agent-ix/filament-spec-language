@@ -378,7 +378,7 @@ fn parse_float(text: &str) -> Option<ParsedFloat> {
 }
 
 fn adjusted_exponent(
-    coefficient_digits: u32,
+    coefficient_digits: u64,
     scale: u32,
     exponent_negative: bool,
     exponent: u64,
