@@ -3,7 +3,8 @@
 //! the call sites termination checking consumes.
 //!
 //! Facts are only ever added by the accepted guard forms: `present(p)` for a
-//! stable path `p`, `contains(c, v)` for stable paths `c` and `v`, and an
+//! stable path `p`, `contains(c, v)` for stable paths `c` and `v` (or a
+//! literal map key `v`), and an
 //! integer ordering or equality between a stable integer path (or
 //! `size(p)`) and an integer literal. A comparison of two
 //! non-literal operands yields no fact. The walk and every guard-fact helper
@@ -82,6 +83,8 @@ struct Facts {
     /// The membership facts `contains(c, v)`: each stable collection path
     /// `c` with the stable paths `v` it is proved to hold.
     members: PersistentMap<StablePath, Rc<BTreeSet<StablePath>>>,
+    /// Literal map keys remain distinct from stable-path membership facts.
+    map_literals: PersistentMap<StablePath, Rc<Vec<Value>>>,
     /// FR-577 difference bounds `(u, v) -> c` record `u - v <= c` for two
     /// integer value paths.
     differences: PersistentMap<(StablePath, StablePath), Integer>,
@@ -550,6 +553,21 @@ fn join(left: Option<Rc<Facts>>, right: Option<Rc<Facts>>) -> Option<Rc<Facts>> 
             members: left.members.intersect_with(&right.members, &|left, right| {
                 Rc::new(left.intersection(right).cloned().collect())
             }),
+            map_literals: left
+                .map_literals
+                .intersect_with(&right.map_literals, &|left, right| {
+                    Rc::new(
+                        left.iter()
+                            .filter(|key| {
+                                right.iter().any(|other| {
+                                    filament_exact::compare_keys(key, other)
+                                        == Some(std::cmp::Ordering::Equal)
+                                })
+                            })
+                            .cloned()
+                            .collect(),
+                    )
+                }),
             // A difference bound holds at a join only on both sides, with
             // the larger (weaker) bound retained.
             differences: left
@@ -830,6 +848,18 @@ impl<'a> Definedness<'a> {
         }
     }
 
+    /// A literal map key, preserving the checked scalar value. Integer
+    /// coercions and unary signs retain their exact integer value.
+    fn map_literal(node: CheckedNode<'_>) -> Option<Value> {
+        if is_integer(node) {
+            return Self::literal(node).map(Value::Integer);
+        }
+        match node.kind() {
+            NodeKind::Literal(CheckedLiteral(value)) => Some(value.clone()),
+            _ => None,
+        }
+    }
+
     /// Apply `subject R k` to `facts`, or `None` when it is unsatisfiable.
     fn relate(
         &self,
@@ -1077,7 +1107,8 @@ impl<'a> Definedness<'a> {
     }
 
     /// FSpec FR-146 "Membership facts": `contains(c, v)` for a stable
-    /// collection path `c` and a stable path `v` proves `contains(c, v)` and
+    /// collection path `c` and a stable path `v` (or a literal map key)
+    /// proves `contains(c, v)` and
     /// `size(c) >= 1` on its true outcome; its false outcome proves nothing.
     fn membership(
         &self,
@@ -1093,12 +1124,16 @@ impl<'a> Definedness<'a> {
             ValueType::Map(map_type) => map_cardinality(map_type),
             _ => return (unchanged(), unchanged()),
         };
-        let (Some(collection), Some(value)) = (
-            self.stable_path(collection, facts),
-            self.stable_path(value, facts),
-        ) else {
+        let literal = matches!(collection.value_type(), ValueType::Map(_))
+            .then(|| Self::map_literal(value))
+            .flatten();
+        let value = self.stable_path(value, facts);
+        let Some(collection) = self.stable_path(collection, facts) else {
             return (unchanged(), unchanged());
         };
+        if value.is_none() && literal.is_none() {
+            return (unchanged(), unchanged());
+        }
         let size = Subject::Size(collection.clone());
         let nonempty = facts
             .intervals
@@ -1111,13 +1146,22 @@ impl<'a> Definedness<'a> {
         if nonempty.is_empty() {
             return (None, unchanged());
         }
-        let mut members = facts
-            .members
-            .get(&collection)
-            .map_or_else(BTreeSet::new, |members| BTreeSet::clone(members));
-        members.insert(value);
         let mut when_true = Facts::clone(facts);
-        when_true.members.insert(collection, Rc::new(members));
+        if let Some(value) = value {
+            let mut members = facts
+                .members
+                .get(&collection)
+                .map_or_else(BTreeSet::new, |members| BTreeSet::clone(members));
+            members.insert(value);
+            when_true.members.insert(collection, Rc::new(members));
+        } else if let Some(literal) = literal {
+            let mut literals = facts
+                .map_literals
+                .get(&collection)
+                .map_or_else(Vec::new, |literals| Vec::clone(literals));
+            literals.push(literal);
+            when_true.map_literals.insert(collection, Rc::new(literals));
+        }
         when_true.intervals.insert(size, nonempty.proved());
         (Some(Rc::new(when_true)), unchanged())
     }
@@ -1666,7 +1710,8 @@ impl<'a> Definedness<'a> {
                 _ => Err(Self::refuse(node, Obligation::Presence)),
             },
             // FSpec FR-144 "Indexing": the index obligation of a map read is
-            // the membership fact `contains(m, k)` over the same stable paths.
+            // the membership fact `contains(m, k)` over the same stable paths
+            // or the same checked literal key.
             NodeKind::Index {
                 collection,
                 index,
@@ -1680,6 +1725,14 @@ impl<'a> Definedness<'a> {
                         .members
                         .get(&collection)
                         .is_some_and(|members| members.contains(&index)),
+                    (Some(collection), None) => Self::map_literal(node.at(*index))
+                        .zip(facts.map_literals.get(&collection))
+                        .is_some_and(|(index, literals)| {
+                            literals.iter().any(|literal| {
+                                filament_exact::compare_keys(literal, &index)
+                                    == Some(std::cmp::Ordering::Equal)
+                            })
+                        }),
                     _ => false,
                 };
                 if proved {
