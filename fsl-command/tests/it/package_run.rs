@@ -326,7 +326,7 @@ fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
     unit.push_str(
         "enum Mode { On, Off }\n\
          record Pair { left: Integer; right: Integer; }\n\
-         temporal Canonical using inf over (x: Config::ConfigVersion) clock \"model-steps\" on origin { always (holds(if library::positive(x.versionNumber) then contains(set[Mode::On], Mode::On) else Mode::On = Mode::On) and holds(Pair{left: 1, right: 2} = Pair{left: 1, right: 2})) }\n",
+         temporal Canonical using inf over (x: Config::ConfigVersion) clock \"model-steps\" on origin { always (holds(if library::positive(x.versionNumber) then x.versionNumber <= 2 else Mode::On = Mode::On) and holds(Pair{left: 1, right: 2} = Pair{left: 1, right: 2})) }\n",
     );
     std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
     std::fs::write(
@@ -356,7 +356,7 @@ fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
         .expect("the atom has canonical checked text");
     assert_eq!(
         atom,
-        "holds(if ix://test:package-run:library.native/positive(x.versionNumber) then contains(set[ix://test:package-run:unit.native/Mode::On], ix://test:package-run:unit.native/Mode::On) else ix://test:package-run:unit.native/Mode::On = ix://test:package-run:unit.native/Mode::On)",
+        "holds(if ix://test:package-run:library.native/positive(x.versionNumber) then x.versionNumber <= 2 else ix://test:package-run:unit.native/Mode::On = ix://test:package-run:unit.native/Mode::On)",
         "{value}"
     );
     assert_eq!(
