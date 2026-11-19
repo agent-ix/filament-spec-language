@@ -670,30 +670,31 @@ fn s2_refuses_inadmissible_input_and_undispatched_declarations() {
 
 #[trace("FR-091-AC-7", "TC-396")]
 #[trace("TC-2214", "FR-091-AC-7")]
+#[trace("FR-680-AC-1", "FR-981-AC-1")]
 #[test]
-fn a_construct_no_variant_represents_refuses_the_unit() {
-    let cases = [
-        ("xs[0]", Production::Postfix, "xs[0]"),
-        (
-            "size<Int[0, 1]>(c)",
-            Production::Primary,
-            "size<Int[0, 1]>(c)",
-        ),
-    ];
-    for (source, production, construct) in cases {
-        let (text, cause, span) = refusal(&format!(
-            "function f using v(): Boolean pure {{ {source} }}"
-        ));
-        assert!(
-            matches!(
-                &cause,
-                FormsCause::UnrepresentedConstruct { production: actual, .. }
-                    if *actual == production
-            ),
-            "{source}: {cause:?}"
+fn formerly_unrepresented_value_constructs_build_with_their_spans() {
+    for source in ["xs[0]", "size<Int[0, 1]>(c)"] {
+        let (text, function) = body(source);
+        let root = function.body.root();
+        assert_eq!(
+            function.spans().expect("source spans").body.at(&[]),
+            Some(span_of(&text, source))
         );
-        assert_eq!(cause.catalog_code(), Code::UnsupportedConstruct);
-        assert_eq!(span, Some(span_of(&text, construct)), "{source}");
+        match root.node() {
+            ExprNode::Index { operand, index } => {
+                assert_eq!(show(root.at(*operand)), "xs");
+                assert_eq!(show(root.at(*index)), "0");
+            }
+            ExprNode::Size {
+                operand,
+                type_argument: Some(result),
+            } => {
+                assert_eq!(show(root.at(*operand)), "c");
+                assert_eq!(result.head, TypeFormHead::Builtin(BuiltinType::Int));
+                assert_eq!(result.bounds, ["0", "1"]);
+            }
+            other => panic!("{source}: expected an index or typed size, got {other:?}"),
+        }
     }
 }
 
