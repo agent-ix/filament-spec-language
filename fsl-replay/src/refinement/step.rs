@@ -1401,7 +1401,19 @@ fn decide_step(
                 Err(verdict) => return verdict,
             };
             if stuttered {
-                return pass_with_states(Taken::Stutter, next);
+                // With hidden fields, `Any` retains the non-taking
+                // candidates and adds matching successors. Record a
+                // matching transition as taken so FR-143 can filter the
+                // non-taking candidate run by abstract fairness.
+                let taken = if hidden && !matched.is_empty() {
+                    match canonical(abstract_system, matched) {
+                        Ok(matched) => Taken::Abstract(matched),
+                        Err(verdict) => return verdict,
+                    }
+                } else {
+                    Taken::Stutter
+                };
+                return pass_with_states(taken, next);
             }
             match canonical(abstract_system, matched) {
                 Ok(matched) => pass_with_states(Taken::Abstract(matched), next),
