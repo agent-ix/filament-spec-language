@@ -1026,6 +1026,7 @@ pub(crate) fn run_compiled(
             prepare: *prepare,
             session: SessionLimits {
                 live_occurrences: call.live_occurrences,
+                held: 0,
             },
         },
         cancel,

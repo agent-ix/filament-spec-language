@@ -1182,6 +1182,7 @@ mod tests {
             .expect("recursive function");
         let limits = SessionLimits {
             live_occurrences: 8,
+            held: 0,
         };
         let mut registry = handle.registry_with_session_limits(limits);
         let environment = ApplicationEnvironment::new(ObjectClosure::default());

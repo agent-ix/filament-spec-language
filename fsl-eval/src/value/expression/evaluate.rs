@@ -33,7 +33,8 @@ use filament_eval::Evaluation;
 use filament_eval::FamilyOutcome;
 use filament_eval::FamilyResult;
 use filament_eval::{
-    PreconditionFailure, ProtocolReferenceUnsupported, ReferenceUnresolved, SessionLimits,
+    LiveContext, PreconditionFailure, ProtocolReferenceUnsupported, ReferenceUnresolved,
+    SessionLimits,
     StateModelUndefined,
 };
 use filament_exact::{
@@ -941,6 +942,8 @@ pub(crate) struct Machine<'a, 'm, N> {
     /// The current and peak occurrence counts of this machine's call frames.
     live_occurrences: u64,
     peak_live_occurrences: u64,
+    /// A scheduler transition context cloned for this synchronous machine.
+    live_context: Option<LiveContext>,
     peak_live_occurrences_sink: Option<Arc<AtomicU64>>,
     /// Per-slot provenance parallel to `frames`.
     frame_guard_provenance: Vec<Vec<bool>>,
@@ -1108,6 +1111,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         self
     }
 
+    /// Enforce the enclosing scheduler's aggregate count for this machine.
+    pub(crate) fn with_live_context(mut self, context: LiveContext) -> Self {
+        self.live_context = Some(context);
+        self
+    }
+
     pub(crate) fn with_peak_live_occurrences_sink(mut self, sink: Arc<AtomicU64>) -> Self {
         self.peak_live_occurrences_sink = Some(sink);
         self
@@ -1226,6 +1235,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             live_occurrences_limit: SessionLimits::default().live_occurrences,
             live_occurrences: 0,
             peak_live_occurrences: 0,
+            live_context: None,
             peak_live_occurrences_sink: None,
             frame_guard_provenance: Vec::new(),
             unavailable_slots: std::collections::BTreeMap::new(),
@@ -1431,6 +1441,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         enforce_root: bool,
     ) -> Result<Evaluation, InternalFault> {
         let root_location = root.location().cloned();
+        // The scheduler already admitted this root frame. Its context starts
+        // with that charge, so the mirrored Machine frame must not charge it
+        // again.
+        let (count_root, enforce_root) = if self.live_context.is_some() {
+            (false, false)
+        } else {
+            (count_root, enforce_root)
+        };
         if let Err(halt) = self.enter_frame(slots, arguments, count_root, enforce_root) {
             return match halt {
                 Halt::Stop(stop) => self.stopped(stop, root_location.as_ref()),
@@ -1439,9 +1457,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             };
         }
         let mut evaluation = self.drive(root)?;
-        evaluation.peak_live_occurrences = self.peak_live_occurrences;
+        evaluation.peak_live_occurrences = self.live_peak();
         if let Some(sink) = self.peak_live_occurrences_sink.as_ref() {
-            sink.fetch_max(self.peak_live_occurrences, AtomicOrdering::Relaxed);
+            sink.fetch_max(evaluation.peak_live_occurrences, AtomicOrdering::Relaxed);
         }
         Ok(evaluation)
     }
@@ -1576,22 +1594,30 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         next_charge: Integer,
         enforce_limit: bool,
     ) -> Result<(), Halt> {
-        let admitted_occurrences = next_charge.to_u64();
-        let occurrences = admitted_occurrences.unwrap_or(u64::MAX);
-        let total = self.live_occurrences.checked_add(occurrences);
-        if enforce_limit
-            && (admitted_occurrences.is_none()
-                || total.map_or(true, |total| total > self.live_occurrences_limit))
-        {
-            return Err(Halt::Stop(Stop::Incomplete(Incomplete {
-                limit_kind: LimitKind::LiveOccurrences,
-                limit: self.live_occurrences_limit,
-                consumed: self.live_occurrences,
-                next_charge,
-                charge_point: ChargePoint::FunctionCall,
-            })));
-        }
-        let total = total.unwrap_or(u64::MAX);
+        let (occurrences, total) = if let Some(context) = self.live_context.as_mut() {
+            if enforce_limit {
+                (context.open(&next_charge)?, self.live_occurrences)
+            } else {
+                (0, self.live_occurrences)
+            }
+        } else {
+            let admitted_occurrences = next_charge.to_u64();
+            let occurrences = admitted_occurrences.unwrap_or(u64::MAX);
+            let total = self.live_occurrences.checked_add(occurrences);
+            if enforce_limit
+                && (admitted_occurrences.is_none()
+                    || total.map_or(true, |total| total > self.live_occurrences_limit))
+            {
+                return Err(Halt::Stop(Stop::Incomplete(Incomplete {
+                    limit_kind: LimitKind::LiveOccurrences,
+                    limit: self.live_occurrences_limit,
+                    consumed: self.live_occurrences,
+                    next_charge,
+                    charge_point: ChargePoint::FunctionCall,
+                })));
+            }
+            (occurrences, total.unwrap_or(u64::MAX))
+        };
         provenance.resize(frame.len(), false);
         if let Some(tracked) = self.owners.as_mut() {
             tracked.push_frame(owners, frame.len());
@@ -1608,11 +1634,23 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         let Some(occurrences) = self.frame_live_occurrences.pop() else {
             return Err(invariant("evaluation-live-occurrence-frame-missing"));
         };
-        self.live_occurrences = self
-            .live_occurrences
-            .checked_sub(occurrences)
-            .ok_or_else(|| invariant("evaluation-live-occurrence-count-underflow"))?;
+        if let Some(context) = self.live_context.as_mut() {
+            if occurrences > 0 {
+                context.close(occurrences);
+            }
+        } else {
+            self.live_occurrences = self
+                .live_occurrences
+                .checked_sub(occurrences)
+                .ok_or_else(|| invariant("evaluation-live-occurrence-count-underflow"))?;
+        }
         Ok(())
+    }
+
+    fn live_peak(&self) -> u64 {
+        self.live_context
+            .as_ref()
+            .map_or(self.peak_live_occurrences, LiveContext::peak)
     }
 
     /// Evaluate `root` on the current frame to its outcome: the task loop
@@ -1838,7 +1876,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         stop: Stop,
         location: Option<&Location>,
     ) -> Result<Evaluation, InternalFault> {
-        Self::stopped_at_depth(stop, location, self.frame_depth())
+        let mut evaluation = Self::stopped_at_depth(stop, location, self.frame_depth())?;
+        evaluation.peak_live_occurrences = self.live_peak();
+        Ok(evaluation)
     }
 
     fn stopped_at_depth(

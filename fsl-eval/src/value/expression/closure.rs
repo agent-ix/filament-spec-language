@@ -92,6 +92,7 @@ where
             pre_admitted: false,
             session_limits: SessionLimits {
                 live_occurrences: filament_eval::DEFAULT_LIVE_OCCURRENCES,
+                held: 0,
             },
             peak_live_occurrences: None,
             expression: PhantomData,
@@ -320,7 +321,7 @@ where
         &self,
         task: &mut Self::Task,
         delivered: Option<Evaluation>,
-        _context: &mut LiveContext,
+        context: &mut LiveContext,
         environment: &ObjectEnvironment,
         meter: &mut Meter,
     ) -> Result<Transition, InternalFault> {
@@ -339,11 +340,12 @@ where
                     InternalFault::new("S6a", "checked-identity-not-resolved-by-package")
                 })?;
                 // The scheduler charged this application's `function.call`.
-                let mut env = EvaluationEnv::charged_with_session_limits(
+                let mut env = EvaluationEnv::charged_with_live_context(
                     package,
                     environment,
                     arguments,
                     self.session_limits,
+                    context.clone(),
                 );
                 let mut evaluation = evaluate_declaration(
                     S6aFamilyKind::Value,
@@ -354,6 +356,7 @@ where
                 if let Some(peak) = self.peak_live_occurrences.as_ref() {
                     peak.fetch_max(env.peak_live_occurrences, Ordering::Relaxed);
                 }
+                context.reach(env.peak_live_occurrences);
                 evaluation.peak_live_occurrences = env.peak_live_occurrences;
                 Ok(Transition::Done(evaluation))
             }
@@ -370,12 +373,14 @@ where
                     graph.dispatch_tables(),
                 )
                 .with_session_limits(self.session_limits)
+                .with_live_context(context.clone())
                 .with_formed_units(expression.formed_units());
                 if let Some(peak) = self.peak_live_occurrences.as_ref() {
                     machine = machine.with_peak_live_occurrences_sink(Arc::clone(peak));
                 }
                 let evaluation =
                     machine.run_expression(expression.root(), expression.slots(), parameters)?;
+                context.reach(evaluation.peak_live_occurrences);
                 Ok(Transition::Done(evaluation))
             }
             Frame::Finished => Err(InternalFault::new(

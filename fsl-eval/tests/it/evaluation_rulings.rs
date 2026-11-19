@@ -214,6 +214,7 @@ fn deep_recursion_memory_stays_within_one_kib_per_work_unit() {
         &mut run,
         filament_eval::SessionLimits {
             live_occurrences: u64::MAX,
+            held: 0,
         },
     )
     .expect("the checked package call runs");
