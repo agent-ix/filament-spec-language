@@ -4390,11 +4390,13 @@ fn a_model_variant_union_is_finite_by_its_payloads() {
 #[test]
 fn a_model_union_clock_is_live_only_in_its_active_case() {
     let choice = ident("ClockChoice");
+    let case_origin = json!({"source": {"sourceIdentity": ident("spec"),
+        "path": "clock-members.fspec", "startLine": 1, "startColumn": 1}});
     let mut armed = json!({"identity": ident("variant/ClockChoice-Armed"), "name": "Armed",
-        "origin": origin(&ident("variant/ClockChoice-Armed"))});
+        "origin": case_origin});
     armed["payloadType"] = json!("ix://filament/native/Clock");
     let idle = json!({"identity": ident("variant/ClockChoice-Idle"), "name": "Idle",
-        "origin": origin(&ident("variant/ClockChoice-Idle"))});
+        "origin": case_origin});
     let document = cells_document(
         vec![wire_type(
             &choice,

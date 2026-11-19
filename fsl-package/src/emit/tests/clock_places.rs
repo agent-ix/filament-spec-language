@@ -411,8 +411,8 @@ fn model_tuple_and_union_clock_places_read_back() {
     let mut document: Value = serde_json::from_slice(&clocked_document_with(false)).expect("JSON");
     let identity = |name: &str| format!("ix://example/config-version/{name}");
     let origin = |name: &str| {
-        json!({"generated": {"generatorIdentity": identity(name),
-        "generatorVersion": "1.0.0", "inputIdentities": [identity(name)]}})
+        json!({"source": {"sourceIdentity": identity(name),
+        "path": "clock-members.fspec", "startLine": 1, "startColumn": 1}})
     };
     let typed = |name: &str, kind: &str, extra: Value| {
         let mut ty = json!({"identity": identity(name), "displayName": name,

@@ -3084,11 +3084,8 @@ fn clock_tuple_and_union_document() -> Vec<u8> {
         serde_json::from_slice(&rpc_document_with(&["x"], false)).expect("JSON");
     let (slot, phase) = (package("Slot"), package("Phase"));
     let origin = |identity: &str| {
-        json!({"generated": {
-            "generatorIdentity": identity,
-            "generatorVersion": "1.0.0",
-            "inputIdentities": [identity],
-        }})
+        json!({"source": {"sourceIdentity": identity, "path": "clock-members.fspec",
+            "startLine": 1, "startColumn": 1}})
     };
     let types = document["types"].as_array_mut().expect("types");
     types.push(wire_type(
