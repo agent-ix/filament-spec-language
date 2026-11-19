@@ -1,1 +1,83 @@
-{"population":{"identity":"ix://agent-ix/checked-handoff/corpus_workflows","displayName":"corpus_workflows","kind":{"module":"agent-ix/checked-handoff","name":"population"},"members":["ix://agent-ix/checked-handoff/Workflow"],"extent":"closed","origin":{"generated":{"generatorIdentity":"ix://agent-ix/checked-handoff/corpus_workflows","generatorVersion":"1.0.0","inputIdentities":["ix://agent-ix/checked-handoff/corpus_workflows"]}}}}
+{
+  "population": {
+    "identity": "ix://agent-ix/checked-handoff/corpus_workflows",
+    "displayName": "corpus_workflows",
+    "kind": {
+      "module": "agent-ix/checked-handoff",
+      "name": "population"
+    },
+    "members": [
+      "ix://agent-ix/checked-handoff/Workflow"
+    ],
+    "extent": "closed",
+    "origin": {
+      "generated": {
+        "generatorIdentity": "ix://agent-ix/checked-handoff/corpus_workflows",
+        "generatorVersion": "1.0.0",
+        "inputIdentities": [
+          "ix://agent-ix/checked-handoff/corpus_workflows"
+        ]
+      }
+    }
+  },
+  "operation": {
+    "owner": "ix://agent-ix/checked-handoff/Workflow",
+    "declaration": {
+      "identity": "ix://agent-ix/checked-handoff/Workflow/probe",
+      "name": "probe",
+      "params": [
+        {
+          "identity": "ix://agent-ix/checked-handoff/Workflow/probe/n",
+          "name": "n",
+          "typeRef": "ix://agent-ix/checked-handoff/Tally",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://agent-ix/checked-handoff/Workflow/probe/n",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://agent-ix/checked-handoff/Workflow/probe/n"
+              ]
+            }
+          }
+        }
+      ],
+      "returns": {
+        "typeRef": "ix://agent-ix/checked-handoff/Tally",
+        "multiplicity": {
+          "lower": 1,
+          "upper": 1,
+          "ordered": false,
+          "unique": true
+        },
+        "nullable": false
+      },
+      "pre": [],
+      "post": [],
+      "frame": {
+        "modifies": [
+          "ix://agent-ix/checked-handoff/Workflow/tally"
+        ],
+        "creates": [],
+        "deletes": []
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://agent-ix/checked-handoff/Workflow/probe",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://agent-ix/checked-handoff/Workflow/probe"
+          ]
+        }
+      }
+    }
+  }
+}

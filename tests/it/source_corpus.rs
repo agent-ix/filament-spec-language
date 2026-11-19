@@ -1058,6 +1058,27 @@ fn stage_parameter_models(directory: &Path, fixtures: &Path) -> Result<(), Strin
                     .ok_or_else(|| format!("{base}: constructs must be an array"))?
                     .push(construct.clone());
             }
+            if let Some(operation) = extension.get("operation") {
+                let owner = operation
+                    .get("owner")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "parameter operation must name its owner".to_owned())?;
+                let declaration = operation
+                    .get("declaration")
+                    .ok_or_else(|| "parameter operation must have a declaration".to_owned())?;
+                model
+                    .get_mut("types")
+                    .and_then(Value::as_array_mut)
+                    .and_then(|types| {
+                        types.iter_mut().find(|record| {
+                            record.get("identity").and_then(Value::as_str) == Some(owner)
+                        })
+                    })
+                    .and_then(|record| record.get_mut("operations"))
+                    .and_then(Value::as_array_mut)
+                    .ok_or_else(|| format!("{base}: operation owner {owner} is absent"))?
+                    .push(declaration.clone());
+            }
         }
         std::fs::write(
             directory.join(output),
