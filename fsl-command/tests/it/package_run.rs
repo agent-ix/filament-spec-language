@@ -316,7 +316,7 @@ fn package_call_snapshot_is_admitted_by_the_v2_package_owner() {
 #[trace("FR-931-AC-11", "FR-931-AC-12")]
 fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
     let directory = tempfile::tempdir().unwrap();
-    let mut unit = crate::config_version_spine::unit_text();
+    let mut unit = crate::config_version_spine::spine::unit_text();
     unit.push_str(
         "profile inf = \"filament.temporal.infinite-trace/v1\";\n\
          enum Mode { On, Off }\n\
@@ -327,7 +327,7 @@ fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
     std::fs::write(directory.path().join("unit.native"), unit).unwrap();
     std::fs::write(
         directory.path().join("model.semantic-ir.json"),
-        crate::config_version_spine::DOMAIN_PACKAGE,
+        crate::config_version_spine::spine::DOMAIN_PACKAGE,
     )
     .unwrap();
 
