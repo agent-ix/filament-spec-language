@@ -1136,16 +1136,15 @@ fn mixed_criticality_switch_keeps_taskset_and_trigger_operation_source() {
         .cst()
         .tokens()
         .iter()
-        .filter(|token| ["Tasks", "Plant", "raise"].contains(&token.spelling()))
-        .map(|token| {
-            (
-                token.spelling(),
-                &source[token.span().start..token.span().end],
-            )
+        .filter(|token| {
+            [
+                b"Tasks".as_slice(),
+                b"Plant".as_slice(),
+                b"raise".as_slice(),
+            ]
+            .contains(&token.spelling())
         })
+        .map(|token| &source[token.span().start..token.span().end])
         .collect::<Vec<_>>();
-    assert_eq!(
-        words,
-        [("Tasks", "Tasks"), ("Plant", "Plant"), ("raise", "raise")]
-    );
+    assert_eq!(words, ["Tasks", "Plant", "raise"]);
 }
