@@ -10,8 +10,8 @@ use std::path::Path;
 
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::document::{
-    resolve_items, settle_package_run, settle_run, AnalyzeDocumentError, AnalyzeRun, ItemSelection,
-    Negotiate, PackageRun, PackageRunError, SettledRun, SubjectSelection,
+    AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, PackageRun, PackageRunError,
+    SettledRun, SubjectSelection, resolve_items, settle_package_run, settle_run,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
@@ -19,8 +19,9 @@ use fsl_semantics::model::observation::DocumentProvision;
 
 use super::settle::Settle;
 use super::{
+    FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
     check_sources, intake_with_bytes, request, request_integer_division, require_complete_edition,
-    wire, FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
+    wire,
 };
 
 fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
@@ -898,6 +899,16 @@ fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
         pointer,
         identity,
     } = refusal;
+    // FR-940 "Claim names": a name shared by two `claim_names` rows is the
+    // one ambiguous declaration, whichever reader found it.
+    let code = match (&cause, &pointer) {
+        (Some(cause), Some(pointer))
+            if cause == "ambiguous-name" && pointer.starts_with("/claim_names/") =>
+        {
+            fsl_foundation::Code::AmbiguousDeclaration
+        }
+        _ => code,
+    };
     let named = match (&identity, &pointer) {
         (Some(identity), _) => format!(": no models entry supplies {identity}"),
         (None, Some(pointer)) => format!(" at {pointer}"),
@@ -959,7 +970,7 @@ fn read_memory(
                     return Err(invalid(
                         &format!("/memory/{position}/model"),
                         "a memory model is sc, tso or ra",
-                    ))
+                    ));
                 }
             };
             Ok(fsl_eval::simulation::protocol::MemorySelection {
@@ -1093,13 +1104,13 @@ pub(super) fn validate_items(items: Option<&[ItemSelection]>) -> Result<()> {
                 return Err(invalid(
                     &format!("/items/{position}/simulation"),
                     "simulation is only valid on a simulation item",
-                ))
+                ));
             }
             (None, true) => {
                 return Err(invalid(
                     &format!("/items/{position}/simulation"),
                     "a simulation item carries its simulation member",
-                ))
+                ));
             }
             (Some(settings), true) => {
                 if item.claim.is_some() {

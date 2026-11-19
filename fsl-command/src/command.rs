@@ -9,8 +9,8 @@ mod items;
 mod monitor;
 mod output;
 mod output_file;
-pub mod plan;
 mod package_run;
+pub mod plan;
 pub use package_run::PreparedPackageRun;
 mod replay;
 mod requirements;
@@ -22,8 +22,8 @@ pub use analyze::{
     AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
     analyze_with_providers_and_limits, prepare_analyze,
 };
-pub use flow::{analyze_flow_report, FlowAnalyzeError};
-pub use monitor::{monitor, MonitorEvent, MonitorProviders, MonitorSummary};
+pub use flow::{FlowAnalyzeError, analyze_flow_report};
+pub use monitor::{MonitorEvent, MonitorProviders, MonitorSummary, monitor};
 pub use output::NativeResult;
 pub use tl::{AtomMapping, TlRecord, record as tl_record};
 
@@ -1149,9 +1149,7 @@ impl RunCause {
             Self::Output(_)
             | Self::ClauseOutput(_)
             | Self::ExportOutput { .. }
-            | Self::TlFault(_) => {
-                filament_semantic_value::catalog::Category::InternalFailure
-            }
+            | Self::TlFault(_) => filament_semantic_value::catalog::Category::InternalFailure,
             Self::SpineRun(refusal) => refusal.category(),
             Self::AnalyzeRefused(refusal) => refusal.document().category(),
             Self::MonitorRefused(refusal) => refusal.document().category(),
@@ -1161,7 +1159,9 @@ impl RunCause {
             Self::MonitorCancelled => filament_semantic_value::catalog::Category::Incomplete,
             Self::ReplayBytes { cause, .. } => cause.category(),
             Self::Replay(failure) => failure.outcome.category(),
-            Self::ReplayOutput { .. } => filament_semantic_value::catalog::Category::InternalFailure,
+            Self::ReplayOutput { .. } => {
+                filament_semantic_value::catalog::Category::InternalFailure
+            }
             _ => self.code().category(),
         }
     }
@@ -1358,15 +1358,24 @@ impl RunError {
                     .with_details(Some(details)),
                 ])
             }
-            RunCause::AnalyzePackage { cause, .. } => {
-                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
-                    OutcomeDiagnostic::new(
-                        cause.as_deref(),
-                        self.cause.code().as_str(),
-                        None,
-                        self.outcome_message(),
-                    ),
-                ])
+            RunCause::AnalyzePackage { cause, pointer, .. } => {
+                let diagnostic = OutcomeDiagnostic::new(
+                    cause.as_deref(),
+                    self.cause.code().as_str(),
+                    None,
+                    self.outcome_message(),
+                );
+                // FR-940-AC-12: a claim-name collision carries the row's path.
+                let diagnostic = match pointer {
+                    Some(pointer) if self.cause.code() == Code::AmbiguousDeclaration => diagnostic
+                        .with_details(Some(serde_json::Map::from_iter([(
+                            "path".to_owned(),
+                            serde_json::Value::String(pointer.clone()),
+                        )]))),
+                    _ => diagnostic,
+                };
+                OutcomeDocument::new(operation, None, self.category())
+                    .with_diagnostics(vec![diagnostic])
             }
             RunCause::AnalyzeNotYetImplemented { .. } => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
@@ -2654,7 +2663,16 @@ fn complete_sources(
         limits,
         integer_division,
         None,
-        |_intake, checked, selections, points, packages, _, libraries, models, inventory, failure| {
+        |_intake,
+         checked,
+         selections,
+         points,
+         packages,
+         _,
+         libraries,
+         models,
+         inventory,
+         failure| {
             let cancel = filament_exact::Cancel::new();
             let result = fsl_replay::spine::package_with_temporal_selections(
                 &checked,

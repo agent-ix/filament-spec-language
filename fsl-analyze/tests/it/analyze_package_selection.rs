@@ -449,7 +449,6 @@ fn state_graph_claims() -> &'static str {
     "FSpec-FR-322-AC-457"
 )]
 #[test]
-#[ignore = "QSL-2545: the reader returns invalid_package/ambiguous-name until the contract-ir re-pin"]
 fn package_claims_resolve_through_the_claim_name_table() {
     let body = format!("{}{}{}", bounded(), not_above_three(), reach_three());
     let items = json!([{"claim": "NotAboveThree"}, {"claim": "ReachThree"}, {"claim": "Missing"}]);
@@ -645,7 +644,6 @@ fn a_name_in_both_name_tables_is_refused_at_the_source_route() {
 /// distinct names both resolve.
 #[trace("TC-3034", "FR-940-AC-12")]
 #[test]
-#[ignore = "QSL-2545: the reader returns invalid_package/ambiguous-name until the contract-ir re-pin"]
 fn a_name_in_both_name_tables_is_refused_at_the_package_route() {
     let items = json!([{"claim": "Bounded"}, {"claim": "ReachThree"}]);
     let ws = Workspace::new("claim-name-namespace-package");
@@ -682,6 +680,9 @@ fn a_name_in_both_name_tables_is_refused_at_the_package_route() {
         path.starts_with("/claim_names/") && path.ends_with("/name"),
         "{diagnostic}"
     );
+    assert_eq!(run.exit, 20, "{diagnostic}");
+    assert_eq!(run.document()["category"], "refusal", "{diagnostic}");
+    assert_eq!(run.document()["last_stage"], Value::Null, "{diagnostic}");
     assert_eq!(run.document()["items"], json!([]));
 }
 
