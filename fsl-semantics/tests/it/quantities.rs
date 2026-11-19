@@ -88,7 +88,11 @@ fn check_quantity_scale_source(
         Vec::new(),
     )
     .expect("the quantity scaling unit assembles")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
 }
 
 /// FSpec FR-142-AC-41 (TC-1324): exact numeric scalar multiplication keeps
