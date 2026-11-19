@@ -663,15 +663,13 @@ fn every_remaining_unwritten_construct_refuses_typed_and_writes_no_clause() {
             .replace("Boolean", carries)
         )
     };
-    let cases = [
-        (
-            C::ProtocolReferenceInBody,
-            "QSL-1121g",
-            vec![C::ProtocolReferenceInBody],
-            false,
-            plain("on origin", "", main, "protocol Flow"),
-        ),
-    ];
+    let cases = [(
+        C::ProtocolReferenceInBody,
+        "QSL-1121g",
+        vec![C::ProtocolReferenceInBody],
+        false,
+        plain("on origin", "", main, "protocol Flow"),
+    )];
     let clauses = |graph: &fsl_semantics::check::CheckedGraph| {
         graph
             .semantic_graph()
