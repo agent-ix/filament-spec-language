@@ -3,7 +3,8 @@
 
 use filament_exact::{Integer, Rational};
 use fsl_semantics::check::{
-    CheckedGraph, CheckedHybridClaim, CheckedHybridModel, HybridFormula, HybridTerm,
+    CheckedGraph, CheckedHybridClaim, CheckedHybridModel, HybridActivation, HybridClock,
+    HybridFormula, HybridTerm,
 };
 use serde_json::Value;
 
@@ -588,7 +589,17 @@ fn check_witness(
                     ));
                 }
             }
-            if !decisive && violates_always_claim(graph, claim, &time, &box_, &apriori, meter)? {
+            if !decisive
+                && violates_always_claim(
+                    graph,
+                    claim,
+                    &trace.start.time,
+                    &time,
+                    &box_,
+                    &apriori,
+                    meter,
+                )?
+            {
                 decisive = true;
             }
             previous_end = time.upper.clone();
@@ -627,25 +638,50 @@ fn check_witness(
 fn violates_always_claim(
     graph: &CheckedGraph,
     claim: &CheckedHybridClaim,
+    activation_time: &super::ExactInterval,
     time: &Interval,
     box_: &[Interval],
     apriori: &[Interval],
     meter: &mut HybridReplayMeter,
 ) -> Result<bool, HybridCertificateRefusal> {
+    if claim.clock != HybridClock::ModelTime || claim.activation != HybridActivation::Origin {
+        return Ok(false);
+    }
     let fsl_semantics::check::HybridFormula::Always(region, inner) = &claim.formula else {
         return Ok(false);
     };
     let fsl_semantics::check::HybridFormula::Holds(atom) = inner.as_ref() else {
         return Ok(false);
     };
-    let start = claim
-        .horizon
+    let Some(origin) = activation_time
+        .lower
         .as_ref()
-        .and_then(|_| region.as_ref())
-        .map_or_else(zero, |interval| interval.lower.clone());
-    let end = region.as_ref().and_then(|interval| interval.upper.as_ref());
-    if time.lower.as_ref().is_none_or(|lower| lower < &start)
-        || end.is_some_and(|end| time.upper.as_ref().is_none_or(|upper| upper > end))
+        .zip(activation_time.upper.as_ref())
+        .filter(|(lower, upper)| lower == upper)
+        .map(|(lower, _)| lower)
+    else {
+        return Ok(false);
+    };
+    let start = origin.add(
+        &region
+            .as_ref()
+            .map_or_else(zero, |interval| interval.lower.clone()),
+    );
+    let end = region
+        .as_ref()
+        .and_then(|interval| interval.upper.as_ref())
+        .map(|upper| origin.add(upper));
+    let Some((time_lower, time_upper)) = time.lower.as_ref().zip(time.upper.as_ref()) else {
+        return Ok(false);
+    };
+    if time_lower < &start
+        || end.as_ref().is_some_and(|end| time_upper > end)
+        || region
+            .as_ref()
+            .is_some_and(|interval| interval.lower_open && time_lower == &start)
+        || region.as_ref().is_some_and(|interval| {
+            interval.upper_open && end.as_ref().is_some_and(|end| time_upper == end)
+        })
     {
         return Ok(false);
     }
