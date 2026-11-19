@@ -199,7 +199,7 @@ impl ClaimItem {
         }
         Ok(Self {
             request_index,
-            claim,
+            claim: claim.clone(),
             kind,
             extent,
             backend: None,
@@ -763,9 +763,7 @@ fn work<'a>(
         .get(crate::zone_check::manifest::METHOD)
         .is_some_and(|method| method == crate::model_check::manifest::METHOD_DIGITAL_CLOCKS);
     let mut built = match &item.form {
-        Some(ItemForm::FiniteHyper(form))
-            if item.kind == Capability::TemporalSatisfaction =>
-        {
+        Some(ItemForm::FiniteHyper(form)) if item.kind == Capability::TemporalSatisfaction => {
             super::finite_hyper_item::item(analysis, binding, item, form, limits)
         }
         Some(ItemForm::Temporal(_))

@@ -60,7 +60,7 @@ pub enum FinitePopulationError {
     },
 }
 
-impl<T: Eq> FiniteTracePopulation<T> {
+impl<T> FiniteTracePopulation<T> {
     /// Construct a population, rejecting empty identities, empty traces, and
     /// every repeated identity in the source document.
     pub fn new(
