@@ -68,6 +68,61 @@ fn parse_document(bytes: &[u8]) -> PackageDocument {
         .expect("the test document parses as JSON")
 }
 
+#[trace("FR-056-AC-10")]
+#[test]
+fn option_of_option_field_presence_is_admitted() {
+    use fsl_semantics::model::domain_package::{DomainPackageRecord, Presence, ValueTypeRef};
+
+    let package = crate::TEST_PACKAGE_NAME;
+    let holder = format!("ix://{package}/Holder");
+    let option = format!("ix://{package}/OptionalInteger");
+    let mut field = crate::model_operations::wire_field(
+        &format!("{holder}/value"),
+        "value",
+        &option,
+        "optional",
+        1,
+    );
+    let document = crate::model_operations::wire_envelope(
+        serde_json::json!([crate::model_operations::wire_construct(
+            "object_type",
+            fsl_semantics::model::intake::meaning::OBJECT_TYPE,
+            serde_json::json!({}),
+        )]),
+        serde_json::json!([
+            crate::model_operations::wire_type(
+                &option,
+                "option",
+                serde_json::json!({"inner": "ix://filament/native/Integer"}),
+            ),
+            crate::model_operations::wire_type(
+                &holder,
+                "object_type",
+                serde_json::json!({"supertypes": [], "fields": [field], "operations": []}),
+            ),
+        ]),
+        serde_json::json!([]),
+    );
+
+    let records = read_records(
+        package,
+        &parse_document(&serde_json::to_vec(&document).expect("serialize model")),
+    )
+    .expect("optional presence wraps the declared Option<Integer> field");
+    assert!(records.iter().any(|record| matches!(
+        record,
+        DomainPackageRecord::FieldMember(field)
+            if field.key.node == format!("{holder}/value")
+                && field.value_type == ValueTypeRef::Package(
+                    filament_checked::key::DeclarationKey {
+                        package: package.to_owned(),
+                        node: option.clone(),
+                    }
+                )
+                && field.presence == Presence::Optional
+    )));
+}
+
 #[trace("TC-145", "FR-056-AC-1")]
 #[test]
 fn the_model_reader_cohort_admits_dimensions_and_scaled_units() {
