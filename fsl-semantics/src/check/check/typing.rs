@@ -18,7 +18,7 @@
 
 use filament_checked::node::{
     CheckedLiteral, Connective, ConnectiveOrigin, IndexedKind, IntegerDivisionOperator, NodeKind,
-    RecordSlot, Visit,
+    RecordField, RecordSlot, Visit,
 };
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -40,9 +40,9 @@ use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
 use crate::check::DispatchOperation;
 use filament_exact::Cancel;
 use filament_exact::{
-    ArithmeticOperator, CollectionKind, CollectionType, DecimalType, FloatType, IeeeValue,
-    IeeeWidth, IllTypedCause, Integer, IntegerInterval, NodeKey, OrderingOperator, Rational,
-    RationalDomain, RoundingMode, Value, ValueType,
+    ArithmeticOperator, CardinalityBound, CollectionKind, CollectionType, DecimalType, FloatType,
+    IeeeValue, IeeeWidth, IllTypedCause, Integer, IntegerInterval, MapType, NodeKey,
+    OrderingOperator, Rational, RationalDomain, RoundingMode, Value, ValueType,
 };
 use filament_semantic_value::absence::AbsenceMode;
 use filament_semantic_value::call::WrongSnapshotCause;
@@ -255,6 +255,12 @@ struct ClockRefFrame<'e> {
 enum RefStep<'e> {
     Field(&'e str),
     Select(ExprRef<'e>, Location),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ClockPathPart {
+    Field(String),
+    Slot,
 }
 
 /// A form waiting on the node of one of its operands.
@@ -2954,9 +2960,24 @@ impl<'a> Typer<'a> {
                 )
                 .map(Step::Typed)
             }
-            Frame::Field(field, member_span, location) => self
-                .field(typed, field, member_span, &location)
-                .map(Step::Typed),
+            Frame::Field(field, member_span, location) => {
+                let clock_size_shape = frames
+                    .iter()
+                    .any(|frame| {
+                        matches!(frame, Frame::Unary(unary) if matches!(&unary.form, Unary::Size(_)))
+                    })
+                    .then(|| self.clock_collection_shape(&typed, field))
+                    .flatten();
+                if let Some(shape) = clock_size_shape {
+                    if let Some(clock_field) =
+                        self.clock_collection_field(typed.clone(), field, shape, &location)
+                    {
+                        return Ok(Step::Typed(clock_field));
+                    }
+                }
+                self.field(typed, field, member_span, &location)
+                    .map(Step::Typed)
+            }
             Frame::Index(frame) => self.accept_index(*frame, typed, frames),
             Frame::IndexKey(frame) => {
                 let (collection, location) = *frame;
@@ -3785,6 +3806,113 @@ impl<'a> Typer<'a> {
             Unary::Convert(target) => self.convert(&target, operand, &location),
             Unary::AllInstances(target) => self.all_instances(&target, operand, &location),
         }
+    }
+
+    /// The shape of `receiver.field` when it is a clock collection path from
+    /// this state clause's `self`.
+    fn clock_collection_shape(
+        &self,
+        receiver: &Node,
+        field: &str,
+    ) -> Option<super::lowering::model::CollectionShape> {
+        let self_slot = self.state.as_ref()?.self_slot;
+        let mut parts = vec![ClockPathPart::Field(field.to_owned())];
+        let mut current = receiver;
+        let owner = loop {
+            match &current.kind {
+                NodeKind::Local(slot) if *slot == self_slot => {
+                    let ValueType::Reference(owner) = &current.value_type else {
+                        return None;
+                    };
+                    break owner.clone();
+                }
+                NodeKind::Attribute {
+                    reference, field, ..
+                } => {
+                    parts.push(ClockPathPart::Field(field.name.clone()));
+                    current = self.body.get(*reference)?;
+                }
+                NodeKind::Field { operand, field, .. } => {
+                    parts.push(ClockPathPart::Field(field.name().to_owned()));
+                    current = self.body.get(*operand)?;
+                }
+                NodeKind::Index { collection, .. } => {
+                    parts.push(ClockPathPart::Slot);
+                    current = self.body.get(*collection)?;
+                }
+                NodeKind::Coerce(operand, _) => current = self.body.get(*operand)?,
+                _ => return None,
+            }
+        };
+        parts.reverse();
+
+        self.scope
+            .clock_places
+            .iter()
+            .filter(|(place_owner, _)| {
+                self.scope
+                    .types
+                    .conforms(owner.clone(), place_owner.clone())
+            })
+            .find_map(|(_, path)| {
+                if path.len() <= parts.len() {
+                    return None;
+                }
+                for (part, step) in parts.iter().zip(path) {
+                    let matches = match (part, step) {
+                        (ClockPathPart::Field(name), super::lowering::PlaceStep::Field(actual)) => {
+                            name == actual
+                        }
+                        (ClockPathPart::Slot, super::lowering::PlaceStep::Slot(_)) => true,
+                        _ => false,
+                    };
+                    if !matches {
+                        return None;
+                    }
+                }
+                match path.get(parts.len()) {
+                    Some(super::lowering::PlaceStep::Slot(shape)) => Some(*shape),
+                    Some(_) | None => None,
+                }
+            })
+    }
+
+    /// Type a clock collection field for size checking without adding it to
+    /// the record's ordinary data fields.
+    fn clock_collection_field(
+        &mut self,
+        receiver: Node,
+        field: &str,
+        shape: super::lowering::model::CollectionShape,
+        location: &Location,
+    ) -> Option<Node> {
+        let ValueType::Composite(declaration) = &receiver.value_type else {
+            return None;
+        };
+        let bound = match shape.max {
+            Some(maximum) => Some(CardinalityBound::new(shape.min, maximum).ok()?),
+            None => None,
+        };
+        let value_type = if shape.map {
+            ValueType::Map(MapType::new(ValueType::Integer, ValueType::Bytes, bound).ok()?)
+        } else {
+            let kind = match (shape.ordered, shape.unique) {
+                (true, false) => CollectionKind::Sequence,
+                (false, true) => CollectionKind::Set,
+                (false, false) => CollectionKind::Bag,
+                (true, true) => CollectionKind::OrderedSet,
+            };
+            ValueType::collection(CollectionType::new(kind, ValueType::Bytes, bound))
+        };
+        Some(node(
+            NodeKind::Field {
+                operand: self.push(receiver),
+                field: RecordField::new(declaration.clone(), field),
+                optional: false,
+            },
+            value_type,
+            location,
+        ))
     }
 
     fn accept_query<'e, 'r>(
