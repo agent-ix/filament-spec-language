@@ -47,6 +47,15 @@ impl Definedness<'_> {
             _ => None,
         };
         let literal = self.numeric_literal(operand);
+        // Membership uses the exact converted value; the equality conversion
+        // table conservatively bounds decimal numerator and denominator ranges.
+        if let (Some(Value::Decimal(value)), ValueType::Rational(target)) =
+            (&literal, node.value_type())
+        {
+            if target.contains(&value.representation().to_rational()) {
+                return Ok(());
+            }
+        }
         if let (Some(Value::Decimal(value)), ValueType::Decimal(target)) =
             (&literal, node.value_type())
         {

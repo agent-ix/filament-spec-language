@@ -114,6 +114,28 @@ fn rational_narrowing_checks_normalized_parts_and_refuses_each_bad_part() {
 
 #[trace("FR-093-AC-67", "FR-096-AC-8", "FSpec-FR-149")]
 #[test]
+fn fractional_decimal_narrowing_evaluates_to_exact_half() {
+    let package = package("function f using v(): Rational[1,1;2,2] pure { let d: Decimal[0,90;1,1;exact] = decimal(5,1) in convert<Rational[1,1;2,2]>(d) }", CheckMode::Linked);
+    let result = package
+        .call(
+            &QualifiedName::unqualified("f").unwrap(),
+            Vec::new(),
+            &ObjectEnvironment::default(),
+            &mut Meter::new(super::quantity_literals::UNLIMITED),
+        )
+        .unwrap();
+    assert!(result.losses.is_empty());
+    match result.outcome {
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Rational(value))) => {
+            assert_eq!(value.numerator(), &Integer::from(1_i64));
+            assert_eq!(value.denominator(), &Integer::from(2_i64));
+        }
+        other => panic!("expected exact 1/2: {other:?}"),
+    }
+}
+
+#[trace("FR-093-AC-67", "FR-096-AC-8", "FSpec-FR-149")]
+#[test]
 fn decimal_narrowing_preserves_values_without_rounding_or_clamping() {
     let package = package("function f using v(d: Decimal[-20,20;0,0;nearest-even]): Decimal[0,9;0,0;nearest-even] pure { convert<Decimal[0,9;0,0;nearest-even]>(d) }", CheckMode::Kernel);
     let result = call(

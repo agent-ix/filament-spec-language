@@ -129,6 +129,16 @@ fn rational_narrowing_lowers_to_rational_narrow() {
 
 #[trace("FR-093-AC-67", "FSpec-FR-149")]
 #[test]
+fn fractional_decimal_proves_exact_rational_membership_and_retains_range_narrowing() {
+    assert_operation("function f using v(): Rational[1,1;2,2] pure { let d: Decimal[0,90;1,1;exact] = decimal(5,1) in convert<Rational[1,1;2,2]>(d) }", "filament.op.numeric.narrow", CheckMode::Linked);
+    assert_unproved("function f using v(d: Decimal[0,90;1,1;exact]): Rational[1,1;2,2] pure { convert<Rational[1,1;2,2]>(d) }");
+    for target in ["Rational[2,2;2,2]", "Rational[1,1;3,3]"] {
+        assert_unproved(&format!("function f using v(): {target} pure {{ let d: Decimal[0,90;1,1;exact] = decimal(5,1) in convert<{target}>(d) }}"));
+    }
+}
+
+#[trace("FR-093-AC-67", "FSpec-FR-149")]
+#[test]
 fn decimal_to_integer_is_exact_or_range_narrowing() {
     assert_operation(
         "function f using v(d: Decimal[0,9;0,0;exact]): Integer pure { convert<Integer>(d) }",
