@@ -12,7 +12,7 @@
 //! `inconclusive`, `ReplayParity`. Replay needs no model checker and reads no
 //! path, environment variable or clock.
 //!
-//! A lasso (`Divergence` or `AbstractUnfair`, FR-143) is replayed over the
+//! A lasso (`Divergence`, `AbstractUnfair`, or `HiddenUnfair`, FR-143/FR-899) is replayed over the
 //! prefix and one pass of its loop. Its loop must close in the product, with
 //! the history values and candidates it entered with, and be fair under
 //! `F_C` as FR-128 reads fairness from the concrete system. The recorded
@@ -1391,7 +1391,8 @@ fn replay_lasso(
         constraint: Some(constraint),
         protocol_class: None,
     })
-    | Some(RefinementFailure::AbstractUnfair { constraint })) = payload.refinement.as_ref()
+    | Some(RefinementFailure::AbstractUnfair { constraint })
+    | Some(RefinementFailure::HiddenUnfair { constraint })) = payload.refinement.as_ref()
     else {
         return Err(refused(ModelTraceRefusal::NoRefinementFailure));
     };
@@ -1515,6 +1516,15 @@ fn replay_lasso(
         (Some(RefinementFailure::Divergence { .. }), true, true)
             if constraint.kind() == FairnessKind::Weak =>
         {
+            RefinementTraceSettlement::Reproduced {
+                failure: payload
+                    .refinement
+                    .clone()
+                    .ok_or_else(|| fault("a-lasso-names-a-failure"))?,
+                mapped,
+            }
+        }
+        (Some(RefinementFailure::HiddenUnfair { .. }), true, _) => {
             RefinementTraceSettlement::Reproduced {
                 failure: payload
                     .refinement
