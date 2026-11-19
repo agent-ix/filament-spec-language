@@ -82,7 +82,11 @@ fn fixture_with(relationships: serde_json::Value) -> Fixture {
     let graph =
         admit_and_assemble_with_body(&document, "function noop using v(): Boolean pure { true }")
             .expect("assemble model")
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
             .expect("check model");
     let model = StateModel::new(
         graph.model_selections(),

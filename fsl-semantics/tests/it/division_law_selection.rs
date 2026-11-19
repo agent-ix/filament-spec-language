@@ -147,13 +147,18 @@ fn a_large_remainder_keeps_its_exact_range_or_reports_the_work_limit() {
     let body = "function big using v(a: Int[1000000007,1000000007], b: Int[2,1000000006]): Int[1,500000003] pure { a rem b }";
     assemble(&headers, body)
         .unwrap()
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap();
     let denied = assemble(&headers, body)
         .unwrap()
         .check(
             CheckMode::Linked,
             CheckingLimits::default().with_work_budget(10000),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .unwrap_err();
     assert_eq!(denied.len(), 1, "{denied:?}");
@@ -169,7 +174,11 @@ fn a_large_remainder_keeps_its_exact_range_or_reports_the_work_limit() {
     let too_narrow = body.replace("Int[1,500000003] pure", "Int[2,500000003] pure");
     let refused = assemble(&headers, &too_narrow)
         .unwrap()
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_err();
     assert_eq!(
         pairs(&refused),
@@ -194,7 +203,11 @@ fn a_law_header_admits_div_and_rem_under_that_law() {
             .unwrap_or_else(|| panic!("{law}: the header selects the law"));
         assert_eq!(selected.profile(), profile);
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{law}: {refusals:?}"));
     }
 }
@@ -232,7 +245,11 @@ fn two_different_law_headers_refuse_conflicting_definition() {
             "{:?}",
             pairs(
                 &declarations
-                    .check(CheckMode::Linked, CheckingLimits::default())
+                    .check(
+                        CheckMode::Linked,
+                        CheckingLimits::default(),
+                        &crate::reward_evaluator::ZeroRewardEvaluator
+                    )
                     .expect_err("two laws are refused")
             )
         ),
@@ -266,7 +283,11 @@ fn a_law_alias_in_using_refuses_wrong_selection_role() {
     )
     .and_then(|declarations| {
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
             .map_err(|refusals| format!("{:?}", pairs(&refusals)))
     });
     let refused = outcome.expect_err("a law alias governs no declaration");
@@ -535,6 +556,7 @@ fn the_remainder_walk_is_bounded_by_the_checking_work_ceiling() {
         .check(
             CheckMode::Linked,
             CheckingLimits::default().with_work_budget(10_000),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("the walk needs more than 10000 runs");
     assert_eq!(refusals.len(), 1, "{refusals:?}");

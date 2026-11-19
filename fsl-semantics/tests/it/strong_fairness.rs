@@ -199,7 +199,11 @@ fn node_identity(written: &str) -> filament_exact::NodeKey {
     )
     .unwrap_or_else(|refusal| panic!("{body}: the unit assembles: {refusal:?}"));
     let graph = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{body}: the package checks: {refusals:?}"));
     let [clause] = graph.temporal_clauses() else {
         panic!("{body}: one emitted clause");
