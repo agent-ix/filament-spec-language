@@ -1457,9 +1457,6 @@ fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<Model
         // normalization can report the ordered FSL loci.
         .filter(|located| !process_subtype_generalization_schema_diagnostic(document, located))
         .filter_map(|located| {
-            if let Some(refusal) = clock_variant_payload_refusal(document, located) {
-                return Some(refusal);
-            }
             if let Some(refusal) = missing_option_inner_schema_refusal(document, located) {
                 return Some(refusal);
             }
@@ -1509,53 +1506,6 @@ fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<Model
     } else {
         Err(refusals)
     }
-}
-
-/// FSpec FR-154-AC-25 classifies a `Clock` variant payload as an unsupported
-/// payload, although the FCD reader reports `INVALID_CLOCK_MEMBER`. Project
-/// that reader diagnostic to FSL's `unsupported_construct` outcome at the
-/// variant payload locus instead of exposing the generic malformed mapping.
-#[ix_trace_rs::string_edge]
-fn clock_variant_payload_refusal(
-    document: &PackageDocument,
-    located: &agent_ix_semantic_ir::diag::Located,
-) -> Option<ModelRefusal> {
-    if located.code != "agent-ix.semantic-ir.INVALID_CLOCK_MEMBER" {
-        return None;
-    }
-    let pointer = located
-        .pointer
-        .strip_prefix("/ir")
-        .unwrap_or(&located.pointer);
-    let mut segments = pointer.strip_prefix('/')?.split('/');
-    if segments.next()? != "types" {
-        return None;
-    }
-    let type_index = segments.next()?.parse::<usize>().ok()?;
-    if segments.next()? != "variants" {
-        return None;
-    }
-    let variant_index = segments.next()?.parse::<usize>().ok()?;
-    if segments.next()? != "payloadType" || segments.next().is_some() {
-        return None;
-    }
-    let case = document
-        .tree
-        .get("types")?
-        .as_array()?
-        .get(type_index)?
-        .get("variants")?
-        .as_array()?
-        .get(variant_index)?;
-    if case.get("payloadType")?.as_str()? != "ix://filament/native/Clock" {
-        return None;
-    }
-    Some(unsupported_member(
-        case,
-        &format!("$.types[{type_index}].variants[{variant_index}]"),
-        MemberPath::new(MemberRoot::Variant).name("payloadType"),
-        format!("{}:payloadType", meaning::VARIANT_TYPE),
-    ))
 }
 
 /// The semantic-IR schema reports a missing required Option `inner` at the
@@ -4873,7 +4823,7 @@ pub(super) fn read_tuple_value_type(
             }
         };
         let supported = match &value_type {
-            ValueTypeRef::Clock => false,
+            ValueTypeRef::Clock => true,
             ValueTypeRef::Package(_)
                 if names_unbounded_rational(&value_type, unbounded_rationals) =>
             {
@@ -4934,16 +4884,15 @@ fn names_unbounded_rational(
     matches!(value_type, ValueTypeRef::Package(key) if unbounded_rationals.contains(&key.node))
 }
 
-/// Whether `payload_type` resolves to an admitted model or native value type.
-/// `Clock` is not admitted as a union payload (FSpec FR-154-AC-25); tuple
-/// positions have their separate FR-322 admission rule. A unit is a location,
+/// Whether `payload_type` resolves to an admitted model or native value type
+/// or a clock place. A unit is a location,
 /// and an unresolved or non-value package meaning is not a union payload type.
 fn variant_payload_is_value_type(
     payload_type: &ValueTypeRef,
     type_meanings: &HashMap<&str, &str>,
 ) -> bool {
     match payload_type {
-        ValueTypeRef::Clock => false,
+        ValueTypeRef::Clock => true,
         ValueTypeRef::Unit(_) => false,
         ValueTypeRef::Native(_) => true,
         ValueTypeRef::Resolved(_) => false,

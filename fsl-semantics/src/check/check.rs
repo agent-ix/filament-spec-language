@@ -48,10 +48,10 @@ use filament_checked::node::{
     Arithmetic, CheckedLiteral, Connective, ConnectiveOrigin, NodeKind, OrderedKind, RecordField,
     RecordSlot, Visit,
 };
-use fsl_foundation::source::node_table::{
-    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList,
-};
 use fsl_foundation::Span;
+use fsl_foundation::source::node_table::{
+    DebugTable, DebugWith, NodeKeyDebug, NodeList, standalone,
+};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -72,8 +72,8 @@ use super::refusal::{
     IdentityObserving, KeyFault, Obligation, StageLimitCause,
 };
 use crate::model::operation::OperationTable;
-use crate::value::definition::{admit_ieee_profile, AdmittedIeeeProfile, DefinitionRole};
-use crate::value::enumeration::{mint_variant_id, AdmittedEnumDeclaration};
+use crate::value::definition::{AdmittedIeeeProfile, DefinitionRole, admit_ieee_profile};
+use crate::value::enumeration::{AdmittedEnumDeclaration, mint_variant_id};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
 use filament_exact::EffectiveId;
@@ -90,8 +90,8 @@ use filament_exact::{Value, ValueType};
 use filament_semantic_value::absence::AbsenceMode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
-    admits_equality_conversion, CompositeShape, EqualityOperand, EqualityOperator,
-    FieldDeclaration, TypeEnvironment,
+    CompositeShape, EqualityOperand, EqualityOperator, FieldDeclaration, TypeEnvironment,
+    admits_equality_conversion,
 };
 use filament_semantic_value::enumeration::{EnumDeclaration, EnumMemberIndex, EnumValue};
 use filament_semantic_value::location::{
@@ -99,8 +99,8 @@ use filament_semantic_value::location::{
 };
 use filament_semantic_value::quantity::UnitTable;
 use filament_semantic_value::quantity::{
-    check_comparable, evaluate_quantity_unit, result_unit, IdentifiedUnit, QuantityOperation,
-    QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
+    IdentifiedUnit, QuantityOperation, QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
+    check_comparable, evaluate_quantity_unit, result_unit,
 };
 use fsl_forms::{
     Accumulation, BinaryOperator, BinderQuery, ClauseKind, ExprId, ExprNode, ExprRef,
@@ -960,11 +960,17 @@ pub struct ModelRecords {
     /// holds an empty map.
     renamed: BTreeMap<(filament_exact::NodeKey, filament_exact::NodeKey), BTreeMap<String, String>>,
     events: BTreeSet<filament_exact::NodeKey>,
+    /// Authored tuple positions mapped to data positions; clocks have no data slot.
+    tuple_positions: BTreeMap<filament_exact::NodeKey, Vec<Option<usize>>>,
 }
 
 impl DebugWith for ModelRecords {
     fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, table: &DebugTable) -> std::fmt::Result {
-        let Self { renamed, events } = self;
+        let Self {
+            renamed,
+            events,
+            tuple_positions,
+        } = self;
         f.debug_struct("ModelRecords")
             .field(
                 "renamed",
@@ -979,6 +985,13 @@ impl DebugWith for ModelRecords {
                     .collect::<Vec<_>>(),
             )
             .field("events", &NodeList(events.iter(), table))
+            .field(
+                "tuple_positions",
+                &tuple_positions
+                    .iter()
+                    .map(|(key, positions)| (NodeKeyDebug(key, table), positions))
+                    .collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
@@ -1010,12 +1023,21 @@ impl ModelRecords {
         self.events.insert(declaration);
     }
 
+    pub(crate) fn declare_tuple_positions(
+        &mut self,
+        declaration: filament_exact::NodeKey,
+        positions: Vec<Option<usize>>,
+    ) {
+        self.tuple_positions.insert(declaration, positions);
+    }
+
     /// Every entry of `other`.
     pub(crate) fn extend(&mut self, other: ModelRecords) {
         for (key, names) in other.renamed {
             self.renamed.entry(key).or_default().extend(names);
         }
         self.events.extend(other.events);
+        self.tuple_positions.extend(other.tuple_positions);
     }
 
     /// The name under which a value of `declaration` keeps `field`.
@@ -2089,6 +2111,19 @@ impl Scope {
         fields.iter().position(|candidate| candidate.name() == name)
     }
 
+    pub(crate) fn tuple_data_position(
+        &self,
+        declaration: &filament_exact::NodeKey,
+        position: usize,
+    ) -> Option<usize> {
+        self.model_records
+            .tuple_positions
+            .get(declaration)
+            .map_or(Some(position), |positions| {
+                positions.get(position).copied().flatten()
+            })
+    }
+
     /// The package's model object types' declared operations (FR-103).
     pub fn operations(&self) -> &OperationTable {
         &self.operations
@@ -2649,9 +2684,9 @@ pub(super) struct AbsentComparison<'e> {
     /// The owner's location.
     pub(super) owner_location: Location,
     /// The place's field.
-    pub(super) field: &'e str,
+    pub(super) field: String,
     /// The union case of the place, when it is one.
-    pub(super) case: Option<&'e str>,
+    pub(super) case: Option<String>,
     /// Whether the comparison requires the place present (`!=`).
     pub(super) present: bool,
 }
@@ -3550,7 +3585,7 @@ impl<'a> Typer<'a> {
                 return Err(CheckRefusal::ill_typed(
                     location,
                     IllTypedCause::AmbiguousLiteral,
-                ))
+                ));
             }
             Some(ValueType::Rational(domain)) => domain,
             Some(_) => return Err(mismatch(location)),
@@ -3609,7 +3644,7 @@ impl<'a> Typer<'a> {
                 return Err(CheckRefusal::ill_typed(
                     location,
                     IllTypedCause::AmbiguousLiteral,
-                ))
+                ));
             }
             Some(ValueType::Decimal(domain)) => domain,
             Some(_) => return Err(mismatch(location)),
@@ -4230,7 +4265,7 @@ impl<'a> Typer<'a> {
                         return Err(CheckRefusal::ill_typed(
                             location,
                             IllTypedCause::AmbiguousLiteral,
-                        ))
+                        ));
                     }
                 }
             }
@@ -4506,38 +4541,47 @@ impl<'a> Typer<'a> {
     pub(super) fn place_operand<'e>(
         &self,
         operand: fsl_forms::ExprRef<'e>,
-    ) -> Option<(fsl_forms::ExprRef<'e>, &'e str, Option<&'e str>, usize)> {
+    ) -> Option<(fsl_forms::ExprRef<'e>, String, Option<String>, usize)> {
         if self.presence_places.is_empty() {
             return None;
         }
-        let fsl_forms::ExprNode::Field {
-            operand: owner,
-            field,
-            ..
-        } = operand.node()
-        else {
-            return None;
-        };
-        let names = |field: &str, case: Option<&str>| {
-            self.presence_places
-                .iter()
-                .any(|place| !place.slot && place.field == field && place.case.as_deref() == case)
-        };
-        if names(field, None) {
-            return Some((operand.at(*owner), field.as_str(), None, 1));
+        let mut path = Vec::new();
+        let mut owner = operand;
+        loop {
+            match owner.node() {
+                fsl_forms::ExprNode::Field {
+                    operand: before,
+                    field,
+                    ..
+                } => {
+                    path.push(field.clone());
+                    owner = owner.at(*before);
+                }
+                fsl_forms::ExprNode::Index {
+                    operand: before,
+                    index,
+                } => {
+                    let fsl_forms::ExprNode::Integer(position) = owner.at(*index).node() else {
+                        return None;
+                    };
+                    path.push(position.to_u64()?.to_string());
+                    owner = owner.at(*before);
+                }
+                fsl_forms::ExprNode::SelfRef if !path.is_empty() => break,
+                _ => return None,
+            }
         }
-        let fsl_forms::ExprNode::Field {
-            operand: object,
-            field: union,
-            ..
-        } = operand.at(*owner).node()
-        else {
-            return None;
-        };
-        names(union, Some(field)).then(|| {
-            let owner = operand.at(*owner);
-            (owner.at(*object), union.as_str(), Some(field.as_str()), 2)
-        })
+        path.reverse();
+        let place = self.presence_places.iter().find(|place| {
+            !place.slot
+                && place.path.len() == path.len()
+                && place.path.iter().zip(&path).all(|(step, read)| match step {
+                    super::lowering::PlaceStep::Field(name)
+                    | super::lowering::PlaceStep::Union(name) => name == read,
+                    super::lowering::PlaceStep::Slot(_) => false,
+                })
+        })?;
+        Some((owner, place.field.clone(), place.case.clone(), path.len()))
     }
 
     /// Whether `operand`, the operand of a field read `operand.op`, is
@@ -5769,7 +5813,7 @@ impl<'a> Typer<'a> {
         let source_type = source_type.clone();
         match (form, identity) {
             (Accumulation::Fold, false) | (Accumulation::Reduce, true) => {
-                return Err(mismatch(location))
+                return Err(mismatch(location));
             }
             (Accumulation::Fold, true) | (Accumulation::Reduce, false) => {}
         }

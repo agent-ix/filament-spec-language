@@ -65,6 +65,7 @@ const CHECKS: &[Check] = &[
     Check { package: "fsl-package", target: Target::Lib, selection: "checked_v2::tests::conformance_dependency_selection_vectors", summaries: &[&["conformance: ", " dependency-selection entry mutations and ", " order vectors"]], summary_mode: SummaryMode::Exact },
     Check { package: "fsl-package", target: Target::Lib, selection: "emit::tests::golden::conformance_emitted_application_nodes_match_fspec_positive_fixtures", summaries: &[&["conformance: ", " emitted application nodes match FSpec's positive fixtures"]], summary_mode: SummaryMode::Exact },
     Check { package: "fsl-semantics", target: Target::Test, selection: "complete_value_lock::conformance_admit_selection_matches_fspec_vectors", summaries: &[&["conformance: ", " accepted and ", " refused selection vectors"]], summary_mode: SummaryMode::Exact },
+    Check { package: "fsl-semantics", target: Target::Test, selection: "variant_type::conformance_clock_tuple_union_intake_vectors_are_admitted", summaries: &[&["conformance: ", " Clock tuple/union intake vectors admitted"]], summary_mode: SummaryMode::Exact },
     Check { package: "fsl-package", target: Target::Lib, selection: "checked_v2::tests::protocol_corpus::conformance_protocol_vector_positive_packages_are_admitted", summaries: &[&["conformance: ", " protocol vector positive packages admitted"]], summary_mode: SummaryMode::Exact },
 ];
 
