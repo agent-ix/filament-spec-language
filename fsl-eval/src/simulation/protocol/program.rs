@@ -983,7 +983,11 @@ impl<'a> Program<'a> {
                 fsl_package::protocol_view::ControlOperation::Sequence => ControlStep::Sequence,
                 fsl_package::protocol_view::ControlOperation::Parallel => ControlStep::Parallel,
                 fsl_package::protocol_view::ControlOperation::Attempt => ControlStep::Attempt,
-                _ => return Err(ProtocolRefusal::fault("a-package-control-is-supported")),
+                operation => {
+                    return Err(ProtocolRefusal::Unsupported(
+                        super::Unsupported::PackageControl(operation),
+                    ));
+                }
             };
             controls.insert(
                 control.id,

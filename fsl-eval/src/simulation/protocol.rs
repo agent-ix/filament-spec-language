@@ -120,6 +120,12 @@ pub enum Unsupported {
     /// A step binder whose record type has no enumeration here: a type with
     /// a field of no finite domain, such as a text type or a map.
     UnenumerableRecord,
+    /// A checked package protocol operation this transition program does
+    /// not step.
+    PackageControl(fsl_package::protocol_view::ControlOperation),
+    /// A package protocol declares a replicated role this program does not
+    /// step yet.
+    PackageReplicatedRole,
 }
 
 impl Unsupported {
@@ -128,6 +134,8 @@ impl Unsupported {
         match self {
             Self::WeakMemory => "memory",
             Self::UnenumerableRecord => "step binder of an unenumerable record type",
+            Self::PackageControl(_) => "package protocol control",
+            Self::PackageReplicatedRole => "package replicated role",
         }
     }
 }
@@ -906,8 +914,13 @@ pub fn explore_protocol<M: MemoryModel>(
     limits: crate::simulation::explore::Limits,
     poll: impl FnMut() -> bool,
 ) -> Result<crate::simulation::explore::Exploration<ModelFinding>, NotSimulated> {
-    check_attempt_types(&system.model, system.protocol, system.evaluator)?;
-    let domains = subject_domains(&system.model, system.protocol, system.evaluator);
+    if let Some(protocol) = system.protocol {
+        check_attempt_types(&system.model, protocol, system.evaluator)?;
+    }
+    let domains = system.protocol.map_or_else(
+        || system.model.rooted_domains(),
+        |protocol| subject_domains(&system.model, protocol, system.evaluator),
+    );
     crate::simulation::explore::explore_request(
         system,
         &roots(&domains),
@@ -1138,7 +1151,8 @@ pub type ProtocolSuccessorsAndTerminal<M> = (
 pub struct ProtocolSystem<'a, M: MemoryModel> {
     model: ModelSystem<'a>,
     evaluator: &'a dyn ModelEvaluator,
-    protocol: &'a CheckedProtocol,
+    protocol: Option<&'a CheckedProtocol>,
+    protocol_name: String,
     program: Program<'a>,
     /// The admitted package execution form, when this system was built from
     /// package nodes rather than a source `CheckedProtocol`.
@@ -1350,13 +1364,178 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         let mut system = Self {
             model,
             evaluator,
-            protocol,
+            protocol: Some(protocol),
+            protocol_name: protocol.name.clone(),
             program,
             package_program: None,
             memory,
             channel_message_bound: None,
             delivery_reads: None,
             message_reads: None,
+            governing,
+            weak_ancestors,
+            weak_parallel_paths,
+            attempts_by_weak_context,
+            non_atomic: weak.non_atomic(),
+            potential: weak,
+            initial_enabled: enabled,
+            over_values,
+            roles,
+            universes: Vec::new(),
+            max_live_instances: DEFAULT_MAX_LIVE_INSTANCES,
+            initial: Vec::new(),
+            model_footprints: std::sync::Mutex::default(),
+        };
+        system.universes = system.role_universes()?;
+        system.initial = system.initial_states()?;
+        Ok(system)
+    }
+
+    /// FR-940: build the sequence, weak-parallel, attempt and finish
+    /// transition system directly from the admitted package protocol form.
+    /// The checked package node identities remain the expression and
+    /// operation authority throughout execution.
+    pub fn new_package(
+        model: ModelSystem<'a>,
+        subject: &ProtocolSubject<'a>,
+        memory: M,
+    ) -> Result<Self, ProtocolRefusal> {
+        let input = &subject.model.simulation.input;
+        let form = input
+            .protocol_definition(&subject.protocol)
+            .and_then(|definition| match definition {
+                super::model::ProtocolDefinition::Package(form) => Some(form),
+                super::model::ProtocolDefinition::Source(_) => None,
+            })
+            .ok_or_else(|| ProtocolRefusal::UnknownProtocol {
+                protocol: subject.protocol.clone(),
+            })?;
+        let package = PackageProtocolProgram::with_memory(input, form, subject.memory.clone())
+            .map_err(|refusal| match refusal {
+                PackageProgramRefusal::Memory(refusal) => ProtocolRefusal::Memory(refusal),
+                PackageProgramRefusal::Unsupported(operation) => {
+                    ProtocolRefusal::Unsupported(Unsupported::PackageControl(operation))
+                }
+                _ => ProtocolRefusal::fault("a-selected-package-protocol-builds"),
+            })?;
+        if let Some(binding) = subject.capacities.first() {
+            return Err(ProtocolRefusal::Capacity(CapacityRefusal::UnknownName {
+                name: binding.name.clone(),
+            }));
+        }
+        if package.roles.iter().any(|role| role.replicated) {
+            return Err(ProtocolRefusal::Unsupported(
+                Unsupported::PackageReplicatedRole,
+            ));
+        }
+        let mut roles = Vec::new();
+        for role in package.roles.iter().filter(|role| !role.replicated) {
+            let binding = subject
+                .roles
+                .iter()
+                .find(|binding| binding.role == role.name)
+                .ok_or_else(|| ProtocolRefusal::RoleMapping {
+                    role: role.name.clone(),
+                })?;
+            let admits = model
+                .declaring_package(role.model_identity.clone())
+                .is_some_and(|declaring| declaring == binding.model);
+            if !admits {
+                return Err(ProtocolRefusal::RoleMapping {
+                    role: role.name.clone(),
+                });
+            }
+            roles.push((role.name.clone(), binding.model.clone()));
+        }
+        if let Some(unknown) = subject.roles.iter().find(|binding| {
+            !package
+                .roles
+                .iter()
+                .any(|role| !role.replicated && role.name == binding.role)
+        }) {
+            return Err(ProtocolRefusal::RoleMapping {
+                role: unknown.role.clone(),
+            });
+        }
+        let over_values = match &package.over_type {
+            ValueType::Reference(object_type) => {
+                let instances = model.instances(&package.over_type).map_err(|_| {
+                    ProtocolRefusal::OverBinding {
+                        parameter: "over".to_owned(),
+                        object: subject.over.key.clone(),
+                    }
+                })?;
+                if !instances.contains(&subject.over) {
+                    return Err(ProtocolRefusal::OverBinding {
+                        parameter: "over".to_owned(),
+                        object: subject.over.key.clone(),
+                    });
+                }
+                vec![Value::Reference(
+                    model
+                        .bound_reference(object_type.clone(), &subject.over)
+                        .map_err(|_| ProtocolRefusal::fault("a-package-over-reference-resolves"))?,
+                )]
+            }
+            _ => {
+                return Err(ProtocolRefusal::fault(
+                    "package-protocol-over-is-a-reference-value",
+                ));
+            }
+        };
+        let governing = package
+            .governing_models()
+            .map_err(ProtocolRefusal::Memory)?;
+        let implemented = memory.models();
+        if governing
+            .values()
+            .any(|resolved| !implemented.contains(resolved))
+        {
+            return Err(ProtocolRefusal::Unsupported(Unsupported::WeakMemory));
+        }
+        let program = Program::new_package(&model, &package)?;
+        let mut enabled = WeakAccesses::default();
+        let mut weak = WeakAccesses::default();
+        for over in &over_values {
+            enabled.extend(classify_package_accesses(&model, &package, over, false)?);
+            weak.extend(classify_package_accesses(&model, &package, over, true)?);
+        }
+        let weak_ancestors = access::weak_ancestors(&program, &governing)?;
+        let mut weak_parallel_paths = BTreeSet::new();
+        for (node, resolved) in &governing {
+            if resolved.is_weak()
+                && program.control(*node)?.step == fsl_semantics::check::ControlStep::Parallel
+            {
+                weak_parallel_paths.insert(program.text(*node)?.to_owned());
+            }
+        }
+        let mut attempts_by_weak_context = BTreeMap::new();
+        for node in program.attempts.keys() {
+            let Some(ancestors) = weak_ancestors.get(node) else {
+                return Err(ProtocolRefusal::fault("an-attempt-has-weak-ancestors"));
+            };
+            let context = ancestors
+                .iter()
+                .rev()
+                .filter(|ancestor| ancestor.is_branch_context)
+                .map(|ancestor| (ancestor.path.clone(), ancestor.branch.clone()))
+                .collect::<Vec<_>>();
+            if !context.is_empty() {
+                attempts_by_weak_context
+                    .entry(context)
+                    .or_insert_with(Vec::new)
+                    .push(*node);
+            }
+        }
+        let mut system = Self {
+            model,
+            evaluator: input.evaluator,
+            protocol: None,
+            protocol_name: subject.protocol.clone(),
+            program,
+            package_program: Some(package),
+            memory,
+            channel_message_bound: None,
             governing,
             weak_ancestors,
             weak_parallel_paths,
@@ -1501,6 +1680,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
     /// The checked protocol clause.
     pub fn protocol(&self) -> &'a CheckedProtocol {
         self.protocol
+            .expect("the source protocol accessor is used on a source route")
     }
 
     /// FR-212 (ADR-027 PA-3, FSpec FR-430): the fairness set of an
@@ -1527,11 +1707,16 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         authored: &[filament_semantic_value::fairness::FairnessConstraint],
         authored_targets: &[fsl_semantics::check::CheckedProtocolFairness],
     ) -> Result<Vec<ProtocolFairness>, ProtocolFairnessError> {
+        let Some(protocol) = self.protocol else {
+            return Err(ProtocolFairnessError::UnknownProtocolTarget {
+                name: self.protocol_name.clone(),
+            });
+        };
         let memory = self
             .memory
-            .fairness(&fairness::memory_branches(self.protocol, &self.governing));
+            .fairness(&fairness::memory_branches(protocol, &self.governing));
         fairness::fairness_set(
-            self.protocol,
+            protocol,
             authored,
             authored_targets,
             |constraint| {
@@ -2349,9 +2534,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             return Ok(TerminalClass::Intended);
         }
         match self.program.terminal {
-            CheckedTerminalMember::None => Ok(TerminalClass::Deadlocked),
-            CheckedTerminalMember::Any => Ok(TerminalClass::Intended),
-            CheckedTerminalMember::When { predicate, .. } => {
+            None | Some(CheckedTerminalMember::None) => Ok(TerminalClass::Deadlocked),
+            Some(CheckedTerminalMember::Any) => Ok(TerminalClass::Intended),
+            Some(CheckedTerminalMember::When { predicate, .. }) => {
                 let mut frame = vec![None; self.program.slots.len()];
                 if let Some(first) = frame.first_mut() {
                     *first = Some(state.over.clone());
@@ -2374,7 +2559,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                         if let Some(cause) = outcome.undefined_cause() {
                             TerminalClass::Undefined {
                                 model: super::model::TerminalModel::named(
-                                    self.protocol.name.clone(),
+                                    self.protocol_name.clone(),
                                 ),
                                 cause,
                             }
@@ -2389,7 +2574,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                         } else {
                             TerminalClass::Undecided {
                                 model: super::model::TerminalModel::named(
-                                    self.protocol.name.clone(),
+                                    self.protocol_name.clone(),
                                 ),
                             }
                         }
