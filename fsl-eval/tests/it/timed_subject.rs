@@ -4449,6 +4449,99 @@ fn a_model_union_clock_is_live_only_in_its_active_case() {
     assert_eq!(armed_states, 1);
 }
 
+/// The data index after a Clock tuple position projects its data slot at run time.
+#[trace("TC-1860", "FR-230-AC-63", "FSpec-FR-415-AC-28")]
+#[test]
+fn a_model_tuple_clock_keeps_the_authored_data_position_at_run_time() {
+    use filament_semantic_value::declaration::CompositeShape;
+    let slot = ident("Slot");
+    let tuple = wire_type(
+        &slot,
+        "tuple",
+        json!({"positions": [
+            {"identity": format!("{slot}/p0"), "typeRef": "ix://filament/native/Clock", "origin": origin(&slot)},
+            {"identity": format!("{slot}/p1"), "typeRef": ident("Int1"), "origin": origin(&slot)}
+        ]}),
+    );
+    let mut document: Json = serde_json::from_slice(&cells_document(
+        vec![tuple],
+        vec![("slot", slot, Some(json!("optional")))],
+        &[],
+        &[],
+    ))
+    .expect("JSON");
+    document["constructs"].as_array_mut().expect("constructs").push(json!({
+        "kind": {"module": PACKAGE, "name": "tuple"}, "moduleVersion": "1.0.0",
+        "construct": {"identity": "value", "shape": "tuple", "members": {"positions": "required"},
+            "meaning": meaning::TUPLE_VALUE_TYPE}
+    }));
+    let world = world_holding(serde_json::to_vec(&document).expect("JSON"), "", &only(&["work"],
+        "pre Data using v on M::Call::work { present(self.slot) and value(self.slot)[1] = 1 }\n"),
+        json!({"t": {"record": {"type": ident("Timer"), "fields": {"n": {"integer": "0"}}}},
+            "slot": {"absent": {}}}));
+    let held = system(&world);
+    let timed = TimedSystem::new(&held, "M").expect("a timed model");
+    let [initial] = &timed.initial()[..] else {
+        panic!("one initial state");
+    };
+    assert!(timed
+        .steps(initial)
+        .expect("absent tuple is guarded")
+        .is_empty());
+    let tuple = world
+        .package
+        .graph()
+        .scope()
+        .types()
+        .composites()
+        .find(|ty| ty.name() == "M::Slot")
+        .expect("the model tuple");
+    let CompositeShape::Tuple(shape) = tuple.shape() else {
+        panic!("tuple shape");
+    };
+    assert_eq!(shape.len(), 1, "the Clock position holds no data");
+    let value = filament_exact::value::tuple(
+        shape,
+        tuple.key(),
+        vec![filament_exact::Value::Integer(Integer::from(1))],
+    )
+    .expect("the typed data part");
+    let mut state = initial.discrete().state().clone();
+    state
+        .populations
+        .get_mut(&DeclarationKey {
+            package: PACKAGE.to_owned(),
+            node: ident("calls"),
+        })
+        .expect("calls")
+        .get_mut("c")
+        .expect("the call")
+        .fields
+        .insert(
+            DeclarationKey {
+                package: PACKAGE.to_owned(),
+                node: ident("Call/slot"),
+            },
+            value,
+        );
+    let state = TimedState::new(
+        held.pre_state(state, initial.discrete().anchor().clone()),
+        initial.clocks().delayed(&exact(2, 1)),
+    );
+    assert_eq!(
+        timed
+            .steps(&state)
+            .expect("the authored data projection runs")
+            .len(),
+        1
+    );
+    assert!(timed.places().iter().any(|place| timed
+        .model()
+        .clock(place.clock())
+        .is_some_and(|clock| clock.name() == "slot.0")
+        && timed.live(place, state.discrete())));
+}
+
 /// FR-120-AC-26 (TC-1270) with the STD-508 ruling on collections of bare
 /// clocks: `sk: Sequence<Clock>[0, 3]` has 4 values and `st: Set<Clock>`
 /// with no declared maximum 2, one for each element count, each a root no
