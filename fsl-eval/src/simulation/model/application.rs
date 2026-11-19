@@ -177,6 +177,15 @@ impl<'a> ModelSystem<'a> {
         contracts::invariants_alone(&walk_of(self, state, None)?)
     }
 
+    /// FR-752: the invariant finding of `state` for one checked clause only.
+    pub(crate) fn invariant_finding_alone(
+        &self,
+        state: &ModelSimState,
+        name: &str,
+    ) -> Result<Vec<ModelFinding>, ExpansionStop> {
+        contracts::invariant_alone(&walk_of(self, state, None)?, name)
+    }
+
     /// The application `operation` names at `row`, by its declaring type
     /// and name in the row's effective view.
     pub(super) fn application_at(

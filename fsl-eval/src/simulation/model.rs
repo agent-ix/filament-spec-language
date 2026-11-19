@@ -36,6 +36,11 @@ pub use operation_coverage::{
     ModelOperationCoverageReason, ModelOperationCoverageReasonKind, ModelOperationCoverageStatus,
     ModelOperationCoverageSummaryStatus,
 };
+mod model_based_test;
+pub use model_based_test::{
+    ModelBasedCoverage, ModelBasedTestCounts, ModelBasedTestError, ModelBasedTestEvidence,
+    ModelBasedTestResult, run_model_based_state_invariant, run_model_based_test,
+};
 mod key_budget;
 mod letters;
 pub use behaviours::{model_behaviours, BehaviourState, BehavioursEnd};
