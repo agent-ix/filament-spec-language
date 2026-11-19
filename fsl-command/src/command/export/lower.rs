@@ -20,6 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) struct Refusal {
     pub(super) construct: String,
     pub(super) detail: String,
+    /// The obligation whose clause failed, when one did.
+    pub(super) obligation: Option<String>,
 }
 
 type Lower<T> = std::result::Result<T, Refusal>;
@@ -28,6 +30,7 @@ fn refuse<T>(construct: &str, detail: impl Into<String>) -> Lower<T> {
     Err(Refusal {
         construct: construct.to_owned(),
         detail: detail.into(),
+        obligation: None,
     })
 }
 
@@ -36,8 +39,8 @@ pub(super) struct Lowered {
     pub(super) text: String,
     pub(super) name_map: Vec<Value>,
     pub(super) regions: BTreeMap<String, Vec<(usize, usize)>>,
-    /// Every graph node the lowering read.
-    pub(super) read: BTreeSet<usize>,
+    /// The output regions written: one per definition.
+    pub(super) definitions: usize,
 }
 
 // ---- The model -----------------------------------------------------------
@@ -102,13 +105,14 @@ fn items<'a>(value: &'a Value, key: &str) -> &'a [Value] {
         .map_or(&[][..], Vec::as_slice)
 }
 
-/// A raw object type of a domain package.
+/// A raw object type of a domain package. Its body is read lazily: a type no
+/// obligation names never refuses the export.
 struct RawObject {
     id: String,
     name: String,
-    fields: Vec<Field>,
-    operations: Vec<Operation>,
-    population: Option<String>,
+    body: Lower<(Vec<Field>, Vec<Operation>)>,
+    populations: Vec<String>,
+    population_note: Option<String>,
 }
 
 fn short_name(id: &str) -> &str {
@@ -129,6 +133,77 @@ fn kind_of(type_ref: &str, values: &BTreeMap<String, Kind>) -> Lower<Kind> {
             Ok,
         ),
     }
+}
+
+fn read_object(
+    node: &Value,
+    id: &str,
+    values: &BTreeMap<String, Kind>,
+) -> Lower<(Vec<Field>, Vec<Operation>)> {
+    if !items(node, "supertypes").is_empty() {
+        return refuse(
+            "model/object_type",
+            format!("`{id}` has supertypes, which this build does not lower"),
+        );
+    }
+    let mut fields = Vec::new();
+    for field in items(node, "fields") {
+        let name = str_of(field, "name").unwrap_or_default();
+        if str_of(field, "presence") != Some("required")
+            || field["nullable"].as_bool() != Some(false)
+        {
+            return refuse(
+                "model/field",
+                format!("`{id}` field `{name}` is not a required, non-null field"),
+            );
+        }
+        fields.push(Field {
+            id: str_of(field, "identity").unwrap_or_default().to_owned(),
+            name: name.to_owned(),
+            kind: kind_of(str_of(field, "typeRef").unwrap_or_default(), values)?,
+        });
+    }
+    let mut operations = Vec::new();
+    for operation in items(node, "operations") {
+        let name = str_of(operation, "name").unwrap_or_default();
+        if !items(operation, "pre").is_empty() || !items(operation, "post").is_empty() {
+            return refuse(
+                "model/operation",
+                format!("`{id}` operation `{name}` carries requires or ensures clauses"),
+            );
+        }
+        let frame = &operation["frame"];
+        if !items(frame, "creates").is_empty() || !items(frame, "deletes").is_empty() {
+            return refuse(
+                "model/operation",
+                "an operation that creates or deletes objects",
+            );
+        }
+        let set = |key: &str| {
+            items(frame, key)
+                .iter()
+                .filter_map(|id| id.as_str().map(str::to_owned))
+                .collect::<BTreeSet<_>>()
+        };
+        let mut params = Vec::new();
+        for param in items(operation, "params") {
+            let kind = kind_of(str_of(param, "typeRef").unwrap_or_default(), values)?;
+            if matches!(kind, Kind::Bool) {
+                return refuse("model/operation", "a Boolean operation parameter");
+            }
+            params.push(Param {
+                name: str_of(param, "name").unwrap_or_default().to_owned(),
+                kind,
+            });
+        }
+        operations.push(Operation {
+            name: name.to_owned(),
+            params,
+            every: set("modifies"),
+            receiver: set("modifies_receiver"),
+        });
+    }
+    Ok((fields, operations))
 }
 
 fn read_models(models: &[Vec<u8>]) -> Lower<BTreeMap<String, RawObject>> {
@@ -169,70 +244,14 @@ fn read_models(models: &[Vec<u8>]) -> Lower<BTreeMap<String, RawObject>> {
             }
             let id = str_of(node, "identity")
                 .ok_or_else(|| refusal("model/object_type", "an object type has no identity"))?;
-            if !items(node, "supertypes").is_empty() {
-                return refuse(
-                    "model/object_type",
-                    format!("`{id}` has supertypes, which this build does not lower"),
-                );
-            }
-            let mut fields = Vec::new();
-            for field in items(node, "fields") {
-                let name = str_of(field, "name").unwrap_or_default();
-                if str_of(field, "presence") != Some("required")
-                    || field["nullable"].as_bool() != Some(false)
-                {
-                    return refuse(
-                        "model/field",
-                        format!("`{id}` field `{name}` is not a required, non-null field"),
-                    );
-                }
-                fields.push(Field {
-                    id: str_of(field, "identity").unwrap_or_default().to_owned(),
-                    name: name.to_owned(),
-                    kind: kind_of(str_of(field, "typeRef").unwrap_or_default(), &values)?,
-                });
-            }
-            let mut operations = Vec::new();
-            for operation in items(node, "operations") {
-                let frame = &operation["frame"];
-                if !items(frame, "creates").is_empty() || !items(frame, "deletes").is_empty() {
-                    return refuse(
-                        "model/operation",
-                        "an operation that creates or deletes objects",
-                    );
-                }
-                let set = |key: &str| {
-                    items(frame, key)
-                        .iter()
-                        .filter_map(|id| id.as_str().map(str::to_owned))
-                        .collect::<BTreeSet<_>>()
-                };
-                let mut params = Vec::new();
-                for param in items(operation, "params") {
-                    let kind = kind_of(str_of(param, "typeRef").unwrap_or_default(), &values)?;
-                    if matches!(kind, Kind::Bool) {
-                        return refuse("model/operation", "a Boolean operation parameter");
-                    }
-                    params.push(Param {
-                        name: str_of(param, "name").unwrap_or_default().to_owned(),
-                        kind,
-                    });
-                }
-                operations.push(Operation {
-                    name: str_of(operation, "name").unwrap_or_default().to_owned(),
-                    params,
-                    every: set("modifies"),
-                    receiver: set("modifies_receiver"),
-                });
-            }
             objects.insert(
                 id.to_owned(),
                 RawObject {
                     id: id.to_owned(),
                     name: short_name(id).to_owned(),
-                    fields,
-                    operations,
-                    population: None,
+                    body: read_object(node, id, &values),
+                    populations: Vec::new(),
+                    population_note: None,
                 },
             );
         }
@@ -243,13 +262,11 @@ fn read_models(models: &[Vec<u8>]) -> Lower<BTreeMap<String, RawObject>> {
             let members = items(population, "members");
             for member in members.iter().filter_map(Value::as_str) {
                 if let Some(object) = objects.get_mut(member) {
-                    if members.len() != 1 || object.population.is_some() {
-                        return refuse(
-                            "model/population",
-                            format!("`{id}` is not the one population of `{member}`"),
-                        );
+                    object.populations.push(id.to_owned());
+                    if members.len() != 1 || object.populations.len() != 1 {
+                        object.population_note =
+                            Some(format!("`{id}` is not the one population of `{member}`"));
                     }
-                    object.population = Some(id.to_owned());
                 }
             }
         }
@@ -261,6 +278,7 @@ fn refusal(construct: &str, detail: &str) -> Refusal {
     Refusal {
         construct: construct.to_owned(),
         detail: detail.to_owned(),
+        obligation: None,
     }
 }
 
@@ -327,7 +345,6 @@ fn conj(mut items: Vec<E>) -> E {
 struct Lowerer<'a> {
     graph: &'a Graph<'a>,
     objects: &'a [Object],
-    read: BTreeSet<usize>,
 }
 
 impl Lowerer<'_> {
@@ -379,7 +396,6 @@ impl Lowerer<'_> {
     }
 
     fn node(&mut self, position: usize, primed: bool) -> Lower<Low> {
-        self.read.insert(position);
         let node = self.graph.node(position);
         let body = serde_json::to_value(&node.body)
             .map_err(|_| refusal("checked package", "a node body does not serialize"))?;
@@ -425,22 +441,21 @@ impl Lowerer<'_> {
         body: &Value,
         primed: bool,
     ) -> Lower<Low> {
-        let binary = |op: Op| Some(op);
         let op = match identity {
-            "filament.op.integer.add" => binary(Op::Add),
-            "filament.op.integer.sub" => binary(Op::Sub),
-            "filament.op.integer.mul" => binary(Op::Mul),
-            "filament.op.integer.lt" => binary(Op::Lt),
-            "filament.op.integer.le" => binary(Op::Le),
-            "filament.op.integer.gt" => binary(Op::Gt),
-            "filament.op.integer.ge" => binary(Op::Ge),
-            "filament.op.integer.eq" => binary(Op::EqInt),
-            "filament.op.integer.ne" => binary(Op::NeInt),
-            "filament.op.boolean.and" => binary(Op::And),
-            "filament.op.boolean.or" => binary(Op::Or),
-            "filament.op.boolean.implies" => binary(Op::Implies),
-            "filament.op.boolean.eq" => binary(Op::EqBool),
-            "filament.op.boolean.ne" => binary(Op::NeBool),
+            "filament.op.integer.add" => Some(Op::Add),
+            "filament.op.integer.sub" => Some(Op::Sub),
+            "filament.op.integer.mul" => Some(Op::Mul),
+            "filament.op.integer.lt" => Some(Op::Lt),
+            "filament.op.integer.le" => Some(Op::Le),
+            "filament.op.integer.gt" => Some(Op::Gt),
+            "filament.op.integer.ge" => Some(Op::Ge),
+            "filament.op.integer.eq" => Some(Op::EqInt),
+            "filament.op.integer.ne" => Some(Op::NeInt),
+            "filament.op.boolean.and" => Some(Op::And),
+            "filament.op.boolean.or" => Some(Op::Or),
+            "filament.op.boolean.implies" => Some(Op::Implies),
+            "filament.op.boolean.eq" => Some(Op::EqBool),
+            "filament.op.boolean.ne" => Some(Op::NeBool),
             _ => None,
         };
         if let Some(op) = op {
@@ -517,7 +532,6 @@ impl Lowerer<'_> {
             .graph
             .position_of(&body["operation"]["member"]["declaration"])
             .ok_or_else(|| refusal(construct, "a conversion to no known type"))?;
-        self.read.insert(target);
         let node = self.graph.node(target);
         let range = serde_json::to_value(&node.body)
             .map_err(|_| refusal("checked package", "a node body does not serialize"))?;
@@ -579,20 +593,23 @@ struct Show<'a> {
     objects: &'a [Object],
 }
 
-fn int_text(value: &str, target: Target) -> String {
+fn int_text(value: &str) -> String {
     if value.starts_with('-') {
         format!("({value})")
     } else {
-        let _ = target;
         value.to_owned()
     }
 }
 
 impl Show<'_> {
-    fn expr(&self, e: &E) -> String {
+    fn exprs(&self, items: &[E]) -> Lower<Vec<String>> {
+        items.iter().map(|item| self.expr(item)).collect()
+    }
+
+    fn expr(&self, e: &E) -> Lower<String> {
         let tla = self.target == Target::Tla;
-        match e {
-            E::Int(value) => int_text(value, self.target),
+        Ok(match e {
+            E::Int(value) => int_text(value),
             E::Bool(true) => if tla { "TRUE" } else { "True" }.to_owned(),
             E::Bool(false) => if tla { "FALSE" } else { "False" }.to_owned(),
             E::Param(name) => name.clone(),
@@ -602,13 +619,15 @@ impl Show<'_> {
                 field,
                 primed,
             } => {
-                let Some(object) = self.objects.get(*object) else {
-                    return String::new();
-                };
-                let Some(field) = object.fields.get(*field) else {
-                    return String::new();
-                };
-                let key = self.expr(key);
+                let object = self
+                    .objects
+                    .get(*object)
+                    .ok_or_else(|| refusal("checked package", "a read of an unexported type"))?;
+                let field = object
+                    .fields
+                    .get(*field)
+                    .ok_or_else(|| refusal("checked package", "a read of an unknown field"))?;
+                let key = self.expr(key)?;
                 let name = mangle("f_", &field.name);
                 if tla {
                     let tick = if *primed { "'" } else { "" };
@@ -626,51 +645,45 @@ impl Show<'_> {
                     }
                 }
             }
-            E::Neg(inner) => format!("(-{})", self.expr(inner)),
+            E::Neg(inner) => format!("(-{})", self.expr(inner)?),
             E::Not(inner) => {
                 if tla {
-                    format!("~{}", self.expr(inner))
+                    format!("~{}", self.expr(inner)?)
                 } else {
-                    format!("Not {}", self.expr(inner))
+                    format!("Not {}", self.expr(inner)?)
                 }
             }
             E::Bin(op, left, right) => {
-                let (left, right) = (self.expr(left), self.expr(right));
-                let symbol = match (op, tla) {
-                    (Op::Add, _) => "+",
-                    (Op::Sub, _) => "-",
-                    (Op::Mul, _) => "*",
-                    (Op::Lt, _) => "<",
-                    (Op::Le, _) => "<=",
-                    (Op::Gt, _) => ">",
-                    (Op::Ge, _) => ">=",
-                    (Op::EqInt, _) => "=",
-                    (Op::And, _) => "/\\",
-                    (Op::Or, _) => "\\/",
-                    (Op::NeInt, true) => "/=",
-                    (Op::Implies, true) => "=>",
-                    (Op::EqBool, true) => "<=>",
-                    (Op::NeBool, true) => {
-                        return format!("~({left} <=> {right})");
+                let (left, right) = (self.expr(left)?, self.expr(right)?);
+                match (op, tla) {
+                    (Op::NeBool, true) => format!("~({left} <=> {right})"),
+                    (Op::NeInt, false) => format!("(Ne {left} {right})"),
+                    (Op::NeBool, false) => format!("Not ({left} <-> {right})"),
+                    _ => {
+                        let symbol = match (op, tla) {
+                            (Op::Add, _) => "+",
+                            (Op::Sub, _) => "-",
+                            (Op::Mul, _) => "*",
+                            (Op::Lt, _) => "<",
+                            (Op::Le, _) => "<=",
+                            (Op::Gt, _) => ">",
+                            (Op::Ge, _) => ">=",
+                            (Op::EqInt, _) => "=",
+                            (Op::And, _) => "/\\",
+                            (Op::Or, _) => "\\/",
+                            (Op::NeInt, _) => "/=",
+                            (Op::Implies, true) => "=>",
+                            (Op::Implies, false) => "->",
+                            (Op::EqBool, true) => "<=>",
+                            (Op::EqBool, false) => "<->",
+                            (Op::NeBool, _) => "<=>",
+                        };
+                        format!("({left} {symbol} {right})")
                     }
-                    (Op::NeInt, false) => return format!("(Ne {left} {right})"),
-                    (Op::Implies, false) => "->",
-                    (Op::EqBool, false) => "<->",
-                    (Op::NeBool, false) => return format!("Not ({left} <-> {right})"),
-                };
-                format!("({left} {symbol} {right})")
+                }
             }
-            E::Conj(items) => {
-                format!(
-                    "({})",
-                    items
-                        .iter()
-                        .map(|item| self.expr(item))
-                        .collect::<Vec<_>>()
-                        .join(" /\\ ")
-                )
-            }
-        }
+            E::Conj(items) => format!("({})", self.exprs(items)?.join(" /\\ ")),
+        })
     }
 }
 
@@ -744,6 +757,8 @@ struct StateClause {
     kind: String,
     context: String,
     context_node: usize,
+    /// The operation anchor node of an operation clause.
+    anchor: Option<usize>,
     operation: Option<String>,
     expression: Value,
 }
@@ -768,7 +783,7 @@ fn state_clauses(graph: &Graph<'_>) -> Lower<Vec<StateClause>> {
         };
         let target = &context["target"];
         let anchor = graph.position_of(target);
-        let (context_id, context_node, operation) = if target["path"][0] == "state" {
+        let (context_id, context_node, operation, anchor) = if target["path"][0] == "state" {
             let anchor = anchor.ok_or_else(|| refusal("state/state_clause", "no anchor node"))?;
             let anchor_body = serde_json::to_value(&graph.node(anchor).body)
                 .map_err(|_| refusal("checked package", "a node body does not serialize"))?;
@@ -792,11 +807,13 @@ fn state_clauses(graph: &Graph<'_>) -> Lower<Vec<StateClause>> {
                     .to_owned(),
                 context_node,
                 operation,
+                Some(anchor),
             )
         } else {
             (
                 target["path"][2].as_str().unwrap_or_default().to_owned(),
                 anchor.ok_or_else(|| refusal("state/state_clause", "no context node"))?,
+                None,
                 None,
             )
         };
@@ -805,6 +822,7 @@ fn state_clauses(graph: &Graph<'_>) -> Lower<Vec<StateClause>> {
             kind,
             context: context_id,
             context_node,
+            anchor,
             operation,
             expression: expression.clone(),
         });
@@ -828,10 +846,10 @@ fn range_conditions(path: &str, kind: &Kind, target: Target) -> Vec<String> {
                 out.push(format!("{path} \\in Int"));
             }
             if let Some(lo) = lo {
-                out.push(format!("{path} >= {}", int_text(lo, target)));
+                out.push(format!("{path} >= {}", int_text(lo)));
             }
             if let Some(hi) = hi {
-                out.push(format!("{path} <= {}", int_text(hi, target)));
+                out.push(format!("{path} <= {}", int_text(hi)));
             }
             out
         }
@@ -845,11 +863,7 @@ fn tla_domain(kind: &Kind) -> String {
         Kind::Int {
             lo: Some(lo),
             hi: Some(hi),
-        } => format!(
-            "{}..{}",
-            int_text(lo, Target::Tla),
-            int_text(hi, Target::Tla)
-        ),
+        } => format!("{}..{}", int_text(lo), int_text(hi)),
         Kind::Int { .. } => "Int".to_owned(),
     }
 }
@@ -870,8 +884,8 @@ pub(super) fn lower(
 ) -> Lower<Lowered> {
     let clauses = state_clauses(graph)?;
     let mut raw = read_models(models)?;
-    let mut contexts: BTreeMap<String, usize> = BTreeMap::new();
-    for (_, position) in wanted {
+    let mut contexts: BTreeMap<String, (usize, String)> = BTreeMap::new();
+    for (name, position) in wanted {
         let clause = clauses
             .iter()
             .find(|clause| clause.position == *position)
@@ -879,25 +893,38 @@ pub(super) fn lower(
         if clause.kind != "invariant" {
             return refuse("state/state_clause", "a clause that is not an invariant");
         }
-        contexts.insert(clause.context.clone(), clause.context_node);
+        contexts
+            .entry(clause.context.clone())
+            .or_insert_with(|| (clause.context_node, name.clone()));
     }
     let mut objects = Vec::new();
-    for (id, node) in &contexts {
+    for (id, (node, owner)) in &contexts {
+        let attribute = |mut refusal: Refusal| {
+            refusal.obligation = Some(owner.clone());
+            refusal
+        };
         let object = raw.remove(id).ok_or_else(|| {
-            refusal(
+            attribute(refusal(
                 "model/object_type",
                 &format!("`{id}` is in no selected model"),
-            )
+            ))
         })?;
-        let population = object
-            .population
-            .ok_or_else(|| refusal("model/population", &format!("`{id}` is in no population")))?;
+        let (fields, operations) = object.body.map_err(attribute)?;
+        if let Some(note) = object.population_note {
+            return Err(attribute(refusal("model/population", &note)));
+        }
+        let population = object.populations.into_iter().next().ok_or_else(|| {
+            attribute(refusal(
+                "model/population",
+                &format!("`{id}` is in no population"),
+            ))
+        })?;
         objects.push(Object {
             id: object.id,
             name: object.name,
             population,
-            fields: object.fields,
-            operations: object.operations,
+            fields,
+            operations,
             node: *node,
         });
     }
@@ -909,12 +936,16 @@ pub(super) fn lower(
     let mut lowerer = Lowerer {
         graph,
         objects: &objects,
-        read: BTreeSet::new(),
     };
     // Each operation's clauses, lowered once: preconditions in the pre-state,
     // postconditions with bare reads in the post-state.
     let mut operations: Vec<Vec<OpLow>> = Vec::new();
     for object in &objects {
+        let owner = contexts.get(&object.id).map(|(_, owner)| owner.clone());
+        let attribute = |mut refusal: Refusal| {
+            refusal.obligation = owner.clone();
+            refusal
+        };
         let mut per = Vec::new();
         for operation in &object.operations {
             let mut lowered = OpLow {
@@ -925,16 +956,20 @@ pub(super) fn lower(
             for clause in clauses.iter().filter(|clause| {
                 clause.context == object.id && clause.operation.as_deref() == Some(&operation.name)
             }) {
-                lowerer.read.insert(clause.position);
-                let low = lowerer.term(&clause.expression, clause.kind == "postcondition")?;
+                if let Some(anchor) = clause.anchor {
+                    lowered.node = anchor;
+                }
+                let low = lowerer
+                    .term(&clause.expression, clause.kind == "postcondition")
+                    .map_err(attribute)?;
                 match clause.kind.as_str() {
                     "precondition" => lowered.pre.push(low.clause()),
                     "postcondition" => lowered.post.push(low.clause()),
                     other => {
-                        return refuse(
+                        return Err(attribute(refusal(
                             "state/state_clause",
-                            format!("a `{other}` operation clause"),
-                        )
+                            &format!("a `{other}` operation clause"),
+                        )))
                     }
                 }
             }
@@ -948,15 +983,17 @@ pub(super) fn lower(
             .iter()
             .find(|clause| clause.position == *position)
             .ok_or_else(|| refusal("state/state_clause", "an obligation that is no clause"))?;
-        lowerer.read.insert(*position);
-        let low = lowerer.term(&clause.expression, false)?;
+        let attribute = |mut refusal: Refusal| {
+            refusal.obligation = Some(name.clone());
+            refusal
+        };
+        let low = lowerer.term(&clause.expression, false).map_err(attribute)?;
         let object = objects
             .iter()
             .position(|object| object.id == clause.context)
             .ok_or_else(|| refusal("model/object_type", "an unexported clause context"))?;
         lowered_clauses.push((name.clone(), *position, object, low.clause()));
     }
-    let read = lowerer.read;
 
     let show = Show {
         target,
@@ -976,7 +1013,7 @@ pub(super) fn lower(
         Target::Tla => tla(&input, &mut definitions)?,
         Target::Lean => lean(&input, &mut definitions)?,
     }
-    assemble(graph, target, module, &objects, definitions, read)
+    assemble(graph, target, module, &objects, definitions)
 }
 
 // ---- Snapshot ------------------------------------------------------------
@@ -989,7 +1026,7 @@ enum Lit {
 impl Lit {
     fn text(&self, target: Target) -> String {
         match (self, target) {
-            (Self::Int(value), _) => int_text(value, target),
+            (Self::Int(value), _) => int_text(value),
             (Self::Bool(true), Target::Tla) => "TRUE".to_owned(),
             (Self::Bool(false), Target::Tla) => "FALSE".to_owned(),
             (Self::Bool(value), Target::Lean) => value.to_string(),
@@ -1167,8 +1204,8 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                     lines.extend(range_conditions(param, kind, target));
                 }
             }
-            lines.extend(lowered.pre.iter().map(|e| input.show.expr(e)));
-            lines.extend(lowered.post.iter().map(|e| input.show.expr(e)));
+            lines.extend(input.show.exprs(&lowered.pre)?);
+            lines.extend(input.show.exprs(&lowered.post)?);
             lines.push(format!("DOMAIN {v}' = DOMAIN {v}"));
             for (field, receiver) in frame_fields(object, operation) {
                 let f = mangle("f_", &field.name);
@@ -1224,7 +1261,7 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             format!(
                 "{clause} == \\A p_self \\in DOMAIN {} : {}",
                 object.variable(),
-                input.show.expr(formula)
+                input.show.expr(formula)?
             ),
             Some(name),
         ));
@@ -1437,10 +1474,10 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                     lines.extend(range_conditions(param, kind, target));
                 }
             }
-            lines.extend(lowered.pre.iter().map(|e| input.show.expr(e)));
-            lines.extend(lowered.post.iter().map(|e| input.show.expr(e)));
+            lines.extend(input.show.exprs(&lowered.pre)?);
+            lines.extend(input.show.exprs(&lowered.post)?);
             lines.push(format!(
-                "List.map Prod.fst s'.{v} = List.map Prod.fst s.{v}"
+                "List.map (fun e => e.1) s'.{v} = List.map (fun e => e.1) s.{v}"
             ));
             for (field, receiver) in frame_fields(object, operation) {
                 let f = mangle("f_", &field.name);
@@ -1460,7 +1497,11 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                 format!(
                     "def {name} (s : State) (s' : State) {} : Prop :=\n  {}",
                     typed.join(" "),
-                    lines.join(" /\\\n  ")
+                    lines
+                        .iter()
+                        .map(|line| format!("({line})"))
+                        .collect::<Vec<_>>()
+                        .join(" /\\\n  ")
                 ),
                 None,
             ));
@@ -1508,7 +1549,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                 "def {clause} (s : State) : Prop :=\n  forall p_self, {} p_self s.{} -> {}",
                 mangle("F_has_", &object.name),
                 object.variable(),
-                input.show.expr(formula)
+                input.show.expr(formula)?
             ),
             Some(name),
         ));
@@ -1538,19 +1579,30 @@ fn assemble(
     module: &str,
     objects: &[Object],
     definitions: Vec<Definition>,
-    read: BTreeSet<usize>,
 ) -> Lower<Lowered> {
+    let first = objects.first().map_or(0, |object| object.node);
     let mut text = match target {
         Target::Tla => {
             let variables: Vec<String> = objects.iter().map(Object::variable).collect();
             format!(
-                "---- MODULE {module} ----\nEXTENDS Naturals, Integers, Sequences, FiniteSets, TLC\n\nVARIABLES {}\n",
+                "---- MODULE {module} ----\nEXTENDS Naturals, Integers, Sequences, FiniteSets, TLC\n\n{}\nVARIABLES {}\n",
+                comment(graph, first, target)?,
                 variables.join(", ")
             )
         }
         Target::Lean => format!("namespace {module}\n"),
     };
     let mut name_map = Vec::new();
+    for object in objects {
+        let region = source_region(graph, object.node)
+            .map_or(Value::Null, |(_, start, end)| json!([start, end]));
+        name_map.push(json!({
+            "name": object.variable(),
+            "node": node_id_text(graph, object.node)?,
+            "region": region,
+        }));
+    }
+    let count = definitions.len();
     let mut regions: BTreeMap<String, Vec<(usize, usize)>> = BTreeMap::new();
     for definition in definitions {
         text.push('\n');
@@ -1581,6 +1633,6 @@ fn assemble(
         text,
         name_map,
         regions,
-        read,
+        definitions: count,
     })
 }

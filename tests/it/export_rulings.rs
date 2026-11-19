@@ -179,9 +179,9 @@ fn the_floor_is_decided_before_the_text_is_charged() {
     names(&value["export"], "export.nodes");
 }
 
-/// FR-1015-AC-7: a lowered export over `export.output_bytes` is `incomplete`.
+/// FR-1015-AC-2: a lowered export over `export.output_bytes` is `incomplete`.
 #[test]
-#[trace("TC-3002", "FR-1015-AC-7")]
+#[trace("TC-2865", "FR-1015-AC-2")]
 fn a_lowered_text_over_the_byte_limit_is_incomplete() {
     let mut member = tla(json!(["Bounded"]));
     member["limits"] = json!({"export.output_bytes": 1});

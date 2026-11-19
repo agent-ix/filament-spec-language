@@ -13,7 +13,7 @@ use super::{Disposition, Mapped, Record, Unlowered};
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
 use filament_exact::NodeKey;
 use fsl_semantics::check::wire_id::WireGraph;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// One authored clause of the program an obligation name may resolve to.
@@ -25,6 +25,9 @@ pub(super) struct ClauseFact {
     pub(super) obligation: Option<NodeKey>,
     /// The `node_tag`/`semantic_form` of an obligation's clause node.
     pub(super) construct: &'static str,
+    /// Whether a `bound` declaration bounds a population the clause ranges
+    /// over (FSpec FR-812 "State and actions").
+    pub(super) bounded: bool,
 }
 
 /// Resolve export obligations from the admitted V2 package's name rows.
@@ -68,6 +71,7 @@ pub(super) fn package_clauses(package: &CheckedPackageV2) -> Result<Vec<ClauseFa
             name: row.name.to_string(),
             obligation,
             construct,
+            bounded: false,
         });
     }
     for row in package.temporal_clause_names().unwrap_or_default() {
@@ -79,6 +83,7 @@ pub(super) fn package_clauses(package: &CheckedPackageV2) -> Result<Vec<ClauseFa
             name: row.name.to_string(),
             obligation: Some(key),
             construct: "temporal/temporal_clause",
+            bounded: false,
         });
     }
     Ok(clauses)
@@ -319,7 +324,16 @@ pub(super) fn run(
         let flows = graph.flows(&closure)?;
         if flows.is_empty() {
             if clause.construct == "state/state_clause" {
-                lowerable.push((name.clone(), root, records.len()));
+                if clause.bounded {
+                    unlowered.get_or_insert_with(|| Unlowered {
+                        obligation: name.clone(),
+                        construct: "model/bound".to_owned(),
+                        detail: "a `bound` declaration bounds the population, and this build does not lower population bounds"
+                            .to_owned(),
+                    });
+                } else {
+                    lowerable.push((name.clone(), root, records.len()));
+                }
                 records.push(Record {
                     obligation: name.clone(),
                     disposition: Disposition::Preserved,
@@ -356,13 +370,6 @@ pub(super) fn run(
             .collect();
         match lower::lower(&graph, models, initial, request.target, &module, &wanted) {
             Ok(done) => {
-                for &position in &done.read {
-                    if charged.insert(position) {
-                        if let Err((setting, bound)) = meter.charge() {
-                            return Ok(Mapped::Incomplete { setting, bound });
-                        }
-                    }
-                }
                 for (name, _, index) in &lowerable {
                     if let Some(record) = records.get_mut(*index) {
                         record.regions = done.regions.get(name).cloned().unwrap_or_default();
@@ -372,21 +379,22 @@ pub(super) fn run(
             }
             Err(refusal) => {
                 unlowered.get_or_insert_with(|| Unlowered {
-                    obligation: first.clone(),
+                    obligation: refusal.obligation.unwrap_or_else(|| first.clone()),
                     construct: refusal.construct,
                     detail: refusal.detail,
                 });
             }
         }
     }
-    let (text, name_map) = match lowered {
-        Some(done) => (done.text, done.name_map),
+    let (text, name_map, regions_written) = match lowered {
+        Some(done) => (done.text, done.name_map, done.definitions as u64),
         None => (
             match request.target {
                 Target::Tla => format!("---- MODULE {module} ----\n====\n"),
                 Target::Lean => format!("namespace {module}\nend {module}\n"),
             },
             Vec::new(),
+            0,
         ),
     };
     Ok(Mapped::Assembled {
@@ -394,5 +402,7 @@ pub(super) fn run(
         name_map,
         records,
         unlowered,
+        work: meter.work,
+        regions_written,
     })
 }
