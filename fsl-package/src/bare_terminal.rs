@@ -161,19 +161,11 @@ impl BarePackage<'_> {
             };
             terminals.push(BareTerminal {
                 node: key(&row.node)?,
-                ordinal: 0,
+                ordinal: usize::try_from(row.ordinal)
+                    .map_err(|_| fault("terminal-ordinal-representable"))?,
                 model,
                 declaration,
             });
-        }
-        // FR-940: ordered by the model selection's identity, as the source
-        // route orders its declarations.
-        terminals.sort_by(|left, right| left.model.cmp(&right.model));
-        let mut ordinals = std::collections::BTreeMap::<String, usize>::new();
-        for terminal in &mut terminals {
-            let ordinal = ordinals.entry(terminal.model.clone()).or_default();
-            terminal.ordinal = *ordinal;
-            *ordinal += 1;
         }
         Ok(terminals)
     }
