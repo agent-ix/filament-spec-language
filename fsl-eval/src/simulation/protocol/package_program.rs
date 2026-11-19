@@ -297,7 +297,7 @@ impl<'a> PackageProtocolProgram<'a> {
                         .evaluator
                         .package_node_key(operation)
                         .ok_or_else(|| PackageProgramRefusal::MissingIdentity(operation.clone()))?;
-                    let (operation_declaring, _) = input
+                    let (operation_declaring, operation_name) = input
                         .evaluator
                         .package_protocol_operation(operation)
                         .ok_or_else(|| PackageProgramRefusal::MissingIdentity(operation.clone()))?;
@@ -318,9 +318,6 @@ impl<'a> PackageProtocolProgram<'a> {
                         .ok_or_else(|| {
                             PackageProgramRefusal::MissingIdentity((*operation).clone())
                         })?;
-                    let operation_name = operation_path.last().cloned().ok_or_else(|| {
-                        PackageProgramRefusal::MissingIdentity((*operation).clone())
-                    })?;
                     (
                         Vec::new(),
                         Vec::new(),
