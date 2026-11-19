@@ -31,6 +31,18 @@ struct PopulationTrace {
     states: Vec<Json>,
 }
 
+#[derive(Clone, Debug)]
+struct FiniteRecord {
+    values: Vec<Value>,
+    source: Json,
+}
+
+impl PartialEq for FiniteRecord {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source
+    }
+}
+
 pub(super) fn item<'a>(
     analysis: &'a RunInput<'a>,
     binding: &SubjectBinding<'a>,
@@ -118,7 +130,10 @@ pub(super) fn item<'a>(
                         };
                         values.push(value);
                     }
-                    records.push(values);
+                    records.push(FiniteRecord {
+                        values,
+                        source: state,
+                    });
                 }
                 traces.push(FiniteTrace {
                     identity: trace.identity,
@@ -173,7 +188,7 @@ pub(super) fn item<'a>(
                                 aligned = false;
                                 break;
                             };
-                            arguments.extend(record.iter().cloned());
+                            arguments.extend(record.values.iter().cloned());
                         }
                         if !aligned {
                             return FiniteTupleOutcome::Incomplete;
@@ -240,7 +255,7 @@ pub(super) fn item<'a>(
                                 let Some(record) = trace.records.get(position) else {
                                     return FiniteTupleOutcome::Incomplete;
                                 };
-                                arguments.extend(record.iter().cloned());
+                                arguments.extend(record.values.iter().cloned());
                             }
                             let Ok(evaluation) = package.evaluate(
                                 &expression,
