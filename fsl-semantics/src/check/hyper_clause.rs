@@ -550,16 +550,8 @@ impl CheckedFiniteHyperClause {
         self.occurrence.as_ref()
     }
 
-    pub(crate) fn typed_body(&self) -> &super::ir::CheckedBody {
-        &self.typed_body
-    }
-
     pub(crate) fn body_slots(&self) -> usize {
         self.body_slots
-    }
-
-    pub(crate) fn body_parameters(&self) -> &[(String, ValueType)] {
-        &self.body_parameters
     }
 
     pub(crate) fn take_formed_units(&mut self) -> filament_semantic_value::quantity::UnitTable {

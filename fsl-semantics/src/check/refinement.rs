@@ -743,7 +743,6 @@ impl CheckedRefinement {
             })
             .collect();
         let body = filament_contract_model::CheckedTerm::Refinement {
-            name: self.name.as_str().into(),
             abstract_key: Box::new(abstract_key),
             profile: filament_contract_model::CheckedArtifactRef {
                 authority: "agent-ix".into(),
