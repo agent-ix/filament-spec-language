@@ -203,9 +203,7 @@ struct PackageSelection {
 /// FR-850, FR-940: analyze a `package` request over the `BarePackage` of
 /// its admitted package, read through `AnalysisView`, never compiling
 /// source, with the caller's `negotiate` under `cancel` and its deadline.
-/// An item whose engine family has no package form yet refuses the request
-/// whole, as not yet implemented and naming the family, rather than settle
-/// `unsupported`.
+/// Each item reads the admitted package form its engine family supports.
 fn run_package(
     selection: PackageSelection,
     negotiate: &dyn Negotiate,
@@ -231,15 +229,6 @@ fn run_package(
         identity_bytes,
         equality_bytes,
     } = admitted;
-    // FSL FR-1033: the package route binds no protocol subject yet, so no
-    // `memory` entry is read over it.
-    if !memory.is_empty() {
-        return Err(RunCause::AnalyzeNotYetImplemented {
-            member: "package",
-            detail: ": the memory member names a protocol subject, which has no package form yet"
-                .to_owned(),
-        });
-    }
     let package = fsl_package::BarePackage::new(&admitted)
         .with_supply(
             fsl_package::BareSupply {
