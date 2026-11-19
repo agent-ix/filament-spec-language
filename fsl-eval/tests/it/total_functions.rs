@@ -1316,6 +1316,7 @@ fn p_input_bytes_limit_refuses_through_package_declarations_check() {
     .check(
         CheckMode::Linked,
         CheckingLimits::default().with_input_bytes(1),
+        &fsl_eval::value::S6aRewardEvaluator,
     );
     let exhausted = refusal(limited);
     assert!(
@@ -1370,6 +1371,7 @@ fn p_work_budget_limit_refuses_through_package_declarations_check() {
     .check(
         CheckMode::Linked,
         CheckingLimits::default().with_work_budget(0),
+        &fsl_eval::value::S6aRewardEvaluator,
     );
     let exhausted = refusal(limited);
     assert!(
