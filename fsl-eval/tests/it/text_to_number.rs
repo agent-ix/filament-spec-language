@@ -5,8 +5,8 @@ use std::str::FromStr;
 
 use filament_eval::{Evaluation, FamilyOutcome};
 use filament_exact::{
-    IeeeFlag, Integer, Meter, Outcome, Rational, Refusal, RoundingMode, ScalarLimits, TextProfile,
-    TextType, Undefined, Value, admit_text,
+    admit_text, IeeeFlag, Integer, Meter, Outcome, Rational, Refusal, RoundingMode, ScalarLimits,
+    TextProfile, TextType, Undefined, Value,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::loss::ValueLoss;
@@ -15,7 +15,7 @@ use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckRefusal, PackageDeclarations};
 use fsl_semantics::model::intake::SelectedModels;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::value::{DefinitionRole, admit_ieee_profile};
+use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
 use ix_trace_rs::trace;
 
 const LIMITS: ScalarLimits = ScalarLimits {
