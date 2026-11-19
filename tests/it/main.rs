@@ -33,6 +33,7 @@ mod compile_command;
 mod no_binary;
 mod parse_operation;
 mod source_corpus;
+mod refinement_source_routes;
 #[cfg(feature = "checked-handoff")]
 mod protocol_source_routes;
 

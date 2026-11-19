@@ -1,0 +1,9 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+profile inf = "filament.temporal.infinite-trace/v1";
+model M = "test/counter-step";
+post Advances using v on M::Counter::inc { (pre(self.value) < 3 and self.value = pre(self.value) + 1) or (pre(self.value) = 3 and self.value = 0) }
+refinement CounterIdentity using inf abstract M concrete M {
+  population M::counters from M::counters;
+  step M::Counter::inc -> M::Counter::inc(self);
+}

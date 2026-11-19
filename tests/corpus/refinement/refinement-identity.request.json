@@ -1,0 +1,26 @@
+{
+  "format": "native-compile/1",
+  "request": {
+    "program": {
+      "source": {
+        "file": "refinement-identity.native",
+        "authority": "test",
+        "identity": "test:corpus/refinement-identity",
+        "document": "refinement-identity",
+        "formal_revision": 1
+      }
+    },
+    "models": [
+      {
+        "format": "semantic-ir/2.0.0",
+        "source": {
+          "file": "../../../fsl-conformance/cases/counter-step-package.json",
+          "authority": "test",
+          "identity": "test:counter-step-package",
+          "document": "Package",
+          "formal_revision": 1
+        }
+      }
+    ]
+  }
+}
