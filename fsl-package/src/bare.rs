@@ -65,7 +65,6 @@ pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/5";
 pub struct BarePackage<'p> {
     dependency_views: Vec<BarePackage<'p>>,
     package: &'p CheckedPackageV2,
-    checked_source: Option<&'p crate::CheckedPackage>,
     /// The exact bytes that admitted `package`, when this value was built
     /// from a reader-backed handoff. A bare package made directly from a
     /// checked object has no byte witness.
@@ -114,7 +113,6 @@ impl<'p> BarePackage<'p> {
             dependency_views: Vec::new(),
             identity: fsl_semantics::library::LibraryName::of_package(package),
             package,
-            checked_source: None,
             canonical_bytes: None,
             supply: None,
             joined: None,
@@ -162,7 +160,6 @@ impl<'p> BarePackage<'p> {
     /// package; callers cannot provide a mismatched slice.
     pub fn from_admitted_read(read: &'p crate::AdmittedPackageRead<'_>) -> Self {
         let mut bare = Self::new(read.admitted());
-        bare.checked_source = Some(read.source());
         bare.canonical_bytes = Some(read.canonical_bytes());
         bare
     }
@@ -171,18 +168,6 @@ impl<'p> BarePackage<'p> {
     /// A value constructed with [`Self::new`] has no retained input bytes.
     pub fn canonical_bytes(&self) -> Option<&'p [u8]> {
         self.canonical_bytes
-    }
-
-    /// The checked time-unit scale to seconds retained by the source route.
-    ///
-    /// A package built directly from a checked V2 object has no source
-    /// semantic graph and returns `None`.
-    pub fn time_unit_scale(&self, unit: &str) -> Option<filament_exact::Rational> {
-        self.checked_source?
-            .graph()
-            .time_unit_scale(unit)
-            .ok()
-            .cloned()
     }
 
     /// The admitted package's identity (FR-940 `identity`).

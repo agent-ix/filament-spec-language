@@ -185,8 +185,6 @@ fn admit_defined(
         let source_index = trace
             .supplied_index(temporal_position)
             .ok_or_else(|| fault("canonical-position-has-supplied-index"))?;
-        let source_index =
-            usize::try_from(source_index).map_err(|_| fault("supplied-position-index-in-usize"))?;
         let position = positions
             .get(source_index)
             .ok_or_else(|| fault("supplied-index-names-a-request-position"))?;
@@ -1769,7 +1767,8 @@ mod tests {
             ActivationState, EvidenceState, ExecutionState,
         };
         let anchor = position("anchor", 3, Valuation::True);
-        let owner = admitted(&[anchor.clone()], ClockCover::Exact, false).expect("trace history");
+        let owner = admitted(std::slice::from_ref(&anchor), ClockCover::Exact, false)
+            .expect("trace history");
         let binding = AuthenticatedBinding {
             package: "recipe".into(),
             declaration: serde_json::from_value(json!({"package":"recipe","path":["Due"],"ordinal":0})).expect("node"),

@@ -15,7 +15,7 @@ impl OwnerObservation {
             ProgressCompleteness::Complete { through } => Some(through),
             ProgressCompleteness::Incomplete => None,
         };
-        let coordinate = through.or_else(|| match retained {
+        let coordinate = through.or(match retained {
             Some(ProgressCompleteness::Complete { through }) => Some(through),
             Some(ProgressCompleteness::Incomplete) | None => None,
         });
