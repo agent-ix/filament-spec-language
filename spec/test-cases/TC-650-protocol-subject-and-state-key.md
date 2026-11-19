@@ -12,7 +12,7 @@ relationships:
 
 Verify the protocol subject's construction and refusals, the thread paths and ordinals, binder removal and the canonical state key.
 
-Scope: FR-205-AC-1 to FR-205-AC-9.
+Scope: FR-205-AC-1 to FR-205-AC-11.
 
 ## Test Procedure
 
@@ -52,6 +52,19 @@ Use ADR-027 §7's `Fill` unit (universe `{c}`, `c.v = 0`).
 
 9. Read `w`'s `roles` entry in every state of `Fill`; build FR-205-AC-9's
    two-alias variant with no role bindings and read both roles' entries.
+10. Build FR-205-AC-10's `Echo` subject. Take `send(Snd)` to `s1`; from
+    `s1` take `duplicate` then `lose` of delivery 0 to `s2`, and
+    `duplicate` then `lose` of delivery 1 to `s3`; take a second
+    `duplicate` from `s2`. Read each state's `ProtocolKey` and cycle key
+    for the claim `always holds(c.v = 0)` and for an item whose obligation
+    reads the delivery index of `Rcv`'s receive steps. Run EN-1 on both
+    items with `max_depth` 8, and check a closure certificate of the cycle
+    keys for the first.
+11. Pair the enabled steps at `s1` and `s2` and compare their post-states'
+    cycle keys, model states and `receive` payloads; canonicalise an
+    `unordered` variant holding deliveries 1 and 3 of one message; read the
+    cycle keys of `s1` to `s3` for an item that reads the message identity
+    of `Rcv`'s receive steps and no delivery index.
 
 Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
 
@@ -89,3 +102,14 @@ Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
 - Step 9: `w`'s entry is `{"type":"model-binding","selection":"<M's
   identity>"}` in every state; the two-alias variant builds, with entries
   naming `M`'s and `N`'s identities (FR-205-AC-9).
+- Step 10: three different `ProtocolKey`s and, for the unread claim, one
+  cycle key (`s1`'s `ProtocolKey`); the second `duplicate` from `s2` carries
+  delivery index 2; EN-1 settles `Holds` (`proved`) and the certificate is
+  accepted. For the reading item, three different cycle keys and
+  `inconclusive` `BoundReached{depth: 8}`. The step fails if `canon` erases
+  a label the item reads or leaves the `next-delivery` bound in the cycle
+  key of an unread channel.
+- Step 11: the steps pair one to one (`duplicate`, `lose`, `receive`) with
+  equal cycle keys, model states and payloads; the `unordered` copies become
+  deliveries 0 and 1 with bound 2; one cycle key for the message-identity
+  item.

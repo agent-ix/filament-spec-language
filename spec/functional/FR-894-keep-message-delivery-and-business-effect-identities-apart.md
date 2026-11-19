@@ -75,6 +75,11 @@ construction, so no `duplicate` fact arises (FR-893). A protocol obligation
 may read the message identity, the delivery index and the effect occurrence
 key of the steps it observes, so a claim can state "each message is
 received at most once" or "each charge is applied once" over every behaviour.
+A delivery index that the checked item reads stays in the state key and
+keeps every protocol state apart that it tells apart. One that the item does
+not read is canonicalised in the cycle key that coalesces states and closes
+lassos (FR-205, "Cycle key"), so a `duplicate` and `lose` loop closes there
+while its counterexample still carries the concrete, never-reused indices.
 
 FSL SHALL name, in the protocol-analysis record (FR-574) and the replay-mode
 report (FR-895), the kind of each duplicate found, as one of three values:
@@ -106,6 +111,8 @@ the distinction in a ledger of its own.
 - ADR-027 ST-3 to ST-5, TS-2: send records, copies and transition identity.
 - [FR-206](FR-206-take-the-protocol-step-kinds-with-folded-structural-moves.md):
   the step kinds.
+- [FR-205](FR-205-define-the-protocol-subject-and-its-state-key.md): the
+  state key and the cycle key.
 - [FR-893](FR-893-reach-and-report-every-compensation-outcome.md): outcome
   facts.
 - [FR-895](FR-895-assess-a-recorded-protocol-execution-against-its-obligations.md):

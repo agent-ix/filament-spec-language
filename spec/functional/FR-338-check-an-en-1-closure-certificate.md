@@ -115,6 +115,18 @@ pub fn check_protocol_closure(
 ) -> Result<TemporalCertificateCheck, ClosureRefusal>; // check_closure's check over a protocol subject
 ```
 
+For `check_protocol_closure`, a `ProductStateRef`'s `model_state` SHALL be
+the protocol state's cycle key for the request's item (FR-205, "Cycle key"):
+the `ProtocolKey` of its delivery-label canonical form, which equals the
+`ProtocolKey` on every channel whose delivery index the item reads. The
+checker SHALL canonicalise each recomputed initial state and successor before
+matching it against the certificate, so a closure over a `duplicate` and
+`lose` loop on an unread channel is finite, and a certificate that holds an
+uncanonicalised key for such a state is rejected `SuccessorMissing` at the
+predecessor that reaches it. An item that reads a channel's delivery index
+has no finite closure while a `duplicate` on that channel stays enabled, and
+settles only on EN-1's bounded result (FR-205).
+
 `ClosureRefusal` is the checker's refusal to check at all: the subject does
 not admit (FR-106), a root is unbounded, the item has no translation or no
 instance (FR-125), the subject has no initial state, a state or automaton

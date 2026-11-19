@@ -156,7 +156,13 @@ loop is never reported as a violation.
   `ProtocolSystem` (ADR-027 TS-1, PX-2) with FR-101 `replay` from the named initial
   state, steps being protocol transition identities with post-states,
   and SHALL refuse `invalid_runtime_input`/`invalid-value` when the loop's
-  last post-state is not its entry state or a step is not enabled. A caller
+  last post-state is not its entry state or a step is not enabled. The loop's
+  last post-state is its entry state when the two have equal cycle keys for
+  the clause's item (FR-205, "Cycle key"): a delivery index the clause does
+  not read is compared canonically, and one it reads is compared as it is. A
+  loop that duplicates on a channel whose delivery index the clause reads
+  therefore never closes and is refused here; the item's only evidence over
+  such loops is EN-1's bounded result (FR-205). A caller
   builds this lasso through FR-217's replay entry; the evaluator's own
   `Lasso::Model` input names a model subject (FR-125).
 - The loop of a zero-counted lasso keeps the interval distance constant: the
@@ -193,7 +199,7 @@ loop is never reported as a violation.
 | FR-329-AC-7 | The same clause with `fair weak attemptUpdate` over the lasso as `Lasso::Observed` returns `MissingFairnessPremise` naming `fair weak whole attemptUpdate`, O-16 unsupported, and evaluates no position; with an empty fairness set over the same observed lasso it is `Completed(false)` at position 0. | Test (TC-848) |
 | FR-329-AC-8 | Over a fair protocol-subject lasso (a `repeat` around a `parallel` whose loop is only `fork` and `join` steps), entered at interval distance 0, built through FR-217's replay, under a bounded profile: with `p` false at every position, `eventually[1,1] holds(p)` `on origin` is `Completed(false)` at position 0; with `p` true at position 0, `eventually[0,1] holds(p)` is `Completed(true)`; with `p` true only at a loop position, at distance 0, `eventually[0,1] holds(p)` is `Completed(true)`. | Test (TC-839) |
 | FR-329-AC-9 | Under a bounded profile, a `Lasso::Observed`, a `Lasso::Model` over a model subject, and a protocol-subject `Lasso::Model` whose loop has one counted step each refuse `unsupported_construct`/`expression-form` and return no truth value; FR-217-AC-7 states the replay of the last. | Test (TC-839) |
-| FR-329-AC-10 | Under a bounded profile, a zero-counted protocol-subject lasso that is unfair for a scheduler constraint refuses `invalid_runtime_input`/`invalid-value` naming the constraint and returns no truth value; the same lasso replayed against the package that declares `scheduling adversarial` is fair, and with `p` false at every position `eventually[1,1] holds(p)` is `Completed(false)` at position 0. | Test (TC-839) |
+| FR-329-AC-10 | Fixture: FR-205-AC-10's `Echo` protocol with `p` the atom `c.v = 1`, false at every position, under a bounded profile; the protocol lasso, built through FR-217's replay, has prefix `send(Snd)` and loop `duplicate(ch, delivery 0)`, `lose(ch, delivery 0)`, whose last post-state has delivery 1 queued and `next-delivery` 2 and so a `ProtocolKey` different from the entry's but an equal cycle key (FR-205). The root thread rests at `Rcv`, enabled at every loop position and taken at none, so over the default package (the payload carrying its scheduler constraints) the lasso is unfair and refuses `invalid_runtime_input`/`invalid-value` naming the root's scheduler constraint, with no truth value. Against the package that declares `scheduling adversarial` the same lasso is fair and `eventually[1,1] holds(p)` is `Completed(false)` at position 0. Adverse checks: comparing the loop by `ProtocolKey` refuses both as a loop that does not close, which is a different refusal (no constraint named, no truth value against the adversarial package); for a clause that reads the delivery index of `Rcv`'s receive steps the lasso refuses `invalid_runtime_input`/`invalid-value` as not closing against either package. | Test (TC-839) |
 
 ## Dependencies
 
