@@ -10,7 +10,8 @@ use serde_json::Value;
 
 use super::expand::{Exp, Expander, ExpansionGap};
 use super::interval::{IValue, Interval, IntervalEvaluator, Tri};
-use super::{HybridReplayMeter, HybridReplayRefusal, SolverMethod};
+use super::{HybridReplayMeter, HybridReplayRefusal};
+use crate::SolverMethod;
 
 /// The result of checking one provider-supplied hybrid certificate.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -112,24 +113,28 @@ fn check_inductive(
         let Some(raw) = boxes.get(mode.name.as_str()) else {
             return Ok(rejected(
                 "box-shape",
-                &format!("/certificate/boxes/{}", mode.name),
+                &format!("/certificate/boxes/{}", mode.name.as_str()),
             ));
         };
         let Some(variables) = raw.as_object() else {
             return Ok(rejected(
                 "box-shape",
-                &format!("/certificate/boxes/{}", mode.name),
+                &format!("/certificate/boxes/{}", mode.name.as_str()),
             ));
         };
         if variables.len() != model.variables.len() {
             return Ok(rejected(
                 "box-shape",
-                &format!("/certificate/boxes/{}", mode.name),
+                &format!("/certificate/boxes/{}", mode.name.as_str()),
             ));
         }
         let mut intervals = Vec::with_capacity(model.variables.len());
         for variable in &model.variables {
-            let pointer = format!("/certificate/boxes/{}/{}", mode.name, variable.name);
+            let pointer = format!(
+                "/certificate/boxes/{}/{}",
+                mode.name.as_str(),
+                variable.name.as_str()
+            );
             let Some(value) = variables.get(variable.name.as_str()) else {
                 return Ok(rejected("box-shape", &pointer));
             };
@@ -192,7 +197,10 @@ fn check_inductive(
     for (mode_index, mode) in model.modes.iter().enumerate() {
         let boxed = &mode_boxes[mode_index];
         if truth(graph, &mode.invariant, boxed, meter)? != Tri::True {
-            return Ok(rejected("b", &format!("/certificate/boxes/{}", mode.name)));
+            return Ok(rejected(
+                "b",
+                &format!("/certificate/boxes/{}", mode.name.as_str()),
+            ));
         }
         for (variable, rate) in mode.rates.iter().enumerate() {
             for upper_face in [false, true] {
@@ -213,14 +221,14 @@ fn check_inductive(
                 let points_inward = if upper_face {
                     rate.upper
                         .as_ref()
-                        .is_some_and(|upper| upper <= &Rational::from_integer(Integer::from(0)))
+                        .is_some_and(|upper| upper <= &Rational::from_integer(Integer::from(0_i64)))
                 } else {
                     rate.lower
                         .as_ref()
-                        .is_some_and(|lower| lower >= &Rational::from_integer(Integer::from(0)))
+                        .is_some_and(|lower| lower >= &Rational::from_integer(Integer::from(0_i64)))
                 };
                 if !points_inward {
-                    let epsilon = Rational::from_integer(Integer::from(1));
+                    let epsilon = Rational::from_integer(Integer::from(1_i64));
                     let outside_value = if upper_face {
                         bound.add(&epsilon)
                     } else {
@@ -229,7 +237,10 @@ fn check_inductive(
                     let mut outside = boxed.to_vec();
                     outside[variable] = Interval::point(outside_value);
                     if truth(graph, &mode.invariant, &outside, meter)? != Tri::False {
-                        return Ok(rejected("b", &format!("/certificate/boxes/{}", mode.name)));
+                        return Ok(rejected(
+                            "b",
+                            &format!("/certificate/boxes/{}", mode.name.as_str()),
+                        ));
                     }
                 }
             }
@@ -257,7 +268,7 @@ fn check_inductive(
             if !subset(&image, target_box) {
                 return Ok(rejected(
                     "successor",
-                    &format!("/certificate/boxes/{}", mode.name),
+                    &format!("/certificate/boxes/{}", mode.name.as_str()),
                 ));
             }
         }
@@ -297,7 +308,6 @@ fn check_flowpipe(
         else {
             return Ok(rejected("box-shape", &format!("{at}/mode")));
         };
-        let mode = &model.modes[mode_index];
         let time = step
             .get("time")
             .and_then(read_interval)
@@ -698,7 +708,7 @@ fn conditionals_resolved(
     match expression {
         Exp::Conditional(condition, yes, no) => {
             let value = IntervalEvaluator::new(expander, zero(), meter)
-                .evaluate(condition, variables)
+                .evaluate((**condition).clone(), variables)
                 .map_err(map_evaluation_refusal)?;
             match value {
                 IValue::Boolean(Tri::True) => {
@@ -748,15 +758,10 @@ fn violates_always_claim(
     let fsl_semantics::check::HybridFormula::Holds(atom) = inner.as_ref() else {
         return Ok(false);
     };
-    let Some(origin) = activation_time
-        .lower
-        .as_ref()
-        .zip(activation_time.upper.as_ref())
-        .filter(|(lower, upper)| lower == upper)
-        .map(|(lower, _)| lower)
-    else {
+    let origin = &activation_time.lower;
+    if origin != &activation_time.upper {
         return Ok(false);
-    };
+    }
     let start = origin.add(
         &region
             .as_ref()
@@ -806,7 +811,7 @@ fn value(
     let expression = expander.term(term, meter).map_err(map_evaluation_refusal)?;
     IntervalEvaluator::new(
         &mut expander,
-        Rational::from_integer(Integer::from(0)),
+        Rational::from_integer(Integer::from(0_i64)),
         meter,
     )
     .evaluate(expression, variables)
@@ -868,7 +873,7 @@ fn subset(inner: &[Interval], outer: &[Interval]) -> bool {
 }
 
 fn zero() -> Rational {
-    Rational::from_integer(Integer::from(0))
+    Rational::from_integer(Integer::from(0_i64))
 }
 
 fn add_intervals(left: &Interval, right: &Interval) -> Option<Interval> {
@@ -927,7 +932,7 @@ fn contract_boundary(
     domain: &[Interval],
     meter: &mut HybridReplayMeter,
 ) -> Result<Interval, HybridCertificateRefusal> {
-    let epsilon = Rational::from_integer(Integer::from(1));
+    let epsilon = Rational::from_integer(Integer::from(1_i64));
     if let (Some(candidate_lower), Some(domain_lower)) =
         (candidate.lower.as_ref(), domain[variable].lower.as_ref())
     {
