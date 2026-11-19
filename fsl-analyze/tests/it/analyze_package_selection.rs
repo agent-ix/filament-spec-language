@@ -366,10 +366,11 @@ fn a_refused_package_never_falls_back_to_source() {
 
 /// FR-850-AC-6 (the cases the admission tests above leave): an identity file
 /// with a foreign `format` refuses `invalid_package`/`unknown-format`, and a
-/// handoff with no `equality.json` is admitted with no equality rows.
+/// handoff with no `equality.json` of a package holding an equality
+/// application refuses `invalid_package`/`missing-file`.
 #[trace("TC-2966", "FR-850-AC-6")]
 #[test]
-fn a_foreign_identity_format_refuses_and_an_absent_equality_file_is_admitted() {
+fn a_foreign_identity_format_and_an_absent_equality_file_refuse_invalid_package() {
     let ws = Workspace::new("package-handoff-identities");
     let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
     let identities = ws.path(&handoff_file("identities.json"));
@@ -388,11 +389,16 @@ fn a_foreign_identity_format_refuses_and_an_absent_equality_file_is_admitted() {
     assert_eq!(run.document()["items"], json!([]));
     assert_eq!(run.exit, 20);
 
+    // The Counter package holds the `Inc` postcondition's equality
+    // application, so its equality rows are required (FR-850-AC-10).
     ws.write(&handoff_file("identities.json"), &rows);
     std::fs::remove_file(ws.path(&handoff_file("equality.json"))).expect("remove equality");
     let run = analyze_members(&ws, "analyze-no-equality.json", &members);
-    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
-    assert_eq!(run.exit, 0);
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["code"], "invalid_package", "{diagnostic}");
+    assert_eq!(diagnostic["cause"], "missing-file", "{diagnostic}");
+    assert_eq!(run.document()["items"], json!([]));
+    assert_eq!(run.exit, 20);
 }
 
 /// FSpec FR-520-AC-7: the `package` member is the closed `{directory}`
@@ -809,4 +815,136 @@ fn a_package_request_names_its_model_by_identity_and_settles_an_alias_model_alia
         package_bytes("package-model-n", &renamed),
         "units importing one model as M and as N write equal package bytes"
     );
+}
+
+/// The `claim` ordinal an item's request names.
+fn claim_ordinal(item: &Value) -> Value {
+    item["request"]["claim"]["occurrence"]["ordinal"].clone()
+}
+
+/// FR-850-AC-10 (QSL-2406): a package holding an equality application is
+/// read with its producer's equality rows, so a handoff without
+/// `equality.json` refuses the whole request `invalid_package`/
+/// `missing-file` at the request stage; a package holding none is admitted
+/// without the file and settles as the source route does.
+#[trace("TC-3025", "FR-850-AC-10")]
+#[test]
+fn an_absent_equality_file_refuses_a_package_that_holds_an_equality() {
+    let items = json!([{"claim": "Bounded"}]);
+    let ws = Workspace::new("package-equality-held");
+    let source = analyze(&counter_request(&ws, &bounded(), items.clone()));
+    let (members, package) = package_request(&ws, &bounded(), items.clone());
+    let package: Value = serde_json::from_slice(&package).expect("package JSON");
+    assert!(
+        package["checked_term_data"]["equality_decisions"]
+            .as_array()
+            .is_some_and(|decisions| !decisions.is_empty()),
+        "the Inc postcondition's `=` is an equality application"
+    );
+    let equality = ws.path(&handoff_file("equality.json"));
+    let rows = std::fs::read(&equality).expect("the handoff writes equality.json");
+    std::fs::remove_file(&equality).expect("remove equality");
+    let run = analyze_members(&ws, "analyze-equality-absent.json", &members);
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["code"], "invalid_package", "{diagnostic}");
+    assert_eq!(diagnostic["cause"], "missing-file", "{diagnostic}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("equality.json")),
+        "{diagnostic}"
+    );
+    assert_eq!(run.document()["items"], json!([]));
+    assert_eq!(run.exit, 20);
+
+    ws.write(&handoff_file("equality.json"), &rows);
+    let run = analyze_members(&ws, "analyze-equality-present.json", &members);
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
+    assert_eq!(run.item(0)["record"], source.item(0)["record"]);
+
+    let greater = format!(
+        "pre CanInc using v on M::Counter::inc {{ self.value < 3 }}\n\
+         post Inc using v on M::Counter::inc {{ self.value > pre(self.value) }}\n{}",
+        bounded()
+    );
+    let ws = Workspace::new("package-equality-none");
+    let path = crate::analyze_cli_support::request_over(
+        &ws,
+        &crate::counter::unit_text(&greater),
+        &crate::counter::document(false),
+        &[crate::analyze_cli_support::counter_snapshot(&[("a", 0)])],
+        json!({ "items": items }),
+    );
+    let source = analyze(&path);
+    let (members, package) = package_selection(&ws, &request_of(&path));
+    let package: Value = serde_json::from_slice(&package).expect("package JSON");
+    assert!(
+        package["checked_term_data"]["equality_decisions"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "no equality application"
+    );
+    std::fs::remove_file(ws.path(&handoff_file("equality.json"))).expect("remove equality");
+    let run = analyze_members(&ws, "analyze-no-equality-held.json", &members);
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
+    assert_eq!(run.item(0)["record"], source.item(0)["record"]);
+    assert_eq!(run.exit, 0);
+}
+
+/// FR-940-AC-10 (QSL-2402): `BelowThree` and `AtMostTwo` share one
+/// `temporal_clause` node, each its own `claim` occurrence numbered in
+/// source order. Both routes refute each item with a reproduced replay at
+/// its own declaration's occurrence, whether both are requested or only the
+/// later one, and swapping the declarations swaps the ordinals.
+#[trace("TC-3026", "FR-940-AC-10")]
+#[test]
+fn declarations_of_a_shared_clause_node_keep_their_own_occurrence() {
+    for (name, order, items) in [
+        (
+            "both",
+            [("BelowThree", 0), ("AtMostTwo", 1)],
+            json!([{"claim": "BelowThree"}, {"claim": "AtMostTwo"}]),
+        ),
+        (
+            "later",
+            [("BelowThree", 0), ("AtMostTwo", 1)],
+            json!([{"claim": "AtMostTwo"}]),
+        ),
+        (
+            "swapped",
+            [("AtMostTwo", 0), ("BelowThree", 1)],
+            json!([{"claim": "BelowThree"}, {"claim": "AtMostTwo"}]),
+        ),
+    ] {
+        let body = if name == "swapped" {
+            format!("{}{}{}", bounded(), at_most_two(), below_three())
+        } else {
+            format!("{}{}{}", bounded(), below_three(), at_most_two())
+        };
+        let ws = Workspace::new(&format!("shared-node-{name}"));
+        let source = analyze(&counter_request(&ws, &body, items.clone()));
+        let (members, _) = package_request(&ws, &body, items.clone());
+        let run = analyze_members(&ws, &format!("analyze-shared-{name}.json"), &members);
+        let requested = items.as_array().expect("items").len();
+        for index in 0..requested {
+            let claim = items[index]["claim"].as_str().expect("claim name");
+            let ordinal = order
+                .iter()
+                .find(|(declared, _)| *declared == claim)
+                .map(|(_, ordinal)| json!(ordinal))
+                .expect("a declared name");
+            for (route, result) in [("source", &source), ("package", &run)] {
+                let item = result.item(index);
+                assert_eq!(label(&item), "refuted", "{name} {route} {claim}: {item}");
+                assert_eq!(item["replay"]["reproduced"], true, "{name} {route} {claim}");
+                assert_eq!(claim_ordinal(&item), ordinal, "{name} {route} {claim}");
+            }
+        }
+        assert_eq!(
+            run.document()["items"],
+            source.document()["items"],
+            "{name}"
+        );
+        assert_eq!(run.exit, source.exit, "{name}");
+    }
 }
