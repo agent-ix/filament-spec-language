@@ -14,7 +14,7 @@ relationships:
 rebuilding the first activating states and the reset process itself, and
 checks the reset process over proper schedulers only.
 
-Scope: FR-201-AC-52, FR-201-AC-53, FR-201-AC-54.
+Scope: FR-201-AC-52, FR-201-AC-53, FR-201-AC-54, FR-201-AC-55.
 
 ## Test Procedure
 
@@ -35,6 +35,10 @@ Scope: FR-201-AC-52, FR-201-AC-53, FR-201-AC-54.
    policy `stay`; then `x(s0) = 0` with policy `b`; then, for
    `<= rational(9, 10)`, `y(s0) = 1` with policy `a`.
 
+6. On the `stay` model, for `<= rational(9, 10)`, check a maximum `reset`
+   with `y(s0) = 1/2`, policy `b` and no row for `u`; then with `u` at
+   `1/2`; then a minimum `reset` with a `Randomized` entry at `s0`.
+
 Run the checker as a separate process, as FR-201-AC-51 does.
 
 ## Expected Results
@@ -46,3 +50,5 @@ Run the checker as a separate process, as FR-201-AC-51 does.
 - Step 4: `Malformed` naming `conditional`, `mode`, `mode` and `numerator`.
 - Step 5: accepted; `RankBroken` at `s0` with `part` `reset`;
   `InequalityFails` at `s0`; accepted, and the claim is refuted.
+- Step 6: `Malformed` at `values`; `InequalityFails` at `s0` with `part`
+  `reset`; `Malformed` at `policy`.

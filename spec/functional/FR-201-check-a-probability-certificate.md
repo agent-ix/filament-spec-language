@@ -96,7 +96,7 @@ product state form `{product_key}`, with `part` when present, and the second as 
 | A non-target state with `x > 0` has no rank | `RankMissing` | `ProbabilisticProductState` of that state |
 | A ranked non-target state with `x > 0` has no successor of positive probability, `x > 0` and a smaller rank | `RankBroken` | `ProbabilisticProductState` of that state |
 | The conditions hold, but the initial state's value is not on the claim's side of the threshold | `ThresholdMissed` | `ProbabilisticProductState` of the initial state |
-| A `Lower` or `Exact` certificate without `ranking`, a lower bound on a maximum without `policy`, or a `LongRun` certificate without `components`, a `Conditional` certificate without `conditional`, with an unknown `mode`, without a part its mode requires or with a part that is not `Exact`, an `Optimum` `reset` without `policy` or `ranking`, or a `Ratio` certificate under an objective other than `workload` | `Malformed` | `CertificateMember` naming `ranking`, `policy`, `components`, `conditional`, `mode`, `numerator`, `denominator`, `post` or `reset` |
+| A `Lower` or `Exact` certificate without `ranking`, a lower bound on a maximum without `policy`, or a `LongRun` certificate without `components`, a `Conditional` certificate without `conditional`, with an unknown `mode`, without a part its mode requires or with a part that is not `Exact`, an `Optimum` `reset` without `policy` or `ranking`, a `reset` whose `values`, `policy` or `ranking` miss, repeat or add a rebuilt reachable waiting state, a `Randomized` `reset` policy entry without a fairness set, or a `Ratio` certificate under an objective other than `workload` | `Malformed` | `CertificateMember` naming `ranking`, `policy`, `components`, `conditional`, `mode`, `numerator`, `denominator`, `post` or `reset` |
 | A `Ratio` denominator of 0 at an initial key from which a first activating state is reachable, or a `Vacuous` certificate where one is reachable | `InequalityFails` | `ProbabilisticProductState` of the initial state |
 | A part of a `Conditional` certificate fails its own conditions (for `reset`, FR-196's proper-optimum conditions); parts are checked in the order `numerator`, `denominator` or `post`, `reset`, and the first failing part is reported | that part's rule | that part's `ProbabilisticProductState` with `part` naming it |
 
@@ -617,11 +617,25 @@ process, by its own graph code, and read none of them from the certificate.
   - Its `values` SHALL satisfy, at every waiting state and under every
     action including `Reset`, `x <= F(x)` for a minimum or `F(y) <= y` for a
     maximum.
-  - Its `policy` SHALL give one choice per waiting state, a
-    `ProductAction` or `Reset`, with `x = F_policy(x)` there.
+  - Its `policy` SHALL give one FR-202 `WitnessEntry` per waiting state, a
+    `Choice` of a `ProductAction` or `Reset`, with `x = F_policy(x)` there.
+    Without a fairness set a deterministic memoryless proper policy
+    attains the optimum, so a `Randomized` entry SHALL be rejected
+    `Malformed` at `policy`. With a fairness set the attaining fair policy
+    may have to mix its choices inside a fair end component, so a
+    `Randomized` entry is admitted, and the checker applies its weighted
+    operator.
   - Its `ranking` SHALL give every waiting state a successor of positive
     probability under the policy with a smaller rank, terminal copies having
     rank 0, so the policy is proper.
+  - `values`, `policy` and `ranking` SHALL each cover exactly the waiting
+    states the checker rebuilt as reachable from the initial keys, one row
+    each. The rule that an unexplored or unnamed successor counts as value 0
+    does not apply to `reset`: a missing row would let a maximum ignore a
+    successor of high value. A missing, extra or duplicate row SHALL be
+    rejected `Malformed` at `values`, `policy` or `ranking`, before any
+    arithmetic, because coverage is a shape fault and not one state's
+    value.
   The checker SHALL compare `reset`'s value at each initial key from which
   a first activating state is reachable with the threshold, and confirm
   every other initial key vacuous by its own reachability search. With a
@@ -1267,6 +1281,7 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-52 | Over FSpec FR-407-AC-18's model, written as an `on each (x: T) when (g)` claim, EN-5 emits for `probability >= rational(1, 2)` over every scheduler an `Optimum` `Conditional` certificate (`post` 1 and `1/2` at the two first activating states, `reset` `1/2` at the initial state with policy `b`) that `fsl-probability-check` accepts with side `AtLeast`; with `reset`'s initial value `1/4` it is rejected `InequalityFails` at the initial state with `part` `reset`, and for `rational(3, 5)` `ThresholdMissed`. Under the workload choosing both actions with `1/2` each, the `Ratio` certificate (numerator `3/8`, denominator `5/8`) is accepted at `rational(3, 5)`; with the denominator replaced by 1 it is rejected `InequalityFails` with `part` `denominator`. | Test (TC-3061) |
 | FR-201-AC-53 | Over the variant where `g` is unreachable, a `Vacuous` certificate is accepted under both scheduler clauses, and over the model itself it is rejected `InequalityFails` at the initial state; a `Conditional` certificate without `conditional` is rejected `Malformed` naming `conditional`, one whose `mode` is `"workload"` `Malformed` naming `mode`, a `Ratio` certificate offered under every scheduler `Malformed` naming `mode`, and a `Ratio` certificate whose `numerator` is a `Lower` certificate `Malformed` naming `numerator`. | Test (TC-3061) |
 | FR-201-AC-54 | Over FSpec FR-407-AC-18's model with the further action `stay` at `s0` (FR-196-AC-16), for `probability >= rational(1, 2)` over every scheduler, the `Optimum` certificate whose `reset` has `x(s0) = 1/2`, `x` at the state after `a` from which `g` is unreachable `1/2`, policy `b` at `s0` and ranks 1 and 2 is accepted: under `stay` and `Reset`, `1/2 <= 1/2`, under `a`, `1/2 <= 1/4 + (3/4)(1/2) = 5/8`, under `b`, `1/2 <= 1/2`. A `reset` with `x(s0) = 0` and policy `stay` is rejected `RankBroken` at `s0` with `part` `reset`, since `stay` has no successor of smaller rank; with policy `b` it is rejected `InequalityFails` at `s0`, since `F_b(x) = 1/2`. So the improper value 0 is never certified. For `<= rational(9, 10)` the `reset` with `y(s0) = 1` and policy `a` (`1/4 + (3/4)(1) = 1`) is accepted and the claim is refuted. | Test (TC-3061) |
+| FR-201-AC-55 | On FR-201-AC-54's `stay` model, for `<= rational(9, 10)` over every scheduler, an `Optimum` certificate whose `reset` has `y(s0) = 1/2`, policy `b` and no row for the state `u` after `a` from which `g` is unreachable is rejected `Malformed` at `values` and proves nothing. Read with `u` as 0, it would pass `F_a(y) = 1/4 <= 1/2`, although the true maximum is 1. With `u` at `1/2` it is rejected `InequalityFails` at `s0` with `part` `reset` (`F_a(y) = 5/8`). Without a fairness set, a `Randomized` `reset` policy entry is rejected `Malformed` at `policy`. | Test (TC-3061) |
 
 ## Dependencies
 
