@@ -1508,7 +1508,7 @@ fn replay_hybrid(
                         static_outcome,
                         exact_reproduced: true,
                     },
-                    counterexample: *found,
+                    counterexample: found,
                 },
                 Some(wire),
             )

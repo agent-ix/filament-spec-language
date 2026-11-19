@@ -1218,7 +1218,7 @@ pub enum HybridReplaySettlement {
         /// Static and exact checks, including the reproduced counterexample.
         replay: HybridReplayRecord,
         /// The replayed counterexample (its kind is the replay's own).
-        counterexample: crate::HybridCounterexample,
+        counterexample: Box<crate::HybridCounterexample>,
     },
     /// The trace was admitted but did not reproduce the claimed violation.
     Inconclusive {
