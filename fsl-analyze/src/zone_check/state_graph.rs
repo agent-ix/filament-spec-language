@@ -201,7 +201,6 @@ fn path_from_initial(graph: &TimedStateGraph, target: usize) -> Vec<usize> {
             }
             None
         })
-        .flatten()
         .unwrap_or_default()
 }
 
