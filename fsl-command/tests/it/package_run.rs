@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const FLOOR_HALF: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
@@ -149,6 +149,25 @@ fn package_call_items_run_from_the_checked_artifact_without_source() {
         json!({"integer": "-14"}),
         "{value}"
     );
+}
+
+/// FR-1039-AC-2: a package synthesis still refuses until QSL-2235 lowers the
+/// checked synthesis's S1-S3 records; the refusal precedes package reads.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-2")]
+fn package_synthesis_refusal_names_qsl_2235_before_reading_the_package() {
+    let directory = tempfile::tempdir().unwrap();
+    let (exit, value) = run(
+        directory.path(),
+        json!({"models": [], "package": {"file": "absent.json"},
+            "synthesis": {"selection": "planned"},
+            "call": {"function": "half", "arguments": []}}),
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    names(&value, "synthesis");
+    names(&value, "QSL-2235");
+    assert!(!value.to_string().contains("absent.json"), "{value}");
 }
 
 /// FR-100 "Request-file preparation for the driver": preparing a package

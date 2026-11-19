@@ -3,8 +3,8 @@
 
 use filament_contract_model as ir;
 use filament_semantic_value::checking::CheckMode;
-use fsl_foundation::serde_object::{deserialize_objects, from_object};
 use fsl_foundation::AccountingSetting;
+use fsl_foundation::serde_object::{deserialize_objects, from_object};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
@@ -298,6 +298,10 @@ pub(super) struct Request {
     /// each refusal names its member path; none when absent.
     #[serde(default, deserialize_with = "present_json_value")]
     pub tl_lowering: Option<serde_json::Value>,
+    /// FR-1036: a synthesis request. The checked-package route is held at
+    /// QSL-2235 until synthesis lowering can admit its S1-S3 records.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub synthesis: Option<serde_json::Value>,
 }
 
 fn from_object_opt<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
