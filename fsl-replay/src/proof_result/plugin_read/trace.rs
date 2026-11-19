@@ -11,16 +11,15 @@ use super::{
     read_plugin_inconclusive_cause, unknown_member, wrong_kind,
 };
 use crate::hybrid_replay::{
-    admit, ExactInterval, ExactReal, ExpressionSite, HybridCounterexample,
-    HybridCounterexampleKind, HybridTrace, TraceBefore, TraceJump, TraceState, UndefinedCause,
-    UndefinedInstant,
+    ExactInterval, ExactReal, ExpressionSite, HybridCounterexample, HybridCounterexampleKind,
+    HybridTrace, TraceBefore, TraceJump, TraceState, UndefinedCause, UndefinedInstant, admit,
 };
-use crate::proof_result::plugin::PluginResultRefusal;
 use crate::proof_result::InconclusiveCause;
+use crate::proof_result::plugin::PluginResultRefusal;
 use filament_exact::Rational;
 use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::{
-    CheckedGraph, CheckedHybridClaim, CheckedHybridModel, HybridTerm, ModeIndex,
+    CheckedFunctionRef, CheckedGraph, CheckedHybridClaim, CheckedHybridModel, HybridTerm, ModeIndex,
 };
 
 use crate::hybrid::{hybrid_counterexample_locus, hybrid_term_at_locus};
@@ -194,20 +193,31 @@ fn read_undefined_kind(
     let wire_locus = member(location, "locus", &child(base, "where"))?;
     let locus = hybrid_counterexample_locus(graph, wire, claim_index, wire_locus)
         .ok_or_else(|| invalid(locus_pointer.clone()))?;
-    let call = || {
-        let mut path = locus.term.term.clone();
-        if !matches!(
-            hybrid_term_at_locus(graph, claim_index, &locus)?,
-            HybridTerm::Call(..)
-        ) {
-            path.pop()?;
+    let call = || -> Option<(CheckedFunctionRef, Option<usize>)> {
+        let path = &locus.term.term;
+        let term = hybrid_term_at_locus(graph, claim_index, &locus)?;
+        if let HybridTerm::Call(function, arguments) = term {
+            // A call-node locus names the function application, not a child
+            // position in the surrounding expression. Its argument index is
+            // recoverable without further context only for a unary call.
+            return Some((*function, (arguments.len() == 1).then_some(0)));
         }
-        let mut parent = locus.clone();
-        parent.term.term = path;
-        match hybrid_term_at_locus(graph, claim_index, &parent)? {
-            HybridTerm::Call(function, _) => Some((*function, locus.term.term.last().copied())),
-            _ => None,
+
+        // When the locus names a term inside a call's argument, use the path
+        // segment immediately below the nearest call node. Earlier segments
+        // belong to the surrounding expression and must not become a
+        // parameter index.
+        for prefix_len in (0..path.len()).rev() {
+            let mut parent = locus.clone();
+            parent.term.term.truncate(prefix_len);
+            if let Some(HybridTerm::Call(function, arguments)) =
+                hybrid_term_at_locus(graph, claim_index, &parent)
+            {
+                let parameter = *path.get(prefix_len)?;
+                return (parameter < arguments.len()).then_some((*function, Some(parameter)));
+            }
         }
+        None
     };
     let cause = match cause_name {
         "division-by-zero" => UndefinedCause::DivisionByZero,

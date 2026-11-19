@@ -1787,7 +1787,9 @@ mod settlement {
             "temporal DivisionCase using p over (h: Braking) clock \"model-time\" on origin { ",
             "always holds(1 / (h.v - 5) != 0) }\n",
             "temporal ParameterCase using p over (h: Braking) clock \"model-time\" on origin { ",
-            "always holds(drag(120) > 0) }\n",
+            "always holds(1 + drag(120) > 0) }\n",
+            "temporal RootParameterCase using p over (h: Braking) clock \"model-time\" on origin { ",
+            "always holds(accept(120)) }\n",
             "temporal ResultCase using p over (h: Braking) clock \"model-time\" on origin { ",
             "always holds(limited(2) > 0) }\n",
             "temporal CaptureCase using p over (h: Braking) clock \"model-time\" on origin { ",
@@ -1796,6 +1798,7 @@ mod settlement {
         let declarations = format!(
             "{}\
              function limited using v(s: Rational[-100, 100; 1, 1]): Rational[-100, 100; 1, 1] pure {{ s }}\n\
+             function accept using v(s: Rational[-100, 100; 1, 1]): Boolean pure {{ s > rational(0, 1) }}\n\
              {}",
             braking(FLOW, "v = 0"),
             claims,
@@ -1833,7 +1836,21 @@ mod settlement {
                 ExpressionLocus {
                     site: ExpressionSite::ClaimAtom { atom: 0 },
                     term: TermLocus {
-                        term: vec![0],
+                        term: vec![0, 1],
+                        body: Vec::new(),
+                    },
+                },
+                UndefinedCause::OutsideParameterRange {
+                    function: fsl_semantics::check::CheckedFunctionRef::new(0),
+                    parameter: 0,
+                },
+            ),
+            (
+                "RootParameterCase",
+                ExpressionLocus {
+                    site: ExpressionSite::ClaimAtom { atom: 0 },
+                    term: TermLocus {
+                        term: Vec::new(),
                         body: Vec::new(),
                     },
                 },
