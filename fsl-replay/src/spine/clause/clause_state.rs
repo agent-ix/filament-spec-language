@@ -31,7 +31,7 @@ use std::sync::Arc;
 use filament_exact::{Cancel, CancelCause, Meter, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::temporal::{
-    push_sample, read_sample_letter, read_sample_stop, CarriedWindow, ClauseStream, FirstUndefined,
+    push_sample, read_sample_letter, read_sample_stop, CarriedWindow, ClauseStream,
     InsufficientData, LetterTape, ObservedRun, StreamStop, TapeEntry, TapeLetter, TapeReading,
     TemporalOutcome,
 };
@@ -247,7 +247,7 @@ pub struct ClauseState<'a> {
     open: ClauseOpen<'a>,
     reading: Reading,
     seen: Vec<Seen>,
-    tape: LetterTape,
+    tape: crate::spine_eval_api::SpineEvalLetterTape,
     /// The samples held by value, by position.
     values: BTreeMap<u64, Value>,
     /// The positions held by value because a reading there did not reduce.
@@ -262,7 +262,7 @@ pub struct ClauseState<'a> {
     /// The positions seen and the progress the latest report read.
     evaluated: Option<(usize, Option<ProgressAssertion>)>,
     /// The carried evaluation of a streamed reading.
-    stream: Option<ClauseStream>,
+    stream: Option<crate::spine_eval_api::SpineEvalClauseStream>,
     /// The position at which a streamed reading stopped, held by value so
     /// its stop is read again for each report.
     stop: Option<(u64, Value)>,
@@ -274,16 +274,16 @@ pub struct ClauseState<'a> {
     /// The last atom a trace-subject stream read short of data.
     undefined_atom: Option<usize>,
     /// The first undefined reading a trace-subject stream met.
-    first_undefined: Option<FirstUndefined>,
+    first_undefined: Option<crate::spine_eval_api::SpineEvalFirstUndefined>,
     /// The canonical text of each record sample held by value, by
     /// position, for a state that cites its samples by index.
     texts: BTreeMap<u64, String>,
     /// FR-820: the carried finite-window evaluation of the report's run over
     /// a `Progressed` or `Timestamped` trace.
-    window: RefCell<CarriedWindow>,
+    window: RefCell<crate::spine_eval_api::SpineEvalCarriedWindow>,
     /// FR-820: the carried finite-window evaluation of FR-504's open-scope
     /// reading, which `decided` reports.
-    open_window: RefCell<CarriedWindow>,
+    open_window: RefCell<crate::spine_eval_api::SpineEvalCarriedWindow>,
     /// The snapshot document the latest advance added, which a restore
     /// removes again.
     fresh_snapshot: Option<DocumentRef>,
@@ -291,7 +291,7 @@ pub struct ClauseState<'a> {
     objects: snapshot::SnapshotRead,
     /// The decisive atom of a snapshot state's activation violated for
     /// good, once its descent found it.
-    snapshot_cache: RefCell<Option<(u64, Option<fsl_eval::temporal::DecisiveAtom>)>>,
+    snapshot_cache: RefCell<Option<(u64, Option<crate::spine_eval_api::SpineEvalDecisiveAtom>)>>,
     /// FR-820: what the report's runs admitted of the trace and the ledger.
     admission: RefCell<CarriedAdmission>,
     /// FR-820: what FR-504's open-scope runs admitted of the trace.
@@ -319,20 +319,20 @@ pub struct ClauseMark {
     ledger: Option<ProgressLedger>,
     report: Arc<ClauseRunReport>,
     evaluated: Option<(usize, Option<ProgressAssertion>)>,
-    stream: Option<ClauseStream>,
+    stream: Option<crate::spine_eval_api::SpineEvalClauseStream>,
     stop: Option<(u64, Value)>,
     exhausted: Option<filament_exact::Incomplete>,
     atom_values: BTreeMap<(usize, u64), Option<bool>>,
     undefined_atom: Option<usize>,
-    first_undefined: Option<FirstUndefined>,
+    first_undefined: Option<crate::spine_eval_api::SpineEvalFirstUndefined>,
     texts: BTreeMap<u64, String>,
     /// A `Timestamped` state's positions since the last evaluation, which an
     /// evaluation puts in canonical order.
-    tail: Option<(usize, Vec<Seen>, Vec<TapeEntry>)>,
-    window: CarriedWindow,
-    open_window: CarriedWindow,
+    tail: Option<(usize, Vec<Seen>, Vec<crate::spine_eval_api::SpineEvalTapeEntry>)>,
+    window: crate::spine_eval_api::SpineEvalCarriedWindow,
+    open_window: crate::spine_eval_api::SpineEvalCarriedWindow,
     objects: snapshot::SnapshotRead,
-    snapshot_cache: Option<(u64, Option<fsl_eval::temporal::DecisiveAtom>)>,
+    snapshot_cache: Option<(u64, Option<crate::spine_eval_api::SpineEvalDecisiveAtom>)>,
     admission: AdmissionMark,
     open_admission: AdmissionMark,
 }
@@ -2086,13 +2086,29 @@ mod tests {
     use super::*;
     use filament_exact::{Decimal, EnumMember, Integer, Timestamp, VariantId};
     use filament_semantic_value::checking::CheckMode;
+    use filament_semantic_value::declaration::{
+        CompositeDeclaration, CompositeShape, FieldDeclaration, TypeEnvironment,
+    };
 
     fn package() -> fsl_package::CheckedPackage {
-        let declarations = fsl_semantics::check::PackageDeclarations::new(
+        let mut declarations = fsl_semantics::check::PackageDeclarations::new(
             fsl_semantics::check::fixture_source(),
             "fixture",
             fsl_foundation::IdentityLimits::default(),
         );
+        declarations.types = TypeEnvironment::new(
+            [CompositeDeclaration::new(
+                crate::fixture_node(8),
+                "CaptureFixture",
+                CompositeShape::Record(vec![FieldDeclaration::new(
+                    "flag",
+                    ValueType::Boolean,
+                    filament_exact::Presence::Required,
+                )]),
+            )],
+            [],
+        )
+        .expect("the capture fixture type admits");
         fsl_package::CheckedPackage::link(
             declarations
                 .check(
