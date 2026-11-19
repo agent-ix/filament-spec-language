@@ -226,6 +226,7 @@ fn the_synthesis_member_writes_the_synthesis_outcome() {
         "{found}"
     );
     assert_eq!(outcome["explored"]["visited"], 8, "{found}");
+    assert_eq!(outcome["explored"]["work"], 9, "{found}");
     assert_eq!(outcome["lineage"]["index"], 7, "{found}");
     let (exit, none) = run(
         &pick("Pick * Pick = 50", ""),
@@ -245,7 +246,7 @@ fn the_synthesis_member_writes_the_synthesis_outcome() {
         "{optimal}"
     );
     assert_eq!(optimal["synthesis"]["optimal"], true, "{optimal}");
-    assert_eq!(optimal["synthesis"]["explored"]["work"], 5, "{optimal}");
+    assert_eq!(optimal["synthesis"]["explored"]["work"], 6, "{optimal}");
     assert_eq!(
         optimal["synthesis"]["objective"]["direction"], "minimize",
         "{optimal}"
@@ -270,6 +271,23 @@ fn the_synthesis_member_writes_the_synthesis_outcome() {
     assert_eq!(limited_objective["synthesis"]["optimal"], false);
     assert_eq!(limited_objective["synthesis"]["candidate"]["value"], "3");
     assert_eq!(limited_objective["synthesis"]["explored"]["work"], 4);
+    let (exit, validated_without_objective) = run(
+        &pick("Pick >= 3", "minimize Pick"),
+        json!({"declaration": "Pick", "limits": {"max_work": 5}}),
+    );
+    assert_eq!(exit, 22, "{validated_without_objective}");
+    assert_eq!(
+        validated_without_objective["synthesis"]["status"],
+        "incomplete"
+    );
+    assert_eq!(
+        validated_without_objective["synthesis"]["check"],
+        "validated"
+    );
+    assert_eq!(
+        validated_without_objective["synthesis"]["explored"]["work"],
+        5
+    );
     let (exit, limited) = run(
         &pick("Pick * Pick = 50", ""),
         json!({"declaration": "Pick", "limits": {"max_candidates": 3}}),

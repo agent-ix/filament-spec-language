@@ -298,7 +298,41 @@ pub(super) fn search_integer_outcome(
                 synthesizer: "filament.synthesis.enumerate/v1",
                 checker: "filament.native.value-validity/v1",
             });
-            match validate(&value) {
+            if let Some(maximum) = limits.max_work.filter(|maximum| result.work >= *maximum) {
+                document.status = "incomplete".to_owned();
+                document.check = Some("unchecked".to_owned());
+                document.optimal = Some(false);
+                document = document.with_cause(serde_json::json!({
+                    "kind": "limit-reached",
+                    "limit": "max_work",
+                    "value": maximum,
+                    "setting": "synthesis.max_work"
+                }));
+                return (document, 22);
+            }
+            if limits
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
+            {
+                document.status = "incomplete".to_owned();
+                document.check = Some("unchecked".to_owned());
+                document.optimal = Some(false);
+                document = document.with_cause(serde_json::json!({"kind": "deadline"}));
+                return (document, 22);
+            }
+            let validation = validate(&value);
+            document.explored.work = document.explored.work.saturating_add(1);
+            if limits
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
+            {
+                document.status = "incomplete".to_owned();
+                document.check = Some("unchecked".to_owned());
+                document.optimal = Some(false);
+                document = document.with_cause(serde_json::json!({"kind": "deadline"}));
+                return (document, 22);
+            }
+            match validation {
                 Ok(()) => {
                     document.check = Some("validated".to_owned());
                     0
@@ -501,8 +535,11 @@ pub(super) fn run_bytes(
     }
     let node = serde_json::to_value(&claim.declaration).map_err(super::RunCause::Output)?;
     let checked_package = compiled.checked.package();
-    let mut meter = filament_exact::Meter::new(super::call_accounting(&selection.accounting));
+    let meter = std::cell::RefCell::new(filament_exact::Meter::new(super::call_accounting(
+        &selection.accounting,
+    )));
     let mut evaluation_error = None;
+    let mut validation_error = None;
     let (mut outcome, exit_code) = search_integer_outcome(
         &package_name,
         claim.name.as_ref(),
@@ -513,7 +550,7 @@ pub(super) fn run_bytes(
             checked_package,
             checked.satisfies(),
             candidate,
-            &mut meter,
+            &mut meter.borrow_mut(),
         ) {
             Ok(filament_exact::Value::Boolean(value)) => value,
             Ok(value) => {
@@ -527,13 +564,36 @@ pub(super) fn run_bytes(
         },
         |candidate| {
             if candidate >= domain.lower() && candidate <= domain.upper() {
-                Ok(())
+                match evaluate_integer_body(
+                    checked_package,
+                    checked.satisfies(),
+                    candidate,
+                    &mut meter.borrow_mut(),
+                ) {
+                    Ok(filament_exact::Value::Boolean(true)) => Ok(()),
+                    Ok(filament_exact::Value::Boolean(false)) => {
+                        Err(serde_json::json!({"kind": "candidate-rejected"}))
+                    }
+                    Ok(value) => {
+                        validation_error = Some(format!(
+                            "satisfies expression returned {value:?} during candidate validation"
+                        ));
+                        Err(serde_json::json!({"kind": "candidate-validation-failed"}))
+                    }
+                    Err(error) => {
+                        validation_error = Some(error);
+                        Err(serde_json::json!({"kind": "candidate-validation-failed"}))
+                    }
+                }
             } else {
                 Err(serde_json::json!({"kind": "candidate-outside-domain"}))
             }
         },
     );
     if let Some(error) = evaluation_error {
+        return Err(refused("/request/synthesis", error));
+    }
+    if let Some(error) = validation_error {
         return Err(refused("/request/synthesis", error));
     }
     if exit_code == 0 {
@@ -548,7 +608,6 @@ pub(super) fn run_bytes(
                 .is_some_and(|deadline| Instant::now() >= deadline);
             if work_exhausted.is_some() || deadline_expired {
                 outcome.status = "incomplete".to_owned();
-                outcome.check = Some("unchecked".to_owned());
                 outcome.optimal = Some(false);
                 outcome.cause = Some(match work_exhausted {
                     Some(maximum) => serde_json::json!({
@@ -581,8 +640,9 @@ pub(super) fn run_bytes(
                         "objective candidate is not an integer",
                     )
                 })?;
-            let value = evaluate_integer_body(checked_package, objective, &candidate, &mut meter)
-                .map_err(|error| refused("/request/synthesis", error))?;
+            let value =
+                evaluate_integer_body(checked_package, objective, &candidate, meter.get_mut())
+                    .map_err(|error| refused("/request/synthesis", error))?;
             outcome.explored.work = outcome.explored.work.saturating_add(1);
             outcome.optimal = Some(checked.objective_is_candidate());
             let filament_exact::Value::Integer(value) = value else {
@@ -984,7 +1044,7 @@ mod tests {
             serde_json::json!({"type": "integer", "value": "7"})
         );
         assert_eq!(candidate["check"], "validated");
-        assert_eq!(candidate["explored"]["work"], 8);
+        assert_eq!(candidate["explored"]["work"], 9);
         assert_eq!(candidate["lineage"]["index"], 7);
         assert_eq!(candidate["lineage"]["symmetry"], "identity");
 
@@ -1013,6 +1073,35 @@ mod tests {
                 "setting": "synthesis.max_candidates"
             })
         );
+    }
+
+    /// FR-754-AC-3: native candidate validation consumes one unit of work.
+    #[test]
+    #[trace("TC-2104", "FR-754-AC-3")]
+    fn candidate_is_unchecked_when_work_limit_cannot_cover_validation() {
+        let mut validation_called = false;
+        let (candidate, exit) = super::search_integer_outcome(
+            "pkg",
+            "Pick",
+            serde_json::json!({"package": "pkg", "path": ["Pick"], "ordinal": 0}),
+            &digit_domain(),
+            SearchLimits {
+                max_candidates: None,
+                max_work: Some(8),
+                deadline: None,
+            },
+            |value| value == &Integer::from(7_i64),
+            |_| {
+                validation_called = true;
+                Ok(())
+            },
+        );
+        assert_eq!(exit, 22);
+        assert!(!validation_called);
+        let candidate = candidate.into_value();
+        assert_eq!(candidate["status"], "incomplete");
+        assert_eq!(candidate["check"], "unchecked");
+        assert_eq!(candidate["explored"]["work"], 8);
     }
 
     #[test]
