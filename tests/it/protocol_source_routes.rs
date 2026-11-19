@@ -336,6 +336,7 @@ fn source_projection_preserves_send_receive_direction_and_local_order() {
 
 fn analysis_request(file: &Path) -> Value {
     let mut request = compile_request(file);
+    request["request"].as_object_mut().unwrap().remove("clocks");
     request["format"] = json!("native-analyze/1");
     request["request"]["documents"] = json!([{"file":saga().join("data/saga-start.json")}]);
     let binding = json!({"type":"model-binding","selection":"example/parts"});
