@@ -47,6 +47,7 @@ thiserror = "2.0.20"
 # The closed-form checker rounds exact rationals to integers.
 num-bigint = "0.4.8"
 num-integer = "0.1.47"
+num-traits = { workspace = true }
 # FR-269: the deciding element is written through the shared canonical writer
 # and read through the shared reader, so a value of any depth round-trips.
 quire-canonical = { workspace = true }
