@@ -168,14 +168,9 @@ impl Lowering<'_> {
         let mut path = Vec::with_capacity(operands.len() + 1);
         path.push(PathSegment::Text(claim.name.clone()));
         path.extend(operands.iter().cloned());
-        let key = super::super::derived_node_key(
-            &self.package_name,
-            NodeTag::Claim,
-            FORM,
-            path,
-            ordinal,
-        )
-        .map_err(|_| stage_fault(&at, "probabilistic-claim-key-is-well-formed"))?;
+        let key =
+            super::super::derived_node_key(&self.package_name, NodeTag::Claim, FORM, path, ordinal)
+                .map_err(|_| stage_fault(&at, "probabilistic-claim-key-is-well-formed"))?;
         match self.graph.nodes.entry(key.clone()) {
             hash_map::Entry::Vacant(slot) => {
                 slot.insert(SemanticNode {

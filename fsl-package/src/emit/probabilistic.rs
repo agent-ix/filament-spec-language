@@ -16,7 +16,6 @@ use filament_contract_model::{
     CheckedLiteralValue, CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole,
     CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRegion, CheckedTerm, LiteralKind,
 };
-use std::collections::HashMap;
 
 use filament_exact::{NodeKey, PathSegment, Rational, UnitId, Value};
 use fsl_semantics::check::wire_id::StructuralIds;
@@ -27,8 +26,7 @@ use fsl_semantics::check::{
 
 use super::{
     body_reference_targets, checked_literal_json, claim_aggregate, claim_binding, encoding,
-    node_id, push_scalar_type, source_artifact, CheckedNodeTag, EmitRefusal,
-    Location, GRAPH_V2,
+    node_id, push_scalar_type, source_artifact, CheckedNodeTag, EmitRefusal, Location, GRAPH_V2,
 };
 
 /// A written node with its declaration occurrence's `region`.
@@ -584,6 +582,8 @@ pub(super) fn write_claim_bodies(
             Some(ClaimReadFault::Subject) => return Err(EmitRefusal::SourceMapInvariant),
             None => {}
         }
+        let region = region_of(graph, &claim.declaration_location())?;
+        let text = scalar_type(ids, graph, nodes, source_map, "text", &region)?;
         // Each node the claim reads is emitted before it.
         let emitted = |key: &NodeKey| {
             let id = node_id(ids, key);
@@ -600,19 +600,16 @@ pub(super) fn write_claim_bodies(
             .as_ref()
             .and_then(&emitted)
             .ok_or_else(missing)?;
-        let region = region_of(graph, &claim.declaration_location())?;
-        let text = scalar_type(ids, graph, nodes, source_map, "text", &region)?;
         let scheduler = match &reads.scheduler {
             Some(SchedulerRead::Workload(workload)) => {
-                let workload_id = emitted(workload).ok_or_else(|| {
-                    EmitRefusal::UnresolvedClaimWorkload {
+                let workload_id =
+                    emitted(workload).ok_or_else(|| EmitRefusal::UnresolvedClaimWorkload {
                         claim: claim.name.clone(),
                         workload: match &claim.scheduler {
                             ProbScheduler::Workload(name) => name.clone(),
                             ProbScheduler::Every => String::new(),
                         },
-                    }
-                })?;
+                    })?;
                 reference(workload_id)
             }
             Some(SchedulerRead::Every(fairness)) => {
@@ -630,10 +627,11 @@ pub(super) fn write_claim_bodies(
             }
             None => return Err(missing()),
         };
-        let read_rewards = refs(&reads.rewards).ok_or_else(|| EmitRefusal::UnresolvedClaimReward {
-            claim: claim.name.clone(),
-            reward: claim.reward_read().unwrap_or_default().to_owned(),
-        })?;
+        let read_rewards =
+            refs(&reads.rewards).ok_or_else(|| EmitRefusal::UnresolvedClaimReward {
+                claim: claim.name.clone(),
+                reward: claim.reward_read().unwrap_or_default().to_owned(),
+            })?;
         let distributions = refs(&reads.distributions).ok_or_else(missing)?;
         let delays = refs(&reads.delays).ok_or_else(missing)?;
         let body = claim_aggregate(vec![

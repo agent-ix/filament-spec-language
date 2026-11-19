@@ -2028,6 +2028,9 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             Err(EmitRefusal::UnresolvedClaimWorkload { .. }) => {
                 panic!("emission emits every recorded workload a claim is stated under")
             }
+            Err(EmitRefusal::UnresolvedClaimReward { .. }) => {
+                panic!("emission emits every recorded reward a claim reads")
+            }
             Err(EmitRefusal::TimedModelWriterInvariant(_)) => Seen::TimedModelWriterInvariant,
             Err(EmitRefusal::MonitorPlanInvariant(_)) => Seen::MonitorPlanInvariant,
             Err(EmitRefusal::MonitorPlanAmbiguous { .. }) => Seen::MonitorPlanAmbiguous,

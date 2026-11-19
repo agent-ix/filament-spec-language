@@ -14,8 +14,8 @@ use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 
 use super::claim::{BoundedMeasure, Event, ProbForm};
 use super::{
-    CheckedProbabilisticClaim, CheckedProbabilisticModel, Delay, DelayDistribution,
-    ProbScheduler, RandomParameter, Reward, Workload,
+    CheckedProbabilisticClaim, CheckedProbabilisticModel, Delay, DelayDistribution, ProbScheduler,
+    RandomParameter, Reward, Workload,
 };
 use crate::model::key::object_type_node_key;
 

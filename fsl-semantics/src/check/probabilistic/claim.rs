@@ -498,7 +498,7 @@ impl CheckedProbabilisticClaim {
 
     /// The location of the whole claim declaration: its `claim`
     /// occurrence's site.
-    pub(crate) fn declaration_location(&self) -> Location {
+    pub fn declaration_location(&self) -> Location {
         site_location(self.declared, Site::Declaration)
     }
 
@@ -1053,7 +1053,11 @@ impl Pass<'_, '_> {
                         span: name.span,
                     }));
                 }
-                Ok((ProbScheduler::Workload(name.name.clone()), Vec::new(), Vec::new()))
+                Ok((
+                    ProbScheduler::Workload(name.name.clone()),
+                    Vec::new(),
+                    Vec::new(),
+                ))
             }
             SchedulerForm::Every { fairness } => {
                 let mut set: Vec<FairnessConstraint> = Vec::new();

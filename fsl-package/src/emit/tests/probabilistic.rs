@@ -1005,103 +1005,433 @@ fn changing_one_weight_or_support_value_changes_the_node_identity() {
     assert_ne!(base, random_id("3: 1, 2: 3"), "one support value differs");
 }
 
-/// TC-2062 (FR-740-AC-4): a claim `under Steady` is emitted beside the
-/// `Steady` workload node it resolves to, and the strict reader admits the
-/// package holding the claim, the reward and the workload.
-#[trace("TC-2062", "FR-740-AC-4")]
-#[test]
-fn a_claim_under_a_workload_is_emitted_with_its_workload_node() {
-    let package = claims_package(&[
-        "workload Steady on Config { weight ConfigVersion::attemptUpdate = 1; }",
-        "reward cost on ConfigVersion::attemptUpdate = 1;",
-        "probabilistic Stable using ev on Config under Steady on origin \
-         with alpha 0.01, beta 0.01, indifference 0.01 \
-         { probability >= 0.5 [ always[0,2] holds(true) ] }",
-    ]);
-    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
-    let (wire, read) = emit_and_read(&package, document);
-    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
-    let [workload] = super::owners::node_where(&wire, "probabilistic", "workload")[..] else {
-        panic!("one workload node");
-    };
-    let [claim] = super::owners::node_where(&wire, "claim", "probabilistic_claim")[..] else {
-        panic!("one claim node");
-    };
-    let emission = emit_checked(&package).expect("the package emits");
-    let [resolved] = emission.claim_workloads() else {
-        panic!("one resolution: {:?}", emission.claim_workloads());
-    };
-    assert_eq!(
-        serde_json::to_value(&resolved.claim).unwrap(),
-        claim["node_id"],
-        "the resolution names the claim's node"
-    );
-    assert_eq!(
-        serde_json::to_value(&resolved.workload).unwrap(),
-        workload["node_id"],
-        "the claim resolves to the Steady workload node"
-    );
+const STEADY: &str = "workload Steady on Config { weight ConfigVersion::attemptUpdate = 1; }";
+const BURSTY: &str = "workload Bursty on Config { weight ConfigVersion::attemptUpdate = 3; }";
+const HOLDS: &str = "{ probability >= 0.5 [ always[0,2] holds(true) ] }";
+
+/// `probabilistic name ... under scheduler` over `body` with confidence.
+fn claim_under(name: &str, scheduler: &str, body: &str) -> String {
+    format!(
+        "probabilistic {name} using ev on Config under {scheduler} on origin \
+         with alpha 0.01, beta 0.01, indifference 0.01 {body}"
+    )
 }
 
-/// TC-2062 (FR-740-AC-4): a claim `under every scheduler` names no workload
-/// and resolves to none; two claims under two workloads each resolve to the
-/// workload of their own name.
+/// The claim nodes of `wire` by declared name.
+fn claim_nodes<'w>(wire: &'w Value) -> Vec<(&'w str, &'w Value)> {
+    super::owners::node_where(wire, "claim", "probabilistic_claim")
+        .into_iter()
+        .map(|node| (node["node_id"]["path"][2].as_str().expect("a name"), node))
+        .collect()
+}
+
+fn claim_named<'w>(wire: &'w Value, name: &str) -> &'w Value {
+    claim_nodes(wire)
+        .into_iter()
+        .find(|(declared, _)| *declared == name)
+        .map(|(_, node)| node)
+        .unwrap_or_else(|| panic!("claim {name}"))
+}
+
+/// The value of the binding `name` of the aggregate `term`, at any depth.
+fn binding<'v>(term: &'v Value, name: &str) -> &'v Value {
+    match term {
+        Value::Object(object) => {
+            if object.get("name").and_then(Value::as_str) == Some(name) {
+                return &object["value"];
+            }
+            object
+                .values()
+                .map(|value| binding(value, name))
+                .find(|found| !found.is_null())
+                .unwrap_or(&Value::Null)
+        }
+        Value::Array(items) => items
+            .iter()
+            .map(|value| binding(value, name))
+            .find(|found| !found.is_null())
+            .unwrap_or(&Value::Null),
+        _ => &Value::Null,
+    }
+}
+
+/// Every reference target in `term`, in order.
+fn targets(term: &Value) -> Vec<Value> {
+    match term {
+        Value::Object(object) => {
+            let mut found: Vec<Value> = object.get("target").cloned().into_iter().collect();
+            for (key, value) in object {
+                if key != "target" {
+                    found.extend(targets(value));
+                }
+            }
+            found
+        }
+        Value::Array(items) => items.iter().flat_map(targets).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn node_ids(wire: &Value, tag: &str, form: &str) -> Vec<Value> {
+    super::owners::node_where(wire, tag, form)
+        .into_iter()
+        .map(|node| node["node_id"].clone())
+        .collect()
+}
+
+fn emit_wire(package: &CheckedPackage) -> Value {
+    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
+    let (wire, read) = emit_and_read(package, document);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    wire
+}
+
+/// TC-2062 (FR-740-AC-4), TC-1288 (FR-498-AC-5), FSpec FR-640-AC-3: a claim
+/// `under W` binds `W`'s workload node in `scheduler` and holds it as a path
+/// operand; a claim `under every scheduler` binds an empty fairness set; a
+/// changed weight of `Steady` changes the claim under it and no other;
+/// writing the claims and weight lines in another order changes no byte.
 #[trace("TC-2062", "FR-740-AC-4")]
+#[trace("TC-1288", "FR-498-AC-5")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
 #[test]
-fn each_claim_resolves_to_the_workload_it_is_stated_under() {
-    let formula = "{ probability >= 0.5 [ always[0,2] holds(true) ] }";
-    let package = claims_package(&[
-        "workload Steady on Config { weight ConfigVersion::attemptUpdate = 1; }",
-        "workload Bursty on Config { weight ConfigVersion::attemptUpdate = 3; }",
-        &format!(
-            "probabilistic A using ev on Config under Steady on origin \
-             with alpha 0.01, beta 0.01, indifference 0.01 {formula}"
-        ),
-        &format!(
-            "probabilistic B using ev on Config under Bursty on origin \
-             with alpha 0.01, beta 0.01, indifference 0.01 {formula}"
-        ),
-        &format!("probabilistic C using ev on Config under every scheduler on origin {formula}"),
-    ]);
-    let emission = emit_checked(&package).expect("the package emits");
-    let wire = wire(&emission);
+fn a_claim_binds_the_workload_it_is_stated_under() {
+    let claims = |steady: &str, order: [usize; 3]| {
+        let declared = [
+            claim_under("A", "Steady", HOLDS),
+            claim_under("B", "Bursty", HOLDS),
+            "probabilistic C using ev on Config under every scheduler on origin \
+             { probability >= 0.5 [ always[0,2] holds(true) ] }"
+                .to_owned(),
+        ];
+        let mut texts = vec![steady.to_owned(), BURSTY.to_owned()];
+        texts.extend(order.iter().map(|&at| declared[at].clone()));
+        let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+        claims_package(&texts)
+    };
+    let package = claims(STEADY, [0, 1, 2]);
+    let wire = emit_wire(&package);
+    assert_eq!(claim_nodes(&wire).len(), 3);
     let workload_named = |name: &str| {
         super::owners::node_where(&wire, "probabilistic", "workload")
             .into_iter()
-            .find(|node| node["body"].to_string().contains(name))
+            .find(|node| binding(&node["body"], "name").to_string().contains(name))
             .map(|node| node["node_id"].clone())
             .expect("the workload node")
     };
-    let claim_node = |name: &str| {
-        super::owners::node_where(&wire, "claim", "probabilistic_claim")
+    let root = node_ids(&wire, "model", "model_root");
+    let [root] = root.as_slice() else {
+        panic!("one model root");
+    };
+    for (name, workload) in [("A", Some("Steady")), ("B", Some("Bursty")), ("C", None)] {
+        let claim = claim_named(&wire, name);
+        let body = &claim["body"];
+        assert_eq!(&targets(binding(body, "subject"))[..], [root.clone()]);
+        let scheduler = targets(binding(body, "scheduler"));
+        let path = claim["node_id"]["path"].to_string();
+        match workload {
+            Some(workload) => {
+                assert_eq!(scheduler, [workload_named(workload)], "{name}");
+            }
+            None => {
+                assert!(scheduler.is_empty(), "{name}: no workload");
+                assert!(path.contains("\"every\""), "{name}: {path}");
+                assert_eq!(
+                    binding(binding(body, "scheduler"), "fairness")["members"],
+                    json!([])
+                );
+            }
+        }
+        assert!(targets(binding(body, "reward")).is_empty(), "{name}");
+        assert!(targets(binding(body, "delays")).is_empty(), "{name}");
+        assert_eq!(claim["node_id"]["ordinal"], 0);
+        assert_eq!(claim["dependencies"], json!(targets(body)));
+    }
+
+    // A changed weight of `Steady` changes A and no other claim.
+    let heavier = emit_wire(&claims(
+        "workload Steady on Config { weight ConfigVersion::attemptUpdate = 2; }",
+        [0, 1, 2],
+    ));
+    assert_ne!(
+        claim_named(&wire, "A")["node_id"],
+        claim_named(&heavier, "A")["node_id"]
+    );
+    for name in ["B", "C"] {
+        assert_eq!(
+            claim_named(&wire, name)["node_id"],
+            claim_named(&heavier, name)["node_id"],
+            "{name}"
+        );
+    }
+
+    // The order the claims are written in changes no byte.
+    let reversed = claims(STEADY, [2, 1, 0]);
+    assert_eq!(
+        emit_checked(&package).unwrap().package().bytes(),
+        emit_checked(&reversed).unwrap().package().bytes()
+    );
+
+    // Renaming A to B gives two claims named B with different paths, each
+    // at ordinal 0.
+    let renamed = emit_wire(&claims_package(&[
+        STEADY,
+        BURSTY,
+        &claim_under("B", "Steady", HOLDS),
+        &claim_under("B", "Bursty", HOLDS),
+    ]));
+    let named: Vec<_> = claim_nodes(&renamed);
+    assert_eq!(named.len(), 2);
+    assert_ne!(named[0].1["node_id"]["path"], named[1].1["node_id"]["path"]);
+    assert!(named
+        .iter()
+        .all(|(_, node)| node["node_id"]["ordinal"] == 0));
+}
+
+/// A unit over the abstraction fixture's model with `random` support
+/// `support` and `claims`, as wire.
+fn random_claims_wire(support: &str, claims: &[String]) -> Value {
+    use super::abstraction::fixture;
+    let document =
+        crate::emit::tests::wire_bytes(&fixture::document()).expect("the fixture serializes");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
+         model M = {package:?};\n\
+         random ConfigVersion::attemptUpdate(n) ~ {{ {support} }};\n{}\n",
+        claims.join("\n"),
+        package = fixture::PACKAGE,
+    );
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    emit_and_read(&CheckedPackage::link(graph), &document).0
+}
+
+/// TC-1288 (FR-498-AC-5), FSpec FR-640-AC-3: a claim's `distributions`
+/// holds every `random_parameter` node of its subject's model, whatever its
+/// scheduler, and a changed support weight or value changes every claim on
+/// the subject.
+#[trace("TC-1288", "FR-498-AC-5")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+fn a_claim_binds_every_random_parameter_of_its_subject() {
+    let claims = [
+        "probabilistic A using ev on M under every scheduler on origin \
+         { probability >= 0.5 [ always[0,2] holds(true) ] }"
+            .to_owned(),
+        "probabilistic B using ev on M under every scheduler on origin \
+         { probability >= 0.25 [ always[0,2] holds(true) ] }"
+            .to_owned(),
+    ];
+    let base = random_claims_wire("3: 1, 1: 3", &claims);
+    let randoms = node_ids(&base, "probabilistic", "random_parameter");
+    assert_eq!(randoms.len(), 1);
+    for (name, node) in claim_nodes(&base) {
+        assert_eq!(
+            targets(binding(&node["body"], "distributions")),
+            randoms,
+            "{name}"
+        );
+        assert!(node["node_id"]["path"]
+            .to_string()
+            .contains("\"distributions\""));
+    }
+    for support in ["3: 1, 1: 2", "3: 1, 2: 3"] {
+        let changed = random_claims_wire(support, &claims);
+        for name in ["A", "B"] {
+            assert_ne!(
+                claim_named(&base, name)["node_id"],
+                claim_named(&changed, name)["node_id"],
+                "{name} under {support}"
+            );
+        }
+    }
+}
+
+const REWARD_DECLARATION: &str = "reward cost on ConfigVersion::attemptUpdate = 1;";
+
+/// The claim of each reward-reading form and of each form that reads none.
+fn reward_forms() -> [(&'static str, String, bool); 5] {
+    let on = |name: &str, body: &str| {
+        format!("probabilistic {name} using ev on Config under every scheduler on origin {body}")
+    };
+    [
+        (
+            "Weighted",
+            on(
+                "Weighted",
+                "{ long_run_fraction holds(true) weighted by cost >= 0.5 }",
+            ),
+            true,
+        ),
+        (
+            "Expected",
+            on(
+                "Expected",
+                "{ expected accumulate cost until holds(true) <= 3 }",
+            ),
+            true,
+        ),
+        (
+            "Plain",
+            on("Plain", "{ long_run_fraction holds(true) >= 0.5 }"),
+            false,
+        ),
+        (
+            "Avail",
+            on("Avail", "{ probability >= 0.5 [ always[0,2] holds(true) ] }"),
+            false,
+        ),
+        (
+            "Steps",
+            on(
+                "Steps",
+                "{ probability >= 0.5 [ steps from holds(true) until holds(true) within 10 >= 3 ] }",
+            ),
+            false,
+        ),
+    ]
+}
+
+/// TC-1288 (FR-498-AC-6), FSpec FR-640-AC-3 and AC-8: a claim whose form reads
+/// reward `cost` binds that reward's node in `reward`, a claim that reads none
+/// binds an empty `reward`, and changing the reward's expression changes
+/// exactly the claims that read it.
+#[trace("TC-1288", "FR-498-AC-6")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-8")]
+#[test]
+fn a_claim_binds_the_reward_its_form_reads() {
+    let forms = reward_forms();
+    let wire_of = |reward: &str| {
+        let mut texts = vec![reward.to_owned()];
+        texts.extend(forms.iter().map(|(_, text, _)| text.clone()));
+        let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+        emit_wire(&claims_package(&texts))
+    };
+    let base = wire_of(REWARD_DECLARATION);
+    let rewards = node_ids(&base, "probabilistic", "reward");
+    assert_eq!(rewards.len(), 1);
+    let changed = wire_of("reward cost on ConfigVersion::attemptUpdate = 2;");
+    assert_ne!(rewards, node_ids(&changed, "probabilistic", "reward"));
+    for (name, _, reads) in &forms {
+        let claim = claim_named(&base, name);
+        let bound = targets(binding(&claim["body"], "reward"));
+        let moved = claim["node_id"] != claim_named(&changed, name)["node_id"];
+        if *reads {
+            assert_eq!(bound, rewards, "{name}");
+        } else {
+            assert!(bound.is_empty(), "{name}");
+        }
+        assert_eq!(
+            moved, *reads,
+            "{name}: only a reading claim's identity moves"
+        );
+    }
+}
+
+/// FSpec FR-640-AC-3: changing a reward's expression changes the identity of
+/// every claim that reads it.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+fn a_claim_that_reads_a_reward_changes_identity_with_the_reward_expression() {
+    let claim_id = |reward: &str| {
+        probabilistic_nodes_of(&[reward, &reward_forms()[1].1])
             .into_iter()
-            .find(|node| node["node_id"]["path"][2] == name)
+            .find(|node| node["node_tag"] == "claim")
             .map(|node| node["node_id"].clone())
             .expect("the claim node")
     };
-    let resolved: Vec<(serde_json::Value, serde_json::Value)> = emission
-        .claim_workloads()
-        .iter()
-        .map(|resolved| {
-            (
-                serde_json::to_value(&resolved.claim).unwrap(),
-                serde_json::to_value(&resolved.workload).unwrap(),
-            )
-        })
-        .collect();
+    assert_ne!(
+        claim_id("reward cost on ConfigVersion::attemptUpdate = 1;"),
+        claim_id("reward cost on ConfigVersion::attemptUpdate = 2;"),
+    );
+}
+
+/// FSpec FR-640-AC-8: a claim `under every scheduler` binds its fairness set,
+/// one member per constraint with its kind, granularity and operation, so
+/// `fair weak whole X` and `fair weak each X` are two members and a changed
+/// constraint changes the claim's path.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-8")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+fn a_claim_binds_its_fairness_set() {
+    let operation = "Config::ConfigVersion::attemptUpdate";
+    let fair = |constraints: &str| {
+        let text = format!(
+            "probabilistic Fair using ev on Config under every scheduler {constraints} \
+             on origin {HOLDS}"
+        );
+        let wire = emit_wire(&claims_package(&[&text]));
+        claim_named(&wire, "Fair").clone()
+    };
+    let weak = fair(&format!("fair weak {operation}"));
+    let members = binding(binding(&weak["body"], "scheduler"), "fairness");
+    assert_eq!(members["members"].as_array().map(Vec::len), Some(1));
+    let path = weak["node_id"]["path"].to_string();
+    assert!(
+        path.contains("\"every\",\"weak\",\"whole\""),
+        "whole when none is written: {path}"
+    );
+    for other in [
+        format!("fair strong {operation}"),
+        format!("fair weak each {operation}"),
+    ] {
+        assert_ne!(weak["node_id"], fair(&other)["node_id"], "{other}");
+    }
+    let both = fair(&format!(
+        "fair weak whole {operation} fair weak each {operation}"
+    ));
+    let both_members = binding(binding(&both["body"], "scheduler"), "fairness");
+    assert_eq!(both_members["members"].as_array().map(Vec::len), Some(2));
     assert_eq!(
-        resolved.len(),
-        2,
-        "the claim under every scheduler has none"
+        both["node_id"],
+        fair(&format!(
+            "fair weak each {operation} fair weak whole {operation}"
+        ))["node_id"],
+        "the order constraints are written in changes nothing"
     );
-    assert!(
-        resolved.contains(&(claim_node("A"), workload_named("Steady"))),
-        "A resolves to Steady: {resolved:?}"
-    );
-    assert!(
-        resolved.contains(&(claim_node("B"), workload_named("Bursty"))),
-        "B resolves to Bursty: {resolved:?}"
-    );
+}
+
+/// FSpec FR-640 Reader rule 6: a claim body that is not the five bindings, or
+/// whose `distributions` is not the subject's, is refused `invalid_package`.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-9")]
+#[test]
+fn the_reader_refuses_a_malformed_claim_body() {
+    let package = claims_package(&[STEADY, &claim_under("A", "Steady", HOLDS)]);
+    let emission = emit_checked(&package).expect("the package emits");
+    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
+    let refused = |edit: &dyn Fn(&mut Value)| {
+        let mut wire = wire(&emission);
+        let claim = wire["semantic_graph"]["nodes"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|node| node["semantic_form"] == "probabilistic_claim")
+            .expect("a claim node");
+        edit(&mut claim["body"]);
+        let mut evidence = read_evidence(&emission);
+        evidence
+            .insert_domain_package_document(package_identity(document), document)
+            .expect("a fresh evidence key");
+        read_v2(&jcs(&wire), library(), V2ReadLimits::fixture(), &evidence)
+    };
+    let dropped = refused(&|body| {
+        body["members"].as_array_mut().unwrap().pop();
+    });
+    assert!(matches!(dropped, Read::Refused(_)), "{dropped:?}");
+    let swapped = refused(&|body| {
+        body["members"].as_array_mut().unwrap().swap(2, 3);
+    });
+    assert!(matches!(swapped, Read::Refused(_)), "{swapped:?}");
 }
 
 /// TC-1563 (FSpec FR-640-AC-4): a `workload` node whose weights name an
@@ -1908,25 +2238,6 @@ fn rewards_keep_their_nodes_whatever_unrelated_declarations_surround_them() {
         differing,
         ["pure_function", "reward"],
         "only the changed reward and the function that computes it differ"
-    );
-}
-
-/// FSpec FR-640-AC-3: changing a reward's expression changes the identity of
-/// every claim that reads it.
-#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
-#[test]
-#[ignore = "QSL-2546: FSL FR-498 fixes a claim node's identity as name + content ordinal with an empty body, so no workload or reward identity reaches it; FSpec FR-640-AC-3 says it does"]
-fn a_claim_that_reads_a_reward_changes_identity_with_the_reward_expression() {
-    let claim_id = |reward: &str| {
-        probabilistic_nodes_of(&[reward, &claim("Stable", "0.5")])
-            .into_iter()
-            .find(|node| node["node_tag"] == "claim")
-            .map(|node| node["node_id"].clone())
-            .expect("the claim node")
-    };
-    assert_ne!(
-        claim_id("reward cost on ConfigVersion::attemptUpdate = 1;"),
-        claim_id("reward cost on ConfigVersion::attemptUpdate = 2;"),
     );
 }
 
