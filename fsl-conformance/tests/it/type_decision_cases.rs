@@ -32,7 +32,11 @@ fn assemble(name: &str, bytes: &[u8]) -> Result<PackageDeclarations, AssemblyRef
 fn check(name: &str, bytes: &[u8]) -> Result<CheckedGraph, Vec<CheckRefusal>> {
     assemble(name, bytes)
         .unwrap_or_else(|refusal| panic!("{name}: assembly succeeds: {refusal:?}"))
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
 }
 
 /// The accepting case checks and the ill-typed case gives one refusal with
@@ -55,7 +59,11 @@ fn assert_pair(accepted: (&str, &[u8]), refused: (&str, &[u8]), code: Code, caus
         Ok(assembled) => assembled,
     };
     let refusals = assembled
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect_err("the ill-typed case is refused");
     let [refusal] = refusals.as_slice() else {
         panic!("{}: one typed refusal: {refusals:?}", refused.0);
