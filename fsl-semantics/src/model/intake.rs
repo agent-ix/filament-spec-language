@@ -4100,7 +4100,7 @@ fn read_decimal_domain(ctx: &NodeCtx<'_>, at: &str) -> Result<DecimalType, Model
         .checked_pow(precision as u32)
         .and_then(|power| power.checked_sub(1))
         .ok_or_else(|| ctx.malformed_in("decimal.precision", "coefficient limit overflowed"))?;
-    let (lower, upper) = read_decimal_bounds(ctx, at, scale, -limit, limit)?;
+    let (lower, upper) = read_decimal_bounds(ctx, at, scale, -limit, limit, Some(limit))?;
     DecimalType::new(
         Integer::from(lower),
         Integer::from(upper),
@@ -4129,7 +4129,7 @@ fn narrow_decimal_domain(
         .to_string()
         .parse::<i128>()
         .map_err(|_| ctx.malformed_in("constraints", "Decimal upper coefficient overflowed"))?;
-    let (lower, upper) = read_decimal_bounds(ctx, at, scale, lower, upper)?;
+    let (lower, upper) = read_decimal_bounds(ctx, at, scale, lower, upper, None)?;
     DecimalType::new(
         Integer::from(lower),
         Integer::from(upper),
@@ -4149,6 +4149,7 @@ fn read_decimal_bounds(
     scale: u64,
     mut lower: i128,
     mut upper: i128,
+    policy_limit: Option<i128>,
 ) -> Result<(i128, i128), ModelRefusal> {
     let constraints = ctx.array_field("constraints")?;
 
@@ -4188,6 +4189,12 @@ fn read_decimal_bounds(
                 format!("INVALID_OPERAND: {keyword}: invalid canonical Decimal bound"),
             ));
         };
+        if policy_limit.is_some_and(|limit| value < -limit || value > limit) {
+            return Err(constraint_ctx.malformed_in(
+                "operands.value",
+                format!("INVALID_OPERAND: {keyword}: coefficient exceeds Decimal precision"),
+            ));
+        }
         match keyword {
             "min" => lower = lower.max(value),
             "exclusiveMin" => {
@@ -4296,7 +4303,7 @@ fn decimal_type_domains(types: &[Value]) -> HashMap<String, DecimalType> {
             let scale = u64::from(inherited.max_scale());
             let lower = inherited.lower().to_string().parse::<i128>().ok()?;
             let upper = inherited.upper().to_string().parse::<i128>().ok()?;
-            let (lower, upper) = read_decimal_bounds(&ctx, at, scale, lower, upper).ok()?;
+            let (lower, upper) = read_decimal_bounds(&ctx, at, scale, lower, upper, None).ok()?;
             inherited = DecimalType::new(
                 Integer::from(lower),
                 Integer::from(upper),
