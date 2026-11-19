@@ -12,7 +12,7 @@ relationships:
 
 Verify the protocol subject's construction and refusals, the thread paths and ordinals, binder removal and the canonical state key.
 
-Scope: FR-205-AC-1 to FR-205-AC-13 (FR-205-AC-12 planned under QSL-2568).
+Scope: FR-205-AC-1 to FR-205-AC-14 (FR-205-AC-12 planned under QSL-2568).
 
 ## Test Procedure
 
@@ -71,6 +71,14 @@ Use ADR-027 §7's `Fill` unit (universe `{c}`, `c.v = 0`).
     `eventually holds(c.v = 1)` against the `scheduling adversarial`
     package; replay it again with the loop's `duplicate` relabelled to
     delivery 1.
+14. Read `Echo`'s post-send queue entry. On a `fifo` channel of capacity 2
+    with delivery `[2,2]`, take `send Snd`'s `count` 2 step. With capacity
+    2, overflow `block`, delivery `[3,3]`, in `parallel P { branch s send
+    Snd via ch; branch r receive Rcv via ch of Snd } join all`, take the
+    `count` 3 step, `receive`, then the continuation step. In `parallel P {
+    branch a sequence { send Snd via ch; attempt A }; branch b attempt B }
+    join all`, take `fork`, `send`, then `attempt(A)`. Read `queues` and
+    `bounds` after each step.
 
 Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
 
@@ -126,3 +134,12 @@ Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
   `reproduced-with-evaluated-witness`. The relabelled replay refuses
   `invalid_runtime_input`/`invalid-value` naming the loop's `duplicate` as
   not enabled.
+- Step 14: the `Echo` entry is exactly `{message, delivery, payload}`. The
+  `[2,2]` step queues deliveries 0 and 1 of one message (ordinal 0), with
+  `next-delivery` 2 and `message-ordinal` 1. The `[3,3]` step queues
+  deliveries 0 and 1, leaves count 1 pending, `next-delivery` 2 and no
+  `message-ordinal` for `Snd`; the continuation appends delivery 2 of the
+  same message (ordinal 0), then `next-delivery` 3 and `message-ordinal` 1.
+  `message-ordinal` 1 for `Snd` on `a`'s path while `a` rests at `A`, absent
+  after `attempt(A)` completes `a`. The step fails if the continuation takes
+  ordinal 1, reuses an index, or the ordinal outlives `a`.

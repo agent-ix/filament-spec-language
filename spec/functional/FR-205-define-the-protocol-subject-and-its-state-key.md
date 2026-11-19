@@ -135,16 +135,23 @@ has already seen instead of a new one.
   registration (ADR-027 PS-8, AE-3). Two states that differ in any dispatched
   attempt's record, outcome or `retry_of` therefore have different keys,
   whether or not the retry relation reads `earlier`.
-- Each `queues` entry SHALL carry, beside its send node, sending thread path
-  and payload, its **message** (the message occurrence of FR-894: instance,
-  send node, thread path and that node's occurrence ordinal on the path) and
-  its **delivery** index, and `bounds` SHALL hold, for each send node and
-  thread path that has sent, its `message-ordinal`, the next occurrence
-  ordinal, and, for each message sent in a live instance, its
-  `next-delivery`, the index the next `duplicate` of it takes, kept after
-  every copy has left the queue and removed with the instance (FSpec
-  FR-425-AC-15). Two states that differ only in their delivery history
-  therefore have different keys.
+- Each `queues` entry SHALL be exactly its **message** (the message
+  occurrence of FR-894: instance, send node, thread path and that node's
+  occurrence ordinal on the path), its **delivery** index and its payload;
+  it carries no separate send node or thread path, which the message
+  already holds. `bounds` SHALL hold `message-ordinal`, the next occurrence
+  ordinal of each send node on each path whose thread is `running`, and
+  `next-delivery`, each message's next delivery index, kept after every copy
+  has left the queue and removed with the instance (FSpec FR-425-AC-15). The
+  indices follow three rules: the copies one `send` step dispatches (one,
+  or `d` for an interval send's `count` step or continuation step) take
+  consecutive delivery indices from the message's next index, a rejected or
+  lost copy included, and a `duplicate` takes the next index; the next index
+  advances by the number of copies the step dispatched; and the occurrence
+  ordinal advances only when the send completes, so every continuation step
+  of a pending interval send is the same message. The ordinal is dropped in
+  the step after which its thread is no longer `running`. Two states that
+  differ only in their delivery history therefore have different keys.
 - Thread, instance, registration and nesting counts SHALL have no ceiling
   of their own; the run's method bounds and resource limits (FR-209, FR-215) are
   the only bounds.
@@ -272,6 +279,7 @@ claim gets bounded evidence instead of an unsound proof or lasso.
 | FR-205-AC-11 | Over `Echo` with the unread claim, `canon` is a bisimulation: from `s1` and from `s2`, the enabled steps pair one to one by kind and node (`duplicate`, `lose`, `receive`), each pair's post-states have equal cycle keys and equal model states, and the paired `receive` binds equal payloads; the paired `duplicate` steps take delivery 1 (from `s1`) and 2 (from `s2`), and their post-states have equal cycle keys. On an `unordered` variant of `ch` holding deliveries 1 and 3 of one message, `canon` renumbers them 0 and 1 and sets the bound to 2. | Test (TC-650) |
 | FR-205-AC-12 | Read case, planned under QSL-2568 (the obligation term that reads a step's message identity or delivery index). For an `Echo` item whose obligation reads the delivery index of `Rcv`'s receive steps ("each delivery of a message on `ch` is received at most once", which holds), `s1`, `s2` and `s3` have three different cycle keys, EN-1 with `max_depth` 8 settles `inconclusive` `BoundReached{depth: 8}`, and no run settles `proved`. An item whose obligation reads the message identity of `Rcv`'s receive steps and no delivery index keeps `s1`, `s2` and `s3` at one cycle key and settles `Holds`. | Test (TC-650), planned: QSL-2568 |
 | FR-205-AC-13 | Counterexamples keep concrete labels. Re-concretising, from `Echo`'s initial state, the cycle-key path with prefix `send(Snd)`, `duplicate`, `lose` of the older copy and loop `duplicate`, `lose` of the older copy gives a counterexample whose `duplicate` identities carry delivery 1 and then 2, whose `lose` identities carry delivery 0 and then 1, and whose post-state keys are the concrete `ProtocolKey`s (`next-delivery` 2 after the first `duplicate`, 3 after the second); no delivery index appears in two `duplicate` identities. For the infinite-trace claim `eventually holds(c.v = 1)`, FR-217 replays it against the `scheduling adversarial` package with every step enabled and the loop closing on cycle keys, and settles `reproduced-with-evaluated-witness`. The same counterexample with the loop's `duplicate` relabelled to delivery 1 refuses `invalid_runtime_input`/`invalid-value` naming that step as not enabled. | Test (TC-650) |
+| FR-205-AC-14 | Key members (FSpec FR-425-AC-15). `Echo`'s post-send queue entry is exactly `{message, delivery, payload}`, with no `send` or `thread` member. On a `fifo` channel of capacity 2 with delivery `[2,2]`, `send Snd`'s `count` 2 step queues deliveries 0 and 1 of one message (ordinal 0) and leaves `next-delivery` 2 and `message-ordinal` 1. With capacity 2, overflow `block` and delivery `[3,3]`, in `parallel P { branch s send Snd via ch; branch r receive Rcv via ch of Snd } join all`, the `count` 3 step queues deliveries 0 and 1 and leaves the send pending with count 1, `next-delivery` 2 and no `message-ordinal` for `Snd` on `s`'s path; after `receive`, the continuation step appends delivery 2 of the same message (ordinal 0), and only then is `next-delivery` 3 and `message-ordinal` 1. In `parallel P { branch a sequence { send Snd via ch; attempt A }; branch b attempt B } join all`, `message-ordinal` 1 for `Snd` on `a`'s path is present while `a` rests at `A` and absent after `attempt(A)` completes `a`. | Test (TC-650) |
 
 ## Dependencies
 
