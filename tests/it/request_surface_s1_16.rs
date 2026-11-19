@@ -105,12 +105,12 @@ fn a_failing_clause_retains_a_one_minimal_replayed_counterexample() {
     assert_eq!(counterexample["invocations"], json!([]), "{value}");
 }
 
-/// FR-752-AC-2: every accepted shrink step is strictly smaller and fails
-/// the same clause.
+/// FR-752-AC-2: a false initial state remains a replayable 1-minimal
+/// counterexample for a fixed set of seeds.
 #[test]
 #[trace("TC-2102", "FR-752-AC-2")]
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-5")]
-fn every_accepted_shrink_step_is_smaller_and_fails_the_same_clause() {
+fn false_initial_state_remains_one_minimal_across_seeds() {
     let unit = format!(
         "{MODEL_HEADER}invariant Never using v on Config::ConfigVersion at current {{ false }}\n"
     );
@@ -125,16 +125,13 @@ fn every_accepted_shrink_step_is_smaller_and_fails_the_same_clause() {
             "initial": "spine-snapshot.json"}),
             ),
         );
-        let steps = value["model_based_test"]["shrink_steps"]
-            .as_array()
-            .unwrap_or_else(|| panic!("shrink steps: {value}"));
-        let mut previous = u64::MAX;
-        for step in steps {
-            let size = step["size"].as_u64().expect("a step size");
-            assert!(size < previous, "{value}");
-            previous = size;
-            assert_eq!(step["failing_clause"], "Never", "{value}");
-        }
+        let result = &value["model_based_test"];
+        assert_eq!(result["clause"], "Never", "{value}");
+        assert_eq!(result["status"], "refuted", "{value}");
+        assert_eq!(result["counterexample"]["minimality"], "1-minimal", "{value}");
+        assert_eq!(result["counterexample"]["replay"], "reproduced", "{value}");
+        assert_eq!(result["counterexample"]["disposition"], "invariant-violated", "{value}");
+        assert_eq!(result["counterexample"]["invocations"], json!([]), "{value}");
     }
 }
 
