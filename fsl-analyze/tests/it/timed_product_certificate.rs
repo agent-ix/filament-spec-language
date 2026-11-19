@@ -504,7 +504,6 @@ fn distribution_free_values_are_rejected() {
 /// scheduler's choice, so the maximum is 1 where `Both` gives `21/40`.
 #[trace("TC-2492", "FR-923-AC-3")]
 #[test]
-#[ignore = "QSL-2156: every-scheduler tie choice in delay races not implemented yet"]
 fn every_scheduler_tie_is_the_schedulers_choice() {
     // `send` is drawn at 2 ms; `tick` is free but can only fire at x = 2 ms.
     let claim = |name: &str, scheduler: &str| {
