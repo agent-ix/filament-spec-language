@@ -118,8 +118,10 @@ FR-120 evaluation meter budget and `ExpansionLimits` travel in the
 `ModelCheckRefusal` holds FR-106's `AdmissionFailure` from building the
 subject's `ModelSystem`, FR-101's `NotSimulated::RequiresBound`, or
 `CaptureRead { clause, capture }` (FR-337 "Capture observation"), the
-clause's checked `holds` condition reading a capture, which the engine
-refuses as a standing decision (FR-337 "Capture observation", QSL-1092).
+clause's checked `holds` condition reading a capture that is not keyable,
+whose unbounded values admit no finite product key. A condition that reads
+only keyable captures is decided, each obligation evaluated and keyed with
+its capture vector (FR-338 "Capture vectors and bound instances").
 
 ## Outputs
 
@@ -170,9 +172,13 @@ automaton states and the depth reached.
   explore no state.
 - After that classification and before any expansion, the engine SHALL
   return `ModelCheckRefusal::CaptureRead` for a clause some `holds`
-  condition of which reads a capture, under every profile, property form and
-  activation (`on origin` included), exploring no state, and naming the first
-  capture in source order that a `holds` condition reads. An admission
+  condition of which reads a capture that is not keyable (FR-337 "Capture
+  observation"), under every profile, property form and activation (`on
+  origin` included), exploring no state, and naming the first such capture in
+  source order. A clause whose conditions read only keyable captures is
+  explored: each live obligation is evaluated under its own capture vector
+  and its automaton key carries that vector and, over a protocol subject, its
+  bound protocol instance (FR-338 "Capture vectors and bound instances"). An admission
   failure or `RequiresBound` is returned instead when it applies, because the
   system is built, and the domains classified, first.
 

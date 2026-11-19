@@ -282,7 +282,9 @@ subject through O-09 and FR-125. `profile` is the exact admitted temporal profil
 `"infinite"` for an infinite-trace `on origin` property. An unguarded
 infinite-trace TP-4 clause with `on each` uses `"each"`; a clause whose
 `on each` activation has a `when` condition uses `"each-when"` for every property form
-(TP-1 to TP-4; "Guarded `on each` activation" below). A deadlock-freedom item's existing derived
+(TP-1 to TP-4; "Guarded `on each` activation" below), and an `on origin` clause
+holding a step identity read over an `on each` protocol subject uses
+`"each-activate"` ("Capture vectors and bound instances" below). A deadlock-freedom item's existing derived
 obligation identity selects its `always holds(not deadlocked)` formula.
 No absent root/profile/activation is defaulted.
 
@@ -707,6 +709,68 @@ binding in FR-125's canonical instance order: like the rejecting key of the safe
 derived from the context alone, without reading the undefined letter.
 FR-339 checks the components over these states.
 
+### Capture vectors and bound instances
+
+A clause some `holds` condition of which reads a keyable capture (FR-337
+"Capture observation") SHALL be keyed with capture vectors, as follows. A
+clause whose conditions read no capture keeps every key above byte for byte.
+
+- **Capture vector.** An activation's capture vector `cv` is the closed
+  array `["captures", values, bound]`. `values` is the ordered vector of
+  `[capture_node, value]` for every capture some `holds` condition reads, in
+  source order, `capture_node` the capture parameter's NodeId spelled as for a
+  clause root and `value` FSpec FR-181's complete typed canonical value; a
+  step identity is spelled as FSpec FR-425 spells it (a message occurrence,
+  an effect occurrence), and a delivery as
+  `{"type":"delivery","message":<message>,"delivery":"<decimal>"}`. A capture
+  no condition reads is not a member. `bound` is `null` over a model subject;
+  over a protocol subject it is `["instance", "<ordinal>", "live"|"removed"]`,
+  the protocol instance the obligation instance is bound to (FSpec FR-828
+  "Instance scope of an obligation") and whether the step that removes it
+  has been taken.
+- **Dead captures.** When `bound` becomes `"removed"`, every step identity
+  value in `values` whose capture the conditions read only as an operand of
+  `=` or `!=` against a step identity read (directly, under `some`, or through
+  `filament.op.step_identity.project`) SHALL be replaced by `null`: every
+  read of the obligation instance is now `none`, so no such comparison can
+  depend on the value, and two product states that differ only in those dead
+  values are one state. Any other captured value is kept.
+- **Obligations.** Each obligation SHALL carry its activation's vector as a
+  last member: `[o,s,cv]` or `[o,s,lower,upper,cv]`. Atoms of an obligation
+  are evaluated under its own `cv`, so the letter of an obligation is its
+  position's observation together with `cv`, and no letter is shared by two
+  activations whose vectors differ. Two obligations equal in every member,
+  `cv` included, are idempotent; obligations with different vectors are
+  never merged or subsumed into one another.
+- **TP-4 forms.** The selected violation of a TP-4 key carries one vector:
+  `["each-buchi", phase, branch, cv]`, `["guarded-buchi", phase, branch, cv]`
+  with `cv` `null` while `phase` is `"waiting"`, and `["buchi", branch, cv]`
+  for `on origin`, whose one activation has one vector. TP-2 and the safety
+  forms carry the vectors inside their obligations.
+- **Protocol subjects.** The product state's protocol component is the
+  cycle key `canon(s)` (FR-205). A capture can hold only a value of a step
+  identity read, whose channel or effect node is in the item's read sets, so
+  `canon` never renumbers a captured label and every `cv` stays consistent
+  with `canon(s)`. FR-205's completeness limit applies: read labels are kept
+  raw.
+- **Checker.** The checker SHALL re-derive each activation's `cv` by
+  evaluating the captures through FR-337's seam from the recompiled package
+  at the activation position, and the `bound` member from the protocol
+  system; a key whose `cv` names a capture no condition reads, omits a read
+  capture, holds a value outside the capture's type, keeps a dead step
+  identity value, or disagrees with the re-derived vector at an activation
+  SHALL be refused as an admission negative (`ShapeMismatch` at
+  `ProductState`), as a foreign key is.
+
+**Activation `"each-activate"`.** An `on origin` clause that holds a step
+identity read and is checked over a protocol subject whose protocol has
+`activation on each` binds one obligation instance per `activate` step (FSpec
+FR-828). Its context `activation` is `"each-activate"`, and it reads as a
+guarded `on each` clause ("Guarded `on each` activation") whose guard is
+fixed to "the position's step is an `activate` step", with every key form of
+`"each-when"`. An `on origin` clause over any other subject keeps
+`"origin"` or `"infinite"`.
+
 ### Protocol non-progress acceptance and closure classification
 
 For a protocol subject with any future interval, the TP-2/TP-3 source form
@@ -1032,6 +1096,7 @@ Note: a rejected certificate settles `inconclusive`, `CertificateRejected`
 | FR-338-AC-24 | TP-4 product keys. Over a TP-4 clause whose reached automaton states carry at least two distinct keys, the closure certificate's automaton keys are exactly the keys an independent replay of the engine reaches under the clause's context; the checker accepts the complete certificate, and rejects `InitialMissing` or `SuccessorMissing` a certificate in which one state's key is replaced by another's, two states' keys are swapped, every key is rotated, or a product state is dropped. | Test (TC-525) |
 | FR-338-AC-25 | TP-4 foreign context. A well-formed TP-4 key of another clause context in a product state is rejected `ShapeMismatch` at that `ProductState` before certificate membership is checked. | Test (TC-525) |
 | FR-338-AC-26 | Protocol cycle keys. Over FR-205-AC-10's `Echo` subject and the claim `always holds(c.v = 0)`, `check_protocol_closure` accepts the certificate whose protocol states are cycle keys, `s1`'s among them. The same certificate with `s1`'s cycle key replaced by `s2`'s raw `ProtocolKey` (delivery 1 queued, `next-delivery` 2) is rejected `SuccessorMissing` at the product state of `Echo`'s initial state, because the checker canonicalises the recomputed `send` successor to `s1`'s cycle key, which the certificate no longer holds. | Test (TC-525) |
+| FR-338-AC-27 | Capture vectors. FR-337-AC-12's `on origin` monitor `always holds(c.value >= n)` with `capture n: Int[0, 3] = c.value;` returns `Holds` with a certificate whose every obligation ends in `["captures", [[<n node>, <Int 0>]], null]`, accepted by the checker; the same certificate with that vector replaced by one holding 1, with the vector omitted, or with a second member for an unread capture is rejected `ShapeMismatch` at the first such `ProductState`. Over FSpec FR-828-AC-8's `Once` protocol, the message obligation's keys carry `bound` `["instance","0","live"]` until the step that removes the first instance and `["instance","0","removed"]` with the captured message replaced by `null` after it, so the states after the two lifetimes' removals coincide; a certificate keeping the dead message is rejected `ShapeMismatch`. A clause reading no capture yields keys byte-equal to those it yielded before capture vectors existed. FSpec FR-828-AC-8's `on origin` variant over an `on each` `Once` has context `activation` `"each-activate"`. | Test (TC-525) |
 
 ## Dependencies
 

@@ -52,9 +52,11 @@ infinite-trace unless a step names another profile.
    0);`.
 6. Run `eventually[0,1] holds(n < 3 and c.value = n + 1)` `on each (q: M::Counter) when
    (c.value = 1)` with `capture n: Int[0, 3] = c.value;` through the engine,
-   and the same clause with the `holds` condition `c.value = 3`; the refusal
-   cases of AC-12 (infinite-trace `always`, a bounded `on origin` monitor, a
-   second capture, an unbounded root), checking that no state is charged.
+   the capture-free clause `eventually[0,1] holds(1 < 3 and c.value = 1 + 1)`,
+   the bounded `on origin` monitor of AC-12 and `always holds(c.value >= 0)`,
+   and the same clause with the `holds` condition `c.value = 3`; then the
+   `capture n: Integer` variants, the second-capture case and an unbounded
+   root, checking that no state is charged for a refusal.
 7. Run FR-128 replay and the FR-338 checker over AC-13's clauses (the unguarded
    `on each` clause for the certificate; FR-128 also replays AC-11's `z`
    counterexample, then with `where.locus` naming the activation or another
@@ -97,9 +99,12 @@ Tag the tests `#[trace("TC-1267", "FR-337-AC-n")]`, and the test of AC-8's later
 - Step 5: `Violated` with the prefix `0 -inc-> 1 -inc-> 2`, then
   `Holds{Exhaustive}`; `Violated` with `kind: UndefinedEvaluation` at position
   2, cause `division-by-zero`, the site naming `z`, then `Holds{Exhaustive}`.
-- Step 6: `ModelCheckRefusal::CaptureRead` naming the clause and `n`, no
-  verdict and no state explored, likewise for each listed case, `RequiresBound`
-  for the unbounded root; the second clause returns step 5's first verdict.
+- Step 6: each `Int[0, 3]` clause returns the verdict and counterexample of
+  its capture-free counterpart, and a `Holds` certificate (capture vector
+  `[[n, 0]]` in its keys) is accepted by FR-338; each `Integer` variant returns
+  `ModelCheckRefusal::CaptureRead` naming the clause and the capture, no
+  verdict and no state explored; `RequiresBound` for the unbounded root; the
+  `c.value = 3` clause returns step 5's first verdict.
 - Step 7: replay `reproduced-with-evaluated-witness`; `Holds{Exhaustive}`
   accepted by FR-338; a certificate for a reached state at which `z` is
   undefined is rejected `BadState` by FR-338; the `z` counterexample replays

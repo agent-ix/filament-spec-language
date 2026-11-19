@@ -100,7 +100,11 @@ of the item's automaton in FR-338's order, by the canonical bytes of their
 identities. For a TP-4 clause with a guarded `on each` activation (context
 activation `"each-when"`, FR-338 "Guarded TP-4 clause") the sets include
 the activation set `["activation"]`, which is index 0; a state belongs to it
-exactly when its key's phase is `"active"`.
+exactly when its key's phase is `"active"`. A clause whose conditions read keyable captures keys its
+components' product states with the capture vectors of FR-338 "Capture
+vectors and bound instances"; the acceptance sets, fairness indices and
+component rules are unchanged, and two product states that differ only in a
+capture vector are two states of any component that holds them.
 
 `UnfairWeak`'s index is into the clause's resolved constraints: one per
 `whole` constraint, and one per transition identity of an `each`
