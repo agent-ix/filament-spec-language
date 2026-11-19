@@ -60,7 +60,7 @@ fn original_probability_forms_and_random_declarations_compile() {
     "FR-186-AC-3",
     "FR-186-AC-4",
     "FR-186-AC-5",
-    "FR-186-AC-9"
+    "FR-186-AC-11"
 )]
 fn invalid_probability_claim_forms_refuse_with_their_specific_causes() {
     let directory = tempfile::tempdir().unwrap();
