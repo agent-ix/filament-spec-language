@@ -26,7 +26,8 @@ fn source(file: &Path) -> Value {
 fn request(file: &Path) -> Value {
     json!({"format":"native-compile/1","request":{
         "program":{"source":source(file)},"models":[{"format":"semantic-ir/2.0.0",
-            "source":source(&fixture("link.semantic-ir.json"))}]}})
+            "source":{"file":fixture("link.semantic-ir.json"),"authority":"test",
+                "identity":"test:link/model","document":"LinkModel","formal_revision":1}}]}})
 }
 
 fn write(directory: &Path, value: &Value) -> PathBuf {
