@@ -25,6 +25,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-966
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-516
+    type: depends_on
   - target: ix://agent-ix/filament-observation/FR-001
     type: depends_on
   - target: ix://agent-ix/filament-observation/FR-005
@@ -134,8 +136,9 @@ reading maps exactly, with no wrapping, saturation or refusal.
 ## Inputs
 
 - The admitted trace of one request: each position's identity, stamp,
-  interval stamp, order key, arrival watermark and admitted observation
-  document, the clock binding's name, unit, epoch and period, the profile
+  interval stamp, order key, arrival watermark, admitted observation
+  document (spine route) or FR-516 `EvidenceRef` (timed-call route), shared
+  and instance-bound valuations and aggregate samples, the clock binding's name, unit, epoch and period, the profile
   identity and the cover (FR-501, FR-522, FR-966).
 - The checked package's identity, contract version and canonical bytes, on the source
   route and on the bare-package route alike.
@@ -166,7 +169,11 @@ FR-526's reports, read from them.
   FR-106 identity in a report, and no owner document carries an FR-106
   identity: a record's value holds its document without the document's
   labels. The mapping is many-to-one where several positions state one fact
-  (below).
+  (below). On the FR-516 route a position's FR-106 identity is its
+  `EvidenceRef` identity (the observation identity FR-516 orders and reports
+  by), and the record's value likewise omits the reference's labels, so
+  everything this requirement says of FR-106 identities, the relabelling
+  check included, applies to it unchanged.
 - The tick-to-nanosecond conversion SHALL be exact: a stamp or `u` of `k`
   ticks of a timed unit is `k × s` nanoseconds, where `s` is the unit's
   declared rational factor to the second (FR-230's `time ... unit`) times
@@ -309,16 +316,66 @@ profile identity.
   - `subject` the expected subject;
   - `value`: `ValueState::Present { value_type: "fsl-eval/trace-position/1",
     canonical_value }`, `canonical_value` the RFC 8785 text of
-    `{"interval": I, "observation": D, "order_key": K}`, with `D` the
-    position's admitted FR-106 document as its canonical JSON value without
-    its `identity` member (the document's own labels), `K`
-    `{"authority": A, "key": k}` or `null`, and `I` the interval stamp
-    `{"earliest": "<n>", "earliest_open": B, "latest": "<n>",
-    "latest_open": B}` or `null`, integers in FR-038's decimal spelling. The
-    value holds every fact of the position that the record's other fields do
-    not, except its FR-106 labels, so two positions share a record identity
-    exactly when they state one fact, and a superseding request that changes
-    a valuation, an order key or an interval changes that record's identity;
+    `{"aggregate_samples": G, "instance_aggregate_samples": IG,
+    "instance_valuations": IV, "interval": I, "observation": D,
+    "order_key": K, "valuations": V}`, integers in FR-038's decimal
+    spelling, with:
+    - `D` the observation's content without its labels, by how the position
+      was admitted:
+      - a position admitted from an FR-106 document (the spine trace route,
+        FR-501): that document's canonical JSON value (the semantic-value
+        canonical JSON FR-106's reader admits) without its `identity`
+        member. The evaluator SHALL retain that document on the position
+        (`EvidencePosition`) at admission, so the value is built from the
+        admitted document and never re-read or reconstructed;
+      - a position carried as an FR-516 `EvidenceRef` (the timed-call and
+        checked-package route, which carries no FR-106 document): the
+        object `{"authority_digest": h, "contract": c, "digest": h,
+        "schema_digest": h}`, `c` the `contract` text and each `h` the
+        member's bytes as lowercase hexadecimal (the empty string for empty
+        bytes). The reference's labels (`identity`, `authority_identity`,
+        `authority_revision`, `scope`, `population`) are omitted, as the
+        FR-106 labels are; the content members stay opaque, FSL hexes their
+        bytes and interprets nothing;
+    - `V` the position's shared `valuations`: an object keyed by the atom
+      index in decimal, each `"true"`, `"false"`, `"missing"` or
+      `{"undefined": U}`; `{}` when there are none. On the spine route these
+      are the valuations the evaluator reads from the admitted document;
+    - `G` the position's shared `aggregate_samples`, keyed the same way,
+      each `"excluded"`, `"counted"`, `{"holds": true}` or
+      `{"holds": false}`, `{"value": Q}` or `{"undefined": U}`; `{}` when
+      there are none;
+    - `IV` and `IG` the instance-bound `instance_valuations` and
+      `instance_aggregate_samples` (FR-524): objects keyed by the lowercase
+      hexadecimal of the trigger identity's bytes (an opaque byte string,
+      FR-516, FR-053, which FSL never decodes as text), each value a `V` or
+      `G` object; `{}` when there are none;
+    - `Q` an exact rational in FR-038's object shape and normalization,
+      `{"kind": "rational", "numerator": "<n>", "denominator": "<n>"}` in
+      lowest terms with a positive denominator, whose components are
+      unbounded: FR-038's signed 64-bit domain does not apply to this value;
+    - `U` the undefined cause, in this requirement's own spelling, one of:
+      - `{"cause": "kernel", "reason": R}`, a kernel `Undefined`, `R` its
+        FR-100 kebab-case kernel reason (the kernel cause has no other
+        member);
+      - `{"cause": "family", "fields": F, "reason": R}`, a family
+        `UndefinedRecord`, `R` the catalog's `UndefinedReason` spelling
+        (FR-100) and `F` the record's `fields` as an object of strings keyed
+        by the catalog's field names (`{}` when it has none);
+      - `{"cause": "insufficient-data", "count": "<n>", "min_count": "<n>"}`,
+        a window aggregate's `InsufficientData`, with the window's value
+        count and the term's `min_count`;
+    - `K` `{"authority": A, "key": k}` or `null`;
+    - `I` the interval stamp `{"earliest": "<n>", "earliest_open": B,
+      "latest": "<n>", "latest_open": B}` or `null`.
+
+    The value holds every fact of the position that the record's other
+    fields do not, except its labels (the FR-106 labels, or an
+    `EvidenceRef`'s labels), so two positions share a record identity
+    exactly when they state one fact, on either route, and a superseding
+    request that changes a valuation, an aggregate sample, an evidence
+    content member, an order key or an interval changes that record's
+    identity;
   - `visibility`: `Internal`, because a position is a snapshot of the
     assessed system's own state at its own anchor (FR-106);
   - `anchor`: `EventPosition(t)` for an event position clock,
@@ -335,10 +392,10 @@ profile identity.
     quarter-tick intervals below, never through this field;
   - `identity`: `authority::observation::record_identity(&record,
     Limits::owner_max())` over the record above.
-- Two or more positions that state one fact (equal observations at one
-  stamp with equal order keys, interval stamps and arrival watermarks, which
-  FR-501 admits and
-orders by observation identity) SHALL map to one owner record and one
+- Two or more positions that state one fact (equal observation content,
+  valuations and aggregate samples at one stamp with equal order keys,
+  interval stamps and arrival watermarks, which FR-501 and FR-516 admit and
+  order by observation identity) SHALL map to one owner record and one
   member. The side mapping is then many-to-one: that record maps to every
   FR-106 identity of those positions, and every owner answer about the record
   is reported under each of them. No such trace is refused.
@@ -520,15 +577,27 @@ has an ingestion instant only when it carries an arrival watermark (FR-966);
 a position without one was never stamped on arrival, so no instant the
 evaluator can write there (its event time, the request's watermark) is an
 ingestion instant the trace holds. `filament-observation` SHALL therefore provide,
-as its own requirement amending its FR-001 and FR-004 (filed against the
-owner as a requirement, as FR-013 was):
+as its own requirement amending its FR-001, FR-004 and FR-005 (filed against
+the owner as a requirement, as FR-013 was):
 
 - `AdmittedRecord.ingestion_time_nanos` SHALL be `Option<i128>`, `None`
   meaning the ingestion instant was not recorded, never an instant;
-- the FR-288 record identity preimage and the observation document SHALL
-  spell an absent ingestion instant as JSON `null`, under a new record
-  contract and identity version as the owner's own versioning rule requires
-  (filament-observation FR-005, "Owner artifact versioning");
+- the owner SHALL edit in place, and spell an absent ingestion instant as
+  the member present with JSON value `null` in, each of these artifacts:
+  - `filament.observation.record/v2` (`schemas/observation-record-v2.schema.json`
+    and the record document), member `ingestion_time_nanos`;
+  - `filament.observation.record-candidate/v1`, the FR-014 event-input record
+    line, member `ingestion_time_nanos`;
+  - `filament.observation.partial-fact/v1`, whose only ingestion member is
+    `ingestion_position`;
+  - the `filament.observation.identity/v2` record-identity preimage
+    (`authority::observation::record_identity`), member
+    `ingestion_time_nanos`;
+- the contract and preimage labels SHALL stay as they are, with no v2 or v3
+  contract, no new identity version and no compatibility layer: the owner is
+  pre-release, and this amends filament-observation FR-005 "Owner artifact
+  versioning", whose rule of a new version for a changed member set does not
+  apply to this change;
 - `partial::Selection`'s ingestion position SHALL take the same `Option`, and
   no owner rule SHALL order, compare or classify by an absent ingestion
   instant.
@@ -553,9 +622,10 @@ SHALL carry `None` and this interim rule is removed.
 | FR-944-AC-4 | Once filament-observation FR-013 lands, FR-502-AC-2's cases through `completeness::revise` refuse `Complete { through: 60 }`, `Incomplete` and the uncovered position stamped 80, refuse a covered position re-delivered under a different observation identity (`MemberObservationChanged`, FR-502's changed-fingerprint case), accept a successor over its own admitted history with another subject, and accept `Complete { through: 100 }` and `{ through: 140 }`, exactly as FR-502's ledger does. A position whose content, stamp, order key, interval and arrival equal a covered position's at or before the retained `through` but whose FR-106 identity is new is refused by the relabelling check before `revise` is called, with FR-502's `Completeness` contradiction (`invalid_runtime_input`/`invalid-value`, the clock name, the retained assertion and the position) and the ledger unchanged, although its owner record identity is the covered one; the same position under its covered FR-106 identity passes the check and `revise` accepts it. | Test (TC-2624, TC-3036) |
 | FR-944-AC-5 | Under `Bounded { uncertainty: 0 }` and unit `ms`, a request `holds(req)` stamped 1 with interval `(0, 1]` maps to `[1, 4]` and an `ack` stamped 3 with interval `[3, 4)` maps to `[12, 15]`; `within_bound(3, req, ack)` read through `relation_to(ack, req shifted by 12)` is `Indeterminate`, and `holds(req) implies eventually[0,3] holds(ack)` with `W` and `Complete { through: 10 }` gives `Indeterminate { reason: StraddlesBound }`, equal to `ClockCover`'s answer, where the half-tick mapping (`[1, 2]`, `[6, 7]`, shift 6) would read `True`. The same request with the `ack` stamped 2 with interval `[2, 3)`, mapped to `[8, 11]`, gives `Completed(true)`. | Test (TC-2624) |
 | FR-944-AC-6 | With an anchor of interval `[0, 0]` (`[0, 0]` in quarter ticks) under `Counter { uncertainty: 0 }`: for `at_least 2`, reading 2 (`[8, 11]`) is eligible, reading 1 (`[4, 7]`) ineligible, and reading 2 under `Counter { uncertainty: 1 }` (`[4, 15]`) `Indeterminate` with reason `StraddlesBound`; for `at_most 2`, reading 1 is eligible, reading 3 (`[12, 15]`) ineligible and reading 2 `Indeterminate` with reason `StraddlesBound`; a candidate of interval `(1, 2]` (`[5, 8]`) is eligible for `at_least 1`, one of interval `[0, 1)` (`[0, 3]`) is ineligible for `at_least 1` and `Indeterminate` for `at_most 0`; and against an anchor of interval `(0, 1]` (`[1, 4]`) a candidate of interval `[3, 4)` (`[12, 15]`) is `Indeterminate` for `at_most 3` and eligible for `at_least 2`. Each decision equals `ClockCover`'s eligibility, and no owner interval with an unbounded end is formed. | Test (TC-2624) |
-| FR-944-AC-8 | FR-501-AC-13's counter-cover request under `ms` with a position carrying arrival 2, one carrying an order key and one an interval stamp builds an admission request that `admit` returns `Available` for, in which: `package` is `native-linked-package/1`, the package `name`, revision `filament.checked-package/v2` and the SHA-256 of `canonical_bytes()`; `producer` is the `fsl-eval` bundle; `binding` has the stated identity text, source `C`, schema `fsl-eval/trace-position/1`, the `over` node's `node_wire` text as signal, the clause node's text plus `/activation` as trigger, unit `ms`, subject kind `package` and `required` true; `expected_subject` is kind `package` with the package identity; both relationship lists are empty; each record's identity equals `record_identity` of the record, its value text is the stated `{"interval", "observation", "order_key"}` object whose `observation` has no `identity` member, so no owner document carries an FR-106 identity, visibility `Internal`, anchor `TimestampNanos(t × 1000000)`, ingestion `2000000` for the arrival-2 position, uncertainty `1000000`; `required_member_identities` is the sorted record identities and equals the members' object and record identities; membership, closure and snapshot identity are `derive_membership`'s identity and digest; the range is `[min, max + 1)` in nanoseconds; sources and both dependency lists are `[C]`; `membership_complete` is true; `population_identity` equals `population_identity` of the request; limits are the record count and 0. Building it twice gives equal requests; changing one valuation, one order key or one interval changes exactly that record's identity. Adding a second observation equal to the first in content, stamp, order key, interval and arrival but with another FR-106 identity admits: the request has one record and one member for both, and every report about that record names both FR-106 identities through the many-to-one side mapping. A position without an arrival carries `ingestion_time_nanos` equal to its event time under the interim rule, and no report carries that value. An event-position clause's request uses `EventPosition` anchors, unit `position` and an `EventPosition` range and is also `Available`. | Test (TC-3036) |
+| FR-944-AC-8 | FR-501-AC-13's counter-cover request under `ms` with a position carrying arrival 2, one carrying an order key and one an interval stamp builds an admission request that `admit` returns `Available` for, in which: `package` is `native-linked-package/1`, the package `name`, revision `filament.checked-package/v2` and the SHA-256 of `canonical_bytes()`; `producer` is the `fsl-eval` bundle; `binding` has the stated identity text, source `C`, schema `fsl-eval/trace-position/1`, the `over` node's `node_wire` text as signal, the clause node's text plus `/activation` as trigger, unit `ms`, subject kind `package` and `required` true; `expected_subject` is kind `package` with the package identity; both relationship lists are empty; each record's identity equals `record_identity` of the record, its value text is the stated seven-member `{"aggregate_samples", "instance_aggregate_samples", "instance_valuations", "interval", "observation", "order_key", "valuations"}` object whose `observation` is the admitted document without its `identity` member and whose `valuations` are the valuations read from it, so no owner document carries an FR-106 identity, visibility `Internal`, anchor `TimestampNanos(t × 1000000)`, ingestion `2000000` for the arrival-2 position, uncertainty `1000000`; `required_member_identities` is the sorted record identities and equals the members' object and record identities; membership, closure and snapshot identity are `derive_membership`'s identity and digest; the range is `[min, max + 1)` in nanoseconds; sources and both dependency lists are `[C]`; `membership_complete` is true; `population_identity` equals `population_identity` of the request; limits are the record count and 0. Building it twice gives equal requests; changing one valuation, one order key or one interval changes exactly that record's identity. Adding a second observation equal to the first in content, stamp, order key, interval and arrival but with another FR-106 identity admits: the request has one record and one member for both, and every report about that record names both FR-106 identities through the many-to-one side mapping. A position without an arrival carries `ingestion_time_nanos` equal to its event time under the interim rule, and no report carries that value. An event-position clause's request uses `EventPosition` anchors, unit `position` and an `EventPosition` range and is also `Available`. | Test (TC-3036) |
 | FR-944-AC-9 | The `fsl-eval` bundle has identity `fsl-eval`, revision `Revision::producer` of the crate version, interface `1.2.0`, no relationships, configuration `fsl-eval/default` whose digest equals `canonical_digest_selection()` of a bundle holding only `{"configurationIdentity": "fsl-eval/default"}`, and digest equal to its own `canonical_digest_selection()`; it is admitted once per process. An admission request mutated after derivation (the binding's source changed, the population identity changed, one record identity changed), each alone, ends the run `runtime_invariant`/`established-invariant-broken`, invariant `observation-admission`, carrying the owner's refusal cause, exit `30`, and no clause outcome; none is `invalid_runtime_input`. A trace of `max_population_entries + 1` positions refuses at stage `admit`, `stage_limit_exceeded`/`node-count-exceeded`, `bound` the owner maximum, `actual` the count, `setting` `filament_observation::authority::Limits.max_population_entries`, and a position whose value text is one byte over `max_string_bytes` refuses `stage_limit_exceeded`/`input-bytes-exceeded` with `setting` `filament_observation::authority::Limits.max_string_bytes`, both before any owner derivation. | Test (TC-3036) |
 | FR-944-AC-10 | One compiled package evaluated on the source route and, after a canonical emit, read and evaluated on the bare-package route gives `canonical_bytes()` equal to the emitted bytes on both routes and to the bytes the reader consumed, exactly, and so equal admission `package` selections (revision `filament.checked-package/v2`, equal digest) and equal owner `Context` authorities on both routes; the same package as non-canonical JSON (reordered members, extra whitespace) is refused by the reader `noncanonical_wire` (FSpec FR-322-AC-4) and admits nothing; no document or file FSL writes carries the digest. | Test (TC-3036) |
+| FR-944-AC-11 | Over FR-516-AC-9's request through `evaluate_temporal_evidence` (positions carried as `EvidenceRef`s with arbitrary, including empty, `contract`, `schema_digest`, `digest` and `authority_digest`), with one position carrying a `Value` aggregate sample of 1/3, one an `Undefined` valuation of kernel reason division by zero, one an `Undefined` aggregate sample of `InsufficientData { count: 1, min_count: 2 }`, and one an instance-bound valuation under a trigger whose identity bytes are `0x00 0xff`: each record's value is the RFC 8785 text of `{"aggregate_samples", "instance_aggregate_samples", "instance_valuations", "interval", "observation", "order_key", "valuations"}` whose `observation` is `{"authority_digest", "contract", "digest", "schema_digest"}` with the bytes in lowercase hexadecimal (`""` for empty) and no `identity`, `authority_identity`, `authority_revision`, `scope` or `population`; the sample is `{"value": {"kind": "rational", "numerator": "1", "denominator": "3"}}`, the valuation `{"undefined": {"cause": "kernel", "reason": "division-by-zero"}}`, the sample `{"undefined": {"cause": "insufficient-data", "count": "1", "min_count": "2"}}`, and the instance valuation keyed by `"00ff"`; a sample of 18446744073709551616/3 writes those unbounded components; `admit` returns `Available`. Changing one content member, one valuation, one aggregate sample or one instance-bound valuation, each alone, changes exactly that record's identity, and changing only an `EvidenceRef` label does not; two positions equal in all but their `EvidenceRef` identity map to one record whose reports name both identities, and the relabelling check refuses such a position at or before a retained `through` whose identity the covered set does not hold. Over FR-501-AC-13's spine request the position keeps its admitted FR-106 document and `observation` is that document's canonical JSON without `identity`, with `valuations` the valuations read from it. | Test (TC-3036) |
 | FR-944-AC-7 | Scaling is exact at the domain's edge: a reading `18446744073709551615` under `Counter { uncertainty: 18446744073709551615 }` maps to `[0, 147573952589676412923]`, reading 0 under the same cover to `[-73786976294838206460, 73786976294838206463]`, and the bounds `9223372036854775807` and `-9223372036854775808` scale to `36893488147419103228` and `-36893488147419103232`; `within_bound` and `definitely_before` over these readings and bounds equal `ClockCover`'s answers. | Test (TC-2624) |
 
 ## Dependencies

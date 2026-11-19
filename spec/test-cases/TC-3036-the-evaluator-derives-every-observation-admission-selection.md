@@ -16,7 +16,8 @@ and its own crate-constant producer bundle alone, that the owner admits it,
 that an owner refusal of that request is an internal failure and an owner
 maximum a limit, and that the package selection and its in-memory digest
 are equal on the source and bare-package routes. Scope: FR-944-AC-8,
-FR-944-AC-9, FR-944-AC-10 and the relabelling case of FR-944-AC-4.
+FR-944-AC-9, FR-944-AC-10, FR-944-AC-11 and the relabelling case of
+FR-944-AC-4.
 
 ## Test Procedure
 
@@ -41,11 +42,22 @@ FR-944-AC-9, FR-944-AC-10 and the relabelling case of FR-944-AC-4.
    position, deliver a position equal to it in content, stamp, order key,
    interval and arrival under a new FR-106 identity, then the same position
    under its covered FR-106 identity.
+5. Run FR-516-AC-9's `EvidenceRef` request through
+   `evaluate_temporal_evidence` with a `Value` sample of 1/3 and one of
+   18446744073709551616/3, a division-by-zero `Undefined` valuation, an
+   `InsufficientData { count: 1, min_count: 2 }` sample and an
+   instance-bound valuation under the trigger identity bytes `0x00 0xff`; vary one content member, one
+   valuation, one sample, one instance valuation and one label, each alone;
+   add a position equal to another in all but its `EvidenceRef` identity;
+   repeat step 4 with that position. Inspect a spine position of step 1.
 
 ## Expected Results
 
-- Step 1: every member equals FR-944-AC-8's value and `admit` returns
-  `Available`; the two builds are equal; each variation changes exactly that
+- Step 1: every member equals FR-944-AC-8's value, each record value is
+  the seven-member object with `aggregate_samples`,
+  `instance_aggregate_samples`, `instance_valuations`, `interval`,
+  `observation` (the document without `identity`), `order_key` and
+  `valuations` (read from the document), and `admit` returns `Available`; the two builds are equal; each variation changes exactly that
   record's identity; no record value carries an FR-106 identity; the equal
   observation admits as the same single record and member, and reports
   about it name both FR-106 identities; the arrival-less position carries
@@ -69,3 +81,13 @@ FR-944-AC-9, FR-944-AC-10 and the relabelling case of FR-944-AC-4.
   with the clock name, the retained assertion and the position, the ledger
   unchanged; the position under its covered identity passes the check and
   `revise` accepts it.
+- Step 5: each value is the stated seven-member object with the label-free
+  four-member `observation` in lowercase hexadecimal, the rationals with
+  unbounded components, `{"cause": "kernel", "reason": "division-by-zero"}`,
+  `{"cause": "insufficient-data", "count": "1", "min_count": "2"}`, the
+  instance valuation keyed `"00ff"`, and `admit` returns `Available`; each content,
+  valuation or sample change alone changes exactly that record's identity
+  and a label change does not; the equal positions share one record whose
+  reports name both identities; the relabelled position is refused before
+  `revise`; the spine position retains its FR-106 document and its
+  `observation` is that document without `identity`.
