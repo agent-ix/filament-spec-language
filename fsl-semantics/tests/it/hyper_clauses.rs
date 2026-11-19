@@ -10,12 +10,12 @@ use filament_checked::node::NodeKind;
 use filament_exact::{NodeKey, PathSegment};
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
-use fsl_foundation::Span;
 use fsl_foundation::diagnostic::{Code, StageFailure};
+use fsl_foundation::Span;
 use fsl_semantics::check::{
-    Capability, CheckCause, CheckRefusal, CheckedHyper, CheckedHyperClause, CheckedModelRelation,
-    HyperCause, HyperForm, HyperTraceFamily, HyperUnsupported, PackageDeclarations, StepRead,
-    TemporalCause, TemporalProfile, check_hyper_clauses,
+    check_hyper_clauses, Capability, CheckCause, CheckRefusal, CheckedHyper, CheckedHyperClause,
+    CheckedModelRelation, HyperCause, HyperForm, HyperTraceFamily, HyperUnsupported,
+    PackageDeclarations, StepRead, TemporalCause, TemporalProfile,
 };
 use fsl_semantics::family::{ClaimExtent, FamilyContract};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -243,7 +243,8 @@ const OPAQUE: &str = "hyper Opaque using inf over behaviours (v: V::ConfigVersio
      { holds(v.versionNumber @ a != v.versionNumber @ b) and \
      always holds(v.versionNumber @ a = v.versionNumber @ b) }";
 
-const DET: &str = "relation Det using v over (x: V::ConfigVersion::step, y: V::ConfigVersion::step) \
+const DET: &str =
+    "relation Det using v over (x: V::ConfigVersion::step, y: V::ConfigVersion::step) \
      { x.i = y.i and pre(x.self.versionNumber) = pre(y.self.versionNumber) \
      implies x.self.versionNumber = y.self.versionNumber }";
 
@@ -826,7 +827,11 @@ fn a_bound_step_relation_has_a_code_claim_beside_its_model_claim() {
         "function noop using v(): Boolean pure { true }",
     );
     let graph = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect("the vault compiles");
     let binding = AuthoredBinding::Frame {
         key: step.clone(),
@@ -864,7 +869,11 @@ fn hyper_clauses_are_ungated_by_the_model_profile() {
     for layer in ["filament.value.complete/v1", "filament.model.complete/v1"] {
         for declaration in [non_interference(), DET.to_owned()] {
             let (_, package) = assemble_under(layer, &["V"], INFINITE, &declaration);
-            let checked = package.check(CheckMode::Linked, CheckingLimits::default());
+            let checked = package.check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            );
             if declaration == non_interference() {
                 // A hyper clause over `behaviours` is emitted (FR-488).
                 checked.unwrap_or_else(|refusals| panic!("{layer}: {refusals:?}"));
@@ -893,14 +902,16 @@ fn an_examined_body_refuses_by_its_own_fault_under_either_profile() {
         ] {
             let (_, package) = assemble_under(layer, &["V"], INFINITE, &declaration);
             let refusals = package
-                .check(CheckMode::Linked, CheckingLimits::default())
+                .check(
+                    CheckMode::Linked,
+                    CheckingLimits::default(),
+                    &crate::reward_evaluator::ZeroRewardEvaluator,
+                )
                 .expect_err("an ill-typed body refuses");
-            let [
-                CheckRefusal {
-                    cause: CheckCause::Hyper(cause),
-                    ..
-                },
-            ] = &refusals[..]
+            let [CheckRefusal {
+                cause: CheckCause::Hyper(cause),
+                ..
+            }] = &refusals[..]
             else {
                 panic!("{layer}: {declaration}: one body fault, not {refusals:?}");
             };
@@ -1090,7 +1101,11 @@ fn a_name_used_twice_refuses_at_the_second() {
 fn body_outcome(declarations: &str) -> Result<(), Vec<HyperCause>> {
     let (_, package) = assemble(&["V"], INFINITE, declarations);
     // Checked hyper clauses and step relations are emitted.
-    let Err(refusals) = package.check(CheckMode::Linked, CheckingLimits::default()) else {
+    let Err(refusals) = package.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    ) else {
         return Ok(());
     };
     let mut faults = Vec::new();
@@ -1242,7 +1257,11 @@ fn value_typer_admits(declarations: &str, parameters: &str, body: &str) -> bool 
         &format!("{declarations}function probe using v({parameters}): Boolean pure {{ {body} }}"),
     );
     package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .is_ok()
 }
 
@@ -1693,12 +1712,10 @@ fn a_conjunct_s_slots_have_the_types_of_their_labels() {
     let [operations, inputs] = checked.mu_universal() else {
         panic!("two conjuncts");
     };
-    assert!(
-        operations
-            .slots()
-            .iter()
-            .all(|slot| matches!(slot, StepRead::Operation { .. }))
-    );
+    assert!(operations
+        .slots()
+        .iter()
+        .all(|slot| matches!(slot, StepRead::Operation { .. })));
     for slot in inputs.slots() {
         let StepRead::Argument(read) = slot else {
             panic!("an argument read, not {slot:?}");
@@ -1905,7 +1922,11 @@ fn a_hyper_clauses_alias_names_its_own_units_package() {
     };
     assert_eq!(clause.mu_universal().len(), 2);
     package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("b's clause checks and emits: {refusals:?}"));
 }
 
@@ -1916,7 +1937,11 @@ fn a_hyper_clauses_alias_names_its_own_units_package() {
 #[test]
 fn a_step_relations_executions_are_its_own_units_packages_operations() {
     let graph = one_alias_two_packages(DET)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("b's relation checks: {refusals:?}"));
     let [relation] = graph.step_relations() else {
         panic!("one relation: {:?}", graph.step_relations());

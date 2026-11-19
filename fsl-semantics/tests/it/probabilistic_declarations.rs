@@ -425,7 +425,11 @@ fn located_over(document: &[u8], body: &str) -> Vec<(Code, Option<&'static str>,
     let regions = declarations.regions();
     let (text, _) = service_unit_over(document, body);
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("the unit refuses")
         .iter()
         .map(|refusal| {
@@ -672,7 +676,11 @@ fn a_precondition_that_reads_a_random_parameter_refuses_at_the_read() {
     // position.
     let document = service_document_with(&["self.phase = Service::Phase::Busy and d < 5"]);
     let refusals = assemble_over(&document, &service(None, ""))
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("the requires reads d");
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
@@ -703,7 +711,11 @@ fn a_reference_valued_random_parameter_refuses_value_outside_type() {
     let body = |random: &str| format!("{D}\n{OUTCOME}\n{DURATION}\n{steady}\n{random}\n");
     let refused = body("random Server::assign(target) ~ { 3: 1 };");
     let refusals = assemble_over(&document, &refused)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("a reference-typed support is refused");
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
@@ -716,7 +728,11 @@ fn a_reference_valued_random_parameter_refuses_value_outside_type() {
 
     let reference = body("random Server::assign(target) ~ { Service::Server#\"s1\": 1 };");
     let refusals = assemble_over(&document, &reference)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("FR-185 refuses reference-literal support values");
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
@@ -729,7 +745,11 @@ fn a_reference_valued_random_parameter_refuses_value_outside_type() {
 
     // The `Int[1, 12]` parameter with the integer value `3` checks.
     assemble_over(&document, &body(""))
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect("the integer-typed parameter checks");
 }
 
@@ -1036,7 +1056,11 @@ fn a_quantity_random_parameter_checks_its_unit_and_precondition() {
     let random = "random Server::attempt(d) ~ { 1 ms: 90, 3 ms: 7, 12 ms: 3 };";
     let body = service(Some((D, random)), "");
     let graph = assemble_over(&document, &body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect("same-unit quantities are a valid support");
     let model = graph.probabilistic_model();
     let [duration, outcome] = model.random_parameters() else {
@@ -1073,7 +1097,11 @@ fn a_quantity_random_parameter_checks_its_unit_and_precondition() {
         let invalid = format!("random Server::attempt(d) ~ {{ {value}: 1 }};");
         let body = service(Some((D, &invalid)), "");
         let refusals = assemble_over(&document, &body)
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
             .expect_err("wrong-unit and wrong-type supports are refused");
         assert_eq!(refusals.len(), 1, "one refusal for {value}: {refusals:?}");
         let refusal = &refusals[0];
@@ -1088,7 +1116,11 @@ fn a_quantity_random_parameter_checks_its_unit_and_precondition() {
                { self.phase = Service::Phase::Busy and d < 5 ms }";
     let body = service(Some((D, random)), pre);
     let refusals = assemble_over(&document, &body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("a precondition cannot read a random parameter");
     assert_eq!(refusals.len(), 1, "one refusal: {refusals:?}");
     let [refusal] = &refusals[..] else {
@@ -1107,7 +1139,11 @@ fn a_quantity_random_parameter_checks_its_unit_and_precondition() {
 #[test]
 fn quantity_literals_type_against_the_declared_units() {
     assemble("function lag using v(): Boolean pure { 5 ms <= 3 ms }")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect("a quantity literal in a function body checks");
     let refusals = refusals_of("function lag using v(): Boolean pure { 5 parsec <= 3 ms }");
     assert_eq!(
@@ -3134,7 +3170,11 @@ fn a_workload_name_is_package_wide() {
         let regions = declarations.regions();
         let (text, _) = service_unit(&body);
         let refusals = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
             .expect_err("the unit refuses");
         let [refusal] = &refusals[..] else {
             panic!("{second}: one refusal: {refusals:?}");
@@ -3296,7 +3336,11 @@ fn service_document_with_flow() -> Vec<u8> {
 #[test]
 fn a_process_in_the_package_does_not_make_a_workload_incomplete() {
     assemble_over(&service_document_with_flow(), &service(None, ""))
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
 }
 
@@ -3327,7 +3371,11 @@ fn a_claims_subject_is_its_own_units_package() {
         &[("a", &a), ("b", b)],
         &[service.as_slice(), other.as_slice()],
     )
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("b's claim checks: {refusals:?}"));
     let [claim] = graph.probabilistic_model().claims() else {
         panic!("one claim: {:?}", graph.probabilistic_model().claims());
@@ -3645,7 +3693,11 @@ fn bare_decimal_threshold_overlong_refused() {
     let declarations = assemble(&body);
     let regions = declarations.regions();
     let refusals = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("a threshold beyond the decimal scale limit refuses");
     let [refusal] = refusals.as_slice() else {
         panic!("one threshold refusal: {refusals:?}");
@@ -4039,7 +4091,11 @@ fn assert_rebuilds_s3(document: &[u8], body: &str) {
     use fsl_semantics::model::state::StateModel;
 
     let graph = assemble_over(document, body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     let (_, packages) = service_unit_over(document, body);
     let model = StateModel::new(
