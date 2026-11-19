@@ -54,8 +54,12 @@ mode.
 2. One line per diagnostic, in document order, in FR-298's diagnostic form
    (`<path>:<line>:<column>: <code>: <message>`, or the source reference
    and byte offsets when the source is not provided). A diagnostic with a
-   cause is followed by the line `  cause: <cause>`, and a diagnostic with
-   a `label` by `  label: <label>`.
+   cause is followed by the line `  cause: <cause>`, a diagnostic with
+   a `label` by `  label: <label>`, and a diagnostic with a `hint`
+   (FR-286 "Fix hints") by `  hint: <hint>`, in that order, so the reader
+   sees what went wrong, where, and what to change. A diagnostic with no
+   `hint` member has no hint line; the renderer never composes a hint of
+   its own.
 3. One line per item, in request order:
    `item <request_index>: <result> (<category>)`, then ` clause <name>`
    when the item names a clause, then ` <certification>` for a `proved`
@@ -132,8 +136,11 @@ exit code of the document's category.
   the header line, the diagnostic lines, the item lines and the result line
   in that order.
 - The text of a document SHALL name its operation, its category, its exit
-  code, its last stage when known, every diagnostic's code, cause and
-  locus, every item's result, category and cause, and its result.
+  code, its last stage when known, every diagnostic's code, cause, locus
+  and hint when it has one, every item's result, category and cause, and its result.
+- When a diagnostic carries `hint`, `render_outcome` SHALL write the line
+  `  hint: <hint>` after the diagnostic's cause and label lines, and SHALL
+  write no hint line for a diagnostic without one.
 - When the driver runs a verb without `--format`, it SHALL write the text
   form of the outcome document.
 - The driver's exit code for an invocation SHALL be equal in text mode and
@@ -153,6 +160,7 @@ exit code of the document's category.
 | FR-865-AC-5 | The text of AC-1's document rendered with a `RenderSources` holding its source admitted under path `src/rule.fsl` prints `src/rule.fsl:<line>:<column>`, and the same document rendered through the driver's text mode over a compile request prints the program source's path, because the compile outcome exposes the admitted sources. | Test (TC-2455) |
 | FR-865-AC-6 | `render_outcome` with `RenderForm::Text` over FR-286-AC-21's replay outcome writes `replay: success (exit 0) at S8` followed by `result 0: input reproduced-without-witness`; over the refused replay of FR-862-AC-1 it writes `replay: refusal (exit 20)` and one diagnostic line with code `invalid-request`, and no `result` line. | Test (TC-2963) |
 | FR-865-AC-7 | `render_outcome` with `RenderForm::Text` over FR-286-AC-22's counter export document written to `m.tla` writes exactly `export: success (exit 0) at S4`, `target: tla filament.output.tla2/v1`, `bytes written: <n>` with `<n>` the target text's length, and `output: m.tla`, and no other line; over the same export with no output file named its last two lines are `bytes written: 0` and `output: none`; over the export under `export.output_bytes` 1 it writes `export: incomplete (exit 22) at S4`, `bytes written: 0` and a line naming `export.output_bytes`. | Test (TC-2996) |
+| FR-865-AC-8 | The text of FR-286-AC-28's `check` document follows its diagnostic line with `  cause: type-mismatch` and then `  hint: <text>`, `<text>` the diagnostic's `hint` byte for byte; the text of FR-286-AC-28's `io-error` document follows its diagnostic line with `  hint: <text>`, the diagnostic's `hint`; the texts of FR-286-AC-15's blank-label document (lines `  cause: blank-label` then `  label: <label>`) and of FR-286-AC-23's `output-failure` document, whose diagnostics have no `hint`, hold no line beginning `  hint:`. | Test (TC-3114) |
 
 ## Dependencies
 

@@ -925,8 +925,13 @@ pub struct OutcomeItem {
     /// The state-graph search horizon, a method parameter.
     #[serde(skip_serializing_if = "Option::is_none")]
     max_depth: Option<Option<u64>>,
-    /// The state-graph phase-0 seed actually used.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The state-graph phase-0 seed actually used, written as FSpec FR-331's
+    /// `U64String` (a decimal string), so every `u64` seed stays exact under
+    /// RFC 8785 (FR-286 "Numbers").
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_u64_string"
+    )]
     seed: Option<u64>,
     /// The number of state-graph witness walks per initial state.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1924,6 +1929,15 @@ pub struct OutcomeDiagnostic {
     /// FR-286 "Diagnostic details": `null`, or the closed object that locates
     /// the refusal inside the request and the call.
     details: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// FSpec FR-331's `U64String`: an unsigned 64-bit integer as its canonical
+/// decimal string.
+fn serialize_u64_string<S>(value: &Option<u64>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    value.map(|value| value.to_string()).serialize(serializer)
 }
 
 fn serialize_source_label<S>(label: &Option<SourceLabel>, serializer: S) -> Result<S::Ok, S::Error>
