@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use filament_checked::node::{
     Arithmetic, CheckedLiteral, Connective, IntegerDivisionOperator, NodeKind,
 };
-use filament_exact::{CollectionKind, MemberId, MemberOwner, NodeKey, Value, ValueType};
+use filament_exact::{CollectionKind, NodeKey, Value, ValueType};
 use filament_semantic_value::declaration::EqualityOperator;
 use fsl_semantics::check::{CheckedNode, NodeId};
 
@@ -20,7 +20,6 @@ struct ExpressionNode {
 #[derive(Default)]
 pub(super) struct CanonicalRows {
     declarations: BTreeMap<NodeKey, String>,
-    fields: BTreeMap<MemberId, String>,
     functions: BTreeMap<usize, String>,
     record_fields: BTreeMap<NodeKey, Vec<String>>,
 }
@@ -121,32 +120,14 @@ impl CheckedExpression {
                         .ok_or_else(|| "checked local has a clause binder".to_owned())?,
                     10,
                 ),
+                // Checked field and attribute names are already alias-free; no selected
+                // row is needed to spell them (source records and object attributes have none).
                 NodeKind::Attribute {
                     reference, field, ..
-                } => (
-                    format!(
-                        "{}.{}",
-                        child(*reference)?,
-                        field_text(
-                            &rows.fields,
-                            MemberOwner::Effective(field.owner.clone()),
-                            &field.name,
-                        )?
-                    ),
-                    9,
-                ),
-                NodeKind::Field { operand, field, .. } => (
-                    format!(
-                        "{}.{}",
-                        child(*operand)?,
-                        field_text(
-                            &rows.fields,
-                            MemberOwner::Node(field.declaration()),
-                            field.name(),
-                        )?
-                    ),
-                    9,
-                ),
+                } => (format!("{}.{}", child(*reference)?, field.name), 9),
+                NodeKind::Field { operand, field, .. } => {
+                    (format!("{}.{}", child(*operand)?, field.name()), 9)
+                }
                 NodeKind::If {
                     condition,
                     then,
@@ -360,7 +341,6 @@ pub(super) fn source_labels(
     binders.extend(clause.captures().map(|(name, _)| name.to_owned()));
     let rows = CanonicalRows {
         declarations: valuation.canonical_declarations.clone(),
-        fields: valuation.canonical_fields.clone(),
         functions: valuation.canonical_functions.clone(),
         record_fields: valuation.canonical_record_fields.clone(),
     };
@@ -445,19 +425,6 @@ fn declaration_text(declaration: &filament_checked::key::DeclarationKey) -> Stri
 
 fn declaration_uri(package: &str, node: &str) -> String {
     format!("ix://{package}/{node}")
-}
-
-fn field_text(
-    fields: &BTreeMap<MemberId, String>,
-    owner: MemberOwner,
-    name: &str,
-) -> Result<String, String> {
-    let identity = MemberId::new(owner, name.to_owned())
-        .map_err(|_| "checked field has a nonempty member identity".to_owned())?;
-    fields
-        .get(&identity)
-        .ok_or_else(|| "field has a selected exact identity row".to_owned())?;
-    Ok(name.to_owned())
 }
 
 fn literal_text(value: &Value, declarations: &BTreeMap<NodeKey, String>) -> Result<String, String> {
