@@ -19,7 +19,7 @@ Verify the structured refusal codes of malformed export members, the `unsupporte
 3. Export the counter under `export.work_units` 1, then under `export.nodes` 1 and `export.work_units` 1.
 4. Over the spine unit with invariants `Low` and `High`, find the least `export.nodes` for `["Low"]`, `["High"]` and `["Low", "High"]`.
 5. Export `SlowEnough` over `Braking` under `any` and read each cause's `node` and `locus`.
-6. Export the counter's `Bounded` to TLA+ and to Lean; count the `fsl:` comment lines N and find the least `export.nodes` C; export again under `export.work_units` C + N and C + N - 1.
+6. Export the counter's `Bounded` to TLA+ and to Lean; count its export definitions N (the blank-line-separated blocks other than the header block and the footer) and find the least `export.nodes` C; export again under `export.work_units` C + N and C + N - 1.
 
 ## Expected Results
 

@@ -69,19 +69,30 @@ writes no target bytes of its own, so the two give byte-identical files.
   share is read, and charged, once. A node's `export.nodes` charge is made
   before its `export.work_units` charge, so a node that would exceed both
   names `export.nodes`. Writing the text charges one `export.work_units`
-  unit for each output region it writes, beside the `export.output_bytes`
-  charge for its bytes.
-- An *output region* SHALL be one top-level definition the text writes:
-  each datatype, variable declaration, function or operator, axiom or
-  assumption, and assertion (an obligation's proposition or theorem) that
-  the export emits, which is each definition FSpec FR-814 precedes with one
-  `fsl:` comment line. The module header, the namespace lines, comments and
-  the lines inside one definition are not regions of their own. FSL SHALL
-  charge exactly one `export.work_units` unit for each such definition, in
-  the order the text writes them, before it writes that definition, so a
-  text of N definitions charges N units for writing and the charge that
-  exceeds the effective bound is the one for the definition that would
-  have been written next.
+  unit for each export definition it writes, beside the
+  `export.output_bytes` charge for its bytes. FSL counts FSpec FR-817's
+  "per output region written" by export definition; it does not count the
+  byte spans that FSpec FR-121, FR-125, FR-812 and FR-813 call output
+  regions, which a record claims and which are not charged.
+- An *export definition* SHALL be one item of the list of top-level
+  definitions the text writes, in the order it writes them. The list holds
+  every definition the export emits, with or without an `fsl:` comment:
+  each datatype, function or operator, axiom or assumption, and assertion
+  (an obligation's proposition or theorem) of a mangled FSL name; each
+  generated helper (`Q_*`, `F_*`, `D_*`); each structural definition
+  (`State`, `WF`, `Init`, `Step`, `Behaviour`, `Next`, `Spec`, `TypeOK`,
+  `vars`, `Reachable`, `Q`, `F`) the text writes; and the TLA+ `VARIABLES`
+  statement, which is one export definition however many variables it
+  declares. A recursive group, which FSpec FR-814 writes as one block, is
+  one export definition. The module or namespace header and footer, the
+  `EXTENDS` and `open` lines, comments and the lines inside a definition
+  are not export definitions. In FSpec FR-814's layout the export
+  definitions are exactly the blank-line-separated blocks other than the
+  header block (the module or namespace line with its `EXTENDS` or `open`
+  lines) and the footer, so a reader counts them from the text.
+- FSL SHALL charge exactly one `export.work_units` unit for each export
+  definition, before it writes that definition, so a text of N export
+  definitions charges N units for writing.
 - An assembled export SHALL write FSpec FR-817's `package` member: the
   source package reference, the target profile, the generator identity and
   version, and the effective value of each of the three export limits. The
@@ -171,7 +182,7 @@ writes no target bytes of its own, so the two give byte-identical files.
   `cause` and `details`.
 - FSL SHALL stop in FSpec FR-817's order: admission, then classification
   (`export.nodes` and per-node `export.work_units`), then the floor, then
-  the text (`export.output_bytes` and per-region `export.work_units`). A
+  the text (`export.output_bytes` and per-export-definition `export.work_units`). A
   request below its floor exits `21` under any `export.output_bytes`.
 - The `package` member's `generator` SHALL be `{"identity":
   "filament-spec-language", "version": V}`, with `V` the application
@@ -198,7 +209,8 @@ writes no target bytes of its own, so the two give byte-identical files.
 | FR-1015-AC-11 | The counter export under `export.work_units` 1 writes `status` `incomplete`, `records` `[]` and `cause` `{"type": "limit-reached", "limit": "work_units", "value": 1, "setting": "export.work_units"}`, exit `22`; under `export.nodes` 1 its `cause` names `nodes`, value 1 and `export.nodes`, though `export.work_units` 1 is also set. | Test (TC-3020) |
 | FR-1015-AC-12 | Over the spine unit with invariants `Low` and `High` over `Config::ConfigVersion`, let `n(S)` be the least `export.nodes` under which the export of obligations `S` is not `incomplete`. Then `n(["Low", "High"])` is less than `n(["Low"]) + n(["High"])` and at least the greater of the two. | Test (TC-3020) |
 | FR-1015-AC-13 | Every `target-unrepresentable` cause of `SlowEnough` over `Braking` under `any` has a string `node` that reads back as a `CheckedNodeId` of the package and re-encodes to the same text, and a `locus` that is either `null` or a region with `start < end`; a cause's `node` equals the `node` of the `name_map` entry, if one exists, for the same node. | Test (TC-3020) |
-| FR-1015-AC-14 | Over the counter's `Bounded` export to TLA+ and to Lean, let N be the number of `fsl:` comment lines of its `target_text` (one per top-level definition) and C the least `export.nodes` under which the export is not `incomplete` (its classification charge). Under `export.work_units` C + N the export is `assembled`, exit `0`. Under `export.work_units` C + N - 1 it is `incomplete` with `records` `[]` and `cause` `{"type": "limit-reached", "limit": "work_units", "value": C + N - 1, "setting": "export.work_units"}`, exit `22`; the denied charge is the one for the Nth definition. An implementation that charges per byte, per line, per obligation or per node mapped while writing, rather than per definition, assembles or stops at a different bound and fails this criterion. | Test (TC-3020) |
+| FR-1015-AC-14 | Over the counter's `Bounded` export to TLA+ and to Lean, let N be the number of export definitions its `target_text` writes (its blank-line-separated blocks other than the header block and the footer, which include the generated helpers, the structural definitions and the TLA+ `VARIABLES` statement as one), and C the least `export.nodes` under which the export is not `incomplete` (its classification charge). Under `export.work_units` C + N the export is `assembled`, exit `0`. Under `export.work_units` C + N - 1 it is `incomplete` with `records` `[]` and `cause` `{"type": "limit-reached", "limit": "work_units", "value": C + N - 1, "setting": "export.work_units"}`, exit `22`. Writing therefore charges one unit per export definition, each before it is written: a mapper that charges per `fsl:` comment, per byte, per line or per obligation, or that skips the helpers, the structural definitions or `VARIABLES`, assembles under C + N - 1 or is `incomplete` under C + N, and fails this criterion. | Test (TC-3020) |
+
 
 ## Dependencies
 
