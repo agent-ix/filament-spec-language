@@ -37,7 +37,7 @@ const SHARED: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile w = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
      import \"test/plant\" as P;\n\
      record ProgramReading { level: Int[0, 9]; }\n\
-     function entry using v(): Boolean pure { P::flag() }\n\
+     function entry using v(): Boolean pure { true }\n\
      temporal Early using w over (r: ProgramReading) clock \"lib-ms\" \
      on origin { eventually[0,2] holds(r.level > 0) }\n";
 
