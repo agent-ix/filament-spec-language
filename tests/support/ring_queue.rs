@@ -426,7 +426,11 @@ pub fn check_over(queue: &[u8], body: &str) -> Result<Checked, Vec<Refused>> {
     .unwrap_or_else(|refusal| panic!("{body}: the unit assembles: {refusal:?}"))
     .with_unwritten_refinements();
     let regions = declarations.regions();
-    match declarations.check(CheckMode::Linked, CheckingLimits::default()) {
+    match declarations.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    ) {
         Ok(graph) => Ok(Checked { graph, packages }),
         Err(refusals) => Err(refusals
             .into_iter()

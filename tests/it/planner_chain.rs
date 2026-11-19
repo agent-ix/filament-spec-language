@@ -70,7 +70,11 @@ pub(crate) fn compile_with(unit: &str, documents: &[Value]) -> Result<CheckedPac
         PackageDeclarations::assemble(raw, PACKAGE.to_owned(), built, models, Vec::new())
             .map_err(Failure::Assembly)?;
     assembled
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .map(CheckedPackage::link)
         .map_err(Failure::Check)
 }
