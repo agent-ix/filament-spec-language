@@ -56,7 +56,11 @@ fn check(
         Vec::new(),
     )
     .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
-    .check(mode, CheckingLimits::default())
+    .check(
+        mode,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
 }
 
 fn call(package: &CheckedPackage, name: &str, arguments: &[i64]) -> (Outcome<Value>, bool, u32) {

@@ -3377,7 +3377,11 @@ fn dispatch_declaration_refusals_are_the_same_under_both_check_modes() {
     let package = || one_candidate_package(receiver_type.clone(), None, ValueType::Integer);
     let refusals_of = |declarations: PackageDeclarations, mode: CheckMode| {
         declarations
-            .check(mode, CheckingLimits::default())
+            .check(
+                mode,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .expect_err("the malformed dispatch declaration is refused")
     };
     let table_out_of_range = || {

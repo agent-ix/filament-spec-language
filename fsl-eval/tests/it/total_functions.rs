@@ -1177,7 +1177,11 @@ fn p10_stable_paths_ieee_conversion_references_duplicates_and_node_limits() {
         declarations.functions = vec![down()];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::new(4));
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::new(4),
+        &fsl_eval::value::S6aRewardEvaluator,
+    );
     let exhausted = refusal(limited);
     assert_eq!(exhausted.cause.code().as_str(), "stage_limit_exceeded");
     assert_eq!(exhausted.cause.cause(), Some("node-count-exceeded"));
@@ -1230,7 +1234,11 @@ fn nodes_limit_is_enforced_across_the_whole_package_not_per_declaration() {
         declarations.functions = vec![small("a")];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::new(4))
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::new(4),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .expect("one small declaration admits under a budget of 4");
 
     // Two declarations under a budget wide enough for both still admit --
@@ -1244,7 +1252,11 @@ fn nodes_limit_is_enforced_across_the_whole_package_not_per_declaration() {
         declarations.functions = vec![small("a"), small("b")];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::new(100))
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::new(100),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .expect("two small declarations admit under a generous package-wide budget");
 
     // The same two declarations, under the reviewer's own measured budget
@@ -1261,7 +1273,11 @@ fn nodes_limit_is_enforced_across_the_whole_package_not_per_declaration() {
             declarations.functions = vec![small("a"), small("b")];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::new(4)),
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::new(4),
+            &fsl_eval::value::S6aRewardEvaluator,
+        ),
     );
     assert_eq!(
         exhausted.cause,

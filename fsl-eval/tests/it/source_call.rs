@@ -123,7 +123,11 @@ fn package_of_with_mode(declarations: &str, mode: CheckMode) -> CheckedPackage {
     .expect("the assembler builds the package declarations");
     CheckedPackage::link(
         declarations
-            .check(mode, CheckingLimits::default())
+            .check(
+                mode,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .expect("the package checks"),
     )
 }
@@ -223,7 +227,11 @@ fn integer_operator_with_mode(
     }
     CheckedPackage::link(
         declarations
-            .check(mode, CheckingLimits::default())
+            .check(
+                mode,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .expect("the operator checks"),
     )
 }

@@ -1206,7 +1206,11 @@ mod map_source {
             Vec::new(),
         )
         .expect("the assembler admits the declarations")
-        .check(mode, CheckingLimits::default())
+        .check(
+            mode,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .map(CheckedPackage::link)
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"))
     }
