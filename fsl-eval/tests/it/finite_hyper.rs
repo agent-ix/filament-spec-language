@@ -212,6 +212,12 @@ fn finite_population_bound_open_closure_and_incomplete_body_are_preserved() {
         FiniteHyperOutcome::Inconclusive
     );
     assert_eq!(
+        evaluate_finite_hyper(&open, 2, &[(Forall, "a".into())], |_| {
+            FiniteTupleOutcome::False { position: 0 }
+        }),
+        FiniteHyperOutcome::Inconclusive
+    );
+    assert_eq!(
         evaluate_finite_hyper(&population, 2, &[(Forall, "a".into())], |_| {
             FiniteTupleOutcome::Incomplete
         }),
