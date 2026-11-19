@@ -13,7 +13,7 @@ use ix_trace_rs::trace;
 use crate::prob_world::{self, World};
 
 const CLAIM: &str = "probabilistic CoinGone using ev on M over (c: M::Coin) under Even on origin \
-    with alpha 0.1, beta 0.1, indifference 0.2 \
+    with alpha 0.05, beta 0.05, indifference 0.2 \
     { probability >= 0.5 [ eventually[1,1] holds(c.v = 1) ] }";
 
 fn ratio(numerator: i64, denominator: i64) -> Rational {
@@ -84,7 +84,7 @@ fn clopper_pearson_coverage() {
     for seed in 0..1_024 {
         let verdict = decide(&world, seed);
         assert_eq!(verdict.basis.method, StatisticalMethod::ClopperPearson);
-        assert_eq!(verdict.basis.samples, 29);
+        assert_eq!(verdict.basis.samples, 38);
         let (lower, upper) = verdict.tests[0]
             .interval
             .as_ref()
