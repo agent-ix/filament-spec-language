@@ -36,6 +36,67 @@ FSpec FR-190's result record: its settlement, `cases`, `checks`, `partitions`,
 `partition_coverage`, operation coverage, provenance and at most one
 retained counterexample.
 
+## Entry
+
+`fsl-eval` SHALL expose model-based testing as one public entry in
+`fsl_eval::simulation::model`:
+
+```rust
+pub fn run_model_based_test(
+    system: &ModelSystem<'_>,
+    request: &ModelBasedTestRequest,
+    admission: &dyn RootAdmission,
+    cancel: &filament_exact::Cancel,
+) -> Result<ModelBasedTestRecord, ModelBasedTestRefusal>
+```
+
+- `ModelBasedTestRequest` holds the clause identity, the generator profile,
+  `seed`, `max_cases`, `max_trace_length`, `max_value_bits` (`Option<u64>`)
+  and the run's limits: the scalar accounting limits of every evaluation
+  the run makes (FSpec FR-461 `accounting.*`), the reachability exploration
+  limits (`explore.states` and `explore.transitions`, FR-255) and the
+  position limit of one generated trace (`simulation.max_steps`).
+- `ModelBasedTestRefusal` is a refusal of the whole request before any case
+  runs, and nothing else: the request-member refusals of FSpec FR-190
+  "Refusals" (no clause, an unknown clause identity, a `max_cases` or
+  `max_trace_length` of 0, and the `max_value_bits` refusals of "Value
+  domains"), each naming the member, and the empty-domain refusal
+  `invalid_model_binding`/`malformed-declaration`.
+- `ModelBasedTestRecord` is FSpec FR-190's result record, and every FSpec
+  FR-190 settlement lives in it, never in the refusal: `failed` with
+  `tool-failure{defect: oracle-disagreement}` or
+  `tool-failure{defect: invalid-shrink}`, `incomplete` with the
+  `limit-reached` cause of the limit or the cancellation that stopped the
+  run (FSpec FR-461), `unsupported` for a `frame` clause with no
+  contract-level reading, `inconclusive` with `no-evaluated-case`, `tested`
+  and `refuted`. A stop inside native evaluation, expansion, replay or
+  shrinking is therefore a settlement of the record, so a caller never has
+  to map an error to a settlement.
+- `RootAdmission` is the native admission that guards a generation root
+  (FSpec FR-190 "Partitions"), one method per guard: argument admission for
+  an operation argument and parameter admission for a value-clause
+  parameter, each given the whole argument vector; and value admission for
+  a field or initial-state value, given the declared field type and the
+  value. Each returns admitted or refused.
+- `NativeAdmission` is the `RootAdmission` every production caller passes.
+  Its argument and parameter admission is
+  `fsl_eval::value::expression::admit_arguments`, called with the vector
+  that holds the refusal value at the root's position and every other root
+  at its least member, so the `Population<T>[N]` maximum check and object
+  admission apply as they do to a supplied call (FR-089). Its field and
+  initial-state admission is the kernel `ValueType::admits` on the declared
+  field type, the per-value check FR-106 snapshot admission applies to each
+  field.
+- A test passes another `RootAdmission`, a test double, to drive the
+  `oracle-disagreement` path; the generator, oracle and shrinker are the
+  same code under either admission.
+- The plan coordinator (FR-753) calls this entry for a `model_based_test`
+  step, taking the accounting limits from `AnalyzeLimits.accounting` and the
+  exploration and position limits from `AnalyzeLimits.simulation` (FR-281),
+  passes `NativeAdmission`, and maps the record's `result` and `cause` to
+  the step's disposition (FSpec FR-824); a `ModelBasedTestRefusal` settles
+  the step as the request refusal it is.
+
 ## Behavior
 
 - The generator SHALL be a deterministic function of the package, clause,
@@ -80,6 +141,15 @@ retained counterexample.
   FR-141 compares them; under `nfc`, `nfd`, `nfkc` and `nfkd` the domain
   holds normal forms only, so the generator never produces a value the type
   cannot retain.
+- The generator SHALL charge a Text root's work to the run's
+  `accounting` meter before it allocates, as FSpec FR-190 "Text domains"
+  states: one `work_units` per cell of the root's count table, charged whole
+  when the root's domain is prepared before the run's first case, and one
+  `normalized_scalars` per scalar of every Text value it builds. A charge the
+  budget cannot cover settles the run `incomplete` with
+  `limit-reached{limit, value, setting: accounting.<counter>}`; the
+  generator never panics, never narrows the declared domain and never
+  settles `unsupported` because a Text root is large.
 - Filtering disabled argument vectors out of a `ModelSystem` expansion SHALL
   remain the construction of the enabled set: it produces no case and no
   count.
@@ -136,6 +206,8 @@ retained counterexample.
 | FR-752-AC-7 | Over a counter with `value` in `Int[0, 5]` (initial 0), `inc(by: Int[1, 6])` (enabled when `value + by <= 5`) and `jam()` (enabled when `value > 5`), the postcondition clause `Inc` of `inc`, seed 7, `max_cases` 100 and `max_trace_length` 8: cases 0 to 7 are the partitions of `value` (-1, 0, 5, 6) followed by those of `by` (0, 1, 6, 7); the cases for `value` -1 and 6 and `by` 0 and 7 are refusal cases discarded `domain-refusal` with their partitions `refused`; the `by` 6 case is discarded `precondition-false` and its partition is `uncovered` with reason `precondition-false` and `bounds` `[]`; `cases.generated` is 100 and equals `passed + failed + discarded`; the run is `tested`. The precondition clause of `inc` over the same model has `discarded_by.precondition-false.count` 0, because a false precondition is a defined, passing point. The postcondition clause of `jam` discards all 100 cases, with `discarded_by` `domain-refusal` `{count: 4, first_case: 0}`, `precondition-false` `{count: 1, first_case: 6}` (the `by` 6 partition case), `invariant-false` `{count: 0, first_case: null}` and `no-check-point` `{count: 95, first_case: 1}`, has `cases.passed` 0, and settles `inconclusive` with cause `no-evaluated-case`, never `tested`; as step `j` of a plan whose step `k` has `depends [j]`, `k` is `blocked` by `j` and the exit is `22`. | Test (TC-2102) |
 | FR-752-AC-8 | Over AC-7's model with a test-double argument admission that accepts `by` 7, the run settles `failed` with `{"type": "tool-failure", "defect": "oracle-disagreement"}`, exit `30`, and writes no `tested` record. Two runs of AC-7 with equal inputs give byte-equal `cases`, `checks`, `partitions` and `partition_coverage`. | Test (TC-2102) |
 | FR-752-AC-9 | Over a value clause `Label` with parameter `t: Text[0, 4; nfc]` and body `size(t) <= 4`, seed 7 and `max_cases` 30, the first cases are `t`'s partitions in FSpec FR-190-AC-19's order: the empty text, U+0000, U+0000 repeated 4 times, the `upper-refusal` refusal case of length 5 (discarded `domain-refusal`), then U+00E9, U+1E0D U+0307, U+AC00, U+00C5 and U+FB01; every seeded case is an `nfc`-normalized member of length at most 4; the run is `tested`. The same clause over `Text[0, 4; unicode-scalars]` has the eight witness spellings as eight distinct cases, U+00E9 and U+0065 U+0301 among them. Over `t: Text[0, 13; unicode-scalars]` the run draws 30 cases and is never `unsupported`. The generator's `unrank` gives FSpec FR-190-AC-18's values. With seed 7 the first seeded `x` of `Square` (`max_value_bits` 8) is 53 and the first seeded `t` over `Text[0, 2; unicode-scalars]` is U+D51A9 U+87AC9, the values FSpec FR-190-AC-21 computes. | Test (TC-2102) |
+| FR-752-AC-10 | Over a value clause `Huge` with parameter `t: Text[0, 1099511627776; nfc]` (`max` 2^40) and body `size(t) >= 0`, seed 7, `max_cases` 30 and `accounting.work_units` 1000000, `run_model_based_test` returns `Ok` with a record settled `incomplete`, cause `{"kind": "limit-reached", "limit": "work_units", "setting": "accounting.work_units", "value": 1000000}`, and `cases.generated` 0; it does not panic or abort, the record is not `unsupported`, and `provenance.size_bounded` is empty. The same clause over `Text[0, 1099511627776; unicode-scalars]` settles the same way. Over `Text[0, 4; nfc]` with the same limits the run is `tested` with `cases.generated` 30. | Test (TC-3068) |
+| FR-752-AC-11 | `run_model_based_test` returns `Err(ModelBasedTestRefusal)` naming the member, and runs no case, for `max_cases` 0, `max_trace_length` 0 and an unknown clause identity, and `invalid_model_binding`/`malformed-declaration` for a clause over an empty domain. With AC-8's test-double admission it returns `Ok` with a record settled `failed` `oracle-disagreement`, never `Err`; with `NativeAdmission` over AC-7's model it returns `Ok` settled `tested`, and the `by` 0 and `by` 7 refusal cases are refused by `admit_arguments` over the argument vector `[by]`. Over AC-7's model as a `model_based_test` plan step with `AnalyzeLimits.simulation` `explore.states` 1, `jam`'s `operations` entry is `uncovered` with reason `undetermined` naming `explore.states`, and the step's `cases` and `result` equal those of the same step under the published default limits (`explore.states` 10000000, `explore.transitions` 100000000, `simulation.max_steps` 16777216). | Test (TC-3068) |
 
 ## Dependencies
 
