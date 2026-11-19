@@ -240,3 +240,40 @@ fn historical_narrowing_corpus_now_reports_unproved_range() {
         assert_unproved(declarations);
     }
 }
+
+#[trace("FR-093-AC-67", "FR-062-AC-13", "FSpec-FR-149")]
+#[test]
+fn explicit_narrowing_of_an_application_keys_the_direct_conversion_context() {
+    use filament_exact::{Integer, ValueType};
+    use fsl_semantics::check::{BodyTerm, LeafTerm, MemberTerm};
+    let graph = check("function f using v(n: Integer): Int[0,9] pure { if n >= 0 and n <= 8 then convert<Int[0,9]>(n + 1) else 0 }", CheckMode::Linked).unwrap();
+    let additions: Vec<_> = graph.requirements().iter().filter(|(key, _)| {
+        matches!(graph.semantic_graph().node(key.node().clone()).unwrap().body(), BodyTerm::Application(application) if application.operation.identity() == "filament.op.integer.add")
+    }).collect();
+    assert_eq!(additions.len(), 1);
+    let (key, record) = additions[0];
+    let ValueType::Int(bound) = record.result_bound().value_type() else {
+        panic!("the explicit narrow supplies the bound");
+    };
+    assert_eq!(bound.lower(), &Integer::from(0_i64));
+    assert_eq!(bound.upper(), &Integer::from(9_i64));
+    let context = record
+        .conversion_context()
+        .expect("the direct explicit conversion occurrence");
+    let narrow = graph.semantic_graph().node(context.node().clone()).unwrap();
+    let BodyTerm::Application(application) = narrow.body() else {
+        panic!("a narrow application");
+    };
+    assert_eq!(
+        application.operation.identity(),
+        "filament.op.numeric.narrow"
+    );
+    assert_eq!(
+        record.result_bound().node(),
+        narrow.semantic_type().unwrap()
+    );
+    assert!(
+        matches!(application.arguments.as_slice(), [MemberTerm::Leaf(LeafTerm::Reference { target })] if target.admitted() == Some(key.node()))
+    );
+    assert!(!graph.requirements().iter().any(|(key, _)| matches!(graph.semantic_graph().node(key.node().clone()).unwrap().body(), BodyTerm::Application(application) if application.operation.identity() == "filament.op.numeric.narrow")));
+}
