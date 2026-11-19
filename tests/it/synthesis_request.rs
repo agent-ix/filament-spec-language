@@ -244,6 +244,7 @@ fn the_synthesis_member_writes_the_synthesis_outcome() {
         "{optimal}"
     );
     assert_eq!(optimal["synthesis"]["optimal"], true, "{optimal}");
+    assert_eq!(optimal["synthesis"]["explored"]["work"], 5, "{optimal}");
     assert_eq!(
         optimal["synthesis"]["objective"]["direction"], "minimize",
         "{optimal}"
@@ -258,6 +259,16 @@ fn the_synthesis_member_writes_the_synthesis_outcome() {
         json!({"type": "integer", "value": "3"}),
         "{optimal}"
     );
+    let (exit, limited_objective) = run(
+        &pick("Pick >= 3", "minimize Pick"),
+        json!({"declaration": "Pick", "limits": {"max_work": 4}}),
+    );
+    assert_eq!(exit, 22, "{limited_objective}");
+    assert_eq!(limited_objective["synthesis"]["status"], "incomplete");
+    assert_eq!(limited_objective["synthesis"]["check"], "unchecked");
+    assert_eq!(limited_objective["synthesis"]["optimal"], false);
+    assert_eq!(limited_objective["synthesis"]["candidate"]["value"], "3");
+    assert_eq!(limited_objective["synthesis"]["explored"]["work"], 4);
     let (exit, limited) = run(
         &pick("Pick * Pick = 50", ""),
         json!({"declaration": "Pick", "limits": {"max_candidates": 3}}),

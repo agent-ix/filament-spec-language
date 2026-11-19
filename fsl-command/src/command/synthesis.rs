@@ -54,6 +54,7 @@ pub(super) enum SearchDisposition {
 pub(super) struct SearchResult {
     pub(super) disposition: SearchDisposition,
     pub(super) visited: u64,
+    pub(super) work: u64,
 }
 
 /// The synthesis outcome's always-present `explored` object (FSpec FR-823).
@@ -206,6 +207,7 @@ pub(super) fn search_integer_domain(
             return SearchResult {
                 disposition: SearchDisposition::NoCandidate,
                 visited,
+                work: visited,
             };
         }
         if limits
@@ -218,6 +220,7 @@ pub(super) fn search_integer_domain(
                     value: limits.max_candidates.expect("limit was checked"),
                 },
                 visited,
+                work: visited,
             };
         }
         if limits.max_work.is_some_and(|maximum| visited >= maximum) {
@@ -227,6 +230,7 @@ pub(super) fn search_integer_domain(
                     value: limits.max_work.expect("limit was checked"),
                 },
                 visited,
+                work: visited,
             };
         }
 
@@ -235,6 +239,7 @@ pub(super) fn search_integer_domain(
             return SearchResult {
                 disposition: SearchDisposition::Candidate(candidate),
                 visited,
+                work: visited,
             };
         }
         candidate = candidate.add(&Integer::one());
@@ -260,7 +265,7 @@ pub(super) fn search_integer_outcome(
         declaration,
         "",
         result.visited,
-        result.visited,
+        result.work,
         max_candidates,
         max_work,
     );
@@ -500,6 +505,31 @@ pub(super) fn run_bytes(
     }
     if exit_code == 0 {
         if let Some(objective) = checked.objective() {
+            if selection
+                .limits
+                .max_work
+                .is_some_and(|maximum| outcome.explored.work >= maximum)
+            {
+                let maximum = selection.limits.max_work.expect("limit was checked");
+                outcome.status = "incomplete".to_owned();
+                outcome.check = Some("unchecked".to_owned());
+                outcome.optimal = Some(false);
+                outcome.cause = Some(serde_json::json!({
+                    "kind": "limit-reached",
+                    "limit": "max_work",
+                    "value": maximum,
+                    "setting": "synthesis.max_work"
+                }));
+                return Ok(Some(super::RunResult {
+                    exit_code: 22,
+                    value: super::output::NativeResult::synthesis_document(serde_json::json!({
+                        "synthesis": outcome.into_value()
+                    })),
+                    outcome: None,
+                    requirements: None,
+                    sources: crate::Sources::from_sources(intake.sources.iter().cloned()),
+                }));
+            }
             let candidate = outcome
                 .candidate
                 .as_ref()
@@ -514,6 +544,7 @@ pub(super) fn run_bytes(
                 })?;
             let value = evaluate_integer_body(checked_package, objective, &candidate)
                 .map_err(|error| refused("/request/synthesis", error))?;
+            outcome.explored.work = outcome.explored.work.saturating_add(1);
             outcome.optimal = Some(checked.objective_is_candidate());
             let filament_exact::Value::Integer(value) = value else {
                 return Err(refused(
