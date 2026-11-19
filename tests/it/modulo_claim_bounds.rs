@@ -367,6 +367,7 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
             accounting: default_accounting(1_000_000),
             supplied: filament_semantic_value::supplied_stop::SuppliedLimits::default(),
             backend: filament_eval::ExecutionBackendChoice::Interpreter,
+            live_occurrences: fsl_replay::spine::DEFAULT_LIVE_OCCURRENCES,
         };
         let run = run_with_replay_context(
             SourceIdentity::new("agent-ix", "test:modulo-claim-bounds"),

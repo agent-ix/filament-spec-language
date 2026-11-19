@@ -65,6 +65,7 @@ fn call(function: &str, x: Value, work_units: u64) -> Call {
         accounting: default_accounting(work_units),
         supplied: SuppliedLimits::default(),
         backend: filament_eval::ExecutionBackendChoice::Interpreter,
+        live_occurrences: fsl_replay::spine::DEFAULT_LIVE_OCCURRENCES,
     }
 }
 

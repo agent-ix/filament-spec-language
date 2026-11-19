@@ -3496,6 +3496,7 @@ fn prepare_complete_run(
         request.limits.supplied.unwrap_or_default(),
     );
     spine_call.wire_arguments = wire_arguments;
+    spine_call.live_occurrences = call.evaluation.live_occurrences();
     if let Some(file) = &call.snapshot {
         let limits = fsl_replay::spine::ObservationLimitsWire::resolve(None).map_err(|error| {
             RunCause::ClauseRequest {

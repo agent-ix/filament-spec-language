@@ -45,6 +45,7 @@ fn a_members_item_bounds_build_a_request_that_replays() {
         accounting: default_accounting(1_000_000),
         supplied: SuppliedLimits::default(),
         backend: filament_eval::ExecutionBackendChoice::Interpreter,
+        live_occurrences: fsl_replay::spine::DEFAULT_LIVE_OCCURRENCES,
     };
     let result = run_with_replay_context(
         SourceIdentity::new("a", "u"),
