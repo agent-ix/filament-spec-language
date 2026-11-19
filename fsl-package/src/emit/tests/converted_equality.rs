@@ -163,14 +163,44 @@ fn nested_equalities_each_retain_producer_facts() {
 }
 
 /// FSpec FR-149-AC-25: the emitted equality decision retains its IEEE schedule.
-#[ix_trace_rs::trace("FSpec-TC-194", "FSpec-FR-149-AC-25", "FSpec-FR-322-AC-288", "QSL-2173")]
+#[ix_trace_rs::trace(
+    "FSpec-TC-194",
+    "FSpec-FR-149-AC-25",
+    "FSpec-FR-322-AC-288",
+    "QSL-2173"
+)]
 #[test]
 fn float_equality_schedule_roundtrips_as_float() {
     let emission = emitted(
         "function float_equal using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure { a = b }\n\
          function float_not_equal using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure { a != b }",
     );
-    super::assert_equality_reader_outcomes(&emission, read_back(&emission));
+    let read = read_back(&emission);
+    let crate::checked_v2::Read::Verified { admitted, .. } = &read else {
+        panic!("the emitted Float equality package is admitted by the reader");
+    };
+    let mut admitted_wire = wire(&emission);
+    admitted_wire["semantic_graph"] =
+        serde_json::to_value(admitted.resolved_graph()).expect("the admitted graph serializes");
+    let not_equal_function = nodes(&admitted_wire)
+        .iter()
+        .find(|node| {
+            node["node_tag"] == "function"
+                && node["declaration"]["qualified_name"][0] == "float_not_equal"
+        })
+        .expect("the reader retains float_not_equal");
+    let body_member = not_equal_function["body"]["members"]
+        .as_array()
+        .expect("the function has body members")
+        .iter()
+        .find(|member| member["name"] == "body")
+        .expect("the function has a body member");
+    let body = referenced(&admitted_wire, &body_member["value"]);
+    assert_eq!(
+        body["body"]["operation"]["identity"], "filament.op.boolean.not",
+        "the source float != keeps its outer Boolean negation after readback"
+    );
+    super::assert_equality_reader_outcomes(&emission, read);
     let emitted_wire = wire(&emission);
     let decisions = emitted_wire["checked_term_data"]["equality_decisions"]
         .as_array()
@@ -269,9 +299,11 @@ fn structurally_reused_equality_keys_retain_each_occurrence() {
         identity_rows[1].checked_node()
     );
     assert_ne!(identity_rows[0].occurrence(), identity_rows[1].occurrence());
-    assert!(identity_rows
-        .iter()
-        .all(|row| row.location().node() == row.application()));
+    assert!(
+        identity_rows
+            .iter()
+            .all(|row| row.location().node() == row.application())
+    );
     assert!(identity_rows.iter().all(|row| {
         row.source_map_entry().node_id == *row.checked_node()
             && row.source_map_entry().role == row.occurrence().role
@@ -282,12 +314,16 @@ fn structurally_reused_equality_keys_retain_each_occurrence() {
     let second_occurrence = witnesses_for_occurrence(stage_rows, &identity_rows[1]);
     assert!(!first_occurrence.is_empty());
     assert!(!second_occurrence.is_empty());
-    assert!(first_occurrence
-        .iter()
-        .all(|witness| witness.occurrence() == identity_rows[0].occurrence()));
-    assert!(second_occurrence
-        .iter()
-        .all(|witness| witness.occurrence() == identity_rows[1].occurrence()));
+    assert!(
+        first_occurrence
+            .iter()
+            .all(|witness| witness.occurrence() == identity_rows[0].occurrence())
+    );
+    assert!(
+        second_occurrence
+            .iter()
+            .all(|witness| witness.occurrence() == identity_rows[1].occurrence())
+    );
     assert_ne!(
         identity_rows[0].occurrence(),
         identity_rows[1].occurrence(),
@@ -340,9 +376,11 @@ fn structurally_reused_equality_keys_retain_each_occurrence() {
                 decision["left"]["conversion_target"], decision["right"]["source_type"],
                 "the converted occurrence targets the exact emitted ms type"
             );
-            assert!(converted_type
-                .replace(decision["right"]["source_type"].clone())
-                .is_none());
+            assert!(
+                converted_type
+                    .replace(decision["right"]["source_type"].clone())
+                    .is_none()
+            );
         } else {
             assert_eq!(decision["left"]["conversion_target"], Value::Null);
         }
@@ -373,8 +411,7 @@ fn structurally_reused_equality_keys_retain_each_occurrence() {
 fn emission_retains_unit_and_dimension_identity_roles() {
     use filament_exact::UnitDomain;
 
-    let declarations =
-        "dimension Length; dimension Area = Length;\n\
+    let declarations = "dimension Length; dimension Area = Length;\n\
          unit m : Length = rational(1, 1); unit cm : Length = rational(1, 100) * m;\n\
          unit mm : Length = rational(1, 10) * cm;\n\
          unit sqm : Area = rational(1, 1);\n\
@@ -394,11 +431,13 @@ fn emission_retains_unit_and_dimension_identity_roles() {
                 .any(|unit| unit.domain() == UnitDomain::Declared)
         })
         .expect("quantity rows retain their source UnitIds");
-    assert!(declared
-        .producer_identity()
-        .unit_ids()
-        .iter()
-        .any(|unit| { unit.domain() == UnitDomain::Declared && unit.declared_key().is_some() }));
+    assert!(
+        declared
+            .producer_identity()
+            .unit_ids()
+            .iter()
+            .any(|unit| { unit.domain() == UnitDomain::Declared && unit.declared_key().is_some() })
+    );
 
     let compound = rows
         .iter()
@@ -409,16 +448,20 @@ fn emission_retains_unit_and_dimension_identity_roles() {
                 .any(|unit| unit.domain() == UnitDomain::Compound)
         })
         .expect("compound quantity rows retain their exact compound UnitId");
-    assert!(compound
-        .producer_identity()
-        .unit_ids()
-        .iter()
-        .any(|unit| unit.domain() == UnitDomain::Compound));
-    assert!(compound
-        .producer_identity()
-        .unit_facts()
-        .iter()
-        .any(|fact| !fact.dimensions.is_empty()));
+    assert!(
+        compound
+            .producer_identity()
+            .unit_ids()
+            .iter()
+            .any(|unit| unit.domain() == UnitDomain::Compound)
+    );
+    assert!(
+        compound
+            .producer_identity()
+            .unit_facts()
+            .iter()
+            .any(|fact| !fact.dimensions.is_empty())
+    );
     let derived = rows
         .iter()
         .find(|row| {
@@ -428,33 +471,45 @@ fn emission_retains_unit_and_dimension_identity_roles() {
                 .any(|fact| !fact.dimension_terms.is_empty())
         })
         .expect("derived dimension rows retain their exact term positions");
-    assert!(derived
-        .producer_identity()
-        .unit_facts()
-        .iter()
-        .flat_map(|fact| &fact.dimension_terms)
-        .any(|term| term.ordinal == 0));
-    assert!(!declared
-        .producer_identity()
-        .unit_facts()
-        .iter()
-        .flat_map(|fact| &fact.conversion_edges)
-        .collect::<Vec<_>>()
-        .is_empty());
+    assert!(
+        derived
+            .producer_identity()
+            .unit_facts()
+            .iter()
+            .flat_map(|fact| &fact.dimension_terms)
+            .any(|term| term.ordinal == 0)
+    );
+    assert!(
+        !declared
+            .producer_identity()
+            .unit_facts()
+            .iter()
+            .flat_map(|fact| &fact.conversion_edges)
+            .collect::<Vec<_>>()
+            .is_empty()
+    );
 
     let witnesses = emission.equality_fact_witness_rows();
-    assert!(witnesses
-        .iter()
-        .any(|row| matches!(row.fact(), EqualityFactWitness::Unit { .. })));
-    assert!(witnesses
-        .iter()
-        .any(|row| matches!(row.fact(), EqualityFactWitness::DimensionDeclaration { .. })));
-    assert!(witnesses
-        .iter()
-        .any(|row| matches!(row.fact(), EqualityFactWitness::DimensionTerm { .. })));
-    assert!(witnesses
-        .iter()
-        .any(|row| matches!(row.fact(), EqualityFactWitness::ConversionEdge { .. })));
+    assert!(
+        witnesses
+            .iter()
+            .any(|row| matches!(row.fact(), EqualityFactWitness::Unit { .. }))
+    );
+    assert!(
+        witnesses
+            .iter()
+            .any(|row| matches!(row.fact(), EqualityFactWitness::DimensionDeclaration { .. }))
+    );
+    assert!(
+        witnesses
+            .iter()
+            .any(|row| matches!(row.fact(), EqualityFactWitness::DimensionTerm { .. }))
+    );
+    assert!(
+        witnesses
+            .iter()
+            .any(|row| matches!(row.fact(), EqualityFactWitness::ConversionEdge { .. }))
+    );
     let emitted_ids = wire(&emission)["semantic_graph"]["nodes"]
         .as_array()
         .expect("emitted nodes")
@@ -795,14 +850,18 @@ fn text_and_plan_equality_rows_retain_operand_type_identities() {
     );
     super::assert_equality_reader_outcomes(&emission, read_back(&emission));
     assert_eq!(emission.equality_producer_identity_rows().len(), 3);
-    assert!(emission
-        .equality_fact_witness_rows()
-        .iter()
-        .any(|row| matches!(row.fact(), EqualityFactWitness::TextPlanType { .. })));
-    assert!(emission
-        .equality_fact_witness_rows()
-        .iter()
-        .any(|row| matches!(row.fact(), EqualityFactWitness::OperandType { .. })));
+    assert!(
+        emission
+            .equality_fact_witness_rows()
+            .iter()
+            .any(|row| matches!(row.fact(), EqualityFactWitness::TextPlanType { .. }))
+    );
+    assert!(
+        emission
+            .equality_fact_witness_rows()
+            .iter()
+            .any(|row| matches!(row.fact(), EqualityFactWitness::OperandType { .. }))
+    );
     assert!(
         emission
             .equality_producer_identity_rows()
@@ -1449,7 +1508,7 @@ fn length_units() -> (
     ValueType,
 ) {
     use fsl_semantics::value::{
-        admit_unit_graph, DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage,
+        DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage, admit_unit_graph,
     };
     let owner = json!({"kind": "source", "authority": "a", "identity": "u", "package_name": "pkg"});
     let length = DimensionPreimage::from_json(json!({
@@ -1676,10 +1735,12 @@ fn equality_fact_witness_rows_omit_only_foreign_package_keys() {
     let emitted = emission.equality_fact_witness_rows().len();
     assert!(emitted > 0, "the local producer yields fact rows");
     // Every row key is package-local, so none may be silently omitted.
-    assert!(emission
-        .equality_fact_witness_rows()
-        .iter()
-        .all(|row| row.structural_key().package() == rows[0].application().package()));
+    assert!(
+        emission
+            .equality_fact_witness_rows()
+            .iter()
+            .all(|row| row.structural_key().package() == rows[0].application().package())
+    );
     assert!(matches!(
         equality_fact_witness_rows(&graph, &HashMap::new(), &[], rows),
         Err(EmitRefusal::MissingEqualityIdentityContext { .. })
