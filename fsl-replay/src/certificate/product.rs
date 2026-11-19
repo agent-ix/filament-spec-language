@@ -19,7 +19,7 @@ use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckedHyperClause, CopyGroup, HyperForm};
 
 use super::closure::{CertificateRejection, TemporalCertificateCheck};
-use super::scc::{CertificateState, Component, ComponentWitness, ProductGraph, check_partition};
+use super::scc::{check_partition, CertificateState, Component, ComponentWitness, ProductGraph};
 use super::{CertificateLocus, CertificateRule};
 use crate::{IncompleteCause, ModelCheckLimit, ModelCheckLimits};
 
@@ -373,6 +373,8 @@ fn check(
     }
     let mut retained = Vec::new();
     let mut edges = Vec::new();
+    let mut undefined = None;
+    let mut violating = None;
     while let Some((key, state)) = pending.pop_front() {
         if cancel.poll() {
             if let Some(source) = cancel.cause() {
@@ -384,17 +386,18 @@ fn check(
         if retained.len() >= limits.limits.max_states {
             return Ok(stopped(
                 ModelCheckLimit::MaxStates,
-                limits.limits.max_states as u64,
+                u64::try_from(limits.limits.max_states)
+                    .map_err(|_| ProductClosureRefusal::Input("max-states"))?,
             ));
         }
         if matches!(
             state.property,
             Property::Undefined { .. } | Property::MatchUndefined { .. }
         ) {
-            return Ok(rejected(CertificateRule::UndefinedMember, key));
+            undefined.get_or_insert_with(|| key.clone());
         }
         if matches!(state.property, Property::Rejected) {
-            return Ok(rejected(CertificateRule::ViolatingMember, key));
+            violating.get_or_insert_with(|| key.clone());
         }
         let expansion = match product.successors(&state) {
             Ok(expansion) => expansion,
@@ -405,7 +408,7 @@ fn check(
             .iter()
             .any(|finding| !matches!(finding, HyperFinding::Enabled { .. }))
         {
-            return Ok(rejected(CertificateRule::UndefinedMember, key));
+            undefined.get_or_insert_with(|| key.clone());
         }
         let source = *seen
             .get(&key)
@@ -414,7 +417,8 @@ fn check(
             if edges.len() >= limits.limits.max_transitions {
                 return Ok(stopped(
                     ModelCheckLimit::MaxTransitions,
-                    limits.limits.max_transitions as u64,
+                    u64::try_from(limits.limits.max_transitions)
+                        .map_err(|_| ProductClosureRefusal::Input("max-transitions"))?,
                 ));
             }
             let next = canonical(&product, next, group.as_ref())?;
@@ -433,6 +437,11 @@ fn check(
             edges.push((source, target, transition));
         }
         retained.push((key, state, expansion.findings));
+    }
+    // FR-163 checks the complete closure before letters, then the component
+    // partition and witnesses before the form-specific violation rule.
+    if let Some(key) = undefined {
+        return Ok(rejected(CertificateRule::UndefinedMember, key));
     }
     let refs = retained
         .iter()
@@ -467,8 +476,14 @@ fn check(
             .map_err(|_| ProductClosureRefusal::Recompute("checker-acceptance"))?;
     }
     if let Some(components) = &certificate.components {
-        return check_partition(&checked, components, &constraints, cancel)
-            .map_err(|_| ProductClosureRefusal::Recompute("empty-product"));
+        let result = check_partition(&checked, components, &constraints, cancel)
+            .map_err(|_| ProductClosureRefusal::Recompute("empty-product"))?;
+        if result != TemporalCertificateCheck::Accepted {
+            return Ok(result);
+        }
+    }
+    if let Some(key) = violating {
+        return Ok(rejected(CertificateRule::ViolatingMember, key));
     }
     Ok(TemporalCertificateCheck::Accepted)
 }
