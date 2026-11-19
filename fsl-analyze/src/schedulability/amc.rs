@@ -127,3 +127,75 @@ pub(super) fn analyse(subject: &ScheduleSubject, cancel: &Cancel) -> Analysed<Cl
         },
     )))
 }
+
+#[cfg(test)]
+mod tests {
+    use filament_exact::{Cancel, Integer, Rational};
+    use fsl_replay::{
+        AmcEvidence, Arrival, ClosedFormEvidence, ClosedFormOutcome, Criticality, Identifier,
+        QualifiedName, ScheduleClaim, ScheduleSubject, SchedulingPolicy, Task, TaskSet, Wcet,
+    };
+    use ix_trace_rs::trace;
+
+    use super::analyse;
+
+    fn integer(value: i64) -> Rational {
+        Rational::from_integer(Integer::from(value))
+    }
+
+    fn low_task(name: &str, execution: i64, period: i64, priority: u64) -> Task {
+        Task {
+            name: Identifier::new(name).expect("a task name"),
+            arrival: Arrival::Periodic {
+                period: integer(period),
+            },
+            deadline: integer(period),
+            wcet: Wcet::Single(integer(execution)),
+            priority: Some(priority),
+            criticality: Criticality::Lo,
+            jitter: integer(0),
+            blocking: integer(0),
+        }
+    }
+
+    /// Trace: TC-702, FR-247-AC-3.
+    #[trace("TC-702", "FR-247-AC-3")]
+    #[test]
+    fn burns_and_davis_amc_oracle_matches_low_and_high_mode_responses() {
+        let high = Task {
+            criticality: Criticality::Hi,
+            wcet: Wcet::Dual {
+                lo: integer(1),
+                hi: integer(3),
+            },
+            ..low_task("b", 1, 6, 2)
+        };
+        let set = TaskSet::new(
+            QualifiedName::new(vec![Identifier::new("Mc").expect("a set name")])
+                .expect("one name segment"),
+            vec![low_task("a", 1, 4, 1), high],
+        )
+        .expect("an admitted task set");
+        let subject = ScheduleSubject::new(set, ScheduleClaim::Schedulable(SchedulingPolicy::Amc))
+            .expect("an admitted AMC claim");
+        let outcome = match analyse(&subject, &Cancel::new()) {
+            Ok(outcome) => outcome,
+            Err(_) => panic!("the AMC oracle completes"),
+        };
+        let ClosedFormOutcome::Schedulable(ClosedFormEvidence::Amc(AmcEvidence {
+            low, high, ..
+        })) = outcome
+        else {
+            panic!("the Mc oracle is schedulable");
+        };
+        let low_response = low[1].jobs[0]
+            .last()
+            .expect("the low-mode HI response exists");
+        let high_response = high[0].jobs[0]
+            .last()
+            .expect("the high-mode response exists");
+
+        assert_eq!(low_response, &integer(2));
+        assert_eq!(high_response, &integer(4));
+    }
+}

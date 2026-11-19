@@ -108,3 +108,59 @@ pub(super) fn analyse(
         qpa_sequence: sequence,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use filament_exact::{Cancel, Integer, Rational};
+    use fsl_replay::{
+        Arrival, ClosedFormOutcome, Criticality, Identifier, MissEvidence, QualifiedName,
+        ScheduleClaim, ScheduleLimits, ScheduleSubject, SchedulingPolicy, Task, TaskSet, Wcet,
+    };
+    use ix_trace_rs::trace;
+
+    use super::analyse;
+
+    fn integer(value: i64) -> Rational {
+        Rational::from_integer(Integer::from(value))
+    }
+
+    fn task(name: &str, execution: i64, period: i64, priority: u64) -> Task {
+        Task {
+            name: Identifier::new(name).expect("a task name"),
+            arrival: Arrival::Periodic {
+                period: integer(period),
+            },
+            deadline: integer(period),
+            wcet: Wcet::Single(integer(execution)),
+            priority: Some(priority),
+            criticality: Criticality::Lo,
+            jitter: integer(0),
+            blocking: integer(0),
+        }
+    }
+
+    /// Trace: TC-702, FR-247-AC-2.
+    #[trace("TC-702", "FR-247-AC-2")]
+    #[test]
+    fn edf_oracle_refutes_utilization_above_one() {
+        let set = TaskSet::new(
+            QualifiedName::new(vec![Identifier::new("Ctl").expect("a set name")])
+                .expect("one name segment"),
+            vec![task("a", 1, 4, 1), task("b", 2, 6, 2), task("c", 6, 12, 3)],
+        )
+        .expect("an admitted task set");
+        let subject = ScheduleSubject::new(set, ScheduleClaim::Schedulable(SchedulingPolicy::Edf))
+            .expect("an admitted EDF claim");
+        let outcome = match analyse(&subject, &ScheduleLimits::default(), &Cancel::new()) {
+            Ok(outcome) => outcome,
+            Err(_) => panic!("the EDF utilization oracle completes"),
+        };
+
+        assert_eq!(
+            outcome,
+            ClosedFormOutcome::Miss(MissEvidence::Utilization(
+                Rational::new(Integer::from(13), Integer::from(12)).expect("a nonzero divisor")
+            ))
+        );
+    }
+}

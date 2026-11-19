@@ -85,3 +85,73 @@ pub(super) fn jobs(
     }
     Ok(Jobs::Met(met))
 }
+
+#[cfg(test)]
+mod tests {
+    use filament_exact::{Cancel, Integer, Rational};
+    use fsl_replay::{Arrival, Criticality, Identifier, Task, Wcet};
+    use ix_trace_rs::trace;
+
+    use super::{jobs, Jobs, Level, Term};
+    use crate::schedulability::arith::int;
+
+    fn integer(value: i64) -> Rational {
+        Rational::from_integer(Integer::from(value))
+    }
+
+    fn task(name: &str, execution: i64, period: i64, deadline: i64, priority: u64) -> Task {
+        Task {
+            name: Identifier::new(name).expect("a task name"),
+            arrival: Arrival::Periodic {
+                period: integer(period),
+            },
+            deadline: integer(deadline),
+            wcet: Wcet::Single(integer(execution)),
+            priority: Some(priority),
+            criticality: Criticality::Lo,
+            jitter: integer(0),
+            blocking: integer(0),
+        }
+    }
+
+    /// Trace: TC-702, FR-247-AC-2.
+    #[trace("TC-702", "FR-247-AC-2")]
+    #[test]
+    fn busy_period_oracle_keeps_the_next_job_until_the_window_closes() {
+        let higher = task("a", 2, 4, 4, 1);
+        let target = task("b", 5, 10, 12, 2);
+        let level = Level {
+            own: target.wcet.hi(),
+            blocking: &target.blocking,
+            constant: int(0),
+            terms: vec![Term {
+                period: higher.arrival.interval(),
+                jitter: &higher.jitter,
+                budget: higher.wcet.hi(),
+            }],
+        };
+        let result = match jobs(&target, &level, &integer(12), &Cancel::new()) {
+            Ok(result) => result,
+            Err(_) => panic!("the busy-period oracle completes"),
+        };
+        let Jobs::Met(jobs) = result else {
+            panic!("both jobs meet the declared response bound");
+        };
+
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(
+            jobs[0].0,
+            vec![integer(5), integer(9), integer(11), integer(11)]
+        );
+        assert_eq!(
+            jobs[1].0,
+            vec![
+                integer(10),
+                integer(16),
+                integer(18),
+                integer(20),
+                integer(20)
+            ]
+        );
+    }
+}
