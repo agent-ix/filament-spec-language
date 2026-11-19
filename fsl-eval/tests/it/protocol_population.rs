@@ -123,7 +123,11 @@ fn package(source: &str) -> (CheckedPackage, fsl_semantics::model::intake::Packa
             Vec::new(),
         )
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the protocol package checks: {refusals:?}")),
     );
     (checked, packages)
@@ -321,7 +325,11 @@ fn all_instances_in_a_check_guard_is_refused_at_checking() {
         Vec::new(),
     )
     .expect("the unit assembles")
-    .check_with_protocol_results(CheckMode::Linked, CheckingLimits::default())
+    .check_with_protocol_results(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .expect("the protocol refusal is retained in its result");
     let refusals: Vec<_> = graph
         .protocol_refusals()
