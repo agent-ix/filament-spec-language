@@ -1787,7 +1787,18 @@ pub(crate) fn convert_outcome(
     graph: &CheckedGraph,
     sources: &[Source],
 ) -> Result<CallOutcome, Box<RunRefusal>> {
-    let record = fsl_eval::value::refusal_record(&evaluation, |location| graph.region(location));
+    convert_outcome_resolving(evaluation, |location| graph.region(location), sources)
+}
+
+/// [`convert_outcome`] with `resolve` mapping a location to its source region:
+/// a checked graph's region, or none for a package read from its bytes.
+#[deny(clippy::wildcard_enum_match_arm)]
+pub(crate) fn convert_outcome_resolving(
+    evaluation: filament_eval::Evaluation,
+    resolve: impl Fn(&Location) -> Option<fsl_foundation::source::provenance::SourceRegion>,
+    sources: &[Source],
+) -> Result<CallOutcome, Box<RunRefusal>> {
+    let record = fsl_eval::value::refusal_record(&evaluation, resolve);
     let filament_eval::Evaluation {
         outcome, location, ..
     } = evaluation;

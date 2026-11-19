@@ -400,7 +400,9 @@ pub(super) fn run_bytes(
                         call_output: None,
                     }
                 }
-                super::PreparedRun::Function(_) | super::PreparedRun::TlLowering(_) => {
+                super::PreparedRun::Function(_)
+                | super::PreparedRun::TlLowering(_)
+                | super::PreparedRun::Package(_) => {
                     return Err(refused(
                         "value_invariants",
                         "expected a clause-run preparation",
@@ -443,6 +445,12 @@ pub(super) fn run_bytes(
                     return Err(refused(
                         "items.selections",
                         "tl_lowering is not an item selection",
+                    ));
+                }
+                Ok(super::PreparedRun::Package(_)) => {
+                    return Err(refused(
+                        "package",
+                        "items over a selected checked package are not implemented yet",
                     ));
                 }
                 Err(cause) => return Err(cause),
