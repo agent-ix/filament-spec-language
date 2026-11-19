@@ -24,7 +24,7 @@ and quantity target, inside or outside an equality. Lowering writes the
 
 Every other target refuses.
 
-Scope: FR-093-AC-35, FR-093-AC-47.
+Scope: FR-093-AC-35, FR-093-AC-47, FR-093-AC-66.
 
 ## Test Procedure
 
@@ -33,9 +33,16 @@ Scope: FR-093-AC-35, FR-093-AC-47.
 2. Check and lower FR-093-AC-47's `g` and read its comparison node and the
    comparison's first argument.
 3. Check FR-093-AC-47's refused converts and `convert<Text[0, 8; nfc]>(t)`.
+4. Over `t: Text[0, 64; unicode-scalars]`, check and lower FR-093-AC-66's
+   five clauses: the `Decimal[0, 1000; 0, 2; exact]` target; the own-type
+   target; the `Quantity<ms, Int[0, 9]>` target; parse the S1 texts
+   `convert<Decimal>(t)` and `convert<Rational>(t)`; and call
+   `CheckedGraph::check_expression` on a `convert` whose target is
+   `TypeForm::builtin(BuiltinType::Decimal, span)` with no bounds.
 
 Tag the tests `#[trace("TC-1196", "FR-093-AC-35")]` and
-`#[trace("TC-1196", "FR-093-AC-47")]`.
+`#[trace("TC-1196", "FR-093-AC-47")]` and
+`#[trace("TC-1196", "FR-093-AC-66")]`.
 
 ## Expected Results
 
@@ -56,3 +63,9 @@ Tag the tests `#[trace("TC-1196", "FR-093-AC-35")]` and
 - Step 3: `ill_typed`/`operator-ineligible` at each refused `convert`, and no
   node. `convert<Text[0, 8; nfc]>(t)` builds no node and its parent
   references `t`.
+- Step 4: `filament.op.text.to_decimal` with mode
+  `{"kind":"rounding","value":"exact"}` and the `text_profile` law; no node,
+  the parent referencing `t`; `ill_typed`/`operator-ineligible` and no node;
+  `invalid_syntax`/`unexpected-token` at the `>` after `Decimal` and after
+  `Rational`, with no check run; `ill_typed`/`type-mismatch` at the `convert`
+  and no `ConvertText` node.

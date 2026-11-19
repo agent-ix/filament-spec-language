@@ -702,7 +702,7 @@ fn tc_444_a_domain_package_comes_from_the_byte_provision() {
     );
 
     let refused = replay(wire(), ReplayLimits::default()).unwrap_err();
-    let ReplayRefusal::Recompile(refusal) = &refused else {
+    let ReplayRefusal::Recompile { refusal, .. } = &refused else {
         panic!("expected a recompile refusal, got {refused:?}");
     };
     assert_eq!(refusal.stage(), SpineStage::Intake);
@@ -983,7 +983,7 @@ fn tc_444_stage_limits_bound_the_recompile() {
     let mut tight = small(7);
     tight.stage_limits.insert("s1.input_bytes".to_owned(), 16);
     let refused = replay(tight, ReplayLimits::default()).unwrap_err();
-    let ReplayRefusal::Recompile(refusal) = &refused else {
+    let ReplayRefusal::Recompile { refusal, .. } = &refused else {
         panic!("expected a recompile refusal, got {refused:?}");
     };
     assert_eq!(refusal.stage(), SpineStage::Source);
@@ -992,7 +992,7 @@ fn tc_444_stage_limits_bound_the_recompile() {
     let mut no_work = small(7);
     no_work.stage_limits.insert("s3.work_units".to_owned(), 0);
     let refused = replay(no_work, ReplayLimits::default()).unwrap_err();
-    let ReplayRefusal::Recompile(refusal) = &refused else {
+    let ReplayRefusal::Recompile { refusal, .. } = &refused else {
         panic!("expected a recompile refusal, got {refused:?}");
     };
     assert_eq!(refusal.stage(), SpineStage::Check);
@@ -1012,7 +1012,7 @@ fn tc_444_a_blank_label_refuses_at_the_source_stage() {
     });
     blank.byte_provision[0].0 = "   ".to_owned();
     let refused = replay(blank, ReplayLimits::default()).unwrap_err();
-    let ReplayRefusal::Recompile(refusal) = &refused else {
+    let ReplayRefusal::Recompile { refusal, .. } = &refused else {
         panic!("expected a recompile refusal, got {refused:?}");
     };
     assert_eq!(refusal.stage(), SpineStage::Source);
@@ -1473,7 +1473,7 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
     assert!(
         matches!(
             replayed,
-            ReplayRefusal::Recompile(_) | ReplayRefusal::RecompileWithProtocolResults { .. }
+            ReplayRefusal::Recompile { .. } | ReplayRefusal::RecompileWithProtocolResults { .. }
         ),
         "{replayed:?}"
     );
@@ -1546,7 +1546,7 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
     )
     .expect_err("test/units does not parse");
     assert!(
-        matches!(replayed, ReplayRefusal::Recompile(_)),
+        matches!(replayed, ReplayRefusal::Recompile { .. }),
         "{replayed:?}"
     );
     assert_eq!(refusal.code(), replayed.code());
@@ -1645,7 +1645,7 @@ fn tc_444_dependency_entries_refuse_by_the_d4_rules() {
     // The entry removed: the import has no supplied library.
     let refused = replay(importing.request(Vec::new(), &[]), ReplayLimits::default())
         .expect_err("test/units is not supplied");
-    let ReplayRefusal::Recompile(refusal) = &refused else {
+    let ReplayRefusal::Recompile { refusal, .. } = &refused else {
         panic!("expected a recompile refusal, got {refused:?}");
     };
     assert_eq!(refused.code(), Code::MissingImport);

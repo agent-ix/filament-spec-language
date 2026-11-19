@@ -626,26 +626,57 @@ fn a_mismatched_certificate_form_refuses_at_certificate() {
     assert!(text.contains("/certificate"), "{item}");
 }
 
+/// FSpec FR-652-AC-3's `Grow`: `v' = 1 - 1 / (1 + v * v)` is not a
+/// polynomial flow, and its interval value over `[a, b]` with `a >= 1` is
+/// exactly `[f(a), f(b)]`, so narrow boxes stay narrow.
+const GROW: &str = "language \"ix:native\" edition \"1-draft\";\n\
+     profile p = \"filament.temporal.infinite-trace/v1\";\n\
+     hybrid Grow using p {\n\
+       initial { mode Up when { v = 1 }; }\n\
+       mode Up invariant { v >= 1 and v <= 100 } flow { v' = 1 - 1 / (1 + v * v); }\n\
+     }\n\
+     temporal Below using p over (h: Grow) clock \"model-time\" \
+     on origin { always [0, 40] holds(h.v < 30) }\n";
+
+/// The nine-step `validated-witness` of FSpec FR-652-AC-3, cut to its
+/// first `steps` steps: step `k` spans `[4k, 4k + 4]` with `box`
+/// `v [l_k, 1 + 4k]` and a-priori box `v [l_k, 5 + 4k]`. Each `l_{k+1}` is
+/// at most `l_k + 4 * f(l_k)`, `f(v) = 1 - 1 / (1 + v * v)` being increasing
+/// and below 1, so every step satisfies the Picard condition and its
+/// successor lies in the next box; step 8's `box` `v [30, 33]` at time 32 is
+/// the decisive box.
+fn grow_witness(steps: usize) -> Value {
+    const LOWER: [&str; 9] = [
+        "1", "3", "33/5", "21/2", "72/5", "183/10", "111/5", "261/10", "30",
+    ];
+    let dwell: Vec<Value> = LOWER
+        .iter()
+        .take(steps)
+        .enumerate()
+        .map(|(k, lower)| {
+            let k = u32::try_from(k).expect("nine steps");
+            json!({"mode": "Up",
+                "time": interval(&(4 * k).to_string(), &(4 * k + 4).to_string()),
+                "step": rational("4"),
+                "box": {"v": interval(lower, &(1 + 4 * k).to_string())},
+                "apriori": {"v": interval(lower, &(5 + 4 * k).to_string())}})
+        })
+        .collect();
+    json!({"type": "validated-witness", "dwells": [dwell]})
+}
+
 /// FSpec FR-652-AC-3 and FR-193-AC-22: a point trace through a mode whose
-/// flow is not polynomial refutes with an accepted `validated-witness`, and
-/// without one stays `inconclusive`.
+/// flow is not polynomial refutes with an accepted `validated-witness` whose
+/// decisive box makes the claim definitely false, and stays `inconclusive`
+/// without one or with a witness whose boxes only straddle `v = 30`.
 #[test]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-3")]
 #[trace("FSpec-TC-1605", "FSpec-FR-193-AC-22")]
 #[ignore = "QSL-2531: validated-witness refutation not implemented yet"]
 fn a_validated_witness_refutes_through_a_non_polynomial_flow() {
-    let unit = "language \"ix:native\" edition \"1-draft\";\n\
-         profile p = \"filament.temporal.infinite-trace/v1\";\n\
-         hybrid Grow using p {\n\
-           mode Up invariant { v >= 1 and v <= 100 } flow { v' = v * v / (1 + v * v); }\n\
-         }\n\
-         temporal Below using p over (h: Grow) clock \"model-time\" \
-         on origin { always [0, 40] holds(h.v < 30) }\n";
     let trace = json!({"start": {"mode": "Up", "time": interval("0", "0"),
         "enclosure": {"v": interval("1", "1")}}, "jumps": []});
-    let witness = json!({"type": "validated-witness", "dwells": [[{"mode": "Up",
-        "time": interval("0", "40"), "step": rational("40"),
-        "box": {"v": interval("1", "1")}, "apriori": {"v": interval("1", "41")}}]]});
+    let witness = grow_witness(9);
     let entry = |certificate: Option<&Value>| {
         let mut entry = json!({"request_index": 0, "result": "inconclusive",
             "cause": {"type": "solver-inconclusive", "trace": trace.clone()}});
@@ -656,20 +687,87 @@ fn a_validated_witness_refutes_through_a_non_polynomial_flow() {
     };
     let (_, with) = first_item(
         "hybrid-652-3a",
-        unit,
+        GROW,
         named("Below", "hybrid-fixture"),
         json!({}),
         vec![hybrid_fixture("hybrid-fixture", &entry(Some(&witness)))],
     );
     assert_eq!(with["record"]["result"], "refuted", "{with}");
+    assert_eq!(with["certificate"]["accepted"], true, "{with}");
     let (_, without) = first_item(
         "hybrid-652-3b",
-        unit,
+        GROW,
         named("Below", "hybrid-fixture"),
         json!({}),
         vec![hybrid_fixture("hybrid-fixture", &entry(None))],
     );
     assert_eq!(without["record"]["result"], "inconclusive", "{without}");
+    // Cut after the step at [28, 32]: its `B` `v [261/10, 33]` straddles 30.
+    let cut = grow_witness(8);
+    // One step at [0, 40]: `B` `v [1, 41]` satisfies Picard but straddles 30.
+    let single = json!({"type": "validated-witness", "dwells": [[{"mode": "Up",
+        "time": interval("0", "40"), "step": rational("40"),
+        "box": {"v": interval("1", "1")}, "apriori": {"v": interval("1", "41")}}]]});
+    for (name, straddling, at) in [
+        ("hybrid-652-3c", &cut, "/certificate/dwells/0/7"),
+        ("hybrid-652-3d", &single, "/certificate/dwells/0/0"),
+    ] {
+        let (_, item) = first_item(
+            name,
+            GROW,
+            named("Below", "hybrid-fixture"),
+            json!({}),
+            vec![hybrid_fixture("hybrid-fixture", &entry(Some(straddling)))],
+        );
+        assert_eq!(item["record"]["result"], "inconclusive", "{item}");
+        assert_eq!(item["certificate"]["accepted"], false, "{item}");
+        assert_eq!(item["certificate"]["rule"], "witness-violation", "{item}");
+        assert_eq!(item["certificate"]["at"], at, "{item}");
+    }
+}
+
+/// FR-450-AC-11: a provider's `refuted` entry whose trace exact replay
+/// cannot decide settles `refuted` when its `validated-witness` is accepted,
+/// and `inconclusive`, `replay-parity` `not-exact`, when it is rejected.
+#[test]
+#[trace("TC-1221", "FR-450-AC-11")]
+#[ignore = "QSL-2531: validated-witness settlement of a NotExact provider refutation not implemented yet"]
+fn an_accepted_witness_settles_a_not_exact_provider_refutation() {
+    let trace = json!({"start": {"mode": "Up", "time": interval("0", "0"),
+        "enclosure": {"v": interval("1", "1")}}, "jumps": []});
+    let entry = |witness: Value| {
+        let mut entry = refuted_entry(trace.clone());
+        entry["certificate"] = witness;
+        entry
+    };
+    let (_, accepted) = first_item(
+        "hybrid-450-11a",
+        GROW,
+        named("Below", "hybrid-fixture"),
+        json!({}),
+        vec![hybrid_fixture("hybrid-fixture", &entry(grow_witness(9)))],
+    );
+    assert_eq!(accepted["record"]["result"], "refuted", "{accepted}");
+    assert_eq!(accepted["certificate"]["accepted"], true, "{accepted}");
+    assert!(
+        accepted["counterexample"]
+            .to_string()
+            .contains("hybrid-counterexample"),
+        "{accepted}"
+    );
+    let (_, rejected) = first_item(
+        "hybrid-450-11b",
+        GROW,
+        named("Below", "hybrid-fixture"),
+        json!({}),
+        vec![hybrid_fixture("hybrid-fixture", &entry(grow_witness(8)))],
+    );
+    assert_eq!(rejected["record"]["result"], "inconclusive", "{rejected}");
+    assert_eq!(rejected["certificate"]["rule"], "witness-violation", "{rejected}");
+    let text = rejected.to_string();
+    assert!(text.contains("replay-parity"), "{rejected}");
+    assert!(text.contains("not-exact"), "{rejected}");
+    assert!(rejected.get("counterexample").is_none(), "{rejected}");
 }
 
 /// `Braking`'s flowpipe: 160 `Moving` steps of 1/16 s contracted to
@@ -914,6 +1012,20 @@ fn an_undefined_evaluation_counterexample_reads_back() {
     let counterexample = item["counterexample"].to_string();
     assert!(counterexample.contains("undefined-evaluation"), "{item}");
     assert!(counterexample.contains("division-by-zero"), "{item}");
+}
+
+/// FR-750-AC-15: a `Below` replay request carrying FSpec FR-652-AC-3's
+/// witness at `/replay/certificate` writes the `hybrid` row
+/// `reproduced-with-validated-witness`; the cut witness or none writes
+/// `inconclusive` `not-exact`; the witness on a `function` request refuses
+/// `unknown-member` at `/replay/certificate`. `ReplayRequestWire` has no
+/// certificate member yet, so the request cannot be built until it lands.
+#[test]
+#[trace("TC-3035", "FR-750-AC-15")]
+#[ignore = "QSL-2531: the replay request's validated-witness certificate is not implemented yet"]
+fn a_witness_refuted_hybrid_item_replays_with_validated_witness() {
+    let _witnesses = (grow_witness(9), grow_witness(8), GROW);
+    todo!("QSL-2531: FR-750-AC-15 needs `ReplayRequestWire`'s certificate member");
 }
 
 /// FR-750-AC-10: the refuted `TooSlow` item's `replay` resolves to the

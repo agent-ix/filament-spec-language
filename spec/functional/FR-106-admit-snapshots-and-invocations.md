@@ -1102,9 +1102,16 @@ required; check 10 settles it.
    A context is never marked incomplete: a snapshot that lists no context of
    the machine is refused here, not returned `Incomplete`.
 10. Parameters and result check. If an invocation's or a `PreCall`
-    selection's `parameters` lack a declared
+    selection's `parameters` lack a declared `required`
     parameter or hold an undeclared one, then admission SHALL refuse
-    `invalid_runtime_input`/`missing-member` or `unknown-member`; if a value
+    `invalid_runtime_input`/`missing-member` or `unknown-member`. An `optional`
+    parameter (FR-056, FSpec FR-154 "Operation parameter presence") has type
+    `Option<X>`: its value is `{"absent": {}}` or `{"present": V}`, `V` a value
+    of `X`, and a `parameters` member that omits it is admitted as
+    `{"absent": {}}`. A bare `X` value at an `optional` parameter is
+    `wrong-value-kind` there, as it is at an optional field. A writer that
+    restates an invocation's parameters writes an omitted `optional`
+    parameter as `{"absent": {}}`, so one invocation has one written form; if a value
     does not fit its declared type, `wrong-value-kind` or `invalid-value`, by
     check 6's value rule. For a postcondition, if the result member is `null` for an
     operation that declares a result, or a value for one that declares none,
@@ -1309,6 +1316,7 @@ required; check 10 settles it.
 | FR-106-AC-68 | Over TC-1171's fixture, `ids` written `{"set": [], "extra": 1}` refuses `unknown-member` naming `extra`, and `counts: Bag<Int[0, 9]>[0, 4]` written `{"bag": [], "set": []}` refuses `unknown-member` naming `set`; the first other member in document order is named. This is the native counterpart of FSpec FR-144-AC-16's extra member. | Test (TC-1171) |
 | FR-106-AC-69 | Over TC-1171's fixture, `order: OrderedSet<Int[0, 9]>[0, 3]` written `{"ordered-set": 1}`, `ids` written `[]`, and `ids` written `{"bag": []}` each refuse `wrong-value-kind` (naming the tag for the non-array, the field otherwise). This is the native counterpart of FSpec FR-144-AC-16's wrong-kind tag. | Test (TC-1171) |
 | FR-106-AC-70 | One snapshot's content admitted under two distinct document references gives two observations whose `identity` values are those two references, each holding the same populations, completeness flags and `ObjectEnvironment`, with the selected `self` object carrying the same universe, object type and object identifier in both. The same holds for the `pre` and `post` observations of one invocation admitted under two pairs of references. Neither observation reports the other's document identity. | Test (TC-1308) |
+| FR-106-AC-71 | Over FSpec TC-2054's `test/refunds` unit and a pre snapshot holding `Staff` objects `s1` (`badge` `1`) and `s2`, an invocation of `Order.note` with `parameters` `{firstApprover: s1, secondApprover: {"absent": {}}}`, one with `secondApprover` `{"present": <reference to s2>}`, and one omitting `secondApprover` are admitted, the third with `secondApprover` absent, so `NoteBy` evaluates false for the first and third and true for the second. The same invocation with `secondApprover` a bare `{"reference": ...}` refuses `invalid_runtime_input`/`wrong-value-kind` at `parameters.secondApprover`, and one omitting `firstApprover` refuses `invalid_runtime_input`/`missing-member` at `parameters.firstApprover`. | Test (TC-3040) |
 
 ## Dependencies
 

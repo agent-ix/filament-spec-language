@@ -31,6 +31,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-observation/FR-005
     type: depends_on
+  - target: ix://agent-ix/filament-observation/FR-008
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-322
     type: references
 ---
@@ -49,16 +51,35 @@ owner's answer back into the reports FR-501, FR-502, FR-524 and FR-526 state.
 It also states the one rule the owner does not have yet, the completeness
 revision rule FR-502 needs, as a requirement on the owner.
 
-### Decision: one admitted history per request, built from the trace
+### Decision: one admitted trace history per request, built from the trace
 
 Every owner module except the interval relation reads a `Context`, and a
 `Context` needs a `History` of a `QualifiedObservation` that the owner's
 `admit` produced. The evaluator therefore admits the request's trace through
 `filament_observation::admit` once, before any owner rule runs, and every
-owner call of that request shares that history. Building the history from the
+owner call of that request except activation (next decision) shares that history. Building the history from the
 trace the evaluator already admitted (FR-106) keeps one admission authority
 for the trace's identities and stamps, so every position in an owner document
 maps back to the identity FR-502's covered set records.
+
+### Decision: a clause's activation is its own optional history
+
+The owner classifies activation over a history whose records are the
+trigger's own observations (filament-observation FR-008): a scope is
+`Inactive` only when its binding is optional and its history holds no
+observation of the trigger, and it refuses a required binding with no trigger
+and a claimed absence that the history contradicts. The trace positions are
+not activation observations; they are the states the clause is evaluated
+over, and every one of them is required. The evaluator therefore admits activation
+histories beside the trace, under an optional binding: one per instance,
+holding exactly its instance-creating delivery or origin (FR-524) and its
+captures, and one empty history for a trigger scope with no instance. A scope with no
+instance then has an empty activation history, and the owner's own rule
+gives `Inactive` or `Unknown` for it unchanged; the trace request keeps its
+required binding. Every activation and capture
+judgement stays with the owner: the evaluator selects which facts are
+activation facts, as FR-524 defines them, and interprets none of the owner's
+rules.
 
 ### Decision: every admission selection is derived, none is supplied
 
@@ -255,9 +276,17 @@ FR-526's reports, read from them.
 
 ### The producer bundle
 
-- `fsl-eval` SHALL own exactly one static producer bundle, a crate constant
-  built and admitted through `StaticProducerBundle::admit` once per process
-  and shared by every admission request:
+- The producer bundle SHALL be caller-owned: the caller of `fsl-eval` builds
+  it with `fsl-eval`'s bundle constructor and admits it once through `StaticProducerBundle::admit` (the owner's
+  validated value type), and passes the admitted `AdmittedStaticBundle` by
+  reference to each run. The owner's `AdmissionRequest.producer` is an owned
+  `AdmittedStaticBundle`, so `fsl-eval` clones the passed bundle into each
+  admission request it builds. `fsl-eval` SHALL hold no
+  static cell, lazy global, lock or cache of `StaticProducerBundle` or
+  `AdmittedStaticBundle`, with no exception,
+  so the qualified core keeps FR-284's rule against global state; a host
+  MAY keep its admitted bundle across runs. The constructor fixes the
+  bundle's content from the crate version:
   - `bundleIdentity` `fsl-eval`;
   - `bundleRevision` `Revision::producer(<fsl-eval crate version>)`, the
     owner's namespaced revision form;
@@ -296,7 +325,10 @@ profile identity.
     activation (`on each` with its guard, or `on origin`). The per-instance
     trigger identities of FR-524 are not binding members: they select
     instances inside one binding, and every record of the binding shares one
-    trigger identity;
+    trigger identity. The trace binding's records are trace positions, never
+    activation observations, and no activation derivation reads the trace
+    request's history; activation is admitted through the activation
+    request below;
   - `unit`: the owner-side unit label `<u>/4`, `<u>` the clock's declared
     time unit name, or `position` for an event position clock, which has
     none (`ms/4`, `position/4`). Every owner-side unit label is this
@@ -504,11 +536,44 @@ profile identity.
 
 ### Completeness
 
-- A retained `Complete { through: T }` SHALL map to a `completeness::Selection`
-  whose required members are the positions stamped at or before `T`, each
-  `Available` with its record, at the boundary `T` in the clock family's
-  `TemporalBoundary` (watermark `T`); `Incomplete` maps to the same selection
-  with the members not yet supplied `Incomplete`.
+- A completeness view SHALL hold one fact for every member of the request's
+  admitted population, in the order of the history's
+  `required_member_identities` (ascending byte order), because the owner's
+  `completeness::derive` refuses a selection whose facts do not exactly
+  cover that population. The selection is
+  `completeness::Selection::new(boundary_identity, boundary, facts)`, built
+  from FR-502's assertion for the request:
+  - `Complete { through: T }`: every fact is `Fact::new(member,
+    Some(record), FactStatus::Available)`, `record` the member's record
+    identity; a member stamped after `T` is admitted and is `Available` as
+    well, so the derived state is `Complete`. `boundary` is the clock
+    family's `TemporalBoundary` with `upper_inclusive` `T` and
+    `carrier_end_exclusive` `T + 1` for an event position or fixed-sample
+    clock, and `upper_inclusive_nanos` `T × s` and
+    `carrier_end_exclusive_nanos` `T × s + 1` for a timestamped clock;
+    `lower` equal to that upper bound; `watermark` equal to it as well.
+    `boundary_identity` is the RFC 8785 text of `{"through": "<T>"}`.
+  - `Incomplete`: every fact is `Fact::new(member, None,
+    FactStatus::Incomplete)`. FR-502 accepts `Incomplete` only while no
+    `Complete` assertion is retained, so it covers no member, and the owner
+    allows an incomplete fact for an admitted member as long as it names no
+    observation; the derived state is `Incomplete`. `boundary` has
+    `upper_inclusive` (`upper_inclusive_nanos`) equal to the retained
+    `through` (`× s`) when the ledger holds one, and otherwise the clock
+    family's least coordinate (`0` for an event position or fixed-sample
+    clock, `-(2^63) × s` nanoseconds for a timestamped clock), with `lower`
+    and `watermark` equal to it and the carrier end one above it, so the
+    boundary never depends on where the trace starts. `boundary_identity` is
+    `{"through": null}`.
+- The owner compares boundaries on their upper bound (`upper_inclusive`, or
+  `upper_inclusive_nanos`) and places members by anchor against it, so this
+  mapping makes the owner's revision rule decide exactly FR-502's cases: a
+  `through` below the retained one regresses the boundary; `Incomplete`
+  after `Complete` succeeds a `Complete` assessment with `Incomplete`
+  facts at an equal boundary; a newly held position stamped at or before the
+  retained `through` is an uncovered member; and `Incomplete` after
+  `Incomplete`, whatever the second trace's start, keeps the boundary and
+  holds every member as incomplete.
 - Accepting, revising or refusing an assertion against a retained one SHALL be
   the owner's completeness revision rule below, preceded by the relabelling
   check that follows, and FR-502's `Completeness` contradiction SHALL be
@@ -531,12 +596,112 @@ profile identity.
 
 ### Activation
 
-- An activation scope SHALL map to an `activation::Selection`: the trigger
-  delivery or origin as `ActivationSelection::new` (or `without_trigger` for a
-  scope with none), the scope's closure as the closure authority
-  (`OpenClosed`), the trigger record's completeness as the evidence authority,
-  and the FR-524 captures as `Capture`s with their source observation
-  identities.
+- Each clause occurrence's activation SHALL be admitted through
+  `filament_observation::admit` as activation requests separate from the
+  trace request: one per instance of the occurrence, and exactly one empty
+  request for a trigger scope that creates no instance. One request per
+  instance is required because the owner's capture environment covers the
+  complete record set of its history at one anchor, and an instance's
+  captures are taken once at its own delivery's anchor (FR-524). Each
+  activation request is built as the trace request is, with these
+  differences:
+  - binding `identity`: the RFC 8785 text of the trace binding's identity
+    object with the added members `"role": "activation"` and, for an
+    instance's request, `"instance": X`, `X` the lowercase hexadecimal of
+    the FR-524 per-instance trigger identity's bytes; the empty request has
+    no `instance` member;
+  - `schema_identity`: `fsl-eval/activation/1`;
+  - `signal_identity` and `trigger_identity`: the trace binding's
+    `trigger_identity` (the clause node's text followed by `/activation`);
+  - `required`: `false`. A clause's activation may correctly never fire, and
+    the owner classifies a scope as `Inactive` only over an optional
+    binding;
+  - `records`: for an instance's request, the instance's trigger record and
+    one capture record per declared capture; the empty request has none.
+    The instance-creating deliveries and the origin of an `on origin`
+    clause (FR-524) are the instances; a delivery whose guard is
+    `Some(false)`, and a delivery refused at admission, makes no request
+    and no record. Every record carries the binding members above, the
+    expected subject, visibility `Internal`, and the anchor, event time,
+    ingestion time, clock and uncertainty of the position that delivered
+    the trigger, built as for the trace request, so every record of one
+    request shares one anchor. A trigger record's value is
+    `ValueState::Present { value_type: "fsl-eval/activation-trigger/1",
+    canonical_value }`, `canonical_value` the RFC 8785 text of
+    `{"instance": X}`. A capture record's value is `ValueState::Present {
+    value_type: "fsl-eval/capture/1", canonical_value }`, `canonical_value`
+    the RFC 8785 text of `{"capture": N, "instance": X, "type": T,
+    "value": W}`, `N` the capture's declared name, `T` its declared type's
+    canonical text and `W` the retained capture fact (FR-524): `{"value":
+    J}` for `CaptureFact::Value`, `J` the value as the semantic-value
+    canonical JSON FR-106's reader admits, or `{"fault": F}` for a faulted
+    capture, `F` one of `"missing"`, `"null"`, `"wrong-type"` and
+    `"stale"`, so a faulted instance's captures are recorded as faithfully
+    as a sound one's. Naming the instance in every value keeps two
+    instances' equal captured values distinct records, as the owner
+    requires of equal captures under distinct triggers;
+  - `scope`: derived over these records exactly as the trace request's
+    scope, with `membership_complete` `true` (the request carries every
+    record the evaluator admitted for it), except that `range` is the trace
+    request's range, so the empty request still has the clause's range;
+  - `limits`: the trace request's rule over this request's record count.
+- Every activation selection SHALL take as `obligation_identity` the trace
+  binding's identity text: the obligation is the clause occurrence, and its
+  instances are told apart by their trigger observations and bindings.
+- Over each activation request's `Context` the evaluator SHALL derive these
+  owner views and pass them to `AuthorityProofs`:
+  - closure: `closure::derive` with `closure::Selection::new(C, P, [C],
+    boundary, state)`, `boundary` the trace request's range as the clock
+    family's `TemporalBoundary`: `lower` the range's start, `upper_inclusive`
+    its last stamp (`max t`, or `max t × s` nanoseconds for a timestamped
+    clock), and `carrier_end_exclusive` and `watermark` both the range's
+    exclusive end (`max t + 1`, or the range's `end_nanos`), so the
+    watermark lies beyond the upper bound as the owner requires of a
+    `Closed` boundary and the boundary matches the admitted range; `state` the scope's FR-524 closure
+    (`OpenClosed::Open` or `OpenClosed::Closed`);
+  - completeness: when FR-524's trigger evidence is `Admitted` and its
+    trigger record is complete, `completeness::derive` with
+    `completeness::Selection::new` over the same boundary (its identity the
+    boundary's RFC 8785 text) and one `Available` fact, naming its record,
+    per member of the activation request's admitted population, giving `Complete` (and `Complete` over no fact for
+    the empty request). When the trigger evidence is `Missing` or `Refused`,
+    or the trigger record is incomplete, no completeness view is passed:
+    the owner then holds the evidence `Incomplete`, which an empty history
+    cannot otherwise state, since a completeness selection covers exactly
+    the required members and the empty request has none;
+  - capture, for an instance's request only: `capture::derive` with
+    `capture::Selection::new(trigger identity, the delivery's anchor,
+    bindings)`, one `capture::Binding` per record of the request (identity
+    `fsl-eval/capture/<N>` for a capture record, `fsl-eval/instance` for the
+    trigger record, the request's binding identity, the record's identity),
+    sorted by capture identity, so the environment covers the complete
+    record set;
+  - no progress view: the evaluator reads no progress or silence axis from
+    an activation view.
+  An instance's proofs are `AuthorityProofs::new(capture, None, closure,
+  completeness)`; the empty request's are
+  `AuthorityProofs::without_capture(binding identity, None, closure,
+  completeness)`.
+- An instance SHALL map to `ActivationSelection::new(obligation, its
+  request's binding identity, trigger identity, its trigger record
+  identity, activation interval, captures)` over its request's `Context`,
+  the captures sorted by identity and equal to the capture view's bindings:
+  one `Capture` `fsl-eval/capture/<N>` per declared capture, sourced from
+  its capture record, of value type `fsl-eval/capture/1` and that record's
+  canonical value, and the instance capture `fsl-eval/instance`, sourced
+  from the trigger record, of value type `fsl-eval/activation-trigger/1`
+  and value `{"instance": X}`. Each capture's provenance is the binding's
+  source `C`. The instance capture is a real capture: an instance's identity
+  is fixed at activation like any captured value, and it gives an instance
+  that declares no capture the nonempty capture set the owner requires of an
+  admitted trigger. The owner gives `Active`.
+- A trigger scope with no instance SHALL map to
+  `ActivationSelection::without_trigger(obligation, the empty request's
+  binding identity, trigger identity, activation interval)` over the empty
+  request's `Context`. The owner's rule gives `Inactive` for a closed scope
+  with a `Complete` completeness view and `Unknown` otherwise, and refuses
+  none of these scopes. The evaluator SHALL NOT derive activation over the
+  trace request's `Context`.
 - FR-524's disposition SHALL be read from the view: `Active`, `Inactive` and
   `Unknown` from `activation()`. The `Unknown` kind SHALL be read from the
   view's axes and the evaluator's own admission outcome: `Missing` when the
@@ -573,10 +738,12 @@ QSL-2327). Where the summary below and FR-013 differ, FR-013 governs:
   request carries its own admitted history, so the successor's scope and
   population identity are its own (filament-observation FR-013).
 - `revise` SHALL refuse with a typed error naming the contradicted member or
-  boundary when the successor's boundary is below the prior's, when a prior
-  `Complete` assessment is succeeded by an `Incomplete` one, or when the
-  successor holds a member at or before the prior boundary that the prior did
-  not hold, or when a member both hold `Available` carries a different
+  boundary when the successor's boundary upper bound (`upper_inclusive`, or
+  `upper_inclusive_nanos`) is below the prior's (`BoundaryRegressed`), when a prior
+  `Complete` assessment is succeeded by a selection holding an `Incomplete`
+  fact (`CompleteRegressed`), or when the successor holds `Available` a
+  member anchored at or before the prior upper bound that the prior did not
+  hold (`UncoveredMember`), or when a member both hold `Available` carries a different
   observation identity in the successor (`MemberObservationChanged`, which
   backs FR-502's changed-fingerprint refusal); it SHALL accept a boundary at or above the prior's and a member
   absent from the successor that the prior held, which stays held.
@@ -637,15 +804,18 @@ SHALL carry `None` and this interim rule is removed.
 | FR-944-AC-1 | For readings 0 to 6 under `Counter { uncertainty: 1 }` and under `Exact`, with bounds 0 to 6, `definitely_before` and `within_bound` read through the owner's `relation_to` on the quarter-tick intervals (reading 3 maps to `[8, 19]` under `Counter { uncertainty: 1 }` and to `[12, 12]` under `Exact`, unit `ms/4`, and bound `b` shifts the request by `4b`) equal `ClockCover`'s answers on every pair. | Test (TC-2624) |
 | FR-944-AC-2 | FR-501-AC-13's counter-cover trace admits through `filament_observation::admit` with one record per position whose identity is the owner's `record_identity`, and every report names the position's FR-106 identity through the side mapping; a `ms` stamp 3 admits as `event_time_nanos` 3000000, and stamp 3 under a declared unit of factor `rational(1, 2000000000)` (1/2 ns) refuses at stage `admit` naming its position; and the partial facts of its atoms read back through `partial::read` with the possibility sets and reasons of their Kleene values. | Test (TC-2624) |
 | FR-944-AC-3 | FR-524-AC-27 to AC-29's scopes give `Active`, `Inactive` and the three `Unknown` kinds through `activation::derive` and the mapping above, equal to the dispositions the evaluator reports; FR-526-AC-2's superseding request gives a repair plan that invalidates exactly the superseded result and retains the other's bytes. | Test (TC-2624) |
-| FR-944-AC-4 | Once filament-observation FR-013 lands, FR-502-AC-2's cases through `completeness::revise` refuse `Complete { through: 60 }`, `Incomplete` and the uncovered position stamped 80, refuse a covered position re-delivered under a different observation identity (`MemberObservationChanged`, FR-502's changed-fingerprint case), accept a successor over its own admitted history with another subject, and accept `Complete { through: 100 }` and `{ through: 140 }`, exactly as FR-502's ledger does. A position whose content, stamp, order key, interval and arrival equal a covered position's at or before the retained `through` but whose FR-106 identity is new is refused by the relabelling check before `revise` is called, with FR-502's `Completeness` contradiction (`invalid_runtime_input`/`invalid-value`, the clock name, the retained assertion and the position) and the ledger unchanged, although its owner record identity is the covered one; the same position under its covered FR-106 identity passes the check and `revise` accepts it. | Test (TC-2624, TC-3036) |
+| FR-944-AC-4 | Once filament-observation FR-013 lands, FR-502-AC-2's cases through `completeness::revise` refuse `Complete { through: 60 }` (`BoundaryRegressed`, its boundary upper bound below the retained one), `Incomplete` (`CompleteRegressed`, its facts `Incomplete` with no observation at the retained boundary) and the uncovered position stamped 80 (`UncoveredMember`, anchored at or before the retained upper bound), refuse a covered position re-delivered under a different observation identity (`MemberObservationChanged`, FR-502's changed-fingerprint case), accept a successor over its own admitted history with another subject, and accept `Complete { through: 100 }` and `{ through: 140 }`, exactly as FR-502's ledger does. A position whose content, stamp, order key, interval and arrival equal a covered position's at or before the retained `through` but whose FR-106 identity is new is refused by the relabelling check before `revise` is called, with FR-502's `Completeness` contradiction (`invalid_runtime_input`/`invalid-value`, the clock name, the retained assertion and the position) and the ledger unchanged, although its owner record identity is the covered one; the same position under its covered FR-106 identity passes the check and `revise` accepts it. | Test (TC-2624, TC-3036) |
 | FR-944-AC-5 | Under `Bounded { uncertainty: 0 }` and clock unit `ms` (owner unit `ms/4`), a request `holds(req)` stamped 1 with interval `(0, 1]` maps to `[1, 4]` and an `ack` stamped 3 with interval `[3, 4)` maps to `[12, 15]`; `within_bound(3, req, ack)` read through `relation_to(ack, req shifted by 12)` is `Indeterminate`, and `holds(req) implies eventually[0,3] holds(ack)` with `W` and `Complete { through: 10 }` gives `Indeterminate { reason: StraddlesBound }`, equal to `ClockCover`'s answer, where the half-tick mapping (`[1, 2]`, `[6, 7]`, shift 6) would read `True`. The same request with the `ack` stamped 2 with interval `[2, 3)`, mapped to `[8, 11]`, gives `Completed(true)`. | Test (TC-2624) |
 | FR-944-AC-6 | With an anchor of interval `[0, 0]` (`[0, 0]` in quarter ticks) under `Counter { uncertainty: 0 }`: for `at_least 2`, reading 2 (`[8, 11]`) is eligible, reading 1 (`[4, 7]`) ineligible, and reading 2 under `Counter { uncertainty: 1 }` (`[4, 15]`) `Indeterminate` with reason `StraddlesBound`; for `at_most 2`, reading 1 is eligible, reading 3 (`[12, 15]`) ineligible and reading 2 `Indeterminate` with reason `StraddlesBound`; a candidate of interval `(1, 2]` (`[5, 8]`) is eligible for `at_least 1`, one of interval `[0, 1)` (`[0, 3]`) is ineligible for `at_least 1` and `Indeterminate` for `at_most 0`; and against an anchor of interval `(0, 1]` (`[1, 4]`) a candidate of interval `[3, 4)` (`[12, 15]`) is `Indeterminate` for `at_most 3` and eligible for `at_least 2`. Each decision equals `ClockCover`'s eligibility, and no owner interval with an unbounded end is formed. | Test (TC-2624) |
 | FR-944-AC-8 | FR-501-AC-13's counter-cover request under `ms` with a position carrying arrival 2, one carrying an order key and one an interval stamp builds an admission request that `admit` returns `Available` for, in which: `package` is `native-linked-package/1`, the package `name`, revision `filament.checked-package/v2` and the SHA-256 of `canonical_bytes()`; `producer` is the `fsl-eval` bundle; `binding` has the stated identity text, source `C`, schema `fsl-eval/trace-position/1`, the `over` node's `node_wire` text as signal, the clause node's text plus `/activation` as trigger, unit `ms/4` (also every record's unit and every interval's unit), subject kind `package` and `required` true; `expected_subject` is kind `package` with the package identity; both relationship lists are empty; each record's identity equals `record_identity` of the record, its value text is the stated seven-member `{"aggregate_samples", "instance_aggregate_samples", "instance_valuations", "interval", "observation", "order_key", "valuations"}` object whose `observation` is the admitted document without its `identity` member and whose `valuations` are the valuations read from it, so no owner document carries an FR-106 identity, visibility `Internal`, anchor `TimestampNanos(t × 1000000)`, ingestion `2000000` for the arrival-2 position, uncertainty `1000000`; `required_member_identities` is the sorted record identities and equals the members' object and record identities; membership, closure and snapshot identity are `derive_membership`'s identity and digest; the range is `[min, max + 1)` in nanoseconds; sources and both dependency lists are `[C]`; `membership_complete` is true; `population_identity` equals `population_identity` of the request; limits are the record count and 0. Building it twice gives equal requests; changing one valuation, one order key or one interval changes exactly that record's identity. Adding a second observation equal to the first in content, stamp, order key, interval and arrival but with another FR-106 identity admits: the request has one record and one member for both, and every report about that record names both FR-106 identities through the many-to-one side mapping. A position without an arrival carries `ingestion_time_nanos` equal to its event time under the interim rule, and no report carries that value. An event-position clause's request uses `EventPosition` anchors, owner unit `position/4` and an `EventPosition` range and is also `Available`. | Test (TC-3036) |
-| FR-944-AC-9 | The `fsl-eval` bundle has identity `fsl-eval`, revision `Revision::producer` of the crate version, interface `1.2.0`, no relationships, configuration `fsl-eval/default` whose digest equals `canonical_digest_selection()` of a bundle holding only `{"configurationIdentity": "fsl-eval/default"}`, and digest equal to its own `canonical_digest_selection()`; it is admitted once per process. An admission request mutated after derivation (the binding's source changed, the population identity changed, one record identity changed), each alone, ends the run `runtime_invariant`/`established-invariant-broken`, invariant `observation-admission`, carrying the owner's refusal cause, exit `30`, and no clause outcome; none is `invalid_runtime_input`. A trace of `max_population_entries + 1` positions refuses at stage `admit`, `stage_limit_exceeded`/`node-count-exceeded`, `bound` the owner maximum, `actual` the count, `setting` `filament_observation::authority::Limits.max_population_entries`, and a position whose value text is one byte over `max_string_bytes` refuses `stage_limit_exceeded`/`input-bytes-exceeded` with `setting` `filament_observation::authority::Limits.max_string_bytes`, both before any owner derivation. | Test (TC-3036) |
+| FR-944-AC-9 | The `fsl-eval` bundle has identity `fsl-eval`, revision `Revision::producer` of the crate version, interface `1.2.0`, no relationships, configuration `fsl-eval/default` whose digest equals `canonical_digest_selection()` of a bundle holding only `{"configurationIdentity": "fsl-eval/default"}`, and digest equal to its own `canonical_digest_selection()`; the caller admits it once and passes it by reference to every run and admission request, and every request of two runs given one admitted bundle names equal producer selections. An admission request mutated after derivation (the binding's source changed, the population identity changed, one record identity changed), each alone, ends the run `runtime_invariant`/`established-invariant-broken`, invariant `observation-admission`, carrying the owner's refusal cause, exit `30`, and no clause outcome; none is `invalid_runtime_input`. A trace of `max_population_entries + 1` positions refuses at stage `admit`, `stage_limit_exceeded`/`node-count-exceeded`, `bound` the owner maximum, `actual` the count, `setting` `filament_observation::authority::Limits.max_population_entries`, and a position whose value text is one byte over `max_string_bytes` refuses `stage_limit_exceeded`/`input-bytes-exceeded` with `setting` `filament_observation::authority::Limits.max_string_bytes`, both before any owner derivation. | Test (TC-3036) |
 | FR-944-AC-10 | One compiled package evaluated on the source route and, after a canonical emit, read and evaluated on the bare-package route gives `canonical_bytes()` equal to the emitted bytes on both routes and to the bytes the reader consumed, exactly, and so equal admission `package` selections (revision `filament.checked-package/v2`, equal digest) and equal owner `Context` authorities on both routes; the same package as non-canonical JSON (reordered members, extra whitespace) is refused by the reader `noncanonical_wire` (FSpec FR-322-AC-4) and admits nothing; no document or file FSL writes carries the digest. | Test (TC-3036) |
 | FR-944-AC-11 | Over FR-516-AC-9's request through `evaluate_temporal_evidence` (positions carried as `EvidenceRef`s with arbitrary, including empty, `contract`, `schema_digest`, `digest` and `authority_digest`), with one position carrying a `Value` aggregate sample of 1/3, one an `Undefined` valuation of kernel reason division by zero, one an `Undefined` aggregate sample of `InsufficientData { count: 1, min_count: 2 }`, and one an instance-bound valuation under a trigger whose identity bytes are `0x00 0xff`: each record's value is the RFC 8785 text of `{"aggregate_samples", "instance_aggregate_samples", "instance_valuations", "interval", "observation", "order_key", "valuations"}` whose `observation` is `{"authority_digest", "contract", "digest", "schema_digest"}` with the bytes in lowercase hexadecimal (`""` for empty) and no `identity`, `authority_identity`, `authority_revision`, `scope` or `population`; the sample is `{"value": {"kind": "rational", "numerator": "1", "denominator": "3"}}`, the valuation `{"undefined": {"cause": "kernel", "reason": "division-by-zero"}}`, the sample `{"undefined": {"cause": "insufficient-data", "count": "1", "min_count": "2"}}`, and the instance valuation keyed by `"00ff"`; a sample of 18446744073709551616/3 writes those unbounded components; `admit` returns `Available`. Changing one content member, one valuation, one aggregate sample or one instance-bound valuation, each alone, changes exactly that record's identity, and changing only an `EvidenceRef` label does not; two positions equal in all but their `EvidenceRef` identity map to one record whose reports name both identities, and the relabelling check refuses such a position at or before a retained `through` whose identity the covered set does not hold. Over FR-501-AC-13's spine request the position keeps its admitted FR-106 document and `observation` is that document's canonical JSON without `identity`, with `valuations` the valuations read from it. | Test (TC-3036) |
 | FR-944-AC-12 | Over FR-327-AC-5's closed `Counter` trace (`c.value` 0, 1, 2) and `always[0,2] holds(3 mod (2 - c.value) >= 0)` `on origin`, the atom `p` is undefined at position 2: that position's record value carries `p`'s valuation `{"undefined": {"cause": "kernel", "reason": "division-by-zero"}}`, no partial fact is derived for `p` at that position, the evaluator reports its own undefined outcome (FR-327) at that position unchanged, and no owner answer for it carries reason `Missing` or `Conflicting` or is `Indeterminate`, and no owner read consumes `p`'s possibility set there: the clause outcome is FR-327-AC-5's `Undefined{where: 2, cause: division-by-zero}`. Positions 0 and 1 have their partial facts derived and read back as AC-2 states. | Test (TC-3036) |
 | FR-944-AC-13 | FR-501-AC-13's request under clock unit `ms` admits with binding `unit` `ms/4`, every record `unit` `ms/4` and every quarter-tick `EventTimeInterval` unit `ms/4`, and `partial::derive` succeeds for every atom of every position; every FSL report names the clock unit `ms`. An event-position clause's request uses `position/4` for all three owner-side labels and derives every partial fact. | Test (TC-3036) |
+| FR-944-AC-14 | For FR-524-AC-10's closed scope whose every delivery has a false guard, with `Admitted` evidence and a complete trigger record: exactly one activation request is built, with binding `required` false, schema `fsl-eval/activation/1`, the trace binding's trigger identity as signal and trigger, the trace identity text with `"role": "activation"` and no `instance` member, the trace request's range, `membership_complete` true and no record; `admit` returns `Available`; `closure::derive` gives a `Closed` view without refusal over the boundary whose `upper_inclusive` is the last stamp and whose `carrier_end_exclusive` and `watermark` are the range's exclusive end, a boundary with `watermark` equal to `upper_inclusive` being the one the owner refuses for `Closed`; the completeness view `Complete` over no fact, and `activation::derive` with `without_trigger`, obligation the trace binding's identity text and `AuthorityProofs::without_capture` gives `Inactive` and no refusal, while the trace request for the same clause keeps `required` true and one record per position. The same scope open gives `Unknown(open)`; with an incomplete trigger record, and with `Missing` and `Refused` trigger evidence, the request still admits `Available` with `membership_complete` true, no completeness view is passed, and `derive` gives `Unknown` with evidence `Incomplete`, reported as `Unknown(open)` with incomplete completeness, `Unknown(missing)` and `Unknown(refused)`, each without a refusal. A scope with one instance-creating delivery and no declared capture gives one request with one trigger record whose value is `{"instance": X}`, a capture view binding exactly that record as `fsl-eval/instance`, and an `Active` view whose captures are exactly `fsl-eval/instance` with value `{"instance": X}`; one declaring captures `a` and `b` gives one request of three records at one anchor and captures `fsl-eval/capture/a`, `fsl-eval/capture/b`, `fsl-eval/instance` in that order, the two declared captures with value text `{"capture", "instance", "type", "value"}` of the instance's FR-524 capture, and a capture faulted `Missing` gives `{"fault": "missing"}`; a delivery with guard `Some(false)` beside it makes no request. Two instances of one clause occurrence capturing equal values give two requests with distinct binding identities, each `capture::derive` and `activation::derive` succeeds and gives `Active`, and the capture record identities and the activation identities differ. No `activation::derive` call of a run is made over the trace request's `Context`. | Test (TC-2624) |
+| FR-944-AC-15 | Two runs given one caller-admitted `AdmittedStaticBundle` by reference build admission requests whose `producer` members are clones equal to that bundle, one clone per request; the bundle is built by `fsl-eval`'s constructor and admitted by the caller through `StaticProducerBundle::admit`. A source scan of `fsl-eval`'s shipped source, `#[cfg(test)]` code excluded, finds no `static`, `OnceLock`, `LazyLock`, `lazy_static!` or `thread_local!` item, and no `Mutex` or `RwLock` field, whose type names `StaticProducerBundle` or `AdmittedStaticBundle`, and fails naming the file and line of any it finds (a fixture source holding `static B: OnceLock<AdmittedStaticBundle>` is reported); a run whose caller passes no bundle cannot be built (the bundle is a required parameter). | Test (TC-3036) |
+| FR-944-AC-16 | For a trace under `ms` (`s` 1000000) with positions stamped 10, 50 and 80 and the assertion `Complete { through: 60 }`, the completeness selection holds three `Available` facts naming their records, one per admitted member in population order, including the member stamped 80, with a `TimestampedEvent` boundary whose `lower_nanos`, `upper_inclusive_nanos` and `watermark_nanos` are 60000000 and `carrier_end_exclusive_nanos` 60000001, and `boundary_identity` `{"through":"60"}`; `completeness::derive` gives `Complete`, and a selection holding only the two members stamped at or before 60 is refused `ExpectedMismatch`, so the member beyond the boundary changes the owner's answer from a refusal to `Complete`. For `Incomplete` with no retained assertion the selection holds three `Incomplete` facts naming no observation, at upper bound -9223372036854775808000000 nanoseconds, identity `{"through":null}`, and `derive` gives `Incomplete`. Through `completeness::revise`: `Complete { through: 60 }` after a retained `Complete { through: 100 }` is refused `BoundaryRegressed`; `Incomplete` after a retained `Complete { through: 100 }` (boundary upper 100000000 on both) is refused `CompleteRegressed`; `Incomplete` after a retained `Incomplete` over a trace starting at 10, with the successor trace starting at 5, is accepted with state `Incomplete`; each answer equals FR-502's ledger. | Test (TC-2624) |
 | FR-944-AC-7 | Scaling is exact at the domain's edge: a reading `18446744073709551615` under `Counter { uncertainty: 18446744073709551615 }` maps to `[0, 147573952589676412923]`, reading 0 under the same cover to `[-73786976294838206460, 73786976294838206463]`, and the bounds `9223372036854775807` and `-9223372036854775808` scale to `36893488147419103228` and `-36893488147419103232`; `within_bound` and `definitely_before` over these readings and bounds equal `ClockCover`'s answers. | Test (TC-2624) |
 
 ## Dependencies

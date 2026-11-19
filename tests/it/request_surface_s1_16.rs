@@ -980,6 +980,216 @@ fn a_tl_lowering_request_selects_its_correspondence() {
     );
 }
 
+/// `Low` with the source union `Shape` declared by the unit, the leaf `leaf`
+/// as its body under `always [0, 3]`.
+fn shape_low(leaf: &str) -> String {
+    low(EVENT_POSITION, &format!("always [0, 3] {leaf}")).replacen(
+        "model Config",
+        "profile v = \"filament.value.complete/v1\";\n\
+         union Shape { Circle(Integer), Rect(Integer, Integer), Empty }\n\
+         model Config",
+        1,
+    )
+}
+
+/// FR-931-AC-13 (source route): a `case` prints its arms in member
+/// declaration order with each binder under its declared name, nested
+/// binders keep their scopes, `_` is an ordinary binder, and renaming a
+/// binder changes the label. The package route is
+/// `case_binders_match_across_the_source_and_package_routes`.
+#[test]
+#[trace("TC-3039", "FR-931-AC-13")]
+#[ignore = "QSL-2562: case binder names in the checked record and canonical case printing not implemented yet"]
+fn case_binders_print_under_their_declared_names() {
+    let atom = |leaf: &str| {
+        let (code, value) = run(
+            &shape_low(leaf),
+            true,
+            ("tl_lowering", json!({"clause": "Low"})),
+        );
+        assert_eq!(code, 0, "{value}");
+        value["tl_lowering"]["atoms"]["p0"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let first = atom(
+        "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })",
+    );
+    // The union's declaration key `ix://<SourceOwner identity>/Shape` (FR-931 "Names").
+    let key = first
+        .strip_prefix("holds(case ")
+        .and_then(|rest| rest.split_once("::Rect("))
+        .map(|(key, _)| key.to_owned())
+        .unwrap_or_else(|| panic!("{first}"));
+    assert!(
+        key.starts_with("ix://") && key.ends_with("/Shape"),
+        "{first}"
+    );
+    assert_eq!(
+        first,
+        format!(
+            "holds(case {key}::Rect(c.versionNumber, 2) {{ Circle(r): r <= 2; \
+             Rect(w, h): w + h <= 4; Empty: true; }})"
+        )
+    );
+    let nested = atom(
+        "holds(let k = c.versionNumber in case Shape::Rect(k, 1) { Circle(r): r <= k; \
+         Rect(_, h): case Shape::Circle(h) { Circle(x): x + k <= 4; Rect(a, b): false; Empty: true; }; \
+         Empty: true; })",
+    );
+    assert_eq!(
+        nested,
+        format!(
+            "holds(let k = c.versionNumber in case {key}::Rect(k, 1) {{ Circle(r): r <= k; \
+             Rect(_, h): case {key}::Circle(h) {{ Circle(x): x + k <= 4; Rect(a, b): false; \
+             Empty: true; }}; Empty: true; }})"
+        )
+    );
+    let renamed = atom(
+        "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(width, h): width+h<=4; Circle(r): r<=2; })",
+    );
+    assert!(
+        renamed.contains("Rect(width, h): width + h <= 4"),
+        "{renamed}"
+    );
+    assert_ne!(renamed, first);
+}
+
+/// A leaf over `shape_low` lowered on the
+/// source route and, after compiling `shape_low(leaf)` to a checked package
+/// and removing the source, on the package route (FR-1039). Returns each
+/// leaf's source and package `atoms` entry of `p0`.
+fn both_routes(leaf: &str) -> (String, String) {
+    let unit = shape_low(leaf);
+    let lower = json!({"clause": "Low"});
+    let (code, value) = run(&unit, true, ("tl_lowering", lower.clone()));
+    assert_eq!(code, 0, "{value}");
+    let from_source = value["tl_lowering"]["atoms"]["p0"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
+    let models =
+        json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}]);
+    let compile = directory.path().join("compile.json");
+    std::fs::write(
+        &compile,
+        serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
+            "models": models, "program": {"source": source("unit.native")},
+            "output": {"package": "package.json"}}}))
+        .unwrap(),
+    )
+    .unwrap();
+    fsl_command::command::compile(&compile).expect("the unit compiles");
+    std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+    let (code, value) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {"models": models,
+            "package": {"file": "package.json"}, "tl_lowering": lower}}),
+    );
+    assert_eq!(code, 0, "{value}");
+    let from_package = value["tl_lowering"]["atoms"]["p0"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    (from_source, from_package)
+}
+
+/// FR-400-AC-13 and FR-931-AC-13 (package route): the reader-backed read
+/// gives every `case` and `let` binding site the declared names the
+/// in-process read gives, observed through the one printer that reads them,
+/// so each leaf, and each leaf with its binders renamed, gives byte-equal
+/// `atoms` on both routes.
+#[test]
+#[trace("TC-3039", "FR-400-AC-13")]
+#[trace("TC-3039", "FR-931-AC-13")]
+#[ignore = "QSL-2562: case binder names on the reader-backed read and package-route case printing not implemented yet"]
+fn case_binders_match_across_the_source_and_package_routes() {
+    for leaf in [
+        "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })",
+        "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(width, h): width+h<=4; Circle(r): r<=2; })",
+        "holds(let k = c.versionNumber in case Shape::Rect(k, 1) { Circle(r): r <= k; \
+         Rect(_, h): case Shape::Circle(h) { Circle(x): x + k <= 4; Rect(a, b): false; Empty: true; }; \
+         Empty: true; })",
+        "holds(let kk = c.versionNumber in case Shape::Rect(kk, 1) { Circle(rr): rr <= kk; \
+         Rect(_, hh): case Shape::Circle(hh) { Circle(xx): xx + kk <= 4; Rect(aa, bb): false; Empty: true; }; \
+         Empty: true; })",
+    ] {
+        let (from_source, from_package) = both_routes(leaf);
+        assert_eq!(from_source, from_package, "{leaf}");
+    }
+}
+
+/// FR-931-AC-14: the checker's own `#ieee_operand` binders of an IEEE
+/// ordering never print. With one bound operand the composition prints
+/// lesser-left; with two it keeps its source orientation. An author's
+/// `ieee_operand_0` around a comparison prints as written. Both routes agree.
+#[test]
+#[trace("TC-3039", "FR-931-AC-14")]
+#[ignore = "QSL-2562: IEEE ordering composition printing not implemented yet"]
+fn the_checker_ieee_operand_binder_never_prints() {
+    const A: &str = "float64(bits: 0x3ff0000000000000)";
+    const Z: &str = "float64(bits: 0x0000000000000000)";
+    let check = |leaf: String, expected: &str| {
+        let (from_source, from_package) = both_routes(&leaf);
+        assert_eq!(from_source, expected, "{leaf}");
+        assert_eq!(from_package, expected, "{leaf}");
+        assert!(
+            !from_source.contains("let") && !from_source.contains('#'),
+            "{from_source}"
+        );
+    };
+    let one = format!("holds(-{A} < {Z})");
+    check(one.clone(), &one);
+    check(format!("holds({Z} > -{A})"), &one);
+    let greater = format!("holds(-{A} > -{Z})");
+    check(greater.clone(), &greater);
+    let lesser = format!("holds(-{Z} < -{A})");
+    check(lesser.clone(), &lesser);
+    assert_ne!(greater, lesser);
+
+    let written = format!("holds(let ieee_operand_0 = -{A} in ieee_operand_0 < {Z})");
+    let (from_source, from_package) = both_routes(&written);
+    assert_eq!(from_source, written);
+    assert_eq!(from_package, written);
+}
+
+/// FR-397-AC-29: the checker names each IEEE ordering operand binder
+/// `#ieee_operand`, outer (left operand) first, and binds no literal or
+/// local read; no parameter node name begins with `ieee_operand`.
+#[test]
+#[trace("TC-3039", "FR-397-AC-29")]
+#[ignore = "QSL-2562: `#ieee_operand` checker binder name not implemented yet"]
+fn the_checker_names_its_ieee_operand_binders_with_a_hash() {
+    for (body, binders) in [("-p < -q", 2), ("-p < q", 1), ("p < q", 0)] {
+        let unit = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             function lt using v(p: Float64[nearest-even], q: Float64[nearest-even]): Boolean pure {{ {body} }}\n"
+        );
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+        let compile = directory.path().join("compile.json");
+        std::fs::write(
+            &compile,
+            serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
+                "models": [], "program": {"source": source("unit.native")},
+                "output": {"package": "package.json"}}}))
+            .unwrap(),
+        )
+        .unwrap();
+        fsl_command::command::compile(&compile).expect("the unit compiles");
+        let package = std::fs::read_to_string(directory.path().join("package.json")).unwrap();
+        // The name is one text literal node however many binders share it.
+        assert_eq!(package.contains("\"#ieee_operand\""), binders > 0, "{body}");
+        assert!(!package.contains("\"ieee_operand_"), "{body}");
+    }
+}
+
 /// A driver can execute the value returned by the public preparation API.
 /// Provenance: QSL-2348.
 #[test]

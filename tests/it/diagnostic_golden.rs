@@ -105,7 +105,7 @@ fn compile_diagnostic(text: &str, packages: &[&[u8]]) -> OutcomeDiagnostic {
         ReplayLimits::default(),
     )
     .expect_err("the targeted declaration refuses emission");
-    let ReplayRefusal::Recompile(refusal) = failure else {
+    let ReplayRefusal::Recompile { refusal, .. } = failure else {
         panic!("the source reaches the compiler: {failure:?}");
     };
     OutcomeDiagnostic::from_compile_refusal(&refusal)

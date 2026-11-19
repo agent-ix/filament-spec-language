@@ -28,7 +28,8 @@ use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
 use crate::graph_world::{
-    config_world, config_world_over, fork_world, game_world, job_world, World, DIVIDES, REACHES_TWO,
+    config_kernel_world, config_kernel_world_over, config_world, fork_kernel_world, fork_world,
+    game_world, job_world, World, DIVIDES, REACHES_TWO,
 };
 use crate::state_graph::{no_samples, reachable, run, system, AB};
 
@@ -361,7 +362,7 @@ fn the_checker_rejects_altered_rank_certificates() {
 #[trace("TC-644", "FR-169-AC-10")]
 #[test]
 fn the_checker_rejects_a_certificate_over_an_undefined_target() {
-    let world = config_world(DIVIDES, &[(0, 0)]);
+    let world = config_kernel_world(DIVIDES, &[(0, 0)]);
     let states = reachable(&world, AB).0;
     let va = |state: &ModelSimState| world.value(state, "a", "versionNumber");
     let ranks: BTreeMap<StateKey, u32> = states
@@ -558,14 +559,16 @@ fn the_checker_stops_at_its_budgets_and_on_cancellation() {
 }
 
 /// Departure 4: over `Fork` with `fromB`'s second precondition
-/// `6 mod (2 - self.pos) >= 0`, which has no value at `pos = 2`, a
+/// `remainder(2 - self.pos) >= 0`, whose Kernel function computes
+/// `6 mod divisor` and has no value at `pos = 2`, a
 /// certificate holding every reachable state is rejected `BadState` at
 /// `pos = 2`: its successors are not known.
 #[trace("TC-644")]
 #[test]
 fn an_undetermined_contract_at_a_reached_state_is_bad() {
-    let world = fork_world(
-        "pre Odd using v on F::Fork::fromB { 6 mod (2 - self.pos) >= 0 }\n\
+    let world = fork_kernel_world(
+        "function remainder using v(divisor: Integer): Integer pure { 6 mod divisor }\n\
+         pre Odd using v on F::Fork::fromB { remainder(2 - self.pos) >= 0 }\n\
          possible ReachesOne using v over (x: F::Fork) { x.pos = 1 }\n",
     );
     let states = reachable(&world, &["f"]).0;
@@ -654,7 +657,8 @@ fn a_count_two_cycle_certifies_only_where_no_from_node_sits() {
 }
 
 /// FR-169-AC-11: over §7.1's subject with universe `{a}`, initial `va = 0`
-/// and TC-592's guard `2 div (2 - self.versionNumber) >= 1`, a hand-built
+/// and the guard `quotient(2 - self.versionNumber) >= 1`, whose Kernel
+/// function computes `2 div divisor`, a hand-built
 /// certificate of the 3 states ranked 2, 1 and 0 for `ReachesTwo` is
 /// rejected `BadState` at `va = 2`, whose guard has no value; the same
 /// ranks over the subject without the guard are accepted.
@@ -662,9 +666,9 @@ fn a_count_two_cycle_certifies_only_where_no_from_node_sits() {
 #[test]
 fn an_undefined_guard_at_a_reached_state_rejects_bad_state() {
     const GUARD: &str = "pre Guard using v on Config::ConfigVersion::attemptUpdate { \
-                         2 div (2 - self.versionNumber) >= 1 }\n";
+                         quotient(2 - self.versionNumber) >= 1 }\n";
     let checked = |extra: &str| {
-        let world = config_world_over(extra, REACHES_TWO, &["a"], &[vec![0]]);
+        let world = config_kernel_world_over(extra, REACHES_TWO, &["a"], &[vec![0]]);
         let states = reachable(&world, &["a"]).0;
         assert_eq!(states.len(), 3);
         let va = |value| {

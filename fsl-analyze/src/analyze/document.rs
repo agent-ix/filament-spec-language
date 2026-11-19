@@ -1182,7 +1182,10 @@ fn claim_occurrence(
         .iter()
         .find(|site| &site.identity == node)
     {
-        return Some(OccurrenceKey::new(site.identity.clone(), site.claim.clone()));
+        return Some(OccurrenceKey::new(
+            site.identity.clone(),
+            site.claim.clone(),
+        ));
     }
     if let Some(clause) = graph
         .state_clauses()
@@ -1495,16 +1498,33 @@ fn resolve_one(
         .iter()
         .find(|clause| clause.clause().name() == name)
         .map(|clause| OccurrenceKey::new(clause.identity(), clause.claim().clone()))
+        .or_else(|| {
+            package
+                .graph()
+                .state_clauses()
+                .iter()
+                .find(|clause| clause.is_invariant() && clause.name() == name)
+                .map(|clause| OccurrenceKey::new(clause.identity(), clause.claim().clone()))
+        })
         .or_else(|| claim_occurrence(package, &records, &node))
     else {
         return unknown_claim(index, name);
     };
-    // A record keys the declaration, or the value clause a `Boolean`
-    // function's name resolves to.
-    let own: Vec<&fsl_route::request::RequirementItem> = records
+    // Prefer records for this declaration's occurrence when equal nodes
+    // carry multiple claims; only fall back to the node for families whose
+    // record does not retain the named occurrence.
+    let occurrence_records: Vec<&fsl_route::request::RequirementItem> = records
         .iter()
-        .filter(|record| record.node() == &node || record.occurrence() == &claim)
+        .filter(|record| record.occurrence() == &claim)
         .collect();
+    let own: Vec<&fsl_route::request::RequirementItem> = if occurrence_records.is_empty() {
+        records
+            .iter()
+            .filter(|record| record.node() == &node)
+            .collect()
+    } else {
+        occurrence_records
+    };
     let kind = match selection.kind.as_deref() {
         // FR-630 "Request item": a refinement item names kind `refinement`,
         // the `temporal-satisfaction` record S3 writes for the declaration

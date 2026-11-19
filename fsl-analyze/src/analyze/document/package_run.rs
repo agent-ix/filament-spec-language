@@ -175,6 +175,7 @@ enum Named<'s> {
         index: RequestIndex,
         name: &'s str,
         declaration: CheckedNodeId,
+        ordinal: u64,
         selection: &'s ItemSelection,
     },
     StateGraph {
@@ -301,8 +302,9 @@ pub fn settle_package_run(
                 index,
                 name,
                 declaration,
+                ordinal,
                 selection,
-            } => match reads.invariant(index, name, &declaration, selection)? {
+            } => match reads.invariant(index, name, &declaration, ordinal, selection)? {
                 Resolution::Settled(settled) => resolved.push(settled),
                 Resolution::Claim(claim, ()) => {
                     invariant_claims.push(claim.item.claim.clone());
@@ -553,6 +555,7 @@ fn resolve_names<'s>(
                     index,
                     name,
                     declaration: found.declaration,
+                    ordinal: found.occurrence.ordinal,
                     selection,
                 });
             }
@@ -708,7 +711,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                         index,
                         Some(name),
                         "unknown-kind",
-                    )))
+                    )));
                 }
             },
             // A temporal clause's one record is `temporal-satisfaction`.
@@ -837,7 +840,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                         index,
                         Some(name),
                         "unknown-kind",
-                    )))
+                    )));
                 }
             },
             None => Capability::TemporalSatisfaction,
@@ -1021,6 +1024,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         index: RequestIndex,
         name: &str,
         declaration: &CheckedNodeId,
+        ordinal: u64,
         selection: &ItemSelection,
     ) -> Result<Resolution<()>, PackageRunError> {
         let pending = |family| {
@@ -1037,10 +1041,11 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             .package()
             .node_key(declaration)
             .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
+        let origin = filament_exact::Origin::new(filament_exact::Role::new("claim"), ordinal);
         let clause = input
-            .state_clause_at(&key)
+            .state_clause(&key, &origin)
             .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
-        let claim = OccurrenceKey::new(clause.identity.clone(), clause.claim.clone());
+        let claim = OccurrenceKey::new(clause.identity.clone(), origin);
         // FR-290: the record's extent from its domain kinds, as S3 classifies
         // the invariant's `operation-contract` record.
         let kinds = input
@@ -1065,7 +1070,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                         index,
                         Some(name),
                         "unknown-kind",
-                    )))
+                    )));
                 }
             },
             None => Capability::OperationContract,

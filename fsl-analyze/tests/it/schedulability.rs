@@ -164,54 +164,157 @@ fn ctl_is_admitted_under_both_policies_and_its_premises_are_its_identity() {
     assert_eq!(edf.analysis(), ClosedFormAnalysis::EdfQpa);
 }
 
-/// The admission codes only; spans and the `3 m` refusal are not covered, so
-/// no criterion is bound.
+/// Retained closed-form admission; S3's task-set tests cover source spans,
+/// BCET and dimensional refusals, which this rational-only API does not hold.
+#[trace("TC-701", "FR-246-AC-2", "FSpec-TC-372", "FSpec-FR-419-AC-5")]
 #[test]
 fn a_task_set_or_claim_that_breaks_a_rule_is_refused_with_its_code() {
     let name = || set_name("S");
     let refusal = |tasks: Vec<Task>| TaskSet::new(name(), tasks).expect_err("a refusal");
 
-    let zero_period = refusal(vec![task("a", 1, 0, 1)]);
-    assert!(matches!(zero_period, TaskSetRefusal::NotPositive { .. }));
-    assert_eq!(zero_period.code(), Code::InvalidTimedModel);
-    assert_eq!(zero_period.cause(), "invalid-task-set");
+    let empty = refusal(vec![]);
+    assert_eq!(empty, TaskSetRefusal::Empty { task_set: name() });
+    assert_eq!(empty.code(), Code::InvalidTimedModel);
+    assert_eq!(empty.cause(), "invalid-task-set");
+    assert_eq!(
+        empty.to_string(),
+        "invalid_timed_model/invalid-task-set: task set S declares no task"
+    );
 
-    let inverted = refusal(vec![hi_task("h", 3, 2, 10, 1)]);
-    assert!(matches!(inverted, TaskSetRefusal::BudgetOrder { .. }));
-    assert_eq!(inverted.code(), Code::InvalidTimedModel);
+    let non_positive = |member| TaskSetRefusal::NotPositive {
+        task: id("a"),
+        member,
+    };
+    for (invalid, expected) in [
+        (task("a", 1, 0, 1), non_positive(TimeMember::Period)),
+        (
+            Task {
+                arrival: Arrival::Sporadic {
+                    min_interarrival: n(0),
+                },
+                ..task("a", 1, 4, 1)
+            },
+            non_positive(TimeMember::Period),
+        ),
+        (
+            Task {
+                deadline: n(0),
+                ..task("a", 1, 4, 1)
+            },
+            non_positive(TimeMember::Deadline),
+        ),
+        (
+            Task {
+                deadline: n(-1),
+                ..task("a", 1, 4, 1)
+            },
+            non_positive(TimeMember::Deadline),
+        ),
+        (task("a", 0, 4, 1), non_positive(TimeMember::Wcet)),
+        (hi_task("a", 0, 2, 4, 1), non_positive(TimeMember::Wcet)),
+        (hi_task("a", 1, 0, 4, 1), non_positive(TimeMember::Wcet)),
+        (
+            Task {
+                jitter: n(-1),
+                ..task("a", 1, 4, 1)
+            },
+            TaskSetRefusal::Negative {
+                task: id("a"),
+                member: TimeMember::Jitter,
+            },
+        ),
+        (
+            Task {
+                blocking: n(-1),
+                ..task("a", 1, 4, 1)
+            },
+            TaskSetRefusal::Negative {
+                task: id("a"),
+                member: TimeMember::Blocking,
+            },
+        ),
+        (
+            hi_task("a", 3, 2, 10, 1),
+            TaskSetRefusal::BudgetOrder { task: id("a") },
+        ),
+        (
+            Task {
+                wcet: Wcet::Dual { lo: n(1), hi: n(2) },
+                ..task("a", 1, 4, 1)
+            },
+            TaskSetRefusal::LoDualBudgets { task: id("a") },
+        ),
+    ] {
+        let refused = refusal(vec![invalid]);
+        assert_eq!(refused, expected);
+        assert_eq!(refused.code(), Code::InvalidTimedModel);
+        assert_eq!(refused.cause(), "invalid-task-set");
+        assert!(refused.to_string().contains("task a"));
+    }
 
     let duplicate = refusal(vec![task("a", 1, 4, 1), task("a", 1, 5, 2)]);
     assert_eq!(duplicate, TaskSetRefusal::DuplicateTask { task: id("a") });
     assert_eq!(duplicate.code(), Code::ConflictingDeclaration);
     assert_eq!(duplicate.cause(), "duplicate-declaration");
 
-    let lo_dual = Task {
-        wcet: Wcet::Dual { lo: n(1), hi: n(2) },
-        ..task("l", 1, 4, 1)
-    };
-    assert!(matches!(
-        refusal(vec![lo_dual]),
-        TaskSetRefusal::LoDualBudgets { .. }
-    ));
-
-    let clash = TaskSet::new(name(), vec![task("a", 1, 4, 1), task("b", 1, 5, 1)])
-        .expect("priorities are the claim's");
-    let clashed = ScheduleSubject::new(
-        clash.clone(),
-        ScheduleClaim::Schedulable(SchedulingPolicy::FixedPriority),
-    )
-    .expect_err("a priority clash");
-    assert_eq!(
-        clashed,
-        TaskSetRefusal::PriorityClash {
-            first: id("a"),
-            second: id("b"),
-            priority: 1,
+    for (tasks, expected, message) in [
+        (
+            vec![Task {
+                priority: None,
+                ..task("a", 1, 4, 1)
+            }],
+            TaskSetRefusal::MissingPriority { task: id("a") },
+            "task a states no priority",
+        ),
+        (
+            vec![task("a", 1, 4, 1), task("b", 1, 5, 1)],
+            TaskSetRefusal::PriorityClash {
+                first: id("a"),
+                second: id("b"),
+                priority: 1,
+            },
+            "tasks a and b share priority 1",
+        ),
+    ] {
+        let set = TaskSet::new(name(), tasks).expect("priorities are the claim's");
+        for claim in [
+            ScheduleClaim::Schedulable(SchedulingPolicy::FixedPriority),
+            ScheduleClaim::Schedulable(SchedulingPolicy::Amc),
+            ScheduleClaim::Response {
+                task: id("a"),
+                bound: n(4),
+            },
+        ] {
+            let refused = ScheduleSubject::new(set.clone(), claim).expect_err("invalid priorities");
+            assert_eq!(refused, expected);
+            assert_eq!(refused.code(), Code::InvalidTimedModel);
+            assert_eq!(refused.cause(), "invalid-task-set");
+            assert_eq!(
+                refused.to_string(),
+                format!("invalid_timed_model/invalid-task-set: {message}")
+            );
         }
+        let edf = schedulable(set, SchedulingPolicy::Edf);
+        assert!(matches!(run(&edf), ClosedFormOutcome::Schedulable(_)));
+    }
+
+    let beyond = TaskSet::new(
+        name(),
+        vec![Task {
+            deadline: n(5),
+            ..task("a", 1, 4, 1)
+        }],
+    )
+    .expect("deadline above period is policy-dependent");
+    let refused = ScheduleSubject::new(beyond, ScheduleClaim::Schedulable(SchedulingPolicy::Amc))
+        .expect_err("AMC requires constrained deadlines");
+    assert_eq!(
+        refused,
+        TaskSetRefusal::AmcDeadlineBeyondPeriod { task: id("a") }
     );
-    assert_eq!(clashed.code(), Code::InvalidTimedModel);
-    ScheduleSubject::new(clash, ScheduleClaim::Schedulable(SchedulingPolicy::Edf))
-        .expect("an edf claim ignores priorities");
+    assert_eq!(refused.code(), Code::InvalidTimedModel);
+    assert_eq!(refused.cause(), "invalid-task-set");
+    assert!(refused.to_string().contains("task a"));
 
     let unknown = ScheduleSubject::new(
         ctl(5),
@@ -243,26 +346,34 @@ fn ctl_is_schedulable_under_fixed_priority_and_edf() {
     );
 }
 
-#[trace("TC-702", "FR-247-AC-1")]
+#[trace("TC-702", "FR-247-AC-1", "FSpec-TC-372", "FSpec-FR-419-AC-9")]
 #[test]
 fn a_response_claim_holds_at_twelve_and_misses_at_eleven() {
     let claim = |bound| ScheduleClaim::Response {
         task: id("c"),
         bound: n(bound),
     };
-    let holds = run(&subject(ctl(5), claim(12)));
+    let holds_subject = subject(ctl(5), claim(12));
+    let holds = run(&holds_subject);
     assert_eq!(fixpoints(fixed_points(&holds)), vec![n(12)]);
     assert_eq!(
-        run(&subject(ctl(5), claim(11))),
+        settled(&holds_subject, &holds),
+        proved(ClosedFormAnalysis::FixedPriorityRta)
+    );
+    let misses = subject(ctl(5), claim(11));
+    let outcome = run(&misses);
+    assert_eq!(
+        outcome,
         ClosedFormOutcome::Miss(MissEvidence::FixedPriority {
             task: id("c"),
             job: 0,
             iterates: iterates(&[5, 9, 12]),
         })
     );
+    assert_eq!(settled(&misses, &outcome), TerminalValue::Refuted);
 }
 
-#[trace("TC-702", "FR-247-AC-2")]
+#[trace("TC-702", "FR-247-AC-2", "FSpec-TC-372", "FSpec-FR-419-AC-2")]
 #[test]
 fn a_third_wcet_of_six_misses_under_fixed_priority_and_edf() {
     assert_eq!(
@@ -279,7 +390,7 @@ fn a_third_wcet_of_six_misses_under_fixed_priority_and_edf() {
     );
 }
 
-#[trace("TC-702", "FR-247-AC-2")]
+#[trace("TC-702", "FR-247-AC-2", "FSpec-TC-372", "FSpec-FR-419-AC-7")]
 #[test]
 fn jitter_and_blocking_move_the_miss_to_b_and_its_evidence_rechecks() {
     let subject = schedulable(jitter_and_blocking(), SchedulingPolicy::FixedPriority);
@@ -293,6 +404,7 @@ fn jitter_and_blocking_move_the_miss_to_b_and_its_evidence_rechecks() {
         })
     );
     assert_eq!(check(&subject, &outcome), ClosedFormCheck::Agrees);
+    assert_eq!(settled(&subject, &outcome), TerminalValue::Refuted);
 }
 
 #[trace("TC-702", "FR-247-AC-3", "FSpec-FR-419-AC-3")]
@@ -382,7 +494,7 @@ fn proved(analysis: ClosedFormAnalysis) -> TerminalValue {
 /// FSpec FR-419-AC-1: `Ctl` at utilization exactly 1 settles `Proved` under
 /// fixed priority, with the fixpoints, and under EDF. FR-248-AC-1's evidence
 /// half is not asserted, so it is not bound.
-#[trace("TC-703", "FSpec-FR-419-AC-1")]
+#[trace("TC-703", "FSpec-FR-419-AC-1", "FSpec-FR-419-AC-2")]
 #[test]
 fn ctl_settles_proved_with_its_fixpoints_and_a_third_wcet_of_six_settles_refuted() {
     let fixed = schedulable(ctl(5), SchedulingPolicy::FixedPriority);
@@ -486,10 +598,13 @@ fn miss_of(job: u64, values: &[i64]) -> ClosedFormOutcome {
     })
 }
 
-#[trace("TC-703", "FR-248-AC-2")]
+#[trace("TC-703", "FR-248-AC-2", "FSpec-TC-372", "FSpec-FR-419-AC-8")]
 #[test]
 fn a_miss_for_a_job_past_the_busy_period_names_the_job_that_closes_it() {
     let subject = busy_period_set();
+    let outcome = run(&subject);
+    assert_eq!(outcome, miss_of(0, &[2]));
+    assert_eq!(settled(&subject, &outcome), TerminalValue::Refuted);
     assert_eq!(
         check(&subject, &miss_of(2, &[4, 6, 7, 8])),
         ClosedFormCheck::Disagrees(ClosedFormDisagreement::BusyPeriodClosed {
@@ -584,6 +699,7 @@ fn evidence_of_another_analysis_or_for_another_subject_disagrees() {
 /// An `edf` claim refuses jitter and blocking, which the demand test ignores
 /// and fixed priority accounts for; the same sets analyse under fixed
 /// priority and an EDF set without them is unchanged.
+#[trace("TC-701", "FR-246-AC-2", "FSpec-TC-372", "FSpec-FR-419-AC-10")]
 #[test]
 fn an_edf_claim_refuses_jitter_and_blocking() {
     let with = |jitter: i64, blocking: i64| {
@@ -609,6 +725,8 @@ fn an_edf_claim_refuses_jitter_and_blocking() {
             }
         );
         assert_eq!(refused.code(), Code::InvalidTimedModel);
+        assert_eq!(refused.cause(), "invalid-task-set");
+        assert!(refused.to_string().contains("task t"));
         let fixed = schedulable(with(jitter, blocking), SchedulingPolicy::FixedPriority);
         assert!(matches!(run(&fixed), ClosedFormOutcome::Miss(_)));
     }

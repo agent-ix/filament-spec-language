@@ -2429,7 +2429,7 @@ fn check_retains_the_owning_protocol_locus() {
             && locus.start() >= x_start as u64
             && locus.end() <= x_end as u64
     ), "{:#?}", results.protocol_results);
-    let without_payload = crate::ReplayRefusal::Recompile(*refusal);
+    let without_payload = crate::ReplayRefusal::Recompile { refusal: *refusal, pointer: None };
     assert_eq!(with_payload_category, without_payload.code().category());
     assert_eq!(
         with_payload_exit,
@@ -2540,7 +2540,7 @@ fn state_clause_refusal_keeps_protocol_result_cleared() {
         [ProtocolResult::Cleared { declaration, stage: SpineStage::Check }]
             if declaration == "W"
     ));
-    let without_payload = crate::ReplayRefusal::Recompile(*refusal);
+    let without_payload = crate::ReplayRefusal::Recompile { refusal: *refusal, pointer: None };
     assert_eq!(with_payload_category, without_payload.code().category());
     assert_eq!(
         with_payload_exit,

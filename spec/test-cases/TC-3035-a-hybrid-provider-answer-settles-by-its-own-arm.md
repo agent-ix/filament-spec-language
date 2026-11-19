@@ -20,7 +20,7 @@ that every exact number on the hybrid wire is a `Rational` object, that an
 undefined-evaluation counterexample is written and read back, that a
 refuted hybrid item's replay target is `state_clause` naming its claim, and
 that `read_entry` reads against the model and the frame's counterexamples.
-Scope: FR-750-AC-6 to FR-750-AC-11 and FR-1021-AC-3.
+Scope: FR-750-AC-6 to FR-750-AC-11, FR-750-AC-15 and FR-1021-AC-3.
 
 ## Test Procedure
 
@@ -47,6 +47,9 @@ Scope: FR-750-AC-6 to FR-750-AC-11 and FR-1021-AC-3.
    mode `Halted`, and on a `failed` `tool-failure` entry.
 7. Plan the `Fill`/`Drain` tank with `dwell_grid` 1 under the reference
    provider; repeat with a fixture provider whose trace bound is `"8"`.
+8. Over FSpec FR-652-AC-3's `Grow`, replay the `Below` request carrying the
+   nine-step witness at `/replay/certificate`; then with the cut witness,
+   with no `certificate`, and with the witness on a `function` request.
 
 ## Expected Results
 
@@ -79,3 +82,6 @@ Scope: FR-750-AC-6 to FR-750-AC-11 and FR-1021-AC-3.
 - Step 7: the validation item carries dwell and horizon as `Rational`
   objects; the string bound refuses `wrong-value-kind` at its member and
   the candidate is not validated.
+- Step 8: the `hybrid` row `reproduced-with-validated-witness`, `success`;
+  `inconclusive` with `hybrid-trace` `not-exact` twice; refused
+  `unknown-member` at `/replay/certificate`.

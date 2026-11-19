@@ -140,7 +140,7 @@ pub enum PlanRootRefusal {
 
 fn front_end(failure: fsl_replay::spine::FrontEndFailure) -> PlanRootRefusal {
     PlanRootRefusal::FrontEnd(Box::new(match refusal_or_fault(failure) {
-        Ok(refusal) => ReplayRefusal::Recompile(refusal),
+        Ok(refusal) => ReplayRefusal::Recompile { refusal, pointer: None },
         Err(fault) => ReplayRefusal::Fault(fault),
     }))
 }

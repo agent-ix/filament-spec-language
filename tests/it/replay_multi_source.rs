@@ -734,7 +734,7 @@ fn temporal_selection_on_a_library_source_reaches_its_emission() {
         fsl_replay::replay_with_temporal_selections(wire, &[selection], ReplayLimits::default())
             .expect_err("a selection naming no temporal declaration is surplus");
     assert!(
-        matches!(refused, ReplayRefusal::Recompile(_)),
+        matches!(refused, ReplayRefusal::Recompile { .. }),
         "{refused:?}"
     );
 }

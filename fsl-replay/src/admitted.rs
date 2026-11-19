@@ -621,7 +621,7 @@ pub enum AdmittedRefusal {
 impl From<ReplayRefusal> for AdmittedRefusal {
     fn from(refusal: ReplayRefusal) -> Self {
         match refusal {
-            ReplayRefusal::Recompile(refusal) => classify(*refusal),
+            ReplayRefusal::Recompile { refusal, .. } => classify(*refusal),
             ReplayRefusal::RecompileWithProtocolResults { refusal, .. }
             | ReplayRefusal::RefinementInternals { refusal, .. } => classify(*refusal),
             ReplayRefusal::DependencyInput(refusal) => {
