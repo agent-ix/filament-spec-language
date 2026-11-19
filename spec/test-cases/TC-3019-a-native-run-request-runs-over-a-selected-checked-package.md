@@ -13,7 +13,7 @@ relationships:
 Verify that a package-only `native-run/1` request runs from the package's
 own records, never reads or compiles source, and refuses a package that
 cannot run with the code and locus stated. Scope: FR-1039-AC-1 to
-FR-1039-AC-3.
+FR-1039-AC-4.
 
 ## Test Procedure
 
@@ -25,6 +25,11 @@ FR-1039-AC-3.
 3. Send a missing file, a v1 document, a package with an unknown member, no
    `models` entry for a spine-model package, and a spine `models` entry for
    the value package.
+4. Export FR-1015-AC-4's counter from its package file with
+   `source_package` `{"identity": "example/counter-unit", "version": "7"}`,
+   the source removed; send it without `source_package`, with `null` (refused `wrong-value-kind`), with a
+   missing file, and with each malformed `source_package` of FR-1039-AC-4;
+   call `half` over the package with and without `source_package`.
 
 ## Expected Results
 
@@ -35,3 +40,7 @@ FR-1039-AC-3.
 - Step 3: each refusal at stage `request`, exit 20, at its row's locus; the
   v1 document refuses `unknown_wire`/`unsupported-wire` at
   `/request/package/contract_version`.
+- Step 4: the outcome's `package.source_package` equals the stated pair;
+  each refusal is `invalid-request` with `invalid_runtime_input` and the
+  cause and `details.path` FR-1039-AC-4 states, exit 20, no file opened;
+  the call returns `-4` both times.

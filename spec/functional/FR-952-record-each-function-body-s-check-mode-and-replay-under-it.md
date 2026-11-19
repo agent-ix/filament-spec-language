@@ -34,8 +34,8 @@ The modes split along FR-495's Kernel boundary:
   under.
 - **Declared clauses.** A declared clause is always checked under `Linked`:
   state, temporal, hyper and value clauses, a declared `vc`, and the
-  `invariant` and `precondition` clause functions. These clause functions
-  carry `linked`, and `Kernel` never admits a declared clause whose
+  `invariant`, `precondition` and `reward` clause functions (FR-094). These
+  clause functions carry `linked`, and `Kernel` never admits a declared clause whose
   obligation `Linked` refuses.
 
 `Kernel` applies to every function body evaluated under a world built with
@@ -60,8 +60,8 @@ check.
 
 - **Emit.** S4 SHALL write `check_mode` on every `function` node: `kernel`
   for a function body checked under `Kernel`, `linked` for a function body
-  checked under `Linked`, and `linked` for every `invariant` or
-  `precondition` clause function.
+  checked under `Linked`, and `linked` for every `invariant`,
+  `precondition` or `reward` clause function.
 - **Read.** FSL's v2 reader SHALL admit the member as FSpec FR-770 states
   and SHALL apply its refusals. The admitted package exposes each
   function's mode to the replay lifecycle.
@@ -102,7 +102,7 @@ check.
 | FR-952-AC-1 | `fsl compile` of `function g using v(x: Int[0, 9], y: Int[1, 9]): Integer pure { x mod y }` (checked under `CheckMode::Linked`) writes a package in which every `function` node carries `"check_mode": "linked"`; the same unit checked under `CheckMode::Kernel` with `function r using v(x: Int[0, 9]): Integer pure { 10 mod x }` added writes `"check_mode": "kernel"` on `g`'s and `r`'s nodes, and `"linked"` on a `precondition` clause function of the same unit; and the two packages are unequal. | Test (TC-2662) |
 | FR-952-AC-2 | Over the second package of AC-1, a replay request at `r`'s `10 mod x` record's occurrence with `x = 0` recompiles `r` under `Kernel` and settles `reproduced-without-witness`, never a `Recompile` refusal carrying `unproved-nonzero` and never `ReplayRefused(UndefinedExpression)`; FR-098-AC-34 holds. | Test (TC-2662) |
 | FR-952-AC-3 | Under a probabilistic world built with `CheckMode::Kernel`, a target predicate that calls `function z using v(p: Int[0, 2]): Boolean pure { 1 mod p = 0 }` checks, and an evaluation of `z` at `p = 0` reached on the probability path is `Undefined::DivisionByZero`, not a check refusal `Unproved(Nonzero)`; the same `1 mod x.phase = 0` written directly in the declared `probabilistic` clause still refuses `undefined_expression`/`unproved-nonzero` at S3 under that world. | Test (TC-2662) |
-| FR-952-AC-4 | Negative: the FSL v2 reader refuses a package whose `function` node lacks `check_mode`, or carries `"strict"`, with `malformed_wire` at `/semantic_graph/nodes/{i}/check_mode`, and refuses `"kernel"` on an `invariant` clause function with `invalid_package`/`invalid-value` at that pointer. | Test (TC-2662) |
+| FR-952-AC-4 | Negative: the FSL v2 reader refuses a package whose `function` node lacks `check_mode`, or carries `"strict"`, with `malformed_wire` at `/semantic_graph/nodes/{i}/check_mode`, and refuses `"kernel"` on an `invariant` clause function with `invalid_package`/`invalid-value` at that pointer. A unit holding `Service`'s reward `duration`, compiled with `check_mode` `kernel`, writes `"linked"` on the reward's clause function, and the reader refuses that function rewritten to `"kernel"` the same way. | Test (TC-2662) |
 | FR-952-AC-5 | A `native-compile/1` request for the unit with `g` and `r` (`10 mod x`) carrying `"check_mode": "kernel"` and a `handoff` exits 0 and writes `"check_mode": "kernel"` on `g`'s and `r`'s nodes and `"linked"` on the `precondition` clause function, in the package the handoff holds and in the `output` file; the same request with no `check_mode` or with `"check_mode": "linked"` refuses `r` `undefined_expression`/`unproved-nonzero` and writes no package, and over the unit without `r` writes `"linked"` on `g`; `"check_mode": "Kernel"`, `"check_mode": 1` and `"check_mode": null` each refuse `invalid-request` at stage `request`, exit 20, naming `check_mode`; and a replay at `r`'s `10 mod x` record over the Kernel handoff settles as FR-098-AC-34 states. | Test (TC-2975) |
 
 ## Dependencies

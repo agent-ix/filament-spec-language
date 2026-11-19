@@ -12,7 +12,7 @@ relationships:
 
 Verify the abstract protocol side: resolution of the protocol, node targets,
 the refinement's internal list (its shape, spellings, resolution, locus and refusal), the
-single `temporal-satisfaction` requirement record (FR-144's) and the unsupported liveness half.
+single `temporal-satisfaction` requirement record (FR-144's) and the liveness half, decided by FR-899 and never `unsupported`.
 
 Scope: FR-147-AC-1 to FR-147-AC-16. Builds: **built** is a build whose
 support set holds `protocol-abstract-side` and `refinement-internal-list`;
@@ -45,7 +45,7 @@ protocol `OnImpl` over `Impl` only (FR-147-AC-16).
 6. Resolve each defect variant of FR-147-AC-6, one value per variant.
 7. Give the refinement check a non-empty resolved list for `CasTwice` and for
    `CasRefinesCounter`, and an empty one.
-8. Resolve a value naming one entry of every class over `Full` and `Rich`.
+8. Resolve a value naming one entry of every class over `Full` and `Rich`, `Full` with a `recommend` node added; check a step row whose right side names that `recommend` node.
 9. Resolve `CasTwice`'s list, rename the abstract alias to `S` with the value
    renamed to match, and resolve again; compare with the empty list.
 10. Place one defect in the unit's value and the same defect in a supplied
@@ -81,8 +81,8 @@ Tag the tests `#[trace("TC-552", "FR-147-AC-n")]`.
   [Twice::Done]`, one `temporal-satisfaction` record and no `refinement` record;
   the node row checks naming `a1`.
 - Step 2: each variant refuses with FR-147-AC-2's code and subcode.
-- Step 3: liveness half `unsupported`, `unsupported-requested-capability`,
-  naming hidden abstract fields.
+- Step 3: liveness half `Checked(HoldsReduced{reductions: []})` beside a
+  holding safety half; never `unsupported`.
 - Step 4: checks with `finish` visible and `abstract_internal` empty; checks
   with `finish` internal; `invalid_model_binding`/`conflicting-binding`.
 - Step 5: the fixture value gives `abstract_internal = [Twice::Done]`; the
@@ -99,7 +99,8 @@ Tag the tests `#[trace("TC-552", "FR-147-AC-n")]`.
   `unsupported`, with no `CheckedRefinement`; the empty list is not refused
   for the list.
 - Step 8: each entry makes exactly its own class internal; the resolved list
-  is in the byte order of the alias-free spellings.
+  is in the byte order of the alias-free spellings, the `recommend` node's
+  bare path among them; the `recommend` right side is admitted.
 - Step 9: `abstract_internal = [Twice::Done]` before and after the rename,
   with the same node identity; the empty list gives a different identity.
 - Step 10: the unit's defect is located at (the unit's value, pointer), the

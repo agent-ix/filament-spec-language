@@ -135,7 +135,9 @@ timed model treats an operation enabled only between positions as enabled.
 - The liveness half (FR-143) over a timed concrete subject SHALL read only
   time-divergent concrete behaviours (ADR-026 TS-4): an accepting cycle of
   the product SHALL refute only when its loop has positive total delay
-  (ADR-026 EZ-6). The liveness half has no core certificate checker, so its
+  (ADR-026 EZ-6). With a hidden abstract field, or a `strong` constraint in
+  `F_A`, it SHALL be decided by FR-899's rules ("Timed subjects") and never
+  settle `unsupported`. The liveness half has no core certificate checker, so its
   `proved` keeps FR-144's `Uncertified` label (ADR-020 CT-4, RU-7); a
   certificate form for it is not specified here.
 

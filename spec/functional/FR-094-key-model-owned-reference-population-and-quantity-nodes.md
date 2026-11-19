@@ -275,15 +275,26 @@ these differences:
 
 - `owner`: the `ModelOwner` of the declaration whose clause it is: the
   authoring operation member for an authored precondition, the candidate
-  operation member for an effective precondition and for a body, and the
+  operation member for an effective precondition and for a body, the
+  operation member a reward is declared on for a reward (FR-740), and the
   object type for an invariant.
 - `declaration`: `null`, as for every model-owned node.
 - body: FR-092's `parameters`, `body` and `decreases` bindings, followed by
   binding `clause` = the `DeclaredClauseKind` as a text literal typed at the
   text scalar node (FR-092 T3): `"precondition"` for an authored or
-  effective precondition, `"body"` for a body, and `"invariant"` for an
-  invariant. The `match` that spells it is over `DeclaredClauseKind`, which
-  has no postcondition arm.
+  effective precondition, `"body"` for a body, `"reward"` for a reward's
+  expression (FR-740, FSpec FR-640), and `"invariant"` for an invariant.
+  The `match` that spells it is over `DeclaredClauseKind` (`Invariant`,
+  `Precondition`, `Body`, `Reward`), which has no postcondition arm. A
+  reward's clause function has its own kind because a `precondition`
+  function is read as a guard of its operation and a `body` function makes
+  the operation's FSpec FR-322 `operation_bodies` row a `function` row: a
+  reward is pure over the operation's parameters, random parameters
+  included, reads no state, has the reward's value type as its result and is
+  neither. Its check mode is `Linked` by FR-952's declared-clause rule,
+  which names `reward` beside `invariant` and `precondition` (FSpec
+  FR-770), and never by the declaration-less function rule that gives a
+  `body` clause function the mode its unit's bodies were checked under.
 
 An operation's postconditions are lowered by the `ProtocolClause` family
 with its checked operation header (ADR-012 §3, §4.3; #218), which gives each
@@ -301,7 +312,14 @@ leaves the node id unchanged.
 The clause functions of one owner share one `package` and `path` (FR-322
 "Structural node identity") and `check` assigns their `ordinal`s in the order
 this section lists them: authored precondition `0`, effective precondition
-`1`, body `2`; an invariant is `0`. No reader derives an ordinal.
+`1`, body `2`; an invariant is `0`. Reward functions (FR-740) are lowered
+after every other clause function, in ascending order of (operation key,
+reward name), and each takes the next ordinal of its path after every
+clause function lowered before it on that path, so a reward's ordinal never
+depends on the source order of any declaration (FSpec FR-640 "Reward
+identity"). A reward on a source-declared type has its own `declaration`
+path and ordinal `0` (FSpec FR-322 "Source-declared object types" item 5).
+No reader derives an ordinal.
 
 A redefining candidate's own clauses are built both by its own dispatch
 operation and as a candidate of the operation it redefines, and `check`
@@ -467,6 +485,7 @@ FSpec's `unit-metre` and `unit-second` nominal nodes.
 | FR-094-AC-13 | With a unit declaring `model R = "acme/rpc" …` and `model F = "acme/flow" …`, each package declaring base dimension `Time` and a root unit of it (`s`; flow's `ms` is `1/1000` of its root), and `dimension R::Time ~ F::Time by 1 R::s = 1000 F::ms;`, the checked graph holds one `scalar_type`/`dimension_equivalence` node with no `declaration`, self-typed, relating the two package `Time` nodes in ascending node-key order with `root_scale` `1/1`, whose `dependencies` are exactly those two nodes and whose one occurrence has role `anchor` and ordinal 0; `dimension F::Time ~ R::Time by 1000 F::ms = 1 R::s;` in its place gives the same node; with `acme/clock` as a third package (root `ms`), `dimension R::Time ~ G::Time by 1 R::s = 1000 G::ms;` gives the node with `root_scale` `1000/1` and `dimension G::Time ~ R::Time by 1000 G::ms = 1 R::s;` the same node; a second declaration `dimension R::Time ~ Time by 1 R::s = 1 s;` over a source `Time` gives a second node with ordinal 1; the package `Time` nodes are the nodes they are with no equivalence; the equivalence node is emitted though no quantity type names either dimension; and IR's checked-package/v2 reader admits the package and derives the classes the declarations give, refusing `invalid_semantic_graph` the same package with a `root_scale` of `0/1`, `-1/1`, `2000/2` or none, or with the ratios of its base pairs not multiplying to one. | Test (TC-419) |
 | FR-094-AC-14 | With TC-1070's standard E and E-P documents selected, the normal handoff emits each ordinary object declaration exactly once with its original effective identity, model owner, correspondence and a generated occurrence at the selecting alias. E-P includes Node, Other and Elsewhere even though Elsewhere is used only by an unused population. Strict read and the public native selected-type projection succeed for both documents, preserving their complete record/object facts. Omitting or foreigning a real object declaration witness returns a typed native refusal without a partial projection. The identities file uses the required existing handoff version and no additional format. | Test (TC-417) |
 | FR-094-AC-15 | A selected model names source unit `U` in exactly one otherwise unused type position: a field, tuple position, sequence item, option inner type, alias target, operation parameter, operation result or Rational scalar unit. For each position independently, with no expression naming `U`, check and handoff emit its source-owned unit node, its dimension and its target-unit dependency closure; the unit is typed by its dimension and has exactly the declared nominal dependencies. An unrelated declared unit is omitted. The normal checked-package/v2 reader admits each emitted package. Separately, synthetic contract fixtures normalized through the production normalizer independently cover a Variant payload and a Map value naming a unit: lowering emits that unit and exactly its nominal closure. This defensive record-arm coverage does not claim public admission of those forms; unit variant payloads remain refused under FR-056-AC-25, and the current Map original-provenance intake refusal remains outside this criterion. The Rational fixture declares its unit in the model namespace as required by TypeDefinition.unit. | Test (TC-419) |
+| FR-094-AC-16 | Lowering `Service` (FR-185-AC-1) builds the `duration` reward's clause function with `owner` the `ModelOwner` whose `node` is the operation member `ix://<model identity>/Server/attempt`, `declaration` `null`, the `parameters` binding referencing `Server::attempt`'s parameters in declared order (the random `d` and `outcome` included), result type the node of `Millis`, and a trailing `clause` binding with the text `"reward"`, checked `Linked`; the graph holds no clause function of `Server::attempt` whose `clause` is `"precondition"` or `"body"` that was built for the reward, and `DeclaredClauseKind` has the four arms `Invariant`, `Precondition`, `Body` and `Reward`, spelled `"invariant"`, `"precondition"`, `"body"` and `"reward"`. | Test (TC-418) |
 
 A check with two admitted versions of one domain package
 identity refuses as an internal fault.
