@@ -1010,6 +1010,8 @@ pub struct CheckedGraph {
     /// FSpec FR-491: the profile that declares FR-176's lattice, when the
     /// unit selects one.
     composition_lattice: Option<String>,
+    /// FR-753: S3-checked verification plans retained for S4 emission.
+    verification_plans: Vec<fsl_forms::VerificationPlanForm>,
     /// FSpec FR-490: the model alias of each temporal clause's subject, by
     /// the clause's name.
     temporal_subject_aliases: BTreeMap<String, String>,
@@ -1181,6 +1183,7 @@ impl DebugWith for CheckedGraph {
             composition_forms,
             compositions,
             composition_lattice,
+            verification_plans,
             temporal_subject_aliases,
             predicate_names,
             protocols,
@@ -1306,6 +1309,7 @@ impl DebugWith for CheckedGraph {
             .field("composition_forms", &composition_forms)
             .field("compositions", &compositions)
             .field("composition_lattice", &composition_lattice)
+            .field("verification_plans", &verification_plans)
             .field("temporal_subject_aliases", &temporal_subject_aliases)
             .field("predicate_names", &predicate_names)
             .field("protocols", &Seq(protocols, table))
@@ -8091,6 +8095,7 @@ impl PackageDeclarations {
             composition_forms: self.compositions,
             compositions: Vec::new(),
             composition_lattice: self.composition_lattice,
+            verification_plans: self.verification_plans,
             temporal_subject_aliases,
             predicate_names,
             model_names,
@@ -9168,6 +9173,12 @@ impl CheckedGraph {
     /// the `package` of every structural node id of the graph.
     pub fn package_name(&self) -> &str {
         &self.package_name
+    }
+
+    /// FR-753: the source-ordered verification plans that passed this
+    /// package's S3 name, applicability, bound and cycle checks.
+    pub fn verification_plans(&self) -> &[fsl_forms::VerificationPlanForm] {
+        &self.verification_plans
     }
 
     /// The lowered nodes, for a test that re-keys one after the nodes bound
