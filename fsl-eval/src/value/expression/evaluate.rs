@@ -3522,6 +3522,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             ) if narrowing => Stop::Refused(Refusal::RationalOutOfDomain {
                                 target: Box::new(target.clone()),
                             }),
+                            (
+                                Stop::Refused(Refusal::CheckedInvariant {
+                                    cause: CheckedInvariantCause::EqualityOperandTargetNotAdmitted,
+                                }),
+                                ValueType::Decimal(target),
+                            ) if narrowing => Stop::Refused(Refusal::DecimalOutOfDomain {
+                                target: Box::new(target.clone()),
+                            }),
                             _ => stop,
                         }
                     })?;
