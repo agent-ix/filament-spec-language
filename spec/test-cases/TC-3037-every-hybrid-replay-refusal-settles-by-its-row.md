@@ -36,7 +36,9 @@ trips. Scope: FR-750-AC-12, FR-750-AC-13 and FR-750-AC-14.
 3. Run FR-450-AC-7's trace under a `work_units` bound of 10 through analyze
    and through a replay request.
 4. Read FR-750-AC-7's process `expression-form` entry through
-   `read_entry(entry, counterexamples, graph, claim)`; repeat with `locus`
+   `read_entry(entry, counterexamples, graph, claim, wire)`, its `locus` the
+   division's emitted node id; repeat with the division's checked-graph index
+   as `locus`, with a node id the wire lacks, with `locus`
    naming a guard node of `Moving`, with a node outside the model, and with
    `mode` `Halted`.
 5. Reproduce each `UndefinedCause` variant (division by zero, `drag` called
@@ -73,8 +75,10 @@ trips. Scope: FR-750-AC-12, FR-750-AC-13 and FR-750-AC-14.
 - Step 3: `incomplete`, `LimitReached{work_units, 10, accounting.work_units}`;
   the replay row `incomplete` with that limit.
 - Step 4: `Unsupported` with `v`'s flow site in `Moving` and the division's
-  `TermLocus`, never `NotRead`; then `invalid_result`/`invalid-value` at
-  `/diagnostic/detail/locus` twice and at `/diagnostic/detail/mode`.
+  `TermLocus`, decoded through the wire graph, never `NotRead`; then
+  `invalid_result`/`invalid-value` at `/diagnostic/detail/locus` four times
+  (the checked-graph index resolves through the wire to another node, which
+  is no term of `v`'s rate) and at `/diagnostic/detail/mode`.
 - Step 5: `division-by-zero`, `outside-parameter-range`,
   `outside-result-range` and `outside-capture-range`, each read back to its
   variant; `undefined` refused at `/kind/cause`; the containing claim settles

@@ -531,7 +531,19 @@ capture enclosed within a composite expression remains permitted.
   `operator-ineligible` at the read, naming the guard; this rule has
   precedence over the table, which classifies record binders only. A protocol
   capture is an immutable value that every role holds: a guard or a `visible`
-  entry may read one, and it needs no listing.
+  entry may read one, and it needs no listing. S3 SHALL NOT refuse a read of a
+  protocol capture `wrong_snapshot`/`wrong-observation`, at any decision and
+  for any owner, because every role holds the capture's value from activation
+  on and no listing applies to it. The refusals that remain around captures
+  are two. A guard or `visible` entry that reads, in place of the capture,
+  the mutable state the capture would have snapshotted (a decision fact of a
+  role's binder) at a decision whose owner is another role SHALL be refused
+  `wrong_snapshot`/`wrong-observation` at that read, reason `other-role`, by
+  the rule below. A read the capture stages classify (FR-381 "Names a stage
+  may read": a capture read before it is written, a capture whose
+  initializer reads itself, or a name foreign to the reading stage) SHALL be
+  refused as that table states, `missing_declaration`/`missing-name` at the
+  name written, with `read` `forward`, `foreign` or `stage`.
 
   A decision that depends on the protocol input reads it through a protocol
   capture: `capture amount: M::Money = input.amount;` fixes the value at
@@ -768,6 +780,7 @@ one protocol declared in the same unit. It carries no package selector.
 | FR-218-AC-45 | `observe role Auditor on M::Actor;` with a `receive` to `Auditor`, a `choice by Auditor`, a `check` and `recommend Advise by Auditor on M::Actor::op contracts [] as (r: Boolean) { true };` checks, and `run observe sequence Review { check Gate using v { true }; recommend Advise by R on M::Actor::op contracts [] as (r: Boolean) { true }; }` checks; each checked clause records the observe-only role or control, and the same clauses without `observe` check to clauses equal except for those marks. `observe observe sequence ...` fails at the parser with `invalid_syntax`/`unexpected-token` at the second `observe`, and a capture named `observe` checks. | Test (TC-2989) |
 | FR-218-AC-46 | Inside `observe sequence Review`, each of `attempt Tried by R on M::Actor::op ...`, an `effect` of an attempt outside `Review`, a `send`, a `commit` and an `event ... for` a compensation refuses `ill_typed`/`operator-ineligible` whose refusal region's text is exactly that action's declaration, retaining `action` (`attempt`, `effect`, `send`, `commit`, `event-for`) and `boundary` `Review`; the same action outside `Review` checks. Under `observe role R`, `attempt Tried by R ...` refuses with `boundary` `R`, and a compensation template `by R` refuses with `action` `compensate` at the template. A nested `choice` in `Review` holding the attempt in one case refuses at the attempt. Two offending actions give two refusals in source order and none whose region is the role or the `Review` header. | Test (TC-2989) |
 | FR-218-AC-47 | A `recommend` over an unknown operation refuses as an `attempt` over it does; a `recommend` whose `contracts` names a clause of another operation refuses as for an attempt; a `while` guard or `visible` entry reading the recommend binder `r` refuses `ill_typed`/`type-mismatch` at the read with `expected` no result. | Test (TC-2989) |
+| FR-218-AC-48 | Over a protocol whose activation captures `capture amount: M::Money = input.amount;`, a `case when amount > 0` guard checks at a decision owned by each role, with no `visible` entry and no `wrong_snapshot`/`wrong-observation` refusal; a guard at a decision owned by one role that reads, in place of a capture, the field of another role's binder that the capture would have snapshotted is refused `wrong_snapshot`/`wrong-observation` at that read, reason `other-role`; and a capture that reads a capture written after it is refused as FR-381 states, `missing_declaration`/`missing-name` with `read` `forward`, at the name written. | Test (TC-3038) |
 
 ## Dependencies
 

@@ -99,6 +99,12 @@ template declares, read outside that template (by another template or by a
 protocol-level stage), `stage` for any other name that exists but that the
 reading stage may not read, and `unbound` for a name nothing declares.
 
+This classification is the only refusal of a read of a capture. A capture is
+an immutable value every role holds from its stage on, so a read of a
+capture that the reading stage may read SHALL NOT be refused
+`wrong_snapshot`/`wrong-observation` at any decision or for any owner, and it
+needs no `visible` listing (FR-218).
+
 | Stage | Names it may read |
 | --- | --- |
 | `protocol-activation` (`activation on each ... when`) | the activation binder |
@@ -291,6 +297,7 @@ node `E` (FSpec FR-056).
 | FR-381-AC-13 | `attempts 3 of M::Node`, an object type, refuses `invalid_model_binding`/`malformed-declaration` at `M::Node`, retaining compensation, member `attempts` and name, and gives no refusal at the retry binders, whatever their type; the same refusal holds for the scalar type `M::Total`, a composite type and a variant type, and `attempts 3 of M::Absent` refuses `missing_declaration`/`missing-name` at `Absent`. | Test (TC-1058) |
 | FR-381-AC-14 | A trigger guard and a recovery predicate that read a field of a binder of the object type `M::Node`, and an activation guard that reads a field of an `on each` binder of that type, each refuse `ill_typed`/`operator-ineligible` at the read, naming their stage; a retry relation over object binders refuses the same way; the same reads over a record-type binder check, and a registration capture that reads a field of an object binder checks. | Test (TC-1057) |
 | FR-381-AC-15 | A trigger guard that reads `trigger.node.n` through the reference-typed field `node` of a record binder, and a recovery predicate that reads `deref(recovered.node).n`, each refuse `ill_typed`/`operator-ineligible` at the read, naming their stage; an activation capture that reads the same field through the reference checks. | Test (TC-1057) |
+| FR-381-AC-16 | In the refund template of TC-1057, a guard at a decision owned by each of the template's roles that reads the activation capture `amount` checks with no `visible` entry and no `wrong_snapshot`/`wrong-observation` refusal; a capture that reads a capture written later, one that reads itself and a registration capture that reads another template's capture are refused `missing_declaration`/`missing-name` at the name written with `read` `forward`, `forward` and `foreign`, and none of them is refused `wrong_snapshot`. | Test (TC-3038) |
 
 ## Dependencies
 
