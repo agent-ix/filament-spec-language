@@ -5,8 +5,8 @@ use std::str::FromStr;
 
 use filament_eval::{Evaluation, FamilyOutcome};
 use filament_exact::{
-    Integer, Meter, Outcome, Rational, Refusal, ScalarLimits, TextProfile, TextType, Undefined,
-    Value, admit_text,
+    IeeeFlag, Integer, Meter, Outcome, Rational, Refusal, RoundingMode, ScalarLimits, TextProfile,
+    TextType, Undefined, Value, admit_text,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::loss::ValueLoss;
@@ -178,9 +178,12 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     assert!(
         matches!(completed(&rounded), Value::Decimal(value) if value.representation().coefficient() == &Integer::from(156_i64) && value.representation().scale() == 2)
     );
-    assert!(
-        matches!(rounded.losses.as_slice(), [loss] if matches!(loss.loss, ValueLoss::Decimal(_)))
-    );
+    assert!(matches!(
+        rounded.losses.as_slice(),
+        [loss] if matches!(&loss.loss, ValueLoss::Decimal(decimal_loss)
+            if decimal_loss.exact() == Rational::new(Integer::from(311_i64), Integer::from(200_i64)).unwrap()
+                && decimal_loss.mode() == RoundingMode::NearestEven)
+    ));
 
     let strict_inexact = call(
         &package,
@@ -355,6 +358,10 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
     assert!(
         matches!(completed(&evaluation), Value::Float(value) if value.bits() == 0x3fb9_9999_9999_999a)
     );
+    assert!(matches!(
+        evaluation.losses.as_slice(),
+        [loss] if matches!(loss.loss, ValueLoss::IeeeFlags(flags) if flags.contains(IeeeFlag::Inexact))
+    ));
     let evaluation = call(
         &package,
         "float",
