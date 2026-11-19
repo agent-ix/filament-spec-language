@@ -23,7 +23,11 @@ pub(super) fn checked_graph() -> fsl_semantics::check::CheckedGraph {
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     assemble_with_models(relation_unit().as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"))
 }
 
@@ -39,7 +43,11 @@ fn checked_bound_graph() -> fsl_semantics::check::CheckedGraph {
     );
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the bound unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the bound unit checks: {refusals:?}"))
 }
 

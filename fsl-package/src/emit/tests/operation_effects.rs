@@ -50,7 +50,11 @@ fn compile(document: &Value, clauses: &str) -> (CheckedPackage, Vec<u8>) {
     let packages = fsl_semantics::model::intake::package_input([bytes.as_slice()]).unwrap();
     let graph = assemble_with_models(unit(clauses).as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     (CheckedPackage::link(graph), bytes)
 }

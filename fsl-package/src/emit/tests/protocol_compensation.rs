@@ -140,7 +140,11 @@ fn checked_graph(unit: &str) -> Result<fsl_semantics::check::CheckedGraph, Vec<C
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
 }
 
 /// FR-892-AC-1 (TC-2525): one package may bind a compensation template, an
