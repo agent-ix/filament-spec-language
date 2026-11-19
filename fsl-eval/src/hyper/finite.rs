@@ -166,8 +166,14 @@ pub fn evaluate_finite_hyper<T>(
     }
     let mut selected = Vec::with_capacity(quantifiers.len());
     let truth = quantify(population, quantifiers, 0, &mut selected, &mut body);
+    let open_refutation_is_decisive = quantifiers
+        .iter()
+        .all(|(kind, _)| *kind == FiniteQuantifier::Forall);
     match (truth, population.closure) {
-        (Truth::False(false_tuples), FiniteTraceClosure::Closed) => {
+        (Truth::False(false_tuples), FiniteTraceClosure::Closed)
+        | (Truth::False(false_tuples), FiniteTraceClosure::Open)
+            if population.closure == FiniteTraceClosure::Closed || open_refutation_is_decisive =>
+        {
             FiniteHyperOutcome::Refuted { false_tuples }
         }
         (Truth::False(_), FiniteTraceClosure::Open) => FiniteHyperOutcome::Inconclusive,

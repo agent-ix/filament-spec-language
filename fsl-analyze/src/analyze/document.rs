@@ -28,7 +28,7 @@ use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::request::ProtocolAnalysisSelection;
 use super::{
@@ -1342,7 +1342,7 @@ pub fn resolve_items(
 mod package_run;
 
 pub use package_run::{
-    settle_package_run, PackageRun, PackageRunError, PendingFamily, PendingPackageFamily,
+    PackageRun, PackageRunError, PendingFamily, PendingPackageFamily, settle_package_run,
 };
 
 /// One requirement item of a run call (FR-395 "Item of the call") with the
@@ -1741,7 +1741,7 @@ fn resolve_one(
                 }
             }
             (Some(_), _) if protocol_analysis_kind => {
-                return invalid_member(index, name, "temporal.subject.protocol")
+                return invalid_member(index, name, "temporal.subject.protocol");
             }
             (Some(_), _) => return invalid_value(index, name, "temporal.subject.protocol"),
             (None, _) => None,
@@ -1793,14 +1793,28 @@ fn resolve_one(
             options: backend_options.clone(),
         }))
     } else {
-        (kind == Capability::TemporalSatisfaction
-            || kind == Capability::GlobalConformance
-            || protocol_analysis_kind)
+        let finite_hyper = (kind == Capability::TemporalSatisfaction)
             .then(|| {
-                let mut form = temporal_item(package, &claim, &temporal);
-                form.pending_reductions.clone_from(&selection.reductions);
-                form.protocol = protocol.clone();
-                ItemForm::Temporal(form)
+                package
+                    .graph()
+                    .finite_hyper_clauses()
+                    .iter()
+                    .find(|clause| clause.identity() == Some(claim.node()))
+                    .cloned()
+            })
+            .flatten();
+        finite_hyper
+            .map(|clause| ItemForm::FiniteHyper(super::request::FiniteHyperItem { clause }))
+            .or_else(|| {
+                (kind == Capability::TemporalSatisfaction
+                    || kind == Capability::GlobalConformance
+                    || protocol_analysis_kind)
+                    .then(|| {
+                        let mut form = temporal_item(package, &claim, &temporal);
+                        form.pending_reductions.clone_from(&selection.reductions);
+                        form.protocol = protocol.clone();
+                        ItemForm::Temporal(form)
+                    })
             })
     };
     let item = ClaimItem {
@@ -2957,10 +2971,10 @@ pub fn settle_run(
             Err(super::simulation_item::SimulationFault::Binding(failure)) => {
                 return Err(AnalyzeDocumentError::Refused(
                     super::AnalyzeRefusal::Binding(failure),
-                ))
+                ));
             }
             Err(super::simulation_item::SimulationFault::Fault) => {
-                return Err(AnalyzeDocumentError::Fault)
+                return Err(AnalyzeDocumentError::Fault);
             }
         }
     }

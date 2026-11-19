@@ -205,7 +205,17 @@ impl ClaimItem {
             backend: None,
             candidates: Vec::new(),
             options: ItemOptions::default(),
-            form: None,
+            form: if kind == Capability::TemporalSatisfaction {
+                graph
+                    .finite_hyper_clauses()
+                    .iter()
+                    .find(|clause| clause.identity() == Some(claim.node()))
+                    .cloned()
+                    .map(FiniteHyperItem::from)
+                    .map(ItemForm::FiniteHyper)
+            } else {
+                None
+            },
         })
     }
 }
@@ -223,6 +233,21 @@ pub enum ItemForm {
     Probabilistic(ProbabilisticItem),
     /// A hybrid-dynamics request; only an engine implementing this form runs it.
     Hybrid(HybridItem),
+    /// A checked FR-898 clause over a request-supplied finite trace population.
+    FiniteHyper(FiniteHyperItem),
+}
+
+/// The checked finite-hyper clause selected by a temporal-satisfaction item.
+#[derive(Clone)]
+pub struct FiniteHyperItem {
+    /// The checked clause whose body is evaluated over the selected traces.
+    pub clause: fsl_semantics::check::CheckedFiniteHyperClause,
+}
+
+impl From<fsl_semantics::check::CheckedFiniteHyperClause> for FiniteHyperItem {
+    fn from(clause: fsl_semantics::check::CheckedFiniteHyperClause) -> Self {
+        Self { clause }
+    }
 }
 
 /// Hybrid item settings kept distinct from temporal and probabilistic forms.
@@ -719,7 +744,8 @@ fn work<'a>(
     let item = &negotiated.item;
     let temporal_kind = match &item.form {
         Some(ItemForm::Temporal(form)) => form.item_kind,
-        Some(ItemForm::Probabilistic(_) | ItemForm::Hybrid(_)) | None => ItemKind::Formula,
+        Some(ItemForm::FiniteHyper(_) | ItemForm::Probabilistic(_) | ItemForm::Hybrid(_))
+        | None => ItemKind::Formula,
     };
     let family = if item.kind == Capability::GlobalConformance {
         Some(fsl_semantics::check::DeclarationFamily::Protocol)
@@ -1106,9 +1132,10 @@ fn work<'a>(
         {
             let form = match &item.form {
                 Some(ItemForm::Temporal(form)) => form.clone(),
-                Some(ItemForm::Probabilistic(_) | ItemForm::Hybrid(_)) | None => {
-                    TemporalItem::default()
-                }
+                Some(
+                    ItemForm::FiniteHyper(_) | ItemForm::Probabilistic(_) | ItemForm::Hybrid(_),
+                )
+                | None => TemporalItem::default(),
             };
             super::invariant_item::invariant_item(
                 analysis,
@@ -1169,6 +1196,7 @@ fn work<'a>(
             Some(crate::zone_check::manifest::BACKEND_ID)
         }
         Some(ItemForm::Temporal(_)) => Some(crate::model_check::manifest::BACKEND_ID),
+        Some(ItemForm::FiniteHyper(_)) => Some(crate::model_check::manifest::BACKEND_ID),
         Some(ItemForm::Probabilistic(form)) => match form.evidence {
             EvidenceKind::Exact => Some(crate::exact_probabilistic::manifest::BACKEND_ID),
             EvidenceKind::Statistical => Some(crate::statistical::manifest::BACKEND_ID),

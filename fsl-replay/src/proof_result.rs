@@ -1749,6 +1749,16 @@ impl TerminalRecord {
         Self::with_backend(request_index, backend, TerminalValue::Refuted)
     }
 
+    /// FR-898: a finite-hyperproperty refutation whose population and exact
+    /// trace-pair witness were reproduced by the checked body.
+    pub fn refuted_by_finite_hyper(
+        request_index: RequestIndex,
+        backend: BackendId,
+        _reproduced: &crate::ReproducedFiniteHyperRefutation,
+    ) -> Self {
+        Self::with_backend(request_index, backend, TerminalValue::Refuted)
+    }
+
     /// ADR-036 PA-20 (FSL FR-573): the record of a settled protocol
     /// analysis. A `refuted` settlement exists only for a counterexample
     /// that replayed, which each protocol analysis engine checks before it
