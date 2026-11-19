@@ -63,14 +63,17 @@ fn a_guard_reading_over_refuses_at_the_read() {
 #[trace("FR-218-AC-17")]
 #[test]
 fn a_guard_reading_the_activation_binder_refuses_as_ineligible_kind() {
-    let source = protocol("", RUN)
-        .replace("on origin", "on each (tick: M::Actor)")
-        .replace(
-            "role R on M::Actor;",
-            "role R on M::Actor; role S on M::Actor;",
-        )
-        .replace("when { ready }", "when { tick.ready }")
-        .replace("when { not ready }", "when { not tick.ready }");
+    let source = format!(
+        "record Plain {{ ready: Boolean; done: Boolean; }}\n{}",
+        protocol("", RUN)
+            .replace("on origin", "on each (tick: Plain)")
+            .replace(
+                "role R on M::Actor;",
+                "role R on M::Actor; role S on M::Actor;",
+            )
+            .replace("when { ready }", "when { tick.ready }")
+            .replace("when { not ready }", "when { not tick.ready }")
+    );
     let (text, found) = refusals(&source);
     assert_eq!(found.len(), 2, "both guard reads are refused: {found:?}");
     for (refusal, cause) in found.iter().zip(protocol_causes(&found)) {
