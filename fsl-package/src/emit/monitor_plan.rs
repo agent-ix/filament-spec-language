@@ -1372,7 +1372,6 @@ fn finish(
     refresh_equality_membership(&mut rows.equality_fact_witness_rows, &nodes);
     Ok(Emission {
         package,
-        claim_workloads: Vec::new(),
         omitted: rows.omitted,
         evidence: own_evidence(&lock),
         capability_report,

@@ -201,7 +201,7 @@ mod time_units;
 pub use time_units::is_clock_unit_node;
 mod timed_model;
 pub use probabilistic::{
-    Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedProbabilisticModel,
+    Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedProbabilisticModel, ClaimReadFault, ClaimReads, FairnessRead, SchedulerRead,
     CheckedTemporalFormula, ClaimActivation, ClaimNormalForm, Confidence, ConfidenceFault, Delay,
     DelayDistribution, DelayFault, Event, FractionMeasure, ModelSubjectRef, OverBinding,
     PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause, ProbabilisticDeclaration,
@@ -6499,7 +6499,7 @@ impl PackageDeclarations {
         };
         // FR-498: each checked probabilistic claim's node.
         let lowered_probabilistic =
-            match lowering.probabilistic_claims(probabilistic_model.claims()) {
+            match lowering.probabilistic_claims(&probabilistic_model, &lowered_rewards) {
                 Ok(keys) => Some(keys),
                 Err(refusal) => {
                     refusals.push(refusal);

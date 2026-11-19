@@ -28,6 +28,7 @@
 
 use std::collections::BTreeMap;
 
+use filament_checked::key::DeclarationKey;
 use filament_exact::{
     DecimalType, Identifier, IllTypedCause, Integer, IntegerInterval, Meter, NodeKey, Quantity,
     Rational, RationalDomain, RoundingMode, UnitId, Value, ValueType,
@@ -96,6 +97,14 @@ pub enum ProbScheduler {
     /// [`CheckedProbabilisticClaim::fairness`].
     Every,
 }
+
+/// A claim's checked scheduler, its fairness set and the declaring type of each
+/// fairness operation.
+type SchedulerCheck = (
+    ProbScheduler,
+    Vec<FairnessConstraint>,
+    Vec<Option<DeclarationKey>>,
+);
 
 /// A probability or measure bound, `>= c` or `<= c`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -396,6 +405,10 @@ pub struct CheckedProbabilisticClaim {
     /// The fairness set of a claim `under every scheduler`; empty under a
     /// workload (ADR-024 PM-7).
     pub fairness: Vec<FairnessConstraint>,
+    /// The declaring type of each of [`Self::fairness`]'s operations, in the
+    /// same order: the identity of its `model` node, `None` when the type has
+    /// none (FSpec FR-640 "Probabilistic claim node").
+    pub(crate) fairness_declaring: Vec<Option<DeclarationKey>>,
     /// The activation, including the trigger binder and its checked guard.
     pub activation: ClaimActivation,
     /// The form.
@@ -814,7 +827,7 @@ impl Pass<'_, '_> {
         claim.activation = activation.as_ref();
         let confidence = keep(refusals, self.confidence(&claim));
         let body = self.form(&claim, profile.as_ref(), cx, nodes, refusals);
-        let (scheduler, fairness) = scheduler?;
+        let (scheduler, fairness, fairness_declaring) = scheduler?;
         let (profile, form_checked) = (profile?, body?);
         let confidence = confidence?;
         if !refusals.is_empty() {
@@ -838,6 +851,7 @@ impl Pass<'_, '_> {
             profile,
             scheduler,
             fairness,
+            fairness_declaring,
             activation: activation?,
             form: form_checked,
             confidence,
@@ -1020,7 +1034,7 @@ impl Pass<'_, '_> {
         &self,
         form: &ProbabilisticForm,
         subject: &ModelSubjectRef,
-    ) -> Result<(ProbScheduler, Vec<FairnessConstraint>), CheckRefusal> {
+    ) -> Result<SchedulerCheck, CheckRefusal> {
         let claim = form.name.name.clone();
         match &form.scheduler {
             SchedulerForm::Workload(name) => {
@@ -1039,10 +1053,11 @@ impl Pass<'_, '_> {
                         span: name.span,
                     }));
                 }
-                Ok((ProbScheduler::Workload(name.name.clone()), Vec::new()))
+                Ok((ProbScheduler::Workload(name.name.clone()), Vec::new(), Vec::new()))
             }
             SchedulerForm::Every { fairness } => {
                 let mut set: Vec<FairnessConstraint> = Vec::new();
+                let mut declaring: Vec<Option<DeclarationKey>> = Vec::new();
                 let mut refused = None;
                 for written in fairness {
                     match self
@@ -1059,6 +1074,7 @@ impl Pass<'_, '_> {
                             );
                             if !set.contains(&constraint) {
                                 set.push(constraint);
+                                declaring.push(operation.declaring_key().cloned());
                             }
                         }
                         Err(fault) => {
@@ -1071,7 +1087,7 @@ impl Pass<'_, '_> {
                 }
                 match refused {
                     Some(refused) => Err(refused),
-                    None => Ok((ProbScheduler::Every, set)),
+                    None => Ok((ProbScheduler::Every, set, declaring)),
                 }
             }
         }

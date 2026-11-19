@@ -21,13 +21,13 @@ use std::collections::HashMap;
 use filament_exact::{NodeKey, PathSegment, Rational, UnitId, Value};
 use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::{
-    CheckedGraph, Delay, DelayDistribution, ProbScheduler, ProbabilisticFeature, RandomParameter,
-    Reward, Workload,
+    CheckedGraph, ClaimReadFault, Delay, DelayDistribution, ProbScheduler, ProbabilisticFeature,
+    RandomParameter, Reward, SchedulerRead, Workload,
 };
 
 use super::{
     body_reference_targets, checked_literal_json, claim_aggregate, claim_binding, encoding,
-    node_id, push_scalar_type, source_artifact, CheckedNodeTag, ClaimWorkload, EmitRefusal,
+    node_id, push_scalar_type, source_artifact, CheckedNodeTag, EmitRefusal,
     Location, GRAPH_V2,
 };
 
@@ -131,24 +131,6 @@ fn spelling(value: &Rational) -> String {
     }
 }
 
-/// The canonical spelling of a support value, as its node's identity
-/// carries it: integers and rationals in FR-205 form, a quantity as its
-/// magnitude, and a text as its JSON string encoding (the encoding of the
-/// literal's own `value` member: double-quoted, `"` and `\` escaped, control
-/// characters as `\b \f \n \r \t` or lowercase `\u00xx`, every other
-/// character verbatim). `None` for a value the reader cannot admit yet
-/// (Boolean and enum supports; IR-1569), which the caller refuses with the
-/// declaration's locus.
-fn support_spelling(value: &Value) -> Option<String> {
-    match value {
-        Value::Integer(value) => Some(value.to_string()),
-        Value::Rational(value) => Some(spelling(value)),
-        Value::Text(value) => serde_json::to_string(value.retained()).ok(),
-        Value::Quantity(value) => Some(spelling(value.magnitude())),
-        _ => None,
-    }
-}
-
 fn reference(target: CheckedNodeId) -> CheckedTerm {
     CheckedTerm::Reference { target }
 }
@@ -193,22 +175,13 @@ fn scalar_type(
 }
 
 fn node(
-    graph: &CheckedGraph,
     ids: &StructuralIds,
     form: &str,
-    operand: Vec<PathSegment>,
+    key: &NodeKey,
     body: CheckedTerm,
-) -> Result<CheckedSemanticNodeV2, EmitRefusal> {
-    let mut path = vec![
-        PathSegment::Text("probabilistic".into()),
-        PathSegment::Text(form.into()),
-    ];
-    path.extend(operand);
-    let id = node_id(
-        ids,
-        NodeKey::new(graph.package_name(), path, 0).map_err(encoding)?,
-    );
-    Ok(CheckedSemanticNodeV2 {
+) -> CheckedSemanticNodeV2 {
+    let id = node_id(ids, key);
+    CheckedSemanticNodeV2 {
         owner_model: None,
         check_mode: None,
         node_id: id.clone(),
@@ -225,7 +198,7 @@ fn node(
         declaration: None,
         owner: None,
         body,
-    })
+    }
 }
 
 fn region_of(
@@ -261,16 +234,18 @@ fn random_parameter_node(
         )
     };
     let region = region_of(graph, &location)?;
-    let (declaring_key, declaring) = model_node(
+    let (_, declaring) = model_node(
         ids,
         nodes,
         operation.declaring_key().ok_or_else(unwritable)?,
     )
     .ok_or_else(unwritable)?;
+    let key = random
+        .node_key(graph.package_name())
+        .ok_or_else(unwritable)?;
     let text = scalar_type(ids, graph, nodes, source_map, "text", &region)?;
     let rational = scalar_type(ids, graph, nodes, source_map, "rational", &region)?;
     let mut rows = Vec::with_capacity(random.support().len());
-    let mut content = Vec::with_capacity(random.support().len());
     for support in random.support() {
         let value = match support.value.0.clone() {
             // IR's reader admits no Boolean or enum support value yet
@@ -299,11 +274,6 @@ fn random_parameter_node(
             Value::Enum(_) => return Err(unwritable()),
             _ => return Err(unwritable()),
         };
-        content.push(format!(
-            "{}*{}",
-            support_spelling(&support.value.0).ok_or_else(unwritable)?,
-            spelling(&support.weight)
-        ));
         rows.push(claim_aggregate(vec![
             claim_binding("value", value),
             claim_binding("weight", weight_literal(&rational, &support.weight)?),
@@ -315,14 +285,8 @@ fn random_parameter_node(
         claim_binding("parameter", text_literal(&text, random.parameter())?),
         claim_binding("support", claim_aggregate(rows)),
     ]);
-    let operand = vec![
-        PathSegment::Node(declaring_key),
-        PathSegment::Text(operation.name().into()),
-        PathSegment::Text(random.parameter().into()),
-        PathSegment::Text(content.join(",")),
-    ];
     Ok(Pending {
-        node: node(graph, ids, "random_parameter", operand, body)?,
+        node: node(ids, "random_parameter", &key, body),
         region,
     })
 }
@@ -348,9 +312,12 @@ fn workload_node(
     let rational = scalar_type(ids, graph, nodes, source_map, "rational", &region)?;
     // A workload whose operations no single model type's lineage declares
     // has no model node to hang from; QSL-2444 tracks emitting it.
-    let (model_key, model) = workload
+    let (_, model) = workload
         .model_key()
         .and_then(|declaration| model_node(ids, nodes, declaration))
+        .ok_or_else(unwritable)?;
+    let key = workload
+        .node_key(graph.package_name())
         .ok_or_else(unwritable)?;
     let mut weights = Vec::with_capacity(workload.weights().len());
     for (operation, weight) in workload.weights() {
@@ -363,10 +330,6 @@ fn workload_node(
         weights.push((declaring, operation.name().to_owned(), weight.clone()));
     }
     weights.sort_by(|left, right| (&left.0, &left.1).cmp(&(&right.0, &right.1)));
-    let content: Vec<String> = weights
-        .iter()
-        .map(|(_, operation, weight)| format!("{operation}*{}", spelling(weight)))
-        .collect();
     let rows = weights
         .iter()
         .map(|(declaring, operation, weight)| {
@@ -382,13 +345,8 @@ fn workload_node(
         claim_binding("name", text_literal(&text, workload.name())?),
         claim_binding("weights", claim_aggregate(rows)),
     ]);
-    let operand = vec![
-        PathSegment::Node(model_key),
-        PathSegment::Text(workload.name().into()),
-        PathSegment::Text(content.join(",")),
-    ];
     Ok(Pending {
-        node: node(graph, ids, "workload", operand, body)?,
+        node: node(ids, "workload", &key, body),
         region,
     })
 }
@@ -448,27 +406,29 @@ fn delay_node(
         )
     };
     let region = region_of(graph, &location)?;
-    let (declaring_key, declaring) = model_node(
+    let (_, declaring) = model_node(
         ids,
         nodes,
         operation.declaring_key().ok_or_else(unwritable)?,
     )
     .ok_or_else(unwritable)?;
+    let key = delay
+        .node_key(graph.package_name())
+        .ok_or_else(unwritable)?;
     // IR's reader admits a delay only on a model with a timed root whose
     // source is `dense`, and types every time by that source's unit.
     let unit = dense_unit(nodes, &declaring).ok_or_else(unwritable)?;
     let text = scalar_type(ids, graph, nodes, source_map, "text", &region)?;
     let rational = scalar_type(ids, graph, nodes, source_map, "rational", &region)?;
     let time = |value: &Rational| literal(&unit, LiteralKind::Quantity, &spelling(value));
-    let (family, parameters, content) = match delay.distribution() {
-        DelayDistribution::Uniform => ("uniform", claim_aggregate(Vec::new()), String::new()),
+    let (family, parameters) = match delay.distribution() {
+        DelayDistribution::Uniform => ("uniform", claim_aggregate(Vec::new())),
         DelayDistribution::UniformRange { a, b } => (
             "uniform_interval",
             claim_aggregate(vec![
                 claim_binding("lower", time(a)?),
                 claim_binding("upper", time(b)?),
             ]),
-            format!("{},{}", spelling(a), spelling(b)),
         ),
         DelayDistribution::Exponential { rate } => (
             "exponential",
@@ -476,19 +436,16 @@ fn delay_node(
                 "rate",
                 weight_literal(&rational, rate)?,
             )]),
-            spelling(rate),
         ),
         DelayDistribution::Discrete(rows) => {
-            let mut content = Vec::with_capacity(rows.len());
             let mut written = Vec::with_capacity(rows.len());
             for (delay, weight) in rows {
-                content.push(format!("{}*{}", spelling(delay), spelling(weight)));
                 written.push(claim_aggregate(vec![
                     claim_binding("delay", time(delay)?),
                     claim_binding("weight", weight_literal(&rational, weight)?),
                 ]));
             }
-            ("discrete", claim_aggregate(written), content.join(","))
+            ("discrete", claim_aggregate(written))
         }
     };
     let body = claim_aggregate(vec![
@@ -497,14 +454,8 @@ fn delay_node(
         claim_binding("family", text_literal(&text, family)?),
         claim_binding("parameters", parameters),
     ]);
-    let operand = vec![
-        PathSegment::Node(declaring_key),
-        PathSegment::Text(operation.name().into()),
-        PathSegment::Text(family.into()),
-        PathSegment::Text(content),
-    ];
     Ok(Pending {
-        node: node(graph, ids, "delay_distribution", operand, body)?,
+        node: node(ids, "delay_distribution", &key, body),
         region,
     })
 }
@@ -543,12 +494,19 @@ fn reward_node(
         )
     };
     let region = region_of(graph, &location)?;
-    let (declaring_key, declaring) = model_node(
+    let (_, declaring) = model_node(
         ids,
         nodes,
         operation.declaring_key().ok_or_else(unwritable)?,
     )
     .ok_or_else(unwritable)?;
+    // The key carries the content operand: the key of the expression node the
+    // function computes (keyed by that expression's content), or a literal
+    // body's text, because the function's own key holds no content. Changing
+    // the expression changes the identity (FSpec FR-640-AC-3).
+    let key = reward
+        .node_key(graph.package_name())
+        .ok_or_else(unwritable)?;
     let function_key = reward.function().ok_or_else(unwritable)?;
     let function = node_id(ids, function_key);
     let function_node = nodes
@@ -573,93 +531,124 @@ fn reward_node(
         claim_binding("value_type", reference(value_type)),
         claim_binding("expression", reference(function)),
     ]);
-    let operand = vec![
-        PathSegment::Node(declaring_key),
-        PathSegment::Text(operation.name().into()),
-        PathSegment::Text(reward.name().into()),
-        // The function's key ranks equal paths by lowering order and holds no
-        // content, so the key of the expression node it computes (keyed by
-        // that expression's content), or a literal body's text, carries it:
-        // changing the expression changes the identity (FSpec FR-640-AC-3).
-        reward
-            .expression_operand()
-            .cloned()
-            .ok_or_else(unwritable)?,
-    ];
     Ok(Pending {
-        node: node(graph, ids, "reward", operand, body)?,
+        node: node(ids, "reward", &key, body),
         region,
     })
 }
 
-/// The emitted `workload` nodes of `nodes`, by the name their `name` binding
-/// carries (a workload name is unique in the package).
-fn workload_nodes_by_name(nodes: &[CheckedSemanticNodeV2]) -> HashMap<&str, &CheckedNodeId> {
-    nodes
-        .iter()
-        .filter(|node| {
-            CheckedNodeTag::from_wire(&node.node_tag) == Some(CheckedNodeTag::Probabilistic)
-                && &*node.semantic_form == "workload"
-        })
-        .filter_map(|node| {
-            let CheckedTerm::Aggregate { members } = &node.body else {
-                return None;
-            };
-            let name = members.iter().find_map(|member| match member {
-                CheckedTerm::Binding { name, value } if &**name == "name" => {
-                    match value.literal_read()?.value {
-                        CheckedLiteralValue::Text(text) => Some(text),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            })?;
-            Some((name, &node.node_id))
-        })
-        .collect()
-}
-
-/// FSpec FR-640 "Emission": each claim `under W` resolved to the emitted
-/// `workload` node named `W` (a workload name is unique in the package), in
-/// ascending claim-node order. A claim `under every scheduler` names no
-/// workload and resolves to none.
-///
-/// TEMPORARY (QSL-2441, spec W77): this mapping is in memory only. Neither the claim
-/// node (empty body, FSL FR-498) nor any row carries it on the wire until arch
-/// rules how a claim references its workload and rewards (QSL-2546).
+/// FSpec FR-640 "Probabilistic claim node": write the body of each claim node
+/// S3 keyed, the five bindings `subject`, `scheduler`, `reward`,
+/// `distributions` and `delays`, referencing the nodes the claim's path holds.
+/// Neither a table nor a sidecar row carries what a claim reads.
 ///
 /// # Errors
 ///
-/// A claim that is not keyed, or whose workload has no emitted node.
-pub(super) fn claim_workloads(
+/// A claim that is not keyed, or that reads a workload, reward or other node
+/// that has no emitted node.
+pub(super) fn write_claim_bodies(
+    ids: &StructuralIds,
     graph: &CheckedGraph,
-    emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
-    nodes: &[CheckedSemanticNodeV2],
-) -> Result<Vec<ClaimWorkload>, EmitRefusal> {
-    let by_name = workload_nodes_by_name(nodes);
-    let mut resolved = Vec::new();
-    for claim in graph.probabilistic_model().claims() {
-        let ProbScheduler::Workload(name) = &claim.scheduler else {
-            continue;
+    nodes: &mut Vec<CheckedSemanticNodeV2>,
+    source_map: &mut Vec<CheckedSourceMapEntry>,
+) -> Result<(), EmitRefusal> {
+    let model = graph.probabilistic_model();
+    let package = graph.package_name();
+    let rewards: Vec<Option<NodeKey>> = model
+        .rewards()
+        .iter()
+        .map(|reward| reward.node_key(package))
+        .collect();
+    for claim in model.claims() {
+        let unkeyed = || EmitRefusal::UnkeyedProbabilisticClaim {
+            claim: claim.name.clone(),
         };
         let claim_id = claim
             .occurrence()
-            .and_then(|occurrence| emitted_node_ids.get(occurrence.node()))
-            .ok_or_else(|| EmitRefusal::UnkeyedProbabilisticClaim {
-                claim: claim.name.clone(),
-            })?;
-        let workload =
-            by_name
-                .get(name.as_str())
-                .ok_or_else(|| EmitRefusal::UnresolvedClaimWorkload {
+            .map(|occurrence| node_id(ids, occurrence.node()))
+            .ok_or_else(unkeyed)?;
+        let reads = claim.reads(package, model, &rewards);
+        match &reads.fault {
+            Some(ClaimReadFault::Workload(workload)) => {
+                return Err(EmitRefusal::UnresolvedClaimWorkload {
                     claim: claim.name.clone(),
-                    workload: name.clone(),
+                    workload: workload.clone(),
+                });
+            }
+            Some(ClaimReadFault::Reward(reward)) => {
+                return Err(EmitRefusal::UnresolvedClaimReward {
+                    claim: claim.name.clone(),
+                    reward: reward.clone(),
+                });
+            }
+            Some(ClaimReadFault::Subject) => return Err(EmitRefusal::SourceMapInvariant),
+            None => {}
+        }
+        // Each node the claim reads is emitted before it.
+        let emitted = |key: &NodeKey| {
+            let id = node_id(ids, key);
+            nodes.iter().any(|node| node.node_id == id).then_some(id)
+        };
+        let refs = |keys: &[NodeKey]| {
+            keys.iter()
+                .map(|key| emitted(key).map(reference))
+                .collect::<Option<Vec<_>>>()
+        };
+        let missing = || EmitRefusal::UnresolvedNodeReference;
+        let subject = reads
+            .subject
+            .as_ref()
+            .and_then(&emitted)
+            .ok_or_else(missing)?;
+        let region = region_of(graph, &claim.declaration_location())?;
+        let text = scalar_type(ids, graph, nodes, source_map, "text", &region)?;
+        let scheduler = match &reads.scheduler {
+            Some(SchedulerRead::Workload(workload)) => {
+                let workload_id = emitted(workload).ok_or_else(|| {
+                    EmitRefusal::UnresolvedClaimWorkload {
+                        claim: claim.name.clone(),
+                        workload: match &claim.scheduler {
+                            ProbScheduler::Workload(name) => name.clone(),
+                            ProbScheduler::Every => String::new(),
+                        },
+                    }
                 })?;
-        resolved.push(ClaimWorkload {
-            claim: claim_id.clone(),
-            workload: (*workload).clone(),
-        });
+                reference(workload_id)
+            }
+            Some(SchedulerRead::Every(fairness)) => {
+                let mut members = Vec::with_capacity(fairness.len());
+                for constraint in fairness {
+                    let declaring = emitted(&constraint.declaring).ok_or_else(missing)?;
+                    members.push(claim_aggregate(vec![
+                        claim_binding("kind", text_literal(&text, constraint.kind)?),
+                        claim_binding("granularity", text_literal(&text, constraint.granularity)?),
+                        claim_binding("declaring", reference(declaring)),
+                        claim_binding("operation", text_literal(&text, &constraint.operation)?),
+                    ]));
+                }
+                claim_aggregate(vec![claim_binding("fairness", claim_aggregate(members))])
+            }
+            None => return Err(missing()),
+        };
+        let read_rewards = refs(&reads.rewards).ok_or_else(|| EmitRefusal::UnresolvedClaimReward {
+            claim: claim.name.clone(),
+            reward: claim.reward_read().unwrap_or_default().to_owned(),
+        })?;
+        let distributions = refs(&reads.distributions).ok_or_else(missing)?;
+        let delays = refs(&reads.delays).ok_or_else(missing)?;
+        let body = claim_aggregate(vec![
+            claim_binding("subject", reference(subject)),
+            claim_binding("scheduler", scheduler),
+            claim_binding("reward", claim_aggregate(read_rewards)),
+            claim_binding("distributions", claim_aggregate(distributions)),
+            claim_binding("delays", claim_aggregate(delays)),
+        ]);
+        let written = nodes
+            .iter_mut()
+            .find(|node| node.node_id == claim_id)
+            .ok_or_else(unkeyed)?;
+        written.dependencies = body_reference_targets(&body);
+        written.body = body;
     }
-    resolved.sort_by(|left, right| left.claim.cmp(&right.claim));
-    Ok(resolved)
+    Ok(())
 }

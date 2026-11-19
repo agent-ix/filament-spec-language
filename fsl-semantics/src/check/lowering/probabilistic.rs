@@ -3,14 +3,12 @@
 //! claim lowers to, with its one declared `claim` occurrence.
 //!
 //! The producer keys the node structurally under FSpec FR-322's
-//! `{package, path, ordinal}` rule: path `["claim", "probabilistic_claim",
-//! name]`, and an ordinal that ranks the claims sharing that name by their
+//! `{package, path, ordinal}` rule: path `["claim", "probabilistic_claim", name, ...]`, the nodes the claim reads
+//! following the name (FSpec FR-640), and an ordinal that ranks the claims sharing that path by their
 //! written content ([`fsl_forms::SignificantContent`]). No span, source position
 //! or declaration order enters the key, so permuting the declarations keys
 //! every claim as before; claims written identically are indistinguishable,
-//! so which of them takes which rank is unobservable. The node's body is an
-//! empty aggregate: no FSpec body is defined for the form yet, and none is
-//! fabricated.
+//! so which of them takes which rank is unobservable. The node's body is written by S4 from the nodes the claim reads.
 
 use std::collections::hash_map;
 
@@ -101,49 +99,80 @@ impl Lowering<'_> {
 
     /// Key and add the node of each of `claims`, recording its one `claim`
     /// occurrence at the claim's declaration. The keys are in `claims`'
-    /// order.
+    /// order. `model` holds what the claims read and `rewards` the function
+    /// node and content operand of each of its rewards, in its order.
     pub(crate) fn probabilistic_claims(
         &mut self,
-        claims: &[CheckedProbabilisticClaim],
+        model: &CheckedProbabilisticModel,
+        rewards: &[Option<(NodeKey, PathSegment)>],
     ) -> Result<Vec<(NodeKey, Option<NodeKey>)>, CheckRefusal> {
+        let claims = model.claims();
+        let reward_keys: Vec<Option<NodeKey>> = model
+            .rewards()
+            .iter()
+            .zip(rewards)
+            .map(|(reward, lowered)| {
+                lowered
+                    .as_ref()
+                    .and_then(|(_, operand)| reward.node_key_over(&self.package_name, operand))
+            })
+            .collect();
+        let paths: Vec<Vec<PathSegment>> = claims
+            .iter()
+            .map(|claim| {
+                claim
+                    .reads(&self.package_name, model, &reward_keys)
+                    .operands()
+            })
+            .collect();
         let mut ranked: Vec<(usize, &CheckedProbabilisticClaim)> =
             claims.iter().enumerate().collect();
-        // Within one name, by content; equal content is equal claims, whose
-        // tie order is unobservable.
-        ranked.sort_by(|(_, left), (_, right)| {
-            left.name
-                .cmp(&right.name)
+        // Within one name and path, by content; equal content is equal
+        // claims, whose tie order is unobservable.
+        ranked.sort_by(|(left_at, left), (right_at, right)| {
+            (&left.name, &paths[*left_at])
+                .cmp(&(&right.name, &paths[*right_at]))
                 .then_with(|| left.content.cmp(&right.content))
         });
         let mut keys = Vec::with_capacity(claims.len());
         let mut ordinal = 0_u64;
-        let mut previous: Option<&str> = None;
+        let mut previous: Option<(&str, &[PathSegment])> = None;
         for (index, claim) in ranked {
-            if previous == Some(claim.name.as_str()) {
+            let path = (claim.name.as_str(), paths[index].as_slice());
+            if previous == Some(path) {
                 ordinal += 1;
             } else {
                 ordinal = 0;
             }
-            previous = Some(&claim.name);
-            keys.push((index, self.probabilistic_claim(claim, ordinal)?));
+            previous = Some(path);
+            keys.push((
+                index,
+                self.probabilistic_claim(claim, &paths[index], ordinal)?,
+            ));
         }
         keys.sort_by_key(|(index, _)| *index);
         Ok(keys.into_iter().map(|(_, key)| key).collect())
     }
 
-    /// Add `claim`'s node at `ordinal` of its name's path.
+    /// Add `claim`'s node at `ordinal` of the path its name and the nodes it
+    /// reads (`operands`) make. The body is written by S4, which holds those
+    /// nodes.
     fn probabilistic_claim(
         &mut self,
         claim: &CheckedProbabilisticClaim,
+        operands: &[PathSegment],
         ordinal: u64,
     ) -> Result<(NodeKey, Option<NodeKey>), CheckRefusal> {
         let at = claim.declaration_location();
         self.charge(1, &at)?;
+        let mut path = Vec::with_capacity(operands.len() + 1);
+        path.push(PathSegment::Text(claim.name.clone()));
+        path.extend(operands.iter().cloned());
         let key = super::super::derived_node_key(
             &self.package_name,
             NodeTag::Claim,
             FORM,
-            vec![PathSegment::Text(claim.name.clone())],
+            path,
             ordinal,
         )
         .map_err(|_| stage_fault(&at, "probabilistic-claim-key-is-well-formed"))?;

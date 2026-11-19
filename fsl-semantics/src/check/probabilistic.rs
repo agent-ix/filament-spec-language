@@ -32,6 +32,7 @@ mod claim;
 mod exact;
 pub(crate) use exact::{value as exact_value, ExactFault};
 mod model;
+mod node_key;
 
 pub use claim::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedTemporalFormula,
@@ -39,6 +40,9 @@ pub use claim::{
     OverBinding, ProbForm, ProbScheduler, ReachTarget,
 };
 pub(crate) use model::{check, precondition_reads, site_spans, ProbabilisticInput, Unresolved};
+pub use node_key::{
+    ClaimReadFault, ClaimReads, FairnessRead, SchedulerRead,
+};
 pub use model::{
     CheckedProbabilisticModel, Delay, DelayDistribution, PackageDelay, PackageDelayFamily,
     PackageLiteral, PackageProbabilistic, PackageProbabilisticRefusal, PackageRandomParameter,
