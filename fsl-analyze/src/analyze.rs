@@ -37,8 +37,8 @@ mod derived_item;
 mod digital_item;
 pub mod document;
 mod exact;
-mod hybrid_item;
 mod finite_hyper_item;
+mod hybrid_item;
 mod invariant_item;
 mod items;
 mod protocol_item;
@@ -89,12 +89,11 @@ pub use clause_item::{
     ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject, CLAUSE_TRANSCRIPT,
 };
 pub use derived_item::{deadlock_model_item, PackageDeadlockSubject};
-pub use invariant_item::{PackageInvariantSubject, PackageItemInputs};
-pub use state_graph_item::PackageStateGraphSubject;
 pub(crate) use derived_item::{derived_target, NoLetters};
 pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
 #[cfg(feature = "test-support")]
 pub use exact::{exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered};
+pub use invariant_item::{PackageInvariantSubject, PackageItemInputs};
 pub(crate) use items::admission;
 pub use items::{
     derived_model_item, derived_protocol_item, derived_zone_item, hyper_form_item, model_item,
@@ -102,6 +101,7 @@ pub use items::{
     ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem, TimedRefinementItem,
 };
 pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
+pub use state_graph_item::PackageStateGraphSubject;
 
 use crate::provider::{ExternalProvider, NotUnbounded, ProviderOptions, ProviderReport};
 use crate::zone_check::ZoneCheckRecord;
@@ -171,6 +171,22 @@ pub struct Engine {
     /// The in-process hybrid provider an [`Engine::hybrid`] engine decides
     /// hybrid items with (FR-750).
     hybrid: Option<std::sync::Arc<dyn fsl_replay::HybridProvider>>,
+    /// The byte exchange for an FR-404 process hybrid provider.
+    hybrid_exchange: Option<std::sync::Arc<dyn HybridProcessExchange>>,
+}
+
+/// The FR-750 byte exchange with one process hybrid provider.
+///
+/// The exchange receives the canonical FR-331 request body and the run's
+/// cancellation token. It returns the provider's FR-331 result body or its
+/// typed process failure; it does not interpret either body.
+pub trait HybridProcessExchange: std::fmt::Debug + Send + Sync {
+    /// Exchange one request body with the process provider.
+    fn exchange(
+        &self,
+        request: &[u8],
+        cancel: &filament_exact::Cancel,
+    ) -> Result<Vec<u8>, fsl_replay::ToolFailure>;
 }
 
 impl Engine {
@@ -182,6 +198,7 @@ impl Engine {
             tool: BackendTool::linked(),
             provider: None,
             hybrid: None,
+            hybrid_exchange: None,
         }
     }
 
@@ -196,11 +213,12 @@ impl Engine {
         descriptor: BackendDescriptor,
         provider: Box<dyn fsl_replay::HybridProvider>,
     ) -> Result<Self, NotHybrid> {
-        let hybrid = descriptor.dynamics().is_some_and(|kinds| {
-            kinds.contains(&fsl_route::DynamicsKind::Hybrid)
-        }) && descriptor
-            .advertises()
-            .any(|(kind, _)| kind == Capability::TemporalSatisfaction);
+        let hybrid = descriptor
+            .dynamics()
+            .is_some_and(|kinds| kinds.contains(&fsl_route::DynamicsKind::Hybrid))
+            && descriptor
+                .advertises()
+                .any(|(kind, _)| kind == Capability::TemporalSatisfaction);
         if !hybrid {
             return Err(NotHybrid {
                 backend: descriptor.id().clone(),
@@ -211,6 +229,42 @@ impl Engine {
             tool: BackendTool::linked(),
             provider: None,
             hybrid: Some(provider.into()),
+            hybrid_exchange: None,
+        })
+    }
+
+    /// An engine whose hybrid provider runs in a process (FR-750).
+    ///
+    /// `exchange` transports the canonical FR-331 request body and returns
+    /// the provider's result body or a typed tool failure. FSL owns request
+    /// composition, result reading, replay and settlement.
+    ///
+    /// # Errors
+    ///
+    /// [`NotHybrid`] when `descriptor` lacks hybrid dynamics or does not
+    /// advertise `temporal-satisfaction`; no engine is made.
+    pub fn hybrid_process(
+        descriptor: BackendDescriptor,
+        tool: BackendTool,
+        exchange: Box<dyn HybridProcessExchange>,
+    ) -> Result<Self, NotHybrid> {
+        let hybrid = descriptor
+            .dynamics()
+            .is_some_and(|kinds| kinds.contains(&fsl_route::DynamicsKind::Hybrid))
+            && descriptor
+                .advertises()
+                .any(|(kind, _)| kind == Capability::TemporalSatisfaction);
+        if !hybrid {
+            return Err(NotHybrid {
+                backend: descriptor.id().clone(),
+            });
+        }
+        Ok(Self {
+            descriptor,
+            tool,
+            provider: None,
+            hybrid: None,
+            hybrid_exchange: Some(exchange.into()),
         })
     }
 
@@ -227,15 +281,19 @@ impl Engine {
             descriptor,
             tool: BackendTool::linked(),
             provider: None,
-            hybrid: Some(std::sync::Arc::new(
-                fsl_hybrid_reference::ReferenceProvider,
-            )),
+            hybrid: Some(std::sync::Arc::new(fsl_hybrid_reference::ReferenceProvider)),
+            hybrid_exchange: None,
         })
     }
 
     /// The hybrid provider this engine decides items with, if any.
     pub(crate) fn hybrid_provider(&self) -> Option<&dyn fsl_replay::HybridProvider> {
         self.hybrid.as_deref()
+    }
+
+    /// The process hybrid exchange, if this engine owns one.
+    pub(crate) fn hybrid_exchange(&self) -> Option<&dyn HybridProcessExchange> {
+        self.hybrid_exchange.as_deref()
     }
 
     /// An engine that decides `value-validity` items with `provider`, a
@@ -267,6 +325,7 @@ impl Engine {
             descriptor,
             provider: Some(provider.into()),
             hybrid: None,
+            hybrid_exchange: None,
             tool,
         })
     }
@@ -428,7 +487,9 @@ impl Engine {
 /// [`Engine::hybrid`] was given a descriptor that is no hybrid provider's
 /// (FR-750): `invalid_capability`/`invalid-dynamics`.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("invalid-dynamics: {backend:?} does not publish `hybrid` dynamics for temporal-satisfaction")]
+#[error(
+    "invalid-dynamics: {backend:?} does not publish `hybrid` dynamics for temporal-satisfaction"
+)]
 pub struct NotHybrid {
     /// The backend whose descriptor was refused.
     pub backend: BackendId,
@@ -2009,7 +2070,7 @@ impl Counterexample {
             | Self::GlobalConformance(_)
             | Self::ScheduleMiss(_)
             | Self::Hybrid(_) => None,
-            | Self::FiniteHyper(_) => None,
+            Self::FiniteHyper(_) => None,
         }
     }
 }
@@ -2685,7 +2746,9 @@ fn settle(
             None,
         ),
         EngineReport::Refused(Refusal::FailedWithDetail(code, detail)) => record(
-            terminal(TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(detail)),
+            terminal(
+                TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(detail),
+            ),
             None,
         ),
         EngineReport::Refused(Refusal::UnsupportedConstruct(mut detail)) => {

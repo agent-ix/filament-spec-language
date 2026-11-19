@@ -67,6 +67,23 @@ pub(super) fn hybrid_item<'a>(
             Mode::Bounded,
             fsl_hybrid_reference::BACKEND,
             move |cancel, engine| {
+                if let Some(exchange) = engine.hybrid_exchange() {
+                    return process_provider(
+                        exchange,
+                        engine,
+                        package,
+                        &claim,
+                        graph,
+                        checked,
+                        model,
+                        position,
+                        work_units,
+                        budget_for(&form, engine),
+                        deadline,
+                        spelling,
+                        cancel,
+                    );
+                }
                 let Some(provider) = engine.hybrid_provider() else {
                     return EngineReport::Refused(Refusal::Unsupported(CatalogCode::new(
                         "unsupported_projection",
@@ -135,6 +152,140 @@ pub(super) fn hybrid_item<'a>(
             },
         )
         .hybrid(),
+    )
+}
+
+/// Run one hybrid item through the process exchange and settle its entry
+/// through the same reader and replay path as an in-process provider.
+#[allow(clippy::too_many_arguments)]
+fn process_provider(
+    exchange: &dyn super::HybridProcessExchange,
+    engine: &super::Engine,
+    package: &CheckedPackage,
+    claim: &OccurrenceKey,
+    graph: &CheckedGraph,
+    checked: &fsl_semantics::check::CheckedHybridClaim,
+    model: &CheckedHybridModel,
+    position: usize,
+    work_units: u64,
+    budget: fsl_replay::SolverBudget,
+    deadline: DeadlineSupply,
+    spelling: Spelling<'_>,
+    cancel: &filament_exact::Cancel,
+) -> EngineReport {
+    let failed = |failure| {
+        EngineReport::Hybrid(Box::new(HybridReport {
+            value: TerminalValue::ToolFailed(failure),
+            counterexample: None,
+            wire: Ok(Value::Null),
+        }))
+    };
+    let Some(emitted) = crate::provider::admitted_bytes(package, spelling.packages, spelling.emit)
+    else {
+        return EngineReport::Refused(Refusal::Unsupported(CatalogCode::new(
+            "unsupported_projection",
+            "tool-unavailable",
+        )));
+    };
+    let Ok(wire) = WireGraph::of_package_bytes(emitted.bytes()) else {
+        return failed(fsl_replay::ToolFailure::MalformedBody);
+    };
+    let Ok(node) = wire.wire_value(claim.node()) else {
+        return EngineReport::Refused(Refusal::Failed(CatalogCode::new(
+            "runtime_invariant",
+            "established-invariant-broken",
+        )));
+    };
+    let occurrence = claim.origin();
+    let item = fsl_replay::HybridProcessItem::new(
+        fsl_foundation::RequestIndex::new(0),
+        serde_json::json!({
+            "node": node,
+            "occurrence": {"role": occurrence.role().as_str(), "ordinal": occurrence.ordinal()},
+        }),
+        serde_json::json!({"classification": "bounded", "bounds": []}),
+        serde_json::json!({"type": "set", "backends": [engine.descriptor().id().as_str()]}),
+        budget,
+    );
+    let mut context = fsl_replay::HybridProcessPackageContext::new();
+    context.support_feature("filament.value.complete/v1");
+    let deadline_ms = match deadline {
+        DeadlineSupply::Unbounded => 600_000,
+        DeadlineSupply::Milliseconds(value) => value,
+    };
+    let request = match fsl_replay::HybridProcessRequest::compose(
+        emitted.bytes(),
+        &context,
+        deadline_ms,
+        &[item],
+    ) {
+        Ok(request) => request,
+        Err(_) => return failed(fsl_replay::ToolFailure::MalformedBody),
+    };
+    let response = match exchange.exchange(request.bytes(), cancel) {
+        Ok(response) => response,
+        Err(failure) => return failed(failure),
+    };
+    let entry: Value = match serde_json::from_slice(&response) {
+        Ok(entry) => entry,
+        Err(_) => return failed(fsl_replay::ToolFailure::MalformedFrame),
+    };
+    let counterexamples = entry["counterexamples"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    let answer = match HybridAnswer::read_entry(&entry, counterexamples, graph, checked, &wire) {
+        Ok(answer) => answer,
+        Err(fsl_replay::HybridEntryRefusal::NotRead(_)) => {
+            if let Some(failure) = fsl_replay::ToolFailure::read_cause(&entry["cause"]) {
+                return failed(failure);
+            }
+            return EngineReport::Refused(Refusal::Unsupported(CatalogCode::new(
+                "unsupported_projection",
+                "tool-unavailable",
+            )));
+        }
+        Err(_) => {
+            return EngineReport::Refused(Refusal::Failed(CatalogCode::new(
+                "invalid_result",
+                "invalid-value",
+            )))
+        }
+    };
+    let mut meter = HybridReplayMeter::new(work_units);
+    let settled = match answer.verdict {
+        HybridVerdict::Solved(result) => result.settle(graph, checked, &mut meter),
+        HybridVerdict::Refuted(claimed) => {
+            HybridSettlement::from_provider_counterexample(graph, checked, *claimed, &mut meter)
+        }
+        HybridVerdict::Unsupported(construct) => {
+            return unsupported_construct(graph, &wire, position, model, &construct);
+        }
+    };
+    match settled {
+        Ok(settled) => {
+            let wire = match &settled.counterexample {
+                Some(found) => counterexample_wire(graph, &wire, position, model, found),
+                None => Ok(Value::Null),
+            };
+            EngineReport::Hybrid(Box::new(HybridReport {
+                value: settled.value,
+                counterexample: settled.counterexample.map(Box::new),
+                wire,
+            }))
+        }
+        Err(refusal) => fault_of(&refusal, work_units),
+    }
+}
+
+fn budget_for(form: &super::HybridItem, engine: &super::Engine) -> fsl_replay::SolverBudget {
+    let bounds = engine.descriptor().solver_bounds();
+    form.limits.resolved_budget(
+        bounds
+            .and_then(|bounds| bounds.max_solver_time)
+            .unwrap_or(u64::MAX),
+        bounds
+            .and_then(|bounds| bounds.max_solver_steps)
+            .unwrap_or(u64::MAX),
     )
 }
 

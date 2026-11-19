@@ -8,11 +8,8 @@
 //! `certification`, `backend`), its `counterexample` and `replay`, and its
 //! `certificate` (`accepted`, `rule`, `at`, `form`).
 //!
-//! The in-process fixture providers are made by `Engine::hybrid` (FR-750).
-//! `Engine::hybrid_process` does not exist yet, so [`process_fixture`] builds
-//! a probe engine in its place: it advertises no hybrid dynamics, so it is
-//! never a candidate for a hybrid item, and the assertions that use it fail
-//! for real.
+//! In-process and process fixture providers exercise both FR-750 dispatch
+//! paths.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -20,7 +17,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use filament_exact::{Integer, Rational, ScalarLimits};
-use fsl_analyze::analyze::Engine;
+use fsl_analyze::analyze::{BackendTool, Engine, HybridProcessExchange};
 use fsl_analyze::provider::{HybridAnswer, HybridProvider, HybridSolveRequest};
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::ModeIndex;
@@ -258,11 +255,36 @@ pub(crate) fn descriptor_of(descriptor: &Value) -> Result<fsl_route::BackendDesc
     .map_err(|refusal| format!("{refusal:?}"))
 }
 
+#[derive(Debug)]
+struct FixedHybridExchange(Vec<u8>);
+
+impl HybridProcessExchange for FixedHybridExchange {
+    fn exchange(
+        &self,
+        _request: &[u8],
+        _cancel: &filament_exact::Cancel,
+    ) -> Result<Vec<u8>, fsl_replay::ToolFailure> {
+        Ok(self.0.clone())
+    }
+}
+
 /// The process hybrid fixture `id` whose exchange returns `entry` as its
-/// result frame: `Engine::hybrid_process` (FR-750). The probe stands in.
+/// result body: `Engine::hybrid_process` (FR-750).
 pub(crate) fn process_fixture(id: &str, entry: &Value) -> Engine {
-    let _answer = entry;
-    Engine::probe(id)
+    let descriptor = descriptor_of(&json!({"backend": id, "dynamics": ["hybrid"],
+        "advertises": [{"kind": "temporal-satisfaction", "mode": "bounded"},
+            {"kind": "temporal-satisfaction", "mode": "unbounded"}],
+        "options": [], "bounds": {"max_solver_steps": 1000, "max_solver_time": 1}}))
+    .expect("the process fixture descriptor is valid");
+    let tool = BackendTool::new("fixture-hybrid", "1").expect("the process fixture tool is valid");
+    Engine::hybrid_process(
+        descriptor,
+        tool,
+        Box::new(FixedHybridExchange(
+            serde_json::to_vec(entry).expect("the fixture entry serializes"),
+        )),
+    )
+    .expect("the process fixture advertises hybrid dynamics")
 }
 
 /// `Engine::hybrid` over the FSpec FR-331 descriptor `descriptor`, its error
@@ -478,7 +500,6 @@ fn hybrid_replay_request(
 /// `inconclusive`, `replay-parity`.
 #[test]
 #[trace("TC-2100", "FR-750-AC-5")]
-#[ignore = "QSL-2532: process-provider composition for hybrid clause requests not implemented yet"]
 fn a_process_provider_refutation_settles_by_exact_replay() {
     let unit = braking(&claim("Positive", "always [0, 12] holds(h.v > 0)"));
     let (_, item) = first_item(
@@ -847,7 +868,10 @@ fn a_refuted_hybrid_item_replays_through_fr_098() {
     // `TooSlow` holds throughout [0, 10], so exact replay must report that
     // the provider's refuted trace does not reproduce the claim violation.
     let non_reproducing = fsl_replay::replay(
-        hybrid_replay_request(&braking_pair(), point_counterexample_with_acceleration(1, 20)),
+        hybrid_replay_request(
+            &braking_pair(),
+            point_counterexample_with_acceleration(1, 20),
+        ),
         fsl_replay::ReplayLimits::default(),
     )
     .expect("a valid trace that does not violate TooSlow settles as a row");
@@ -880,9 +904,20 @@ fn a_refuted_hybrid_item_replays_through_fr_098() {
 /// `NotRead` and the item settles `failed` by FR-290.
 #[test]
 #[trace("TC-3035", "FR-750-AC-11")]
-#[ignore = "QSL-2532: process providers (`Engine::hybrid_process`) do not exist yet"]
 fn a_process_failed_entry_settles_failed_by_fr_290() {
-    todo!("QSL-2532: process half of FR-750-AC-11");
+    let entry = json!({"request_index": 0, "result": "failed",
+        "cause": {"kind": "tool-failure", "defect": "crash"}});
+    let unit = braking(&claim("Positive", "always [0, 12] holds(h.v > 0)"));
+    let (_, item) = first_item(
+        "hybrid-750-11",
+        &unit,
+        named("Positive", "hybrid-process"),
+        json!({}),
+        vec![process_fixture("hybrid-process", &entry)],
+    );
+    assert_eq!(item["record"]["result"], "failed", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "tool-failure", "{item}");
+    assert_eq!(item["record"]["cause"]["defect"], "crash", "{item}");
 }
 
 /// FR-1021-AC-3: the plan's `Fill`/`Drain` validation item reaches the
