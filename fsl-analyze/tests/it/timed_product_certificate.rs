@@ -6,19 +6,19 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::analyze::{
-    analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered, AnalyzeRecord,
-    Engines,
+    AnalyzeRecord, Engines, analyze_items, exact_probabilistic_item,
+    exact_probabilistic_item_tampered,
 };
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    check_probability_certificate_document, CertificateRule, ExactProbabilityCertificate,
-    ExactProbabilityCertificateCheck, InconclusiveCause, ProbabilityCertificateLocus,
-    ProbabilityCertificateRule, ProbabilityDocumentError, ProofBasis, TerminalValue,
+    CertificateRule, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
+    InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule,
+    ProbabilityDocumentError, ProofBasis, TerminalValue, check_probability_certificate_document,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::long_run_certificate::limits;
 use crate::timed_world::{self, World};
@@ -158,7 +158,9 @@ fn settle_tampered(
 
 /// The exact value of a `proved` record.
 fn proved_value(record: &AnalyzeRecord) -> Rational {
-    let terminal = record.terminal().expect("a terminal record");
+    let terminal = record
+        .terminal()
+        .unwrap_or_else(|| panic!("expected a terminal record, got {record:#?}"));
     match terminal.value() {
         TerminalValue::Proved {
             basis: ProofBasis::ExactValue { value, .. },
@@ -439,9 +441,11 @@ fn strict_mean_time_is_certified_over_boundary_regions() {
     assert_eq!(proved_value(&record), ratio(20, 9));
     let doc = document(&record);
     assert_eq!(doc["objective"]["timed"]["form"], "expected-elapsed");
-    assert!(doc["values"][0]["state"]
-        .to_string()
-        .contains("boundary-region"));
+    assert!(
+        doc["values"][0]["state"]
+            .to_string()
+            .contains("boundary-region")
+    );
     assert!(accepted(&world, "MeanTime", &doc));
 }
 
