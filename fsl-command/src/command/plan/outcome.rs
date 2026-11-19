@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 
 /// The decision of a `measured` step (FSpec FR-409).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Decision {
+pub(crate) enum Decision {
     /// The measurement met its acceptance bound.
     Accepted,
     /// The measurement missed it.
@@ -19,7 +19,7 @@ pub enum Decision {
 
 /// A step's closed status: the FSpec FR-331 result vocabulary plus `blocked`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum StepStatus {
+pub(crate) enum StepStatus {
     /// Proved.
     Proved,
     /// Refuted.
@@ -97,7 +97,7 @@ impl StepStatus {
 
 /// One plan node's disposition.
 #[derive(Clone, Debug, PartialEq)]
-pub struct StepDisposition {
+pub(crate) struct StepDisposition {
     /// The step name.
     pub name: String,
     /// The settled status.
@@ -115,7 +115,7 @@ pub struct StepDisposition {
 
 /// The plan run's whole outcome.
 #[derive(Clone, Debug, PartialEq)]
-pub struct PlanRunOutcome {
+pub(crate) struct PlanRunOutcome {
     /// The checked package identity.
     pub package: String,
     /// The selected plan's declared name.
@@ -144,20 +144,18 @@ impl PlanRunOutcome {
     }
 
     /// `passed` when every node is satisfied, `failed` when any node is in
-    /// `failed_steps`, otherwise `incomplete`. A run with no dispositions
-    /// settled no node and is `incomplete`.
+    /// `failed_steps`, otherwise `incomplete`; `None` (the document's `null`)
+    /// when `execute` was `false` and no node settled.
     #[must_use]
-    pub fn status(&self) -> &'static str {
-        let Some(steps) = &self.dispositions else {
-            return "incomplete";
-        };
-        if steps.iter().any(|step| step.status.is_failure()) {
+    pub fn status(&self) -> Option<&'static str> {
+        let steps = self.dispositions.as_ref()?;
+        Some(if steps.iter().any(|step| step.status.is_failure()) {
             "failed"
         } else if steps.iter().all(|step| step.status.satisfies_requires()) {
             "passed"
         } else {
             "incomplete"
-        }
+        })
     }
 
     /// The process exit: the highest-severity FSpec FR-301 code of the
@@ -196,21 +194,72 @@ impl PlanRunOutcome {
 }
 
 fn step_value(step: &StepDisposition) -> Value {
-    let mut value = json!({
+    json!({
         "status": step.status.name(),
         "method": step.method,
         "evidence": step.evidence,
         "blocked_by": step.blocked_by,
         "result": step.result,
-    });
-    if let StepStatus::Measured(decision) = step.status {
-        value["decision"] = json!(match decision {
-            Decision::Accepted => "accepted",
-            Decision::Rejected => "rejected",
-            Decision::Undecided => "undecided",
-        });
+    })
+}
+
+/// One plan node as the gate takes it: its name, method and `requires`
+/// prerequisites.
+#[derive(Clone, Debug)]
+pub(crate) struct PlannedStep {
+    pub name: String,
+    pub method: String,
+    pub requires: Vec<String>,
+}
+
+/// What an engine settled a step as.
+#[derive(Clone, Debug)]
+pub(crate) struct Settled {
+    pub status: StepStatus,
+    pub evidence: Option<String>,
+    pub result: Option<Value>,
+}
+
+/// Settle `steps` in source order (FSpec FR-824 "Outcome document"): a step
+/// whose `requires` prerequisite is not satisfied is `blocked` by the first
+/// such prerequisite in source order, is not handed to `run` and gets no
+/// result; every other step is settled by `run`.
+pub(crate) fn settle_in_order(
+    steps: &[PlannedStep],
+    mut run: impl FnMut(&PlannedStep) -> Settled,
+) -> Vec<StepDisposition> {
+    let mut settled: Vec<StepDisposition> = Vec::with_capacity(steps.len());
+    for step in steps {
+        let blocker = settled
+            .iter()
+            .find(|earlier| {
+                step.requires.contains(&earlier.name) && !earlier.status.satisfies_requires()
+            })
+            .map(|earlier| earlier.name.clone());
+        let disposition = match blocker {
+            Some(name) => StepDisposition {
+                name: step.name.clone(),
+                status: StepStatus::Blocked,
+                method: step.method.clone(),
+                evidence: None,
+                blocked_by: Some(name),
+                result: None,
+            },
+            None => {
+                let outcome = run(step);
+                StepDisposition {
+                    name: step.name.clone(),
+                    status: outcome.status,
+                    method: step.method.clone(),
+                    evidence: outcome.evidence,
+                    blocked_by: None,
+                    result: outcome.result,
+                }
+            }
+        };
+        settled.push(disposition);
     }
-    value
+    settled
 }
 
 #[cfg(test)]
@@ -218,112 +267,193 @@ mod tests {
     use super::*;
     use ix_trace_rs::trace;
 
-    fn step(name: &str, status: StepStatus, blocked_by: Option<&str>) -> StepDisposition {
-        StepDisposition {
+    fn planned(name: &str, requires: &[&str]) -> PlannedStep {
+        PlannedStep {
             name: name.to_owned(),
-            status,
             method: "model_check".to_owned(),
-            evidence: None,
-            blocked_by: blocked_by.map(str::to_owned),
-            result: (status != StepStatus::Blocked).then(|| json!({})),
+            requires: requires.iter().map(|name| (*name).to_owned()).collect(),
         }
     }
 
-    fn outcome(steps: Vec<StepDisposition>) -> PlanRunOutcome {
+    fn settled(status: StepStatus, evidence: Option<&str>, result: Value) -> Settled {
+        Settled {
+            status,
+            evidence: evidence.map(str::to_owned),
+            result: Some(result),
+        }
+    }
+
+    fn outcome(dispositions: Option<Vec<StepDisposition>>) -> PlanRunOutcome {
         PlanRunOutcome {
             package: "pkg".to_owned(),
             plan: "Release".to_owned(),
             document: None,
             initial: None,
             seed: 7,
-            dispositions: Some(steps),
+            dispositions,
         }
     }
 
-    /// Whether `dependent` runs after `prerequisite` settled `status`.
-    fn runs(status: StepStatus) -> bool {
-        status.satisfies_requires()
+    /// Run `Release`-shaped steps through the gate; returns the dispositions
+    /// and the names `run` was handed (the steps that were negotiated).
+    fn gate(
+        steps: &[PlannedStep],
+        mut engine: impl FnMut(&str) -> Settled,
+    ) -> (Vec<StepDisposition>, Vec<String>) {
+        let mut handed = Vec::new();
+        let dispositions = settle_in_order(steps, |step| {
+            handed.push(step.name.clone());
+            engine(&step.name)
+        });
+        (dispositions, handed)
+    }
+
+    fn release() -> Vec<PlannedStep> {
+        vec![
+            planned("safe", &[]),
+            planned("tested", &[]),
+            planned("timely", &["safe"]),
+        ]
     }
 
     #[test]
     #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-1")]
     #[trace("TC-3018", "FR-1038-AC-1")]
-    fn a_refuted_step_and_its_blocked_dependent_write_failed_and_exit_22() {
-        let mut tested = step("tested", StepStatus::Tested, None);
-        tested.evidence = Some("tested".to_owned());
-        let run = outcome(vec![
-            step("safe", StepStatus::Refuted, None),
-            tested,
-            step("timely", StepStatus::Blocked, Some("safe")),
-        ]);
+    fn a_refuted_step_blocks_its_dependent_and_the_run_writes_failed_and_exit_22() {
+        let (dispositions, handed) = gate(&release(), |name| match name {
+            "safe" => settled(StepStatus::Refuted, Some("refutation"), json!({})),
+            _ => settled(StepStatus::Tested, Some("tested"), json!({})),
+        });
+        assert_eq!(handed, ["safe", "tested"]);
+        let run = outcome(Some(dispositions));
         let document = run.document();
         assert_eq!(document["format"], "filament.verification-plan-outcome/v1");
         assert_eq!(document["status"], "failed");
         assert_eq!(document["failed_steps"], json!(["safe"]));
         assert_eq!(document["inputs"], json!({"initial": null, "seed": 7}));
+        assert_eq!(document["dispositions"]["safe"]["evidence"], "refutation");
+        assert_eq!(document["dispositions"]["tested"]["evidence"], "tested");
+        assert_eq!(document["dispositions"]["timely"]["status"], "blocked");
         assert_eq!(document["dispositions"]["timely"]["blocked_by"], "safe");
         assert_eq!(document["dispositions"]["timely"]["result"], Value::Null);
-        assert_eq!(document["dispositions"]["tested"]["evidence"], "tested");
         assert_eq!(run.exit_code(), 22);
     }
 
     #[test]
     #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-1")]
     #[trace("TC-3018", "FR-1038-AC-1")]
-    fn an_emit_only_request_writes_null_dispositions_and_exits_0() {
-        let mut run = outcome(Vec::new());
-        run.dispositions = None;
+    #[trace("TC-3032", "FR-1038-AC-3")]
+    #[trace("FSpec-TC-2046", "FSpec-FR-824-AC-6")]
+    fn an_emit_only_run_writes_null_status_and_dispositions_and_exits_0() {
+        let mut run = outcome(None);
         run.document = Some(json!({"format": "filament.verification-plan/v1"}));
         let document = run.document();
+        assert_eq!(document["status"], Value::Null);
         assert_eq!(document["dispositions"], Value::Null);
-        assert_eq!(document["document"]["format"], "filament.verification-plan/v1");
+        assert_eq!(document["failed_steps"], json!([]));
+        assert_eq!(
+            document["document"]["format"],
+            "filament.verification-plan/v1"
+        );
         assert_eq!(run.exit_code(), 0);
-        assert!(run.failed_steps().is_empty());
     }
 
     #[test]
     #[trace("FSpec-TC-2045", "FSpec-FR-824-AC-4")]
-    fn an_unsupported_step_leaves_the_plan_incomplete_with_no_failed_step_and_exit_21() {
-        let run = outcome(vec![
-            step("safe", StepStatus::Unsupported, None),
-            step("tested", StepStatus::Tested, None),
-            step("timely", StepStatus::Blocked, Some("safe")),
-        ]);
-        assert!(!runs(StepStatus::Unsupported));
-        assert_eq!(run.document()["status"], "incomplete");
-        assert!(run.failed_steps().is_empty());
+    fn an_unsupported_step_is_negotiated_and_blocks_its_dependent_unnegotiated() {
+        let diagnostic = json!({"refusal": {
+            "code": "unsupported_projection",
+            "cause": "unsupported-requested-capability",
+            "capability": "temporal-satisfaction", "extent": "bounded"}});
+        let (dispositions, handed) = gate(&release(), |name| match name {
+            "safe" => settled(StepStatus::Unsupported, None, diagnostic.clone()),
+            _ => settled(StepStatus::Tested, Some("tested"), json!({})),
+        });
+        assert_eq!(handed, ["safe", "tested"], "timely is never handed on");
+        let run = outcome(Some(dispositions));
+        let document = run.document();
+        let safe = &document["dispositions"]["safe"];
+        assert_eq!(safe["status"], "unsupported");
+        assert_eq!(safe["evidence"], Value::Null);
+        assert_eq!(safe["result"]["refusal"]["code"], "unsupported_projection");
+        assert_eq!(
+            safe["result"]["refusal"]["cause"],
+            "unsupported-requested-capability"
+        );
+        assert_eq!(document["dispositions"]["tested"]["status"], "tested");
+        assert_eq!(document["dispositions"]["timely"]["blocked_by"], "safe");
+        assert_eq!(document["status"], "incomplete");
+        assert_eq!(document["failed_steps"], json!([]));
         assert_eq!(run.exit_code(), 21);
     }
 
     #[test]
     #[trace("FSpec-TC-2045", "FSpec-FR-824-AC-5")]
-    fn a_measured_step_gates_and_settles_by_its_decision() {
-        for (decision, dependent_runs, status, failed, exit) in [
-            (Decision::Accepted, true, "passed", vec![], 0),
-            (Decision::Rejected, false, "failed", vec!["s"], 22),
-            (Decision::Undecided, false, "incomplete", vec![], 22),
+    fn a_measured_step_gates_its_dependent_by_its_decision() {
+        let steps = [planned("s", &[]), planned("t", &["s"])];
+        for (decision, name, dependent_runs, status, failed, exit) in [
+            (Decision::Accepted, "accepted", true, "passed", vec![], 0),
+            (
+                Decision::Rejected,
+                "rejected",
+                false,
+                "failed",
+                vec!["s"],
+                22,
+            ),
+            (
+                Decision::Undecided,
+                "undecided",
+                false,
+                "incomplete",
+                vec![],
+                22,
+            ),
         ] {
-            let measured = StepStatus::Measured(decision);
-            assert_eq!(runs(measured), dependent_runs);
-            let dependent = if dependent_runs {
-                step("t", StepStatus::Proved, None)
-            } else {
-                step("t", StepStatus::Blocked, Some("s"))
-            };
-            let run = outcome(vec![step("s", measured, None), dependent]);
+            let (dispositions, handed) = gate(&steps, |step| match step {
+                "s" => settled(
+                    StepStatus::Measured(decision),
+                    Some("measured"),
+                    json!({"verdict": {"decision": {"type": name}}}),
+                ),
+                _ => settled(StepStatus::Proved, Some("proof"), json!({})),
+            });
+            assert_eq!(handed.contains(&"t".to_owned()), dependent_runs);
+            let run = outcome(Some(dispositions));
             let document = run.document();
             assert_eq!(document["status"], status);
             assert_eq!(run.failed_steps(), failed);
             assert_eq!(run.exit_code(), exit);
+            let measured = document["dispositions"]["s"].as_object().unwrap();
+            let mut members: Vec<&str> = measured.keys().map(String::as_str).collect();
+            members.sort_unstable();
             assert_eq!(
-                document["dispositions"]["s"]["decision"],
-                match decision {
-                    Decision::Accepted => "accepted",
-                    Decision::Rejected => "rejected",
-                    Decision::Undecided => "undecided",
-                }
+                members,
+                ["blocked_by", "evidence", "method", "result", "status"]
+            );
+            assert_eq!(measured["status"], "measured");
+            assert_eq!(measured["result"]["verdict"]["decision"]["type"], name);
+            assert_eq!(
+                document["dispositions"]["t"]["status"],
+                if dependent_runs { "proved" } else { "blocked" }
             );
         }
+    }
+
+    #[test]
+    #[trace("FSpec-TC-2045", "FSpec-FR-824-AC-4")]
+    fn a_blocked_prerequisite_blocks_its_dependents_by_the_first_unsatisfied_one() {
+        let steps = [
+            planned("a", &[]),
+            planned("b", &["a"]),
+            planned("c", &["b", "a"]),
+        ];
+        let (dispositions, handed) = gate(&steps, |_| {
+            settled(StepStatus::Inconclusive, None, json!({}))
+        });
+        assert_eq!(handed, ["a"]);
+        assert_eq!(dispositions[1].blocked_by.as_deref(), Some("a"));
+        assert_eq!(dispositions[2].blocked_by.as_deref(), Some("a"));
     }
 
     #[test]
@@ -339,9 +469,16 @@ mod tests {
             let steps = statuses
                 .into_iter()
                 .enumerate()
-                .map(|(index, status)| step(&format!("s{index}"), status, None))
+                .map(|(index, status)| StepDisposition {
+                    name: format!("s{index}"),
+                    status,
+                    method: "model_check".to_owned(),
+                    evidence: None,
+                    blocked_by: None,
+                    result: None,
+                })
                 .collect();
-            assert_eq!(outcome(steps).exit_code(), exit);
+            assert_eq!(outcome(Some(steps)).exit_code(), exit);
         }
     }
 }

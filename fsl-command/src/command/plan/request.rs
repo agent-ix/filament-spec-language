@@ -13,7 +13,7 @@ const MEMBERS: [&str; 6] = ["plan", "emit", "execute", "initial", "seed", "docum
 /// Which run route carries the request: FSpec FR-824 "Selection" lets only a
 /// run over a selected checked package carry `document`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Route {
+pub(crate) enum Route {
     /// A source run: the program is compiled and the plan documents emitted.
     Source,
     /// A run over a selected checked package: no source is compiled, so the
@@ -23,7 +23,7 @@ pub enum Route {
 
 /// One verification plan request, read strictly.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PlanRequest {
+pub(crate) struct PlanRequest {
     /// The bare or qualified declared plan name, when given.
     pub plan: Option<String>,
     /// Whether the outcome carries the plan document (default `false`).
@@ -90,7 +90,7 @@ fn kind_error(name: &str, expected: &str) -> RunCause {
 
 fn text(object: &Map<String, Value>, name: &str) -> Result<Option<String>> {
     match object.get(name) {
-        None => Ok(None),
+        None | Some(Value::Null) => Ok(None),
         Some(Value::String(text)) => Ok(Some(text.clone())),
         Some(_) => Err(kind_error(name, "a string")),
     }
@@ -98,7 +98,7 @@ fn text(object: &Map<String, Value>, name: &str) -> Result<Option<String>> {
 
 fn flag(object: &Map<String, Value>, name: &str, default: bool) -> Result<bool> {
     match object.get(name) {
-        None => Ok(default),
+        None | Some(Value::Null) => Ok(default),
         Some(Value::Bool(flag)) => Ok(*flag),
         Some(_) => Err(kind_error(name, "a boolean")),
     }
@@ -106,7 +106,7 @@ fn flag(object: &Map<String, Value>, name: &str, default: bool) -> Result<bool> 
 
 fn seed(object: &Map<String, Value>) -> Result<Option<u64>> {
     match object.get("seed") {
-        None => Ok(None),
+        None | Some(Value::Null) => Ok(None),
         Some(Value::Number(number)) => number.as_u64().map(Some).ok_or_else(|| {
             refuse(
                 "/seed",
@@ -119,7 +119,7 @@ fn seed(object: &Map<String, Value>) -> Result<Option<u64>> {
 }
 
 fn document(object: &Map<String, Value>, route: Route) -> Result<Option<String>> {
-    let Some(member) = object.get("document") else {
+    let Some(member) = object.get("document").filter(|value| !value.is_null()) else {
         return match route {
             Route::Source => Ok(None),
             Route::Package => Err(refuse(
@@ -169,7 +169,7 @@ fn document(object: &Map<String, Value>, route: Route) -> Result<Option<String>>
 /// `unknown-member`, `wrong-value-kind`, `invalid-value` (`emit` and
 /// `execute` both `false`, at `/execute`; a `seed` outside the unsigned
 /// 64-bit range), or `missing-member` (`document` on a package route).
-pub fn read(member: &Value, route: Route) -> Result<PlanRequest> {
+pub(crate) fn read(member: &Value, route: Route) -> Result<PlanRequest> {
     let Some(object) = member.as_object() else {
         return Err(refuse("", "wrong-value-kind", "expected an object"));
     };
@@ -201,4 +201,98 @@ pub fn read(member: &Value, route: Route) -> Result<PlanRequest> {
         seed,
         document,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+    use serde_json::json;
+
+    fn cause(member: &Value, route: Route) -> (String, &'static str) {
+        match read(member, route) {
+            Err(RunCause::PlanRequest { path, cause, .. }) => (path, cause),
+            other => panic!("expected a plan request refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    #[trace("TC-3018", "FR-1038-AC-2")]
+    #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
+    fn a_seed_on_a_plan_no_step_consumes_it_in_refuses_unknown_member() {
+        let request = read(
+            &json!({"plan": "P", "seed": 3, "initial": "s.json"}),
+            Route::Source,
+        )
+        .unwrap();
+        assert!(request.close_by_plan(true, true).is_ok());
+        for (initial, seed, pointer) in [
+            (true, false, "/request/verification_plan/seed"),
+            (false, true, "/request/verification_plan/initial"),
+        ] {
+            match request.close_by_plan(initial, seed) {
+                Err(RunCause::PlanRequest { path, cause, .. }) => {
+                    assert_eq!((path.as_str(), cause), (pointer, "unknown-member"));
+                }
+                other => panic!("expected unknown-member, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
+    fn the_package_route_requires_a_document_and_the_source_route_refuses_one() {
+        let document = "/request/verification_plan/document";
+        assert_eq!(
+            cause(&json!({"plan": "P"}), Route::Package),
+            (document.to_owned(), "missing-member")
+        );
+        assert_eq!(
+            cause(&json!({"document": {"file": "p.json"}}), Route::Source),
+            (document.to_owned(), "unknown-member")
+        );
+        let request = read(&json!({"document": {"file": "p.json"}}), Route::Package).unwrap();
+        assert_eq!(request.document.as_deref(), Some("p.json"));
+        assert_eq!(
+            cause(&json!({"document": {"file": 1}}), Route::Package),
+            (format!("{document}/file"), "wrong-value-kind")
+        );
+    }
+
+    #[test]
+    #[trace("TC-3032", "FR-1038-AC-3")]
+    #[trace("FSpec-TC-2046", "FSpec-FR-824-AC-6")]
+    fn a_null_member_is_absent_and_a_seed_that_is_not_a_u64_is_invalid() {
+        let request = read(
+            &json!({"plan": "Release", "seed": null, "emit": null, "initial": null}),
+            Route::Source,
+        )
+        .unwrap();
+        assert_eq!(request.seed, None);
+        assert_eq!(request.effective_seed(), 0);
+        assert_eq!(request.initial, None);
+        assert!(!request.emit && request.execute);
+        for seed in [
+            json!(-1),
+            json!(7.5),
+            json!(1e3),
+            Value::from(18_446_744_073_709_551_616_f64),
+        ] {
+            assert_eq!(
+                cause(&json!({"seed": seed}), Route::Source),
+                (
+                    "/request/verification_plan/seed".to_owned(),
+                    "invalid-value"
+                ),
+                "{seed}"
+            );
+        }
+        assert_eq!(
+            cause(&json!({"seed": "7"}), Route::Source),
+            (
+                "/request/verification_plan/seed".to_owned(),
+                "wrong-value-kind"
+            )
+        );
+    }
 }

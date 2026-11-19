@@ -361,7 +361,7 @@ fn compile_bytes(unit: &str) -> Result<Vec<u8>, Value> {
 #[test]
 #[trace("TC-2103", "FR-753-AC-3")]
 #[trace("FSpec-TC-1601", "FSpec-FR-192-AC-11")]
-#[ignore = "QSL-2236: `verify` plan emission outside the checked package not implemented yet"]
+#[ignore = "QSL-2509: plan emission outside the checked package (S4) is not on main yet"]
 fn a_plan_leaves_the_package_identity_unchanged_and_emits_its_document() {
     let plan_free = RELEASE_PLAN.split("verify Release").next().unwrap();
     let without = compile_bytes(&format!("{MODEL_HEADER}{plan_free}")).expect("compiles");
@@ -399,7 +399,7 @@ fn a_plan_leaves_the_package_identity_unchanged_and_emits_its_document() {
 #[trace("TC-2103", "FR-753-AC-4")]
 #[trace("TC-3018", "FR-1038-AC-1")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-1")]
-#[ignore = "QSL-2236: verification plan execution not implemented yet"]
+#[ignore = "QSL-2511: the plan coordinator (execute_plan) and QSL-2509 plan documents are not on main yet"]
 fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
     let (exit, value) = run(
         &format!("{MODEL_HEADER}{RELEASE_PLAN}"),
@@ -426,56 +426,103 @@ fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
     assert_eq!(exit, 22, "{value}");
 }
 
+/// The `details.path` of a refused run's document.
+fn refusal_path(value: &Value) -> &str {
+    value["details"]["path"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a path: {value}"))
+}
+
 /// FR-1038-AC-2, FSpec FR-824-AC-3: the strict reader refuses a malformed
-/// `verification_plan` member at its pointer before any stage runs, so no
-/// outcome is written and the run exits `20`.
+/// `verification_plan` member at its exact pointer before any stage runs, so
+/// no outcome is written and the run exits `20`.
 #[test]
 #[trace("TC-3018", "FR-1038-AC-2")]
+#[trace("TC-3032", "FR-1038-AC-3")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
+#[trace("FSpec-TC-2046", "FSpec-FR-824-AC-6")]
 fn the_verification_plan_reader_refuses_a_malformed_member_at_its_pointer() {
     let unit = format!("{MODEL_HEADER}{RELEASE_PLAN}");
     for (member, cause, pointer) in [
         (
             json!({"plan": "Release", "seed": "7"}),
             "wrong-value-kind",
-            "/verification_plan/seed",
+            "/request/verification_plan/seed",
         ),
         (
             json!({"plan": "Release", "seed": -1}),
             "invalid-value",
-            "/verification_plan/seed",
+            "/request/verification_plan/seed",
+        ),
+        (
+            json!({"plan": "Release", "seed": 7.5}),
+            "invalid-value",
+            "/request/verification_plan/seed",
+        ),
+        (
+            serde_json::from_str(r#"{"plan": "Release", "seed": 18446744073709551616}"#).unwrap(),
+            "invalid-value",
+            "/request/verification_plan/seed",
         ),
         (
             json!({"plan": "Release", "emit": "yes"}),
             "wrong-value-kind",
-            "/verification_plan/emit",
+            "/request/verification_plan/emit",
         ),
         (
             json!({"plan": "Release", "emit": false, "execute": false}),
             "invalid-value",
-            "/verification_plan/execute",
+            "/request/verification_plan/execute",
         ),
         (
             json!({"plan": "Release", "engine": "x"}),
             "unknown-member",
-            "/verification_plan/engine",
+            "/request/verification_plan/engine",
         ),
         (
             json!({"plan": "Release", "document": {"file": "p.json"}}),
             "unknown-member",
-            "/verification_plan/document",
+            "/request/verification_plan/document",
         ),
-        (json!([]), "wrong-value-kind", "/verification_plan"),
+        (json!([]), "wrong-value-kind", "/request/verification_plan"),
+        (
+            json!(null),
+            "wrong-value-kind",
+            "/request/verification_plan",
+        ),
     ] {
         let (exit, value) = run(&unit, true, ("verification_plan", member));
         assert_eq!(exit, 20, "{value}");
+        assert_eq!(refusal_path(&value), pointer, "{value}");
         refusal_names(&value, cause);
-        refusal_names(&value, pointer);
         assert!(
             value.get("verification_plan").is_none(),
             "no outcome: {value}"
         );
     }
+}
+
+/// FR-1038-AC-3, FSpec FR-824-AC-6: a `null` member inside the object is
+/// absent, so the request passes the reader and reaches the stages after it
+/// (which refuse the unimplemented member as before, not at its kind).
+#[test]
+#[trace("TC-3032", "FR-1038-AC-3")]
+#[trace("FSpec-TC-2046", "FSpec-FR-824-AC-6")]
+fn a_null_member_inside_the_verification_plan_object_is_absent() {
+    let unit = format!("{MODEL_HEADER}{RELEASE_PLAN}");
+    let (_, value) = run(
+        &unit,
+        true,
+        (
+            "verification_plan",
+            json!({"plan": "Release", "seed": null, "emit": null, "initial": null}),
+        ),
+    );
+    let path = value["details"]["path"].as_str().unwrap_or_default();
+    assert!(
+        !path.starts_with("/request/verification_plan/"),
+        "the reader refused a null member: {value}"
+    );
 }
 
 /// FR-1038-AC-2, FSpec FR-824-AC-2/AC-3: the plan is selected by declared
@@ -485,7 +532,7 @@ fn the_verification_plan_reader_refuses_a_malformed_member_at_its_pointer() {
 #[trace("TC-3018", "FR-1038-AC-2")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-2")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
-#[ignore = "QSL-2236: verification plan selection and request members not implemented yet"]
+#[ignore = "QSL-2508/QSL-2509: plan selection over emitted plan documents is not on main yet; the request members are read (QSL-2510)"]
 fn the_verification_plan_member_selects_one_plan_or_refuses() {
     let one = format!("{MODEL_HEADER}{RELEASE_PLAN}");
     let (_, value) = run(

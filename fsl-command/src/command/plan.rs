@@ -3,14 +3,16 @@
 //! member. [`request`] is its strict reader and [`outcome`] the writer of the
 //! `filament.verification-plan-outcome/v1` document.
 
-pub mod outcome;
-pub mod request;
+pub(crate) mod outcome;
+pub(crate) mod request;
 
 use super::{Result, RunCause};
 use serde_json::Value;
 
 /// Read the `verification_plan` member of the `native-run/1` request in
-/// `bytes`, when it carries one, before any stage runs.
+/// `bytes`, when it carries one, before any stage runs. A request with a
+/// `package` member is a run over a selected checked package, which carries
+/// the plan `document`; any other request is a source run.
 ///
 /// # Errors
 ///
@@ -22,11 +24,16 @@ pub(super) fn check_member(bytes: &[u8]) -> Result<()> {
     {
         return Ok(());
     }
-    match document
-        .get("request")
-        .and_then(|body| body.get("verification_plan"))
-    {
-        Some(member) => request::read(member, request::Route::Source).map(drop),
+    let Some(body) = document.get("request") else {
+        return Ok(());
+    };
+    let route = if body.get("package").is_some() {
+        request::Route::Package
+    } else {
+        request::Route::Source
+    };
+    match body.get("verification_plan") {
+        Some(member) => request::read(member, route).map(drop),
         None => Ok(()),
     }
 }
