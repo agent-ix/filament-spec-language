@@ -12,7 +12,7 @@ use fsl_semantics::check::HyperForm;
 use ix_trace_rs::trace;
 
 use crate::hyper::refuted;
-use crate::hyper_world::{key, non_interference, opaque, Vault, World, EQUAL_INPUTS};
+use crate::hyper_world::{key, non_interference, opaque, Vault, World, EQUAL_INPUTS, STARTS};
 
 /// The two vaults `v` and `w` of one initial state.
 const TWO_VAULTS: [(&str, (i64, i64)); 2] = [("v", (0, 0)), ("w", (1, 0))];
