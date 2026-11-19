@@ -1255,8 +1255,9 @@ pub fn replay_protocol_trace_from_package(
     }
     let documents = request.byte_provision().snapshots();
     let meter = request.accounting_limits();
+    let model_input = input.input();
     let simulation = ModelSimulationRequest {
-        input: input.input(),
+        input: model_input.clone(),
         packages: &packages,
         normalization: limits.spine.model,
         snapshots: &documents,
@@ -1279,8 +1280,7 @@ pub fn replay_protocol_trace_from_package(
         capacities: subject.capacities.clone(),
         memory: subject.memory.clone(),
     };
-    let protocol_form = input
-        .input()
+    let protocol_form = model_input
         .protocol_definition(&subject.protocol)
         .and_then(|definition| match definition {
             fsl_eval::simulation::model::ProtocolDefinition::Package(form) => Some(form),
