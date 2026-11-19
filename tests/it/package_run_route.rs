@@ -71,7 +71,6 @@ fn names(value: &Value, text: &str) {
 #[test]
 #[trace("TC-3019", "FR-1039-AC-1")]
 #[trace("TC-3019", "FR-100-AC-22")]
-#[ignore = "QSL-1989: native-compile/1 does not take the integer_division member yet, so the package this run selects cannot be compiled"]
 fn a_package_only_run_uses_the_recorded_law_without_source() {
     let directory = tempfile::tempdir().unwrap();
     compile(directory.path(), HALF, json!({"integer_division": "floor"}));
@@ -100,7 +99,7 @@ fn a_package_only_run_uses_the_recorded_law_without_source() {
 /// directory.
 #[test]
 #[trace("TC-3019", "FR-1039-AC-2")]
-#[ignore = "QSL-2390: native-run over a selected checked package is not implemented for every member yet"]
+#[ignore = "FR-754: the synthesis lowering is not installed, so the package this run selects cannot be compiled (SynthesisNotChecked)"]
 fn a_package_run_selects_its_form_by_the_member() {
     let directory = tempfile::tempdir().unwrap();
     compile(directory.path(), PICK, json!({}));
@@ -133,7 +132,7 @@ fn a_package_run_selects_its_form_by_the_member() {
 /// stage `request` with the stated code.
 #[test]
 #[trace("TC-3019", "FR-1039-AC-3")]
-#[ignore = "QSL-2390: package-route refusals are not implemented yet"]
+#[ignore = "FR-1039 names code unknown_contract_version, which the closed diagnostic catalogue (fsl-foundation CATALOG_CATEGORIES) does not hold; spec decision needed"]
 fn a_package_that_cannot_run_refuses_at_the_request() {
     let directory = tempfile::tempdir().unwrap();
     crate::support::config_version_spine::spine::write(
@@ -141,7 +140,7 @@ fn a_package_that_cannot_run_refuses_at_the_request() {
         crate::support::config_version_spine::Case::Healthy,
     )
     .unwrap();
-    compile(directory.path(), HALF, json!({}));
+    compile(directory.path(), HALF, json!({"integer_division": "floor"}));
     let mut wire: Value =
         serde_json::from_slice(&std::fs::read(directory.path().join("package.json")).unwrap())
             .unwrap();
