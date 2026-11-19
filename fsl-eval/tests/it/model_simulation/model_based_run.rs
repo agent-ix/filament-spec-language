@@ -325,13 +325,10 @@ fn unbounded_model_roots_report_value_bound_cuts_in_operation_coverage() {
         .iter()
         .find(|entry| entry.operation.name == "big")
         .expect("big is declared");
-    assert!(matches!(
-        big.status,
-        ModelOperationCoverageStatus::Covered { .. }
-            | ModelOperationCoverageStatus::NotCovered {
-                reason: ModelOperationCoverageReason::NotGenerated { .. }
-            }
-    ));
+    assert!(
+        matches!(big.status, ModelOperationCoverageStatus::Covered { .. }),
+        "the seeded wide-bound suite must actually apply big"
+    );
 }
 
 /// FR-752-AC-4 / FSpec FR-190-AC-13: a passing run stays tested; a failing
@@ -679,6 +676,28 @@ fn unbounded_value_function_uses_size_order_partitions_before_seeded_draws() {
     assert_eq!(result.counts.generated, 20);
     assert_eq!(result.counts.passing, 20);
     assert_eq!(result.evidence, ModelBasedTestEvidence::Tested);
+    assert_eq!(result.checks.evaluated, 20);
+    assert_eq!(result.discarded_by.len(), 4);
+    assert_eq!(
+        result.partition_coverage.status,
+        ModelOperationCoverageSummaryStatus::Complete
+    );
+    let limited = run_model_based_test_with_value_bits(
+        &system,
+        &identity,
+        &sampler(),
+        7,
+        1,
+        8,
+        Some(8),
+        10_000,
+        Limits::default(),
+    )
+    .expect("a case budget may end within the partition prefix");
+    assert_eq!(limited.counts.generated, 1);
+    assert_eq!(limited.counts.passing, 1);
+    assert_eq!(limited.partitions.len(), 5);
+    assert_eq!(limited.partition_coverage.uncovered["not-generated"], 4);
     assert!(result.partitions.iter().all(|partition| {
         !matches!(
             partition.kind,
@@ -1145,6 +1164,55 @@ fn contract_cases_start_with_ordered_domain_partitions() {
     )
     .expect("the native postcondition partition run");
 
+    let repeated = run_model_based_test(
+        &system,
+        &identity,
+        &sampler(),
+        7,
+        100,
+        8,
+        10_000,
+        Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+    )
+    .expect("the same native run");
+    assert_eq!(result.counts, repeated.counts);
+    assert_eq!(result.discarded_by, repeated.discarded_by);
+    assert_eq!(result.checks, repeated.checks);
+    assert_eq!(result.partitions, repeated.partitions);
+    assert_eq!(result.partition_coverage, repeated.partition_coverage);
+    assert!(result.checks.evaluated >= result.counts.passing);
+    assert!(result.checks.skipped.values().all(|count| *count == 0));
+    assert_eq!(result.partition_coverage.uncovered["precondition-false"], 1);
+    assert_eq!(result.partition_coverage.uncovered["no-check-point"], 1);
+
+    let bounded = run_model_based_test(
+        &system,
+        &identity,
+        &sampler(),
+        7,
+        100,
+        8,
+        10_000,
+        Limits::default()
+            .with_max_states(1)
+            .with_max_transitions(1_000),
+    )
+    .expect("a coverage stop does not stop the suite");
+    assert_eq!(bounded.result, ModelBasedTestEvidence::Tested);
+    assert_eq!(
+        bounded.counts.generated,
+        bounded.counts.passing + bounded.counts.failing + bounded.counts.discarded
+    );
+    assert_eq!(bounded.counts.generated, 100);
+    assert!(
+        bounded
+            .partition_coverage
+            .uncovered
+            .contains_key("undetermined")
+    );
+
     let expected = [
         (vec![0, 2], "-1".to_owned(), ModelBoundaryKind::LowerRefusal),
         (vec![0, 2], "0".to_owned(), ModelBoundaryKind::LowerEndpoint),
@@ -1223,6 +1291,83 @@ fn contract_cases_start_with_ordered_domain_partitions() {
             }
         )
     );
+}
+
+/// Text count-table work is charged before any caller-sized allocation.
+#[trace("TC-3068", "FR-752-AC-10")]
+#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-22")]
+#[test]
+fn text_domain_work_limits_settle_a_record_before_any_case() {
+    for (maximum, profile, work, expected) in [
+        (
+            1_099_511_627_776_u64,
+            "nfc",
+            1_000_000,
+            ModelBasedTestEvidence::Incomplete,
+        ),
+        (
+            1_099_511_627_776,
+            "unicode-scalars",
+            1_000_000,
+            ModelBasedTestEvidence::Incomplete,
+        ),
+        (4, "nfc", 2_559, ModelBasedTestEvidence::Incomplete),
+        (4, "nfc", 1_000_000, ModelBasedTestEvidence::Tested),
+    ] {
+        let mut world = world_with_level_bound(
+            vec![operation("observe", &[], None, frame(&[], false, false))],
+            &format!(
+                "function Label using v(t: Text[0,{maximum}; {profile}]): Boolean pure {{ size(t) >= 0 }}"
+            ),
+            5,
+        );
+        let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+        let mut meter = UNLIMITED;
+        meter.work_units = work;
+        let system = system(&world, vec![initial], &["c1"], meter);
+        let identity = world
+            .package
+            .graph()
+            .function_identity("Label")
+            .expect("value clause");
+        let result = run_model_based_test(
+            &system,
+            &identity,
+            &sampler(),
+            7,
+            30,
+            8,
+            10_000,
+            Limits::default(),
+        )
+        .expect("resource exhaustion is a run record");
+        assert_eq!(result.result, expected);
+        assert!(result.provenance.size_bounded.is_empty());
+        if expected == ModelBasedTestEvidence::Incomplete {
+            assert_eq!(result.exit_code(), 22);
+            assert_eq!(result.counts.generated, 0);
+            assert_eq!(result.checks.evaluated, 0);
+            assert_eq!(
+                result.cause,
+                Some(ModelBasedTestCause::LimitReached {
+                    limit: filament_exact::LimitKind::WorkUnits,
+                    value: work,
+                    setting: "accounting.work_units".to_owned(),
+                })
+            );
+        } else {
+            assert_eq!(result.counts.generated, 30);
+            assert_eq!(result.counts.discarded, 1);
+            assert_eq!(result.checks.evaluated, 29);
+            assert!(
+                result
+                    .discarded_by
+                    .values()
+                    .filter(|entry| entry.count == 0)
+                    .all(|entry| entry.first_case.is_none())
+            );
+        }
+    }
 }
 
 /// FR-752-AC-7 / FSpec FR-190-AC-16: an unrelated Jam postcondition records

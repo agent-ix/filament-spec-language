@@ -24,8 +24,7 @@ pub struct ModelOperationCase {
 }
 
 /// Resource limits that can stop operation-reachability exploration.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ModelOperationCoverageLimit {
     /// Reachability exploration exhausted its state budget.
     States,
@@ -35,6 +34,23 @@ pub enum ModelOperationCoverageLimit {
     Candidates,
     /// Reachability exploration was cancelled by its caller.
     Cancelled,
+    /// A scalar accounting counter stopped generation before exploration.
+    Accounting(filament_exact::LimitKind),
+}
+
+impl Serialize for ModelOperationCoverageLimit {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(match self {
+            Self::States => "states",
+            Self::Transitions => "transitions",
+            Self::Candidates => "candidates",
+            Self::Cancelled => "cancelled",
+            Self::Accounting(counter) => counter.as_str(),
+        })
+    }
 }
 
 /// Reachability information for one declared operation, obtained from the
@@ -121,6 +137,12 @@ impl Serialize for ModelOperationCoverageEntry {
                         entry.serialize_entry("reason", "undetermined")?;
                         entry.serialize_entry("limit", limit)?;
                         entry.serialize_entry("value", value)?;
+                        if let ModelOperationCoverageLimit::Accounting(counter) = limit {
+                            entry.serialize_entry(
+                                "setting",
+                                &format!("accounting.{}", counter.as_str()),
+                            )?;
+                        }
                     }
                 }
             }

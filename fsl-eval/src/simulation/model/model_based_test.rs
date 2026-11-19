@@ -69,6 +69,36 @@ pub struct ModelBasedTestDiscardCount {
     pub first_case: Option<u64>,
 }
 
+/// Check points evaluated or skipped under the clause's premises.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelBasedTestChecks {
+    /// Check points evaluated, including failing points.
+    pub evaluated: u64,
+    /// Skipped points, grouped by the false premise.
+    pub skipped: BTreeMap<ModelBasedTestDiscardReason, u64>,
+}
+
+impl Default for ModelBasedTestChecks {
+    fn default() -> Self {
+        Self {
+            evaluated: 0,
+            skipped: BTreeMap::from([
+                (ModelBasedTestDiscardReason::PreconditionFalse, 0),
+                (ModelBasedTestDiscardReason::InvariantFalse, 0),
+            ]),
+        }
+    }
+}
+
+/// Summary of the root partitions exercised by the suite.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelBasedPartitionCoverage {
+    /// Complete when every partition was covered or refused.
+    pub status: ModelOperationCoverageSummaryStatus,
+    /// Number of uncovered partitions grouped by their reason.
+    pub uncovered: BTreeMap<String, u64>,
+}
+
 /// Per-case draw provenance, including the value-size bound used to admit the
 /// generated roots.
 #[derive(Clone, Debug)]
@@ -179,6 +209,8 @@ pub enum ModelBasedTestEvidence {
     Refuted,
     /// Every generated case was discarded, so no case was evaluated.
     Inconclusive,
+    /// A resource limit stopped generation before completion.
+    Incomplete,
 }
 
 impl ModelBasedTestEvidence {
@@ -189,15 +221,25 @@ impl ModelBasedTestEvidence {
             Self::Tested => Category::Success.exit_code(),
             Self::Refuted => Category::Violation.exit_code(),
             Self::Inconclusive => Category::Inconclusive.exit_code(),
+            Self::Incomplete => Category::Incomplete.exit_code(),
         }
     }
 }
 
 /// FR-190's completed-run cause when every generated case is discarded.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModelBasedTestCause {
     /// No generated case reached an evaluated check point.
     NoEvaluatedCase,
+    /// The scalar accounting budget could not cover generation work.
+    LimitReached {
+        /// Counter whose budget was exhausted.
+        limit: filament_exact::LimitKind,
+        /// Configured limit, rather than the denied charge.
+        value: u64,
+        /// Setting that raises the reached limit.
+        setting: String,
+    },
 }
 
 /// The operation-coverage summary in an FR-190 run record.
@@ -230,8 +272,12 @@ pub struct ModelBasedTestResult {
     pub counts: ModelBasedTestCounts,
     /// Discarded cases grouped by reason, with their first case index.
     pub discarded_by: BTreeMap<ModelBasedTestDiscardReason, ModelBasedTestDiscardCount>,
+    /// Native clause check-point accounting, excluding shrink replays.
+    pub checks: ModelBasedTestChecks,
     /// The model's boundary partitions.
     pub partitions: Vec<ModelBoundaryPartition>,
+    /// Coverage of the declared root partitions.
+    pub partition_coverage: ModelBasedPartitionCoverage,
     /// Sampling provenance for every generated case, including discards.
     pub provenance: ModelBasedProvenance,
     /// One entry per declared operation.
@@ -645,6 +691,161 @@ fn size_domain_count(bits: u64) -> Integer {
         .sub(&Integer::one())
 }
 
+fn discard_counts() -> BTreeMap<ModelBasedTestDiscardReason, ModelBasedTestDiscardCount> {
+    [
+        ModelBasedTestDiscardReason::DomainRefusal,
+        ModelBasedTestDiscardReason::PreconditionFalse,
+        ModelBasedTestDiscardReason::InvariantFalse,
+        ModelBasedTestDiscardReason::NoCheckPoint,
+    ]
+    .into_iter()
+    .map(|reason| (reason, ModelBasedTestDiscardCount::default()))
+    .collect()
+}
+
+fn partition_coverage(partitions: &[ModelBoundaryPartition]) -> ModelBasedPartitionCoverage {
+    let mut uncovered = BTreeMap::new();
+    for partition in partitions {
+        let reason = match &partition.status {
+            Some(ModelPartitionStatus::Covered { .. } | ModelPartitionStatus::Refused { .. }) => {
+                continue;
+            }
+            Some(ModelPartitionStatus::Uncovered { reason, .. }) => match reason {
+                ModelPartitionUncoveredReason::PreconditionFalse => "precondition-false",
+                ModelPartitionUncoveredReason::Unreachable => "unreachable",
+                ModelPartitionUncoveredReason::UnreachableWithinBound => "unreachable-within-bound",
+                ModelPartitionUncoveredReason::NotGenerated => "not-generated",
+                ModelPartitionUncoveredReason::NoCheckPoint => "no-check-point",
+                ModelPartitionUncoveredReason::Undetermined { .. } => "undetermined",
+            },
+            None => "not-generated",
+        };
+        *uncovered.entry(reason.to_owned()).or_insert(0) += 1;
+    }
+    ModelBasedPartitionCoverage {
+        status: if uncovered.is_empty() {
+            ModelOperationCoverageSummaryStatus::Complete
+        } else {
+            ModelOperationCoverageSummaryStatus::Partial
+        },
+        uncovered,
+    }
+}
+
+fn prepare_text_roots(
+    roots: impl IntoIterator<Item = ValueType>,
+    meter: &mut Meter,
+) -> Result<(), filament_exact::Incomplete> {
+    use filament_exact::{Charge, ChargePoint, TextProfile};
+    for root in roots {
+        if let ValueType::Text(text) = root {
+            let states = match text.profile() {
+                TextProfile::UnicodeScalars | TextProfile::BinaryUtf8 => 1_u64,
+                TextProfile::Nfd | TextProfile::Nfkd => 256,
+                TextProfile::Nfc | TextProfile::Nfkc => 512,
+            };
+            let cells = Integer::from(text.max())
+                .add(&Integer::one())
+                .mul(&Integer::from(states));
+            meter.charge(Charge::new(ChargePoint::TextNormalizeInput).work(cells))?;
+            // Boundary strings are built before seeded draws. Fund the longest
+            // one before allocating any of them, including the refusal value.
+            meter.charge(
+                Charge::new(ChargePoint::TextNormalizeOutput)
+                    .work(Integer::zero())
+                    .exact_size(
+                        filament_exact::LimitKind::NormalizedScalars,
+                        Integer::from(text.max().checked_add(1).unwrap_or(text.max())),
+                    ),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the existing internal run inputs"
+)]
+fn text_limit_record(
+    model: Option<&ModelSystem<'_>>,
+    clause: String,
+    sampler: &DefinitionRef,
+    seed: u64,
+    max_cases: u64,
+    max_trace_length: usize,
+    max_value_bits: Option<u64>,
+    stop: filament_exact::Incomplete,
+) -> ModelBasedTestResult {
+    let operations = model.map(|system| {
+        system
+            .operations()
+            .into_iter()
+            .map(|(_, name, identity)| ModelOperationCoverageEntry {
+                operation: ModelOperation {
+                    identity: identity.to_owned(),
+                    name: name.to_owned(),
+                },
+                status: super::ModelOperationCoverageStatus::NotCovered {
+                    reason: ModelOperationCoverageReason::Undetermined {
+                        limit: ModelOperationCoverageLimit::Accounting(stop.limit_kind),
+                        value: u128::from(stop.limit),
+                    },
+                },
+            })
+            .collect::<Vec<_>>()
+    });
+    let coverage = operations.as_ref().map(|entries| ModelBasedCoverage {
+        status: if entries.is_empty() {
+            ModelOperationCoverageSummaryStatus::Complete
+        } else {
+            ModelOperationCoverageSummaryStatus::Partial
+        },
+        uncovered: if entries.is_empty() {
+            BTreeMap::new()
+        } else {
+            BTreeMap::from([(
+                ModelOperationCoverageReasonKind::Undetermined,
+                entries.len(),
+            )])
+        },
+        limits: ModelOperationCoverageLimits {
+            undetermined: entries.len(),
+        },
+    });
+    ModelBasedTestResult {
+        clause,
+        profile: sampler.clone(),
+        seed,
+        max_cases,
+        max_trace_length,
+        max_value_bits,
+        counts: ModelBasedTestCounts::default(),
+        discarded_by: discard_counts(),
+        checks: ModelBasedTestChecks::default(),
+        partition_coverage: partition_coverage(&[]),
+        partitions: Vec::new(),
+        provenance: ModelBasedProvenance {
+            max_value_bits,
+            size_bounded: model
+                .map(|system| model_size_bounded_roots(system, max_value_bits))
+                .unwrap_or_default(),
+            value_bound_cuts: ModelBasedValueBoundCuts::default(),
+            cases: Vec::new(),
+        },
+        operations,
+        coverage,
+        result: ModelBasedTestEvidence::Incomplete,
+        evidence: ModelBasedTestEvidence::Incomplete,
+        cause: Some(ModelBasedTestCause::LimitReached {
+            limit: stop.limit_kind,
+            value: stop.limit,
+            setting: format!("accounting.{}", stop.limit_kind.as_str()),
+        }),
+        counterexample: None,
+    }
+}
+
 fn model_size_bounded_roots(
     system: &ModelSystem<'_>,
     max_value_bits: Option<u64>,
@@ -699,6 +900,22 @@ fn run_model_based_value_function(
         }
     })?;
     let mut domains = Vec::with_capacity(function.parameters.len());
+    let mut generation_meter = Meter::new(system.meter_limits());
+    if let Err(stop) = prepare_text_roots(
+        function.parameters.iter().map(|(_, ty)| ty.clone()),
+        &mut generation_meter,
+    ) {
+        return Ok(text_limit_record(
+            None,
+            name,
+            sampler,
+            seed,
+            max_cases,
+            max_trace_length,
+            max_value_bits,
+            stop,
+        ));
+    }
     let mut partitions = Vec::new();
     for (index, (parameter, value_type)) in function.parameters.iter().enumerate() {
         let domain = system.value_domain(value_type, &[]).ok_or_else(|| {
@@ -827,18 +1044,28 @@ fn run_model_based_value_function(
     }
 
     let mut counts = ModelBasedTestCounts::default();
-    let mut discarded_by = BTreeMap::new();
+    let mut discarded_by = discard_counts();
+    let mut checks = ModelBasedTestChecks::default();
     let mut provenance = Vec::new();
-    let mut generated_partitions = Vec::new();
+    let mut generated_partitions: Vec<_> = partitions
+        .iter()
+        .map(|(_, _, _, partition)| {
+            let mut partition = partition.clone();
+            partition.status = Some(ModelPartitionStatus::Uncovered {
+                reason: ModelPartitionUncoveredReason::NotGenerated,
+                bounds: Vec::new(),
+            });
+            partition
+        })
+        .collect();
     let mut counterexample = None;
     let mut case_index = 0_u64;
 
-    for (parameter_index, parameter, value_type, partition) in &partitions {
+    for (generated_partition, (parameter_index, parameter, value_type, partition)) in
+        generated_partitions.iter_mut().zip(&partitions)
+    {
         if case_index >= max_cases {
             break;
-        }
-        if !generated_partitions.contains(partition) {
-            generated_partitions.push(partition.clone());
         }
         let refusal = matches!(
             partition.kind,
@@ -893,6 +1120,9 @@ fn run_model_based_value_function(
                     ModelBasedTestDiscardReason::DomainRefusal,
                     case_index,
                 );
+                generated_partition.status = Some(ModelPartitionStatus::Refused {
+                    first_case: case_index,
+                });
             }
             super::ModelBoundaryKind::LowerEndpoint
             | super::ModelBoundaryKind::UpperEndpoint
@@ -911,6 +1141,10 @@ fn run_model_based_value_function(
                     });
                 }
                 let outcome = value_function_result(package, &qualified_name, &assignment, system)?;
+                checks.evaluated += 1;
+                generated_partition.status = Some(ModelPartitionStatus::Covered {
+                    first_case: case_index,
+                });
                 match outcome {
                     CaseResult::Pass => counts.passing = counts.passing.saturating_add(1),
                     CaseResult::Discard(reason) => {
@@ -992,6 +1226,7 @@ fn run_model_based_value_function(
                 ));
             }
         }
+        checks.evaluated += 1;
         case_index = case_index.saturating_add(1);
     }
 
@@ -1028,6 +1263,8 @@ fn run_model_based_value_function(
         max_value_bits,
         counts,
         discarded_by,
+        checks,
+        partition_coverage: partition_coverage(&generated_partitions),
         partitions: generated_partitions,
         provenance: ModelBasedProvenance {
             max_value_bits,
@@ -1075,7 +1312,7 @@ fn value_function_result(
         }
         FamilyOutcome::Evaluated(Outcome::Undefined(_))
         | FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(_)) => {
-            CaseResult::Discard(ModelBasedTestDiscardReason::NoCheckPoint)
+            CaseResult::Fail("undefined-evaluation".to_owned())
         }
         FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)) => {
             return Err(ModelBasedTestError::ClauseUndetermined {
@@ -1101,6 +1338,13 @@ fn shrink_value_assignment(
     _case_index: u64,
     _seed: u64,
 ) -> Result<Vec<Value>, ModelBasedTestError> {
+    let CaseResult::Fail(disposition) =
+        value_function_result(package, function, assignment, system)?
+    else {
+        return Err(ModelBasedTestError::Shrink(
+            ModelShrinkError::NotCounterexample,
+        ));
+    };
     let mut minimized = assignment.to_vec();
     for parameter in 0..domains.len() {
         while let Some(current) = domains[parameter].index_of(&minimized[parameter]) {
@@ -1115,7 +1359,10 @@ fn shrink_value_assignment(
             let mut reduced = minimized.clone();
             reduced[parameter] = candidate;
             match value_function_result(package, function, &reduced, system)? {
-                CaseResult::Fail(_) => minimized = reduced,
+                CaseResult::Fail(candidate_disposition) if candidate_disposition == disposition => {
+                    minimized = reduced
+                }
+                CaseResult::Fail(_) => break,
                 CaseResult::Pass | CaseResult::Discard(_) => break,
             }
         }
@@ -1172,6 +1419,21 @@ fn run_model_based_contract_clause(
 ) -> Result<ModelBasedTestResult, ModelBasedTestError> {
     let identity = clause.identity.clone();
     system.reset_value_bound_cuts();
+    if let Err(stop) = prepare_text_roots(
+        system.rooted_domains().into_iter().map(|(_, _, ty)| ty),
+        &mut Meter::new(system.meter_limits()),
+    ) {
+        return Ok(text_limit_record(
+            Some(system),
+            clause.name.clone(),
+            sampler,
+            seed,
+            max_cases,
+            max_trace_length,
+            max_value_bits,
+            stop,
+        ));
+    }
     let partitions = contract_partition_cases(
         system,
         clause,
@@ -1216,32 +1478,35 @@ fn run_model_based_with_oracle<F>(
 where
     F: FnMut(&ModelTrace) -> Result<CaseResult, ModelBasedTestError>,
 {
+    if let Err(stop) = prepare_text_roots(
+        system.rooted_domains().into_iter().map(|(_, _, ty)| ty),
+        &mut Meter::new(system.meter_limits()),
+    ) {
+        return Ok(text_limit_record(
+            Some(system),
+            clause.to_owned(),
+            sampler,
+            seed,
+            max_cases,
+            max_trace_length,
+            max_value_bits,
+            stop,
+        ));
+    }
     let mut generated_cases = Vec::new();
     let mut partitions = Vec::new();
     let mut provenance = Vec::new();
     let mut counts = ModelBasedTestCounts::default();
-    let mut discarded_by = BTreeMap::from([
-        (
-            ModelBasedTestDiscardReason::DomainRefusal,
-            ModelBasedTestDiscardCount::default(),
-        ),
-        (
-            ModelBasedTestDiscardReason::PreconditionFalse,
-            ModelBasedTestDiscardCount::default(),
-        ),
-        (
-            ModelBasedTestDiscardReason::InvariantFalse,
-            ModelBasedTestDiscardCount::default(),
-        ),
-        (
-            ModelBasedTestDiscardReason::NoCheckPoint,
-            ModelBasedTestDiscardCount::default(),
-        ),
-    ]);
+    let mut checks = ModelBasedTestChecks::default();
+    let mut discarded_by = discard_counts();
     let mut counterexample = None;
 
     let mut case_index = 0_u64;
     for mut partition_case in partition_cases.unwrap_or_default() {
+        if partition_case.trace.is_none() && partition_case.discard.is_none() {
+            partitions.push(partition_case.partition);
+            continue;
+        }
         if case_index >= max_cases {
             partition_case.partition.status = Some(ModelPartitionStatus::Uncovered {
                 reason: ModelPartitionUncoveredReason::NotGenerated,
@@ -1269,6 +1534,7 @@ where
             continue;
         }
         if let Some(trace) = partition_case.trace {
+            add_trace_checks(system, clause, &trace, omitted_clause.as_ref(), &mut checks)?;
             let result = oracle(&trace)?;
             partition_case.partition.status = match result {
                 CaseResult::Pass | CaseResult::Fail(_) => Some(ModelPartitionStatus::Covered {
@@ -1358,6 +1624,7 @@ where
                 partitions.push(partition.clone());
             }
         }
+        add_trace_checks(system, clause, &trace, omitted_clause.as_ref(), &mut checks)?;
         match oracle(&trace)? {
             CaseResult::Pass => {
                 generated_cases.push(case_for(&trace, current_case));
@@ -1428,6 +1695,8 @@ where
         max_value_bits,
         counts,
         discarded_by,
+        checks,
+        partition_coverage: partition_coverage(&partitions),
         partitions,
         provenance: ModelBasedProvenance {
             max_value_bits,
@@ -1451,6 +1720,87 @@ where
     })
 }
 
+fn add_trace_checks(
+    system: &ModelSystem<'_>,
+    clause: &str,
+    trace: &ModelTrace,
+    identity: Option<&NodeKey>,
+    checks: &mut ModelBasedTestChecks,
+) -> Result<(), ModelBasedTestError> {
+    let Some(identity) = identity else {
+        let invariant = system
+            .source_package()
+            .and_then(|package| package.graph().state_clause(clause))
+            .is_some_and(|clause| clause.is_invariant());
+        checks.evaluated += if invariant {
+            u64::try_from(trace.trace.steps.len())
+                .unwrap_or(u64::MAX)
+                .saturating_add(1)
+        } else {
+            1
+        };
+        return Ok(());
+    };
+    let contract = system
+        .contract_clauses()
+        .into_iter()
+        .find(|contract| contract.identity == *identity)
+        .ok_or_else(|| ModelBasedTestError::InvalidClause {
+            clause: clause.to_owned(),
+        })?;
+    let Some((_, states)) = super::rebuild_model_trace(
+        system,
+        &trace.trace.initial,
+        &trace.trace.steps,
+        trace.trace.provenance.as_ref(),
+        Some(identity),
+    )?
+    else {
+        return Err(ModelBasedTestError::Shrink(
+            ModelShrinkError::NotCounterexample,
+        ));
+    };
+    let Some((declaring, name)) = &contract.operation else {
+        return Err(ModelBasedTestError::InvalidClause {
+            clause: clause.to_owned(),
+        });
+    };
+    let operation = system
+        .operation_text(declaring.clone(), name)
+        .ok_or_else(|| ModelBasedTestError::InvalidClause {
+            clause: clause.to_owned(),
+        })?;
+    for (index, state) in states.iter().enumerate() {
+        let points = match contract.kind {
+            ContractClauseKind::Precondition => system
+                .precondition_cases(state, identity.clone())
+                .map_err(ModelBasedTestError::Expansion)?
+                .len(),
+            ContractClauseKind::Postcondition => usize::from(
+                trace
+                    .trace
+                    .steps
+                    .get(index)
+                    .is_some_and(|step| step.transition.operation() == operation),
+            ),
+            ContractClauseKind::Invariant => 1,
+        };
+        let points = u64::try_from(points).unwrap_or(u64::MAX);
+        if points == 0 {
+            continue;
+        }
+        if has_false_invariant(system, state)? {
+            *checks
+                .skipped
+                .entry(ModelBasedTestDiscardReason::InvariantFalse)
+                .or_default() += points;
+        } else {
+            checks.evaluated += points;
+        }
+    }
+    Ok(())
+}
+
 fn contract_result(
     system: &ModelSystem<'_>,
     clause: &ContractClause,
@@ -1469,17 +1819,6 @@ fn contract_result(
             ModelShrinkError::NotCounterexample,
         ));
     };
-    if trace.attempted.is_some()
-        && states
-            .first()
-            .map(|state| has_false_invariant(system, state))
-            .transpose()?
-            .unwrap_or(false)
-    {
-        return Ok(CaseResult::Discard(
-            ModelBasedTestDiscardReason::InvariantFalse,
-        ));
-    }
     let (declaring, operation) =
         clause
             .operation
@@ -1492,6 +1831,37 @@ fn contract_result(
         .ok_or_else(|| ModelBasedTestError::InvalidClause {
             clause: clause.name.clone(),
         })?;
+    if clause.kind == ContractClauseKind::Precondition {
+        let mut evaluated = false;
+        let mut skipped = false;
+        let mut undefined = false;
+        for state in &states {
+            let cases = system
+                .precondition_cases(state, identity.clone())
+                .map_err(ModelBasedTestError::Expansion)?;
+            if has_false_invariant(system, state)? {
+                skipped |= !cases.is_empty();
+                continue;
+            }
+            for case in cases {
+                evaluated = true;
+                if case.undecided.is_some() {
+                    undefined = true;
+                }
+            }
+        }
+        return Ok(if undefined {
+            CaseResult::Fail("undefined-precondition".to_owned())
+        } else if evaluated {
+            CaseResult::Pass
+        } else {
+            CaseResult::Discard(if skipped {
+                ModelBasedTestDiscardReason::InvariantFalse
+            } else {
+                ModelBasedTestDiscardReason::NoCheckPoint
+            })
+        });
+    }
     if let Some(attempted) = &trace.attempted {
         if attempted.operation() != operation_text {
             return Ok(match clause.kind {
@@ -1539,16 +1909,17 @@ fn contract_result(
         };
     }
     let mut checked = false;
+    let mut skipped = false;
+    let mut failure = None;
     for (index, step) in trace.trace.steps.iter().enumerate() {
         if step.transition.operation() != operation_text {
             continue;
         }
-        checked = true;
         if has_false_invariant(system, &states[index])? {
-            return Ok(CaseResult::Discard(
-                ModelBasedTestDiscardReason::InvariantFalse,
-            ));
+            skipped = true;
+            continue;
         }
+        checked = true;
         match clause.kind {
             ContractClauseKind::Precondition => {
                 let cases = system
@@ -1567,11 +1938,6 @@ fn contract_result(
                 }
             }
             ContractClauseKind::Postcondition => {
-                if has_false_invariant(system, &states[index + 1])? {
-                    return Ok(CaseResult::Discard(
-                        ModelBasedTestDiscardReason::InvariantFalse,
-                    ));
-                }
                 let operation_identity = (declaring.clone(), operation.clone());
                 let selected: Vec<NodeKey> = system
                     .contract_clauses()
@@ -1591,9 +1957,8 @@ fn contract_result(
                 if cases.undecided.iter().any(|undecided| {
                     undecided.transition == step.transition && undecided.clause == clause.name
                 }) {
-                    return Ok(CaseResult::Discard(
-                        ModelBasedTestDiscardReason::NoCheckPoint,
-                    ));
+                    failure.get_or_insert_with(|| "undefined-postcondition".to_owned());
+                    continue;
                 }
                 let post_key = system.state_key(&states[index + 1])?.1;
                 let mut clause_holds = false;
@@ -1605,7 +1970,7 @@ fn contract_result(
                     clause_holds |= candidate_key == post_key;
                 }
                 if !clause_holds {
-                    return Ok(CaseResult::Fail("postcondition-false".to_owned()));
+                    failure.get_or_insert_with(|| "postcondition-false".to_owned());
                 }
             }
             ContractClauseKind::Invariant => {
@@ -1615,8 +1980,12 @@ fn contract_result(
             }
         }
     }
-    Ok(if checked {
+    Ok(if let Some(disposition) = failure {
+        CaseResult::Fail(disposition)
+    } else if checked {
         CaseResult::Pass
+    } else if skipped {
+        CaseResult::Discard(ModelBasedTestDiscardReason::InvariantFalse)
     } else {
         CaseResult::Discard(ModelBasedTestDiscardReason::NoCheckPoint)
     })
@@ -2395,6 +2764,7 @@ fn invariant_result(
             ModelShrinkError::NotCounterexample,
         ));
     };
+    let mut failed = false;
     for state in &states {
         let findings = system
             .invariant_finding_alone(state, clause)
@@ -2402,7 +2772,7 @@ fn invariant_result(
         for finding in findings {
             match finding {
                 ModelFinding::InvariantViolated { clause: found, .. } if found == clause => {
-                    return Ok(CaseResult::Fail("invariant-violated".to_owned()));
+                    failed = true;
                 }
                 ModelFinding::InvariantUndetermined { clause: found, .. } if found == clause => {
                     return Err(ModelBasedTestError::InvariantUndetermined {
@@ -2413,7 +2783,11 @@ fn invariant_result(
             }
         }
     }
-    Ok(CaseResult::Pass)
+    Ok(if failed {
+        CaseResult::Fail("invariant-violated".to_owned())
+    } else {
+        CaseResult::Pass
+    })
 }
 
 fn temporal_result(

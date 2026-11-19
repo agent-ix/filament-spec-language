@@ -18,6 +18,32 @@ fn operations() -> Vec<ModelOperation> {
         .collect()
 }
 
+/// A generation accounting stop keeps operations undecided and names the setting.
+#[trace("TC-3068", "FR-752-AC-10")]
+#[test]
+fn accounting_stop_preserves_the_limit_setting_in_operation_evidence() {
+    let declared = vec![ModelOperation {
+        identity: "operation:inc".to_owned(),
+        name: "inc".to_owned(),
+    }];
+    let reasons = vec![(
+        "operation:inc".to_owned(),
+        ModelOperationCoverageReason::Undetermined {
+            limit: fsl_eval::simulation::model::ModelOperationCoverageLimit::Accounting(
+                filament_exact::LimitKind::WorkUnits,
+            ),
+            value: 1_000_000,
+        },
+    )];
+    let coverage =
+        model_operation_coverage(&declared, &[], &reasons).expect("undecided reachability");
+    let entry = serde_json::to_value(&coverage.operations[0]).expect("operation evidence");
+    assert_eq!(entry["reason"], "undetermined");
+    assert_eq!(entry["limit"], "work_units");
+    assert_eq!(entry["setting"], "accounting.work_units");
+    assert_eq!(entry["value"], 1_000_000);
+}
+
 /// FR-752-AC-4 (FSpec FR-190-AC-11): operation coverage preserves declared
 /// order and distinguishes covered cases from exhaustively unreachable ops.
 #[trace("TC-2956", "FR-752-AC-4")]
