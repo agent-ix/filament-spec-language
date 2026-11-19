@@ -109,6 +109,13 @@ Round 3, head dcd70c8d0527b009437d513a39fecf34338417a8 (fix commit dcd70c8d0). V
 | FND-014 | fixed | The observer refusal is now raised in `run_bytes` right after `request::read`, before any stage. `last_stage` is null, the refusal and an outcome diagnostic carry `details` `{"path": "/request/export/observer"}`, there is no package and no file (probe X1; asserted in `an_observer_the_build_cannot_run_is_unsupported`) |
 | FND-015 | fixed | `observer` must be one of `sany`/`tlc`/`apalache`/`lean`; any other name refuses `invalid_runtime_input`/`invalid-value` at `/request/export/observer`, exit 20 (test case `coq`) |
 
+Round 4, head 5986cfee3fe3b496055d808f0b18c5485b109546 (fix commit 5986cfee3). Verified by code reading and the focused tests. The arch ruling is implemented as stated: a write failure after a successful export is `RunCause::ExportOutput` (code and cause `output-failure`, category internal-failure, exit 30, `last_stage` S4, stage `emit`); a late `OutputExists` race stays exit 20. The observer refusal keeps `capability`/`reason`, per that ruling.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-016 | fixed | The observer check now runs after the `output`/`handoff` refusal and `target_path`. An existing path and a member plus override both refuse `invalid-request`, exit 20, `last_stage` null, with the file untouched (test `output_admission_refusals_precede_the_observer_refusal`) |
+| FND-017 | fixed | `unsupported_observer` writes `output` `{"path": <as given>, "bytes_written": 0}` through the shared `output_name` (test `an_unsupported_observer_names_its_output_with_no_bytes`) |
+
 ## New findings (disposition pass 2)
 
 | ID | Severity | Summary | Refs |
