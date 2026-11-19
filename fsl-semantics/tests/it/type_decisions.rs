@@ -61,7 +61,11 @@ fn assemble(declarations: &str) -> Result<PackageDeclarations, AssemblyRefusal> 
 fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
     assemble(declarations)
         .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
 }
 
 #[cfg(feature = "test-support")]
@@ -87,7 +91,11 @@ fn check_selected(
         Vec::new(),
     )
     .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
 }
 
 fn assert_checks(declarations: &str) {
