@@ -2913,7 +2913,7 @@ fn json_integer(value: &serde_json::Value) -> Option<u64> {
         .or_else(|| value.as_i64().and_then(|number| u64::try_from(number).ok()))
 }
 
-fn recording_value(
+pub(crate) fn recording_value(
     value: &serde_json::Value,
     value_type: &ValueType,
     types: &filament_semantic_value::declaration::TypeEnvironment,
