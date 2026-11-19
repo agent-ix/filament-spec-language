@@ -161,6 +161,9 @@ pub(super) fn settle(
         (CounterexampleKind::Formula, None) => {
             return Err(fault("formula-counterexample-names-a-clause"))
         }
+        (CounterexampleKind::LoopProof(_), _) => {
+            return Err(fault("loop-proof-counterexample-is-protocol-only"))
+        }
     };
     let finite = payload.lasso.is_none()
         && matches!(

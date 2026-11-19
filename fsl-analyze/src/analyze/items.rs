@@ -134,6 +134,9 @@ pub fn model_item<'a>(
         ModelCheckItem::DeadlockFreedom | ModelCheckItem::RaceFreedom => {
             Err(DerivedItemMismatch::DerivedRun { index })
         }
+        ModelCheckItem::LoopInvariant { .. } | ModelCheckItem::LoopTermination { .. } => {
+            Err(DerivedItemMismatch::DerivedRun { index })
+        }
     }
 }
 
@@ -148,7 +151,9 @@ pub(super) fn run_model_item(
         ModelCheckItem::Invariant { .. } => Capability::OperationContract,
         ModelCheckItem::Clause { .. }
         | ModelCheckItem::DeadlockFreedom
-        | ModelCheckItem::RaceFreedom => Capability::TemporalSatisfaction,
+        | ModelCheckItem::RaceFreedom
+        | ModelCheckItem::LoopInvariant { .. }
+        | ModelCheckItem::LoopTermination { .. } => Capability::TemporalSatisfaction,
     };
     AnalyzeItem::new(
         index,
@@ -161,6 +166,8 @@ pub(super) fn run_model_item(
                 ModelCheckItem::Clause { clause, .. } => Some(*clause),
                 ModelCheckItem::DeadlockFreedom
                 | ModelCheckItem::RaceFreedom
+                | ModelCheckItem::LoopInvariant { .. }
+                | ModelCheckItem::LoopTermination { .. }
                 | ModelCheckItem::Invariant { .. } => None,
             };
             let simulation = item.request.subject.simulation.clone();
@@ -255,7 +262,9 @@ pub fn protocol_item<'a>(
         ModelCheckItem::Clause { .. } => Ok(run_protocol_item(index, CLAUSE_FAMILY, item)),
         ModelCheckItem::DeadlockFreedom
         | ModelCheckItem::RaceFreedom
-        | ModelCheckItem::Invariant { .. } => Err(DerivedItemMismatch::DerivedRun { index }),
+        | ModelCheckItem::Invariant { .. }
+        | ModelCheckItem::LoopInvariant { .. }
+        | ModelCheckItem::LoopTermination { .. } => Err(DerivedItemMismatch::DerivedRun { index }),
     }
 }
 
@@ -777,6 +786,8 @@ pub fn derived_protocol_item<'a, S>(
     let decides: fn(&ModelCheckItem<'_>) -> bool = match kind {
         ItemKind::DeadlockFreedom => |run| matches!(run, ModelCheckItem::DeadlockFreedom),
         ItemKind::RaceFreedom => |run| matches!(run, ModelCheckItem::RaceFreedom),
+        ItemKind::LoopInvariant => |run| matches!(run, ModelCheckItem::LoopInvariant { .. }),
+        ItemKind::LoopTermination => |run| matches!(run, ModelCheckItem::LoopTermination { .. }),
         ItemKind::Formula | ItemKind::TimeLockFreedom | ItemKind::Refinement => {
             return Err(DerivedItemMismatch::NotDerived { index })
         }
@@ -784,6 +795,28 @@ pub fn derived_protocol_item<'a, S>(
     let models = match (&obligation.kind, kind) {
         (ObligationKind::ProtocolDeadlockFreedom { models }, ItemKind::DeadlockFreedom)
         | (ObligationKind::RaceFreedom { models }, ItemKind::RaceFreedom) => models,
+        (
+            ObligationKind::ProtocolLoopInvariant { models, repeat },
+            ItemKind::LoopInvariant,
+        ) => {
+            if !matches!(item.request.item, ModelCheckItem::LoopInvariant { repeat: found } if found == *repeat)
+                || !matches!(item.certificate.item, ModelCheckItem::LoopInvariant { repeat: found } if found == *repeat)
+            {
+                return Err(DerivedItemMismatch::OtherItem { index, kind });
+            }
+            models
+        }
+        (
+            ObligationKind::ProtocolLoopTermination { models, repeat },
+            ItemKind::LoopTermination,
+        ) => {
+            if !matches!(item.request.item, ModelCheckItem::LoopTermination { repeat: found } if found == *repeat)
+                || !matches!(item.certificate.item, ModelCheckItem::LoopTermination { repeat: found } if found == *repeat)
+            {
+                return Err(DerivedItemMismatch::OtherItem { index, kind });
+            }
+            models
+        }
         _ => return Err(DerivedItemMismatch::OtherItem { index, kind }),
     };
     let over = |memory: &fsl_eval::simulation::protocol::ResolvedMemory| {
@@ -860,7 +893,11 @@ pub fn derived_zone_item<'a, S: Clone + Eq + 'a>(
             matches!(item.request.item, ZoneCheckItem::TimeLockFreedom)
                 && item.request.obligation.kind == ObligationKind::TimeLockFreedom
         }
-        ItemKind::Formula | ItemKind::RaceFreedom | ItemKind::Refinement => {
+        ItemKind::Formula
+        | ItemKind::RaceFreedom
+        | ItemKind::Refinement
+        | ItemKind::LoopInvariant
+        | ItemKind::LoopTermination => {
             return Err(DerivedItemMismatch::NotDerived { index })
         }
     };
@@ -1107,6 +1144,7 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         // A request defect: an operation or subject count the request names
         // wrongly, or the race-freedom item over a model subject.
         ModelCheckRefusal::RaceOverModel
+        | ModelCheckRefusal::LoopProofOverModel
         | ModelCheckRefusal::InvariantOverProtocol
         | ModelCheckRefusal::Liveness(LivenessRefusal::UnknownOperation { .. })
         | ModelCheckRefusal::Hyper(

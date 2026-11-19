@@ -260,6 +260,7 @@ fn temporal<T: Spelling>(
     claim: Option<&OccurrenceKey>,
 ) -> Result<Json, CounterexampleWireError> {
     let mut race_member = None;
+    let mut loop_proof_member = None;
     let kind = match &counterexample.kind {
         CounterexampleKind::Formula => json!("formula"),
         CounterexampleKind::Deadlock => json!("deadlock"),
@@ -268,6 +269,22 @@ fn temporal<T: Spelling>(
         CounterexampleKind::Race(found) => {
             race_member = Some(race(found)?);
             json!("race")
+        }
+        CounterexampleKind::LoopProof(found) => {
+            loop_proof_member = Some(json!({
+                "repeat": found.repeat,
+                "obligation": match found.obligation {
+                    crate::LoopProofObligation::Invariant => "loop-invariant",
+                    crate::LoopProofObligation::Termination => "loop-termination",
+                },
+                "failure": match found.failure {
+                    crate::LoopProofFailure::InvariantFalse => "invariant-false",
+                    crate::LoopProofFailure::Undefined => "undefined",
+                    crate::LoopProofFailure::VariantDidNotDecrease => "variant-did-not-decrease",
+                    crate::LoopProofFailure::VariantBelowFloor => "variant-below-floor",
+                }
+            }));
+            json!("loop-proof")
         }
     };
     let steps = counterexample
@@ -327,6 +344,9 @@ fn temporal<T: Spelling>(
     }
     if let Some(found) = race_member {
         written["race"] = found;
+    }
+    if let Some(found) = loop_proof_member {
+        written["loop_proof"] = found;
     }
     if let Some(failure) = &counterexample.refinement {
         written["refinement_failure"] = refinement(failure)?;

@@ -27,8 +27,8 @@ use super::program::{Cursor, Lifetime};
 use super::settle::{SettleError, Settled};
 use super::steps::Gathered;
 use super::{
-    undetermined, Bound, Disposition, Instance, ProtocolRefusal, ProtocolState, ProtocolSystem,
-    RoleStatus, Status, Thread,
+    Bound, Disposition, Instance, ProtocolRefusal, ProtocolState, ProtocolSystem, RoleStatus,
+    Status, Thread, undetermined,
 };
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::model::encode::value_enc;

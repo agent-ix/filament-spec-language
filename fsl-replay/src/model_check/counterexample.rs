@@ -145,6 +145,39 @@ pub struct Race {
     pub later: u64,
 }
 
+/// Which loop-proof obligation the witness refutes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LoopProofObligation {
+    /// The invariant was false or undefined at a decision.
+    Invariant,
+    /// The variant failed its decrease or floor check on a back edge.
+    Termination,
+}
+
+/// Why the loop-proof obligation failed at the witness's final state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LoopProofFailure {
+    /// The invariant evaluated to false.
+    InvariantFalse,
+    /// The invariant or variant was undefined.
+    Undefined,
+    /// The variant was not strictly smaller.
+    VariantDidNotDecrease,
+    /// The first value of the back edge was below zero.
+    VariantBelowFloor,
+}
+
+/// The repeat node and failure named by a loop-proof counterexample.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LoopProofCounterexample {
+    /// The repeat node's checked graph ordinal.
+    pub repeat: usize,
+    /// The failed obligation.
+    pub obligation: LoopProofObligation,
+    /// The failure at the final state.
+    pub failure: LoopProofFailure,
+}
+
 /// What a counterexample refutes (ADR-018 DL-4).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CounterexampleKind {
@@ -161,6 +194,8 @@ pub enum CounterexampleKind {
     /// and [`TemporalCounterexample::final_delay`], the state admits no
     /// time-divergent continuation.
     TimeLock,
+    /// FR-730's repeat invariant or termination obligation.
+    LoopProof(LoopProofCounterexample),
 }
 
 /// The loop of a liveness refutation (ADR-018 CX-1): where the behaviour
@@ -261,10 +296,13 @@ impl<T: SubjectTransition> TemporalCounterexample<T> {
             (
                 CounterexampleKind::Formula
                 | CounterexampleKind::Race(_)
-                | CounterexampleKind::UndefinedEvaluation(_),
+                | CounterexampleKind::UndefinedEvaluation(_)
+                | CounterexampleKind::LoopProof(_),
                 None,
             )
-            | (CounterexampleKind::Race(_) | CounterexampleKind::UndefinedEvaluation(_), Some(_)) => {
+            | (CounterexampleKind::Race(_)
+            | CounterexampleKind::UndefinedEvaluation(_)
+            | CounterexampleKind::LoopProof(_), Some(_)) => {
                 u64::try_from(self.prefix.len()).ok()
             }
         }

@@ -111,16 +111,22 @@ pub enum ItemKind {
     RaceFreedom,
     /// A refinement item, one per checked refinement declaration (FR-144).
     Refinement,
+    /// FR-730's invariant obligation for one protocol repeat.
+    LoopInvariant,
+    /// FR-730's termination obligation for one protocol repeat.
+    LoopTermination,
 }
 
 impl ItemKind {
     /// Every kind, in FR-368's table order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::Formula,
         Self::DeadlockFreedom,
         Self::TimeLockFreedom,
         Self::RaceFreedom,
         Self::Refinement,
+        Self::LoopInvariant,
+        Self::LoopTermination,
     ];
 
     /// The FR-368 `item_kind` spelling.
@@ -131,6 +137,8 @@ impl ItemKind {
             Self::TimeLockFreedom => "time-lock-freedom",
             Self::RaceFreedom => "race-freedom",
             Self::Refinement => "refinement",
+            Self::LoopInvariant => "loop-invariant",
+            Self::LoopTermination => "loop-termination",
         }
     }
 }

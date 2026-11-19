@@ -69,13 +69,13 @@ use super::memory::{
     MemoryStep, Read, ReadChoice, SharedCell, Written,
 };
 use super::race::{
-    clear_read, clear_write, join_maps, set_read, set_write, AccessRecord, DataRace, RaceMap,
-    RaceSummary,
+    AccessRecord, DataRace, RaceMap, RaceSummary, clear_read, clear_write, join_maps, set_read,
+    set_write,
 };
 use super::tso::DEFAULT_MEMORY_BOUND;
 use crate::simulation::footprint::{Footprint, Location};
 use crate::simulation::model::encode::{
-    keyed_name, map_enc, sorted_map_enc, untyped_value_enc, Canonicalizer, Enc, KeyName,
+    Canonicalizer, Enc, KeyName, keyed_name, map_enc, sorted_map_enc, untyped_value_enc,
 };
 use crate::simulation::model::{Cell, ModelSimState};
 

@@ -40,6 +40,7 @@
 use std::collections::BTreeSet;
 
 use filament_exact::NodeKey;
+use filament_exact::{Origin, Role};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::MemoryModelName;
 use fsl_semantics::check::{
@@ -175,6 +176,20 @@ pub enum ObligationKind {
         /// path, in ascending path order.
         models: Vec<(String, MemoryModelName)>,
     },
+    /// A protocol repeat's invariant obligation, keyed by its checked node.
+    ProtocolLoopInvariant {
+        /// The repeat node within its checked protocol.
+        repeat: fsl_semantics::check::ProtocolNodeId,
+        /// The subject's resolved memory models.
+        models: Vec<(String, MemoryModelName)>,
+    },
+    /// A protocol repeat's termination obligation, keyed by its checked node.
+    ProtocolLoopTermination {
+        /// The repeat node within its checked protocol.
+        repeat: fsl_semantics::check::ProtocolNodeId,
+        /// The subject's resolved memory models.
+        models: Vec<(String, MemoryModelName)>,
+    },
 }
 
 /// An obligation identity over a model subject: the subject, the kind
@@ -237,6 +252,18 @@ struct ProtocolReading {
     /// Whether a resolved model is weak and an access is non-atomic, which
     /// gives the subject its race-freedom item (FR-224, FSpec FR-438).
     races: bool,
+    /// Each repeat with an authored loop proof, in checked source order.
+    loop_proofs: Vec<fsl_semantics::check::ProtocolNodeId>,
+}
+
+impl ProtocolReading {
+    /// The synthetic source-map occurrence for one checked repeat node.
+    fn repeat_anchor(&self, repeat: fsl_semantics::check::ProtocolNodeId) -> Option<OccurrenceKey> {
+        Some(OccurrenceKey::new(
+            self.node.clone()?,
+            Origin::new(Role::new("repeat"), u64::try_from(repeat.0).ok()?),
+        ))
+    }
 }
 
 impl SubjectReading {
@@ -316,6 +343,21 @@ impl SubjectReading {
         self.protocol
             .as_ref()
             .is_some_and(|protocol| protocol.races)
+    }
+
+    /// The checked repeat nodes whose loop proofs derive obligations.
+    pub fn protocol_loop_proofs(&self) -> &[fsl_semantics::check::ProtocolNodeId] {
+        self.protocol
+            .as_ref()
+            .map_or(&[], |protocol| protocol.loop_proofs.as_slice())
+    }
+
+    /// The checked-node occurrence used to key a loop-proof item.
+    pub fn protocol_loop_anchor(
+        &self,
+        repeat: fsl_semantics::check::ProtocolNodeId,
+    ) -> Option<OccurrenceKey> {
+        self.protocol.as_ref()?.repeat_anchor(repeat)
     }
 
     /// FSpec FR-368 "Claim and anchor of a derived or refinement item": the
@@ -456,6 +498,14 @@ impl<S: Clone> ProtocolTemporalItem<'_, S> {
                 node: self.protocol.node(),
                 models: self.models.to_vec(),
                 races: weak && self.non_atomic_access,
+                loop_proofs: self
+                    .protocol
+                    .slots
+                    .repeats
+                    .iter()
+                    .filter(|repeat| repeat.loop_proof.is_some())
+                    .map(|repeat| repeat.node)
+                    .collect(),
             }),
         }
     }

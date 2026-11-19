@@ -48,6 +48,8 @@ pub fn certificate_item<S>(obligation: &ItemObligation<S>) -> CertificateItem<'_
         ObligationKind::ProtocolAuthored { .. }
         | ObligationKind::ProtocolDeadlockFreedom { .. }
         | ObligationKind::RaceFreedom { .. } => CertificateItem::Other,
+        ObligationKind::ProtocolLoopInvariant { .. }
+        | ObligationKind::ProtocolLoopTermination { .. } => CertificateItem::Other,
     }
 }
 

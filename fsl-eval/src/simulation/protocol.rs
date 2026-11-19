@@ -46,7 +46,8 @@ mod wire;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
-use filament_exact::{Meter, NodeKey, ObjectReference, Value, ValueType};
+use filament_eval::{FamilyOutcome, FamilyResult};
+use filament_exact::{Integer, Meter, NodeKey, ObjectReference, Outcome, Value, ValueType};
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::Code;
@@ -60,7 +61,9 @@ use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::explore::TransitionSystem;
 use crate::simulation::footprint::Location;
 use crate::simulation::key::{self, EncodingRefusal};
-use crate::simulation::model::encode::{Canonicalizer, Enc, map_enc, reference_enc, value_enc};
+use crate::simulation::model::encode::{
+    self, Canonicalizer, Enc, map_enc, reference_enc, value_enc,
+};
 use crate::simulation::model::{
     BROKEN, ClauseOutcome, ModelEvaluator, ModelFinding, ModelSimState, ModelSystem, Observed,
     TerminalClass, Verdict, verdict,
@@ -503,6 +506,12 @@ struct Instance {
     environments: BTreeMap<ThreadPath, BTreeMap<fsl_semantics::check::ProtocolNodeId, Bound>>,
     /// Each `repeat` counter, by (repeat node, thread) (ADR-027 PS-6).
     counters: BTreeMap<(fsl_semantics::check::ProtocolNodeId, ThreadPath), u64>,
+    /// The first-decision variant for each active proof-loop invocation,
+    /// separate from the bounded-repeat counters above.
+    loop_variants: BTreeMap<(fsl_semantics::check::ProtocolNodeId, ThreadPath), Value>,
+    /// First loop-proof failure in this instance, for the proof item to
+    /// consume at the corresponding reachable state.
+    loop_proof_violation: Option<ProtocolLoopProofViolation>,
     /// The next occurrence ordinal of each send node on each thread path.
     message_ordinals: BTreeMap<(fsl_semantics::check::ProtocolNodeId, ThreadPath), u64>,
     /// The next occurrence ordinal of each effect node on each thread path.
@@ -535,6 +544,8 @@ impl Default for Instance {
             parallels: BTreeMap::new(),
             environments: BTreeMap::new(),
             counters: BTreeMap::new(),
+            loop_variants: BTreeMap::new(),
+            loop_proof_violation: None,
             message_ordinals: BTreeMap::new(),
             effect_ordinals: BTreeMap::new(),
             next_deliveries: BTreeMap::new(),
@@ -1059,6 +1070,9 @@ pub struct ProtocolSystem<'a, M: MemoryModel> {
     evaluator: &'a dyn ModelEvaluator,
     protocol: &'a CheckedProtocol,
     program: Program<'a>,
+    /// A loop proof item is a product of the ordinary protocol state with
+    /// the prior decision value for exactly one repeat invocation.
+    loop_proof_target: Option<ProtocolLoopProofTarget>,
     memory: M,
     /// The per-channel queue occupancy bound supplied by model checking.
     channel_message_bound: Option<u64>,
@@ -1101,6 +1115,124 @@ pub struct ProtocolSystem<'a, M: MemoryModel> {
     /// writes, by attempt node and transition identity: a function of the
     /// two alone, derived once per run.
     model_footprints: std::sync::Mutex<ModelFootprints>,
+}
+
+/// The part of a checked repeat's loop proof selected by an EN-1 item.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProtocolLoopProofKind {
+    /// Check the invariant at every repeat decision.
+    Invariant,
+    /// Check the variant on every completed iteration.
+    Termination,
+}
+
+/// One repeat-specific loop proof obligation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProtocolLoopProofTarget {
+    /// The checked repeat node.
+    pub repeat: fsl_semantics::check::ProtocolNodeId,
+    /// The obligation to discharge.
+    pub kind: ProtocolLoopProofKind,
+}
+
+/// Why a protocol loop-proof item failed at a reachable decision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProtocolLoopProofFailure {
+    /// The invariant evaluated to false.
+    InvariantFalse,
+    /// The invariant or variant was undefined.
+    Undefined,
+    /// The variant did not strictly decrease across a back edge.
+    VariantDidNotDecrease,
+    /// The first value of a back edge violated the nonnegative floor.
+    VariantBelowFloor,
+    /// Evaluation exhausted a named resource before deciding the body.
+    EvaluationIncomplete,
+    /// The checked body refused evaluation.
+    EvaluationRefused,
+}
+
+/// A concrete loop-proof refutation found while expanding a state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProtocolLoopProofViolation {
+    /// The checked repeat node.
+    pub repeat: fsl_semantics::check::ProtocolNodeId,
+    /// The obligation that failed.
+    pub kind: ProtocolLoopProofKind,
+    /// The failure.
+    pub failure: ProtocolLoopProofFailure,
+}
+
+/// Flatten a checked integer or integer tuple variant into its ordered
+/// components and declared component types.
+fn loop_variant_components(
+    value: &Value,
+    value_type: &ValueType,
+    typing: encode::Typing<'_>,
+) -> Option<Vec<(Integer, ValueType)>> {
+    match value_type {
+        ValueType::Integer | ValueType::Int(_) => match value {
+            Value::Integer(value) => Some(vec![(value.clone(), value_type.clone())]),
+            _ => None,
+        },
+        ValueType::Composite(key) => {
+            let Value::Composite(value) = value else {
+                return None;
+            };
+            let types = typing.tuple_types(key)?;
+            if value.slots().len() != types.len() {
+                return None;
+            }
+            let mut components = Vec::with_capacity(types.len());
+            for (slot, value_type) in value.slots().iter().zip(types) {
+                let filament_exact::FieldValue::Present(value) = slot else {
+                    return None;
+                };
+                components.extend(loop_variant_components(value, value_type, typing)?);
+            }
+            Some(components)
+        }
+        _ => None,
+    }
+}
+
+/// The lexicographic comparison of `left` and `right`, with `None` for a
+/// value that does not match the checked integer/tuple shape.
+fn compare_loop_variants(
+    left: &Value,
+    right: &Value,
+    value_type: &ValueType,
+    typing: encode::Typing<'_>,
+) -> Option<std::cmp::Ordering> {
+    let left = loop_variant_components(left, value_type, typing)?;
+    let right = loop_variant_components(right, value_type, typing)?;
+    if left.len() != right.len() {
+        return None;
+    }
+    for ((left, _), (right, _)) in left.iter().zip(right.iter()) {
+        let ordering = left.cmp(right);
+        if ordering != std::cmp::Ordering::Equal {
+            return Some(ordering);
+        }
+    }
+    Some(std::cmp::Ordering::Equal)
+}
+
+/// Whether each component of the first-decision variant meets its
+/// nonnegative floor, including the type-level nonnegative lower bound.
+fn loop_variant_floor_holds(
+    value: &Value,
+    value_type: &ValueType,
+    typing: encode::Typing<'_>,
+) -> bool {
+    let Some(components) = loop_variant_components(value, value_type, typing) else {
+        return false;
+    };
+    components.iter().all(|(value, value_type)| {
+        let type_proves_floor =
+            matches!(value_type, ValueType::Int(interval) if !interval.lower().is_negative());
+        type_proves_floor || !value.is_negative()
+    })
 }
 
 /// The model locations of each application of an attempt, by attempt node
@@ -1160,6 +1292,18 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         model: ModelSystem<'a>,
         subject: &ProtocolSubject<'a>,
         memory: M,
+    ) -> Result<Self, ProtocolRefusal> {
+        Self::new_with_loop_proof(model, subject, memory, None)
+    }
+
+    /// FR-730: build a proof-product protocol system for one repeat item.
+    /// The target is installed before initial states settle, so decisions at
+    /// the first reachable state participate in the obligation.
+    pub fn new_with_loop_proof(
+        model: ModelSystem<'a>,
+        subject: &ProtocolSubject<'a>,
+        memory: M,
+        loop_proof_target: Option<ProtocolLoopProofTarget>,
     ) -> Result<Self, ProtocolRefusal> {
         let evaluator = subject.model.simulation.input.evaluator;
         let protocol = evaluator.protocol(&subject.protocol).ok_or_else(|| {
@@ -1268,6 +1412,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             evaluator,
             protocol,
             program,
+            loop_proof_target,
             memory,
             channel_message_bound: None,
             delivery_reads: None,
@@ -1286,6 +1431,17 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             initial: Vec::new(),
             model_footprints: std::sync::Mutex::default(),
         };
+        if let Some(target) = system.loop_proof_target {
+            if !system
+                .program
+                .repeat(target.repeat)
+                .is_ok_and(|repeat| repeat.proof.is_some())
+            {
+                return Err(ProtocolRefusal::fault(
+                    "a-loop-proof-target-names-a-checked-loop-proof",
+                ));
+            }
+        }
         system.universes = system.role_universes()?;
         system.initial = system.initial_states()?;
         Ok(system)
@@ -1340,6 +1496,18 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                         })
             })
         })
+    }
+
+    /// The first target-specific loop-proof failure carried by `state`, if
+    /// any. Ordinary protocol systems never populate this field.
+    pub fn loop_proof_violation<'s>(
+        &self,
+        state: &'s ProtocolState<M>,
+    ) -> Option<&'s ProtocolLoopProofViolation> {
+        state
+            .instances
+            .values()
+            .find_map(|instance| instance.loop_proof_violation.as_ref())
     }
 
     /// The objects of each replicated role's population (ADR-027 RR-1): the
@@ -1848,6 +2016,59 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     Enc::tagged("integer", vec![("value", Enc::text(counter.to_string()))]),
                 ));
             }
+            for ((node, thread), value) in &instance.loop_variants {
+                let node = self
+                    .program
+                    .text(*node)
+                    .map_or(Enc::Unencodable("a repeat node"), Enc::text);
+                bounds.push((
+                    Enc::tagged(
+                        "loop-proof-variant",
+                        vec![("node", node), ("thread", thread.enc())],
+                    ),
+                    value_enc(value, self.model.typing()),
+                ));
+            }
+            if let Some(violation) = instance.loop_proof_violation {
+                let node = self
+                    .program
+                    .text(violation.repeat)
+                    .map_or(Enc::Unencodable("a repeat node"), Enc::text);
+                bounds.push((
+                    Enc::tagged("loop-proof-violation", vec![("node", node)]),
+                    Enc::tagged(
+                        "failure",
+                        vec![
+                            (
+                                "kind",
+                                Enc::text(match violation.kind {
+                                    ProtocolLoopProofKind::Invariant => "invariant",
+                                    ProtocolLoopProofKind::Termination => "termination",
+                                }),
+                            ),
+                            (
+                                "failure",
+                                Enc::text(match violation.failure {
+                                    ProtocolLoopProofFailure::InvariantFalse => "invariant-false",
+                                    ProtocolLoopProofFailure::Undefined => "undefined",
+                                    ProtocolLoopProofFailure::VariantDidNotDecrease => {
+                                        "variant-did-not-decrease"
+                                    }
+                                    ProtocolLoopProofFailure::VariantBelowFloor => {
+                                        "variant-below-floor"
+                                    }
+                                    ProtocolLoopProofFailure::EvaluationIncomplete => {
+                                        "evaluation-incomplete"
+                                    }
+                                    ProtocolLoopProofFailure::EvaluationRefused => {
+                                        "evaluation-refused"
+                                    }
+                                }),
+                            ),
+                        ],
+                    ),
+                ));
+            }
             for ((node, thread), counter) in &instance.message_ordinals {
                 let node = self
                     .program
@@ -2115,6 +2336,41 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         self.evaluate_in(body, frame, &self.model.observation_of(observed)?)
     }
 
+    /// Evaluate a checked loop-proof expression without coercing a scalar
+    /// variant to a Boolean verdict.
+    fn evaluate_loop_value(
+        &self,
+        body: &fsl_semantics::check::CheckedBody,
+        frame: Vec<Option<Value>>,
+        observed: &ModelSimState,
+    ) -> Result<Result<Value, ProtocolLoopProofFailure>, ExpansionStop> {
+        let observation = self.model.observation_of(observed)?;
+        let evaluation = self
+            .evaluator
+            .evaluate_protocol_slot(
+                body,
+                frame,
+                &observation.environment,
+                &mut Meter::new(self.model.meter()),
+            )
+            .map_err(|_| broken())?;
+        let result = match evaluation.outcome {
+            FamilyOutcome::Evaluated(Outcome::Completed(value)) => Ok(value),
+            FamilyOutcome::Evaluated(Outcome::Undefined(_))
+            | FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(_)) => {
+                Err(ProtocolLoopProofFailure::Undefined)
+            }
+            FamilyOutcome::Evaluated(Outcome::Incomplete(_)) => {
+                Err(ProtocolLoopProofFailure::EvaluationIncomplete)
+            }
+            FamilyOutcome::Evaluated(Outcome::Refused(_))
+            | FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(_)) => {
+                Err(ProtocolLoopProofFailure::EvaluationRefused)
+            }
+        };
+        Ok(result)
+    }
+
     /// [`Self::evaluate`] over a thread's observation, whose synthesized
     /// observation is built once however many bodies read it.
     fn evaluate_observed(
@@ -2313,6 +2569,13 @@ impl<'a, M: MemoryModel> TransitionSystem for ProtocolSystem<'a, M> {
 }
 
 impl<M: MemoryModel> SubjectSystem for ProtocolSystem<'_, M> {
+    fn loop_proof_violation<'s>(
+        &self,
+        state: &'s ProtocolState<M>,
+    ) -> Option<&'s ProtocolLoopProofViolation> {
+        ProtocolSystem::loop_proof_violation(self, state)
+    }
+
     fn state_key(
         &self,
         state: &Self::State,

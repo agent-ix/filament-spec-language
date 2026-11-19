@@ -16,7 +16,7 @@ use fsl_semantics::check::{CheckedBody, ControlStep, ProtocolNodeId};
 use super::identity::ThreadPath;
 use super::memory::MemoryModel;
 use super::program::{Cursor, Rest};
-use super::{undetermined, Instance, ProtocolRefusal, ProtocolSystem};
+use super::{Instance, ProtocolRefusal, ProtocolSystem, undetermined};
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::model::{ModelFinding, ModelSimState, Verdict};
 
@@ -66,6 +66,115 @@ enum Decision {
 }
 
 impl<M: MemoryModel> ProtocolSystem<'_, M> {
+    /// FR-730: inspect one decision for the active loop-proof item. The
+    /// returned variant value is retained only when the guard takes the
+    /// back edge; a false guard still closes a preceding back edge.
+    fn loop_proof_decision(
+        &self,
+        instance: &mut Instance,
+        path: &ThreadPath,
+        node: ProtocolNodeId,
+        model: &ModelSimState,
+    ) -> Result<Option<filament_exact::Value>, ExpansionStop> {
+        let Some(target) = self
+            .loop_proof_target
+            .filter(|target| target.repeat == node)
+        else {
+            return Ok(None);
+        };
+        let repeat = self.program.repeat(node).map_err(ExpansionStop::from)?;
+        let proof = repeat
+            .proof
+            .ok_or_else(|| ProtocolRefusal::fault("a-loop-proof-target-has-proof"))
+            .map_err(ExpansionStop::from)?;
+        let frame = self.frame(instance, path, node);
+        match target.kind {
+            super::ProtocolLoopProofKind::Invariant => {
+                match self.evaluate_loop_value(&proof.invariant, frame, model)? {
+                    Ok(filament_exact::Value::Boolean(true)) => {}
+                    Ok(filament_exact::Value::Boolean(false)) => {
+                        instance.loop_proof_violation.get_or_insert(
+                            super::ProtocolLoopProofViolation {
+                                repeat: node,
+                                kind: target.kind,
+                                failure: super::ProtocolLoopProofFailure::InvariantFalse,
+                            },
+                        );
+                    }
+                    Ok(_) => {
+                        return Err(
+                            ProtocolRefusal::fault("a-checked-loop-invariant-is-boolean").into(),
+                        );
+                    }
+                    Err(failure) => {
+                        instance.loop_proof_violation.get_or_insert(
+                            super::ProtocolLoopProofViolation {
+                                repeat: node,
+                                kind: target.kind,
+                                failure,
+                            },
+                        );
+                    }
+                }
+                Ok(None)
+            }
+            super::ProtocolLoopProofKind::Termination => {
+                let value = match self.evaluate_loop_value(&proof.variant, frame, model)? {
+                    Ok(value) => value,
+                    Err(failure) => {
+                        instance.loop_proof_violation.get_or_insert(
+                            super::ProtocolLoopProofViolation {
+                                repeat: node,
+                                kind: target.kind,
+                                failure,
+                            },
+                        );
+                        return Ok(None);
+                    }
+                };
+                if let Some(previous) = instance.loop_variants.get(&(node, path.clone())) {
+                    match super::compare_loop_variants(
+                        previous,
+                        &value,
+                        proof.variant.root().value_type(),
+                        self.model.value_typing(),
+                    ) {
+                        Some(std::cmp::Ordering::Greater) => {}
+                        Some(_) => {
+                            instance.loop_proof_violation.get_or_insert(
+                                super::ProtocolLoopProofViolation {
+                                    repeat: node,
+                                    kind: target.kind,
+                                    failure: super::ProtocolLoopProofFailure::VariantDidNotDecrease,
+                                },
+                            );
+                        }
+                        None => {
+                            return Err(ProtocolRefusal::fault(
+                                "checked-loop-variant-values-have-the-checked-order",
+                            )
+                            .into());
+                        }
+                    }
+                    if !super::loop_variant_floor_holds(
+                        previous,
+                        proof.variant.root().value_type(),
+                        self.model.value_typing(),
+                    ) {
+                        instance.loop_proof_violation.get_or_insert(
+                            super::ProtocolLoopProofViolation {
+                                repeat: node,
+                                kind: target.kind,
+                                failure: super::ProtocolLoopProofFailure::VariantBelowFloor,
+                            },
+                        );
+                    }
+                }
+                Ok(Some(value))
+            }
+        }
+    }
+
     /// FO-1: the structural moves of the thread `path` of `instance` from
     /// `cursor` until a rest point, with the `repeat` counters it enters,
     /// advances and leaves written to `instance`. `model` is the state the
@@ -156,6 +265,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     }
                     ControlStep::Repeat => {
                         let repeat = self.program.repeat(node)?;
+                        instance.loop_variants.remove(&(node, path.clone()));
                         if repeat.max.is_some() {
                             instance
                                 .counters
@@ -175,33 +285,43 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 },
                 Cursor::Guard(node) => {
                     let repeat = self.program.repeat(node)?;
+                    let variant = self.loop_proof_decision(instance, path, node, model)?;
                     match self.decide(instance, path, node, repeat.guard, model)? {
                         Decision::Undecided(finding) => return Ok(Settled::Undecided(finding)),
-                        Decision::Value(false) => Cursor::Exit(node),
-                        Decision::Value(true) => match repeat.max {
-                            None => Cursor::Enter(repeat.body),
-                            Some(max) => {
-                                let counter = instance
-                                    .counters
-                                    .get_mut(&(node, path.clone()))
-                                    .ok_or_else(|| {
-                                        ProtocolRefusal::fault("a-bounded-repeat-has-a-counter")
-                                    })?;
-                                if *counter < max {
-                                    *counter = counter.saturating_add(1);
-                                    Cursor::Enter(repeat.body)
-                                } else {
-                                    // With no `exhausted` control, a guard
-                                    // true at the maximum leaves the repeat.
-                                    repeat.exhausted.map_or(Cursor::Exit(node), Cursor::Enter)
+                        Decision::Value(false) => {
+                            instance.loop_variants.remove(&(node, path.clone()));
+                            Cursor::Exit(node)
+                        }
+                        Decision::Value(true) => {
+                            if let Some(value) = variant {
+                                instance.loop_variants.insert((node, path.clone()), value);
+                            }
+                            match repeat.max {
+                                None => Cursor::Enter(repeat.body),
+                                Some(max) => {
+                                    let counter = instance
+                                        .counters
+                                        .get_mut(&(node, path.clone()))
+                                        .ok_or_else(|| {
+                                            ProtocolRefusal::fault("a-bounded-repeat-has-a-counter")
+                                        })?;
+                                    if *counter < max {
+                                        *counter = counter.saturating_add(1);
+                                        Cursor::Enter(repeat.body)
+                                    } else {
+                                        // With no `exhausted` control, a guard
+                                        // true at the maximum leaves the repeat.
+                                        repeat.exhausted.map_or(Cursor::Exit(node), Cursor::Enter)
+                                    }
                                 }
                             }
-                        },
+                        }
                     }
                 }
                 Cursor::Exit(node) => {
                     if self.program.control(node)?.step == ControlStep::Repeat {
                         instance.counters.remove(&(node, path.clone()));
+                        instance.loop_variants.remove(&(node, path.clone()));
                     }
                     let Some(parent) = self.program.parent(node)? else {
                         return Ok(Settled::Rest(Rest::Finish));

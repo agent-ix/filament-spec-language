@@ -36,16 +36,16 @@ use super::fairness::ProtocolFairness;
 use super::footprint::ProtocolLocation;
 use super::identity::ThreadPath;
 use super::memory::{
-    buffer_location, Access, CarriedKey, Chosen, FootprintStep, GatedStep, MemoryBranch,
-    MemoryModel, MemoryStep, MemoryStepId, ReadChoice, SharedCell, Written,
+    Access, CarriedKey, Chosen, FootprintStep, GatedStep, MemoryBranch, MemoryModel, MemoryStep,
+    MemoryStepId, ReadChoice, SharedCell, Written, buffer_location,
 };
-use super::ra::{acquires, releases, CarriedView};
+use super::ra::{CarriedView, acquires, releases};
 use super::race::{
-    clear_read, clear_write, join_maps, set_read, set_write, AccessRecord, DataRace, RaceMap,
-    RaceSummary,
+    AccessRecord, DataRace, RaceMap, RaceSummary, clear_read, clear_write, join_maps, set_read,
+    set_write,
 };
 use crate::simulation::footprint::{Footprint, Location};
-use crate::simulation::model::encode::{map_enc, untyped_value_enc, Canonicalizer, Enc};
+use crate::simulation::model::encode::{Canonicalizer, Enc, map_enc, untyped_value_enc};
 use crate::simulation::model::{Cell, ModelSimState};
 
 /// The published default of a memory bound (ADR-025 MB-2).

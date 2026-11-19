@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use filament_exact::{
     EffectiveId, FieldValue, NodeKey, ObjectReference, OriginalDeclarationKey, PathSegmentView,
-    UniverseId, Value,
+    UniverseId, Value, ValueType,
 };
 use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape, TypeEnvironment};
 use fsl_foundation::node_wire::node_key_from_json;
@@ -821,6 +821,16 @@ impl<'t> Typing<'t> {
         }
     }
 
+    /// The declared positions of a tuple type, when `key` names one.
+    pub(crate) fn tuple_types(&self, key: &filament_exact::NodeKey) -> Option<&[ValueType]> {
+        let declaration = self.types?.composite(key.clone())?;
+        match declaration.shape() {
+            filament_semantic_value::declaration::CompositeShape::Tuple(types) => Some(types),
+            filament_semantic_value::declaration::CompositeShape::Record(_)
+            | filament_semantic_value::declaration::CompositeShape::Union(_) => None,
+        }
+    }
+
     /// The record, tuple and union types of `types` and the variant types
     /// `variants`.
     pub(crate) fn with_variants(
@@ -1133,8 +1143,8 @@ pub(super) fn model_key(model: &StateModel, state: &ModelState, typing: Typing<'
 #[cfg(test)]
 mod tests {
     use filament_exact::{
-        from_admitted, CollectionKind, CollectionType, Integer, Quantity, Rational, Timestamp,
-        UnitId, Uuid, ValueType,
+        CollectionKind, CollectionType, Integer, Quantity, Rational, Timestamp, UnitId, Uuid,
+        ValueType, from_admitted,
     };
     use ix_trace_rs::trace;
 
@@ -1348,7 +1358,7 @@ mod tests {
     /// with the nullary member `none` and the member `tagged(Tag)` (`33…`),
     /// and the values `Tag { sku }`, `Pair(true, -3)` and `none`.
     pub(super) fn declared() -> (TypeEnvironment, impl Fn(i64) -> Value, Value, Value) {
-        use filament_exact::{from_admitted_slots, Presence, UnionMember, UnionValue};
+        use filament_exact::{Presence, UnionMember, UnionValue, from_admitted_slots};
         use filament_semantic_value::declaration::{
             CompositeDeclaration, FieldDeclaration, UnionMemberDeclaration,
         };
