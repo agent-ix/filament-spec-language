@@ -85,12 +85,12 @@ impl Walk<'_, '_> {
             }
             (HybridTerm::Call(..), _) => {
                 let expanded = self.expander.term(term, self.meter)?;
-                polynomial_gap(&expanded, position).map(|(form, inner)| Gap {
-                    form,
-                    locus: inner.unwrap_or(TermLocus {
-                        term: path.to_vec(),
-                        body: Vec::new(),
-                    }),
+                // The expansion's loci are relative to the call, so the
+                // call's own path leads them.
+                polynomial_gap(&expanded, position).map(|(form, inner)| {
+                    let mut locus = inner.unwrap_or_default();
+                    locus.term.splice(0..0, path.iter().copied());
+                    Gap { form, locus }
                 })
             }
             // A Boolean-valued `if` is a Boolean combination; a numeric one
@@ -134,10 +134,12 @@ fn polynomial_gap(exp: &Exp, position: Position) -> Option<(&'static str, Option
         (Exp::Compare(_, a, b), _) => {
             polynomial_gap(a, Position::Numeric).or_else(|| polynomial_gap(b, Position::Numeric))
         }
-        (Exp::Conditional(c, a, b), Position::Boolean) => polynomial_gap(c, Position::Boolean)
+        (Exp::Conditional(c, a, b, _), Position::Boolean) => polynomial_gap(c, Position::Boolean)
             .or_else(|| polynomial_gap(a, Position::Boolean))
             .or_else(|| polynomial_gap(b, Position::Boolean)),
-        (Exp::Conditional(..), Position::Numeric) => Some(("conditional", None)),
+        (Exp::Conditional(.., locus), Position::Numeric) => {
+            Some(("conditional", Some(locus.clone())))
+        }
         (Exp::Recursive(call), _) => Some(("recursive-call", Some(call.locus.clone()))),
         (Exp::Activation(_) | Exp::Capture(_) | Exp::Parameter(_), _) => Some(("activation", None)),
     }

@@ -56,3 +56,13 @@ Examined:
 The partial framing is honest. The PR claims coverage only for AC-3, the AC-7
 refusal half and the AC-6 descriptor. Of those, the AC-6 options clause is
 claimed but not met (FND-001).
+
+## Dispositions
+
+Round 1, head 269ecdaa44ebd141577a0396d68efcd6fe79509f.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The descriptor now carries the defaults through `with_options` (name, default) pairs, and the AC-6 test reads them from `option_defaults()` and checks `dynamics` == ["hybrid"] |
+| FND-002 | fixed | `#[trace("FSpec-TC-1891", "FSpec-FR-779-AC-2")]` added to `an_out_of_domain_or_unknown_option_settles_invalid_request`. FSpec TC-1891 scopes FR-779-AC-1 and AC-2 |
+

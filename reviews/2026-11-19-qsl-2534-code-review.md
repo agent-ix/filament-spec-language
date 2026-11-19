@@ -76,4 +76,29 @@ weakened assertions are FND-005.
 | FND-009 | low | The AC-1, AC-9 and AC-11 ignore reasons do not name the QSL-2531 certified-checker dependency, which only the PR body states. AC-1's reason ("the first-party reference hybrid provider is not implemented yet") is stale now that the provider exists | fsl-analyze/tests/it/hybrid_reference.rs:63 |
 | FND-010 | low | The FR-1021-AC-3 stub is still labelled QSL-2534, and the PR body lists it as remaining here. Ruling 5 assigns it to QSL-2531 | fsl-analyze/tests/it/hybrid_requests.rs:1114-1116 |
 
+## New findings (disposition pass 1)
+
+Found while checking round 1 at 269ecdaa44ebd141577a0396d68efcd6fe79509f, against FR-1019 "Class" as merged on main by #3088 (SW-1, 38f5f0d38).
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-011 | medium | FR-1019-AC-14 (merged on main with SW-1) has no test on this PR, active or ignored. The fixtures C1 to C6 are untested as an AC: the outer `/` (C2), the `/` in `half`'s body at its own span (C4) and the `rational(1, 2)` coefficient (C5) have no case at all, and the initial-entry and `if` cases are tagged AC-3 | fsl-analyze/tests/it/hybrid_reference.rs:156-197 |
+| FND-012 | medium | A numeric `if` or an activation reached through an expanded call is located at the call site. `polynomial_gap` returns no locus for `Exp::Conditional` and activation nodes. Merged FR-1019 "Class" requires such a construct to be reported at its own source span inside the called function's body | fsl-replay/src/hybrid_replay/class.rs:140-142 |
+| FND-013 | low | The class check now meters call expansion against `hybrid.max_solver_steps` and reports `Stopped(Steps(budget))`. FR-1019 "Budgets" counts a step per Picard attempt, so a call-heavy model can stop `limit-reached` `max_solver_steps` before any Picard attempt | fsl-hybrid-reference/src/lib.rs:44-71 |
+
 ## Dispositions
+
+Round 1, head 269ecdaa44ebd141577a0396d68efcd6fe79509f.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `Refusal::InvalidOptionValue { .. }` added to the test helper's `None` arm (items.rs:1215); `cargo test -p fsl-analyze --lib --no-run` builds |
+| FND-002 | fixed | `HybridTerm::Conditional` and `Exp::Conditional` in Boolean position walk c, a and b; only numeric position is `conditional`. Tested by `a_boolean_if_is_in_the_class_and_a_numeric_if_is_not` |
+| FND-003 | deferred | Initial entries now precede the modes (fixed part). Rates stay in variable order because `CheckedMode.rates` and the wire store them by variable, so the written order cannot be recovered. That diverges from merged FR-1019 "its flow equations as written" only when a mode writes its equations out of variable order. The limitation is documented on `polynomial_class_gap`. It is out of scope for this PR: either amend FR-1019 to "in variable declaration order" (recommended, since the order only breaks ties for the diagnostic locus) or file a contract ticket for an equation-order field (class.rs:147-156) |
+| FND-004 | fixed | `BackendDescriptor::with_options` takes (name, default) pairs and stores `option_defaults`, exposed by `option_defaults()`. The reference descriptor is built from `OPTION_DEFAULTS`, and callers are updated | - |
+| FND-005 | fixed | The test asserts `dynamics` == ["hybrid"] and reads the defaults from `reference.option_defaults()` | - |
+| FND-006 | fixed | `ResourceExhausted` answers `Stopped(Steps)`, and any other `Err` answers `Unknown` (inconclusive, never in-class proof). `CLASS_WORK_UNITS` is removed. The budget semantics are FND-013 | - |
+| FND-007 | fixed | The `descriptor` helper is removed | - |
+| FND-008 | accepted-no-change | Kept transparent, with the rationale documented on `polynomial_gap`: a range check is a definedness condition on the wrapped term's value, as in FR-450 exact replay's polynomial flow. Merged FR-1019 "Class" is silent on range checks, and the finding was low confidence | - |
+| FND-009 | fixed | The AC-1, AC-9 and AC-11 ignore reasons now cite QSL-2531 and the remaining solver work | - |
+| FND-010 | fixed | The FR-1021-AC-3 stub is relabelled QSL-2531 (ignore and `todo!`) | - |
