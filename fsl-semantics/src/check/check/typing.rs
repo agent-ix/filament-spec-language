@@ -29,6 +29,7 @@ use super::{
     node, refuse, LocalKind, Typer,
 };
 use crate::check::call_target::{resolve_target, ResolvedTarget};
+use crate::check::{CollectionShape, PlaceStep};
 use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
 use crate::check::refusal::{
@@ -3814,7 +3815,7 @@ impl<'a> Typer<'a> {
         &self,
         receiver: &Node,
         field: &str,
-    ) -> Option<super::lowering::model::CollectionShape> {
+    ) -> Option<CollectionShape> {
         let self_slot = self.state.as_ref()?.self_slot;
         let mut parts = vec![ClockPathPart::Field(field.to_owned())];
         let mut current = receiver;
@@ -3860,10 +3861,10 @@ impl<'a> Typer<'a> {
                 }
                 for (part, step) in parts.iter().zip(path) {
                     let matches = match (part, step) {
-                        (ClockPathPart::Field(name), super::lowering::PlaceStep::Field(actual)) => {
+                        (ClockPathPart::Field(name), PlaceStep::Field(actual)) => {
                             name == actual
                         }
-                        (ClockPathPart::Slot, super::lowering::PlaceStep::Slot(_)) => true,
+                        (ClockPathPart::Slot, PlaceStep::Slot(_)) => true,
                         _ => false,
                     };
                     if !matches {
@@ -3871,7 +3872,7 @@ impl<'a> Typer<'a> {
                     }
                 }
                 match path.get(parts.len()) {
-                    Some(super::lowering::PlaceStep::Slot(shape)) => Some(*shape),
+                    Some(PlaceStep::Slot(shape)) => Some(*shape),
                     Some(_) | None => None,
                 }
             })
@@ -3883,7 +3884,7 @@ impl<'a> Typer<'a> {
         &mut self,
         receiver: Node,
         field: &str,
-        shape: super::lowering::model::CollectionShape,
+        shape: CollectionShape,
         location: &Location,
     ) -> Option<Node> {
         let ValueType::Composite(declaration) = &receiver.value_type else {
@@ -3894,7 +3895,11 @@ impl<'a> Typer<'a> {
             None => None,
         };
         let value_type = if shape.map {
-            ValueType::Map(MapType::new(ValueType::Integer, ValueType::Bytes, bound).ok()?)
+            ValueType::Map(
+                MapType::new(ValueType::Integer, ValueType::Bytes, bound)
+                    .ok()?
+                    .into(),
+            )
         } else {
             let kind = match (shape.ordered, shape.unique) {
                 (true, false) => CollectionKind::Sequence,
