@@ -209,7 +209,7 @@ fn value_of_an_optional_parameter_without_a_presence_guard_refuses_unproved_pres
         fsl_foundation::diagnostic::Code::UndefinedExpression
     );
     assert_eq!(refusal.cause.cause(), Some("unproved-presence"));
-    assert_eq!(refusal.location.path(), vec![0, 0]);
+    assert_eq!(refusal.location.path(), vec![0]);
 }
 
 /// FR-103-AC-12: `deref` requires a reference option, so it cannot be applied
