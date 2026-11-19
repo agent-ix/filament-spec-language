@@ -1041,7 +1041,14 @@ fn replay_abstract_timed_failure(
             let Some(selected) = selected else {
                 return Ok(None);
             };
-            prefix.push(selected);
+            if !selected
+                .parts()
+                .iter()
+                .any(|part| part.iter().all(|constraint| constraint.holds(&clocks)))
+            {
+                return Ok(None);
+            }
+            clocks = selected.reset(&clocks);
         }
         prior = *post;
         mapped.extend(prior.abstract_states.first().cloned());
