@@ -164,7 +164,10 @@ fn check_inductive(
         {
             return Ok(rejected(
                 "a",
-                &format!("/certificate/boxes/{}", model.modes[mode_index].name),
+                &format!(
+                    "/certificate/boxes/{}",
+                    model.modes[mode_index].name.as_str()
+                ),
             ));
         }
         // An initial condition or invariant point just outside any face must
@@ -187,7 +190,10 @@ fn check_inductive(
                 {
                     return Ok(rejected(
                         "a",
-                        &format!("/certificate/boxes/{}", model.modes[mode_index].name),
+                        &format!(
+                            "/certificate/boxes/{}",
+                            model.modes[mode_index].name.as_str()
+                        ),
                     ));
                 }
             }
