@@ -356,6 +356,7 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::AmbiguousMember(_)
         | CheckCause::AmbiguousQualified(_)
         | CheckCause::UnsupportedNavigation(_)
+        | CheckCause::NullExpression
         | CheckCause::NonBooleanRoot
         | CheckCause::UnitMismatch
         | CheckCause::IntegerOutsideI128(_)

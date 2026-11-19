@@ -5,6 +5,8 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-365
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-104
+    type: verifies
 ---
 # TC-1046: reaches over a relationship end types as Boolean and refuses by name, operand, direction and destination
 
@@ -12,7 +14,7 @@ relationships:
 
 Verify that the `StateModel` hook checks `reaches(a, b, name)` when `name` is a
 relationship end, and refuses each inadmissible form with its code and cause.
-Scope: FR-365-AC-1 to FR-365-AC-4.
+Scope: FR-365-AC-1 to FR-365-AC-4 and FR-104-AC-17.
 
 Catches a checker that resolves the third argument only as a field (every
 positive vector then refuses `missing-name`), that skips the direction or the
@@ -30,7 +32,8 @@ static type or the refusal's code, cause, family and location with the vector.
 Fixture **R** (domain package `test/orders`) declares object types `Order`,
 `Rush` (supertype `Order`) and `Person`; `Order` declares the field `trail` typed
 `Option<Reference<Order>>` and the field `parent` typed
-`Option<Reference<Order>>`; a population `orders` with member type `Order` and no
+`Option<Reference<Order>>`; `Person` declares its own `trail` field typed
+`Option<Reference<Person>>`; a population `orders` with member type `Order` and no
 maximum, and a population `people` with member type `Person`. `Rush` declares the operations `hop(target: Reference<Order>)` and
 `hopRush(target: Reference<Rush>)`. Each relationship
 is declared by its source type; the end names type, role and multiplicity
@@ -69,7 +72,7 @@ is declared by its source type; the end names type, role and multiplicity
 | C11 | `reaches(self, self, crowd)`; `reaches(self, self, ranked)`; `reaches(self, self, bare)` | `unsupported_construct`/`expression-form`, each |
 | C12 | `reaches(self, self, back)` on `M::Order`: forward traversal of a `target-to-source` relationship whose destination is also unbounded | `ill_typed`/`operator-ineligible` (direction), not `expression-form`: direction before multiplicity |
 | C13 | `reaches(self, self, next)` in a `Value` function body `f(o: Reference<M::Order>): Boolean pure` | `ill_typed`/`operator-ineligible` at the form: no observation to traverse |
-| C14 | `reaches(self, self, M::Order::next)` | refused at the form's build as FR-102 states for a qualified edge |
+| C14 | On `M::Order`: `reaches(self, self, M::Order::next)`; then edges `M::Person::noSuchEdge`, `M::Person::next` and `M::Person::trail` | the first checks as Boolean over the declared Order/next relationship; the two absent foreign members refuse `missing_declaration`/`missing-name` retaining the full authored edge name before testing conformance; the existing foreign `Person::trail` refuses `ill_typed`/`operator-ineligible` without selecting `Order::trail` (FR-104-AC-17) |
 | C15 | `Person` declares the operation `watch(o: Reference<M::Order>)`; the clause `pre using V on M::Person::watch { reaches(o, o, next) }` (`next` resolves on `Order`, the operand's type, as the end of `Order/next`; the context object is a `Person`, so the walked population is not the context population); then with an added population `archive` with member type `Order` and no maximum | admitted, type `Boolean`, and the requirements record adds the `orders` domain once beside the context population `people`; then `ambiguous_declaration`/`ambiguous-name` at the form naming `archive` and `orders` in ascending `DeclarationKey` order |
 | C16 | `reaches(self, self, loose)` on `M::Order`, where `Order/loose`'s destination is an unbounded `Person` end (it fails both the multiplicity and the destination-type check) | `unsupported_construct`/`expression-form`, not `ill_typed`/`operator-ineligible`: multiplicity before destination type |
 | C17 | `reaches(self, self, kids)` (`Set`-shaped, `{0,3}` unique) and `reaches(self, self, litter)` (`Bag`-shaped, `{0,3}` non-unique) as an `invariant` on `M::Order`; and `reaches(self, target, kids)` as a `pre` clause of `M::Rush::hop(target: Reference<M::Order>)` | admitted, type `Boolean` each; the node holds the end's relationship and role, the same shape as for `next` |

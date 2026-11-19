@@ -99,12 +99,9 @@ parses all of them (`fsl-cst/src/grammar.rs:566-591`, `:864-865`,
   `reaches(a, b, edge)` as a node with two expression children and a member
   name. Nothing here checks where `self`, `result` or `reaches` may appear or
   what `edge` names; S3 does (FR-104).
-- S1 parses `reaches`'s edge as a `QualifiedName`
-  (`fsl-cst/src/grammar.rs:905-914`). If the edge has more than one segment,
-  such as `M::T::parent`, then the builder SHALL refuse it with
-  `FormsCause::UnrepresentedConstruct` (`unsupported_construct`) at the edge:
-  the edge is a member of the operands' own type, which S3 resolves, so a
-  qualified spelling names nothing more.
+- S1 parses `reaches`'s edge as a `QualifiedName`. S2 SHALL retain every
+  segment, including a qualifier such as `M::T` in `M::T::parent`, and the
+  complete edge span. S3 resolves the owner and member (FR-104, FR-365).
 - S2 SHALL NOT resolve the `using` alias, the model alias, the context type
   or the operation. It keeps their spellings and spans for S3.
 - S2 SHALL build a state clause body of any depth S1 admits, exactly as it
@@ -119,7 +116,7 @@ parses all of them (`fsl-cst/src/grammar.rs:566-591`, `:864-865`,
 |----|----------|--------------|
 | FR-102-AC-1 | The unit `invariant ParentOrder using v on Config::ConfigVersion at current { present(self.parent) implies deref(value(self.parent)).versionNumber < self.versionNumber }` builds one `StateClauseForm` with kind `Invariant`, name `ParentOrder`, profile `v`, context `Config::ConfigVersion`, no operation, and a body whose spans resolve to the source bytes of each sub-expression. | Test (TC-456) |
 | FR-102-AC-2 | `pre P using v on Config::ConfigVersion::attemptUpdate { true }` builds kind `Precondition` with operation `attemptUpdate`; the same text with `post` builds kind `Postcondition`. | Test (TC-456) |
-| FR-102-AC-3 | `not reaches(self, self, parent)` builds `Not(Reaches { SelfRef, SelfRef, edge: parent })`, and `reaches(self, self, Config::ConfigVersion::parent)` refuses `UnrepresentedConstruct` at the edge; and `self.versionNumber = pre(self.versionNumber)` builds an equality of two `Field` reads of `SelfRef`, the right one under `Pre`. `result` builds `Expression::Result`. None of the single-segment forms refuses. | Test (TC-456) |
+| FR-102-AC-3 | `not reaches(self, self, parent)` builds `Not(Reaches { SelfRef, SelfRef, edge: parent })`, and `reaches(self, self, Config::ConfigVersion::parent)` builds `Reaches` retaining the entire edge name and span; and `self.versionNumber = pre(self.versionNumber)` builds an equality of two `Field` reads of `SelfRef`, the right one under `Pre`. `result` builds `Expression::Result`. None of these forms refuses. | Test (TC-456) |
 | FR-102-AC-4 | The `dispatch` arms for `Invariant`, `Pre`, `Post` and `Body` each make exactly one call (the existing `dispatch_entry_is_a_single_thin_call` check passes over them). A unit whose only declaration begins with a spelling no family claims, such as `temporal`, still refuses `NoDispatchEntry`, naming that spelling. | Test (TC-457) |
 | FR-102-AC-5 | An invariant whose body is 128 nested `not`s around `true`, and one of 100,000 nested `not`s around `true` parsed on a thread with a 512 KiB stack under S1 limits raised to fit it, each build their form on that thread, and no S2 outcome names a depth. | Test (TC-457) |
 | FR-102-AC-6 | With the `seam-probe` feature, the probe variant of `LeadingTokenKind` and of `Expression` still fails to compile at exactly the checked-in S2 seam list, which is unchanged by this feature (FR-063). | Test (TC-457) |

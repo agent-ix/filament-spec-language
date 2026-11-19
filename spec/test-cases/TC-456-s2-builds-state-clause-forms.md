@@ -52,8 +52,8 @@ Tag the tests `#[trace("TC-456", "FR-102-AC-n")]`.
 - Step 3: `Not(Reaches { SelfRef, SelfRef, edge: "parent" })`; an equality
   whose left is `Field(SelfRef, versionNumber)` and whose right is
   `Pre(Field(SelfRef, versionNumber))`; `Expression::Result`; and
-  `FormsCause::UnrepresentedConstruct` at the qualified edge
-  `Config::ConfigVersion::parent`. No other step refuses.
+  a `Reaches` form retaining the qualified edge
+  `Config::ConfigVersion::parent` and its span. No step refuses.
 - Step 4: kind `Constraint`, name `Low`, profile `v`, context `M::Counter`,
   no operation, each body span slicing to its text; then kind `Invariant`
   with an otherwise equal form; the `Constraint` arm makes one call.

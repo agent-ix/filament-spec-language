@@ -16,10 +16,16 @@ Scope: FR-763-AC-4.
 
 ## Test Procedure
 
-Run the `parse` operation over a state clause `reaches(self, self, Config::ConfigVersion::parent)`. Test: `tests/it/forms_refusal_cause.rs` `a_qualified_reaches_edge_names_the_edge`.
+Run the `parse` operation over a state clause `reaches(self, self, Config::ConfigVersion::parent)`. Test: `tests/it/forms_refusal_cause.rs` `a_qualified_reaches_edge_builds_without_a_forms_refusal`.
+
+Build the same clause through S2 and assert the complete edge spelling and
+span, and both `SelfRef` operands. Test:
+`fsl-forms/tests/it/state_model_forms.rs`
+`a_qualified_edge_name_builds_a_reaches_form`.
 
 Tag the tests `#[trace("TC-2158", "FR-763-AC-4")]`.
 
 ## Expected Results
 
-- `construct` `qualified-reaches-edge`, `text` `Config::ConfigVersion::parent`, locus the edge's span.
+- Successful parse (exit 0), no diagnostic. The form retains
+  `Config::ConfigVersion::parent` and its complete span (FR-102-AC-3).
