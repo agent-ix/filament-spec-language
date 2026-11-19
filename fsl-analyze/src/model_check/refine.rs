@@ -703,7 +703,7 @@ impl Run<'_, '_> {
                             }
                         }
                     }
-                    Taken::Abstract(_) => {
+                    Taken::Abstract(_) | Taken::CandidateSteps(_) => {
                         return Err(End::Fault(InternalFault::new(
                             "refinement-check",
                             "protocol-product-edge-has-protocol-taken",
@@ -902,6 +902,7 @@ impl Run<'_, '_> {
                                 (Taken::Stutter, None)
                                     | (Taken::Protocol(_), Some(_))
                                     | (Taken::ProtocolTraces(_), Some(_))
+                                    | (Taken::CandidateSteps(_), None)
                             )
                     });
                 if !witnessed {
@@ -2635,7 +2636,11 @@ impl Run<'_, '_> {
                     certified.post == widen(target) && certified.transition == transition
                 })
                 .ok_or_else(|| fault("a-loop-edge-is-a-retained-edge"))?;
-            taking |= certified.taken != Taken::Stutter;
+            taking |= match &certified.taken {
+                Taken::Stutter => false,
+                Taken::CandidateSteps(steps) => steps.iter().any(|step| step.transition.is_some()),
+                Taken::Abstract(_) | Taken::Protocol(_) | Taken::ProtocolTraces(_) => true,
+            };
             match transition {
                 Some(transition) => {
                     let (post_state, _) =

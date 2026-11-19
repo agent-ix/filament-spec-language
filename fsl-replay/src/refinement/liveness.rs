@@ -52,6 +52,10 @@ impl AbstractClass {
             Taken::Abstract(transitions) => {
                 transitions.iter().any(|transition| self.covers(transition))
             }
+            Taken::CandidateSteps(steps) => steps
+                .iter()
+                .filter_map(|step| step.transition.as_ref())
+                .any(|transition| self.covers(transition)),
             Taken::Protocol(_) => false,
             Taken::ProtocolTraces(_) => false,
         }
