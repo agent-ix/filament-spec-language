@@ -1906,7 +1906,12 @@ fn an_unstable_fifo_key_refuses_at_the_key() {
                 vec![filament_exact::PathSegment::Text("WithFloat".to_owned())]
             );
             assert_eq!(declaration.ordinal(), 0);
-            let key_start = text.rfind("{ m }").expect("the FIFO key") + 2;
+            let checked_unit = format!(
+                "language \"ix:native\" edition \"1-draft\";\n\
+                 profile v = \"filament.model.complete/v1\";\n{PROFILES}\
+                 model M = \"acme/orders\";\n{text}"
+            );
+            let key_start = checked_unit.rfind("{ m }").expect("the FIFO key") + 2;
             assert_eq!(
                 *span,
                 fsl_foundation::Span {
