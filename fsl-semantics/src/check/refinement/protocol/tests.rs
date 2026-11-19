@@ -222,7 +222,11 @@ fn check_with_internals(
     }
     let regions = assembled.regions();
     assembled
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .map_err(|refusals| {
             refusals
                 .into_iter()
@@ -2102,7 +2106,11 @@ fn check_written(text: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
     )
     .unwrap_or_else(|refusal| panic!("{text}: the assembler refuses: {refusal:?}"))
     .with_unwritten_refinements()
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
 }
 
 /// A refinement whose rows select a protocol with an `attempt` adds no

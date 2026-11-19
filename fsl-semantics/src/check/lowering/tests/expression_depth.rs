@@ -81,7 +81,11 @@ fn a_postcondition_pre_over_1000_levels_refuses_on_a_small_stack() {
         "fixture",
         fsl_foundation::IdentityLimits::default(),
     )
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .expect("an empty package checks");
     let refused = std::thread::scope(|scope| {
         std::thread::Builder::new()

@@ -423,7 +423,11 @@ fn an_unresolved_over_type_refuses_at_the_type() {
 /// The one temporal refusal `text`'s package check gives.
 fn package_refusal(text: &str) -> TemporalCause {
     let refusals = assemble(text)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("the clause is refused");
     let [CheckRefusal {
         cause: CheckCause::Temporal(cause),
@@ -454,7 +458,11 @@ fn the_package_check_refuses_a_clause_no_emission_writes() {
         (captured.replace("on origin", "on each (d: Counter)"), 1),
     ] {
         let graph = assemble(&text)
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("an emitted clause compiles");
         let [clause] = graph.temporal_clauses() else {
             panic!("one emitted clause");
@@ -473,7 +481,11 @@ fn the_package_check_refuses_a_clause_no_emission_writes() {
 /// The package check of `text` admits its one temporal clause.
 fn package_admits(text: &str) {
     let graph = assemble(text)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("`{text}` checks: {refusals:?}"));
     assert_eq!(graph.temporal_clauses().len(), 1, "{text}");
 }
@@ -497,7 +509,11 @@ fn a_carried_aggregate_value_or_threshold_is_refused_at_the_carried_expression()
     let at = |part| temporal_location(0, TemporalSite::Aggregate(0, part));
     let refused = |text: &str| {
         assemble(text)
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect_err("the carried expression is refused at S3")
             .into_iter()
             .map(|refusal| {
@@ -627,7 +643,11 @@ record Counter",
             Vec::new(),
         )
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
     };
     for formula in [
         "sum of e.latency over past[0,2] <= 1 M::ps",
@@ -759,7 +779,11 @@ fn aggregate_atoms_are_checked_and_admitted() {
     // FR-194-AC-7: `5 m` against a time value is a unit mismatch at the
     // threshold.
     let refusals = assemble(&wrong_threshold_dimension)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("a threshold of another dimension is refused at S3");
     assert_eq!(refusals[0].cause.code(), Code::IllTyped);
     assert_eq!(refusals[0].cause.cause(), Some("unit-mismatch"));
@@ -783,7 +807,11 @@ fn aggregate_atoms_are_checked_and_admitted() {
     ));
     let rational_count = source(&[EVENT], "Int[0,9]", "count over past[0,3] >= 1/2");
     let refusals = assemble(&rational_count)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("a rational count threshold is refused");
     assert_eq!(
         refusals[0].cause,
@@ -796,14 +824,22 @@ fn aggregate_atoms_are_checked_and_admitted() {
         "count where holds(c) over past[0,3] >= 1",
     );
     let refusals = assemble(&ill_typed)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("a non-Boolean aggregate filter is refused");
     assert_eq!(refusals[0].cause.code(), Code::IllTyped);
     assert!(matches!(refusals[0].cause, CheckCause::NonBooleanRoot));
 
     let mismatched_threshold = source(&[EVENT], "Int[0,9]", "sum of c over past[0,3] <= true");
     let refusals = assemble(&mismatched_threshold)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("a threshold must match the aggregate value type");
     assert!(matches!(
         refusals[0].cause,
@@ -812,7 +848,11 @@ fn aggregate_atoms_are_checked_and_admitted() {
 
     let nonnumeric_count_threshold = source(&[EVENT], "Int[0,9]", "count over past[0,3] >= true");
     let refusals = assemble(&nonnumeric_count_threshold)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("a count threshold is dimensionless numeric");
     assert!(matches!(
         refusals[0].cause,
@@ -834,7 +874,11 @@ fn aggregate_atoms_are_checked_and_admitted() {
         "fraction holds(c > 1) over past[0,3] >= c",
     ] {
         let refusals = assemble(&source(&[EVENT], "Int[0,9]", formula))
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect_err(formula);
         assert!(
             matches!(
@@ -869,7 +913,11 @@ fn a_duration_window_lowers_to_quantities_of_its_unit() {
     let graph = assemble(&timestamped_source(
         "always[0,2] (quantile 0.95 of c over past[0 ms, 300 s] <= 5 ms)",
     ))
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("the clause checks: {refusals:?}"));
     let [clause] = graph.temporal_clauses() else {
         panic!("one clause");
@@ -943,7 +991,11 @@ fn a_duration_window_lowers_to_quantities_of_its_unit() {
     let graph = assemble(&timestamped_source(
         "always[0,2] (quantile 0.95 of c over past[0 ms, 300 s] <= 1 s)",
     ))
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("the clause checks: {refusals:?}"));
     let converted = graph
         .semantic_graph()
@@ -1031,7 +1083,11 @@ fn an_on_each_guard_is_kept_with_the_emitted_clause() {
                 "function Noop using v(): Boolean pure { true }\nrecord Counter",
             );
         let graph = assemble(&text)
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{activation}: {refusals:?}"));
         let [clause] = graph.temporal_clauses() else {
             panic!("one emitted clause");
@@ -1051,7 +1107,11 @@ fn ordinary_temporal_hyper_read_refuses_outside_a_hyper_clause() {
     let text = source(&[INFINITE], "Counter", "holds(c.level @ a = 3)");
     let package = assemble(&text);
     let refusals = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("an ordinary temporal clause cannot read a trace variable");
     assert!(
         refusals.iter().any(|refusal| {
@@ -1073,7 +1133,11 @@ fn a_holds_condition_is_typed_over_the_over_parameter() {
     let package = assemble(&text);
     let regions = package.regions();
     let refusals = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("an unbound name is refused");
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal: {refusals:?}");
@@ -1088,7 +1152,11 @@ fn a_holds_condition_is_typed_over_the_over_parameter() {
 
     let text = source(&[INFINITE], "Counter", "eventually holds(c.level)");
     let refusals = assemble(&text)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("a non-Boolean condition is refused");
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal: {refusals:?}");
