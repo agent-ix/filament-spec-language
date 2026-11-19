@@ -292,6 +292,7 @@ impl Unit {
     ) -> Self {
         let model = |package: &'static str, abstract_side: bool| {
             let level = node(package, "Level");
+            let bit = node(package, "Bit");
             let operations = if abstract_side {
                 abstract_operations
                     .iter()
@@ -305,7 +306,7 @@ impl Unit {
                     package,
                     "M",
                     vec![
-                        single(package, "M", "v", &level),
+                            single(package, "M", "v", &bit),
                         single(package, "M", "h", &level),
                     ],
                     operations,
@@ -314,13 +315,13 @@ impl Unit {
                 object_type(
                     package,
                     "M",
-                    vec![single(package, "M", "v", &level)],
+                    vec![single(package, "M", "v", &bit)],
                     operations,
                 )
             };
             document(
                 package,
-                vec![bounded(package, "Level", hidden_max), object],
+                vec![bounded(package, "Bit", 1), bounded(package, "Level", hidden_max), object],
                 vec![population(package, "ms", "M")],
             )
         };
