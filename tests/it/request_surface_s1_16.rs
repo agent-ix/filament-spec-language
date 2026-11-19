@@ -980,6 +980,73 @@ fn a_tl_lowering_request_selects_its_correspondence() {
     );
 }
 
+/// `Low` with the source union `Shape` declared by the unit, the leaf `leaf`
+/// as its body under `always [0, 3]`.
+fn shape_low(leaf: &str) -> String {
+    low(EVENT_POSITION, &format!("always [0, 3] {leaf}")).replacen(
+        "model Config",
+        "profile v = \"filament.value.complete/v1\";\n\
+         union Shape { Circle(Integer), Rect(Integer, Integer), Empty }\n\
+         model Config",
+        1,
+    )
+}
+
+/// FR-931-AC-13 (source route): a `case` prints its arms in member
+/// declaration order with each binder under its declared name, nested
+/// binders keep their scopes, `_` is an ordinary binder, and renaming a
+/// binder changes the label. The package-route half joins FR-931-AC-11's
+/// package test (FR-1039).
+#[test]
+#[trace("TC-3039", "FR-931-AC-13")]
+#[ignore = "QSL-2562: case binder names in the checked record and canonical case printing not implemented yet"]
+fn case_binders_print_under_their_declared_names() {
+    let atom = |leaf: &str| {
+        let (code, value) = run(
+            &shape_low(leaf),
+            true,
+            ("tl_lowering", json!({"clause": "Low"})),
+        );
+        assert_eq!(code, 0, "{value}");
+        value["tl_lowering"]["atoms"]["p0"].as_str().unwrap().to_owned()
+    };
+    let first = atom(
+        "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })",
+    );
+    // The union's declaration key `ix://<SourceOwner identity>/Shape` (FR-931 "Names").
+    let key = first
+        .strip_prefix("holds(case ")
+        .and_then(|rest| rest.split_once("::Rect("))
+        .map(|(key, _)| key.to_owned())
+        .unwrap_or_else(|| panic!("{first}"));
+    assert!(key.starts_with("ix://") && key.ends_with("/Shape"), "{first}");
+    assert_eq!(
+        first,
+        format!(
+            "holds(case {key}::Rect(c.versionNumber, 2) {{ Circle(r): r <= 2; \
+             Rect(w, h): w + h <= 4; Empty: true; }})"
+        )
+    );
+    let nested = atom(
+        "holds(let k = c.versionNumber in case Shape::Rect(k, 1) { Circle(r): r <= k; \
+         Rect(_, h): case Shape::Circle(h) { Circle(x): x + k <= 4; Rect(a, b): false; Empty: true; }; \
+         Empty: true; })",
+    );
+    assert_eq!(
+        nested,
+        format!(
+            "holds(let k = c.versionNumber in case {key}::Rect(k, 1) {{ Circle(r): r <= k; \
+             Rect(_, h): case {key}::Circle(h) {{ Circle(x): x + k <= 4; Rect(a, b): false; \
+             Empty: true; }}; Empty: true; }})"
+        )
+    );
+    let renamed = atom(
+        "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(width, h): width+h<=4; Circle(r): r<=2; })",
+    );
+    assert!(renamed.contains("Rect(width, h): width + h <= 4"), "{renamed}");
+    assert_ne!(renamed, first);
+}
+
 /// A driver can execute the value returned by the public preparation API.
 /// Provenance: QSL-2348.
 #[test]
