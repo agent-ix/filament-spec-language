@@ -210,7 +210,11 @@ fn a_later_attempt_protocol_lowers_after_an_earlier_refusal() {
         Vec::new(),
     )
     .expect("the declarations assemble")
-    .check_with_protocol_results(CheckMode::Linked, CheckingLimits::default())
+    .check_with_protocol_results(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    )
     .expect("protocol-local S3 refusal is retained");
     assert_eq!(checked.protocol_refusals().len(), 1);
     assert_eq!(checked.protocol_refusals()[0].declaration, "Broken");
