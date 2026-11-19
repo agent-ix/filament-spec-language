@@ -47,7 +47,7 @@ fn call(package: &CheckedPackage, value: Value) -> Evaluation {
         .unwrap()
 }
 
-#[trace("FR-093-AC-4", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FSpec-FR-149")]
 #[test]
 fn guarded_narrowing_evaluates_the_same_integer_at_both_endpoints() {
     let package = package("function f using v(n: Integer): Int[0,9] pure { if n >= 0 and n <= 9 then convert<Int[0,9]>(n) else 0 }", CheckMode::Linked);
@@ -63,7 +63,7 @@ fn guarded_narrowing_evaluates_the_same_integer_at_both_endpoints() {
     }
 }
 
-#[trace("FR-093-AC-4", "FR-096-AC-8", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FR-096-AC-8", "FSpec-FR-149")]
 #[test]
 fn kernel_narrowing_refuses_both_outside_integer_endpoints() {
     let package = package(

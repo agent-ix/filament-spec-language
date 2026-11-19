@@ -79,7 +79,7 @@ fn assert_unproved(source: &str) {
     );
 }
 
-#[trace("FR-093-AC-4", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FSpec-FR-149")]
 #[test]
 fn guarded_int_narrowing_checks_and_lowers_to_numeric_narrow() {
     assert_operation("function f using v(q: Int[0,20]): Int[0,9] pure { if q <= 9 then convert<Int[0,9]>(q) else 0 }", "filament.op.numeric.narrow", CheckMode::Linked);
@@ -91,7 +91,7 @@ fn unguarded_int_narrowing_refuses_unproved_range() {
     assert_unproved("function f using v(q: Int[0,20]): Int[0,9] pure { convert<Int[0,9]>(q) }");
 }
 
-#[trace("FR-093-AC-4", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FSpec-FR-149")]
 #[test]
 fn integer_source_under_guard_narrows() {
     assert_operation("function f using v(n: Integer): Int[0,9] pure { if n >= 0 and n <= 9 then convert<Int[0,9]>(n) else 0 }", "filament.op.numeric.narrow", CheckMode::Linked);
