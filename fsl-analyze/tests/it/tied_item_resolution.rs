@@ -347,7 +347,7 @@ fn contract_provider(
 /// `operation-contract` request item.
 #[trace("TC-2725", "FR-968-AC-2")]
 #[test]
-#[ignore = "QSL-2564: Engine::external refuses an operation-contract provider and sends no operation-contract item to a provider; analyze also settles a named `post` clause unknown-claim"]
+#[ignore = "QSL-2564: Engine::external refuses an operation-contract provider and sends no operation-contract item to a provider; QSL-2580: analyze settles a named `post` clause unknown-claim"]
 fn a_post_item_with_a_provider_matches_contract_checker_and_the_provider() {
     use fsl_analyze::provider::ProviderVerdict;
     let ws = Workspace::new("post-item-with-provider");
@@ -392,9 +392,10 @@ enum ContractRow {
     /// `value = 1` to the post-state `value = 2`: FSpec FR-485 "Replay"
     /// reproduces it.
     Reproduces,
-    /// `Reproduces` with `violated` naming occurrence ordinal 7, which
-    /// `Wrong` does not have: the replay does not reproduce it.
-    OtherOccurrence,
+    /// `Reproduces` with the post-state `value = 1`: the `inc` post premise
+    /// `Inc` (`self.value - pre(self.value) = 1`) fails on the recorded
+    /// values, so the replay does not reproduce the violation.
+    PremiseFails,
     /// `Reproduces` with `bound` `true`: a reader with no implementation
     /// engine cannot re-execute it.
     Bound,
@@ -474,7 +475,7 @@ fn a_provider_contract_verdict_settles_after_replay() {
 
     let parity = settle(
         "contract-provider-parity",
-        contract_verdict(ContractRow::OtherOccurrence),
+        contract_verdict(ContractRow::PremiseFails),
     );
     inconclusive(&parity, "replay-parity");
 
@@ -491,4 +492,33 @@ fn a_provider_contract_verdict_settles_after_replay() {
         },
     );
     inconclusive(&assignments, "replay-parity");
+}
+
+/// FR-962-AC-1 (`post` half): an unnamed `operation-contract` item for an
+/// operation's `post` contract reaches the negotiator with exactly
+/// `[contract-checker]`, names no backend, and never settles
+/// `ambiguous-backend`.
+#[trace("TC-2702", "FR-962-AC-1")]
+#[test]
+#[ignore = "QSL-2580: analyze settles a named `post` clause unknown-claim, so the post item never reaches negotiation"]
+fn an_operation_post_item_reaches_negotiation_with_contract_checker() {
+    let ws = Workspace::new("post-item-one-candidate");
+    let request = set_to_request(&ws, KEEPS, json!([{"claim": "Keeps"}]));
+    let (document, seen) = analyze_recording(&request, Vec::new());
+    assert_eq!(
+        seen,
+        vec![vec!["contract-checker".to_owned()]],
+        "{document}"
+    );
+    let item = &document["items"][0];
+    assert!(item["request"].get("backend").is_none(), "{item}");
+    assert_eq!(
+        item["request"]["candidates"],
+        json!({"type": "set", "backends": ["contract-checker"]}),
+        "{item}"
+    );
+    assert!(
+        !document.to_string().contains("ambiguous-backend"),
+        "{document}"
+    );
 }
