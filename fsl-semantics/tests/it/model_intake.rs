@@ -3394,12 +3394,29 @@ mod float_members {
                 },
                 "the diagnostic identifies the source clause owning the rejected operator: {clause}: {refusal:?}"
             );
+            assert_eq!(
+                refusal.location.path(),
+                if clause.contains("self.a + 1") {
+                    vec![0]
+                } else {
+                    Vec::new()
+                },
+                "the diagnostic path ends at the rejected operator expression: {clause}: {refusal:?}"
+            );
             match &refusal.cause {
                 CheckCause::OperandTypeMismatch {
+                    operator,
                     left_type,
                     right_type,
-                    ..
                 } => {
+                    let expected_operator = if clause.contains(" < ") {
+                        fsl_forms::BinaryOperator::Less
+                    } else if clause.contains(" + ") {
+                        fsl_forms::BinaryOperator::Add
+                    } else {
+                        fsl_forms::BinaryOperator::Equal
+                    };
+                    assert_eq!(*operator, expected_operator, "{clause}");
                     assert_ne!(left_type, right_type, "{clause}");
                     let operand_types = format!("{left_type:?} {right_type:?}");
                     assert!(operand_types.contains("Float"), "{clause}: {operand_types}");
