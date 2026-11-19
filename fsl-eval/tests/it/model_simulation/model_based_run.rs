@@ -1341,6 +1341,9 @@ fn text_domain_work_limits_settle_a_record_before_any_case() {
             Limits::default(),
         )
         .expect("resource exhaustion is a run record");
+        assert_eq!(result.limits.accounting.work_units, work);
+        assert_eq!(result.limits.positions, 10_000);
+        assert_eq!(result.limits.exploration, Limits::default());
         assert_eq!(result.result, expected);
         assert!(result.provenance.size_bounded.is_empty());
         if expected == ModelBasedTestEvidence::Incomplete {

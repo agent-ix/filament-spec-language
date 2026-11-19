@@ -39,10 +39,11 @@ pub use operation_coverage::{
 mod model_based_test;
 pub use model_based_test::{
     ModelBasedCaseProvenance, ModelBasedCounterexample, ModelBasedCoverage,
-    ModelBasedPartitionCoverage, ModelBasedProvenance, ModelBasedSizeBoundedRoot,
-    ModelBasedTestCause, ModelBasedTestChecks, ModelBasedTestCounts, ModelBasedTestDiscardCount,
-    ModelBasedTestDiscardReason, ModelBasedTestError, ModelBasedTestEvidence, ModelBasedTestResult,
-    ModelBasedValueBoundCut, ModelBasedValueBoundCuts, run_model_based_state_invariant,
+    ModelBasedPartitionCoverage, ModelBasedProvenance, ModelBasedRunLimits,
+    ModelBasedSizeBoundedRoot, ModelBasedTestCause, ModelBasedTestChecks, ModelBasedTestCounts,
+    ModelBasedTestDiscardCount, ModelBasedTestDiscardReason, ModelBasedTestError,
+    ModelBasedTestEvidence, ModelBasedTestResult, ModelBasedValueBoundCut,
+    ModelBasedValueBoundCuts, run_model_based_state_invariant,
     run_model_based_state_invariant_with_value_bits, run_model_based_test,
     run_model_based_test_with_value_bits,
 };

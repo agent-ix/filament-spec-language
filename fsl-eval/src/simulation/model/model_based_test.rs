@@ -99,6 +99,30 @@ pub struct ModelBasedPartitionCoverage {
     pub uncovered: BTreeMap<String, u64>,
 }
 
+/// Runtime limits retained with the generated evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ModelBasedRunLimits {
+    /// Scalar limits applied to native evaluation and Text preparation.
+    pub accounting: filament_exact::ScalarLimits,
+    /// Candidate bound applied by the model transition system.
+    pub expansion: super::ExpansionLimits,
+    /// State and transition limits of the coverage exploration.
+    pub exploration: Limits,
+    /// Position limit of a sampled trace.
+    pub positions: u64,
+}
+
+impl ModelBasedRunLimits {
+    fn for_run(system: &ModelSystem<'_>, positions: u64, exploration: Limits) -> Self {
+        Self {
+            accounting: system.meter_limits(),
+            expansion: system.limits,
+            exploration,
+            positions,
+        }
+    }
+}
+
 /// Per-case draw provenance, including the value-size bound used to admit the
 /// generated roots.
 #[derive(Clone, Debug)]
@@ -256,6 +280,8 @@ pub struct ModelBasedCoverage {
 /// The FR-190 result record for a run over a checked clause.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelBasedTestResult {
+    /// Runtime resource bounds that produced this evidence.
+    pub limits: ModelBasedRunLimits,
     /// The checked clause selected by the run.
     pub clause: String,
     /// The selected generation profile.
@@ -604,6 +630,8 @@ pub fn run_model_based_test_with_value_bits(
             max_cases,
             max_trace_length,
             max_value_bits,
+            position_limit,
+            reachability_limits,
         );
     }
     Err(ModelBasedTestError::InvalidClause {
@@ -769,6 +797,7 @@ fn prepare_text_roots(
 )]
 fn text_limit_record(
     model: Option<&ModelSystem<'_>>,
+    limits: ModelBasedRunLimits,
     clause: String,
     sampler: &DefinitionRef,
     seed: u64,
@@ -814,6 +843,7 @@ fn text_limit_record(
         },
     });
     ModelBasedTestResult {
+        limits,
         clause,
         profile: sampler.clone(),
         seed,
@@ -886,6 +916,8 @@ fn run_model_based_value_function(
     max_cases: u64,
     max_trace_length: usize,
     max_value_bits: Option<u64>,
+    position_limit: u64,
+    reachability_limits: Limits,
 ) -> Result<ModelBasedTestResult, ModelBasedTestError> {
     let name = package
         .graph()
@@ -907,6 +939,7 @@ fn run_model_based_value_function(
     ) {
         return Ok(text_limit_record(
             None,
+            ModelBasedRunLimits::for_run(system, position_limit, reachability_limits),
             name,
             sampler,
             seed,
@@ -1255,6 +1288,7 @@ fn run_model_based_value_function(
         })
         .collect();
     Ok(ModelBasedTestResult {
+        limits: ModelBasedRunLimits::for_run(system, position_limit, reachability_limits),
         clause: name,
         profile: sampler.clone(),
         seed,
@@ -1425,6 +1459,7 @@ fn run_model_based_contract_clause(
     ) {
         return Ok(text_limit_record(
             Some(system),
+            ModelBasedRunLimits::for_run(system, position_limit, reachability_limits),
             clause.name.clone(),
             sampler,
             seed,
@@ -1484,6 +1519,7 @@ where
     ) {
         return Ok(text_limit_record(
             Some(system),
+            ModelBasedRunLimits::for_run(system, position_limit, reachability_limits),
             clause.to_owned(),
             sampler,
             seed,
@@ -1687,6 +1723,7 @@ where
     let value_bound_cuts = system.value_bound_cuts();
 
     Ok(ModelBasedTestResult {
+        limits: ModelBasedRunLimits::for_run(system, position_limit, reachability_limits),
         clause: clause.to_owned(),
         profile: sampler.clone(),
         seed,
