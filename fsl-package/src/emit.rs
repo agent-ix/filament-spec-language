@@ -9197,7 +9197,7 @@ fn temporal_binding_rows(
                 occurrence: claim_ordinal,
                 clock_name: clock_name.into(),
                 clock: clock.clone(),
-                trace: Some(quantifier.variable.clone()),
+                trace: Some(quantifier.variable.clone().into()),
             };
             keyed.rows.push((identity.clone(), row.clone()));
             rows.push(row);
