@@ -202,7 +202,12 @@ list.
   the executor SHALL replay the request's `HybridCounterexample` by FR-450
   against the recompiled claim and its hybrid model, and write FSpec
   FR-323's `hybrid` row (FR-750); the function-only target refusal above
-  does not apply to it.
+  does not apply to it. The request's counterexample is caller input, so a
+  trace FSpec FR-193 "Hybrid trace" refuses SHALL refuse the request as
+  `ReplayRefusal::HybridTrace(TraceRefusal)`,
+  `invalid_runtime_input`/`invalid-value` at the member's pointer within the
+  request's counterexample, and write no row; every other hybrid replay
+  refusal settles by FR-750 "Replay refusals".
 - When a decoded request carries the observed temporal counterexample arm
   with a `state_clause` target, the executor SHALL dispatch it through
   `fsl_replay::replay` to [FR-331](FR-331-replay-a-temporal-counterexample-over-an-observed-trace.md)
