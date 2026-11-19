@@ -37,3 +37,32 @@ Reviewed PR #3095 at `d95c0834561321d6df9deca737e318fe78701def`, limited to its 
 - The former incorrect FR-892-AC-3 trace on the admission-only test is corrected to FR-892-AC-1. The separate bounded projection test remains tagged FR-892-AC-3.
 - Only Rust test code changed; no production APIs, dependencies, CI workflows, or fixture copies were added. No duplication finding.
 - Targeted test evidence was read from the PR description and dispatching coder report, not rerun by the reviewer. No full `fsl-analyze` integration target or high-memory `protocol_constructs::two_protocols_declaring_one_channel_name_keep_their_queues_apart` test was run.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The fix adds exact corpus regressions for the original await request's timestamped-event binding and the original Boolean-result compensation source's strict handoff admission. |
+
+### FND-001 after excerpt
+
+```rust
+        assert!(
+            handoff
+                .admitted()
+                .resolved_graph()
+                .nodes
+                .iter()
+                .any(|node| &*node.semantic_form == "compensation"),
+            "the strict reader admits the original compensation handoff"
+        );
+        assert_eq!(await_bindings[0]["clock_name"], "timer");
+        assert_eq!(
+            await_bindings[0]["clock"],
+            json!({"kind": "timestamped_event", "timestamp_unit": "s"})
+        );
+```
+
+## Disposition Round 1 Verification
+
+Reviewed PR #3095 at `4fe76af7c33dadabb3f7652da5a346d4f5ac0552`. `tests/it/protocol_source_routes.rs` now compiles `staged/await.request.json`, strict-reads its package, and checks that the await node has one `timer` binding with `timestamped_event` seconds. It also compiles the original Boolean-result compensation source through `handoff()` and requires an admitted graph containing a compensation node. These are the two cases from FND-001. No new code defects were found in the changed tests. No builds or tests were run by the reviewer; `git diff --check` and `quire validate --scope . reviews/qsl-2225-pr3095-code-review.md` passed. The PR's in-repository copy of this artifact is still at the initial-review version and must be updated from this disposition version before merge.
