@@ -29,6 +29,10 @@ use crate::temporal::window::AggregateSample;
 const VALUE_TYPE: &str = "fsl-eval/trace-position/1";
 const PACKAGE_REVISION: &str = fsl_package::CHECKED_PACKAGE_V2;
 
+mod activation;
+mod completeness;
+pub(super) use activation::ActivationInstance;
+
 struct TraceDefinition<'a> {
     package_identity: &'a str,
     canonical_package_bytes: &'a [u8],
@@ -40,6 +44,10 @@ struct TraceDefinition<'a> {
 
 /// Owner-qualified records and the many-to-one mapping back to FR-106 labels.
 pub(super) struct OwnerObservation {
+    request: AdmissionRequest,
+    authority: AuthoritySelection,
+    subject: SubjectSelection,
+    time_factor: filament_exact::Rational,
     pub(super) qualified: Box<filament_observation::QualifiedObservation>,
     pub(super) side_map: BTreeMap<Identity, Vec<String>>,
     pub(super) partial_facts: Vec<PartialFact>,
@@ -56,6 +64,7 @@ pub(super) struct PartialFact {
 /// Admit every position in canonical trace order. Selection data is read only
 /// from the checked subject and the trace, never from an owner field in input.
 pub(super) fn admit_trace(
+    producer: &filament_observation::AdmittedStaticBundle,
     subject: &EvidenceSubject<'_>,
     request: &EvidenceRequest,
     binding: &AuthenticatedBinding,
@@ -73,6 +82,7 @@ pub(super) fn admit_trace(
         occurrence,
     };
     admit_defined(
+        producer,
         &definition,
         &request.positions,
         request.cover,
@@ -82,6 +92,7 @@ pub(super) fn admit_trace(
 }
 
 fn admit_defined(
+    producer: &filament_observation::AdmittedStaticBundle,
     subject: &TraceDefinition<'_>,
     positions: &[EvidencePosition],
     cover: ClockCover,
@@ -130,8 +141,6 @@ fn admit_defined(
         u64::try_from(scaled_nanos(uncertainty, &time_factor, position)?)
             .map_err(|_| unrepresentable(position, "clock_uncertainty_nanos"))?;
     }
-    let producer =
-        super::producer::admitted().map_err(|cause| owner_fault("producer-bundle", cause))?;
     let clock_identity = Identity::new(binding.clock_name.to_string());
     let clock_revision = Identity::new(binding.profile.identity.to_string());
     let unit = format!("{}/4", clock_unit(clock));
@@ -337,6 +346,7 @@ fn admit_defined(
     admission_request.scope.population_identity =
         population::population_identity(&admission_request, owner_limits)
             .map_err(|error| owner_fault(error.code().as_str(), error.detail()))?;
+    let retained_request = admission_request.clone();
     match admit(admission_request) {
         AdmissionOutcome::Available { observation } => {
             let partial_facts = derive_partial_facts(
@@ -347,6 +357,17 @@ fn admit_defined(
                 &position_records,
             )?;
             let owner = OwnerObservation {
+                authority: AuthoritySelection {
+                    definition_identity: observation.binding().identity.clone(),
+                    definition_revision: Identity::new(PACKAGE_REVISION),
+                    definition_digest: package_digest,
+                },
+                subject: SubjectSelection {
+                    scope_identity: observation.scope().membership_rule_identity.clone(),
+                    population_identity: observation.scope().population_identity.clone(),
+                },
+                request: retained_request,
+                time_factor,
                 qualified: observation,
                 side_map,
                 partial_facts,
@@ -362,6 +383,15 @@ fn admit_defined(
 }
 
 impl OwnerObservation {
+    fn context(&self) -> Context<'_> {
+        Context::new(
+            History::batch(&self.qualified),
+            &self.authority,
+            &self.subject,
+            1,
+            None,
+        )
+    }
     /// Read only Boolean facts. Undefined values retain the evaluator's
     /// cause and never select or consume an owner possibility set.
     pub(super) fn valuation(
@@ -1128,7 +1158,11 @@ mod tests {
             },
         )
         .expect("admitted trace");
-        admit_defined(&definition, positions, cover, &binding, &trace)
+        let producer = super::super::producer::producer_bundle()
+            .expect("producer selection")
+            .admit()
+            .expect("producer admission");
+        admit_defined(&producer, &definition, positions, cover, &binding, &trace)
     }
 
     fn position(label: &str, stamp: u64, valuation: Valuation) -> EvidencePosition {
@@ -1533,6 +1567,374 @@ mod tests {
                 "value": {"n": 5},
                 "source": "admitted semantic content"
             })
+        );
+    }
+
+    #[test]
+    #[ix_trace_rs::trace("TC-2624", "FR-944-AC-16")]
+    fn completeness_uses_every_member_and_the_asserted_through_boundary() {
+        use crate::temporal::ProgressCompleteness;
+        use filament_observation::authority::{
+            completeness as owner_completeness, ErrorCode, TemporalBoundary,
+        };
+        let positions = [
+            position("ten", 10, Valuation::True),
+            position("fifty", 50, Valuation::True),
+            position("eighty", 80, Valuation::True),
+        ];
+        let owner = admitted(&positions, ClockCover::Exact, false).expect("owner trace");
+        let asserted = ProgressCompleteness::Complete { through: 60 };
+        let selection = owner
+            .completeness_selection(asserted, None)
+            .expect("selection");
+        let document = owner_completeness::derive(owner.context(), &selection, Limits::owner_max())
+            .expect("derive");
+        let view = owner_completeness::read(
+            document.bytes(),
+            owner.context(),
+            &selection,
+            Limits::owner_max(),
+        )
+        .expect("strict view");
+        assert_eq!(view.payload().state(), owner_completeness::State::Complete);
+        assert_eq!(view.payload().fact_count(), 3);
+        assert!(view.payload().facts().all(|fact| fact.status
+            == owner_completeness::FactStatus::Available
+            && fact.observation_identity.is_some()));
+        assert_eq!(view.payload().boundary_identity(), "{\"through\":\"60\"}");
+        assert_eq!(
+            view.payload().boundary(),
+            TemporalBoundary::TimestampedEvent {
+                lower_nanos: 60_000_000,
+                upper_inclusive_nanos: 60_000_000,
+                carrier_end_exclusive_nanos: 60_000_001,
+                watermark_nanos: 60_000_000,
+            }
+        );
+        let partial = owner_completeness::Selection::new(
+            Identity::new(view.payload().boundary_identity()), view.payload().boundary(),
+            owner.request.scope.members.iter().filter(|member| matches!(member.anchor, Anchor::TimestampNanos(value) if value <= 60_000_000))
+                .map(|member| owner_completeness::Fact::new(member.object_identity.clone(), Some(member.record_identity.clone()), owner_completeness::FactStatus::Available)).collect(),
+        );
+        let error = owner_completeness::derive(owner.context(), &partial, Limits::owner_max())
+            .expect_err("subset is not the admitted population");
+        assert_eq!(error.code(), ErrorCode::ExpectedMismatch);
+        let incomplete = owner
+            .completeness_view(ProgressCompleteness::Incomplete, None)
+            .expect("incomplete view");
+        assert_eq!(
+            incomplete.payload().state(),
+            owner_completeness::State::Incomplete
+        );
+        assert_eq!(incomplete.payload().fact_count(), 3);
+        assert!(incomplete.payload().facts().all(|fact| fact.status
+            == owner_completeness::FactStatus::Incomplete
+            && fact.observation_identity.is_none()));
+        assert_eq!(
+            incomplete.payload().boundary(),
+            TemporalBoundary::TimestampedEvent {
+                lower_nanos: -9_223_372_036_854_775_808_000_000,
+                upper_inclusive_nanos: -9_223_372_036_854_775_808_000_000,
+                carrier_end_exclusive_nanos: -9_223_372_036_854_775_807_999_999,
+                watermark_nanos: -9_223_372_036_854_775_808_000_000,
+            }
+        );
+        let reduced =
+            admitted(&positions[..2], ClockCover::Exact, false).expect("smaller population");
+        let reduced_view = reduced
+            .completeness_view(asserted, None)
+            .expect("smaller view");
+        assert_ne!(
+            view.payload().population_identity(),
+            reduced_view.payload().population_identity()
+        );
+        assert_ne!(view.bytes(), reduced_view.bytes());
+    }
+
+    #[test]
+    #[ix_trace_rs::trace("TC-2624", "FR-944-AC-16", "FR-944-AC-4")]
+    fn completeness_revision_vectors_keep_boundary_and_fact_regressions_distinct() {
+        use crate::temporal::ProgressCompleteness;
+        use filament_observation::authority::completeness as owner_completeness;
+        let owner = admitted(
+            &[position("ten", 10, Valuation::True)],
+            ClockCover::Exact,
+            false,
+        )
+        .expect("prior history");
+        let complete = ProgressCompleteness::Complete { through: 100 };
+        let selection = owner
+            .completeness_selection(complete, None)
+            .expect("prior selection");
+        let document = owner_completeness::derive(owner.context(), &selection, Limits::owner_max())
+            .expect("prior document");
+        let prior = owner_completeness::read(
+            document.bytes(),
+            owner.context(),
+            &selection,
+            Limits::owner_max(),
+        )
+        .expect("prior view");
+        for (asserted, code) in [
+            (
+                ProgressCompleteness::Complete { through: 60 },
+                "QOBS-REV-BOUNDARY-REGRESSED",
+            ),
+            (
+                ProgressCompleteness::Incomplete,
+                "QOBS-REV-COMPLETE-REGRESSED",
+            ),
+        ] {
+            let successor = owner
+                .completeness_selection(asserted, Some(complete))
+                .expect("successor selection");
+            let context = Context::new(
+                History::batch(&owner.qualified),
+                &owner.authority,
+                &owner.subject,
+                2,
+                Some(&document),
+            );
+            let error =
+                owner_completeness::revise(&prior, context, &successor, Limits::owner_max())
+                    .expect_err("regression");
+            let owner_completeness::RevisionCause::Contradiction(contradiction) = error.cause()
+            else {
+                panic!("typed monotonicity contradiction");
+            };
+            assert_eq!(contradiction.code(), code);
+        }
+        let incomplete = ProgressCompleteness::Incomplete;
+        let selection = owner
+            .completeness_selection(incomplete, None)
+            .expect("incomplete selection");
+        let document = owner_completeness::derive(owner.context(), &selection, Limits::owner_max())
+            .expect("incomplete document");
+        let prior = owner_completeness::read(
+            document.bytes(),
+            owner.context(),
+            &selection,
+            Limits::owner_max(),
+        )
+        .expect("incomplete view");
+        let successor = admitted(
+            &[position("five", 5, Valuation::True)],
+            ClockCover::Exact,
+            false,
+        )
+        .expect("earlier starting trace");
+        let selection = successor
+            .completeness_selection(incomplete, Some(incomplete))
+            .expect("successor selection");
+        let context = Context::new(
+            History::batch(&successor.qualified),
+            &successor.authority,
+            &successor.subject,
+            2,
+            Some(&document),
+        );
+        let document = owner_completeness::revise(&prior, context, &selection, Limits::owner_max())
+            .expect("incomplete revision stays admissible");
+        let view = owner_completeness::read_revised(
+            document.bytes(),
+            &prior,
+            context,
+            &selection,
+            Limits::owner_max(),
+        )
+        .expect("revised view");
+        assert_eq!(
+            view.payload().state(),
+            owner_completeness::State::Incomplete
+        );
+    }
+
+    #[test]
+    #[ix_trace_rs::trace("TC-2624", "FR-944-AC-14")]
+    fn optional_activation_histories_classify_empty_scopes_and_instance_captures() {
+        use super::activation::{ActivationCapture, ActivationInstance};
+        use crate::temporal::evidence::{TriggerEvidence, TriggerRecord, TriggerScope};
+        use crate::temporal::ProgressClosure;
+        use filament_observation::authority::activation::{
+            ActivationState, EvidenceState, ExecutionState,
+        };
+        let anchor = position("anchor", 3, Valuation::True);
+        let owner = admitted(&[anchor.clone()], ClockCover::Exact, false).expect("trace history");
+        let binding = AuthenticatedBinding {
+            package: "recipe".into(),
+            declaration: serde_json::from_value(json!({"package":"recipe","path":["Due"],"ordinal":0})).expect("node"),
+            profile: serde_json::from_value(json!({"authority":"agent-ix","identity":"filament.temporal.timestamped-event.finite-window/v1"})).expect("profile"),
+            clock_name: "clock".into(), clock: ClockConfiguration::TimestampedEvent { timestamp_unit:"ms".into() },
+        };
+        let scope = TriggerScope {
+            closure: ProgressClosure::Closed,
+            evidence: TriggerEvidence::Admitted,
+            record: TriggerRecord::Complete,
+        };
+        let (empty, _) = owner
+            .activation_history(&anchor, None)
+            .expect("optional empty history");
+        assert!(owner.request.binding.required);
+        assert!(!empty.request.binding.required);
+        assert_eq!(
+            empty.request.binding.schema_identity.as_str(),
+            "fsl-eval/activation/1"
+        );
+        assert_eq!(
+            empty.request.binding.signal_identity,
+            owner.request.binding.trigger_identity
+        );
+        assert_eq!(
+            empty.request.binding.trigger_identity,
+            owner.request.binding.trigger_identity
+        );
+        assert_eq!(empty.request.scope.range, owner.request.scope.range);
+        assert!(empty.request.scope.membership_complete);
+        assert!(empty.qualified.records().is_empty());
+        let key: Value =
+            serde_json::from_str(empty.request.binding.identity.as_str()).expect("activation key");
+        assert_eq!(key["role"], "activation");
+        assert!(key.get("instance").is_none());
+        let view = owner
+            .activation_view(&binding, ClockCover::Exact, &anchor, None, scope)
+            .expect("inactive scope");
+        assert_eq!(view.payload().activation(), ActivationState::Inactive);
+        assert_eq!(view.payload().closure(), ExecutionState::Closed);
+        assert_eq!(view.payload().evidence(), EvidenceState::Complete);
+        assert_eq!(
+            view.payload().obligation_identity(),
+            owner.request.binding.identity.as_str()
+        );
+        for (closure, evidence, record) in [
+            (
+                ProgressClosure::Open,
+                TriggerEvidence::Admitted,
+                TriggerRecord::Complete,
+            ),
+            (
+                ProgressClosure::Closed,
+                TriggerEvidence::Admitted,
+                TriggerRecord::Incomplete,
+            ),
+            (
+                ProgressClosure::Closed,
+                TriggerEvidence::Missing,
+                TriggerRecord::Complete,
+            ),
+            (
+                ProgressClosure::Closed,
+                TriggerEvidence::Refused,
+                TriggerRecord::Complete,
+            ),
+        ] {
+            let view = owner
+                .activation_view(
+                    &binding,
+                    ClockCover::Exact,
+                    &anchor,
+                    None,
+                    TriggerScope {
+                        closure,
+                        evidence,
+                        record,
+                    },
+                )
+                .expect("unknown empty scope");
+            assert_eq!(view.payload().activation(), ActivationState::Unknown);
+            if evidence != TriggerEvidence::Admitted || record == TriggerRecord::Incomplete {
+                assert_eq!(view.payload().evidence(), EvidenceState::Incomplete);
+                assert!(view.payload().completeness_authority().is_none());
+            }
+        }
+        let first = SemanticTriggerIdentity::new(vec![0, 255]).expect("instance");
+        let view = owner
+            .activation_view(
+                &binding,
+                ClockCover::Exact,
+                &anchor,
+                Some(ActivationInstance {
+                    identity: &first,
+                    captures: Vec::new(),
+                }),
+                scope,
+            )
+            .expect("capture-free instance");
+        assert_eq!(view.payload().activation(), ActivationState::Active);
+        let captures: Vec<_> = view.payload().captures().collect();
+        assert_eq!(captures.len(), 1);
+        assert_eq!(captures[0].identity, "fsl-eval/instance");
+        assert_eq!(captures[0].canonical_value, "{\"instance\":\"00ff\"}");
+        let two_captures = || {
+            vec![
+                ActivationCapture {
+                    name: "a",
+                    declared_type: "Integer",
+                    fact: json!({"value":1}),
+                },
+                ActivationCapture {
+                    name: "b",
+                    declared_type: "Integer",
+                    fact: json!({"fault":"missing"}),
+                },
+            ]
+        };
+        let view = owner
+            .activation_view(
+                &binding,
+                ClockCover::Exact,
+                &anchor,
+                Some(ActivationInstance {
+                    identity: &first,
+                    captures: two_captures(),
+                }),
+                scope,
+            )
+            .expect("declared captures");
+        assert_eq!(view.payload().activation(), ActivationState::Active);
+        assert_eq!(
+            view.payload()
+                .captures()
+                .map(|capture| capture.identity)
+                .collect::<Vec<_>>(),
+            [
+                "fsl-eval/capture/a",
+                "fsl-eval/capture/b",
+                "fsl-eval/instance"
+            ]
+        );
+        let captures: Vec<_> = view.payload().captures().collect();
+        let value: Value =
+            serde_json::from_str(captures[1].canonical_value).expect("capture content");
+        assert_eq!(value["value"], json!({"fault":"missing"}));
+        let second = SemanticTriggerIdentity::new(vec![1, 255]).expect("second instance");
+        let other = owner
+            .activation_view(
+                &binding,
+                ClockCover::Exact,
+                &anchor,
+                Some(ActivationInstance {
+                    identity: &second,
+                    captures: two_captures(),
+                }),
+                scope,
+            )
+            .expect("second instance");
+        assert_ne!(
+            view.payload().activation_identity(),
+            other.payload().activation_identity()
+        );
+        assert_ne!(
+            view.payload()
+                .captures()
+                .next()
+                .expect("capture")
+                .source_observation_identity,
+            other
+                .payload()
+                .captures()
+                .next()
+                .expect("capture")
+                .source_observation_identity
         );
     }
 }

@@ -216,3 +216,112 @@ fn the_complete_through_rule_accepts_and_refuses_as_fr_944_states() {
         "a retained Incomplete refuses nothing"
     );
 }
+
+fn bundle_global_lines(source: &str) -> Vec<usize> {
+    use syn::visit::Visit;
+    struct BundleType(bool);
+    impl<'ast> Visit<'ast> for BundleType {
+        fn visit_type_path(&mut self, node: &'ast syn::TypePath) {
+            self.0 |= node.path.segments.iter().any(|segment| {
+                segment.ident == "StaticProducerBundle" || segment.ident == "AdmittedStaticBundle"
+            });
+            syn::visit::visit_type_path(self, node);
+        }
+    }
+    struct Globals(Vec<usize>);
+    impl<'ast> Visit<'ast> for Globals {
+        fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
+            if node.attrs.iter().any(|attribute| matches!(&attribute.meta,
+                syn::Meta::List(list) if list.path.is_ident("cfg") && list.tokens.to_string() == "test")) {
+                return;
+            }
+            syn::visit::visit_item_mod(self, node);
+        }
+        fn visit_item_static(&mut self, node: &'ast syn::ItemStatic) {
+            let mut bundle = BundleType(false);
+            bundle.visit_type(&node.ty);
+            if bundle.0 {
+                self.0.push(node.ident.span().start().line);
+            }
+        }
+        fn visit_field(&mut self, node: &'ast syn::Field) {
+            let mut bundle = BundleType(false);
+            bundle.visit_type(&node.ty);
+            struct Lock(bool);
+            impl<'ast> Visit<'ast> for Lock {
+                fn visit_type_path(&mut self, node: &'ast syn::TypePath) {
+                    self.0 |= node
+                        .path
+                        .segments
+                        .iter()
+                        .any(|segment| segment.ident == "Mutex" || segment.ident == "RwLock");
+                    syn::visit::visit_type_path(self, node);
+                }
+            }
+            let mut lock = Lock(false);
+            lock.visit_type(&node.ty);
+            if bundle.0 && lock.0 {
+                use syn::spanned::Spanned;
+                self.0.push(node.span().start().line);
+            }
+        }
+        fn visit_macro(&mut self, node: &'ast syn::Macro) {
+            fn bundle(tokens: proc_macro2::TokenStream) -> bool {
+                tokens.into_iter().any(|token| match token {
+                    proc_macro2::TokenTree::Ident(ident) => {
+                        ident == "StaticProducerBundle" || ident == "AdmittedStaticBundle"
+                    }
+                    proc_macro2::TokenTree::Group(group) => bundle(group.stream()),
+                    proc_macro2::TokenTree::Punct(_) | proc_macro2::TokenTree::Literal(_) => false,
+                })
+            }
+            if (node.path.is_ident("lazy_static") || node.path.is_ident("thread_local"))
+                && bundle(node.tokens.clone())
+            {
+                use syn::spanned::Spanned;
+                self.0.push(node.span().start().line);
+            }
+        }
+    }
+    let parsed = syn::parse_file(source).expect("Rust source");
+    let mut globals = Globals(Vec::new());
+    globals.visit_file(&parsed);
+    globals.0
+}
+
+#[test]
+#[trace("TC-3036", "FR-944-AC-15")]
+fn observation_producers_are_caller_owned_without_global_storage() {
+    assert_eq!(
+        bundle_global_lines("static B: OnceLock<AdmittedStaticBundle> = OnceLock::new();"),
+        vec![1]
+    );
+    assert_eq!(
+        bundle_global_lines("struct Host { bundle: Mutex<StaticProducerBundle> }"),
+        vec![1]
+    );
+    assert!(bundle_global_lines(
+        "#[cfg(test)] mod tests { static B: OnceLock<AdmittedStaticBundle> = OnceLock::new(); }"
+    )
+    .is_empty());
+    assert!(bundle_global_lines(
+        "const NAME: &str = \"static B: OnceLock<AdmittedStaticBundle>\";"
+    )
+    .is_empty());
+    let mut files = Vec::new();
+    sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+    let findings: Vec<_> = files
+        .iter()
+        .flat_map(|path| {
+            let text = std::fs::read_to_string(path).expect("source");
+            bundle_global_lines(&text)
+                .into_iter()
+                .map(|line| format!("{}:{line}", path.display()))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert!(findings.is_empty(), "producer globals: {findings:?}");
+}

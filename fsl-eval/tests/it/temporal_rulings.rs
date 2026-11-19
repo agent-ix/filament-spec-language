@@ -112,8 +112,13 @@ fn a_surplus_capture_fact_is_refused_after_the_contradiction_check_and_uncharged
     through.deliveries = vec![surplus];
     through.trigger = Some(id("t2"));
     let mut meter = unlimited();
-    let refused = evaluate_temporal_evidence(&env.subject(&[]), &through, &mut meter)
-        .map(|issued| issued.result().clone());
+    let refused = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &env.subject(&[]),
+        &through,
+        &mut meter,
+    )
+    .map(|issued| issued.result().clone());
     expect_refusal(refused, "surplus-capture");
     assert!(meter.admitted_charges().is_empty());
     // An origin's surplus fact is refused the same way.
@@ -515,9 +520,14 @@ fn every_stop_is_an_ok_incomplete_result_that_returns_the_requests_ledgers() {
         work_units: 1,
         ..SCALAR_LIMITS_UNLIMITED
     });
-    let result = evaluate_temporal_evidence(&subject, &base, &mut tight)
-        .map(|issued| issued.result().clone())
-        .expect("an Ok result");
+    let result = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &subject,
+        &base,
+        &mut tight,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("an Ok result");
     assert!(matches!(
         result.incomplete,
         Some(EvidenceIncomplete::Meter { .. })
@@ -632,9 +642,14 @@ fn silent_samples_are_charged_at_the_meter_and_to_neither_steps_nor_positions() 
         facts: Vec::new(),
     });
     let mut meter = unlimited();
-    let result = evaluate_temporal_evidence(&subject, &asked, &mut meter)
-        .map(|issued| issued.result().clone())
-        .expect("a result");
+    let result = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &subject,
+        &asked,
+        &mut meter,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("a result");
     assert_eq!(result.truth, Some(Truth::False));
     let usage = result.usage;
     // Observed: the origin (1), `eventually` at 0 (1), two position scans (2),
@@ -670,9 +685,14 @@ fn an_origin_clause_over_three_positions_measures_the_stated_usage() {
     asked.origins = vec![origin("o1", "a")];
     asked.trigger = Some(id("o1"));
     let mut meter = unlimited();
-    let result = evaluate_temporal_evidence(&subject, &asked, &mut meter)
-        .map(|issued| issued.result().clone())
-        .expect("a result");
+    let result = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &subject,
+        &asked,
+        &mut meter,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("a result");
     let expected = [
         (EvidenceCounter::FormulaNodes, 2),
         (EvidenceCounter::Instances, 1),
@@ -701,24 +721,39 @@ fn a_shared_meter_one_unit_short_stops_the_second_instance_naming_it() {
         delivery("t2", "r", "p", &["5"]),
     ];
     let mut probe = unlimited();
-    let first = evaluate_temporal_evidence(&subject, &asked, &mut probe)
-        .map(|issued| issued.result().clone())
-        .expect("a result");
+    let first = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &subject,
+        &asked,
+        &mut probe,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("a result");
     let used = probe.admitted_charges().len() as u64;
     let mut shared = Meter::new(ScalarLimits {
         work_units: used + 1,
         ..SCALAR_LIMITS_UNLIMITED
     });
-    let one = evaluate_temporal_evidence(&subject, &asked, &mut shared)
-        .map(|issued| issued.result().clone())
-        .expect("a result");
+    let one = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &subject,
+        &asked,
+        &mut shared,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("a result");
     assert_eq!(one.truth, first.truth);
     assert_eq!(one.settlement, first.settlement);
     assert_eq!(one.support.len(), first.support.len());
     asked.trigger = Some(id("t2"));
-    let two = evaluate_temporal_evidence(&subject, &asked, &mut shared)
-        .map(|issued| issued.result().clone())
-        .expect("a result");
+    let two = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &subject,
+        &asked,
+        &mut shared,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("a result");
     assert_eq!(two.truth, None);
     match two.incomplete {
         Some(EvidenceIncomplete::Meter { instance, .. }) => {
@@ -733,9 +768,14 @@ fn a_shared_meter_one_unit_short_stops_the_second_instance_naming_it() {
         work_units: used + 1,
         ..SCALAR_LIMITS_UNLIMITED
     });
-    let replay = evaluate_temporal_evidence(&subject, &asked, &mut fresh)
-        .map(|issued| issued.result().clone())
-        .expect("a result");
+    let replay = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &subject,
+        &asked,
+        &mut fresh,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("a result");
     assert_eq!(replay.result_identity, one.result_identity);
 }
 
@@ -748,9 +788,14 @@ fn a_sibling_clause_keeps_its_result_after_a_counter_stop() {
     let mut meter = unlimited();
     let mut stopped = asked(&env, p);
     stopped.limits = TemporalEvidenceLimits::default().with_ceiling(EvidenceCounter::Positions, 0);
-    let first = evaluate_temporal_evidence(&env.subject(&[]), &stopped, &mut meter)
-        .map(|issued| issued.result().clone())
-        .expect("an Ok result");
+    let first = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &env.subject(&[]),
+        &stopped,
+        &mut meter,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("an Ok result");
     assert!(first.incomplete.is_some());
     let mut own = request(
         &sibling,
@@ -760,9 +805,14 @@ fn a_sibling_clause_keeps_its_result_after_a_counter_stop() {
     );
     own.origins = vec![origin("o1", "a")];
     own.trigger = Some(id("o1"));
-    let second = evaluate_temporal_evidence(&sibling.subject(&[]), &own, &mut meter)
-        .map(|issued| issued.result().clone())
-        .expect("a result");
+    let second = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &sibling.subject(&[]),
+        &own,
+        &mut meter,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("a result");
     assert_eq!(second.truth, Some(Truth::True));
     assert!(second.incomplete.is_none());
 }
@@ -824,8 +874,13 @@ fn a_conflicting_completeness_revision_is_refused_and_the_progress_entry_is_kept
     });
     let mut meter = unlimited();
     expect_refusal(
-        evaluate_temporal_evidence(&subject, &retreat, &mut meter)
-            .map(|issued| issued.result().clone()),
+        evaluate_temporal_evidence(
+            &crate::temporal_activation::producer(),
+            &subject,
+            &retreat,
+            &mut meter,
+        )
+        .map(|issued| issued.result().clone()),
         "progress-contradiction",
     );
     assert!(meter.admitted_charges().is_empty());
@@ -1063,41 +1118,71 @@ fn twins_pair_their_clock_rows_by_key_and_an_absent_or_unknown_selector_is_refus
     let mut one = asked(&base, p);
     one.occurrence = Some(claim(3));
     one.binding = binding("ms");
-    let ok = evaluate_temporal_evidence(&subject, &one, &mut unlimited())
-        .map(|issued| issued.result().clone())
-        .expect("ordinal 3");
+    let ok = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &subject,
+        &one,
+        &mut unlimited(),
+    )
+    .map(|issued| issued.result().clone())
+    .expect("ordinal 3");
     assert_eq!(ok.truth, Some(Truth::True));
     // Position pairing would read the 7-row first and accept this.
     one.binding = binding("us");
     expect_refusal(
-        evaluate_temporal_evidence(&subject, &one, &mut unlimited())
-            .map(|issued| issued.result().clone()),
+        evaluate_temporal_evidence(
+            &crate::temporal_activation::producer(),
+            &subject,
+            &one,
+            &mut unlimited(),
+        )
+        .map(|issued| issued.result().clone()),
         "binding-mismatch",
     );
     one.occurrence = Some(claim(7));
-    assert!(evaluate_temporal_evidence(&subject, &one, &mut unlimited())
-        .map(|issued| issued.result().clone())
-        .is_ok());
+    assert!(evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &subject,
+        &one,
+        &mut unlimited()
+    )
+    .map(|issued| issued.result().clone())
+    .is_ok());
     one.binding = binding("ms");
     expect_refusal(
-        evaluate_temporal_evidence(&subject, &one, &mut unlimited())
-            .map(|issued| issued.result().clone()),
+        evaluate_temporal_evidence(
+            &crate::temporal_activation::producer(),
+            &subject,
+            &one,
+            &mut unlimited(),
+        )
+        .map(|issued| issued.result().clone()),
         "binding-mismatch",
     );
     // The selector is required for twins and must name one.
     one.occurrence = None;
     let mut meter = unlimited();
     expect_refusal(
-        evaluate_temporal_evidence(&subject, &one, &mut meter)
-            .map(|issued| issued.result().clone()),
+        evaluate_temporal_evidence(
+            &crate::temporal_activation::producer(),
+            &subject,
+            &one,
+            &mut meter,
+        )
+        .map(|issued| issued.result().clone()),
         "occurrence-required",
     );
     assert!(meter.admitted_charges().is_empty());
     one.occurrence = Some(claim(5));
     let mut meter = unlimited();
     expect_refusal(
-        evaluate_temporal_evidence(&subject, &one, &mut meter)
-            .map(|issued| issued.result().clone()),
+        evaluate_temporal_evidence(
+            &crate::temporal_activation::producer(),
+            &subject,
+            &one,
+            &mut meter,
+        )
+        .map(|issued| issued.result().clone()),
         "occurrence-unknown",
     );
     assert!(meter.admitted_charges().is_empty());
@@ -1363,8 +1448,13 @@ fn a_clause_with_no_tick_reach_is_refused_before_anything_is_charged() {
     asked.trigger = Some(id("o1"));
     let mut meter = unlimited();
     expect_refusal(
-        evaluate_temporal_evidence(&env.subject(&[]), &asked, &mut meter)
-            .map(|issued| issued.result().clone()),
+        evaluate_temporal_evidence(
+            &crate::temporal_activation::producer(),
+            &env.subject(&[]),
+            &asked,
+            &mut meter,
+        )
+        .map(|issued| issued.result().clone()),
         "clause-unreadable",
     );
     assert!(meter.admitted_charges().is_empty());
@@ -1393,6 +1483,7 @@ fn the_spec_vector_of_silent_samples_measures_its_exact_usage() {
     let p = fixed.atom("p");
     let mut meter = unlimited();
     let result = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
         &fixed.subject(&[]),
         &exact_silent_request(&fixed, p),
         &mut meter,
@@ -1656,10 +1747,14 @@ fn the_reach_of_the_clause_bounds_the_silent_samples_that_are_materialized() {
     let fixed = fixed_env("on origin", "eventually[0, 1] holds(p)");
     let p = fixed.atom("p");
     let mut meter = unlimited();
-    let result =
-        evaluate_temporal_evidence(&fixed.subject(&[]), &silent_request(&fixed, p), &mut meter)
-            .map(|issued| issued.result().clone())
-            .expect("a result");
+    let result = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &fixed.subject(&[]),
+        &silent_request(&fixed, p),
+        &mut meter,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("a result");
     let usage = result.usage;
     assert_eq!(usage.get(EvidenceCounter::EvaluationSteps), 4);
     assert_eq!(usage.get(EvidenceCounter::Positions), 1);
@@ -1676,18 +1771,28 @@ fn a_meter_ceiling_of_nine_stops_at_the_tenth_charge_the_observed_lookup() {
     let subject = fixed.subject(&[]);
     let asked = silent_request(&fixed, p);
     let mut full = unlimited();
-    evaluate_temporal_evidence(&subject, &asked, &mut full)
-        .map(|issued| issued.result().clone())
-        .expect("a result");
+    evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &subject,
+        &asked,
+        &mut full,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("a result");
     assert_eq!(full.admitted_charges().len(), 13);
     let run = |work_units: u64| {
         let mut meter = Meter::new(ScalarLimits {
             work_units,
             ..SCALAR_LIMITS_UNLIMITED
         });
-        let result = evaluate_temporal_evidence(&subject, &asked, &mut meter)
-            .map(|issued| issued.result().clone())
-            .expect("an Ok result");
+        let result = evaluate_temporal_evidence(
+            &crate::temporal_activation::producer(),
+            &subject,
+            &asked,
+            &mut meter,
+        )
+        .map(|issued| issued.result().clone())
+        .expect("an Ok result");
         (result, meter)
     };
     let (nine, nine_meter) = run(9);
@@ -1726,9 +1831,14 @@ fn the_covered_positions_limit_is_an_ok_incomplete_result_with_the_requests_ledg
     // The system setting is 2 positions; the request covers 3.
     subject.progress_capacity = 2;
     let mut meter = unlimited();
-    let result = evaluate_temporal_evidence(&subject, &asked, &mut meter)
-        .map(|issued| issued.result().clone())
-        .expect("an Ok result");
+    let result = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &subject,
+        &asked,
+        &mut meter,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("an Ok result");
     assert_eq!(result.activation, ActivationState::Unavailable);
     assert_eq!(result.truth, None);
     match result.incomplete {
@@ -1744,9 +1854,14 @@ fn the_covered_positions_limit_is_an_ok_incomplete_result_with_the_requests_ledg
     assert!(meter.admitted_charges().is_empty());
     // Exactly at the setting the call completes and retains the positions.
     subject.progress_capacity = 3;
-    let done = evaluate_temporal_evidence(&subject, &asked, &mut unlimited())
-        .map(|issued| issued.result().clone())
-        .expect("a result");
+    let done = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &subject,
+        &asked,
+        &mut unlimited(),
+    )
+    .map(|issued| issued.result().clone())
+    .expect("a result");
     assert_eq!(done.truth, Some(Truth::True));
     assert_eq!(
         done.progress_ledger.as_ref().map(|ledger| ledger.len()),

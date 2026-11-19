@@ -222,7 +222,12 @@ fn issued_full_result_borrows_preserve_outputs_and_do_not_evaluate_again() {
     asked.decision_closure = Some(fsl_eval::temporal::ProgressClosure::Open);
     let mut meter = unlimited();
     let original = package
-        .evaluate_temporal_evidence(&clause, &asked, &mut meter)
+        .evaluate_temporal_evidence(
+            &crate::support::observation_producer(),
+            &clause,
+            &asked,
+            &mut meter,
+        )
         .expect("an issued original");
     let charged = format!("{:?}", meter.admitted_charges());
     assert!(!meter.admitted_charges().is_empty());
@@ -251,7 +256,12 @@ fn issued_full_result_borrows_preserve_outputs_and_do_not_evaluate_again() {
     correction.relation = Relation::Superseding(predecessor.clone());
     correction.ledger = Some(original_ledger.clone());
     let corrected = package
-        .evaluate_temporal_evidence(&clause, &correction, &mut meter)
+        .evaluate_temporal_evidence(
+            &crate::support::observation_producer(),
+            &clause,
+            &correction,
+            &mut meter,
+        )
         .expect("an issued correction");
     assert_eq!(corrected.result().truth, Some(Truth::False));
     assert_eq!(corrected.result().settlement, Some(Settlement::ClosedScope));
