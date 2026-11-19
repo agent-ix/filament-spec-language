@@ -1061,13 +1061,30 @@ fn a_whole_model_role_round_trips() {
         "a whole-model role is static"
     );
 
-    let found = refusals(&flow("role w each M from cells max 2 lifetime workflow;"));
-    assert!(
-        found.iter().any(|refusal| {
+    let refused_flow = flow("role w each M from cells max 2 lifetime workflow;");
+    let packages = fsl_semantics::model::intake::package_input([SPINE_MODEL_DOCUMENT]).unwrap();
+    let assembled = assemble_with_models(refused_flow.as_bytes(), &packages)
+        .expect("the replicated role unit assembles");
+    let regions = assembled.regions();
+    let found = assembled
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect_err("a replicated role over a model alias refuses");
+    let refusal = found
+        .iter()
+        .find(|refusal| {
             refusal.cause.code().as_str() == "invalid_model_binding"
                 && refusal.cause.cause() == Some("malformed-declaration")
-        }),
-        "{found:?}"
+        })
+        .unwrap_or_else(|| panic!("{found:?}"));
+    let region = regions
+        .refusal_region(refusal)
+        .unwrap_or_else(|| panic!("the refusal names a source region: {refusal:?}"));
+    let start = usize::try_from(region.start()).expect("region start fits usize");
+    let end = usize::try_from(region.end()).expect("region end fits usize");
+    assert_eq!(
+        &refused_flow[start..end],
+        "M",
+        "the refusal locus is exactly the whole-model alias"
     );
 }
 
