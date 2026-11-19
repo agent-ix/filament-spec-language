@@ -6,8 +6,8 @@
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::zone_check::{ZoneCheckLimits, ZoneCheckOutcome, ZoneUndecided};
 use fsl_replay::{
-    CertificateLocus, CertificateRejection, CertificateRule, CounterexampleKind,
-    TemporalCounterexample,
+    AcceptanceSet, CertificateLocus, CertificateRejection, CertificateRule, ComponentReason,
+    CounterexampleKind, TemporalCounterexample,
 };
 use ix_trace_rs::trace;
 
@@ -577,6 +577,28 @@ fn a_liveness_certificate_states_its_non_zeno() {
                     rule: CertificateRule::NonZenoMismatch,
                     at: CertificateLocus::NonZenoMember,
                 }),
+            );
+        }
+        if expected == fsl_replay::NonZeno::NotRequired {
+            let mut forged = certificate.clone();
+            forged.non_zeno = Some(fsl_replay::NonZeno::Assumed);
+            forged
+                .components
+                .as_mut()
+                .expect("a liveness component list")
+                .reasons[0] = ComponentReason::Lacks(AcceptanceSet::Divergence);
+            assert_eq!(
+                crate::zone_search::check(
+                    &world,
+                    &forged,
+                    fsl_replay::CertificateCheckLimits::default(),
+                )
+                .expect("the check runs"),
+                fsl_replay::ZoneCertificateVerdict::Rejected(CertificateRejection {
+                    rule: CertificateRule::NonZenoMismatch,
+                    at: CertificateLocus::NonZenoMember,
+                }),
+                "a divergence-missing acyclic component is not an accepting cycle",
             );
         }
     }

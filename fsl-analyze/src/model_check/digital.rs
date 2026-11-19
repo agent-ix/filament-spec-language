@@ -982,11 +982,14 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         let instances = system
             .instances(&self.request.clause.over().1)
             .map_err(|_| DigitalRefusal::Fault("instances"))?;
-        let mut automaton_states = BTreeSet::new();
         for instance in &instances {
             let mut product = Product::default();
             let built = self.build(&mut product, automaton, false, instance)?;
-            automaton_states.extend(product.vertices.iter().map(|vertex| vertex.q.index()));
+            let automaton_states: BTreeSet<usize> = product
+                .vertices
+                .iter()
+                .map(|vertex| vertex.q.index())
+                .collect();
             self.stats.automaton_states = self
                 .stats
                 .automaton_states
