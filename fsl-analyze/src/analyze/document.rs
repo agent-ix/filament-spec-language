@@ -910,8 +910,7 @@ impl ItemSelection {
             self.kind.as_deref(),
             Some("local-projection" | "realizability")
         );
-        self.probabilistic.is_some()
-            || self.hybrid.is_some()
+        self.hybrid.is_some()
             || self.correspondence.is_some()
             || (self.premises.is_some() && !protocol_analysis)
             || (self.assessed_root.is_some() && !protocol_analysis)
