@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile values = "filament.value.complete/v1";
+profile infinite = "filament.temporal.infinite-trace/v1";
+model CounterModel = "test/counter-step";
+hyper Whole using infinite over behaviours () forall trace first of CounterModel forall trace second of CounterModel forall trace third of CounterModel { always (true and not false) }

@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile events = "filament.temporal.infinite-trace/v1";
+record Sample { input: Int[0,2]; output: Boolean; }
+hyper StableOutput using events over samples in Sample bounded 3 forall trace first forall trace second { always holds((first.input = second.input) implies (first.output = second.output)) }

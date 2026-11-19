@@ -1,0 +1,16 @@
+language "ix:native" edition "1-draft";
+profile values = "filament.value.complete/v1";
+profile infinite = "filament.temporal.infinite-trace/v1";
+model CounterModel = "test/counter-step";
+profile messaging = "filament.protocol.finite-global/v1";
+protocol Session using messaging over (subject: CounterModel::Counter) on origin {
+  role Clerk on CounterModel::Counter;
+  run sequence Work {}
+  finish Complete as (completed: Boolean) { completed };
+}
+refinement SessionToCounter using infinite abstract CounterModel concrete CounterModel {
+  population CounterModel::counters from CounterModel::counters;
+  object CounterModel::Counter from CounterModel::Counter { value = self.value; }
+  step CounterModel::Counter::inc -> CounterModel::Counter::inc(self);
+  step CounterModel::Session::Complete -> stutter;
+}
