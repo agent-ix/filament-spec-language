@@ -9,6 +9,7 @@ pub mod refinement_cas;
 pub mod spine_model;
 pub mod workspace;
 
+#[cfg(feature = "checked-handoff")]
 pub(crate) fn observation_producer() -> filament_observation::AdmittedStaticBundle {
     fsl_eval::temporal::evidence::producer_bundle()
         .expect("fixed producer selection")
