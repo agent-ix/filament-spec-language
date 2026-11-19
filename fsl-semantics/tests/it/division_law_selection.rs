@@ -113,7 +113,11 @@ fn check(
 ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
     assemble(headers, declarations)
         .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal}"))
-        .check(mode, CheckingLimits::default())
+        .check(
+            mode,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
 }
 
 /// `(code, cause)` of each refusal.
@@ -151,13 +155,15 @@ fn a_large_remainder_keeps_its_exact_range_or_reports_the_work_limit() {
             CheckMode::Linked,
             CheckingLimits::default(),
             &crate::reward_evaluator::ZeroRewardEvaluator,
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .unwrap();
     let denied = assemble(&headers, body)
         .unwrap()
         .check(
             CheckMode::Linked,
-            CheckingLimits::default().with_work_budget(10000),
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator.with_work_budget(10000),
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .unwrap_err();
@@ -177,6 +183,7 @@ fn a_large_remainder_keeps_its_exact_range_or_reports_the_work_limit() {
         .check(
             CheckMode::Linked,
             CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .unwrap_err();
@@ -206,6 +213,7 @@ fn a_law_header_admits_div_and_rem_under_that_law() {
             .check(
                 CheckMode::Linked,
                 CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
                 &crate::reward_evaluator::ZeroRewardEvaluator,
             )
             .unwrap_or_else(|refusals| panic!("{law}: {refusals:?}"));
@@ -248,6 +256,7 @@ fn two_different_law_headers_refuse_conflicting_definition() {
                     .check(
                         CheckMode::Linked,
                         CheckingLimits::default(),
+                        &crate::reward_evaluator::ZeroRewardEvaluator,
                         &crate::reward_evaluator::ZeroRewardEvaluator
                     )
                     .expect_err("two laws are refused")
@@ -286,6 +295,7 @@ fn a_law_alias_in_using_refuses_wrong_selection_role() {
             .check(
                 CheckMode::Linked,
                 CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
                 &crate::reward_evaluator::ZeroRewardEvaluator,
             )
             .map_err(|refusals| format!("{:?}", pairs(&refusals)))
@@ -555,7 +565,8 @@ fn the_remainder_walk_is_bounded_by_the_checking_work_ceiling() {
         .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal}"))
         .check(
             CheckMode::Linked,
-            CheckingLimits::default().with_work_budget(10_000),
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator.with_work_budget(10_000),
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("the walk needs more than 10000 runs");

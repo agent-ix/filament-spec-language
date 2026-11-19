@@ -36,7 +36,11 @@ fn check_in(
         Vec::new(),
     )
     .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
-    .check(mode, CheckingLimits::default())
+    .check(
+        mode,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
 }
 
 const V: &str = "profile v = \"filament.value.complete/v1\";\n";

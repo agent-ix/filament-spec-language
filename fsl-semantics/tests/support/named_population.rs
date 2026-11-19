@@ -250,7 +250,7 @@ pub fn check_with_profiles(
     match declarations.check(
         CheckMode::Linked,
         CheckingLimits::default(),
-        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        &crate::reward_evaluator::ZeroRewardEvaluator,
     ) {
         Ok(graph) => Ok(Checked { graph, packages }),
         Err(refusals) => Err(refusals
