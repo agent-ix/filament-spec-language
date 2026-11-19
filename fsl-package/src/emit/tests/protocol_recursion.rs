@@ -267,7 +267,11 @@ fn an_attempt_bearing_protocol_in_a_predicate_cycle_is_grouped_and_reads_back() 
     let (graph, model_digest) = {
         let graph = assemble_with_models(text.as_bytes(), &packages)
             .expect("the unit assembles")
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("unit checks: {refusals:?}"));
         (graph, package_identity(document))
     };

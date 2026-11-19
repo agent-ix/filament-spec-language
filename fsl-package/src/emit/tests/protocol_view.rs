@@ -64,7 +64,11 @@ fn fixture_over(text: &str) -> Fixture {
     );
     let graph = assemble_with_models(source.as_bytes(), &packages)
         .expect("unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the workflow checks: {refusals:?}"));
     let selections = tc134_selections(&graph);
     let [protocol] = graph.protocols() else {
