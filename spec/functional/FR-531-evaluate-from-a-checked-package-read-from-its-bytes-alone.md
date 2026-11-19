@@ -27,6 +27,12 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-940
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-090
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-397
+    type: references
+  - target: ix://agent-ix/filament-specification/FR-322
+    type: depends_on
   - target: ix://agent-ix/filament-contract-ir/FR-357
     type: references
   - target: ix://agent-ix/filament-contract-ir/FR-358
@@ -177,6 +183,7 @@ entry defines no result type of its own.
 | activation map | `activation_relation(package)` (FR-449 rows) | the same |
 | package identity of a progress binding and of a result identity | the package's `name()` | the source identity labels |
 | protocol slot, binders, binder types and levels, locations, callees | the admitted protocol nodes and `protocol_locations` rows (FR-390, FR-464) | the source `CheckedBody` and checked package |
+| location of each term of a function body, for its value losses and stops | the `body_locations` rows of the function ("Function body locations in the bytes") | the checked body's node locations, which equal those rows |
 | protocol subject (FR-205): the protocol clause, the binding of each static role, the `over` universe, the capacity names, and the memory model of each outermost `parallel` | the protocol clause from the admitted `protocol` nodes and `protocol_locations` rows (FR-390, FR-464); each static role's declared model or model type from its `role` node, and its binding by resolving the request's `roles` selection (FR-1033), or the binding by construction of a role on a whole model, against the package's `model_root` selections (FSpec FR-425); the `over` parameter's population universe from the package's selected-model population catalog row of that population (FR-533 "Observation admission"); the capacity names from the clause's `symbolic(<name>)` queue capacities in its protocol nodes (FSpec FR-785); each outermost `parallel` the request's `memory` member targets, and its source default, from the `parallel` control nodes of that protocol node (FR-383: the memory model when written, `Sc` when absent, FR-219) | S3's checked protocol clause (FR-218) and the source graph's model selections |
 | model selections, population types and type environment of an observation | the package's `model_root` selections, its selected-model population catalog and its selected object declarations, with the caller's domain package documents (FR-533 "Observation admission") | the source graph's model selections, protocol population types and scope |
 | dependency closure | the direct dependencies the package retains from its read evidence | the source package's closure |
@@ -208,6 +215,38 @@ dropped. The package route reads the records from these rows and nodes, and
 the source route reads the same rows of its own emission, so both routes
 hold one value per record.
 
+**Function body locations in the bytes.** S6a records a value loss (an IEEE
+operation's raised flags, a decimal rounding) and locates a stop at the
+position in a function body where the operation ran, as the
+`ExpressionLocation` `{ origin: Body { function, index }, path }` the checker
+assigned that position (FR-090). This holds for a loss in a function the
+caller called directly and for one in a function reached through a nested
+call: the loss is never moved to a call site, because the source route
+records it inside the callee's body and a call made from the request has no
+call site in any body. The bare route cannot recompute these locations from
+the admitted body: the checker locates a node that lowering introduces (an
+IEEE ordering's `#ieee_operand` `let` and its composition parts under FR-397,
+an implicit coercion) at the source position it stands for, so the child-index
+path of a position in the lowered body differs from the checker's location
+wherever lowering reshaped the tree. S4 SHALL therefore write, for every term
+of every function body it emits, one FSpec FR-322 `checked_term_data`
+`body_locations` row carrying the checker's location of that term, its
+origin `{kind: "function_body", function, name, index}` holding the function
+node and the `Body` owner's `function` and `index`, keyed and walked as
+FR-383 "Protocol term locations" keys and walks a protocol slot's rows, with
+the function body's root in place of the slot's root. A term S4 cannot key to
+a `source_map` occurrence is `EmitRefusal::UnlocatedOccurrence` with no
+bytes, never an omitted row. The bare route SHALL locate each term of a
+function body it evaluates from its row, and the in-process route, which
+reads its own emission's rows for every other fact of this table, gives the
+same locations from the checked body, so the two routes return equal
+`Evaluation.location` and equal `Evaluation.losses`, record for record. The
+rows add no graph node and change no node id, so the package identity
+`name` and every structural `NodeRef` are unchanged by them; the package
+bytes do change, and a package written without them is refused by the strict
+reader (FR-322-AC-490), never evaluated with locations derived from the
+lowered tree or read from source.
+
 Every row of the in-process column that names the source is replaced on the
 bare route by the bytes column, and FR-532 and FR-533 state that the in-process
 routes then read the bytes column too, so that one value exists per fact.
@@ -229,7 +268,8 @@ the bytes carry, and the in-process routes spell them the same way:
 - a position and an instance are the request's own values;
 - a binder is its `NodeKey`, and its declared name only where the admitted binder
   node carries one;
-- a location is the one the package's own location rows give, and none where the
+- a location is the one the package's own location rows give (`protocol_locations`
+  for a protocol slot, `body_locations` for a function body), and none where the
   wire carries none (FR-390: FSL never invents one);
 - a progress binding and a result identity use the package `name()` and the clause
   occurrence, and carry no source authority or source identity label.
@@ -960,6 +1000,7 @@ outcome map. Each carries a "Consumer entry" section that points here.
 | FR-531-AC-33 | Allocation observation encloses only the adapter/conversion call, with fixture preparation and assertions outside it. A successful owned materialization performs observed allocations; a denial before its first allocation performs none, and a later denial allocates neither the denied material nor an owned diagnostic. The controls include fresh owner-produced lazy numeric payloads, values `2^127` and `-(2^127 + 1)`, and larger heap-backed values without prior warming or formatting. These values remain exact on successful copies; insufficient work/storage retains the first real row locus and original bound. | Test |
 | FR-531-AC-34 | Over the unit `record W { c: Clock; n: Integer; }`, `tuple P (Clock, Integer);`, `union U { armed(Clock), idle }`, `object O { w: W; d: Clock; q: Sequence<Clock>[0, 3]; p: P; u: U; operation arm(x: Clock, k: Integer) modifies self.d; }` and `time O dense unit ms;`, `identities.json` has `format` `/5`; `O`'s `source_objects` row has the data entries `w`, `p`, `u` and the clock entries `d` (`member_type` `ix://filament/native/Clock`, `collections` `[]`) and `q` (`Sequence<ix://filament/native/Clock>`, `[{"kind": "sequence", "minimum": "0", "maximum": "3"}]`) in field order, and the operation `{"identity": "O::arm", "query": false, "clock_parameters": ["x"]}`; `W`'s `source_records` row has the clock entry `c` and the data entry `n`; `P`'s `source_tuples` row has the clock position `0` and the data position `1`; `U`'s `armed` member has empty `payload_nodes` and one `clock_payload` entry; the file reads back equal. A `/4` document, an absent `source_tuples`, an entry with both `type_node` and `member_type`, one with neither, a clock entry named `w`, and an operation entry without `clock_parameters` each refuse `Malformed` with no partial read. | Test (TC-1331) |
 | FR-531-AC-35 | The unit of FR-062's RR-12 (`g` and `f`) and RR-16 (`g`, `h` and `f`, renamed `g2`, `h2` and `f2`), with RR-5's `sq` added, is emitted with one `requirement_items` row per record of `CheckedGraph::requirements()` in its iteration order (eight rows: three for `f`, two for `f2`, three for `sq`), each row's `claim`, `kind` and `extent` equal to its record's key, capability and extent and each `value-validity` row's record node equal to its record's owner, bound, conversion, guards, roots and objects; the package read with `read_checked_package` gives a `BarePackage` whose `call_requirements("f")`, `("f2")` and `("sq")` equal, member for member and request index for request index, FR-395's `call_requirements_for` over the compiled unit, and `call_requirements("g")` is empty. The same package with `f2`'s second row removed is refused by the strict reader (FSpec FR-825 rule 14), so no `BarePackage` gives a shorter member list. | Test (TC-1331) |
+| FR-531-AC-36 | Over `function f using v(p: Float64[nearest-even], q: Float64[nearest-even], r: Float64[nearest-even]): Boolean pure { sqrt(p) <= sqrt(q) }` and `function g using v(p: Float64[nearest-even], q: Float64[nearest-even], r: Float64[nearest-even]): Boolean pure { f(p, q, r) }`, each called with `p`, `q` and `r` at `2.0` on the source route and on the `BarePackage` of the same unit's written bytes with the same remaining budget: for each of `f` and `g` both routes return `Completed(true)` and equal charge logs, and both return exactly two losses, each `IeeeFlags` with the inexact flag, located at `Body { function: "f", index: 0 }` paths `[0]` and `[1]` in that order (for `g` too, since the loss is in `f`'s body, never at `g`'s call site); the package's `body_locations` rows of `f` give those two paths for the two `sqrt` terms. A bare route that locates `f`'s body from the child-index paths of the lowered body places the second loss at `[1, 0]` and fails the equality; one that has no location faults `value-loss-site-is-located` and fails; the same bytes with the second `sqrt`'s row removed are refused by the strict reader (FSpec FR-322-AC-490) and evaluate nothing. | Test (TC-3133) |
 
 ## Dependencies
 
