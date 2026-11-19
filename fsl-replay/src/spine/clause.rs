@@ -482,6 +482,13 @@ pub struct OperationContractViolation {
 pub struct TemporalValuation {
     /// The checked clause.
     pub clause: fsl_semantics::check::CheckedTemporalClause,
+    /// The checked Boolean condition of each `holds` atom, keyed by the
+    /// formula node whose valuation the clause report carries. These views
+    /// let command adapters render a package-independent canonical label.
+    pub checked_conditions: Vec<(
+        fsl_semantics::check::FormulaNodeId,
+        fsl_semantics::check::CheckedBody,
+    )>,
     /// The valuation over the supplied trace; `None` when the trace is an
     /// empty finite trace, which asks for the clause alone, or a lasso beside a
     /// profile that does not read one.
@@ -490,6 +497,40 @@ pub struct TemporalValuation {
     /// behaviour) closed trace of the model subject a snapshot builds;
     /// `None` for a supplied trace.
     pub behaviours: Option<crate::BehaviourValuations>,
+}
+
+impl TemporalValuation {
+    /// Retain the checked conditions for one temporal clause alongside its
+    /// valuation. The formula arena's node order is the source/package
+    /// formula order, so the resulting keys are stable across both routes.
+    pub(crate) fn from_node(
+        node: &fsl_semantics::check::TemporalClauseNode,
+        positions: Option<crate::spine_eval_api::SpineEvalObservedValuation>,
+        behaviours: Option<crate::BehaviourValuations>,
+    ) -> Self {
+        let clause = node.clause();
+        let mut checked_conditions = Vec::new();
+        for index in 0..clause.formula().nodes().len() {
+            let Some(atom) = clause.formula().node_id(index) else {
+                continue;
+            };
+            if !matches!(
+                clause.formula().nodes().get(index),
+                Some(fsl_semantics::check::FormulaNode::Holds { .. })
+            ) {
+                continue;
+            }
+            if let Some((condition, _)) = node.condition(atom) {
+                checked_conditions.push((atom, condition.body().clone()));
+            }
+        }
+        Self {
+            clause: clause.clone(),
+            checked_conditions,
+            positions,
+            behaviours,
+        }
+    }
 }
 
 impl ClauseDisposition {

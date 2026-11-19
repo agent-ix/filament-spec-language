@@ -385,13 +385,9 @@ pub(super) fn run_behaviours(
         max_steps,
         run.accounting,
     ) {
-        Ok(behaviours) => {
-            ClauseDisposition::TemporalValuation(Box::new(super::TemporalValuation {
-                clause: clause.clone(),
-                positions: None,
-                behaviours: Some(behaviours),
-            }))
-        }
+        Ok(behaviours) => ClauseDisposition::TemporalValuation(Box::new(
+            super::TemporalValuation::from_node(node, None, Some(behaviours)),
+        )),
         Err(refusal) => replay_refusal(refusal),
     }
 }

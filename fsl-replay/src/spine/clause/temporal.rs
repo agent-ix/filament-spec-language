@@ -1434,11 +1434,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
                 && !super::trace_refusal::profile_reads(clause.profile()).contains(&trace.kind())))
     {
         return early(ClauseDisposition::TemporalValuation(Box::new(
-            super::TemporalValuation {
-                clause: clause.clone(),
-                positions: None,
-                behaviours: None,
-            },
+            super::TemporalValuation::from_node(node, None, None),
         )));
     }
     let site = ClauseSite {
@@ -1827,11 +1823,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             &mut meter,
         ) {
             Ok(positions) => late(ClauseDisposition::TemporalValuation(Box::new(
-                super::TemporalValuation {
-                    clause: clause.clone(),
-                    positions: Some(positions),
-                    behaviours: None,
-                },
+                super::TemporalValuation::from_node(node, Some(positions), None),
             ))),
             Err(_) => late(ClauseDisposition::EvaluateFault(
                 filament_semantic_value::catalog::InternalFault::new(
