@@ -43,28 +43,29 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{
-    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
+    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex, analyze,
 };
 use fsl_eval::model_subject::{CapacityBinding, ModelInstance, ModelSubject};
-use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
+use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, check_model_bounds};
 use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTarget};
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop, TransitionSystem};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    abstract_classes, check_initial, check_protocol_initial, check_protocol_state_relations,
-    check_protocol_step, check_step, open_protocol_systems, open_systems, AbstractClass,
-    AbstractProtocolSystem, CertifiedEdge, CertifiedPosition, ConcreteStep, CounterexampleKind,
+    AbstractClass, AbstractProtocolSystem, CandidateFairState, CandidateFairStep,
+    CandidateLivenessError, CertifiedEdge, CertifiedPosition, ConcreteStep, CounterexampleKind,
     IncompleteCause, Lasso, LivenessHalf, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
     ModelStep, ProtocolRelationError, ProtocolStateRelation, ProtocolSystemsRefusal, ReachedLimit,
     RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems, RunStats,
     SafetyOutcome, SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal,
     Taken, TemporalCounterexample, UnavailabilityCause, UndecidedCause, UndefinedEvaluation,
-    Undetermined,
+    Undetermined, abstract_classes, candidate_lasso_has_fair_run, check_initial,
+    check_protocol_initial, check_protocol_state_relations, check_protocol_step, check_step,
+    open_protocol_systems, open_systems,
 };
 use fsl_semantics::check::CheckedRefinement;
 
-use super::check::{fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS};
-use super::fair_walk::{fairness_constraints, FairModel};
+use super::check::{BOUND_POSITIONS, ModelCheckRefusal, fault, not_simulated, widen};
+use super::fair_walk::{FairModel, fairness_constraints};
 
 /// One refinement safety run (FR-142 Inputs).
 pub struct RefinementCheckRequest<'a> {
@@ -282,7 +283,7 @@ fn check_with(
                         stats,
                     },
                     End::Undecided(_) | End::Violated(_) | End::Refusal(_) => {
-                        return Err(fault("the-abstract-initial-states-build"))
+                        return Err(fault("the-abstract-initial-states-build"));
                     }
                 };
             return Ok(RefinementOutcome {
@@ -2857,28 +2858,31 @@ impl Run<'_, '_> {
         constraints: &[Constraint],
         through: Option<usize>,
     ) -> Result<bool, End> {
-        let mut graph = Graph::new();
-        let mut vertices = BTreeMap::<(usize, Vec<u8>), Vertex>::new();
-        for (position, (product, _)) in path.iter().enumerate() {
+        let mut positions = Vec::with_capacity(path.len());
+        let mut steps = Vec::with_capacity(path.len());
+        for (product, edge_index) in path {
             let candidates = enabled
                 .get(*product)
                 .ok_or_else(|| fault("candidate-lasso-position-is-retained"))?;
-            for candidate in candidates {
-                let states = candidate
-                    .transitions
+            positions.push(
+                candidates
                     .iter()
-                    .map(|transition| {
-                        numbered
-                            .get(transition)
-                            .copied()
-                            .ok_or_else(|| fault("every-candidate-transition-is-numbered"))
+                    .map(|candidate| {
+                        Ok(CandidateFairState {
+                            key: candidate.key.clone(),
+                            enabled: candidate
+                                .transitions
+                                .iter()
+                                .map(|transition| {
+                                    numbered.get(transition).copied().ok_or_else(|| {
+                                        fault("every-candidate-transition-is-numbered")
+                                    })
+                                })
+                                .collect::<Result<Vec<_>, _>>()?,
+                        })
                     })
-                    .collect::<Result<BTreeSet<_>, _>>()?;
-                let vertex = graph.add_vertex(states);
-                vertices.insert((position, candidate.key.clone()), vertex);
-            }
-        }
-        for (position, (product, edge_index)) in path.iter().enumerate() {
+                    .collect::<Result<Vec<_>, End>>()?,
+            );
             let edge = self
                 .nodes
                 .get(*product)
@@ -2887,29 +2891,25 @@ impl Run<'_, '_> {
             let Taken::CandidateSteps(rows) = &edge.taken else {
                 return Err(fault("candidate-lasso-edge-retains-candidate-steps").into());
             };
-            for row in rows {
-                let from = vertices
-                    .get(&(position, row.pre_state.clone()))
-                    .copied()
-                    .ok_or_else(|| fault("candidate-lasso-edge-source-exists"))?;
-                let to_position = (position + 1) % path.len();
-                let to = vertices
-                    .get(&(to_position, row.post_state.clone()))
-                    .copied()
-                    .ok_or_else(|| fault("candidate-lasso-edge-target-exists"))?;
-                let label = match &row.transition {
-                    Some(transition) => EdgeLabel::Transition(
-                        numbered
-                            .get(transition)
-                            .copied()
-                            .ok_or_else(|| fault("every-candidate-transition-is-numbered"))?,
-                    ),
-                    None => EdgeLabel::Stutter,
-                };
-                graph
-                    .add_edge(from, to, label)
-                    .map_err(|_| fault("candidate-lasso-edge-joins-vertices"))?;
-            }
+            steps.push(
+                rows.iter()
+                    .map(|row| {
+                        Ok(CandidateFairStep {
+                            pre_state: row.pre_state.clone(),
+                            transition: row
+                                .transition
+                                .as_ref()
+                                .map(|transition| {
+                                    numbered.get(transition).copied().ok_or_else(|| {
+                                        fault("every-candidate-transition-is-numbered")
+                                    })
+                                })
+                                .transpose()?,
+                            post_state: row.post_state.clone(),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, End>>()?,
+            );
         }
         let prefix = through.map_or(abstract_fairness.len().saturating_sub(1), |index| index);
         let selected = classes
@@ -2918,25 +2918,14 @@ impl Run<'_, '_> {
             .filter(|(_, class)| class.constraint() <= prefix)
             .filter_map(|(index, _)| constraints.get(index).cloned())
             .collect::<Vec<_>>();
-        let initial = vertices
-            .iter()
-            .filter_map(|((position, _), vertex)| (*position == 0).then_some(*vertex))
-            .collect::<Vec<_>>();
-        let mut reachable = BTreeSet::new();
-        let mut queue = VecDeque::from(initial);
-        while let Some(vertex) = queue.pop_front() {
-            if !reachable.insert(vertex) {
-                continue;
-            }
-            queue.extend(graph.edges_from(vertex).iter().map(|edge| edge.target));
-        }
-        match analyze(&graph, &reachable, &selected, self.cancel) {
-            Ok(analyses) => Ok(Analysis::first_fair_in(&analyses).is_some()),
-            Err(FairnessError::Cancelled) => {
+        match candidate_lasso_has_fair_run(&positions, &steps, &selected, self.cancel) {
+            Ok(fair) => Ok(fair),
+            Err(CandidateLivenessError::Fairness(FairnessError::Cancelled)) => {
                 self.poll()?;
                 Err(fault("candidate-lasso-check-was-cancelled").into())
             }
-            Err(FairnessError::UnknownVertex { .. } | FairnessError::EmptyLoop) => {
+            Err(CandidateLivenessError::InvalidGraph)
+            | Err(CandidateLivenessError::Fairness(_)) => {
                 Err(fault("candidate-lasso-is-a-closed-finite-graph").into())
             }
         }
@@ -3380,7 +3369,7 @@ mod cas_fixture;
 mod tests {
     use ix_trace_rs::trace;
 
-    use super::cas_fixture::{cas_refines_counter, World, UNLIMITED};
+    use super::cas_fixture::{UNLIMITED, World, cas_refines_counter};
     use super::*;
 
     fn request(world: &World) -> RefinementCheckRequest<'_> {
