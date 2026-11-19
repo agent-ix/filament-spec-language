@@ -65,7 +65,9 @@ use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId, TerminalKeys, TerminalMismatch};
+use fsl_semantics::check::{
+    CheckedProtocol, CheckedTemporalClause, FormulaNodeId, TerminalKeys, TerminalMismatch,
+};
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::observation::DocumentRef;
 
@@ -407,6 +409,17 @@ pub enum ModelTraceRefusal {
         /// Its transition identity.
         transition: Box<ProtocolTransition>,
     },
+    /// An observed protocol event was not enabled because its first
+    /// `related by` premise did not hold (FR-731).
+    #[error("invalid_runtime_input/invalid-value: protocol step {step} at `{node}` fails related-by clause `{relationship}`")]
+    ProtocolRelatedBy {
+        /// The step's zero-based index in the prefix.
+        step: usize,
+        /// The event node's declaration path.
+        node: String,
+        /// The first failed relationship clause's protocol-local name.
+        relationship: String,
+    },
     /// A `send` step whose replayed send record differs from the one it
     /// records (ADR-027 PX-2).
     #[error("stale_dependency/content-mismatch: send step {step} records {recorded:?}; it replays {replayed:?}")]
@@ -535,6 +548,7 @@ impl ModelTraceRefusal {
             | Self::TimedSubject(_)
             | Self::NotEnabled { .. }
             | Self::ProtocolNotEnabled { .. }
+            | Self::ProtocolRelatedBy { .. }
             | Self::SendRecordShape { .. }
             | Self::OverBinding
             | Self::RaceOverModel
@@ -587,6 +601,7 @@ impl ModelTraceRefusal {
             | Self::TimedSubject(_)
             | Self::NotEnabled { .. }
             | Self::ProtocolNotEnabled { .. }
+            | Self::ProtocolRelatedBy { .. }
             | Self::SendRecordShape { .. }
             | Self::OverBinding
             | Self::RaceOverModel
@@ -1171,6 +1186,7 @@ pub fn replay_protocol_trace_with_temporal_selections(
             let replayed = ProtocolReplay {
                 payload,
                 clause,
+                protocol,
                 letters,
                 meter,
             };
@@ -1205,11 +1221,45 @@ pub fn replay_protocol_trace_with_temporal_selections(
 struct ProtocolReplay<'r> {
     payload: &'r TemporalCounterexample<ProtocolTransition>,
     clause: Option<&'r CheckedTemporalClause>,
+    protocol: &'r CheckedProtocol,
     letters: &'r dyn ModelLetters,
     meter: ScalarLimits,
 }
 
 impl ProtocolReplay<'_> {
+    /// Name the first checked relation of a node whose observed transition
+    /// was rejected by exploration's event-premise filtering.
+    fn related_by_not_enabled(
+        &self,
+        step: usize,
+        transition: &ProtocolTransition,
+    ) -> Option<ModelTraceRefusal> {
+        let path = transition.node()?;
+        let control = self
+            .protocol
+            .controls
+            .controls
+            .iter()
+            .find(|control| control.path.join("/") == path)?;
+        let related = self
+            .protocol
+            .slots
+            .related
+            .iter()
+            .find(|related| related.node == control.node)?;
+        let relationship = self
+            .protocol
+            .relationships
+            .get(related.relationship)?
+            .name
+            .clone();
+        Some(ModelTraceRefusal::ProtocolRelatedBy {
+            step,
+            node: path.to_owned(),
+            relationship,
+        })
+    }
+
     /// FR-217 over `system`, under whichever memory model the subject's
     /// resolved models need (FR-227).
     fn settle<M: MemoryModel>(
@@ -1242,18 +1292,33 @@ impl ProtocolReplay<'_> {
         // A step that the resolved models do not reproduce refuses before a
         // fairness set that differs, which a change of memory model changes
         // too (FR-227-AC-1).
-        let replayed = replay_prefix(system, payload, &PROTOCOL_STEPS)?;
-        let Some((positions, steps)) = replayed else {
-            return Ok(no_value());
+        let replayed = match replay_prefix(system, payload, &PROTOCOL_STEPS) {
+            Ok(replayed) => replayed,
+            Err(ReplayRefusal::ModelTrace(refusal)) => {
+                let ModelTraceRefusal::ProtocolNotEnabled { step, transition } = *refusal else {
+                    return Err(ReplayRefusal::ModelTrace(refusal));
+                };
+                if let Some(refusal) = self.related_by_not_enabled(step, &transition) {
+                    return Err(refused(refusal));
+                }
+                return Err(refused(ModelTraceRefusal::ProtocolNotEnabled {
+                    step,
+                    transition,
+                }));
+            }
+            Err(refusal) => return Err(refusal),
         };
-        if let Some(lasso) = payload.lasso {
-            close_loop(system, &positions, lasso)?;
-        }
         if self.clause.is_some() && payload.fairness != fairness {
             return Err(refused(ModelTraceRefusal::ProtocolFairnessSet {
                 payload: payload.fairness.clone(),
                 recompiled: fairness,
             }));
+        }
+        let Some((positions, steps)) = replayed else {
+            return Ok(no_value());
+        };
+        if let Some(lasso) = payload.lasso {
+            close_loop(system, &positions, lasso)?;
         }
         Ok(match (&payload.kind, self.clause) {
             (CounterexampleKind::Deadlock, _) => deadlock(system, payload, &positions, &steps)?,
