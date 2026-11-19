@@ -559,6 +559,29 @@ fn checked_node_named(
         .map(|node| node.node_id.clone())
 }
 
+/// The role of `protocol` named `name`. Only a role of that protocol
+/// resolves, so a channel, record or other declaration that shares the
+/// role's name is never taken for it (FR-570).
+fn protocol_role_named(
+    package: &filament_contract_model::CheckedPackageV2,
+    protocol: &filament_contract_model::CheckedNodeId,
+    name: &str,
+) -> Option<filament_contract_model::CheckedNodeId> {
+    let view = fsl_package::protocol_view::protocol_view(package, protocol).ok()?;
+    view.roles().iter().find_map(|id| {
+        package
+            .resolved_graph()
+            .nodes
+            .iter()
+            .find(|node| &node.node_id == *id)
+            .and_then(|node| node.declaration.as_ref())
+            .filter(|declaration| {
+                declaration.qualified_name.last().map(|segment| &**segment) == Some(name)
+            })
+            .map(|_| (*id).clone())
+    })
+}
+
 fn protocol_analysis_work<'a>(
     analysis: &'a super::RunInput<'a>,
     binding: &super::SubjectBinding<'a>,
@@ -635,7 +658,8 @@ fn protocol_analysis_work<'a>(
         // Route an unresolved name through the adapter's existing
         // `UnknownRole` invalid-value settlement. The protocol node is a
         // valid checked identity that cannot be one of its roles.
-        let role = checked_node_named(&v2, role_name).unwrap_or_else(|| protocol_node.clone());
+        let role = protocol_role_named(&v2, &protocol_node, role_name)
+            .unwrap_or_else(|| protocol_node.clone());
         let request = crate::protocol_analysis::ProjectionRequest {
             protocol: protocol_node,
             definition_key,

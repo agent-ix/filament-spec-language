@@ -1164,7 +1164,10 @@ impl OutcomeItem {
                     UnavailabilityCause::ContractCheck { reason, .. } => {
                         item.refusal = Some(reason.as_str());
                     }
-                    UnavailabilityCause::ProtocolAnalysis(_) => {}
+                    UnavailabilityCause::ProtocolAnalysis(unsupported) => {
+                        item.at = crate::protocol_analysis::node_text(&unsupported.node).ok();
+                        item.message.clone_from(&unsupported.detail);
+                    }
                     UnavailabilityCause::SolverAbsent
                     | UnavailabilityCause::HybridProviderAbsent
                     | UnavailabilityCause::BackendAbsent

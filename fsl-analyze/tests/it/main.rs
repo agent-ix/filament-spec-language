@@ -100,6 +100,7 @@ mod protocol_constructs;
 mod protocol_counted_steps;
 mod protocol_footprints;
 mod protocol_item_bounds;
+mod protocol_docs_examples;
 mod protocol_outcomes;
 mod protocol_projection;
 mod protocol_realizability;
