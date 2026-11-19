@@ -1278,6 +1278,7 @@ fn compile_empty_program_is_invalid_request() {
         job["request"]["program"] = json!([]);
     });
     let failure = refusal(&output, 20, "invalid-request", "empty program");
+    assert_eq!(failure["stage"], "request", "{failure}");
     let message = failure["message"].as_str().unwrap_or_default();
     assert!(message.contains("program"), "{failure}");
 }
