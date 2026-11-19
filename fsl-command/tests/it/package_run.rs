@@ -320,13 +320,13 @@ fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
     unit = unit.replace(
         "profile v = \"filament.model.complete/v1\";",
         "profile v = \"filament.model.complete/v1\";\n\
-         profile inf = \"filament.temporal.event-position.false-extension/v1\";\n\
+         profile inf = \"filament.temporal.infinite-trace/v1\";\n\
          import \"test/lib\" as library;",
     );
     unit.push_str(
         "enum Mode { On, Off }\n\
          record Pair { left: Integer; right: Integer; }\n\
-         temporal Canonical using inf over (x: Config::ConfigVersion) clock \"events\" on origin { eventually[0,2] (holds(if library::positive(x.versionNumber) then x.versionNumber <= 2 else Mode::On = Mode::On) and holds(Pair{left: 1, right: 2} = Pair{left: 1, right: 2})) }\n",
+         temporal Canonical using inf over (x: Config::ConfigVersion) clock \"model-steps\" on origin { once[0,2] (holds(if library::positive(x.versionNumber) then x.versionNumber <= 2 else Mode::On = Mode::On) and holds(Pair{left: 1, right: 2} = Pair{left: 1, right: 2})) }\n",
     );
     std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
     std::fs::write(
@@ -347,7 +347,6 @@ fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
         "identity": "example/config-version", "document": "ConfigVersion",
         "formal_revision": 1}}],
         "libraries": [{"identity":"test/lib", "source":source("library.native")}],
-        "clocks": {"events":{"kind":"event_position","sequence_authority":"events"}},
         "program": {"source": source("unit.native")},
         "tl_lowering": {"clause": "Canonical"}});
     let (exit, value) = run(directory.path(), request.clone());
