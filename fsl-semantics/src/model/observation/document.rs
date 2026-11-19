@@ -4305,6 +4305,7 @@ pub fn unit_id_named(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::domain_package::OperationEffect;
     use ix_trace_rs::trace;
 
     /// The value form `text` spells, read as the admission reads it.
@@ -4343,6 +4344,30 @@ mod tests {
         collect_references(&SnapshotValue::absent(), &mut found);
         collect_references(&SnapshotValue::integer("1"), &mut found);
         assert!(found.is_empty());
+    }
+
+    #[trace("FSpec-FR-151-AC-21")]
+    #[test]
+    fn omitted_optional_parameter_is_the_same_value_as_explicit_absent() {
+        let operation = OperationDeclaration::new(
+            "sample",
+            vec![("maybe".to_owned(), ValueType::option(ValueType::Integer))],
+            None,
+            OperationEffect::default(),
+        )
+        .with_optional_parameters(&[true]);
+        let types = TypeEnvironment::new([], []).expect("an empty environment admits");
+        let mut omitted_references = References::over(&[], &types, &[]);
+        let omitted = admit_parameters(&mut omitted_references, &operation, &[])
+            .expect("an optional argument may be omitted");
+        let mut explicit_references = References::over(&[], &types, &[]);
+        let explicit = admit_parameters(
+            &mut explicit_references,
+            &operation,
+            &[("maybe".to_owned(), snapshot(r#"{"absent":{}}"#))],
+        )
+        .expect("an explicit absent optional argument admits");
+        assert_eq!(omitted, explicit);
     }
 
     fn reference(population: &str, key: &str) -> SnapshotValue {
