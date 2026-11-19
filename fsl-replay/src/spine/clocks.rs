@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-640, FSpec FR-540: a compile or run request's `clocks` member, keyed by
-//! clock name, turned into one [`TemporalClockSelection`] per clock-bearing
-//! declaration.
+//! clock name, turned into [`TemporalClockSelection`]s for clock-bearing
+//! declarations (one selection per quantified trace for hyper clauses).
 //!
 //! A clock name is the role a declaration writes; every declaration that
 //! writes the same name reads the same clock, so one configuration per name
 //! binds them all. A declaration over a model subject, and a hyper clause over
-//! a model's behaviours, take their binding from the model and no member: the
-//! configuration is derived from the binding and the declaration's profile.
+//! a model's behaviours, take their binding from the model and no member:
+//! each configuration is derived from that trace's binding and the
+//! declaration's profile.
 
 use std::collections::{BTreeMap, BTreeSet};
 

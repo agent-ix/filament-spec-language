@@ -392,10 +392,10 @@ pub enum EmitRefusal {
     },
 }
 
-/// One explicit clock configuration selected for an exact checked temporal
-/// declaration. The emitter obtains the clock name and structural
-/// declaration identity from the checked graph; this selection supplies only
-/// the independent typed clock configuration.
+/// One clock configuration selected for an exact checked temporal declaration
+/// or quantified hyper trace. The emitter obtains the clock name and
+/// structural declaration identity from the checked graph; this selection
+/// supplies only the independent typed clock configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TemporalClockSelection {
     /// The exact source document containing the checked declaration.
