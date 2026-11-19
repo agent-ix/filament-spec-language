@@ -1566,10 +1566,10 @@ fn node_by_id<'w>(wire: &'w Value, id: &Value) -> &'w Value {
 /// bindings are `declaring`, `operation`, `name`, `value_type` and
 /// `expression`, in that order, and whose `expression` is a clause function
 /// owned by the operation member with the operation's parameter `n`, the
-/// random one included, and the clause kind `precondition`, which stands in
-/// for a kind of its own until QSL-2535 adds `reward`.
+/// random one included, and the clause kind `reward` (FSpec FR-322).
 #[trace("TC-2062", "FR-740-AC-1")]
 #[trace("TC-2062", "FR-185-AC-7")]
+#[trace("FSpec-TC-1563", "FSpec-FR-322-AC-471")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-1")]
 #[test]
 fn a_reward_is_emitted_with_its_clause_function() {
@@ -1604,7 +1604,7 @@ fn a_reward_is_emitted_with_its_clause_function() {
         bound(body, "value_type")["target"],
         "the function is typed by the reward's value type"
     );
-    assert_eq!(bound(&function["body"], "clause")["value"], "precondition");
+    assert_eq!(bound(&function["body"], "clause")["value"], "reward");
     let parameters = bound(&function["body"], "parameters")["members"]
         .as_array()
         .expect("the parameters are an aggregate");
@@ -1820,7 +1820,7 @@ fn reward_order_changes_no_node_and_the_expression_changes_the_identity() {
 /// resolved id of the node at position `i` of `wire`'s graph, `depth` levels
 /// deep: an index names a position, so two ids are the same identity only when
 /// their resolved forms are (FSpec FR-322 "Operand index segments").
-fn resolved_id(wire: &Value, id: &Value, depth: usize) -> Value {
+pub(super) fn resolved_id(wire: &Value, id: &Value, depth: usize) -> Value {
     let mut id = id.clone();
     if depth == 0 {
         return id;
@@ -1951,39 +1951,14 @@ fn source_object_reward(declarations: &str) -> CheckedPackage {
     CheckedPackage::link(graph)
 }
 
-/// FSL FR-740 interim: a reward declared on a source-declared object has no
-/// `model` node to hang from (QSL-2463 emits source objects; contract-ir
-/// admits a source-owned declaring node only after #1053), so emission refuses
-/// it with the reward's locus rather than writing the package without it.
-#[trace("TC-2062", "FR-185-AC-12")]
-#[test]
-fn a_reward_on_a_source_object_refuses_emission_with_its_locus() {
-    let package = source_object_reward("reward cost on O::step = x;");
-    assert_eq!(package.graph().probabilistic_model().rewards().len(), 1);
-    let refusal = emit_checked(&package).expect_err("emission refuses");
-    assert!(
-        matches!(
-            &refusal,
-            EmitRefusal::ProbabilisticModelNotEmitted {
-                declaration,
-                feature: fsl_semantics::check::ProbabilisticFeature::Reward,
-                region,
-                ..
-            } if declaration == "cost" && region.start() < region.end()
-        ),
-        "{refusal:?}"
-    );
-    assert_eq!(
-        (refusal.code(), refusal.cause()),
-        (Code::UnsupportedConstruct, Some("not-yet-implemented"))
-    );
-}
-
-/// TC-2062 (FR-740-AC-1): QSL-2463 emits a reward on a source-declared object
-/// as a `reward` node the strict reader admits.
+/// TC-2062 (FR-740-AC-1), FSpec FR-322: a reward on a source-declared object
+/// is emitted as a `reward` node whose clause function is a `SourceOwner`
+/// declaration `[O, step, reward, cost]` at ordinal 0. The test does not read the
+/// package back: emission follows spec W76 and the strict reader (contract-ir
+/// dd390f51) is behind it, refusing a source-declared `declaring` loudly
+/// (QSL-2592).
 #[trace("TC-2062", "FR-740-AC-1")]
 #[test]
-#[ignore = "QSL-2463: source-declared objects emit as nodes IR can join (contract-ir #1053)"]
 fn a_reward_on_a_source_object_is_emitted() {
     let package = source_object_reward("reward cost on O::step = x;");
     let emission = emit_checked(&package).expect("the reward emits");
@@ -2036,13 +2011,7 @@ fn probabilistic_refusals_have_locus() {
     let abstraction_document =
         crate::emit::tests::wire_bytes(&abstraction::document()).expect("serializes");
     let variant_document = serde_json::to_vec(&variants::document()).expect("serializes");
-    let cases: [(String, Vec<u8>, ProbabilisticFeature, &str); 4] = [
-        (
-            format!("{head}profile P = \"filament.model.complete/v1\";\n{objects}reward cost on O::step = x;\n"),
-            Vec::new(),
-            ProbabilisticFeature::Reward,
-            "cost",
-        ),
+    let cases: [(String, Vec<u8>, ProbabilisticFeature, &str); 3] = [
         (
             format!("{head}{timed}{objects}delay O::step ~ uniform;\n"),
             Vec::new(),
@@ -2102,4 +2071,76 @@ fn probabilistic_refusals_have_locus() {
         assert!(!message.contains("Span {"), "{message}");
         assert!(!message.contains("RawSourceRef"), "{message}");
     }
+}
+
+/// FSpec FR-322 "Claim declaration names": the `claim_names` rows are in the
+/// package's node order, which resolves operand IDs, so a package with
+/// several state clauses and a claim carries its rows in the order the
+/// strict reader checks them.
+#[trace("TC-621", "FR-186-AC-5")]
+#[test]
+fn claim_names_rows_follow_the_graphs_node_order() {
+    let package = claims_package(&[&claim("Stable", "0.5")]);
+    let wire = wire(&emit_checked(&package).expect("the package emits"));
+    let nodes: Vec<&Value> = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("the graph has nodes")
+        .iter()
+        .map(|node| &node["node_id"])
+        .collect();
+    let at: Vec<usize> = wire["claim_names"]
+        .as_array()
+        .expect("claim_names rows")
+        .iter()
+        .map(|row| {
+            nodes
+                .iter()
+                .position(|id| **id == row["declaration"])
+                .expect("a row names a graph node")
+        })
+        .collect();
+    assert!(at.len() > 1, "several claim-bearing nodes: {at:?}");
+    assert!(at.windows(2).all(|pair| pair[0] <= pair[1]), "{at:?}");
+}
+
+/// FSpec FR-322, TC-1563: a reward on a source-declared object is a clause
+/// function whose owner is the source object's declaration `[O, step, reward,
+/// cost]` at ordinal 0, with the clause kind `reward`. The strict reader does not
+/// yet admit a source-declared `declaring` for a reward (QSL-2592), so the
+/// admission and the rule-4 rename refusal of FR-640-AC-7's source half are not
+/// asserted here.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-7")]
+#[test]
+fn a_source_declared_reward_is_a_source_owned_declaration_at_ordinal_zero() {
+    let package = source_object_reward("reward cost on O::step = x;");
+    let emission = emit_checked(&package).expect("the reward emits");
+    let wire = wire(&emission);
+    let [reward] = super::owners::node_where(&wire, "probabilistic", "reward")[..] else {
+        panic!("one reward node");
+    };
+    let function = node_by_id(&wire, &bound(&reward["body"], "expression")["target"]);
+    assert_eq!(bound(&function["body"], "clause")["value"], "reward");
+    assert_eq!(
+        function["declaration"]["qualified_name"],
+        json!(["O", "step", "reward", "cost"])
+    );
+    assert_eq!(function["node_id"]["ordinal"], 0);
+    assert_eq!(
+        node_by_id(&wire, &bound(&reward["body"], "declaring")["target"])["semantic_form"],
+        "object_type"
+    );
+}
+
+/// FSpec FR-640-AC-7, FR-322-AC-471: the strict reader admits the clause kind
+/// `reward` for a reward's function. The refusals of any other kind or owner
+/// are asserted, with code and locus, by
+/// `operation_bodies::a_reward_function_with_another_clause_kind_or_owner_is_refused`.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-7")]
+#[trace("FSpec-TC-1563", "FSpec-FR-322-AC-471")]
+#[test]
+fn the_reader_admits_the_reward_clause_kind() {
+    let (document, package) =
+        reward_over_parameter("reward cost on ConfigVersion::attemptUpdate = n + 1;");
+    let (_, read) = emit_and_read(&package, &document);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
 }

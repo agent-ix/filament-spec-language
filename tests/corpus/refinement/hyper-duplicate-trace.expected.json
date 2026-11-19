@@ -1,0 +1,8 @@
+{
+  "verb": "compile",
+  "exit_code": 20,
+  "category": "refusal",
+  "last_stage": "S3",
+  "code": "conflicting_declaration",
+  "flips_with": "none"
+}
