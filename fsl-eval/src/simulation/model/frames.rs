@@ -14,13 +14,13 @@ use std::convert::Infallible;
 use std::rc::Rc;
 
 use filament_checked::key::DeclarationKey;
-use filament_exact::{Integer, ObjectReference, OrderingOperator, Value};
+use filament_exact::{Integer, ObjectReference, OrderingOperator, Value, ValueType};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::model::domain_package::OperationEffect;
 use fsl_semantics::model::observation::{
     AdmissionUsage, AdmittedObservations, Observation, SelfKind,
 };
-use fsl_semantics::model::population::{decide_frame, FrameDecision, FrameObject, FrameStop};
+use fsl_semantics::model::population::{FrameDecision, FrameObject, FrameStop, decide_frame};
 use fsl_semantics::model::state::{ModelState, StateField, StateObject};
 use quire_canonical::Limits as CanonicalLimits;
 
@@ -28,14 +28,14 @@ pub(super) mod judge;
 #[cfg(test)]
 mod narrowing_tests;
 
-use super::contracts::{conjunction, Conjunction};
+use super::contracts::{Conjunction, conjunction};
 use super::domain::{Domain, Odometer};
-use super::encode::{self, value_enc, values_equal, Typing};
+use super::encode::{self, Typing, value_enc, values_equal};
 use super::footprints::ReadCheck;
-use super::walk::{stop, Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk};
+use super::walk::{Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk, stop};
 use super::{
-    handler_anchor, identity_limits, state_document, Application, ClauseInfo, ClauseOutcome,
-    FieldChange, ModelFinding, ModelSimState, StepEffect, WrittenSlots, BROKEN, EXHAUSTED,
+    Application, BROKEN, ClauseInfo, ClauseOutcome, EXHAUSTED, FieldChange, ModelFinding,
+    ModelSimState, StepEffect, WrittenSlots, handler_anchor, identity_limits, state_document,
 };
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::Footprint;
@@ -107,7 +107,7 @@ fn argument_domains(
                 position,
             ) {
                 Some(support) => Some(Domain::Listed(support.values())),
-                None => Domain::of(value_type, &references, system.types, &system.record_orders),
+                None => system.value_domain(value_type, &references),
             }
         })
         .collect::<Option<Vec<_>>>()
@@ -346,6 +346,8 @@ pub(super) struct PreconditionCase {
     pub(super) transition: ModelTransition,
     /// The arguments, in parameter order.
     pub(super) arguments: Vec<Value>,
+    /// Whether the precondition decided true.
+    pub(super) satisfied: bool,
     /// The evaluation that decided no Boolean, if any.
     pub(super) undecided: Option<ClauseOutcome>,
 }
@@ -374,15 +376,18 @@ pub(super) fn precondition_cases(
         let verdict = conjunction(walk, &[clause], |info| {
             pre_observations(walk, info, row, &args)
         })?;
+        let (satisfied, undecided) = match verdict {
+            Conjunction::True => (true, None),
+            Conjunction::False(_) => (false, None),
+            Conjunction::Undecided(mut undecided) => {
+                (false, undecided.pop().map(|(_, outcome)| outcome))
+            }
+        };
         cases.push(PreconditionCase {
             transition,
             arguments: args.into_iter().map(|(_, value)| value).collect(),
-            undecided: match verdict {
-                Conjunction::True | Conjunction::False(_) => None,
-                Conjunction::Undecided(mut undecided) => {
-                    undecided.pop().map(|(_, outcome)| outcome)
-                }
-            },
+            satisfied,
+            undecided,
         });
     }
     Ok(cases)
@@ -825,12 +830,10 @@ impl Run<'_, '_, '_> {
         let result = match self.application.declaration.result() {
             None => None,
             Some(result_type) => {
-                let domain = Domain::of(
-                    result_type,
-                    &self.walk.references(),
-                    self.walk.system.types,
-                    &self.walk.system.record_orders,
-                );
+                let domain = self
+                    .walk
+                    .system
+                    .value_domain(result_type, &self.walk.references());
                 match domain.and_then(|domain| domain.nth(0)) {
                     Some(value) => Some(value),
                     None => return Ok(None),
@@ -869,6 +872,50 @@ impl Run<'_, '_, '_> {
             for target in found.targets {
                 match target {
                     PostTarget::Equation { field, value } => {
+                        let size_bits = self
+                            .walk
+                            .system
+                            .max_value_bits
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        if size_bits > 0
+                            && self
+                                .walk
+                                .system
+                                .fields
+                                .values()
+                                .flatten()
+                                .find(|candidate| candidate.name == field)
+                                .is_some_and(|candidate| {
+                                    matches!(&candidate.value_type, ValueType::Integer)
+                                })
+                        {
+                            let field_type = self
+                                .walk
+                                .system
+                                .fields
+                                .values()
+                                .flatten()
+                                .find(|candidate| candidate.name == field)
+                                .map(|candidate| &candidate.value_type);
+                            if field_type
+                                .and_then(|field_type| {
+                                    self.walk
+                                        .system
+                                        .value_domain(field_type, &self.walk.references())
+                                })
+                                .is_some_and(|domain| match value.as_ref() {
+                                    Some(value @ Value::Integer(_)) => {
+                                        domain.index_of(value).is_none()
+                                    }
+                                    _ => false,
+                                })
+                            {
+                                self.walk.system.record_value_bound_cut(
+                                    &self.application.text,
+                                    &format!("{:?}", self.walk.state.state()),
+                                );
+                            }
+                        }
                         narrowing.entry(field).or_default().equations.push(value);
                     }
                     PostTarget::Bound {
@@ -1352,12 +1399,7 @@ impl Run<'_, '_, '_> {
                 // A field with no finite domain (an `Integer`, a string, an
                 // unbounded collection) is bounded by no frame that grants it,
                 // so it cannot be written here.
-                let Some(domain) = Domain::of(
-                    &field.value_type,
-                    &references,
-                    system.types,
-                    &system.record_orders,
-                ) else {
+                let Some(domain) = system.value_domain(&field.value_type, &references) else {
                     continue;
                 };
                 let mut different: Option<Option<Value>> = None;
@@ -1501,13 +1543,11 @@ impl Run<'_, '_, '_> {
         let Some(result_type) = self.application.declaration.result() else {
             return Ok(None);
         };
-        let domain = Domain::of(
-            result_type,
-            post_references,
-            self.walk.system.types,
-            &self.walk.system.record_orders,
-        )
-        .ok_or_else(|| stop(BROKEN))?;
+        let domain = self
+            .walk
+            .system
+            .value_domain(result_type, post_references)
+            .ok_or_else(|| stop(BROKEN))?;
         if domain.len() > RESULT_ORDER_LIMIT {
             return Err(stop(EXHAUSTED));
         }

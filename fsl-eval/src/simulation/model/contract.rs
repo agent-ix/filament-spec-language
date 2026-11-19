@@ -303,6 +303,8 @@ pub struct PreconditionCase {
     pub receiver: ObjectReference,
     /// The arguments, in parameter order.
     pub arguments: Vec<Value>,
+    /// Whether the precondition decided true.
+    pub satisfied: bool,
     /// The evaluation that decided no Boolean; `None` when the clause
     /// decided one.
     pub undecided: Option<ClauseOutcome>,
@@ -614,6 +616,7 @@ impl<'a> ModelSystem<'a> {
                     transition: case.transition,
                     receiver: row.reference.clone(),
                     arguments: case.arguments,
+                    satisfied: case.satisfied,
                     undecided: case.undecided,
                 });
             }

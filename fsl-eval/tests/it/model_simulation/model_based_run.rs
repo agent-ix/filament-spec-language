@@ -2,11 +2,15 @@
 //! FR-752 model-based run record over a checked counter invariant.
 
 use super::*;
+use unicode_normalization::UnicodeNormalization;
 
 use fsl_eval::simulation::model::{
-    run_model_based_state_invariant, run_model_based_test, ModelBasedTestError,
-    ModelBasedTestEvidence, ModelOperationCoverageReason, ModelOperationCoverageReasonKind,
-    ModelOperationCoverageStatus, ModelOperationCoverageSummaryStatus,
+    ModelBasedCounterexample, ModelBasedTestCause, ModelBasedTestDiscardCount,
+    ModelBasedTestDiscardReason, ModelBasedTestError, ModelBasedTestEvidence,
+    ModelOperationCoverageReason, ModelOperationCoverageReasonKind, ModelOperationCoverageStatus,
+    ModelOperationCoverageSummaryStatus, run_model_based_state_invariant,
+    run_model_based_state_invariant_with_value_bits, run_model_based_test,
+    run_model_based_test_with_value_bits,
 };
 
 const INC: &str = "pre CanInc using v on M::Counter::inc { self.value < 5 }\n\
@@ -99,13 +103,19 @@ fn passing_run_reports_native_operation_coverage() {
     .expect("the same model-based request is reproducible");
 
     assert_eq!(result.counts.passing, 100);
+    assert_eq!(result.counts.generated, 100);
     assert_eq!(result.counts.failing, 0);
     assert_eq!(result.counts.discarded, 0);
-    assert_eq!(result.evidence, ModelBasedTestEvidence::Tested);
+    assert_eq!(result.evidence, ModelBasedTestEvidence::Tested,);
     assert_eq!(result.profile, sampler());
     assert_eq!(result.provenance.len(), 100);
-    assert_eq!(result.provenance[0].seed, 7);
-    assert_eq!(result.provenance[0].trace, 0);
+    let first_sample = result.provenance[0]
+        .sample
+        .as_ref()
+        .expect("model cases retain sampled-trace provenance");
+    assert_eq!(first_sample.seed, 7);
+    assert_eq!(first_sample.trace, 0);
+    assert_eq!(result.provenance[0].max_value_bits, None);
     assert_eq!(result.partitions, repeated.partitions);
     assert_eq!(result.operations, repeated.operations);
     let counter_domain = IntegerInterval::new(0_i64.into(), 5_i64.into())
@@ -126,36 +136,41 @@ fn passing_run_reports_native_operation_coverage() {
         ]
     );
     assert!(result.counterexample.is_none());
-    assert_eq!(result.operations.len(), 3);
+    let operations = result
+        .operations
+        .as_ref()
+        .expect("state runs carry operation coverage");
+    assert_eq!(operations.len(), 3);
     assert_eq!(
-        result
-            .operations
+        operations
             .iter()
             .map(|entry| entry.operation.name.as_str())
             .collect::<Vec<_>>(),
         ["inc", "jam", "reset"]
     );
     assert_eq!(
-        result.operations[0].status,
+        operations[0].status,
         ModelOperationCoverageStatus::Covered { first_case: 0 }
     );
     assert_eq!(
-        result.operations[2].status,
+        operations[2].status,
         ModelOperationCoverageStatus::Covered { first_case: 0 }
     );
     assert_eq!(
-        result.operations[1].status,
+        operations[1].status,
         fsl_eval::simulation::model::ModelOperationCoverageStatus::NotCovered {
             reason: ModelOperationCoverageReason::Unreachable,
         }
     );
     assert_eq!(
-        result.coverage.status,
+        result.coverage.as_ref().expect("coverage summary").status,
         ModelOperationCoverageSummaryStatus::Partial
     );
     assert_eq!(
         result
             .coverage
+            .as_ref()
+            .expect("coverage summary")
             .uncovered
             .get(&ModelOperationCoverageReasonKind::Unreachable),
         Some(&1)
@@ -186,11 +201,137 @@ fn bounded_run_reports_unreachable_within_bound() {
     .expect("the bounded reachability run");
     assert_eq!(result.counts.passing, 100);
     assert_eq!(
-        result.operations[2].status,
+        result.operations.as_ref().unwrap()[2].status,
         fsl_eval::simulation::model::ModelOperationCoverageStatus::NotCovered {
-            reason: ModelOperationCoverageReason::UnreachableWithinBound,
+            reason: ModelOperationCoverageReason::UnreachableWithinBound {
+                bounds: vec!["max_trace_length".to_owned()],
+            },
         }
     );
+}
+
+/// FR-752-AC-6: size-bounded operation results stop at a value cut and keep
+/// the corresponding operation unreachable only within that bound.
+#[trace("TC-2956", "FR-752-AC-6")]
+#[trace("FSpec-TC-2004", "FSpec-FR-190-AC-12")]
+#[test]
+fn unbounded_model_roots_report_value_bound_cuts_in_operation_coverage() {
+    let make_world = || {
+        let clauses = "pre CanAdd using v on M::Counter::add { true }\n\
+                       post Add using v on M::Counter::add { self.value = pre(self.value) + amount }\n\
+                       pre CanBig using v on M::Counter::big { self.value >= 300 }\n\
+                       post Big using v on M::Counter::big { true }\n\
+                       invariant Safe using v on M::Counter at current { true }";
+        let mut amount_type = bound_type("Amount", 100);
+        amount_type["constraints"][0]["operands"]["value"] = json!("1");
+        let mut document: Json = serde_json::from_slice(&counters_document(
+            vec![
+                operation(
+                    "add",
+                    &[("amount", &ident("Amount"))],
+                    None,
+                    frame(&["value"], false, false),
+                ),
+                operation("big", &[], None, frame(&[], false, false)),
+            ],
+            false,
+        ))
+        .expect("fixture JSON");
+        let counter = document["types"]
+            .as_array_mut()
+            .expect("types array")
+            .iter_mut()
+            .find(|ty| ty["identity"] == ident("Counter"))
+            .expect("Counter declaration");
+        counter["fields"] = json!([wire_field(
+            "value",
+            "ix://filament/native/Integer",
+            "required"
+        )]);
+        document["types"]
+            .as_array_mut()
+            .expect("types array")
+            .push(amount_type);
+        build_world_document(
+            serde_json::to_vec(&document).expect("fixture serializes"),
+            clauses,
+            false,
+            false,
+        )
+        .expect("unbounded integer model and clauses check")
+    };
+    let run = |bits| {
+        let mut world = make_world();
+        let bytes = json!({
+            "format": "filament.state.snapshot/v1",
+            "identity": {"authority": "test", "identity": "s0"},
+            "observation": "current",
+            "model": world.header.clone(),
+            "anchor": {"kind": "initialization", "name": "start"},
+            "populations": [{"population": ident("counters"), "complete": true,
+                "objects": [{"key": "c1", "type": ident("Counter"),
+                    "fields": {"value": {"integer": "0"}}}]}],
+        })
+        .to_string()
+        .into_bytes();
+        let reference = fsl_semantics::model::observation::document_reference(&bytes)
+            .expect("a document names itself");
+        world.snapshots.insert(reference, bytes);
+        let initial = DocumentRef {
+            authority: "test".to_owned(),
+            identity: "s0".to_owned(),
+        };
+        let system = system(&world, vec![initial], &["c1"], UNLIMITED);
+        run_model_based_state_invariant_with_value_bits(
+            &system,
+            "Safe",
+            &sampler(),
+            7,
+            100,
+            8,
+            Some(bits),
+            10_000,
+            Limits::default()
+                .with_max_states(1_000)
+                .with_max_transitions(50_000),
+        )
+        .expect("the size-bounded native model run")
+    };
+
+    let narrow = run(8);
+    assert!(narrow.provenance.value_bound_cuts.count >= 1);
+    assert_eq!(narrow.provenance.max_value_bits, Some(8));
+    let big = narrow
+        .operations
+        .as_ref()
+        .expect("state clauses carry operation coverage")
+        .iter()
+        .find(|entry| entry.operation.name == "big")
+        .expect("big is declared");
+    assert_eq!(
+        big.status,
+        ModelOperationCoverageStatus::NotCovered {
+            reason: ModelOperationCoverageReason::UnreachableWithinBound {
+                bounds: vec!["max_value_bits".to_owned()],
+            },
+        }
+    );
+
+    let wide = run(10);
+    let big = wide
+        .operations
+        .as_ref()
+        .expect("state clauses carry operation coverage")
+        .iter()
+        .find(|entry| entry.operation.name == "big")
+        .expect("big is declared");
+    assert!(matches!(
+        big.status,
+        ModelOperationCoverageStatus::Covered { .. }
+            | ModelOperationCoverageStatus::NotCovered {
+                reason: ModelOperationCoverageReason::NotGenerated { .. }
+            }
+    ));
 }
 
 /// FR-752-AC-4 / FSpec FR-190-AC-13: a passing run stays tested; a failing
@@ -218,10 +359,14 @@ fn failing_run_retains_replayable_counterexample_without_losing_coverage() {
 
     assert_eq!(result.counts.failing, 1);
     assert_eq!(result.evidence, ModelBasedTestEvidence::Refuted);
-    let counterexample = result.counterexample.expect("a replayed failure");
+    let ModelBasedCounterexample::Trace(counterexample) =
+        result.counterexample.expect("a replayed failure")
+    else {
+        panic!("a state failure retains a trace counterexample");
+    };
     assert_eq!(counterexample.trace.steps.len(), 4);
     assert_eq!(
-        result.operations[1].status,
+        result.operations.as_ref().unwrap()[1].status,
         fsl_eval::simulation::model::ModelOperationCoverageStatus::NotCovered {
             reason: ModelOperationCoverageReason::Unreachable,
         }
@@ -251,6 +396,962 @@ fn missing_clause_is_rejected_instead_of_reported_tested() {
         result,
         Err(ModelBasedTestError::InvalidClause { clause }) if clause == "Missing"
     ));
+}
+
+/// FR-190-AC-9: zero case and trace limits refuse before sampling.
+#[trace("TC-2102", "FR-752-AC-1")]
+#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-9")]
+#[test]
+fn zero_model_based_limits_are_rejected_before_sampling() {
+    let mut world = counter_run_world("Safe", "self.value <= 5");
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let system = system(&world, vec![initial], &["c1"], UNLIMITED);
+    for (max_cases, max_trace_length, member) in [(0, 8, "max_cases"), (1, 0, "max_trace_length")] {
+        assert!(matches!(
+            run_model_based_state_invariant(
+                &system,
+                "Safe",
+                &sampler(),
+                7,
+                max_cases,
+                max_trace_length,
+                10_000,
+                Limits::default()
+                    .with_max_states(100)
+                    .with_max_transitions(1_000),
+            ),
+            Err(ModelBasedTestError::InvalidLimit { member: found }) if found == member
+        ));
+    }
+}
+
+/// FR-752-AC-5: `max_value_bits` is constrained to 1..=64 and is unknown
+/// when every generation root already has a finite declared domain.
+#[trace("TC-2102", "FR-752-AC-5")]
+#[test]
+fn max_value_bits_rejects_invalid_ranges_and_finite_only_models() {
+    let mut world = counter_run_world("Safe", "self.value <= 5");
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let system = system(&world, vec![initial], &["c1"], UNLIMITED);
+    for bits in [0, 65] {
+        assert!(matches!(
+            run_model_based_state_invariant_with_value_bits(
+                &system,
+                "Safe",
+                &sampler(),
+                7,
+                20,
+                8,
+                Some(bits),
+                10_000,
+                Limits::default()
+                    .with_max_states(100)
+                    .with_max_transitions(1_000),
+            ),
+            Err(ModelBasedTestError::InvalidLimit {
+                member: "max_value_bits"
+            })
+        ));
+    }
+    assert!(matches!(
+        run_model_based_state_invariant_with_value_bits(
+            &system,
+            "Safe",
+            &sampler(),
+            7,
+            20,
+            8,
+            Some(8),
+            10_000,
+            Limits::default()
+                .with_max_states(100)
+                .with_max_transitions(1_000),
+        ),
+        Err(ModelBasedTestError::UnknownValueBits)
+    ));
+}
+
+/// FR-752-AC-5 / FSpec FR-190-AC-8: an unbounded operation parameter requires
+/// the requested size limit, which appears in every sampled-case provenance.
+#[trace("TC-2102", "FR-752-AC-5")]
+#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-8")]
+#[test]
+fn an_unbounded_integer_parameter_uses_and_records_max_value_bits() {
+    let mut world = world_with_level_bound(
+        vec![operation(
+            "observe",
+            &[("sample", "ix://filament/native/Integer")],
+            None,
+            frame(&[], false, false),
+        )],
+        "invariant Safe using v on M::Counter at current { self.value <= 5 }",
+        5,
+    );
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let system = system(&world, vec![initial], &["c1"], UNLIMITED);
+    assert!(matches!(
+        run_model_based_state_invariant_with_value_bits(
+            &system,
+            "Safe",
+            &sampler(),
+            7,
+            8,
+            2,
+            None,
+            10_000,
+            Limits::default()
+                .with_max_states(100)
+                .with_max_transitions(1_000),
+        ),
+        Err(ModelBasedTestError::MissingValueBits)
+    ));
+
+    let result = run_model_based_state_invariant_with_value_bits(
+        &system,
+        "Safe",
+        &sampler(),
+        7,
+        8,
+        2,
+        Some(3),
+        10_000,
+        Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+    )
+    .expect("the bounded integer operation input");
+    assert_eq!(result.max_value_bits, Some(3));
+    assert_eq!(result.provenance.max_value_bits, Some(3));
+    assert_eq!(result.provenance.size_bounded.len(), 1);
+    assert_eq!(result.provenance.size_bounded[0].values, "15");
+    assert_eq!(result.provenance.len(), 8);
+    assert!(
+        result
+            .provenance
+            .iter()
+            .all(|case| case.max_value_bits == Some(3))
+    );
+    let bounded_domain = IntegerInterval::new((-7_i64).into(), 7_i64.into())
+        .expect("three size bits bound the parameter to [-7, 7]");
+    let partitions: Vec<_> = result
+        .partitions
+        .iter()
+        .filter(|partition| partition.domain == bounded_domain)
+        .map(|partition| (partition.kind, partition.value.to_string()))
+        .collect();
+    assert_eq!(
+        partitions,
+        [
+            (ModelBoundaryKind::LowerRefusal, "-8".to_owned()),
+            (ModelBoundaryKind::LowerEndpoint, "-7".to_owned()),
+            (ModelBoundaryKind::UpperEndpoint, "7".to_owned()),
+            (ModelBoundaryKind::UpperRefusal, "8".to_owned()),
+        ]
+    );
+}
+
+/// FR-752-AC-7: the deterministic domain-boundary prefix is ordered by
+/// parameter declaration, before any seeded assignments, and consumes the
+/// generated-case limit (including refusal discards).
+#[trace("TC-2102", "FR-752-AC-7")]
+#[test]
+fn value_function_boundaries_precede_seeded_cases_in_declared_parameter_order() {
+    let mut world = world_with_level_bound(
+        vec![operation("observe", &[], None, frame(&[], false, false))],
+        "function Limit using v(x: Int[0,5], delta: Int[1,6]): Boolean pure { x + delta <= 11 }",
+        5,
+    );
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let system = system(&world, vec![initial], &["c1"], UNLIMITED);
+    let identity = world
+        .package
+        .graph()
+        .function_identity("Limit")
+        .expect("checked value function");
+
+    let result = run_model_based_test_with_value_bits(
+        &system,
+        &identity,
+        &sampler(),
+        7,
+        8,
+        8,
+        None,
+        10_000,
+        Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+    )
+    .expect("native value-function oracle and deterministic boundary prefix");
+
+    let assignments: Vec<Vec<String>> = result
+        .provenance
+        .iter()
+        .map(|case| {
+            case.assignment
+                .as_ref()
+                .expect("value cases retain their typed assignments")
+                .iter()
+                .map(|value| match value {
+                    filament_exact::Value::Integer(value) => value.to_string(),
+                    other => panic!("expected integer boundary value, got {other:?}"),
+                })
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        assignments,
+        [
+            vec!["-1", "1"],
+            vec!["0", "1"],
+            vec!["5", "1"],
+            vec!["6", "1"],
+            vec!["0", "0"],
+            vec!["0", "1"],
+            vec!["0", "6"],
+            vec!["0", "7"],
+        ]
+    );
+    assert_eq!(result.counts.generated, 8);
+    assert_eq!(result.counts.discarded, 4);
+    assert_eq!(result.counts.passing, 4);
+    assert_eq!(result.evidence, ModelBasedTestEvidence::Tested);
+    assert_eq!(result.operations, None);
+    assert_eq!(result.coverage, None);
+}
+
+/// FSpec FR-190-AC-14 / FR-752-AC-5: an unbounded integer root uses the
+/// request's size domain and emits its pinned size partitions before draws.
+#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-14")]
+#[trace("TC-2102", "FR-752-AC-5")]
+#[test]
+fn unbounded_value_function_uses_size_order_partitions_before_seeded_draws() {
+    let mut world = world_with_level_bound(
+        vec![operation("observe", &[], None, frame(&[], false, false))],
+        "function Square using v(x: Integer): Boolean pure { x * x >= 0 }",
+        5,
+    );
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let system = system(&world, vec![initial], &["c1"], UNLIMITED);
+    let identity = world
+        .package
+        .graph()
+        .function_identity("Square")
+        .expect("checked value function");
+
+    let result = run_model_based_test_with_value_bits(
+        &system,
+        &identity,
+        &sampler(),
+        7,
+        20,
+        8,
+        Some(8),
+        10_000,
+        Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+    )
+    .expect("native predicate evaluation over the size-bounded root");
+
+    let values: Vec<String> = result
+        .provenance
+        .iter()
+        .take(5)
+        .map(|case| {
+            let [filament_exact::Value::Integer(value)] = case
+                .assignment
+                .as_ref()
+                .expect("value case assignment")
+                .as_slice()
+            else {
+                panic!("expected one integer parameter")
+            };
+            value.to_string()
+        })
+        .collect();
+    assert_eq!(values, ["0", "-1", "1", "-255", "255"]);
+    assert_eq!(result.max_value_bits, Some(8));
+    assert_eq!(result.provenance.max_value_bits, Some(8));
+    assert_eq!(result.provenance.size_bounded.len(), 1);
+    assert_eq!(result.provenance.size_bounded[0].values, "511");
+    assert_eq!(result.provenance.value_bound_cuts.count, 0);
+    assert_eq!(result.counts.generated, 20);
+    assert_eq!(result.counts.passing, 20);
+    assert_eq!(result.evidence, ModelBasedTestEvidence::Tested);
+    assert!(result.partitions.iter().all(|partition| {
+        !matches!(
+            partition.kind,
+            ModelBoundaryKind::LowerRefusal | ModelBoundaryKind::UpperRefusal
+        )
+    }));
+}
+
+/// FR-190-AC-21: Text normalization witnesses consume the deterministic
+/// partition prefix before a sampler-indexed exact-domain draw.
+#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-21")]
+#[test]
+fn text_value_draw_uses_the_exact_unicode_scalar_domain_index() {
+    let mut world = world_with_level_bound(
+        vec![operation("observe", &[], None, frame(&[], false, false))],
+        "function TextValue using v(t: Text[0,2; unicode-scalars]): Boolean pure { true }",
+        5,
+    );
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let system = system(&world, vec![initial], &["c1"], UNLIMITED);
+    let identity = world
+        .package
+        .graph()
+        .function_identity("TextValue")
+        .expect("checked Text value function");
+    let result = run_model_based_test(
+        &system,
+        &identity,
+        &sampler(),
+        7,
+        11,
+        8,
+        10_000,
+        Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+    )
+    .expect("native Text value evaluation");
+
+    let [filament_exact::Value::Text(value)] = result.provenance.cases[10]
+        .assignment
+        .as_ref()
+        .expect("seeded Text assignment")
+        .as_slice()
+    else {
+        panic!("expected a Text value");
+    };
+    assert_eq!(value.retained(), "\u{d51a9}\u{87ac9}");
+    assert_eq!(result.counts.generated, 11);
+    assert_eq!(result.evidence, ModelBasedTestEvidence::Tested);
+}
+
+/// FR-190-AC-14: Text partitions retain the declared domain regardless of
+/// the optional integer size bound.
+#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-14")]
+#[test]
+fn text_partitions_are_independent_of_max_value_bits() {
+    let mut world = world_with_level_bound(
+        vec![operation("observe", &[], None, frame(&[], false, false))],
+        "function TextValue using v(x: Integer, t: Text[0,4; unicode-scalars]): Boolean pure { true }",
+        5,
+    );
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let system = system(&world, vec![initial], &["c1"], UNLIMITED);
+    let identity = world
+        .package
+        .graph()
+        .function_identity("TextValue")
+        .expect("checked value function");
+    let run = |bits| {
+        run_model_based_test_with_value_bits(
+            &system,
+            &identity,
+            &sampler(),
+            7,
+            30,
+            8,
+            Some(bits),
+            10_000,
+            Limits::default()
+                .with_max_states(100)
+                .with_max_transitions(1_000),
+        )
+        .expect("native bounded value function")
+    };
+    let wide = run(8);
+    let narrow = run(1);
+    let text_partitions = |result: &fsl_eval::simulation::model::ModelBasedTestResult| {
+        result
+            .partitions
+            .iter()
+            .filter(|partition| partition.path == [1])
+            .map(|partition| {
+                (
+                    partition.kind,
+                    partition.value.to_string(),
+                    partition.text_value.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let text = text_partitions(&wide);
+    assert_eq!(text, text_partitions(&narrow));
+    assert_eq!(text.len(), 12);
+    assert_eq!(
+        text.iter().map(|(kind, _, _)| *kind).collect::<Vec<_>>(),
+        [
+            ModelBoundaryKind::TextEmpty,
+            ModelBoundaryKind::TextSingleton,
+            ModelBoundaryKind::TextUpperEndpoint,
+            ModelBoundaryKind::UpperRefusal,
+            ModelBoundaryKind::TextNormalization,
+            ModelBoundaryKind::TextNormalization,
+            ModelBoundaryKind::TextNormalization,
+            ModelBoundaryKind::TextNormalization,
+            ModelBoundaryKind::TextNormalization,
+            ModelBoundaryKind::TextNormalization,
+            ModelBoundaryKind::TextNormalization,
+            ModelBoundaryKind::TextNormalization,
+        ]
+    );
+    assert_eq!(wide.provenance.size_bounded.len(), 1);
+    assert_eq!(wide.provenance.size_bounded[0].values, "511");
+    assert_eq!(narrow.provenance.size_bounded[0].values, "3");
+    assert_eq!(wide.counts.generated, 30);
+    assert_eq!(wide.counts.passing, 29);
+    assert_eq!(wide.counts.discarded, 1);
+    assert_eq!(wide.evidence, ModelBasedTestEvidence::Tested);
+}
+
+/// FR-752-AC-9 / FR-190-AC-19: Text boundaries precede normalized seeded
+/// draws, while the unicode-scalars profile keeps all witness spellings.
+#[trace("TC-2102", "FR-752-AC-9")]
+#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-19")]
+#[test]
+fn text_value_cases_keep_normalization_partitions_and_seeded_members() {
+    let mut nfc_world = world_with_level_bound(
+        vec![operation("observe", &[], None, frame(&[], false, false))],
+        "function Label using v(t: Text[0,4; nfc]): Boolean pure { size(t) <= 4 }",
+        5,
+    );
+    let initial = nfc_world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let nfc_system = system(&nfc_world, vec![initial], &["c1"], UNLIMITED);
+    let identity = nfc_world
+        .package
+        .graph()
+        .function_identity("Label")
+        .expect("checked NFC value function");
+    let nfc_result = run_model_based_test(
+        &nfc_system,
+        &identity,
+        &sampler(),
+        7,
+        30,
+        8,
+        10_000,
+        Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+    )
+    .expect("native NFC Text value evaluation");
+
+    assert_eq!(nfc_result.counts.generated, 30);
+    assert_eq!(nfc_result.counts.discarded, 1);
+    assert_eq!(nfc_result.evidence, ModelBasedTestEvidence::Tested);
+    assert_eq!(
+        nfc_result
+            .partitions
+            .iter()
+            .map(|partition| partition.kind)
+            .collect::<Vec<_>>(),
+        [
+            ModelBoundaryKind::TextEmpty,
+            ModelBoundaryKind::TextSingleton,
+            ModelBoundaryKind::TextUpperEndpoint,
+            ModelBoundaryKind::UpperRefusal,
+            ModelBoundaryKind::TextNormalization,
+            ModelBoundaryKind::TextNormalization,
+            ModelBoundaryKind::TextNormalization,
+            ModelBoundaryKind::TextNormalization,
+            ModelBoundaryKind::TextNormalization,
+        ]
+    );
+    for case in &nfc_result.provenance.cases[9..] {
+        let [Value::Text(text)] = case
+            .assignment
+            .as_ref()
+            .expect("a seeded Text case has its assignment")
+            .as_slice()
+        else {
+            panic!("expected a Text assignment");
+        };
+        assert!(text.retained().chars().eq(text.retained().chars().nfc()));
+        assert!(text.retained().chars().count() <= 4);
+    }
+
+    let mut scalar_world = world_with_level_bound(
+        vec![operation("observe", &[], None, frame(&[], false, false))],
+        "function ScalarLabel using v(t: Text[0,4; unicode-scalars]): Boolean pure { true }",
+        5,
+    );
+    let initial = scalar_world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let scalar_system = system(&scalar_world, vec![initial], &["c1"], UNLIMITED);
+    let identity = scalar_world
+        .package
+        .graph()
+        .function_identity("ScalarLabel")
+        .expect("checked scalar Text value function");
+    let scalar_result = run_model_based_test(
+        &scalar_system,
+        &identity,
+        &sampler(),
+        7,
+        12,
+        8,
+        10_000,
+        Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+    )
+    .expect("native unicode-scalars Text value evaluation");
+    let witnesses: Vec<String> = scalar_result.provenance.cases[4..12]
+        .iter()
+        .map(|case| {
+            let [Value::Text(text)] = case
+                .assignment
+                .as_ref()
+                .expect("a witness has its assignment")
+                .as_slice()
+            else {
+                panic!("expected a Text assignment");
+            };
+            text.retained().to_owned()
+        })
+        .collect();
+    assert_eq!(
+        witnesses,
+        [
+            "\u{e9}",
+            "e\u{301}",
+            "d\u{307}\u{323}",
+            "d\u{323}\u{307}",
+            "\u{ac00}",
+            "\u{1100}\u{1161}",
+            "\u{212b}",
+            "\u{fb01}",
+        ]
+    );
+}
+
+/// FR-752-AC-5: size-domain shrinking walks in size order and native
+/// re-evaluation retains the least failing value.
+#[trace("TC-2102", "FR-752-AC-5")]
+#[test]
+fn unbounded_value_failure_shrinks_to_the_least_failing_integer() {
+    let mut world = world_with_level_bound(
+        vec![operation("observe", &[], None, frame(&[], false, false))],
+        "function Below using v(x: Integer): Boolean pure { x < 200 }",
+        5,
+    );
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let system = system(&world, vec![initial], &["c1"], UNLIMITED);
+    let identity = world
+        .package
+        .graph()
+        .function_identity("Below")
+        .expect("checked value function");
+
+    let result = run_model_based_test_with_value_bits(
+        &system,
+        &identity,
+        &sampler(),
+        7,
+        20,
+        8,
+        Some(8),
+        10_000,
+        Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+    )
+    .expect("native value evaluation and size-ordered shrinking");
+
+    assert_eq!(result.evidence, ModelBasedTestEvidence::Refuted);
+    let ModelBasedCounterexample::ValueAssignment(counterexample) = result
+        .counterexample
+        .expect("native-replayed value counterexample")
+    else {
+        panic!("a value clause retains its parameter assignment");
+    };
+    let [filament_exact::Value::Integer(value)] = counterexample.as_slice() else {
+        panic!("expected one integer parameter");
+    };
+    assert_eq!(value.to_string(), "200");
+}
+
+/// FR-752-AC-7: native contract dispatch evaluates a selected precondition
+/// independently, and a false precondition remains a passing check point.
+#[trace("TC-2102", "FR-752-AC-7")]
+#[test]
+fn a_model_based_precondition_treats_false_as_a_passing_point() {
+    let mut world = counter_run_world("Safe", "self.value <= 5");
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let system = system(&world, vec![initial], &["c1"], UNLIMITED);
+    let identity = world
+        .package
+        .graph()
+        .state_clause("CanReset")
+        .expect("checked precondition")
+        .identity();
+    let result = run_model_based_test(
+        &system,
+        &identity,
+        &sampler(),
+        7,
+        40,
+        8,
+        10_000,
+        Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+    )
+    .expect("native precondition oracle");
+
+    assert_eq!(result.evidence, ModelBasedTestEvidence::Tested);
+    assert_eq!(result.counts.generated, 40);
+    assert!(result.counts.passing > 0);
+    assert_eq!(
+        result.discarded_by[&ModelBasedTestDiscardReason::PreconditionFalse].count,
+        0
+    );
+}
+
+/// FR-752-AC-6: a completed run with no evaluated check point is inconclusive
+/// and retains every generated discard in its result and exit category.
+#[trace("TC-2102", "FR-752-AC-6")]
+#[test]
+fn a_run_with_only_no_check_point_discards_is_inconclusive_exit_22() {
+    let mut world = counter_run_world("Safe", "self.value <= 5");
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let system = system(&world, vec![initial], &["c1"], UNLIMITED);
+    let identity = world
+        .package
+        .graph()
+        .state_clause("Jam")
+        .expect("checked postcondition")
+        .identity();
+    let result = run_model_based_test(
+        &system,
+        &identity,
+        &sampler(),
+        7,
+        20,
+        8,
+        10_000,
+        Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+    )
+    .expect("the native precondition oracle");
+
+    assert_eq!(result.counts.generated, 20);
+    assert_eq!(result.counts.passing, 0);
+    assert_eq!(result.counts.failing, 0);
+    assert_eq!(result.counts.discarded, 20);
+    assert_eq!(
+        result.discarded_by[&ModelBasedTestDiscardReason::DomainRefusal].count,
+        2
+    );
+    assert_eq!(
+        result.discarded_by[&ModelBasedTestDiscardReason::NoCheckPoint].count,
+        18
+    );
+    assert_eq!(result.evidence, ModelBasedTestEvidence::Inconclusive);
+    assert_eq!(result.cause, Some(ModelBasedTestCause::NoEvaluatedCase));
+    assert_eq!(result.exit_code(), 22);
+}
+
+/// FR-752-AC-7: the selected postcondition does not constrain its own
+/// generated operation step, then a false native result is retained.
+#[trace("TC-2102", "FR-752-AC-7")]
+#[test]
+fn a_model_based_postcondition_is_checked_on_its_applied_step() {
+    let mut world = counter_run_world("Safe", "self.value <= 5");
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let system = system(&world, vec![initial], &["c1"], UNLIMITED);
+    let identity = world
+        .package
+        .graph()
+        .state_clause("Reset")
+        .expect("checked postcondition")
+        .identity();
+    let result = run_model_based_test(
+        &system,
+        &identity,
+        &sampler(),
+        7,
+        40,
+        8,
+        10_000,
+        Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+    )
+    .expect("native postcondition oracle");
+
+    assert_eq!(result.evidence, ModelBasedTestEvidence::Refuted);
+    assert_eq!(result.counts.generated, 5);
+    assert_eq!(result.counts.failing, 1);
+    assert!(result.counterexample.is_some());
+}
+
+/// FR-752's deterministic contract prefix emits field partitions before
+/// parameter partitions, counts refusals, and preserves disabled arguments.
+#[trace("FSpec-TC-2102", "FR-752-AC-7")]
+#[test]
+fn contract_cases_start_with_ordered_domain_partitions() {
+    let clauses = "pre CanInc using v on M::Counter::inc { self.value + delta <= 5 }\n\
+                   post Inc using v on M::Counter::inc { self.value <= 5 }";
+    let op = operation(
+        "inc",
+        &[("delta", &ident("By"))],
+        None,
+        frame(&["value"], false, false),
+    );
+    let mut document: Json =
+        serde_json::from_slice(&counters_document(vec![op], false)).expect("fixture JSON");
+    let level = document["types"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|ty| ty["identity"] == ident("Level"))
+        .unwrap();
+    *level = bound_type("Level", 5);
+    let mut by_type = bound_type("By", 6);
+    by_type["constraints"][0]["operands"]["value"] = json!("1");
+    document["types"].as_array_mut().unwrap().push(by_type);
+    let mut world = build_world_document(
+        serde_json::to_vec(&document).expect("fixture serializes"),
+        clauses,
+        false,
+        false,
+    )
+    .expect("the model and contract check");
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let system = system(&world, vec![initial], &["c1"], UNLIMITED);
+    let identity = world
+        .package
+        .graph()
+        .state_clause("Inc")
+        .expect("checked postcondition")
+        .identity();
+    let result = run_model_based_test(
+        &system,
+        &identity,
+        &sampler(),
+        7,
+        100,
+        8,
+        10_000,
+        Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+    )
+    .expect("the native postcondition partition run");
+
+    let expected = [
+        (vec![0, 2], "-1".to_owned(), ModelBoundaryKind::LowerRefusal),
+        (vec![0, 2], "0".to_owned(), ModelBoundaryKind::LowerEndpoint),
+        (vec![0, 2], "5".to_owned(), ModelBoundaryKind::UpperEndpoint),
+        (vec![0, 2], "6".to_owned(), ModelBoundaryKind::UpperRefusal),
+        (
+            vec![1, 0, 0],
+            "0".to_owned(),
+            ModelBoundaryKind::LowerRefusal,
+        ),
+        (
+            vec![1, 0, 0],
+            "1".to_owned(),
+            ModelBoundaryKind::LowerEndpoint,
+        ),
+        (
+            vec![1, 0, 0],
+            "6".to_owned(),
+            ModelBoundaryKind::UpperEndpoint,
+        ),
+        (
+            vec![1, 0, 0],
+            "7".to_owned(),
+            ModelBoundaryKind::UpperRefusal,
+        ),
+    ];
+    let actual: Vec<_> = result
+        .partitions
+        .iter()
+        .map(|partition| {
+            (
+                partition.path.clone(),
+                partition.value.to_string(),
+                partition.kind,
+            )
+        })
+        .collect();
+    assert_eq!(actual, expected);
+    assert_eq!(result.counts.generated, 100);
+    assert_eq!(result.counts.discarded, 6);
+    assert_eq!(result.counts.passing, 94);
+    assert_eq!(result.counts.failing, 0);
+    assert_eq!(result.evidence, ModelBasedTestEvidence::Tested);
+    assert_eq!(
+        result.discarded_by[&ModelBasedTestDiscardReason::DomainRefusal].count,
+        4
+    );
+    assert_eq!(
+        result.discarded_by[&ModelBasedTestDiscardReason::PreconditionFalse].count,
+        1
+    );
+    assert_eq!(
+        result.discarded_by[&ModelBasedTestDiscardReason::NoCheckPoint].count,
+        1
+    );
+    assert_eq!(
+        result.partitions[0].status,
+        Some(fsl_eval::simulation::model::ModelPartitionStatus::Refused { first_case: 0 })
+    );
+    assert_eq!(
+        result.partitions[6].status,
+        Some(
+            fsl_eval::simulation::model::ModelPartitionStatus::Uncovered {
+                reason:
+                    fsl_eval::simulation::model::ModelPartitionUncoveredReason::PreconditionFalse,
+                bounds: Vec::new(),
+            }
+        )
+    );
+    assert_eq!(
+        result.partitions[1].status,
+        Some(
+            fsl_eval::simulation::model::ModelPartitionStatus::Uncovered {
+                reason: fsl_eval::simulation::model::ModelPartitionUncoveredReason::NoCheckPoint,
+                bounds: Vec::new(),
+            }
+        )
+    );
+}
+
+/// FR-752-AC-7 / FSpec FR-190-AC-16: an unrelated Jam postcondition records
+/// the false inc precondition partition and treats every other missing check
+/// point as a discard.
+#[trace("TC-2102", "FR-752-AC-7")]
+#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-16")]
+#[test]
+fn jam_postcondition_discards_unrelated_inc_partition_cases() {
+    let clauses = "pre CanInc using v on M::Counter::inc { self.value + delta <= 5 }\n\
+                   post Inc using v on M::Counter::inc { self.value <= 5 }\n\
+                   pre CanJam using v on M::Counter::jam { self.value > 5 }\n\
+                   post Jam using v on M::Counter::jam { self.value = 0 }";
+    let operations = vec![
+        operation(
+            "inc",
+            &[("delta", &ident("By"))],
+            None,
+            frame(&["value"], false, false),
+        ),
+        operation("jam", &[], None, frame(&["value"], false, false)),
+    ];
+    let mut document: Json =
+        serde_json::from_slice(&counters_document(operations, false)).expect("fixture JSON");
+    let level = document["types"]
+        .as_array_mut()
+        .expect("types array")
+        .iter_mut()
+        .find(|ty| ty["identity"] == ident("Level"))
+        .expect("Level declaration");
+    *level = bound_type("Level", 5);
+    let mut by_type = bound_type("By", 6);
+    by_type["constraints"][0]["operands"]["value"] = json!("1");
+    document["types"]
+        .as_array_mut()
+        .expect("types array")
+        .push(by_type);
+    let mut world = build_world_document(
+        serde_json::to_vec(&document).expect("fixture serializes"),
+        clauses,
+        false,
+        false,
+    )
+    .expect("the model and contracts check");
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let system = system(&world, vec![initial], &["c1"], UNLIMITED);
+    let identity = world
+        .package
+        .graph()
+        .state_clause("Jam")
+        .expect("checked Jam postcondition")
+        .identity();
+    let result = run_model_based_test(
+        &system,
+        &identity,
+        &sampler(),
+        7,
+        100,
+        8,
+        10_000,
+        Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+    )
+    .expect("the native Jam postcondition run");
+
+    assert_eq!(result.counts.generated, 100);
+    assert_eq!(result.counts.passing, 0);
+    assert_eq!(result.counts.failing, 0);
+    assert_eq!(result.counts.discarded, 100);
+    assert_eq!(result.evidence, ModelBasedTestEvidence::Inconclusive);
+    assert_eq!(result.cause, Some(ModelBasedTestCause::NoEvaluatedCase));
+    assert_eq!(result.exit_code(), 22);
+    assert_eq!(
+        result.discarded_by[&ModelBasedTestDiscardReason::DomainRefusal],
+        ModelBasedTestDiscardCount {
+            count: 4,
+            first_case: Some(0),
+        }
+    );
+    assert_eq!(
+        result.discarded_by[&ModelBasedTestDiscardReason::PreconditionFalse],
+        ModelBasedTestDiscardCount {
+            count: 1,
+            first_case: Some(6),
+        }
+    );
+    assert_eq!(
+        result.discarded_by[&ModelBasedTestDiscardReason::InvariantFalse],
+        ModelBasedTestDiscardCount {
+            count: 0,
+            first_case: None,
+        }
+    );
+    assert_eq!(
+        result.discarded_by[&ModelBasedTestDiscardReason::NoCheckPoint],
+        ModelBasedTestDiscardCount {
+            count: 95,
+            first_case: Some(1),
+        }
+    );
+
+    let inc_precondition = world
+        .package
+        .graph()
+        .state_clause("CanInc")
+        .expect("checked inc precondition")
+        .identity();
+    let precondition_result = run_model_based_test(
+        &system,
+        &inc_precondition,
+        &sampler(),
+        7,
+        8,
+        8,
+        10_000,
+        Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+    )
+    .expect("the false inc precondition is an evaluated point");
+    assert_eq!(
+        precondition_result.discarded_by[&ModelBasedTestDiscardReason::PreconditionFalse].count,
+        0
+    );
+    assert_eq!(
+        precondition_result.partitions[6].status,
+        Some(fsl_eval::simulation::model::ModelPartitionStatus::Covered { first_case: 6 })
+    );
 }
 
 /// FR-752 evaluates temporal claims through the checked clause's profile and
@@ -311,7 +1412,7 @@ fn temporal_clause_reads_captures_from_the_activation_state() {
         &sampler(),
         42,
         1,
-        0,
+        1,
         10_000,
         Limits::default()
             .with_max_states(100)
@@ -352,10 +1453,11 @@ fn temporal_violation_shrinks_and_retains_the_same_clause_failure() {
 
     assert_eq!(result.counts.failing, 1);
     assert_eq!(result.evidence, ModelBasedTestEvidence::Refuted);
-    assert!(result
+    let ModelBasedCounterexample::Trace(counterexample) = result
         .counterexample
         .expect("a native-replayed temporal failure")
-        .trace
-        .steps
-        .is_empty());
+    else {
+        panic!("a temporal failure retains a trace counterexample");
+    };
+    assert!(counterexample.trace.steps.is_empty());
 }

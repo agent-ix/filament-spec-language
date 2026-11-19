@@ -12,8 +12,8 @@ use fsl_semantics::model::state::ModelState;
 
 use super::footprints::Enforcement;
 use super::{
-    contracts, frames, state_document, Application, ClauseInfo, ModelFinding, ModelSimState,
-    ModelSystem, BROKEN, EXHAUSTED,
+    Application, BROKEN, ClauseInfo, EXHAUSTED, ModelFinding, ModelSimState, ModelSystem,
+    contracts, frames, state_document,
 };
 use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 
@@ -308,7 +308,17 @@ pub(super) fn expand_state(
     state: &ModelSimState,
     enforcement: Option<&Enforcement<'_>>,
 ) -> Result<Expansion<ModelTransition, ModelSimState, ModelFinding>, ExpansionStop> {
-    expand(system, state, enforcement, None, None, None, None)
+    expand(system, state, enforcement, None, None, None, None, None)
+}
+
+/// Expand a state while testing one selected operation clause independently
+/// of the relation that generates cases.
+pub(super) fn expand_state_omitting_clause(
+    system: &ModelSystem<'_>,
+    state: &ModelSimState,
+    clause: &filament_exact::NodeKey,
+) -> Result<Expansion<ModelTransition, ModelSimState, ModelFinding>, ExpansionStop> {
+    expand(system, state, None, None, None, None, None, Some(clause))
 }
 
 /// [`expand_state`] with no footprint enforcement, also returning every
@@ -330,6 +340,7 @@ pub(super) fn expand_enabled<'s>(
         post_presence,
         None,
         None,
+        None,
     )?;
     Ok((expansion, enabled))
 }
@@ -347,6 +358,7 @@ pub(super) fn expand_enabled_with_cancel<'s>(
         Some(&mut enabled),
         None,
         Some(cancel),
+        None,
         None,
     )?;
     Ok((expansion, enabled))
@@ -367,6 +379,7 @@ pub(super) fn expand_enabled_with_key_policy<'s>(
         None,
         Some(cancel),
         Some(key_policy),
+        None,
     )?;
     Ok((expansion, enabled))
 }
@@ -379,6 +392,7 @@ fn expand<'s>(
     post_presence: Option<PostPresence<'s>>,
     cancel: Option<&filament_exact::Cancel>,
     key_policy: Option<&'s dyn super::key_budget::KeyPolicy>,
+    omitted_clause: Option<&filament_exact::NodeKey>,
 ) -> Result<Expansion<ModelTransition, ModelSimState, ModelFinding>, ExpansionStop> {
     // FR-120: every expansion entry point runs the bound check first, so an
     // expansion never meets a granted field with no finite domain.
@@ -401,7 +415,9 @@ fn expand<'s>(
             continue;
         };
         for application in applications {
-            let clauses = walk.selected(row, application, |_| true);
+            let clauses = walk.selected(row, application, |identity| {
+                omitted_clause != Some(&identity)
+            });
             frames::apply(
                 &walk,
                 row,

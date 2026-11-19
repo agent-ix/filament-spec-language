@@ -17,8 +17,8 @@ use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use super::walk::{rows_of, sorted_contract_findings, stop, walk_of, Applied, Budget, Row, Walk};
-use super::{contracts, frames, Application, ModelFinding, ModelSimState, ModelSystem, BROKEN};
+use super::walk::{Applied, Budget, Row, Walk, rows_of, sorted_contract_findings, stop, walk_of};
+use super::{Application, BROKEN, ModelFinding, ModelSimState, ModelSystem, contracts, frames};
 use crate::simulation::expansion::ExpansionStop;
 
 /// The operation an attempt applies (FR-114): the type that declares it, its
@@ -103,9 +103,7 @@ impl<'a> ModelSystem<'a> {
                 || budget.charge(),
             );
         }
-        let Some(domain) =
-            super::domain::Domain::of(value_type, &references, self.types, &self.record_orders)
-        else {
+        let Some(domain) = self.value_domain(value_type, &references) else {
             return Ok(None);
         };
         let mut values = Vec::new();
@@ -810,10 +808,10 @@ mod tests {
     use ix_trace_rs::trace;
     use serde_json::json;
 
-    use super::super::walk::{rows_of, Budget};
+    use super::super::walk::{Budget, rows_of};
     use super::{Applications, OperationRef};
     use crate::simulation::expansion::ExpansionLimit;
-    use crate::simulation::sampled::world::{initial, Model, Operation, World};
+    use crate::simulation::sampled::world::{Model, Operation, World, initial};
 
     /// One cell `c` whose `v: Int[0, 3]` is 0, and `set(n: Int[0, 3])`,
     /// whose postcondition `Put` makes `v` the argument.

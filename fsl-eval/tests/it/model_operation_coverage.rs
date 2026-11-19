@@ -88,7 +88,9 @@ fn operation_coverage_preserves_unreachable_within_bound_reason() {
         &[
             (
                 "operation:reset".into(),
-                ModelOperationCoverageReason::UnreachableWithinBound,
+                ModelOperationCoverageReason::UnreachableWithinBound {
+                    bounds: vec!["max_trace_length".to_owned()],
+                },
             ),
             (
                 "operation:jam".into(),
@@ -101,8 +103,15 @@ fn operation_coverage_preserves_unreachable_within_bound_reason() {
     assert_eq!(
         result.operations[1].status,
         ModelOperationCoverageStatus::NotCovered {
-            reason: ModelOperationCoverageReason::UnreachableWithinBound,
+            reason: ModelOperationCoverageReason::UnreachableWithinBound {
+                bounds: vec!["max_trace_length".to_owned()],
+            },
         }
+    );
+    let wire = serde_json::to_value(&result).expect("coverage has a JSON result shape");
+    assert_eq!(
+        wire["operations"][1]["bounds"],
+        serde_json::json!(["max_trace_length"])
     );
     assert_eq!(
         result.operations[2].status,
@@ -134,6 +143,7 @@ fn operation_coverage_is_deterministic_and_keeps_verdict_out_of_scope() {
             "operation:jam".into(),
             ModelOperationCoverageReason::Undetermined {
                 limit: fsl_eval::simulation::model::ModelOperationCoverageLimit::States,
+                value: 20,
             },
         ),
     ];
@@ -156,6 +166,7 @@ fn operation_coverage_is_deterministic_and_keeps_verdict_out_of_scope() {
         ModelOperationCoverageStatus::NotCovered {
             reason: ModelOperationCoverageReason::Undetermined {
                 limit: fsl_eval::simulation::model::ModelOperationCoverageLimit::States,
+                value: 20,
             },
         }
     );
