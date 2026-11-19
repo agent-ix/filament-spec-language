@@ -734,15 +734,23 @@ fn elapsed_quantile_tight_search_refutes() {
 fn a_wrong_clock_cap_is_malformed() {
     let world = retx(GUARD, true, "", &every_deadlines());
     let doc = document(&settle(&world, "Deadline"));
-    let text = doc.to_string();
-    // The first `x` entry `[identity,value,"3"]` (FR-196: the cap of `x` is 3)
-    // with its cap lowered to 2.
-    let lowered = if text.contains(",\"3\"]") {
-        text.replacen(",\"3\"]", ",\"2\"]", 1)
-    } else {
-        text.replacen(",\\\"3\\\"]", ",\\\"2\\\"]", 1)
-    };
-    let changed: Value = serde_json::from_str(&lowered).expect("JSON");
+    let mut changed = doc.clone();
+    let mut lowered_caps = 0;
+    for row in changed["values"].as_array_mut().expect("values") {
+        let encoded = row["state"].as_str().expect("encoded ProductKey");
+        let bytes = URL_SAFE_NO_PAD.decode(encoded).expect("base64 ProductKey");
+        let mut key: Value = serde_json::from_slice(&bytes).expect("canonical ProductKey");
+        let clocks = key[2][1][4].as_array_mut().expect("digital clocks");
+        if let Some(clock) = clocks.iter_mut().find(|clock| clock[0][1] == "x") {
+            // FR-196: the cap of `x` is 3; lower it to 2 in the encoded key.
+            assert_eq!(clock[2], "3");
+            clock[2] = json!("2");
+            let bytes = serde_json::to_vec(&key).expect("canonical JSON bytes");
+            row["state"] = json!(URL_SAFE_NO_PAD.encode(bytes));
+            lowered_caps += 1;
+        }
+    }
+    assert!(lowered_caps > 0, "the digital ProductKeys name clock x");
     assert_ne!(changed, doc, "the document names the cap of x");
     match check(&world, "Deadline", &changed) {
         Ok(ExactProbabilityCertificateCheck::Rejected(rejection)) => {
