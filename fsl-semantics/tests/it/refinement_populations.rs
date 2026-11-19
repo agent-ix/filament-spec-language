@@ -14,7 +14,7 @@ use filament_exact::{
 use fsl_foundation::Code;
 use fsl_semantics::check::{
     ApplicationTerm, Binding, BindingValue, BodyTerm, CheckedRefinement, CheckedRow, LeafTerm,
-    MemberTerm, PopulationUse, PopulationValue, RefinementCause, SemanticGraph,
+    MemberTerm, PopulationUse, PopulationValue, RefinementCause,
 };
 use ix_trace_rs::trace;
 
@@ -258,7 +258,7 @@ fn only_over_a_population_lowers() {
     let only_body = graph
         .node(only_body.admitted().expect("the only body is resolved").clone())
         .expect("the only body node exists");
-    assert_eq!(only_body.semantic_type(), Some(result_type));
+    assert_eq!(only_body.semantic_type(), Some(result_type.clone()));
 }
 
 /// FR-139-AC-2 (TC-544 step 2): `only` over a condition that is not Boolean
