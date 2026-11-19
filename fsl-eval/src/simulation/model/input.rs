@@ -25,10 +25,10 @@ use fsl_package::{
     TerminalResolveRefusal, UnreadModelForm,
 };
 use fsl_semantics::check::footprint::{
-    derive_atom_reads, derive_attempt_footprint_fallback_with_reference_literals,
-    derive_constraint_reads, derive_footprint, derive_guard_reads, derive_node_reads,
+    FootprintRefusal, ReferenceLiterals, SymbolicFootprint, SymbolicLocation, derive_atom_reads,
+    derive_attempt_footprint_fallback_with_reference_literals, derive_constraint_reads,
+    derive_footprint, derive_guard_reads, derive_node_reads,
     derive_selected_footprint_with_reference_literals, derive_slot_reads, reference_literals_of,
-    FootprintRefusal, ReferenceLiterals, SymbolicFootprint, SymbolicLocation,
 };
 use fsl_semantics::check::{
     CheckedBody, CheckedHyperClause, CheckedNode, CheckedProbabilisticModel, CheckedProtocol,
@@ -1262,6 +1262,11 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         None
     }
 
+    /// FR-531: the admitted value type of a package protocol binder.
+    fn package_protocol_parameter_type(&self, _binder: &CheckedNodeId) -> Option<ValueType> {
+        None
+    }
+
     /// The admitted node keys of the protocol `name`.
     fn protocol_node_keys(&self, name: &str) -> Option<&CheckedProtocolNodeKeys>;
 
@@ -2154,6 +2159,10 @@ impl ModelEvaluator for BarePackage<'_> {
         self.protocol_role_model(model).ok()
     }
 
+    fn package_protocol_parameter_type(&self, binder: &CheckedNodeId) -> Option<ValueType> {
+        self.protocol_parameter_type(binder).ok()
+    }
+
     fn protocol_node_keys(&self, _name: &str) -> Option<&CheckedProtocolNodeKeys> {
         None
     }
@@ -2443,7 +2452,7 @@ fn source_predicate<'p>(
 
 #[cfg(test)]
 mod tests {
-    use super::{receiver_slots, ClauseBinder};
+    use super::{ClauseBinder, receiver_slots};
     use ix_trace_rs::trace;
 
     /// FR-940-AC-11, FR-156: a package term gives frame slots to the binders

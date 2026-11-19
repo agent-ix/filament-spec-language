@@ -54,6 +54,8 @@ pub struct PackageControl {
     pub binder: Option<fsl_package::CheckedNodeId>,
     /// The FR-531 identity of the attempt result binder.
     pub binder_key: Option<NodeKey>,
+    /// The admitted value type of the attempt result binder.
+    pub binder_type: Option<filament_exact::ValueType>,
     /// The attempt's explicit memory ordering.
     pub ordering: Option<fsl_forms::AccessOrdering>,
     /// The state clauses selected by an attempt's `contracts` member.
@@ -104,6 +106,8 @@ pub struct PackageProtocolProgram<'a> {
     pub over: fsl_package::CheckedNodeId,
     /// The FR-531 identity of the `over` parameter node.
     pub over_key: NodeKey,
+    /// The admitted value type of the `over` parameter.
+    pub over_type: filament_exact::ValueType,
     /// The source/package-independent memory selection result.
     pub memory: ResolvedMemory,
     /// Every control, keyed by the package-local protocol node identity.
@@ -120,6 +124,8 @@ pub struct PackageProtocolProgram<'a> {
     pub finish_binder: fsl_package::CheckedNodeId,
     /// The FR-531 identity of the finish result binder.
     pub finish_binder_key: NodeKey,
+    /// The admitted value type of the finish result binder.
+    pub finish_binder_type: filament_exact::ValueType,
 }
 
 /// Why a package protocol could not become an executable program.
@@ -385,6 +391,15 @@ impl<'a> PackageProtocolProgram<'a> {
                         .ok_or_else(|| PackageProgramRefusal::MissingIdentity(binder.clone()))
                 })
                 .transpose()?;
+            let binder_type = binder
+                .as_ref()
+                .map(|binder| {
+                    input
+                        .evaluator
+                        .package_protocol_parameter_type(binder)
+                        .ok_or_else(|| PackageProgramRefusal::MissingIdentity(binder.clone()))
+                })
+                .transpose()?;
             controls.insert(
                 control.id,
                 PackageControl {
@@ -405,6 +420,7 @@ impl<'a> PackageProtocolProgram<'a> {
                     role_key,
                     binder,
                     binder_key,
+                    binder_type,
                     ordering,
                     contracts,
                     contract_keys,
@@ -448,16 +464,25 @@ impl<'a> PackageProtocolProgram<'a> {
             .evaluator
             .package_node_key(&over)
             .ok_or_else(|| PackageProgramRefusal::MissingIdentity(over.clone()))?;
+        let over_type = input
+            .evaluator
+            .package_protocol_parameter_type(&over)
+            .ok_or_else(|| PackageProgramRefusal::MissingIdentity(over.clone()))?;
         let finish_binder = form.finish.binder.clone();
         let finish_binder_key = input
             .evaluator
             .package_node_key(&finish_binder)
+            .ok_or_else(|| PackageProgramRefusal::MissingIdentity(finish_binder.clone()))?;
+        let finish_binder_type = input
+            .evaluator
+            .package_protocol_parameter_type(&finish_binder)
             .ok_or_else(|| PackageProgramRefusal::MissingIdentity(finish_binder.clone()))?;
         Ok(Self {
             name: form.name.clone(),
             root,
             over,
             over_key,
+            over_type,
             memory,
             controls,
             roles,
@@ -466,6 +491,7 @@ impl<'a> PackageProtocolProgram<'a> {
             finish,
             finish_binder,
             finish_binder_key,
+            finish_binder_type,
         })
     }
 
