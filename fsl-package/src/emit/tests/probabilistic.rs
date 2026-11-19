@@ -324,11 +324,10 @@ fn a_second_same_named_probabilistic_claim_is_ambiguous() {
         .iter()
         .filter_map(|row| row["name"].as_str())
         .collect();
-    assert_eq!(names.len(), 2, "{names:?}");
-    assert!(
-        names.contains(&"Stable") && names.contains(&"Other"),
-        "{names:?}"
-    );
+    for declared in ["Stable", "Other"] {
+        let rows = names.iter().filter(|name| **name == declared).count();
+        assert_eq!(rows, 1, "one claim_names row for {declared}: {names:?}");
+    }
 }
 
 /// The emission of `package` read back by the strict reader with `document`
