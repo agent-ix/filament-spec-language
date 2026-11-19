@@ -164,6 +164,27 @@ mod refinement;
 mod refusal;
 mod region;
 mod reward_validation;
+#[cfg(test)]
+pub(crate) mod test_support {
+    use filament_exact::{Integer, Meter, Value};
+
+    use super::{CheckedGraph, Reward, RewardEvaluationFailure, RewardEvaluator};
+
+    /// Explicit test fixture for checker tests that assert no reward value.
+    pub(crate) struct ZeroRewardEvaluator;
+
+    impl RewardEvaluator for ZeroRewardEvaluator {
+        fn evaluate(
+            &self,
+            _graph: &CheckedGraph,
+            _reward: &Reward,
+            _arguments: Vec<Value>,
+            _meter: &mut Meter,
+        ) -> Result<Value, RewardEvaluationFailure> {
+            Ok(Value::Integer(Integer::from(0_i64)))
+        }
+    }
+}
 mod settings;
 mod source_model;
 pub(crate) mod state_clause;
