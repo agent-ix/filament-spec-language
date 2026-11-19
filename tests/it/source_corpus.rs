@@ -214,6 +214,13 @@ fn execute_request(
             match ran {
                 Ok(result) => {
                     let value = result.value.as_value().clone();
+                    if value.get("format").and_then(Value::as_str) == Some("native-run-result/2") {
+                        let bytes =
+                            serde_json::to_vec(&value).map_err(|error| error.to_string())?;
+                        fsl_replay::spine::read_native_run_result(&bytes).map_err(|error| {
+                            format!("{}: invalid native result: {error}", request.display())
+                        })?;
+                    }
                     let outcome = value.get("outcome");
                     let (category, last_stage) = match &result.outcome {
                         Some(document) => lifecycle(document)?,
@@ -227,14 +234,21 @@ fn execute_request(
                         code: value
                             .get("code")
                             .or_else(|| outcome.and_then(|outcome| outcome.get("code")))
+                            .or_else(|| value.pointer("/disposition/refusal/code"))
+                            .or_else(|| value.pointer("/disposition/outcome/code"))
                             .and_then(string_member)
                             .map(str::to_owned),
                         cause: value
                             .get("cause")
                             .or_else(|| outcome.and_then(|outcome| outcome.get("cause")))
+                            .or_else(|| value.pointer("/disposition/refusal/cause"))
+                            .or_else(|| value.pointer("/disposition/outcome/cause"))
                             .and_then(string_member)
                             .map(str::to_owned),
-                        result: outcome.and_then(|outcome| outcome.get("value")).cloned(),
+                        result: outcome
+                            .and_then(|outcome| outcome.get("value"))
+                            .or_else(|| value.pointer("/disposition/outcome/value"))
+                            .cloned(),
                     })
                 }
                 Err(error) => {
@@ -990,9 +1004,12 @@ fn corpus_collections() {
     println!("{report}");
 }
 
+#[trace("FR-106", "FR-107", "FR-312-AC-1")]
 #[test]
 fn corpus_operations() {
-    run_area("operations");
+    let directory = corpus_root().join("operations");
+    let report = run_directory(&directory).unwrap_or_else(|error| panic!("{error}"));
+    println!("{report}");
 }
 
 #[test]

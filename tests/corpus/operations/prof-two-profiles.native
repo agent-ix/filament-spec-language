@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile valueProfile = "filament.value.complete/v1";
+model Config = "example/config-version";
+function keep using valueProfile(n: Integer): Integer pure { n }
+invariant Nonnegative using v on Config::ConfigVersion at current { self.versionNumber >= 0 }
