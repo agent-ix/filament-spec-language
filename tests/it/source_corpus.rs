@@ -1045,11 +1045,13 @@ fn stage_parameter_models(directory: &Path, fixtures: &Path) -> Result<(), Strin
             let populations = populations
                 .as_array_mut()
                 .ok_or_else(|| format!("{base}: populations must be an array"))?;
-            populations.push(
+            populations.extend(
                 extension
-                    .get("population")
-                    .ok_or_else(|| "parameter fixture must declare a population".to_owned())?
-                    .clone(),
+                    .get("populations")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| "parameter fixture must declare populations".to_owned())?
+                    .iter()
+                    .cloned(),
             );
             if let Some(construct) = extension.get("construct") {
                 model
@@ -1058,7 +1060,12 @@ fn stage_parameter_models(directory: &Path, fixtures: &Path) -> Result<(), Strin
                     .ok_or_else(|| format!("{base}: constructs must be an array"))?
                     .push(construct.clone());
             }
-            if let Some(operation) = extension.get("operation") {
+            for operation in extension
+                .get("operations")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 let owner = operation
                     .get("owner")
                     .and_then(Value::as_str)

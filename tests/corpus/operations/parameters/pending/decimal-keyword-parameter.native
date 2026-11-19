@@ -1,4 +1,4 @@
 language "ix:native" edition "1-draft";
 profile v = "filament.model.complete/v1";
 model M = "test/decimal";
-pre Rule using v on M::Meter::adjust { by and true }
+pre P using v on M::Meter::adjust { by >= 0.00 }
