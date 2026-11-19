@@ -6,8 +6,8 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::declaration::CompositeShape;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    BodyTerm, ClockOp, CollectionShape, LeafTerm, LiteralValue, MemberTerm, NodeRef, NodeTag,
-    PlaceStep, SlotRef,
+    BindingValue, BodyTerm, ClockOp, CollectionShape, LeafTerm, LiteralValue, MemberTerm, NodeRef,
+    NodeTag, PlaceStep, SlotRef,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -2259,9 +2259,17 @@ fn a_population_clock_presence_read_uses_the_visited_reference() {
         panic!("the owner parameter carries its binder name");
     };
     let Some(MemberTerm::Binding(name)) = owner_body.members.first() else {
-        panic!("the owner parameter begins with its name binding");
+        panic!("the owner parameter begins with a name binding");
     };
-    assert_eq!(name.name, "c");
+    assert_eq!(name.name, "name");
+    let BindingValue::Leaf(LeafTerm::Literal {
+        value: LiteralValue::Text(owner_name),
+        ..
+    }) = &name.value
+    else {
+        panic!("the owner parameter's name is text");
+    };
+    assert_eq!(owner_name, "c");
 }
 
 /// The STD-493 ruling on FR-230 "Presence bit" (TC-685): `absent` is an
