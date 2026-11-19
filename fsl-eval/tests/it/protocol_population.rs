@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
-use filament_exact::{Meter, ScalarLimits};
+use filament_exact::ScalarLimits;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::model_subject::{ModelInstance, ModelSubject, ProtocolSubject, RoleBinding};
 use fsl_eval::simulation::model::{
@@ -16,9 +16,7 @@ use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
-use fsl_semantics::model::observation::{
-    DocumentProvision, DocumentRef, ObservationLimits, document_reference,
-};
+use fsl_semantics::model::observation::{DocumentProvision, ObservationLimits, document_reference};
 use ix_trace_rs::trace;
 use serde_json::{Value as Json, json};
 
@@ -43,14 +41,14 @@ language "ix:native" edition "1-draft";
 profile P = "filament.protocol.finite-global/v1";
 model M = "test/orders";
 protocol Census using P over (view: M::Node) on origin {
-  capture count: Integer = size(allInstances<M::Node>(M::otherNodes));
+  capture populationCount: Integer = size(allInstances<M::Node>(M::otherNodes));
   role Seller on M::Node;
   role Buyer on M::Node;
   channel Notes from Seller to Buyer carries M::Flag
       ordering unordered delivery at-least-once capacity 1 overflow block;
   run sequence Main {
     send Sent via Notes as (sent: M::Flag) {
-      size(allInstances<M::Node>(M::otherNodes)) >= 1 and count = 2
+      size(allInstances<M::Node>(M::otherNodes)) >= 1 and populationCount = 2
     };
   }
   finish Closed as (closed: M::Flag) { true };
@@ -257,11 +255,15 @@ fn all_instances_populates_a_protocol_capture_and_send_constraint() {
         &["Seller", "Buyer"],
         &["other-1", "other-2"],
     );
-    assert_eq!(captures["count"]["value"], json!(2));
+    assert_eq!(
+        captures["entries"][0]["value"]["value"],
+        json!("2"),
+        "{captures}"
+    );
     assert!(has_send, "the populated send constraint is enabled");
 
     let (captures, has_send) = run_protocol(SOURCE, "Census", &["Seller", "Buyer"], &[]);
-    assert_eq!(captures["count"]["value"], json!(0));
+    assert_eq!(captures["entries"][0]["value"]["value"], json!("0"));
     assert!(!has_send, "the empty-population send is disabled");
 }
 
@@ -270,11 +272,24 @@ fn all_instances_populates_a_protocol_capture_and_send_constraint() {
 #[test]
 fn lookup_in_a_protocol_capture_matches_present_and_empty_absent_results() {
     let (captures, _) = run_protocol(LOOKUP_SOURCE, "Lookup", &["Observer"], &[]);
-    assert_eq!(captures["found"]["type"], json!("option"));
-    assert_eq!(captures["found"]["value"]["type"], json!("reference"));
-    assert_eq!(captures["found"]["value"]["object"], json!("node-1"));
-    assert_eq!(captures["missing"]["type"], json!("option"));
-    assert!(captures["missing"]["value"].is_null());
+    assert_eq!(captures["entries"][0]["key"], json!("found"));
+    assert_eq!(
+        captures["entries"][0]["value"]["type"],
+        json!("option"),
+        "{captures}"
+    );
+    assert_eq!(
+        captures["entries"][0]["value"]["value"]["type"],
+        json!("reference")
+    );
+    assert_eq!(
+        captures["entries"][0]["value"]["value"]["identity"],
+        json!("node-1"),
+        "{captures}"
+    );
+    assert_eq!(captures["entries"][1]["key"], json!("missing"));
+    assert_eq!(captures["entries"][1]["value"]["type"], json!("option"));
+    assert!(captures["entries"][1]["value"]["value"].is_null());
 }
 
 /// Provenance: QSL-2216.

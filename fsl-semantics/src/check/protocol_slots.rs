@@ -42,15 +42,15 @@ use fsl_forms::{
     ProtocolDeclarationForm, ProtocolMemberForm, ProtocolNodeKind, ReplicatedRoleForm, RoleForm,
     RoleLifetime, TerminalForm,
 };
-use fsl_foundation::{diagnostic::Locus, Span};
+use fsl_foundation::{Span, diagnostic::Locus};
 
 use super::check::{NamedScope, Scope};
 use super::ir::CheckedBody;
-use super::lowering::{protocol_location, ProtocolSite};
+use super::lowering::{ProtocolSite, protocol_location};
 use super::protocol_clause::{
-    record_binder, written_owner, BoundAttempt, CheckedProtocol, ProtocolNodeId,
+    BoundAttempt, CheckedProtocol, ProtocolNodeId, record_binder, written_owner,
 };
-use super::protocol_obligation::{model_state_reads, span_of, type_named_body, wraps, Goal};
+use super::protocol_obligation::{Goal, model_state_reads, span_of, type_named_body, wraps};
 use super::refusal::{
     ArmFault, CheckCause, CheckRefusal, ObservationReason, ProtocolAnchorCause, RelatedEnd,
     SlotKind,
@@ -417,7 +417,10 @@ impl Checker<'_, '_> {
                 .unwrap_or_default(),
         };
         // A role's `until` is typed over `C0` and the role's binder alone,
-        // so every name it binds is readable there.
+        // so every name it binds is readable there. A send constraint may
+        // also name the model's populations; barred slots need the same
+        // resolution so `model_state_reads` can report their required S3
+        // refusal at the operation.
         let role_bound: Option<Vec<(String, ValueType)>> = match slot.owner {
             SlotOwner::Role(role) => Some(
                 self.bound
@@ -515,7 +518,17 @@ impl Checker<'_, '_> {
         };
         // A role's `until` reads model state as a state clause does, so its
         // population positions name the unit's populations (FR-208, FR-391).
-        let named = role_bound.is_some().then(|| {
+        let names_model_populations = slot.bars_model_state
+            || matches!(
+                slot.owner,
+                SlotOwner::Node(node)
+                    if self
+                        .protocol
+                        .declarations
+                        .get(node)
+                        .is_some_and(|declaration| declaration.kind == ProtocolNodeKind::Send)
+            );
+        let named = (role_bound.is_some() || names_model_populations).then(|| {
             NamedScope::of(
                 self.declarations.models,
                 self.declarations.scope,
