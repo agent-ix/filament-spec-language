@@ -253,7 +253,7 @@ pub(crate) fn descriptor_of(descriptor: &Value) -> Result<fsl_route::BackendDesc
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter_map(|name| name.as_str().map(str::to_owned)),
+                .filter_map(|name| name.as_str().map(|name| (name.to_owned(), String::new()))),
         )
     })
     .map_err(|refusal| format!("{refusal:?}"))
@@ -1111,9 +1111,9 @@ fn a_process_failed_entry_settles_failed_by_fr_290() {
 /// trace bound written as `"8"` refuses `invalid_result`/`wrong-value-kind`.
 #[test]
 #[trace("TC-3035", "FR-1021-AC-3")]
-#[ignore = "QSL-2534: the plan's validation items over the reference provider land with the reference solver"]
+#[ignore = "QSL-2531: the Rational wire rule on the plan validation path"]
 fn a_plan_validation_item_carries_rational_objects() {
-    todo!("QSL-2534: FR-1021-AC-3");
+    todo!("QSL-2531: FR-1021-AC-3");
 }
 
 /// `Shuttle` of FR-750-AC-12, its `Moving -> Stopped` reset `reset`, with

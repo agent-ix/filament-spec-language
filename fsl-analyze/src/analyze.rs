@@ -459,7 +459,11 @@ fn hybrid_reference_descriptor() -> Result<BackendDescriptor, RegistrationRefusa
         }),
     )
     .map(|descriptor| {
-        descriptor.with_options(OPTION_DEFAULTS.iter().map(|(name, _)| (*name).to_owned()))
+        descriptor.with_options(
+            OPTION_DEFAULTS
+                .iter()
+                .map(|(name, default)| ((*name).to_owned(), (*default).to_owned())),
+        )
     })
 }
 

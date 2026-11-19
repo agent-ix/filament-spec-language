@@ -93,7 +93,19 @@ impl Walk<'_, '_> {
                     }),
                 })
             }
-            (HybridTerm::Conditional(..), _) => here("conditional"),
+            // A Boolean-valued `if` is a Boolean combination; a numeric one
+            // is piecewise, so not a polynomial.
+            (HybridTerm::Conditional(c, a, b), Position::Boolean) => {
+                let mut found = self.term(c, &child(0), Position::Boolean)?;
+                if found.is_none() {
+                    found = self.term(a, &child(1), Position::Boolean)?;
+                }
+                if found.is_none() {
+                    found = self.term(b, &child(2), Position::Boolean)?;
+                }
+                found
+            }
+            (HybridTerm::Conditional(..), Position::Numeric) => here("conditional"),
             (HybridTerm::Capture(_) | HybridTerm::ActivationVariable(_), _) => here("activation"),
             _ => here("mixed-kinds"),
         })
@@ -101,7 +113,10 @@ impl Walk<'_, '_> {
 }
 
 /// The first node of an expanded expression outside the class, with its
-/// locus when the expansion kept one.
+/// locus when the expansion kept one. A call's argument and result ranges
+/// (`Exp::Ranged`) are definedness conditions on a value that is the wrapped
+/// term's, as in exact replay's polynomial flow (FR-450 "Exact replay"), so
+/// they do not leave the class.
 fn polynomial_gap(exp: &Exp, position: Position) -> Option<(&'static str, Option<TermLocus>)> {
     match (exp, position) {
         (Exp::Number(_) | Exp::Variable(_) | Exp::Boolean(_), _) => None,
@@ -119,16 +134,22 @@ fn polynomial_gap(exp: &Exp, position: Position) -> Option<(&'static str, Option
         (Exp::Compare(_, a, b), _) => {
             polynomial_gap(a, Position::Numeric).or_else(|| polynomial_gap(b, Position::Numeric))
         }
-        (Exp::Conditional(..), _) => Some(("conditional", None)),
+        (Exp::Conditional(c, a, b), Position::Boolean) => polynomial_gap(c, Position::Boolean)
+            .or_else(|| polynomial_gap(a, Position::Boolean))
+            .or_else(|| polynomial_gap(b, Position::Boolean)),
+        (Exp::Conditional(..), Position::Numeric) => Some(("conditional", None)),
         (Exp::Recursive(call), _) => Some(("recursive-call", Some(call.locus.clone()))),
         (Exp::Activation(_) | Exp::Capture(_) | Exp::Parameter(_), _) => Some(("activation", None)),
     }
 }
 
 /// The first construct of `model` outside the class of FR-1019 "Class", in
-/// source order: each mode in declared order (its invariant, the rates of its
-/// variables, then each transition's guard and reset values), then the
-/// initial entries. `Ok(None)` when every construct is inside it.
+/// source order: the initial entries, then each mode in declared order (its
+/// invariant, its flow equations, then each transition's guard and reset
+/// values), each expression by a pre-order walk. A checked model stores a
+/// mode's rates by variable, so its equations are taken in variable order,
+/// which is the written order whenever the modes write them in the order the
+/// variables first appear. `Ok(None)` when every construct is inside it.
 ///
 /// # Errors
 ///
@@ -153,6 +174,17 @@ pub fn polynomial_class_gap(
             variable: variable.map(VariableIndex::new),
         })
     };
+    for (entry, initial) in model.initial.iter().enumerate() {
+        let gap = walk.term(&initial.condition, &[], Position::Boolean)?;
+        if let Some(found) = found(
+            gap,
+            ExpressionSite::Initial { entry },
+            initial.mode.get(),
+            None,
+        ) {
+            return Ok(Some(found));
+        }
+    }
     for (mode_index, mode) in model.modes.iter().enumerate() {
         let gap = walk.term(&mode.invariant, &[], Position::Boolean)?;
         if let Some(found) = found(
@@ -205,17 +237,6 @@ pub fn polynomial_class_gap(
                     return Ok(Some(found));
                 }
             }
-        }
-    }
-    for (entry, initial) in model.initial.iter().enumerate() {
-        let gap = walk.term(&initial.condition, &[], Position::Boolean)?;
-        if let Some(found) = found(
-            gap,
-            ExpressionSite::Initial { entry },
-            initial.mode.get(),
-            None,
-        ) {
-            return Ok(Some(found));
         }
     }
     Ok(None)

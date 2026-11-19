@@ -43,24 +43,11 @@ fn one(claim: &str) -> Value {
     json!([{"claim": claim}])
 }
 
-/// The descriptor of `backend` in the outcome's `registry` member.
-fn descriptor<'v>(document: &'v Value, backend: &str) -> Option<&'v Value> {
-    fn search<'v>(value: &'v Value, backend: &str) -> Option<&'v Value> {
-        match value {
-            Value::Object(map) if map.get("backend") == Some(&json!(backend)) => Some(value),
-            Value::Object(map) => map.values().find_map(|inner| search(inner, backend)),
-            Value::Array(items) => items.iter().find_map(|inner| search(inner, backend)),
-            _ => None,
-        }
-    }
-    search(&document["registry"], backend)
-}
-
 /// FR-1019-AC-1: `SlowEnough` is proved by a certified outward-rounded
 /// flowpipe covering horizon 10 with one jump.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-1")]
-#[ignore = "QSL-2534: the first-party reference hybrid provider is not implemented yet"]
+#[ignore = "QSL-2534 remaining: the flowpipe solver is not implemented, and `certified` needs the FR-751 checker (QSL-2531)"]
 fn the_reference_provider_proves_slow_enough() {
     let item = reference("ref-1", &braking_pair(), one("SlowEnough"));
     let record = &item["record"];
@@ -164,6 +151,49 @@ fn the_class_admits_cyclic_flows_and_refuses_a_guard_division() {
     );
 }
 
+/// FR-1019 "Class": a Boolean-valued `if` in a guard is a Boolean
+/// combination and inside the class; a numeric-valued `if` in a flow is
+/// piecewise and outside it, located at the `if`.
+#[test]
+#[trace("TC-2869", "FR-1019-AC-3")]
+fn a_boolean_if_is_in_the_class_and_a_numeric_if_is_not() {
+    let boolean =
+        braking_pair().replace("when { v = 0 }", "when { if a > 1 then v = 0 else v <= 0 }");
+    let inside = reference("ref-3d", &boolean, one("SlowEnough"));
+    assert!(!inside.to_string().contains("expression-form"), "{inside}");
+    let numeric = braking_pair().replace(
+        "flow { v' = -a; a' = 0; }",
+        "flow { v' = if v > 1 then -a else 0; a' = 0; }",
+    );
+    let item = reference("ref-3e", &numeric, one("SlowEnough"));
+    assert_eq!(item["record"]["result"], "unsupported", "{item}");
+    let text = item.to_string();
+    for member in ["expression-form", "Moving", "\"v\"", "conditional"] {
+        assert!(text.contains(member), "{member}: {item}");
+    }
+}
+
+/// FR-1019 "Class": the first construct is found in source order, the
+/// initial entries before the modes.
+#[test]
+#[trace("TC-2869", "FR-1019-AC-3")]
+fn the_initial_entries_are_read_before_the_modes() {
+    let unit = braking_pair().replace(
+        "hybrid Braking using p {\n",
+        "hybrid Braking using p {\n  initial { mode Moving when { v = 40 / 2 and a = 1 }; }\n",
+    );
+    let unit = unit.replace(
+        "flow { v' = -a; a' = 0; }",
+        "flow { v' = -a / (1 + v); a' = 0; }",
+    );
+    let item = reference("ref-3f", &unit, one("SlowEnough"));
+    assert_eq!(item["record"]["result"], "unsupported", "{item}");
+    assert!(
+        !item.to_string().contains("\"variable\""),
+        "an initial entry names no variable: {item}"
+    );
+}
+
 /// FR-1019-AC-4: `Engines::fsl()` does not hold the reference provider, and
 /// a named fixture hybrid provider beside it routes to the fixture.
 #[test]
@@ -256,9 +286,10 @@ fn the_reference_provider_negotiates_by_dynamics() {
     assert!(neither["record"].get("result").is_none(), "{neither}");
 }
 
-/// FR-1019-AC-6: `Engines::fsl_with_reference_hybrid()` holds every engine of
-/// `Engines::fsl()` and the reference provider, whose descriptor publishes
-/// `dynamics`, `bounds` and the three option names with their defaults.
+/// FR-1019-AC-6, descriptor clause: `Engines::fsl_with_reference_hybrid()`
+/// holds every engine of `Engines::fsl()` and the reference provider, whose
+/// descriptor publishes `dynamics` `["hybrid"]`, `bounds` and `options` with
+/// their defaults. The step-budget clause is the ignored test below.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-6")]
 fn the_reference_provider_publishes_its_descriptor() {
@@ -280,23 +311,21 @@ fn the_reference_provider_publishes_its_descriptor() {
         .find(|descriptor| descriptor.candidate().id().as_str() == REFERENCE)
         .expect("the reference provider is registered");
     assert_eq!(
-        reference.dynamics().map(|kinds| kinds.len()),
-        Some(1),
-        "hybrid only"
+        reference
+            .dynamics()
+            .map(|kinds| kinds.iter().map(|kind| kind.to_wire()).collect::<Vec<_>>()),
+        Some(vec!["hybrid"])
     );
     let bounds = reference.solver_bounds().expect("published bounds");
     assert_eq!(bounds.max_solver_steps, Some(1_000_000));
     assert_eq!(bounds.max_solver_time, Some(60));
+    let defaults: Vec<(&str, &str)> = reference
+        .option_defaults()
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect();
     assert_eq!(
-        reference
-            .options()
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-        ["precision_bits", "refine_depth", "step"]
-    );
-    assert_eq!(
-        fsl_hybrid_reference::OPTION_DEFAULTS,
+        defaults,
         [
             ("precision_bits", "64"),
             ("refine_depth", "32"),
@@ -347,6 +376,7 @@ fn coarse_options_still_prove_and_change_the_request() {
 /// `invalid-request` naming it, before any solver step.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-7")]
+#[trace("FSpec-TC-1891", "FSpec-FR-779-AC-2")]
 fn an_out_of_domain_or_unknown_option_settles_invalid_request() {
     // A published option with a value outside its domain: the provider's
     // `check_options` refuses it before any solver step.
@@ -437,7 +467,7 @@ fn the_flowpipe_stops_at_the_guard_and_jumps_once() {
 /// enclosure of the two modes' hulls.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-9")]
-#[ignore = "QSL-2534: the reference provider's inductive enclosure is not implemented yet"]
+#[ignore = "QSL-2534 remaining: the inductive enclosure is not implemented, and `certified` needs the FR-751 checker (QSL-2531)"]
 fn a_claim_with_no_horizon_is_proved_inductively() {
     let unit = braking(&claim("Bounded", "always holds(h.v < 30)"));
     let item = reference("ref-9", &unit, one("Bounded"));
@@ -487,7 +517,7 @@ fn a_violation_in_a_final_dwell_is_cut_by_end() {
 /// `validated-witness` the core accepts.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-11")]
-#[ignore = "QSL-2534: the reference provider's validated witnesses are not implemented yet"]
+#[ignore = "QSL-2534 remaining: the validated witness is not produced yet, and its acceptance needs the FR-751 checker (QSL-2531)"]
 fn a_cyclic_polynomial_flow_refutes_through_a_validated_witness() {
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
          profile p = \"filament.temporal.infinite-trace/v1\";\n\

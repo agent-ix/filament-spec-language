@@ -1212,6 +1212,7 @@ mod tests {
             | Refusal::Failed(code) => Some(code.to_string()),
             Refusal::RequiresBound
             | Refusal::NotStatistical
+            | Refusal::InvalidOptionValue { .. }
             | Refusal::NotEmitted
             | Refusal::UnsupportedConstruct(_)
             | Refusal::Incomplete(_) => None,
