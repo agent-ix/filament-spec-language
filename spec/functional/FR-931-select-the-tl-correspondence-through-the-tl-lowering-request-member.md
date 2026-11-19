@@ -362,10 +362,14 @@ numericEqual(l, g))`, with `N(x)` for `numericEqual(x, x)`, `l` and `g` each a
 local read or a literal, and the connectives nested as FR-397 nests them.
 
 - **No checker `let`.** `C(l, g)` prints `T(l) < T(g)` and `C=(l, g)` prints
-  `T(l) <= T(g)`. This holds whoever wrote the expression: an author who
-  spells the same composition with `filament::value::ieee::numericEqual` and
-  `filament::value::ieee::totalOrder` over locals or literals has written
-  the same checked tree, and it prints as the comparison.
+  `T(l) <= T(g)`. This holds whoever wrote the expression. An author who
+  spells the composition with `filament::value::ieee::numericEqual` and
+  `filament::value::ieee::totalOrder` over locals or literals writes a
+  different in-process term: its connectives are source connectives, it
+  carries no ordering-part mark, and under FR-397 each intrinsic call
+  charges one `compare_ieee`. It still prints as the comparison, because it
+  computes the same Boolean value, and the atom text labels that value, not
+  the charges spent computing it.
 - **One checker `let`.** `let #ieee_operand = e in C(l, g)` (or `C=`), where
   exactly one of `l` and `g` reads that binder, prints with `T(e)` in place
   of that read, the lesser operand on the left: `T(l) < T(g)` or
