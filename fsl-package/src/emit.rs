@@ -8603,8 +8603,16 @@ fn claim_name_rows(
             }
         }
     }
+    // The reader orders rows by the graph's own node order, which resolves
+    // operand IDs and so need not agree with the plain `CheckedNodeId` order.
+    let position: BTreeMap<&CheckedNodeId, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(at, node)| (&node.node_id, at))
+        .collect();
     rows.sort_by(|left, right| {
-        (&left.declaration, &left.occurrence).cmp(&(&right.declaration, &right.occurrence))
+        (position.get(&left.declaration), &left.occurrence)
+            .cmp(&(position.get(&right.declaration), &right.occurrence))
     });
     rows.dedup_by(|later, earlier| {
         later.declaration == earlier.declaration && later.occurrence == earlier.occurrence
