@@ -654,7 +654,11 @@ pub(crate) fn refining_from(
     .with_unwritten_refinements();
     let regions = declarations.regions();
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .map_err(|refusals| {
             refusals
                 .into_iter()

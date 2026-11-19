@@ -70,7 +70,11 @@ fn world() -> World {
         Vec::new(),
     )
     .expect("the unit assembles")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .expect("the unit checks");
     World {
         provision: SourceProvision::single(graph.source(), UNIT.as_bytes()),
