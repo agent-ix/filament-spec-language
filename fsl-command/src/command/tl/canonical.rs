@@ -10,7 +10,7 @@ use filament_checked::node::{
 };
 use filament_exact::{NodeKey, Value, ValueType};
 use filament_semantic_value::declaration::EqualityOperator;
-use fsl_package::ReaderProtocolProjection;
+use fsl_package::{BarePackage, ReaderProtocolProjection};
 use fsl_semantics::check::{CheckedNode, NodeId};
 
 struct ExpressionNode {
@@ -296,16 +296,66 @@ pub(super) fn source_labels(
         binders.push(trigger.to_owned());
     }
     binders.extend(clause.captures().map(|(name, _)| name.to_owned()));
-    let declarations = BTreeMap::new();
     valuation
         .checked_conditions
         .iter()
         .map(|(atom, body)| {
             CheckedExpression::from_source(body.root())
-                .and_then(|expression| expression.render(&binders, &declarations))
+                .and_then(|expression| {
+                    expression.render(&binders, &valuation.canonical_declarations)
+                })
                 .map(|label| (*atom, label))
         })
         .collect()
+}
+
+/// Resolve package enum references only through identity rows joined by the
+/// admitted package reader.
+pub(super) fn package_declarations(
+    package: &BarePackage<'_>,
+) -> Result<BTreeMap<NodeKey, String>, String> {
+    let identities = package
+        .identities()
+        .ok_or_else(|| "checked package has joined selected identity rows".to_owned())?;
+    let mut declarations = BTreeMap::new();
+    for row in identities.source_enum_rows() {
+        declarations.insert(
+            row.declaration.node_key.clone(),
+            format!(
+                "ix://{}/{}",
+                row.declaration.source_identity,
+                row.declaration
+                    .qualified_declaration
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .collect::<Vec<_>>()
+                    .join("/")
+            ),
+        );
+    }
+    for row in identities.source_record_rows() {
+        declarations.insert(
+            row.record_key.clone(),
+            format!(
+                "ix://{}/{}",
+                row.source_identity,
+                row.qualified_declaration
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .collect::<Vec<_>>()
+                    .join("/")
+            ),
+        );
+    }
+    for row in identities.declaration_rows() {
+        if let filament_contract_model::SelectedExactIdentity::Record(key) = &row.exact_identity {
+            declarations.insert(
+                key.clone(),
+                format!("ix://{}/{}", row.selected_document, row.original_identity),
+            );
+        }
+    }
+    Ok(declarations)
 }
 
 fn checked_children(node: CheckedNode<'_>) -> Vec<CheckedNode<'_>> {

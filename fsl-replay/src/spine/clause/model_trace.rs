@@ -386,7 +386,7 @@ pub(super) fn run_behaviours(
         run.accounting,
     ) {
         Ok(behaviours) => ClauseDisposition::TemporalValuation(Box::new(
-            super::TemporalValuation::from_node(node, None, Some(behaviours)),
+            super::TemporalValuation::from_node(node, graph, None, Some(behaviours)),
         )),
         Err(refusal) => replay_refusal(refusal),
     }

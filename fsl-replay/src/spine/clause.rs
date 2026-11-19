@@ -11,21 +11,21 @@
 //! Reuses FR-100's outcome mapping ([`super::call::convert_outcome`]) by
 //! reference, rather than restating it.
 
-use filament_checked::node::{Connective, NodeKind};
+use filament_checked::node::{CheckedLiteral, Connective, NodeKind};
 use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, Identifier, Meter, ScalarLimits, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
-use fsl_foundation::SourceIdentity;
 use fsl_foundation::source::Source;
 use fsl_foundation::source_map::NativeLanguage;
-use fsl_semantics::check::{CheckedGraph, CheckedStateClause};
+use fsl_foundation::SourceIdentity;
+use fsl_semantics::check::{CheckedGraph, CheckedNode, CheckedStateClause};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::{
+    admit_current_snapshot, admit_frame_invocation, admit_observations, population_universe_for,
     AdmissionFailure, AdmissionRecord, AdmittedInvocation, AdmittedObservations, ClauseFacts,
     ClauseSelection, ClauseSelectionInput, DocumentRef, FrameFacts, FrameWitness,
-    ObservationLimits, OperationFacts, Provisions, admit_current_snapshot, admit_frame_invocation,
-    admit_observations, population_universe_for,
+    ObservationLimits, OperationFacts, Provisions,
 };
 
 mod clause_state;
@@ -39,19 +39,19 @@ mod temporal;
 mod trace_refusal;
 mod trace_subject;
 pub use clause_state::{
-    AdmittedPosition, AdmittedValue, Advance, CLAUSE_STATE_FORMAT, ClauseLimits, ClauseMark,
-    ClauseOpen, ClauseRefusal, ClauseState, ClauseTraceKind, assertion_json, assertion_of,
-    incomplete_json, incomplete_of, pending_report,
+    assertion_json, assertion_of, incomplete_json, incomplete_of, pending_report, AdmittedPosition,
+    AdmittedValue, Advance, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal, ClauseState,
+    ClauseTraceKind, CLAUSE_STATE_FORMAT,
 };
 pub(crate) use correction::run_correction;
 pub use correction::{
-    CorrectionRecord, CorrectionRefusal, EVIDENCE_LEDGER_FORMAT, EvidenceLedgerFile,
-    EvidenceLedgerReadError, RunRelation, read_evidence_ledger, settle_correction,
-    settle_run_correction,
+    read_evidence_ledger, settle_correction, settle_run_correction, CorrectionRecord,
+    CorrectionRefusal, EvidenceLedgerFile, EvidenceLedgerReadError, RunRelation,
+    EVIDENCE_LEDGER_FORMAT,
 };
-pub use ledger_wire::{LedgerReadError, read_ledger, write_ledger};
+pub use ledger_wire::{read_ledger, write_ledger, LedgerReadError};
 pub use package_authentication::{
-    AuthenticationFailure, PackageAuthentication, PackagesStage, authenticate_emission,
+    authenticate_emission, AuthenticationFailure, PackageAuthentication, PackagesStage,
 };
 pub use progress::{
     ContradictedDimension, LedgerBinding, ObservedPosition, ProgressAssertion, ProgressClosure,
@@ -60,24 +60,24 @@ pub use progress::{
 };
 use temporal::TemporalRun;
 pub use temporal::{
-    AdmittedLate, DEFAULT_MODEL_MAX_CANDIDATES, FiniteWindowAssessment, FiniteWindowPremises,
-    FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs, OverObject,
-    PackageTemporalRequest, ProgressRefusal, TemporalAuthentication, TimestampedCover,
-    TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey, TimestampedWindow,
-    TraceBinding, TraceInput, admit_progress, authenticate_package_trace, clause_trace_binding,
-    name_clause_atom, run_package_temporal, run_package_temporal_bounded, sample_position,
+    admit_progress, authenticate_package_trace, clause_trace_binding, name_clause_atom,
+    run_package_temporal, run_package_temporal_bounded, sample_position, AdmittedLate,
+    FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport,
+    LateEntry, LateInputs, OverObject, PackageTemporalRequest, ProgressRefusal,
+    TemporalAuthentication, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
+    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, DEFAULT_MODEL_MAX_CANDIDATES,
 };
-pub(crate) use temporal::{SAMPLE_AUTHORITY, trace_refusal, verdict};
-pub use trace_refusal::{REASONS as TRACE_REFUSAL_REASONS, TraceRefusal};
+pub(crate) use temporal::{trace_refusal, verdict, SAMPLE_AUTHORITY};
+pub use trace_refusal::{TraceRefusal, REASONS as TRACE_REFUSAL_REASONS};
 pub use trace_subject::{
-    PackageTraceSubjectRequest, TraceSubjectClauseRequest, run_package_trace_subject,
-    run_trace_subject_clause,
+    run_package_trace_subject, run_trace_subject_clause, PackageTraceSubjectRequest,
+    TraceSubjectClauseRequest,
 };
 
-pub use super::call::{CallOutcome, CallValue, RunRefusal};
 use super::call::{
-    CallSources, convert_call_failure, convert_outcome, run_compiled as run_call_compiled, select,
+    convert_call_failure, convert_outcome, run_compiled as run_call_compiled, select, CallSources,
 };
+pub use super::call::{CallOutcome, CallValue, RunRefusal};
 use super::lifecycle as front_end;
 use super::{CompileRefusal, DependencyInput, RequestClocks, SpineLimits};
 use crate::proof_result::SettlementBasis;
@@ -489,6 +489,9 @@ pub struct TemporalValuation {
         fsl_semantics::check::FormulaNodeId,
         fsl_semantics::check::CheckedBody,
     )>,
+    /// Alias-free declaration spellings referenced by the checked conditions.
+    /// Structural package keys never provide surface labels by themselves.
+    pub canonical_declarations: BTreeMap<filament_exact::NodeKey, String>,
     /// The valuation over the supplied trace; `None` when the trace is an
     /// empty finite trace, which asks for the clause alone, or a lasso beside a
     /// profile that does not read one.
@@ -505,6 +508,7 @@ impl TemporalValuation {
     /// formula order, so the resulting keys are stable across both routes.
     pub(crate) fn from_node(
         node: &fsl_semantics::check::TemporalClauseNode,
+        graph: &CheckedGraph,
         positions: Option<crate::spine_eval_api::SpineEvalObservedValuation>,
         behaviours: Option<crate::BehaviourValuations>,
     ) -> Self {
@@ -524,13 +528,74 @@ impl TemporalValuation {
                 checked_conditions.push((atom, condition.body().clone()));
             }
         }
+        let canonical_declarations = canonical_condition_declarations(graph, &checked_conditions);
         Self {
             clause: clause.clone(),
             checked_conditions,
+            canonical_declarations,
             positions,
             behaviours,
         }
     }
+}
+
+fn canonical_condition_declarations(
+    graph: &CheckedGraph,
+    conditions: &[(
+        fsl_semantics::check::FormulaNodeId,
+        fsl_semantics::check::CheckedBody,
+    )],
+) -> BTreeMap<filament_exact::NodeKey, String> {
+    let mut declarations = BTreeMap::new();
+    for (key, declaration) in graph.semantic_graph().source_enum_declarations() {
+        declarations.insert(
+            key.clone(),
+            format!(
+                "ix://{}/{}",
+                declaration.owner.identity(),
+                declaration
+                    .qualified_declaration
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .collect::<Vec<_>>()
+                    .join("/")
+            ),
+        );
+    }
+    for (_, body) in conditions {
+        let mut pending = vec![body.root()];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node.id()) {
+                continue;
+            }
+            let key = match node.kind() {
+                NodeKind::Literal(CheckedLiteral(filament_exact::Value::Enum(member))) => {
+                    Some(member.variant().owner().clone())
+                }
+                NodeKind::Field { field, .. } => Some(field.declaration()),
+                _ => None,
+            };
+            if let Some(key) = key {
+                if let Some(declaration) = graph.resolve_declaration(key.clone()) {
+                    declarations.insert(
+                        key,
+                        format!("ix://{}/{}", declaration.package, declaration.node),
+                    );
+                }
+            }
+            let mut children = Vec::new();
+            let _ = node.kind().map_ref(
+                |child| {
+                    children.push(*child);
+                    ()
+                },
+                Clone::clone,
+            );
+            pending.extend(children.into_iter().map(|child| node.at(child)));
+        }
+    }
+    declarations
 }
 
 impl ClauseDisposition {
