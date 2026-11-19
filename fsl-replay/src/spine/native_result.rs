@@ -2710,12 +2710,11 @@ impl Disposition {
                 actual,
                 result_type_locus,
             } => {
+                // FR-109's select-refusal record carries the catalog `name`
+                // field. FR-867's typed detail is projected into the later
+                // monitor outcome document, not this strict native result.
                 let mut refusal = RefusalWire::new(Code::IllTyped.as_str(), Some("type-mismatch"))
-                    .fields(BTreeMap::from([
-                        ("function", name.clone()),
-                        ("expected", "Boolean".to_owned()),
-                        ("actual", actual.clone()),
-                    ]));
+                    .fields(BTreeMap::from([("name", name.clone())]));
                 refusal.message = Some(format!(
                     "function `{name}` returns `{actual}`; a claim selection needs a function whose result is `Boolean`"
                 ));
