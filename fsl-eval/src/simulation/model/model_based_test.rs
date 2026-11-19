@@ -1411,25 +1411,34 @@ fn shrink_value_assignment(
         ));
     };
     let mut minimized = assignment.to_vec();
-    for parameter in 0..domains.len() {
-        while let Some(current) = domains[parameter].index_of(&minimized[parameter]) {
-            if current == 0 {
-                break;
-            }
-            let candidate = domains[parameter].nth(current - 1).ok_or_else(|| {
-                ModelBasedTestError::ValueDomain {
-                    parameter: parameter.to_string(),
+    loop {
+        let mut changed = false;
+        for (parameter, domain) in domains.iter().enumerate() {
+            while let Some(current) = domain.index_of(&minimized[parameter]) {
+                if current == 0 {
+                    break;
                 }
-            })?;
-            let mut reduced = minimized.clone();
-            reduced[parameter] = candidate;
-            match value_function_result(package, function, &reduced, system)? {
-                CaseResult::Fail(candidate_disposition) if candidate_disposition == disposition => {
-                    minimized = reduced
+                let candidate =
+                    domain
+                        .nth(current - 1)
+                        .ok_or_else(|| ModelBasedTestError::ValueDomain {
+                            parameter: parameter.to_string(),
+                        })?;
+                let mut reduced = minimized.clone();
+                reduced[parameter] = candidate;
+                match value_function_result(package, function, &reduced, system)? {
+                    CaseResult::Fail(candidate_disposition)
+                        if candidate_disposition == disposition =>
+                    {
+                        minimized = reduced;
+                        changed = true;
+                    }
+                    CaseResult::Fail(_) | CaseResult::Pass | CaseResult::Discard(_) => break,
                 }
-                CaseResult::Fail(_) => break,
-                CaseResult::Pass | CaseResult::Discard(_) => break,
             }
+        }
+        if !changed {
+            break;
         }
     }
     Ok(minimized)

@@ -1007,6 +1007,68 @@ fn unbounded_value_failure_shrinks_to_the_least_failing_integer() {
     assert_eq!(value.to_string(), "200");
 }
 
+/// A later decrease can enable another decrease of an earlier root.
+#[trace("TC-2102", "FR-752-AC-2")]
+#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-5")]
+#[test]
+fn value_shrinking_revisits_earlier_parameters_until_one_minimal() {
+    use fsl_eval::value::CheckedPackageEvaluation;
+    let mut world = world_with_level_bound(
+        vec![operation("observe", &[], None, frame(&[], false, false))],
+        "function Coupled using v(x: Int[0,3], y: Int[0,3]): Boolean pure { not ((x >= 2 and y >= 1) or (x >= 1 and y = 1)) }",
+        5,
+    );
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let system = system(&world, vec![initial], &["c1"], UNLIMITED);
+    let identity = world
+        .package
+        .graph()
+        .function_identity("Coupled")
+        .expect("checked value clause");
+    for seed in 0..12 {
+        let result = run_model_based_test(
+            &system,
+            &identity,
+            &sampler(),
+            seed,
+            100,
+            8,
+            10_000,
+            Limits::default(),
+        )
+        .expect("the seeded value run");
+        let Some(ModelBasedCounterexample::ValueAssignment(assignment)) = result.counterexample
+        else {
+            panic!("the seeded suite must find the coupled failure for seed {seed}");
+        };
+        let values: Vec<_> = assignment
+            .iter()
+            .map(|value| {
+                let filament_exact::Value::Integer(value) = value else {
+                    panic!("integer parameters");
+                };
+                value.to_string()
+            })
+            .collect();
+        assert_eq!(values, ["1", "1"], "one-minimal assignment for seed {seed}");
+        let replay = world
+            .package
+            .call(
+                &fsl_eval::value::QualifiedName::unqualified("Coupled").expect("function name"),
+                assignment,
+                &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
+                &mut filament_exact::Meter::new(UNLIMITED),
+            )
+            .expect("native replay");
+        assert!(matches!(
+            replay.outcome,
+            filament_eval::FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(
+                filament_exact::Value::Boolean(false)
+            ))
+        ));
+    }
+}
+
 /// FR-752-AC-7: native contract dispatch evaluates a selected precondition
 /// independently, and a false precondition remains a passing check point.
 #[trace("TC-2102", "FR-752-AC-7")]
