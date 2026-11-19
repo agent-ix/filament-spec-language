@@ -3188,6 +3188,13 @@ pub enum CheckCause {
         /// The zero literal's span.
         span: Span,
     },
+    /// A known method does not apply to the referenced claim family.
+    VerificationPlanInapplicableMethod {
+        /// The method's authored name.
+        method: String,
+        /// The step's source span.
+        span: Span,
+    },
     /// `invalid_package` / `invalid-value`: a supplied [`super::DispatchTable`]
     /// or [`super::DispatchOperation`] is malformed — an out-of-range table
     /// or function index, or a candidate whose signature does not match its
@@ -3669,6 +3676,12 @@ impl CheckCause {
             },
             Self::DispatchLink(cause) => Some(cause.catalog),
             Self::RewardEvaluation(failure) => Some(failure.catalog),
+            Self::VerificationPlanInapplicableMethod { .. } => Some(
+                filament_semantic_value::catalog::CatalogCode::new(
+                    "invalid_capability",
+                    "inapplicable-kind",
+                ),
+            ),
             _ => Some(filament_semantic_value::catalog::CatalogCode::new(
                 self.code().as_str(),
                 self.cause()?,
@@ -3749,6 +3762,7 @@ impl CheckCause {
             | Self::EmptyReferenceLiteralKey { .. } => Code::InvalidPackage,
             Self::DuplicateVerificationStep { .. } => Code::ConflictingDeclaration,
             Self::VerificationPlanBoundZero { .. } => Code::InvalidModelBinding,
+            Self::VerificationPlanInapplicableMethod { .. } => Code::InvalidModelBinding,
             Self::UnrepresentableBound => Code::UnrepresentableConstraint,
             Self::MissingSelection { .. } => Code::MissingDeclaration,
             Self::UnsupportedFeature { .. } => Code::UnknownRequiredFeature,
@@ -3843,6 +3857,7 @@ impl CheckCause {
             Self::DefinitionCycle { .. } => Some("definition-cycle"),
             Self::DuplicateVerificationStep { .. } => Some("duplicate-declaration"),
             Self::VerificationPlanBoundZero { .. } => Some("malformed-declaration"),
+            Self::VerificationPlanInapplicableMethod { .. } => Some("inapplicable-kind"),
             Self::InvalidDispatchDeclaration(_) => Some("invalid-value"),
             Self::EmptyReferenceLiteralKey { .. } => Some("invalid-value"),
             Self::MissingSelection { .. } => Some("missing-selection"),

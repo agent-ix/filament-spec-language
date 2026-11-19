@@ -1872,7 +1872,31 @@ fn verification_plan_cycle(
 /// The first S3 refusal in one plan's source order. These checks resolve
 /// references that do not require the completed clause graph; the graph
 /// itself is checked separately before clause assembly (FR-753/FSpec FR-192).
+fn verification_plan_claim_exists(package: &PackageDeclarations, name: &str) -> bool {
+    package.state_clauses.iter().any(|clause| clause.name == name)
+        || package
+            .temporal_clauses
+            .iter()
+            .any(|clause| clause.form.name.name == name)
+        || package
+            .state_graph_claims
+            .iter()
+            .any(|claim| claim.form.name.name == name)
+        || package
+            .hybrid_claims
+            .iter()
+            .any(|claim| claim.form.name.name == name)
+        || package.probabilistic.iter().any(|declaration| match declaration {
+            ProbabilisticDeclaration::Claim(claim) => claim.name.name == name,
+            ProbabilisticDeclaration::Random(_)
+            | ProbabilisticDeclaration::Reward(_)
+            | ProbabilisticDeclaration::Delay(_)
+            | ProbabilisticDeclaration::Workload(_) => false,
+        })
+}
+
 fn verification_plan_refusal(
+    package: &PackageDeclarations,
     plan: &fsl_forms::VerificationPlanForm,
 ) -> Option<CheckCause> {
     let mut names = BTreeMap::new();
@@ -1886,6 +1910,9 @@ fn verification_plan_refusal(
         }
     }
     for step in &plan.steps {
+        if !verification_plan_claim_exists(package, &step.claim.name) {
+            return Some(CheckCause::MissingQualifiedName(step.claim.clone()));
+        }
         if !matches!(
             step.method.name.as_str(),
             "model_check"
@@ -1900,6 +1927,20 @@ fn verification_plan_refusal(
                 | "replay"
         ) {
             return Some(CheckCause::MissingQualifiedName(step.method.clone()));
+        }
+        if step.method.name == "schedulability"
+            && package
+                .temporal_clauses
+                .iter()
+                .any(|clause| clause.form.name.name == step.claim.name)
+        {
+            return Some(CheckCause::VerificationPlanInapplicableMethod {
+                method: step.method.name.clone(),
+                span: step.span,
+            });
+        }
+        if !package.declared_type_spans.contains_key(&step.domain.name) {
+            return Some(CheckCause::MissingQualifiedName(step.domain.clone()));
         }
         if step.bound.as_deref() == Some("0") {
             return Some(CheckCause::VerificationPlanBoundZero {
@@ -2244,7 +2285,7 @@ impl PackageDeclarations {
         protocol_check_refusals: &mut Vec<ProtocolCheckRefusal>,
     ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
         for plan in &self.verification_plans {
-            if let Some(cause) = verification_plan_refusal(plan) {
+            if let Some(cause) = verification_plan_refusal(&self, plan) {
                 return Err(vec![CheckRefusal {
                     location: root(Origin::Expression),
                     cause,

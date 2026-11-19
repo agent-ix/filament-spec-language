@@ -372,6 +372,7 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::DefinitionCycle { .. }
         | CheckCause::DuplicateVerificationStep { .. }
         | CheckCause::VerificationPlanBoundZero { .. }
+        | CheckCause::VerificationPlanInapplicableMethod { .. }
         | CheckCause::InvalidDispatchDeclaration(_)
         | CheckCause::MissingSelection { .. }
         | CheckCause::UnsupportedFeature { .. }
