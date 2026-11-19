@@ -188,9 +188,31 @@ has a row, `check` builds the node of its declaring owner, of the declaring
 node of each field and of each relationship its frame `modifies` under either
 scope, and of each `creates` and `deletes` subject. It builds them from the
 admitted records whether or not the package carries `operation_effects`
-(FR-496-AC-5), at the model alias's declaration site, or as one `generated`
-occurrence at the fallback `generated_location` for a model admitted without
-an alias.
+(FR-496-AC-5), each located at its selection as the next paragraph states.
+
+Every model declaration node `check` builds is located at the occurrence
+that selected its domain package, not only a relationship root. A model
+declaration node (a `model` or `relation` node carrying a `ModelOwner`) is a
+compiler-derived node: no source text declares it, its declaration lives in
+the host-supplied domain document, which is not a source of the unit, and its
+node id is a function of its owner alone. `check` records exactly one
+occurrence for it, `generated` at ordinal 0, whose span is the span of the
+selecting occurrence: for an aliased selection, the `model` alias's
+declaration-site/source span, the same span as the package's `model_root`
+occurrence (FSpec FR-322 "Model declaration occurrences"). This holds
+whatever root reaches the node: a `Reference<T>` type, the declaring node of
+a member, a frame or effect subject, a selected relationship, an
+`operation_effects` row, or a `clock_place` `resolved_path` row that names a
+model tuple value type or variant type only by its text identity. The last
+case has no located construct around it, because a model `object_type` node's
+body is empty and so encloses no node, so the selecting occurrence is its only
+source text. A model admitted without an alias (the dispatch bridge's view of
+a selected package) takes the span of the selection of the same domain-package
+identity, its `model_root` span. `check` never records a model declaration node at
+the fallback `generated_location` and never with role `expression`. A model
+declaration node whose identity has no selecting span is a typed internal
+`check` fault, so no model declaration node reaches emission as an
+`UnlocatedOccurrence`.
 
 A `Reference<T>` type carries `T` as an `EffectiveId` (ADR-013 O-05).
 `check` maps it to the `DeclarationKey` that the effective view's
@@ -486,6 +508,7 @@ FSpec's `unit-metre` and `unit-second` nominal nodes.
 | FR-094-AC-14 | With TC-1070's standard E and E-P documents selected, the normal handoff emits each ordinary object declaration exactly once with its original effective identity, model owner, correspondence and a generated occurrence at the selecting alias. E-P includes Node, Other and Elsewhere even though Elsewhere is used only by an unused population. Strict read and the public native selected-type projection succeed for both documents, preserving their complete record/object facts. Omitting or foreigning a real object declaration witness returns a typed native refusal without a partial projection. The identities file uses the required existing handoff version and no additional format. | Test (TC-417) |
 | FR-094-AC-15 | A selected model names source unit `U` in exactly one otherwise unused type position: a field, tuple position, sequence item, option inner type, alias target, operation parameter, operation result or Rational scalar unit. For each position independently, with no expression naming `U`, check and handoff emit its source-owned unit node, its dimension and its target-unit dependency closure; the unit is typed by its dimension and has exactly the declared nominal dependencies. An unrelated declared unit is omitted. The normal checked-package/v2 reader admits each emitted package. Separately, synthetic contract fixtures normalized through the production normalizer independently cover a Variant payload and a Map value naming a unit: lowering emits that unit and exactly its nominal closure. This defensive record-arm coverage does not claim public admission of those forms; unit variant payloads remain refused under FR-056-AC-25, and the current Map original-provenance intake refusal remains outside this criterion. The Rational fixture declares its unit in the model namespace as required by TypeDefinition.unit. | Test (TC-419) |
 | FR-094-AC-16 | Lowering `Service` (FR-185-AC-1) builds the `duration` reward's clause function with `owner` the `ModelOwner` whose `node` is the operation member `ix://<model identity>/Server/attempt`, `declaration` `null`, the `parameters` binding referencing `Server::attempt`'s parameters in declared order (the random `d` and `outcome` included), result type the node of `Millis`, and a trailing `clause` binding with the text `"reward"`, checked `Linked`; the graph holds no clause function of `Server::attempt` whose `clause` is `"precondition"` or `"body"` that was built for the reward, and `DeclaredClauseKind` has the four arms `Invariant`, `Precondition`, `Body` and `Reward`, spelled `"invariant"`, `"precondition"`, `"body"` and `"reward"`. | Test (TC-418) |
+| FR-094-AC-17 | A unit selects, under a dense time source on `ConfigVersion`, a domain package whose object type `ConfigVersion` adds field `s` typed by the tuple `Slot(Clock, Integer)` and field `p` typed by the union `Phase { Armed(Clock), Idle }`, so that the clock places `s.0` and `p.Armed` name `Slot` and `Phase` only through their `resolved_path` rows. `emit_checked` succeeds. The `Slot` and `Phase` `model` nodes each carry exactly one occurrence and one `source_map` entry, role `generated` at ordinal 0, whose region is the selecting `model` alias's declaration span and equals the region of the package's `model_root` entry. The strict read of the bytes with the domain document as evidence is Verified and reads `s.0` and `p.Armed` back with their `resolved_path` rows. With the same package also admitted without an alias, the nodes keep that same entry. No model declaration node is recorded at `generated_location` or with role `expression`, and emission never refuses `UnlocatedOccurrence` for one. | Test (TC-3085) |
 
 A check with two admitted versions of one domain package
 identity refuses as an internal fault.
