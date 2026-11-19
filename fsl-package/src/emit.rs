@@ -902,8 +902,8 @@ impl TemporalBindingRows {
         &self.declarations
     }
 
-    /// The row of `declaration`'s claim occurrence `occurrence`, `None` when
-    /// the lock selects no clock configuration for it.
+    /// The unscoped row of `declaration`'s claim occurrence `occurrence`,
+    /// `None` when it has only per-trace rows or no clock configuration.
     pub fn get(
         &self,
         declaration: &NodeKey,
@@ -911,7 +911,27 @@ impl TemporalBindingRows {
     ) -> Option<&filament_contract_model::TemporalBinding> {
         self.rows
             .iter()
-            .find(|(key, row)| key == declaration && row.occurrence == occurrence)
+            .find(|(key, row)| {
+                key == declaration && row.occurrence == occurrence && row.trace.is_none()
+            })
+            .map(|(_, row)| row)
+    }
+
+    /// The row of `declaration`'s claim occurrence `occurrence` for the
+    /// quantified `trace`, `None` when that trace has no clock row.
+    pub fn get_for_trace(
+        &self,
+        declaration: &NodeKey,
+        occurrence: u64,
+        trace: &str,
+    ) -> Option<&filament_contract_model::TemporalBinding> {
+        self.rows
+            .iter()
+            .find(|(key, row)| {
+                key == declaration
+                    && row.occurrence == occurrence
+                    && row.trace.as_deref() == Some(trace)
+            })
             .map(|(_, row)| row)
     }
 
