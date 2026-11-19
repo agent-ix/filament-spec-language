@@ -200,6 +200,42 @@ fn preparation_retains_owned_inputs_and_the_existing_run_outcomes() {
     }
 }
 
+/// Provenance: QSL-2617.
+#[test]
+#[trace("TC-2188", "FR-767-AC-1")]
+fn prepared_function_input_retains_the_request_integer_division_law() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("program.native"),
+        format!(
+            "{HEADER}function q using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure {{ a div b }}\n"
+        ),
+    )
+    .unwrap();
+    let path = write_request(
+        directory.path(),
+        "run.json",
+        json!({"format":"native-run/1", "request":{
+            "models":[],
+            "program":{"source":source()},
+            "integer_division":"floor",
+            "call":{"function":"q", "arguments":[
+                {"parameter":"a", "value":-7}, {"parameter":"b", "value":3}]}
+        }}),
+    );
+    let PreparedRun::Function(prepared) =
+        command::prepare_run(&path, RunLimits::default()).unwrap()
+    else {
+        panic!("a function selection remains a function");
+    };
+
+    let input = prepared.into_input();
+    let integer_division = input
+        .integer_division
+        .expect("prepared input retains the request's integer-division law");
+    assert_eq!(integer_division.profile(), filament_exact::DivisionProfile::Floor);
+}
+
 #[test]
 #[trace("TC-771", "FR-287-AC-11")]
 fn intake_failures_have_their_original_codes_and_no_invented_stage() {
