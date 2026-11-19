@@ -265,7 +265,6 @@ fn set_interior_values(to: Rational) -> impl Fn(&mut ExactProbabilityCertificate
 #[trace("TC-2489", "FR-920-AC-1")]
 #[trace("FSpec-TC-1767", "FSpec-FR-725-AC-1")]
 #[test]
-#[ignore = "QSL-2156: timed-product/v1 certificate documents not implemented yet"]
 fn digital_document_names_route_scale_and_clocks() {
     let world = retx(GUARD, true, "", &every_deadlines());
     let record = settle(&world, "Deadline");
