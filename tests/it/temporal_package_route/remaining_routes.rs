@@ -406,7 +406,12 @@ fn public_analyze_proves_fair_each_service_and_refutes_unfair_service() {
     assert_eq!(unknown.exit_code, 20, "{}", unknown.value);
     let item = &unknown.value.as_value()["items"][0];
     assert_eq!(item["claim_name"], "AbsentTemporalClaim", "{item}");
-    assert_eq!(item["record"]["result"], "invalid-request", "{item}");
+    assert_eq!(item["category"], "refusal", "{item}");
+    assert!(item["record"].get("result").is_none(), "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_capability",
+        "{item}"
+    );
     assert_eq!(
         item["record"]["diagnostic"]["cause"], "unknown-claim",
         "{item}"
