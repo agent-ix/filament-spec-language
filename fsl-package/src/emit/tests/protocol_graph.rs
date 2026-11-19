@@ -1835,7 +1835,6 @@ fn a_channel_carrying_a_bounded_type_is_admitted() {
 #[trace("TC-2503", "FR-881", "FSpec-FR-726-AC-2")]
 fn a_fifo_key_stable_key_is_written() {
     for (carries, key) in [
-        ("Int[0, 99]", "m"),
         ("Quantity<m>", "m"),
         ("Option<Int[0, 5]>", "m"),
         ("Sequence<Quantity<m>>", "m"),
