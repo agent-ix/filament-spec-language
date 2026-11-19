@@ -721,7 +721,10 @@ fn encode_captures(mut encoder: MemberEncoder, captures: &[CaptureFact]) -> Memb
     encoder
 }
 
-fn encode_trace(subject: &ResolvedSubject<'_>, request: &EvidenceRequest) -> Vec<u8> {
+fn encode_trace(
+    subject: &ResolvedSubject<'_>,
+    request: &EvidenceRequest,
+) -> Result<Vec<u8>, super::identity::MemberFault> {
     let mut encoder = MemberEncoder::new().u64(request.positions.len() as u64);
     // The listing is the order of an event-position or fixed-sample trace;
     // a timestamped trace has the canonical order of FR-501.
@@ -732,6 +735,20 @@ fn encode_trace(subject: &ResolvedSubject<'_>, request: &EvidenceRequest) -> Vec
     };
     for position in ordered {
         encoder = encode_ref(encoder, &position.observation).u64(position.position);
+        encoder = encoder.option(position.interval.as_ref(), |encoder, interval| {
+            encoder
+                .u64(interval.earliest)
+                .u64(interval.latest)
+                .flag(interval.earliest_open)
+                .flag(interval.latest_open)
+        });
+        encoder = encoder.option(position.arrival.as_ref(), |encoder, arrival| {
+            encoder.u64(*arrival)
+        });
+        encoder = match &position.admitted_document {
+            Some(document) => encoder.flag(true).bytes(&serde_json::to_vec(document)?),
+            None => encoder.flag(false),
+        };
         encoder = encoder.option(position.order_key.as_ref(), |encoder, key| {
             encoder.text(&key.authority).u64(key.key as u64)
         });
@@ -746,7 +763,7 @@ fn encode_trace(subject: &ResolvedSubject<'_>, request: &EvidenceRequest) -> Vec
             encoder = encode_aggregate_samples(encoder.bytes(instance.as_bytes()), samples);
         }
     }
-    encoder.finish()
+    Ok(encoder.finish())
 }
 
 fn encode_deliveries(request: &EvidenceRequest) -> Vec<u8> {
@@ -918,7 +935,7 @@ fn identity_of(
         .ceilings(&request.limits)
         .meter_ceiling(meter_ceiling)
         .member(IdentityMember::Cover, cover)
-        .member(IdentityMember::Trace, encode_trace(subject, request))
+        .member(IdentityMember::Trace, encode_trace(subject, request)?)
         .member(IdentityMember::Progress, encode_progress(request))
         .member(IdentityMember::Trigger, trigger)
         .member(
