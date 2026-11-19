@@ -167,12 +167,6 @@ fn indexed_reads_outside_hyper_keep_the_defined_boundary_cause() {
             .expect("the hyper-only expression refuses");
     let value = error.artifact_value().expect("the refusal encodes");
     assert_eq!(error.category().exit_code(), 21, "{value}");
-    assert_eq!(
-        value["diagnostics"][0]["code"], "unsupported_construct",
-        "{value}"
-    );
-    assert_eq!(
-        value["diagnostics"][0]["cause"], "expression-form",
-        "{value}"
-    );
+    assert_eq!(value["code"], "unsupported_construct", "{value}");
+    assert_eq!(value["cause"], "expression-form", "{value}");
 }
