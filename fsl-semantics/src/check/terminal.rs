@@ -286,8 +286,8 @@ impl TerminalNode {
     }
 }
 
-/// FR-411 "Deadlock-freedom verdict join": each selected model's, by selection
-/// identity, terminal node key, or `None` for a model with no declaration.
+/// FR-411 "Deadlock-freedom verdict join": each declared terminal's node key, by
+/// its model's selection identity and ordinal; a model with no declaration has none.
 ///
 /// The node key carries the declaration's mode, model and predicate and not
 /// its written name, so two packages that differ only in a model's
@@ -376,7 +376,8 @@ impl std::fmt::Display for TerminalMismatch {
 impl CheckedGraph {
     /// FR-411 "Deadlock-freedom verdict join": each selected model's
     /// terminal node key, the node its declaration's `claim` occurrence
-    /// names, or `None` for a model with no declaration.
+    /// names. A model with no declaration is left out of the map; an absent
+    /// key reads as no declaration.
     pub fn terminal_keys(&self) -> TerminalKeys {
         let mut ordinals = BTreeMap::<&str, usize>::new();
         TerminalKeys(

@@ -453,8 +453,10 @@ fn two_aliases_of_one_identity_keep_their_terminals_apart() {
         &packages,
         V2ReadLimits::fixture(),
     );
-    assert!(
-        format!("{:?}", admitted.err()).contains("ambiguous-name"),
-        "a package cannot carry two terminal nodes on one model node"
+    let refusal = admitted.expect_err("a package cannot carry two terminal nodes on one model node");
+    assert_eq!(refusal.cause.as_deref(), Some("ambiguous-name"));
+    assert_eq!(
+        refusal.code,
+        fsl_foundation::diagnostic::Code::InvalidPackage
     );
 }
