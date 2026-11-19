@@ -143,6 +143,23 @@ fn an_unsupplied_extension_selection_refuses_unknown_profile() {
         value.to_string().contains("unsupported-selection"),
         "{value}"
     );
+
+    // The same unit with no `extensions` member refuses the same way.
+    let directory = tempfile::tempdir().unwrap();
+    let path = extension_request(directory.path(), json!([]));
+    let mut request: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    request["request"]
+        .as_object_mut()
+        .unwrap()
+        .remove("extensions");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let (exit, value) = compile_refusal(&path);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "unknown_profile", "{value}");
+    assert!(
+        value.to_string().contains("unsupported-selection"),
+        "{value}"
+    );
 }
 
 /// FR-660-AC-3 (TC-1741): a supplied definition missing
