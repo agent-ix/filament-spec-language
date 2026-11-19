@@ -491,7 +491,7 @@ impl CheckedPackage {
     ///     source: fsl_foundation::source::provenance::RawSourceRef,
     /// ) -> CheckedPackage {
     ///     let graph = PackageDeclarations::new(source, "test/package", fsl_foundation::IdentityLimits::default())
-    ///         .check(CheckMode::Linked, CheckingLimits::default())
+    ///         .check(CheckMode::Linked, CheckingLimits::default(), &fsl_semantics::check::test_support::ZeroRewardEvaluator)
     ///         .expect("an empty package checks cleanly");
     ///     CheckedPackage::link(graph)
     /// }
@@ -859,7 +859,11 @@ pub(crate) fn dependency_chain(length: usize) -> CheckedPackage {
             "test/package",
             fsl_foundation::IdentityLimits::default(),
         )
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("an empty package checks"),
     );
     (0..length).fold(
@@ -1003,7 +1007,11 @@ mod tests {
             fsl_forms::Expression::boolean(true),
         )];
         let graph = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("a function over a model reference checks");
         let model_nodes: Vec<filament_exact::NodeKey> = graph
             .semantic_graph()

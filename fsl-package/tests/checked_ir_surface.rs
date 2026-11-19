@@ -22,7 +22,11 @@ fn empty_graph() -> CheckedGraph {
     .reference()
     .clone();
     PackageDeclarations::new(source, "pkg", fsl_foundation::IdentityLimits::default())
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("an empty package checks")
 }
 
