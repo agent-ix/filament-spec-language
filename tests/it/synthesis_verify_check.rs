@@ -87,13 +87,11 @@ fn assert_missing_name_span(refusals: &[CheckRefusal], source: &str, name: &str)
 #[trace("TC-2104", "FR-754-AC-2")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-8")]
 #[test]
-#[ignore = "QSL-2235: S3 finite-domain rule for `synthesis` not implemented yet"]
 fn an_unbounded_synthesis_domain_refuses_unbounded_extent() {
-    let refusals = check(
-        "type Wide = Integer;\n\
-         synthesis Pick using v grammar Wide domain Wide satisfies { Pick * Pick = 49 };",
-    )
-    .unwrap_or_else(|refusal| panic!("S1 and S2 admit `synthesis`: {refusal}"));
+    let declaration = "type Wide = Integer;\n\
+         synthesis Pick using v grammar Wide domain Wide satisfies { Pick * Pick = 49 };";
+    let refusals = check(declaration)
+        .unwrap_or_else(|refusal| panic!("S1 and S2 admit `synthesis`: {refusal}"));
     assert_eq!(
         codes(&refusals),
         [Some(CatalogCode::new(
@@ -102,13 +100,63 @@ fn an_unbounded_synthesis_domain_refuses_unbounded_extent() {
         ))],
         "{refusals:?}"
     );
+    let [CheckRefusal {
+        cause: fsl_semantics::check::CheckCause::SynthesisUnboundedDomain { span, .. },
+        ..
+    }] = refusals.as_slice()
+    else {
+        panic!("expected a located unbounded-domain refusal: {refusals:?}");
+    };
+    let source = format!("{HEADER}{declaration}\n");
+    assert_eq!(&source[span.start..span.end], "Wide");
+}
+
+/// FR-754-AC-2: a record's first unbounded field and a recursive union's
+/// recursive member both refuse at the authored `domain` name.
+#[trace("TC-2104", "FR-754-AC-2")]
+#[test]
+fn composite_synthesis_domains_name_the_first_unbounded_component() {
+    for (declaration, expected_domain, expected_component) in [
+        (
+            "record Packet { payload: String; }\n\
+             synthesis Pick using v grammar Packet domain Packet satisfies { true };",
+            "Packet",
+            "domain.payload.String",
+        ),
+        (
+            "union Tree { Leaf, Branch(Option<Tree>) }\n\
+             synthesis Pick using v grammar Tree domain Tree satisfies { true };",
+            "Tree",
+            "domain.Branch[0].some.recursive composite",
+        ),
+    ] {
+        let refusals = check(declaration)
+            .unwrap_or_else(|refusal| panic!("S1 and S2 admit `synthesis`: {refusal}"));
+        assert_eq!(
+            codes(&refusals),
+            [Some(CatalogCode::new(
+                "unsupported_projection",
+                "unbounded-extent"
+            ))],
+            "{refusals:?}"
+        );
+        let [CheckRefusal {
+            cause: fsl_semantics::check::CheckCause::SynthesisUnboundedDomain { component, span },
+            ..
+        }] = refusals.as_slice()
+        else {
+            panic!("expected one unbounded-domain refusal: {refusals:?}");
+        };
+        assert_eq!(component, expected_component);
+        let source = format!("{HEADER}{declaration}\n");
+        assert_eq!(&source[span.start..span.end], expected_domain);
+    }
 }
 
 /// FR-754-AC-2 (positive half): the same declaration over a bounded domain
 /// checks with no refusal.
 #[trace("TC-2104", "FR-754-AC-2")]
 #[test]
-#[ignore = "QSL-2235: S2/S3 `synthesis` declaration not implemented yet"]
 fn a_bounded_synthesis_domain_checks() {
     let refusals = check(
         "type Digit = Int[0, 9];\n\

@@ -401,7 +401,8 @@ impl DeclarationRegions {
                 None => self.region(&refusal.location),
             },
             CheckCause::TerminalWithoutObjectType { span, .. }
-            | CheckCause::TimedNotChecked { span, .. } => {
+            | CheckCause::TimedNotChecked { span, .. }
+            | CheckCause::SynthesisUnboundedDomain { span, .. } => {
                 region(&self.source, self.embedding.as_deref(), *span)
             }
             CheckCause::RefinementNotEmitted { span, .. } => {

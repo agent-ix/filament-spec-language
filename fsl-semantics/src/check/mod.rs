@@ -198,8 +198,8 @@ pub(crate) mod state_clause;
 mod state_graph_claim;
 mod state_model;
 mod step_simulation;
-mod synthesis;
 mod sum_case;
+mod synthesis;
 mod task_set;
 mod temporal_clause;
 mod terminal;
@@ -2190,6 +2190,24 @@ fn temporal_declaration_index(origin: &str) -> Option<usize> {
 }
 
 impl PackageDeclarations {
+    fn synthesis_domain_type(&self, name: &str) -> Option<ValueType> {
+        self.aliases
+            .iter()
+            .find_map(|(alias, value_type)| (alias == name).then(|| value_type.clone()))
+            .or_else(|| {
+                self.enums
+                    .iter()
+                    .find(|enumeration| enumeration.name == name)
+                    .map(|enumeration| ValueType::Enum(enumeration.shape()))
+            })
+            .or_else(|| {
+                self.types
+                    .composites()
+                    .find(|composite| composite.name() == name)
+                    .map(|composite| ValueType::Composite(composite.key()))
+            })
+    }
+
     /// Check every function: duplicate names, declared types, typing, static
     /// definedness and termination, in that order. Every refusal is made
     /// before any charge; a reached checking limit is `stage_limit_exceeded`
@@ -2337,6 +2355,21 @@ impl PackageDeclarations {
                 return Err(vec![CheckRefusal {
                     location: root(Origin::Expression),
                     cause: CheckCause::DefinitionCycle { edges },
+                }]);
+            }
+        }
+        for synthesis in &self.synthesis_forms {
+            let Some(domain_type) = self.synthesis_domain_type(&synthesis.domain.name) else {
+                continue;
+            };
+            if let Some(component) = synthesis::first_unbounded_component(&self.types, &domain_type)
+            {
+                return Err(vec![CheckRefusal {
+                    location: root(Origin::Expression),
+                    cause: CheckCause::SynthesisUnboundedDomain {
+                        component,
+                        span: synthesis.domain.span,
+                    },
                 }]);
             }
         }
