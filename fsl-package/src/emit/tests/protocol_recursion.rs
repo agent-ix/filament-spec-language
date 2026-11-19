@@ -86,7 +86,11 @@ fn check_result(
     let identity = package_identity(SPINE_MODEL_DOCUMENT);
     let declarations = assemble_with_models(text.as_bytes(), &packages).expect("unit assembles");
     declarations
-        .check(CheckMode::Linked, limits)
+        .check(
+            CheckMode::Linked,
+            limits,
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .map(|graph| (graph, identity))
 }
 
@@ -362,7 +366,11 @@ fn checked_large_text(
     .expect("the spine model admits");
     let graph = PackageDeclarations::assemble(raw, "pkg".to_owned(), unit, models, Vec::new())
         .expect("the unit assembles")
-        .check(CheckMode::Linked, limits)
+        .check(
+            CheckMode::Linked,
+            limits,
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("unit checks: {refusals:?}"));
     (graph, identity)
 }

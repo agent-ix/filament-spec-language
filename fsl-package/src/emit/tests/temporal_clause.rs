@@ -260,6 +260,7 @@ fn check_graph_with_s3_input_limit(
         .check(
             CheckMode::Linked,
             CheckingLimits::default().with_input_bytes(input_bytes),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
 }
 

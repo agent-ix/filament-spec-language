@@ -13,12 +13,30 @@
 )]
 
 use filament_checked::key::DeclarationKey;
+use filament_exact::{Integer, Meter, Value};
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
-use fsl_semantics::check::{CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{
+    CheckRefusal, CheckedGraph, PackageDeclarations, Reward, RewardEvaluationFailure,
+    RewardEvaluator,
+};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use serde_json::{json, Value as Json};
+
+struct PopulationFixtureRewardEvaluator;
+
+impl RewardEvaluator for PopulationFixtureRewardEvaluator {
+    fn evaluate(
+        &self,
+        _graph: &CheckedGraph,
+        _reward: &Reward,
+        _arguments: Vec<Value>,
+        _meter: &mut Meter,
+    ) -> Result<Value, RewardEvaluationFailure> {
+        Ok(Value::Integer(Integer::zero()))
+    }
+}
 
 /// The package's identity.
 pub const PACKAGE: &str = "test/counter";
@@ -250,7 +268,7 @@ pub fn check_with_profiles(
     match declarations.check(
         CheckMode::Linked,
         CheckingLimits::default(),
-        &crate::reward_evaluator::ZeroRewardEvaluator,
+        &PopulationFixtureRewardEvaluator,
     ) {
         Ok(graph) => Ok(Checked { graph, packages }),
         Err(refusals) => Err(refusals
