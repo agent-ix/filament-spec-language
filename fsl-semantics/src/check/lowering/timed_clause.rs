@@ -221,6 +221,34 @@ impl Lowering<'_> {
                                 vec![self.parameter(selection.binder(), 0, integer, location)?]
                             }
                         };
+                        let slots = if reset.selection().is_some() {
+                            binders.clone()
+                        } else {
+                            let integer = self.scalar("integer", location)?;
+                            reset
+                                .slots()
+                                .iter()
+                                .map(|slot| {
+                                    let key = self.insert(
+                                        location,
+                                        NodeTag::Value,
+                                        "literal",
+                                        Some(integer.clone()),
+                                        None,
+                                        BodyTerm::literal(
+                                            integer.clone(),
+                                            LiteralValue::Count(*slot),
+                                        ),
+                                    )?;
+                                    self.record(
+                                        key.clone(),
+                                        OccurrenceRole::Expression,
+                                        location.clone(),
+                                    );
+                                    Ok(key)
+                                })
+                                .collect::<Result<Vec<_>, CheckRefusal>>()?
+                        };
                         // A selection by `present(e)` resets the held
                         // elements that are present: its condition is the
                         // `presence_read` of the element's place (FSpec
@@ -242,7 +270,7 @@ impl Lowering<'_> {
                         ResetTargetNodes::Place {
                             clock: reset.clock(),
                             owner,
-                            slots: binders.clone(),
+                            slots,
                             binders,
                             condition,
                         }

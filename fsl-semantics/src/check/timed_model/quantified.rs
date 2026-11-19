@@ -689,6 +689,8 @@ pub(super) fn reset(
         clock,
         value,
         span,
+        slots: Vec::new(),
+        slot_spans: Vec::new(),
         selection: Some(super::SelectionDraft {
             path: quantifier.path,
             name,

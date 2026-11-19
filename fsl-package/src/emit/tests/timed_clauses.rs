@@ -1431,7 +1431,6 @@ fn nested_timer_document() -> Vec<u8> {
 /// `clock_reset` with a slot term per collection level.
 #[trace("TC-2391", "FR-230-AC-67")]
 #[test]
-#[ignore = "QSL-2144: an element reset no single binder selects is refused TimedModelNotEmitted, not written"]
 fn a_reset_below_two_collections_holds_a_slot_per_level() {
     const RESET: &str =
         "post R using v on Config::ConfigVersion::attemptUpdate { self.ts[0].ys[1] = 0 ms }\n";
@@ -1472,9 +1471,16 @@ fn a_reset_below_two_collections_holds_a_slot_per_level() {
     assert_eq!(steps, ["field", "slot", "field", "slot"]);
     let slots = member(&reset["body"], "slots")["members"]
         .as_array()
-        .expect("slots")
-        .len();
-    assert_eq!(slots, 2);
+        .expect("slots");
+    assert_eq!(slots.len(), 2);
+    assert_eq!(member(&reset["body"], "binders")["members"], json!([]));
+    assert_eq!(
+        slots
+            .iter()
+            .map(|slot| literal(target(&wire, slot), "value"))
+            .collect::<Vec<_>>(),
+        ["0", "1"]
+    );
 }
 
 /// FR-230-AC-50, FSpec FR-342-AC-13, FR-322-AC-454: a clock-reading `pre`
