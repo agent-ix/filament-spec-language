@@ -50,6 +50,8 @@ use super::{
     ProductKind, ProductRefusal, ProductStop, UndefinedPath, UndefinedRead,
 };
 
+pub(crate) const ELAPSED_REWARD: &str = "qsl_elapsed_time";
+
 /// Build the digital product of a claim over a timed subject (FR-204).
 ///
 /// # Errors
@@ -565,6 +567,7 @@ struct Planned {
     target: Target,
     probability: Rational,
     rewards: Vec<(Identifier, Value)>,
+    elapsed_ticks: u64,
     step: Option<TraceStep>,
     zero_delay: bool,
 }
@@ -1422,6 +1425,18 @@ impl<'c> Builder<'_, '_, 'c> {
             }
             let zero_delay = edge.zero_delay;
             let to = self.intern(edge.target, Some(at), edge.step, self.nodes[at].initial)?;
+            let mut rewards = edge.rewards;
+            if matches!(self.form, Form::MeanTime { .. }) {
+                let name = Identifier::new(ELAPSED_REWARD)
+                    .map_err(|_| fault("elapsed-reward-identifier-is-valid"))?;
+                let magnitude = Rational::new(
+                    Integer::from(edge.elapsed_ticks),
+                    Integer::from(self.scale),
+                )
+                .map_err(|_| fault("elapsed-reward-scale-is-positive"))?;
+                let unit = filament_exact::UnitId::declared(self.timed.source().unit_node.clone());
+                rewards.push((name, Value::Quantity(Quantity::new(magnitude, unit))));
+            }
             self.edges.push(ProbEdge {
                 from: ProbStateId(at),
                 choice: edge.choice,
@@ -1429,7 +1444,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 draw: edge.draw,
                 to: ProbStateId(to),
                 probability: edge.probability,
-                rewards: edge.rewards,
+                rewards,
             });
             self.zero_delay.push(zero_delay);
         }
@@ -1448,6 +1463,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 target,
                 probability: one(),
                 rewards: self.system.zero_rewards(),
+                elapsed_ticks: 0,
                 step: None,
                 zero_delay: true,
             });
@@ -1475,6 +1491,7 @@ impl<'c> Builder<'_, '_, 'c> {
         choice: ProductAction,
         delayed: (Vec<u64>, Option<u64>),
         tail: Tail,
+        elapsed_ticks: u64,
     ) -> Step<Planned> {
         let reached = DState {
             model: state.model.clone(),
@@ -1495,6 +1512,7 @@ impl<'c> Builder<'_, '_, 'c> {
             target,
             probability: one(),
             rewards: self.system.zero_rewards(),
+            elapsed_ticks,
             step: Some(taken),
             zero_delay: false,
         })
@@ -1516,6 +1534,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     ProductAction::UnitDelay,
                     first_delay.clone(),
                     Tail::Running,
+                    1,
                 )?;
                 if unit.target.key != self.nodes[at].key {
                     planned.push(unit);
@@ -1523,7 +1542,7 @@ impl<'c> Builder<'_, '_, 'c> {
             } else {
                 let current_key = self.nodes[at].key.clone();
                 let mut cursor = state.clone();
-                for _ in 0..self.subdivisions {
+                for elapsed_ticks in 1..=self.subdivisions {
                     self.poll()?;
                     let Some(delayed) = self.unit_delay(local, &cursor)? else {
                         break;
@@ -1534,6 +1553,7 @@ impl<'c> Builder<'_, '_, 'c> {
                         ProductAction::UnitDelay,
                         delayed.clone(),
                         Tail::Running,
+                        elapsed_ticks,
                     )?;
                     if unit.target.key != current_key {
                         planned.push(unit);
@@ -1553,6 +1573,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     ProductAction::EnterIdleDelay,
                     first_delay,
                     Tail::IdleDelayed,
+                    1,
                 )?);
             }
         }
@@ -1569,6 +1590,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 ProductAction::IdleDelay,
                 delayed,
                 Tail::IdleDelayed,
+                1,
             )?;
             if self.subdivisions == 1 || delay.target.key != self.nodes[at].key {
                 planned.push(delay);
@@ -1593,6 +1615,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 target,
                 probability: one(),
                 rewards: self.system.zero_rewards(),
+                elapsed_ticks: 0,
                 step: Some(taken),
                 zero_delay: false,
             });
@@ -1666,6 +1689,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     target,
                     probability,
                     rewards: draw.rewards.clone(),
+                    elapsed_ticks: 0,
                     step: Some(taken),
                     zero_delay: true,
                 });
@@ -1718,6 +1742,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 target,
                 probability,
                 rewards: draw.rewards.clone(),
+                elapsed_ticks: 0,
                 step: Some(taken),
                 zero_delay: true,
             });
@@ -2105,7 +2130,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     at,
                     &start,
                     ordered,
-                    (order, delay == 0, representative),
+                    (order, delay == 0, delay, representative),
                     Edges {
                         planned: &mut *planned,
                         scope,
@@ -2129,11 +2154,11 @@ impl<'c> Builder<'_, '_, 'c> {
         at: usize,
         start: &DState,
         ordered: &[ScheduledIdentity],
-        outcome: (Rational, bool, &ScheduledIdentity),
+        outcome: (Rational, bool, u64, &ScheduledIdentity),
         out: Edges<'_>,
     ) -> Step<()> {
         let Edges { planned, scope } = out;
-        let (probability, zero_delay, representative) = outcome;
+        let (probability, zero_delay, elapsed_ticks, representative) = outcome;
         // (probability, states reached after each step, first draw, rewards
         // summed over the steps taken)
         type Chain = (
@@ -2236,6 +2261,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 target,
                 probability: chain_probability,
                 rewards,
+                elapsed_ticks,
                 step: Some(taken),
                 zero_delay,
             });

@@ -43,6 +43,7 @@ pub(crate) use build::BudgetedProductError;
 pub use build::{build_product_with_key_budget, BudgetedProductError};
 pub(crate) use build::{build_retaining_monitor, build_retaining_monitor_with_budget};
 pub(crate) use digital::model_constraints;
+pub(crate) use digital::ELAPSED_REWARD;
 pub use fair::{
     decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,
     decide_fair_reachability, maximal_fair_end_components, ActionChoice, FairBoundedResult,

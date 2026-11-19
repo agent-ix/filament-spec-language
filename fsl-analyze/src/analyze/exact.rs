@@ -399,12 +399,210 @@ fn run_timed(
     checked_report(checked, certificate, binding, extremum, subject)
 }
 
+fn run_timed_mean(
+    request: ProductRequest<'_>,
+    cancel: &Cancel,
+    tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
+) -> EngineReport {
+    let claim = request.claim;
+    let ProbForm::MeanTime { bound, .. } = &claim.form else {
+        return not_yet();
+    };
+    if !matches!(claim.scheduler, ProbScheduler::Every) || !claim.fairness.is_empty() {
+        return not_yet();
+    }
+    let simulation = request.subject.simulation.clone();
+    let Some(source_package) = simulation.source_package() else {
+        return not_yet();
+    };
+    let limits = request.limits;
+    let meter = simulation.meter;
+    let subject = SubjectLimits {
+        expansion: simulation.expansion,
+        meter: &meter,
+    };
+    let document_limits = ProbabilityDocumentLimits {
+        bytes: limits.document.bytes,
+        storage_bytes: limits.document.storage_bytes,
+        states: limits.model.limits.max_states,
+        edges: limits.model.limits.max_transitions,
+        scalar_bits: limits.max_rational_bits,
+        accounting: meter,
+    };
+    let system = match ModelSystem::new_with_cancel(simulation.clone(), cancel) {
+        Ok(system) => system,
+        Err(failure) => return build_refusal(ProductRefusal::Admission(failure), subject),
+    };
+    let timed = match fsl_eval::simulation::model::TimedSystem::new(
+        &system,
+        claim.subject.alias.as_str(),
+    ) {
+        Ok(timed) => timed,
+        Err(_) => return not_yet(),
+    };
+    let route = if crate::exact_probabilistic::timed_region_route(&timed, claim) {
+        TimedProbabilityRoute::Region
+    } else {
+        TimedProbabilityRoute::Digital
+    };
+    let scale = match crate::exact_probabilistic::timed_certificate_scale(&system, &timed, claim) {
+        Ok(scale) => scale,
+        Err(refusal) => return build_refusal(refusal, subject),
+    };
+    let built = match build_retaining_monitor(
+        ProductRequest {
+            subject: request.subject,
+            claim,
+            limits,
+        },
+        cancel,
+    ) {
+        Ok((built, _)) => built,
+        Err(refusal) => return build_refusal(refusal, subject),
+    };
+    let ProbBuild::Built(product) = built else {
+        return not_yet();
+    };
+    let [(_, _, start)] = product.initial.as_slice() else {
+        return not_yet();
+    };
+    let target = product
+        .labels
+        .iter()
+        .map(|labels| labels.first().copied().unwrap_or(false))
+        .collect::<Vec<_>>();
+    if target.len() != product.states.len() {
+        return broken();
+    }
+    let (objective, extremum) = match bound {
+        Bound::AtLeast(_) => (UnboundedObjective::Min, Some(Extremum::Min)),
+        Bound::AtMost(_) => (UnboundedObjective::Max, Some(Extremum::Max)),
+    };
+    let solved = match decide_expected_reward(
+        &product,
+        &target,
+        crate::exact_probabilistic::ELAPSED_REWARD,
+        objective,
+        &limits,
+    ) {
+        Ok(solved) => solved,
+        Err(UnboundedError::MaxPolicyIterations) => {
+            return settled(
+                &ExactProbBuildIssue::Limit {
+                    limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
+                    value: limits.max_policy_iterations,
+                },
+                subject,
+            )
+        }
+        Err(UnboundedError::MaxRationalBits) => {
+            return settled(
+                &ExactProbBuildIssue::Limit {
+                    limit: ModelCheckLimit::ExactProbMaxRationalBits,
+                    value: limits.max_rational_bits,
+                },
+                subject,
+            )
+        }
+        Err(_) => return broken(),
+    };
+    if solved
+        .values
+        .iter()
+        .any(|value| matches!(value, ExtRational::PlusInfinity))
+    {
+        return document_failure(ProbabilityDocumentError::MixedInfiniteCoverage, subject);
+    }
+    let Some(ExtRational::Finite(value)) = solved.values.get(start.index()) else {
+        return not_yet();
+    };
+    let holds = match bound {
+        Bound::AtLeast(threshold) => value >= threshold,
+        Bound::AtMost(threshold) => value <= threshold,
+    };
+    if !holds {
+        return not_yet();
+    }
+    let identity = match fsl_replay::probabilistic_claim_identity(claim) {
+        Ok(identity) => identity,
+        Err(_) => return not_yet(),
+    };
+    let values = solved.values;
+    let mut certificate = match certificate_of(
+        &product,
+        None,
+        &values,
+        fsl_replay::ProbabilityDocumentIoLimits {
+            bytes: document_limits.bytes,
+            storage_bytes: document_limits.storage_bytes,
+        },
+        cancel,
+    ) {
+        Ok(certificate) => certificate,
+        Err(error) => return document_failure(error, subject),
+    };
+    if let Some(tamper) = tamper {
+        tamper(&mut certificate);
+    }
+    let mut targets = product
+        .labels
+        .iter()
+        .enumerate()
+        .filter(|(_, labels)| labels.first().copied().unwrap_or(false))
+        .filter_map(|(index, _)| {
+            product.states[index].certificate_state.clone()
+        })
+        .collect::<Vec<_>>();
+    targets.sort();
+    targets.dedup();
+    let optimization = match objective {
+        UnboundedObjective::Min => ProbabilityObjective::Minimum,
+        UnboundedObjective::Max => ProbabilityObjective::Maximum,
+    };
+    let document = ProbabilityCertificateDocument {
+        cyclic_dtmc: false,
+        identity: identity.clone(),
+        targets,
+        event: None,
+        failures: Vec::new(),
+        reward: None,
+        optimization,
+        timed: Some(TimedProbabilityObjective {
+            route,
+            unit: timed.source().unit_node.clone(),
+            scale,
+            form: TimedProbabilityForm::ExpectedElapsed,
+        }),
+        values: certificate.values.clone(),
+        ranking: Vec::new(),
+    };
+    let checked = (|| {
+        let bytes = write_probability_certificate(&document, document_limits, cancel)?;
+        check_probability_certificate_document(
+            &system,
+            source_package.graph().probabilistic_model().claims(),
+            &identity,
+            &bytes,
+            document_limits,
+            cancel,
+        )
+    })();
+    let binding = match claim_binding(&system, claim) {
+        Ok(binding) => binding,
+        Err(_) => return not_yet(),
+    };
+    checked_report(checked, certificate, binding, extremum, subject)
+}
+
 fn run(
     request: ProductRequest<'_>,
     cancel: &Cancel,
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
+    if matches!(&request.claim.form, ProbForm::MeanTime { .. }) {
+        return run_timed_mean(request, cancel, tamper);
+    }
     if matches!(
         &request.claim.form,
         ProbForm::Probability {
