@@ -291,6 +291,21 @@ fn a_hidden_field_with_an_always_enabled_abstract_write_refutes_a_peek_loop() {
     ));
 }
 
+/// FR-899-AC-2 (TC-2536): the same concrete write loop has both a stuttering
+/// candidate run and one that takes the abstract write; the fair candidate
+/// suffices for inclusion.
+#[trace("TC-2536", "FR-899-AC-2")]
+#[test]
+fn one_fair_hidden_candidate_run_is_sufficient() {
+    let unit = Unit::register();
+    let refinement = hidden_register_history().replace(
+        "step Impl::Register::write -> Spec::Register::write(self, x);",
+        "step Impl::Register::write -> stutter;\n\
+         step Impl::Register::write -> Spec::Register::write(self, x);",
+    );
+    holds(&check_aux(&unit.world(&refinement)));
+}
+
 /// `Probe` over the concrete guards `concrete` (`flipA`, `flipB`, `setA`,
 /// `peek`) and the abstract ones `abstract_` (`flipA`, `flipB`, `setA`),
 /// starting at `initials`.
