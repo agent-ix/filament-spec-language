@@ -1414,6 +1414,9 @@ pub struct ClauseSite {
     pub claim: filament_exact::Origin,
     /// The declared clause name.
     pub name: String,
+    /// The span of the whole declaration (FSpec FR-322 "Clause declaration
+    /// regions").
+    pub span: fsl_foundation::Span,
 }
 
 impl TemporalClauseNode {
@@ -7192,6 +7195,7 @@ impl PackageDeclarations {
                 identity: lowered.key.clone(),
                 claim: claim.clone(),
                 name: declared.form.name.name.clone(),
+                span: declared.span,
             });
             let bounded = checked_claim.horizon.is_some();
             // The class S3 recorded for each variable; the request label is
