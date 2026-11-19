@@ -1026,8 +1026,8 @@ fn stage_parameter_models(directory: &Path, fixtures: &Path) -> Result<(), Strin
             "switch-model.json",
         ),
         (
-            "tests/fixtures/decimal-value-types.semantic-ir.json",
-            None,
+            "examples/checked-handoff/model.semantic-ir.json",
+            Some("workflow.decimal.json"),
             "decimal-model.json",
         ),
     ] {
@@ -1059,6 +1059,13 @@ fn stage_parameter_models(directory: &Path, fixtures: &Path) -> Result<(), Strin
                     .and_then(Value::as_array_mut)
                     .ok_or_else(|| format!("{base}: constructs must be an array"))?
                     .push(construct.clone());
+            }
+            if let Some(types) = extension.get("types").and_then(Value::as_array) {
+                model
+                    .get_mut("types")
+                    .and_then(Value::as_array_mut)
+                    .ok_or_else(|| format!("{base}: types must be an array"))?
+                    .extend(types.iter().cloned());
             }
             for operation in extension
                 .get("operations")
@@ -1118,6 +1125,35 @@ fn corpus_operation_parameters() {
     let admission = run_directory(&scratch.path().join("admission"))
         .unwrap_or_else(|error| panic!("parameter model admission: {error}"));
     println!("parameter model admission: {admission}");
+    let report = run_directory(scratch.path()).unwrap_or_else(|error| panic!("{error}"));
+    println!("{report}");
+}
+
+#[trace("FR-106-AC-36", "FR-106-AC-37", "FR-107")]
+#[test]
+fn corpus_operation_decimal_parameters() {
+    let fixtures = corpus_root().join("operations/parameters");
+    let scratch = tempfile::tempdir().expect("decimal parameter request directory");
+    for (source, destination) in [
+        ("decimal", ""),
+        ("decimal/admission", "admission"),
+        ("data", "data"),
+    ] {
+        let destination = scratch.path().join(destination);
+        std::fs::create_dir_all(&destination).expect("decimal parameter data directory");
+        for entry in std::fs::read_dir(fixtures.join(source)).expect("decimal corpus inputs") {
+            let entry = entry.expect("decimal corpus entry");
+            if entry.file_type().expect("decimal input type").is_file() {
+                std::fs::copy(entry.path(), destination.join(entry.file_name()))
+                    .expect("stage authored decimal input");
+            }
+        }
+    }
+    stage_parameter_models(scratch.path(), &fixtures)
+        .unwrap_or_else(|error| panic!("decimal model fixture: {error}"));
+    let admission = run_directory(&scratch.path().join("admission"))
+        .unwrap_or_else(|error| panic!("decimal model admission: {error}"));
+    println!("decimal model admission: {admission}");
     let report = run_directory(scratch.path()).unwrap_or_else(|error| panic!("{error}"));
     println!("{report}");
 }
