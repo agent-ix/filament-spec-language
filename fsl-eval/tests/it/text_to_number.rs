@@ -5,8 +5,8 @@ use std::str::FromStr;
 
 use filament_eval::{Evaluation, FamilyOutcome};
 use filament_exact::{
-    ChargePoint, IeeeFlag, Integer, Meter, Outcome, Rational, Refusal, RoundingMode, ScalarLimits,
-    TextProfile, TextType, Undefined, Value, admit_text,
+    admit_text, ChargePoint, IeeeFlag, Integer, Meter, Outcome, Rational, Refusal, RoundingMode,
+    ScalarLimits, TextProfile, TextType, Undefined, Value,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::loss::ValueLoss;
@@ -19,7 +19,7 @@ use fsl_semantics::model::domain_package::{
 };
 use fsl_semantics::model::intake::SelectedModels;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::value::{DefinitionRole, admit_ieee_profile};
+use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
 use ix_trace_rs::trace;
 
 const LIMITS: ScalarLimits = ScalarLimits {
@@ -352,6 +352,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
 
 #[trace(
     "FSpec-TC-964",
+    "FSpec-FR-478-AC-4",
     "FSpec-FR-478-AC-5",
     "FSpec-FR-478-AC-6",
     "FSpec-FR-478-AC-9",
@@ -374,6 +375,43 @@ fn conversion_charges_input_then_target_work_and_stops_on_denial() {
             ChargePoint::TextInputBytes,
             ChargePoint::TextDecodeScalars
         ]
+    );
+
+    let (malformed, meter) = call_with_meter(
+        &package,
+        "convert_integer",
+        text_value("abc", TextProfile::UnicodeScalars),
+        LIMITS,
+    );
+    undefined(&malformed, Undefined::MalformedNumber);
+    assert_eq!(
+        charge_points(&meter),
+        [
+            ChargePoint::FunctionCall,
+            ChargePoint::TextInputBytes,
+            ChargePoint::TextDecodeScalars
+        ],
+        "grammar failure follows input and decode charges"
+    );
+
+    let (outside, meter) = call_with_meter(
+        &package,
+        "convert_bounded",
+        text_value("100", TextProfile::UnicodeScalars),
+        LIMITS,
+    );
+    assert!(matches!(
+        outside.outcome,
+        FamilyOutcome::Evaluated(Outcome::Refused(Refusal::IntegerOutOfDomain { .. }))
+    ));
+    assert_eq!(
+        charge_points(&meter),
+        [
+            ChargePoint::FunctionCall,
+            ChargePoint::TextInputBytes,
+            ChargePoint::TextDecodeScalars
+        ],
+        "out-of-domain refusal follows input and decode charges"
     );
 
     let (rounded, meter) = call_with_meter(

@@ -4,14 +4,14 @@
 use std::str::FromStr;
 
 use filament_exact::{
-    Charge, ChargePoint, Decimal, DecimalOperation, DecimalType, FloatType, IeeeFlags, IeeeValue,
-    IeeeWidth, Integer, LimitKind, Meter, Quantity, Rational, Refusal, RoundingMode, ScalarLimits,
-    Undefined, Value, ValueType, evaluate_decimal, exact_to_ieee,
+    evaluate_decimal, exact_to_ieee, Charge, ChargePoint, Decimal, DecimalOperation, DecimalType,
+    FloatType, IeeeFlags, IeeeValue, IeeeWidth, Integer, LimitKind, Meter, Quantity, Rational,
+    Refusal, RoundingMode, ScalarLimits, Undefined, Value, ValueType,
 };
 use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::loss::ValueLoss;
 use filament_semantic_value::quantity::{UnitScope, UnitTable};
-use filament_semantic_value::stop::{Stop, outcome_into_stop};
+use filament_semantic_value::stop::{outcome_into_stop, Stop};
 
 /// Convert one admitted `Text` or `String` value to its checked numeric target.
 pub(super) fn convert(
@@ -314,10 +314,7 @@ fn parse_float(text: &str) -> Option<ParsedFloat> {
             if !natural(digits) || (exponent_negative && digits == "0") {
                 return None;
             }
-            match u64::from_str(digits)
-                .ok()
-                .filter(|exponent| *exponent <= 100_000_000)
-            {
+            match u64::from_str(digits).ok() {
                 Some(exponent) => (mantissa, Some((exponent_negative, exponent)), None),
                 None => (mantissa, None, Some(exponent_negative)),
             }
@@ -339,10 +336,12 @@ fn parse_float(text: &str) -> Option<ParsedFloat> {
         });
     }
     let value = if let Some((exponent_negative, exponent)) = exponent {
-        let exp = i128::from(exponent);
-        let signed_exp = if exponent_negative { -exp } else { exp };
-        let adjusted =
-            i128::from(coefficient.decimal_digits()) - 1 - i128::from(scale) + signed_exp;
+        let adjusted = adjusted_exponent(
+            coefficient.decimal_digits(),
+            scale,
+            exponent_negative,
+            exponent,
+        );
         if adjusted > 400 {
             return Some(ParsedFloat::Extreme {
                 overflow: true,
@@ -355,7 +354,12 @@ fn parse_float(text: &str) -> Option<ParsedFloat> {
                 negative: coefficient.is_negative(),
             });
         }
-        let shift = signed_exp - i128::from(scale);
+        let signed_exponent = if exponent_negative {
+            -i128::from(exponent)
+        } else {
+            i128::from(exponent)
+        };
+        let shift = signed_exponent - i128::from(scale);
         if shift >= 0 {
             Rational::from_integer(
                 coefficient.mul(&Integer::power_of_ten(u64::try_from(shift).ok()?)),
@@ -371,6 +375,31 @@ fn parse_float(text: &str) -> Option<ParsedFloat> {
         decimal_to_rational(Decimal::new(coefficient, scale))?
     };
     Some(ParsedFloat::Finite(value, false))
+}
+
+fn adjusted_exponent(
+    coefficient_digits: u32,
+    scale: u32,
+    exponent_negative: bool,
+    exponent: u64,
+) -> i128 {
+    let exponent = i128::from(exponent);
+    let signed_exponent = if exponent_negative {
+        -exponent
+    } else {
+        exponent
+    };
+    i128::from(coefficient_digits) - 1 - i128::from(scale) + signed_exponent
+}
+
+#[cfg(test)]
+mod tests {
+    use super::adjusted_exponent;
+
+    #[test]
+    fn exponent_cancellation_precedes_extreme_classification() {
+        assert_eq!(adjusted_exponent(1, 100_000_001, false, 100_000_001), 0);
+    }
 }
 
 fn decimal_to_rational(decimal: Decimal) -> Option<Rational> {

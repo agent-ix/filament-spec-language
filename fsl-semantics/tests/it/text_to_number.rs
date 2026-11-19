@@ -186,6 +186,11 @@ fn text_and_string_conversions_build_their_typed_operations() {
         12,
         "only the twelve expected text/string conversions are built"
     );
+    assert_eq!(
+        graph.requirements().len(),
+        0,
+        "no conversion body obligation"
+    );
     for application in all.iter().filter(|application| {
         application
             .operation
@@ -202,6 +207,36 @@ fn text_and_string_conversions_build_their_typed_operations() {
         };
         assert!(target.admitted().is_some(), "reference to source parameter");
     }
+}
+
+#[trace("TC-1196", "FR-093-AC-35")]
+#[test]
+fn exact_decimal_conversion_retains_text_law_and_exact_mode() {
+    let graph = check(
+        "function exact_decimal using v(t: Text[0, 64; unicode-scalars]): Decimal[0, 1000; 0, 2; exact] pure { convert<Decimal[0, 1000; 0, 2; exact]>(t) }",
+    )
+    .expect("the exact decimal conversion checks");
+    let all = applications(&graph);
+    let [application] = all.as_slice() else {
+        panic!("one checked conversion application");
+    };
+    assert_eq!(
+        application.operation.identity(),
+        "filament.op.text.to_decimal"
+    );
+    assert_eq!(
+        application.operation.mode(),
+        Some(&OperationMode::Rounding(
+            filament_exact::RoundingMode::Exact
+        ))
+    );
+    assert_eq!(application.operation.laws().len(), 1);
+    assert_eq!(application.operation.laws()[0].role, LawRole::TextProfile);
+    assert_eq!(
+        application.operation.laws()[0].definition,
+        DefinitionRole::TextProfile.reference()
+    );
+    assert_eq!(graph.requirements().len(), 0, "no body obligation");
 }
 
 #[trace("TC-1196", "FR-093-AC-47")]
@@ -264,19 +299,40 @@ fn text_to_non_numeric_targets_is_refused_as_operator_ineligible() {
         Code::IllTyped,
         "operator-ineligible",
     );
+    assert_refused(
+        "function f using v(t: Text[0, 64; unicode-scalars]): String pure { convert<String>(t) }",
+        Code::IllTyped,
+        "operator-ineligible",
+    );
+    assert_refused(
+        &format!(
+            "{UNITS}function f using v(t: Text[0, 64; unicode-scalars]): Quantity<ms, Int[0, 99]> pure {{ convert<Quantity<ms, Int[0, 99]>>(t) }}"
+        ),
+        Code::IllTyped,
+        "operator-ineligible",
+    );
 }
 
 #[trace("TC-1196", "FR-093-AC-47")]
 #[test]
 fn conversion_to_the_same_text_type_is_an_identity_without_a_node() {
     let graph = check(
-        "function f using v(t: Text[0, 8; nfc]): Text[0, 8; nfc] pure { convert<Text[0, 8; nfc]>(t) }",
+        "function f using v(t: Text[0, 64; unicode-scalars]): Boolean pure { convert<Text[0, 64; unicode-scalars]>(t) = t }",
     )
     .expect("same-type conversion is identity");
-    assert!(!applications(&graph).iter().any(|application| {
-        application
-            .operation
-            .identity()
-            .starts_with("filament.op.text.to_")
-    }));
+    let all = applications(&graph);
+    let [equality] = all.as_slice() else {
+        panic!("only the parent equality application is lowered");
+    };
+    assert_eq!(equality.operation.identity(), "filament.op.text.eq");
+    let [MemberTerm::Leaf(LeafTerm::Reference { target: first }), MemberTerm::Leaf(LeafTerm::Reference { target: second })] =
+        equality.arguments.as_slice()
+    else {
+        panic!("both parent operands reference the original parameter");
+    };
+    assert_eq!(
+        first, second,
+        "the identity conversion leaves the operand reference intact"
+    );
+    assert_eq!(graph.requirements().len(), 0, "no identity body obligation");
 }
