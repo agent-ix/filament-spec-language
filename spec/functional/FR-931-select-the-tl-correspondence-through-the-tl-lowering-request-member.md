@@ -384,7 +384,7 @@ local read or a literal, and the connectives nested as FR-397 nests them.
   expressions at each level), and only the source orientation re-checks to
   the same one.
 
-A timed node's producer-created slot binder (FR-230, `<field>#<depth>`) never reaches the printer: it binds no checked-term slot (FR-400).
+A timed node's producer-created place binder (FR-230, `<field>#<depth>`) never reaches the printer: it binds no checked-term slot (FR-400).
 
 A `let` whose binder is named `#ieee_operand` anywhere else is not a checker
 composition; the printer refuses that checked expression as malformed and
