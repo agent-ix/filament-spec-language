@@ -292,10 +292,12 @@ impl Product<'_, '_> {
                         .ok_or(ZoneCheckRefusal::Fault("walk-edge"))?;
                     cycle.push(index);
                 }
-                if hidden
-                    && self.candidate_loop_has_fair_run(run, live, &cycle, class.constraint())?
-                {
-                    continue;
+                if hidden {
+                    match self.candidate_loop_has_fair_run(run, live, &cycle, class.constraint())? {
+                        Ok(true) => continue,
+                        Ok(false) => {}
+                        Err(ends) => return Ok(Lived::Ends(ends)),
+                    }
                 }
                 if let Some(found) = self.lasso(run, live, class, entry.index(), &cycle)? {
                     return Ok(Lived::Violated(Box::new(found)));
@@ -673,7 +675,7 @@ impl Product<'_, '_> {
         live: &Live,
         cycle: &[usize],
         through: usize,
-    ) -> Result<bool, Halt> {
+    ) -> Result<Result<bool, Decided>, Halt> {
         let mut positions = Vec::with_capacity(cycle.len());
         let mut steps = Vec::with_capacity(cycle.len());
         let mut transitions = BTreeSet::<ModelTransition>::new();
@@ -697,7 +699,7 @@ impl Product<'_, '_> {
                 let expansion = match self.abstract_system.expand_state(candidate) {
                     Ok(expansion) => expansion,
                     Err(stop) if stop.is_internal_failure() => {
-                        return Ok(false);
+                        return Err(ZoneCheckRefusal::Fault("candidate-loop-expansion").into());
                     }
                     Err(stop) => {
                         let reached = match stop.limit {
@@ -713,10 +715,10 @@ impl Product<'_, '_> {
                                 value: self.abstract_system.max_candidates(),
                             },
                         };
-                        return Err(Halt::Outcome(Box::new(Decided::Stopped {
+                        return Ok(Err(Decided::Stopped {
                             cause: TimedRefinementStop::Step(reached),
                             stats: run.stats(),
-                        })));
+                        }));
                     }
                 };
                 if expansion
@@ -724,12 +726,12 @@ impl Product<'_, '_> {
                     .iter()
                     .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
                 {
-                    return Err(Halt::Outcome(Box::new(Decided::Undecided {
+                    return Ok(Err(Decided::Undecided {
                         cause: TimedRefinementUndecided::Undetermined(
                             Undetermined::UndecidedSuccessor,
                         ),
                         stats: run.stats(),
-                    })));
+                    }));
                 }
                 let enabled: Vec<_> = expansion
                     .successors
@@ -827,13 +829,13 @@ impl Product<'_, '_> {
                 Ok(rows)
             })
             .collect::<Result<Vec<_>, ZoneCheckRefusal>>()?;
-        let fairness: Vec<_> = self
+        let fairness_constraints: Vec<_> = self
             .refinement
             .abstract_operation_fairness()
             .cloned()
             .collect();
         let mut constraints = Vec::new();
-        for constraint in fairness.iter().take(through.saturating_add(1)) {
+        for constraint in fairness_constraints.iter().take(through.saturating_add(1)) {
             let operation = constraint.operation();
             let name = self
                 .abstract_system
@@ -857,18 +859,16 @@ impl Product<'_, '_> {
                 ),
             }
         }
-        candidate_lasso_has_fair_run(&fair_positions, &fair_steps, &constraints, run.cancel)
-            .map_err(|error| {
-                fairness(
-                    run,
-                    match error {
-                        fsl_replay::CandidateLivenessError::Fairness(error) => error,
-                        fsl_replay::CandidateLivenessError::InvalidGraph => {
-                            FairnessError::EmptyLoop
-                        }
-                    },
-                )
-            })
+        match candidate_lasso_has_fair_run(&fair_positions, &fair_steps, &constraints, run.cancel) {
+            Ok(fair) => Ok(Ok(fair)),
+            Err(error) => Err(fairness(
+                run,
+                match error {
+                    fsl_replay::CandidateLivenessError::Fairness(error) => error,
+                    fsl_replay::CandidateLivenessError::InvalidGraph => FairnessError::EmptyLoop,
+                },
+            )),
+        }
     }
 
     /// The product as the fairness kernels read it for `class`: each
