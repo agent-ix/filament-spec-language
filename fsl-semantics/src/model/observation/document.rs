@@ -4306,6 +4306,7 @@ pub fn unit_id_named(
 mod tests {
     use super::*;
     use crate::model::domain_package::OperationEffect;
+    use filament_exact::ValueType;
     use ix_trace_rs::trace;
 
     /// The value form `text` spells, read as the admission reads it.
