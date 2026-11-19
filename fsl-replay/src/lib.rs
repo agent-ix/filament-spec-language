@@ -95,37 +95,37 @@ mod witness_entry_name;
 use fsl_package::{ModelIdentity, ObligationIdentity};
 
 pub use admitted::{
-    AdmittedCompilation, AdmittedComposite, AdmittedCompositeForm, AdmittedContext,
-    AdmittedDimension, AdmittedEnum, AdmittedEnumCase, AdmittedLookupRefusal, AdmittedRefusal,
-    AdmittedResource, AdmittedUnionMember, AdmittedUnit, compile_admitted,
-    compile_admitted_with_temporal_selections,
+    compile_admitted, compile_admitted_with_temporal_selections, AdmittedCompilation,
+    AdmittedComposite, AdmittedCompositeForm, AdmittedContext, AdmittedDimension, AdmittedEnum,
+    AdmittedEnumCase, AdmittedLookupRefusal, AdmittedRefusal, AdmittedResource,
+    AdmittedUnionMember, AdmittedUnit,
 };
 pub use application::{
+    acquire_checked_closure, acquire_checked_closure_with_integer_division,
     ApplicationBeginRefusal, ApplicationEnvironment, ApplicationRegistry, CallableLookupRefusal,
     CallableSelection, CheckedApplicationProgress, CheckedApplicationSession,
     CheckedClosureCompilation, CheckedClosureHandle, ClosureOwnerRefusal, NestedCallOccurrence,
     NestedCallSite, NestedCallSiteRefusal, NominalDeclaration, NominalDeclarationForm,
-    NominalDeclarationMember, NominalDeclarationRefusal, SelectionRefusal, acquire_checked_closure,
-    acquire_checked_closure_with_integer_division,
+    NominalDeclarationMember, NominalDeclarationRefusal, SelectionRefusal,
 };
-pub use bounds::{BoundExceeded, DEFAULT_REPLAY_INPUT_BYTES, ReplayLimits};
+pub use bounds::{BoundExceeded, ReplayLimits, DEFAULT_REPLAY_INPUT_BYTES};
 pub use build_inventory::{
-    Advertisement, Application, BuildInventory, Consumer, Family, Profile, build_inventory,
+    build_inventory, Advertisement, Application, BuildInventory, Consumer, Family, Profile,
 };
-pub use call_replay_context::{CallReplayContext, RunWithReplayContext, run_with_replay_context};
+pub use call_replay_context::{run_with_replay_context, CallReplayContext, RunWithReplayContext};
 pub use call_requirements::{
-    CallRequirement, CallRequirements, RequirementsRun, RunWithRequirements, call_requirements_for,
-    run_with_requirements, run_with_requirements_reading,
+    call_requirements_for, run_with_requirements, run_with_requirements_reading,
     run_with_requirements_reading_and_profile_catalog,
-    run_with_requirements_reading_and_profile_catalog_and_integer_division,
+    run_with_requirements_reading_and_profile_catalog_and_integer_division, CallRequirement,
+    CallRequirements, RequirementsRun, RunWithRequirements,
 };
 pub use call_site::{
-    CallSite, CallSiteRefusal, CallSiteSelection, ClauseName, ClauseSite, FieldName, FieldSite,
-    FunctionSite, ImportedFunctionName, ImportedFunctionSite, OperationSite, PopulationName,
-    PopulationSite, ValueParitySite, call_site,
+    call_site, CallSite, CallSiteRefusal, CallSiteSelection, ClauseName, ClauseSite, FieldName,
+    FieldSite, FunctionSite, ImportedFunctionName, ImportedFunctionSite, OperationSite,
+    PopulationName, PopulationSite, ValueParitySite,
 };
 pub use certificate::closed_form::check::{
-    CertificateRefusal, ClaimTriple, ClosedFormResult, check_closed_form,
+    check_closed_form, CertificateRefusal, ClaimTriple, ClosedFormResult,
 };
 pub use certificate::closed_form::outcome::{
     AmcEvidence, ClosedFormAnalysis, ClosedFormEvidence, ClosedFormOutcome, DemandWitness,
@@ -138,21 +138,21 @@ pub use certificate::closed_form::task_set::{
     TaskSetRefusal, TimeMember, Wcet,
 };
 pub use certificate::closure::{
+    check_closure, check_components, check_protocol_closure, check_protocol_components,
     CertificateRejection, CertificateRequest, ClosureCertificate, ClosureRefusal, ProductStateRef,
-    ProtocolCertificateRequest, TemporalCertificateCheck, check_closure, check_components,
-    check_protocol_closure, check_protocol_components,
+    ProtocolCertificateRequest, TemporalCertificateCheck,
 };
 pub use certificate::scc::{Component, ComponentCertificate, ComponentWitness, ProofCertificate};
 pub use certificate::simulation::{
-    CertifiedEdge, CertifiedPosition, EvaluationOutcome, FailedStep, IncompleteLimit,
-    SimulationCertificate, SimulationCertificateRequest, SimulationRefusal, UndeterminedStep,
-    check_simulation_certificate,
+    check_simulation_certificate, CertifiedEdge, CertifiedPosition, EvaluationOutcome, FailedStep,
+    IncompleteLimit, SimulationCertificate, SimulationCertificateRequest, SimulationRefusal,
+    UndeterminedStep,
 };
 pub use certificate::smt::{
-    ProofFormat, RefinementSmtCertificate, RefutedQuery, SmtProofCheck, check_refinement_smt_proof,
+    check_refinement_smt_proof, ProofFormat, RefinementSmtCertificate, RefutedQuery, SmtProofCheck,
 };
 pub use certificate::state_graph::{
-    StateGraphCertificate, StateGraphCertificateRequest, check_state_graph,
+    check_state_graph, StateGraphCertificate, StateGraphCertificateRequest,
 };
 pub use certificate::zone::{LuBounds, Zone, ZoneError};
 pub use certificate::zone_certificate::{
@@ -160,8 +160,8 @@ pub use certificate::zone_certificate::{
     CertificateCheckLimits, CertificateItem, CertifiedItem, CheckerFault, ComponentReason,
     Components, DivergenceWitness, DivergentTarget, FairnessMember, ItemIdentity, NonZeno,
     ProductMark, RefinementIdentity, RefinementPart, SilentMove, StateGraphCertificateForm,
-    StateGraphPart, ZoneCertificate,
-    ZoneCertificateRefusal, ZoneCertificateRequest, ZoneCertificateVerdict,
+    StateGraphPart, ZoneCertificate, ZoneCertificateRefusal, ZoneCertificateRequest,
+    ZoneCertificateVerdict,
 };
 pub use certificate::{CertificateLocus, CertificateMember, CertificateRule, QueryPart};
 /// FR-322 "Operand index segments": a package's graph and its wire ids.
@@ -169,18 +169,18 @@ pub use fsl_semantics::check::wire_id::{WireGraph, WireIdError};
 // FR-491: the state-clause evaluation entry and its typed result, at the root
 // so CG names them without naming `spine` (ADR-011 FB-05, T-12 rule (a)).
 pub use clause_evaluation::{
-    ClauseEvaluation, ClauseEvaluationRequest, ClauseIncomplete, ClauseObservation, ClauseRefusal,
-    evaluate_clause,
+    evaluate_clause, ClauseEvaluation, ClauseEvaluationRequest, ClauseIncomplete,
+    ClauseObservation, ClauseRefusal,
 };
 /// The checked owner's opaque admitted integer-division selection.
 pub use filament_checked::integer_division::AdmittedIntegerDivision;
 /// The semantic owner's division-definition admission and closed definition references.
-pub use fsl_semantics::value::{DefinitionReference, DefinitionRole, admit_integer_division};
+pub use fsl_semantics::value::{admit_integer_division, DefinitionReference, DefinitionRole};
 
 pub use compile::{
-    CompileUnit, CompiledPackage, compile_package, compile_package_with_execution_points,
-    compile_package_with_integer_division, compile_package_with_temporal_selections,
-    compile_package_with_temporal_selections_and_execution_points,
+    compile_package, compile_package_with_execution_points, compile_package_with_integer_division,
+    compile_package_with_temporal_selections,
+    compile_package_with_temporal_selections_and_execution_points, CompileUnit, CompiledPackage,
 };
 pub use composite::{
     CompositeEvidence, CompositeIdentity, CompositeParityClaim, CompositeParityReport,
@@ -189,35 +189,33 @@ pub use composite::{
     VerifiedShadowResult,
 };
 pub use exact_probabilistic::{
-    ExactProbBuildIssue, ExactProbBuildRecord, settle_exact_prob_build_issue,
+    settle_exact_prob_build_issue, ExactProbBuildIssue, ExactProbBuildRecord,
 };
 pub use execute::{
-    BoundEntries, DependencySelectionsCause, Domain, FrameIdentityMismatch, FrameReplayResult,
+    parity_obligation, replay, replay_composite_parity, replay_frame, replay_operator_parity,
+    replay_value_parity, replay_with_cancel, replay_with_cancel_and_temporal_selections,
+    replay_with_temporal_selections, settle_verified_shadow, value_parity_obligation, BoundEntries,
+    DependencySelectionsCause, Domain, FrameIdentityMismatch, FrameReplayResult,
     IdentityEncodeError, LimitAboveReader, MalformedOperationReason, ParityArgument,
     ParityBoundRefusal, ParityPreimage, ReplayRefusal, ScalarIdentityMismatch, ValueParityArgument,
-    ValueParityPreimage, ValueParityReport, ValueParityResult, parity_obligation, replay,
-    replay_composite_parity, replay_frame, replay_operator_parity, replay_value_parity,
-    replay_with_cancel, replay_with_cancel_and_temporal_selections,
-    replay_with_temporal_selections, settle_verified_shadow, value_parity_obligation,
+    ValueParityPreimage, ValueParityReport, ValueParityResult,
 };
 pub use hybrid::{
-    AdmittedHybridProcessItem, AdmittedHybridProcessRequest, BoundDimension, BudgetRefusal,
-    ClaimHorizon, HybridProcessDependencyPackage, HybridProcessItem, HybridProcessPackageContext,
-    HybridProcessRequest, HybridProcessRequestRefusal, HybridSettlement, NegativeHorizon,
-    HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSolveRequest, HybridVerdict,
-    SolverBudget, SolverCoverage, SolverHorizon, SolverMethod, SolverOutcome, SolverResult,
-    SolverStop, UnsupportedConstruct, hybrid_locus_site, hybrid_locus_wire,
-    settle_hybrid_candidates,
+    hybrid_locus_site, hybrid_locus_wire, settle_hybrid_candidates, AdmittedHybridProcessItem,
+    AdmittedHybridProcessRequest, BoundDimension, BudgetRefusal, ClaimHorizon, HybridAnswer,
+    HybridEntryRefusal, HybridProcessDependencyPackage, HybridProcessItem,
+    HybridProcessPackageContext, HybridProcessRequest, HybridProcessRequestRefusal, HybridProvider,
+    HybridSettlement, HybridSolveRequest, HybridVerdict, NegativeHorizon, SolverBudget,
+    SolverCoverage, SolverHorizon, SolverMethod, SolverOutcome, SolverResult, SolverStop,
+    UnsupportedConstruct,
 };
 pub use hybrid_replay::{
-    ExactCheck, ExactGap, ExactInterval, ExactReal, ExactRecord, ExactReplay, ExpansionGap,
-    HybridCertificateCheck, HybridCertificateRefusal,
-    ExpressionLocus, ExpressionSite, HybridCounterexample, HybridCounterexampleKind,
-    HybridReplayMeter, HybridReplayRefusal, HybridTrace, JsonPointer, ReplayRecord, Root,
-    StaticCheck, StaticReplay, TermLocus, TraceBefore, TraceFault, TraceJump, TraceRefusal,
-    TraceState, UndefinedCause, UndefinedInstant, admit as admit_hybrid_trace,
-    check_hybrid_certificate, exact_replay,
-    static_replay,
+    admit as admit_hybrid_trace, check_hybrid_certificate, exact_replay, static_replay, ExactCheck,
+    ExactGap, ExactInterval, ExactReal, ExactRecord, ExactReplay, ExpansionGap, ExpressionLocus,
+    ExpressionSite, HybridCertificateCheck, HybridCertificateRefusal, HybridCounterexample,
+    HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal, HybridTrace, JsonPointer,
+    ReplayRecord, Root, StaticCheck, StaticReplay, TermLocus, TraceBefore, TraceFault, TraceJump,
+    TraceRefusal, TraceState, UndefinedCause, UndefinedInstant,
 };
 pub use identity::{
     DeclaredDomain, DefinitionSourceRef, EmptyQualifiedName, ProfileSelection, QualifiedName,
@@ -225,15 +223,14 @@ pub use identity::{
 };
 pub use limits::{AccountingLimits, CallerLimits, EngineLimits, RenderLimits};
 pub use model_check::counterexample::{
-    ClaimPredicate, CounterexampleKind, Lasso, MappingSite, ModelStep,
+    undefined_finding, ClaimPredicate, CounterexampleKind, Lasso, MappingSite, ModelStep,
     ObservedTemporalCounterexample, ObservedTemporalKind, ObservedTemporalStep, Race,
     TemporalCounterexample, TimedPoint, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
-    undefined_finding,
 };
 pub use model_check::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
 pub use model_check::finite_hyper_replay::{
-    ReproducedFiniteHyperRefutation, replay_finite_hyper_refutation,
-    reproduce_finite_hyper_refutation,
+    replay_finite_hyper_refutation, reproduce_finite_hyper_refutation,
+    ReproducedFiniteHyperRefutation,
 };
 pub use model_check::graph_replay::{
     replay_model_graph, replay_model_graph_from_package, replay_model_graph_with_cancel,
@@ -241,8 +238,8 @@ pub use model_check::graph_replay::{
     replay_model_graph_with_temporal_selections,
 };
 pub use model_check::graph_settle::{
-    GraphReplayResult, GraphReplaySettlement, StateGraphMethod, StateGraphRecord,
-    settle_state_graph,
+    settle_state_graph, GraphReplayResult, GraphReplaySettlement, StateGraphMethod,
+    StateGraphRecord,
 };
 pub use model_check::hyper_counterexample::{
     HyperCounterexample, HyperCounterexampleKind, HyperLocus, HyperStep, HyperTrace,
@@ -250,61 +247,62 @@ pub use model_check::hyper_counterexample::{
 };
 pub use model_check::hyper_outcome::{BoundCovers, HyperOutcome, HyperReductionCause};
 pub use model_check::hyper_replay::{
-    HyperReplay, ModelRelationReplay, check_match_witness, replay_hyper_trace_tuple,
-    replay_model_relation_tuple,
+    check_match_witness, replay_hyper_trace_tuple, replay_model_relation_tuple, HyperReplay,
+    ModelRelationReplay,
 };
 pub use model_check::hyper_settle::{
-    HyperRecord, HyperSettleRefusal, LimitOrigin, ProductMember, UsedLimit, settle_hyper_check,
-    settle_hyper_form, settle_hyper_smt,
+    settle_hyper_check, settle_hyper_form, settle_hyper_smt, HyperRecord, HyperSettleRefusal,
+    LimitOrigin, ProductMember, UsedLimit,
 };
 pub use model_check::hyper_smt_outcome::{HyperSmtOutcome, HyperSmtResult, SmtMethod};
 pub use model_check::hyper_smt_query::{
-    HyperProductIdentity, HyperQuery, HyperQueryRequest, encode_hyper_query,
+    encode_hyper_query, HyperProductIdentity, HyperQuery, HyperQueryRequest,
 };
 pub use model_check::identity::{
-    ClauseIdentity, ClauseRootRefusal, HyperIdentity, StateGraphIdentity, node_occurrence,
+    node_occurrence, ClauseIdentity, ClauseRootRefusal, HyperIdentity, StateGraphIdentity,
 };
 pub use model_check::item::{
     Instance, InvariantClause, ItemRefusal, LivenessTranslation, ModelCheckItem, Translation,
 };
 pub use model_check::limits::{
+    meter_bound, ExactProbLimit, ExactProbLimits, ModelCheckLimit, ModelCheckLimits, ReachedLimit,
     DEFAULT_EXACT_PROB_MAX_ITERATIONS, DEFAULT_EXACT_PROB_MAX_POLICY_ITERATIONS,
     DEFAULT_EXACT_PROB_MAX_PRECISION_BITS, DEFAULT_EXACT_PROB_MAX_RATIONAL_BITS,
     DEFAULT_EXACT_PROB_MAX_WITNESS_PATHS, DEFAULT_EXACT_PROB_PRECISION_BITS,
     DEFAULT_MAX_AUTOMATON_STATES, DEFAULT_MAX_RELATION_TUPLES, DEFAULT_MAX_WALK_STEPS,
-    DEFAULT_MAX_WITNESS_SET, DEFAULT_WITNESS_SAMPLES, DEFAULT_WITNESS_SEED, ExactProbLimit,
-    ExactProbLimits, ModelCheckLimit, ModelCheckLimits, ReachedLimit, meter_bound,
+    DEFAULT_MAX_WITNESS_SET, DEFAULT_WITNESS_SAMPLES, DEFAULT_WITNESS_SEED,
 };
 pub use model_check::outcome::{
     MemoryCause, ModelCheckOutcome, ReductionCause, RunStats, UndecidedCause,
 };
 pub use model_check::refinement_replay::{
-    ProtocolAssumptionReplaySettlement, RefinementTraceSettlement,
     replay_free_delay_refinement_trace, replay_protocol_assumption_witness,
-    replay_refinement_trace, replay_timed_refinement_trace,
+    replay_refinement_trace, replay_timed_refinement_trace, ProtocolAssumptionReplaySettlement,
+    RefinementTraceSettlement,
 };
 pub use model_check::refinement_settle::{
-    RefinementRecord, settle_refinement, settle_refinement_refusal, settle_refinement_safety,
+    settle_refinement, settle_refinement_refusal, settle_refinement_safety,
     settle_refinement_safety_with_assumption_replay, settle_refinement_with_assumption_replay,
+    RefinementRecord,
 };
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
 pub use model_check::replay::replay_timed_counterexample;
 pub use model_check::replay::{
-    BehaviourValuationEnd, BehaviourValuations, DelayBar, HandoffSupply, ModelTraceEnd,
-    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceRun, ModelTraceSettlement,
-    ModelTraceSubject, ModelTraceValue, ProtocolTraceEnd, ProtocolTraceRun, ProtocolTraceSubject,
-    StrongFairnessHint, TimedReplay, behaviour_valuations, evaluate_model_trace,
-    evaluate_protocol_trace, replay_checked_source_model_trace, replay_model_trace,
-    replay_model_trace_from_package, replay_model_trace_with_temporal_selections,
-    replay_protocol_trace, replay_protocol_trace_with_temporal_selections,
+    behaviour_valuations, evaluate_model_trace, evaluate_protocol_trace,
+    replay_checked_source_model_trace, replay_model_trace, replay_model_trace_from_package,
+    replay_model_trace_with_temporal_selections, replay_protocol_trace,
+    replay_protocol_trace_with_temporal_selections, BehaviourValuationEnd, BehaviourValuations,
+    DelayBar, HandoffSupply, ModelTraceEnd, ModelTraceRefusal, ModelTraceReplayResult,
+    ModelTraceRun, ModelTraceSettlement, ModelTraceSubject, ModelTraceValue, ProtocolTraceEnd,
+    ProtocolTraceRun, ProtocolTraceSubject, StrongFairnessHint, TimedReplay,
 };
 pub use model_check::settle::{
-    CertificateChecker, EXPLICIT_STATE, Execution, K_INDUCTION, ModelCheckRecord, RecordWarning,
-    ResultLabel, Truth, settle_model_check, settle_protocol_check,
+    settle_model_check, settle_protocol_check, CertificateChecker, Execution, ModelCheckRecord,
+    RecordWarning, ResultLabel, Truth, EXPLICIT_STATE, K_INDUCTION,
 };
 pub use model_check::smt_query::{
-    Refusal, SmtEncodingLimits, SmtEncodingRefusal, SmtQueryKind, encode_smt_query,
+    encode_smt_query, Refusal, SmtEncodingLimits, SmtEncodingRefusal, SmtQueryKind,
 };
 pub use model_check::state_graph::{
     GraphEvidence, GraphEvidenceEnvelope, GraphUndefined, GraphWitness, LassoWitness, ModelLasso,
@@ -312,45 +310,46 @@ pub use model_check::state_graph::{
     StateGraphPropertyForm, TrapClosure, WitnessPath, WitnessSource,
 };
 pub use model_check::step_safety::{
-    StepCertification, StepRecordVerdict, StepRecordsSettlement, certify_step_records,
-    settle_step_records,
+    certify_step_records, settle_step_records, StepCertification, StepRecordVerdict,
+    StepRecordsSettlement,
 };
 pub use model_check::step_settle::{
-    BackendCertificate, OtherBackendResult, STEP_INDUCTION_DEPTH, StepBackendOutcome,
-    StepSimulationSettlement, settle_step_simulation,
+    settle_step_simulation, BackendCertificate, OtherBackendResult, StepBackendOutcome,
+    StepSimulationSettlement, STEP_INDUCTION_DEPTH,
 };
 pub use model_check::subject_identity::SubjectIdentity;
 pub use monitor_plan::{
-    ActivationToken, AtomId, ClockBindingKey, FormulaToken, MonitorAtom, MonitorPlanRefusal,
-    MonitorProgram, MonitorSubject, MonitorTarget, PLAN_ROOT_BINDINGS, PlanId, PlanRootPremises,
-    PremiseDefect, SubformulaId, TickInterval, TimedMonitorPlan, TimingObligation,
-    TimingObligationSettings, canonical_rational, plan_obligations,
+    canonical_rational, plan_obligations, ActivationToken, AtomId, ClockBindingKey, FormulaToken,
+    MonitorAtom, MonitorPlanRefusal, MonitorProgram, MonitorSubject, MonitorTarget, PlanId,
+    PlanRootPremises, PremiseDefect, SubformulaId, TickInterval, TimedMonitorPlan,
+    TimingObligation, TimingObligationSettings, PLAN_ROOT_BINDINGS,
 };
 
 // FR-492: the refinement simulation query, its request and kind, as
 // replay-owned wrappers (FR-100-AC-8), so CG names neither `spine` nor
 // `fsl_eval` (ADR-011 FB-05, T-12).
 pub use refinement_query::{
-    RefinementHandoffRefusal, RefinementKeyRefusal, RefinementQueryKind, RefinementQueryRequest,
-    RefinementQuerySubject, RefinementUniverse, encode_refinement_query,
+    encode_refinement_query, RefinementHandoffRefusal, RefinementKeyRefusal, RefinementQueryKind,
+    RefinementQueryRequest, RefinementQuerySubject, RefinementUniverse,
 };
 
 pub use refinement::{
-    AbstractClass, AbstractInitial, AbstractProtocolSystem, AssumptionIdentity, AssumptionOrigin,
-    AssumptionSelectedMember, AssumptionSide, AssumptionTarget, ConcreteStep, EvalFailure,
-    CandidateFairState, CandidateFairStep, CandidateLivenessError, HiddenSlot, HistoryValues,
-    LivenessHalf, MappedState, MappingFailure, MappingRowRef,
-    MappingUndetermined, ObjectKey, ObservationField, ObservationLabel, PairedAssumptionPath,
-    PairedAssumptionStep, ProtocolAssumptionFairness, ProtocolAssumptionReason,
-    ProtocolAssumptionWitness, ProtocolCandidate, ProtocolRelationError, ProtocolStateRelation,
-    ProtocolStep, ProtocolStepView, ProtocolSteps, ProtocolSystemsRefusal, ProtocolTrace,
-    RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems, RefinementWitness,
-    RefinementWitnessError, RequiredTemporalFairness, SafetyOutcome, SafetyUndecided, StateIndex,
-    StepArgument, StepRejection, StepResult, StepVerdict, StepViewRefusal, SubjectRefusal, Taken,
-    TerminalSuccessDirection, Undetermined, UnsteppedConstruct, abstract_classes, check_initial,
-    check_protocol_initial, check_protocol_state_relations, check_protocol_step, check_step,
-    candidate_lasso_has_fair_run, initial_history, map_state, open_protocol_systems, open_systems,
-    protocol_observation_label, protocol_transition_class, step_history, step_view_over,
+    abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
+    check_protocol_state_relations, check_protocol_step, check_step, initial_history, map_state,
+    open_protocol_systems, open_systems, protocol_observation_label, protocol_transition_class,
+    step_history, step_view_over, AbstractClass, AbstractInitial, AbstractProtocolSystem,
+    AssumptionIdentity, AssumptionOrigin, AssumptionSelectedMember, AssumptionSide,
+    AssumptionTarget, CandidateFairState, CandidateFairStep, CandidateLivenessError, ConcreteStep,
+    EvalFailure, HiddenSlot, HistoryValues, LivenessHalf, MappedState, MappingFailure,
+    MappingRowRef, MappingUndetermined, ObjectKey, ObservationField, ObservationLabel,
+    PairedAssumptionPath, PairedAssumptionStep, ProtocolAssumptionFairness,
+    ProtocolAssumptionReason, ProtocolAssumptionWitness, ProtocolCandidate, ProtocolRelationError,
+    ProtocolStateRelation, ProtocolStep, ProtocolStepView, ProtocolSteps, ProtocolSystemsRefusal,
+    ProtocolTrace, RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems,
+    RefinementWitness, RefinementWitnessError, RequiredTemporalFairness, SafetyOutcome,
+    SafetyUndecided, StateIndex, StepArgument, StepRejection, StepResult, StepVerdict,
+    StepViewRefusal, SubjectRefusal, Taken, TerminalSuccessDirection, Undetermined,
+    UnsteppedConstruct,
 };
 // The equality operator a composite parity claim names (FR-358).
 pub use filament_semantic_value::declaration::EqualityOperator;
@@ -358,47 +357,35 @@ pub use filament_semantic_value::declaration::EqualityOperator;
 // `TerminalValue` are built from, so the code generator, which depends on
 // this crate alone, names them without naming `fsl_foundation`.
 pub use axes::{ActivationAxis, ExecutionAxis, OutcomeAxes, TruthAxis};
-pub use filament_contract_model::{Std001Code, std001_code};
+pub use filament_contract_model::{std001_code, Std001Code};
 pub use fsl_foundation::{BackendId, Code, RequestIndex};
 pub use outcome::undefined_reason;
 pub use outcome::{
-    ClauseRunNotAnItem, ConformanceClosureOutput, ConformanceGlobalOutput,
-    ConformanceMessageBoundOutput, ConformanceObligationOutput, ConformanceProjectionOutput,
-    ConformanceRecordingIdentity, ConformanceReplayOutput, CounterexampleWireError, ExecuteResult,
-    ItemCause, ItemLabel, OUTCOME_FORMAT, Operation, OutcomeDiagnostic, OutcomeDocument,
-    OutcomeItem, OutcomeItemError, OutcomeLocus, OutcomeStage, OutcomeWriteError, ParityReason,
-    ProtocolConformanceOutput, ProtocolWire, ResultLimit, ResultValue, assignments_wire,
-    certificate_identity_wire, claim_locus_wire, graph_evidence_wire, probabilistic_wire,
-    protocol_temporal_wire, temporal_wire,
+    assignments_wire, certificate_identity_wire, claim_locus_wire, graph_evidence_wire,
+    probabilistic_wire, protocol_temporal_wire, temporal_wire, ClauseRunNotAnItem,
+    ConformanceClosureOutput, ConformanceGlobalOutput, ConformanceMessageBoundOutput,
+    ConformanceObligationOutput, ConformanceProjectionOutput, ConformanceRecordingIdentity,
+    ConformanceReplayOutput, CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel,
+    Operation, OutcomeDiagnostic, OutcomeDocument, OutcomeItem, OutcomeItemError, OutcomeLocus,
+    OutcomeStage, OutcomeWriteError, ParityReason, ProtocolConformanceOutput, ProtocolWire,
+    ResultLimit, ResultValue, OUTCOME_FORMAT,
 };
 pub use planner::{
-    Budget, PlannerDeclaration, PlannerResult, PremiseItem, PremiseResult, ResultEntry,
-    SettlementRequest, read_premise_item, read_result_entry, read_settlement_request,
+    read_premise_item, read_result_entry, read_settlement_request, Budget, PlannerDeclaration,
+    PlannerResult, PremiseItem, PremiseResult, ResultEntry, SettlementRequest,
 };
 pub use probability_certificate::admit_acyclic_probabilistic_refutation_subject;
 #[cfg(feature = "test-support")]
 pub use probability_certificate::{
-    BoundedFairProbabilityPhase, CyclicMdpProbabilityPhase, RewardProbabilityPhase,
     admit_acyclic_probabilistic_refutation_subject_with_identity,
     admit_cyclic_eventual_certificate_subject_with_identity,
     check_bounded_fair_probability_certificate_observing,
     check_cyclic_mdp_probability_certificate_observing,
     check_cyclic_mdp_probability_certificate_with_identity,
-    check_cyclic_reward_probability_certificate_observing,
+    check_cyclic_reward_probability_certificate_observing, BoundedFairProbabilityPhase,
+    CyclicMdpProbabilityPhase, RewardProbabilityPhase,
 };
 pub use probability_certificate::{
-    ClaimBinding, DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail,
-    ExactProbabilityAcceptance, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
-    ExactProbabilityGraphError, ExactProbabilityValue, LongRunProbabilityComponent,
-    LongRunProbabilityDocument, ProbabilisticCounterexample, ProbabilityBoundSide,
-    ProbabilityCertificateDocument, ProbabilityCertificateLocus, ProbabilityCertificateRejection,
-    ProbabilityCertificateRule, ProbabilityDocumentError, ProbabilityDocumentIoLimits,
-    ProbabilityDocumentLimit, ProbabilityDocumentLimits, ProbabilityKeyAdmission,
-    ProbabilityObjective, ProbabilityProductKey, ProbabilityProofDocument,
-    ProbabilityRewardObjective, ProbabilitySourceError, ProbabilitySourceLimits,
-    ProbabilitySourceRequest, ProbabilityStateEvent, ProbabilityWitnessError,
-    ProbabilityWitnessPath, ProbabilityWitnessReplay, ProbabilityWitnessStep,
-    ReproducedProbabilityWitness, WeightedLongRunProbabilityDocument,
     admit_expected_reward_certificate_subject, check_claim_exact_reachability,
     check_probability_certificate_document, check_probability_certificate_source, claim_binding,
     cyclic_mdp_probability_certificate_document,
@@ -410,33 +397,44 @@ pub use probability_certificate::{
     read_weighted_long_run_probability_certificate, replay_probabilistic_witness,
     weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
     write_probability_certificate, write_probability_proof_document,
-    write_weighted_long_run_probability_certificate,
+    write_weighted_long_run_probability_certificate, ClaimBinding, DigitalClockKey,
+    DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail, ExactProbabilityAcceptance,
+    ExactProbabilityCertificate, ExactProbabilityCertificateCheck, ExactProbabilityGraphError,
+    ExactProbabilityValue, LongRunProbabilityComponent, LongRunProbabilityDocument,
+    ProbabilisticCounterexample, ProbabilityBoundSide, ProbabilityCertificateDocument,
+    ProbabilityCertificateLocus, ProbabilityCertificateRejection, ProbabilityCertificateRule,
+    ProbabilityDocumentError, ProbabilityDocumentIoLimits, ProbabilityDocumentLimit,
+    ProbabilityDocumentLimits, ProbabilityKeyAdmission, ProbabilityObjective,
+    ProbabilityProductKey, ProbabilityProofDocument, ProbabilityRewardObjective,
+    ProbabilitySourceError, ProbabilitySourceLimits, ProbabilitySourceRequest,
+    ProbabilityStateEvent, ProbabilityWitnessError, ProbabilityWitnessPath,
+    ProbabilityWitnessReplay, ProbabilityWitnessStep, ReproducedProbabilityWitness,
+    WeightedLongRunProbabilityDocument,
 };
 #[cfg(feature = "test-support")]
 pub use probability_certificate::{
-    LongRunProbabilityPhase, ProbabilityWitnessSemanticPhase,
     admit_expected_reward_certificate_subject_with_identity,
     check_long_run_probability_certificate_observing,
     check_long_run_probability_certificate_with_identity, replay_probabilistic_witness_observing,
+    LongRunProbabilityPhase, ProbabilityWitnessSemanticPhase,
 };
 pub use product_action::{
     FreeDelayActionRow, FreeDelayRow, FreeDelaysRace, FreeRacer, GivenRacer, NotMixedRace,
     ProductAction, ProductActionError, ProductActionRefusal, Schedule,
 };
 pub use proof_result::{
-    AppliedReduction, BackendProviderSource, BoundsMethod, Certification, DeclineCode,
-    EmptyEnvelopeSet, ExactBinding, ExactEntry, ExactOrBounds, ExactRational, Extremum,
-    FslOnlyCause, IncompleteCause, InconclusiveCause, InstanceBound, MemoryBound,
-    MemoryBoundMember, PluginReplayContext, PluginReplayRefusal, PluginResultRefusal,
+    read_backend_provider_envelope, read_first_party_solver_basis, read_plugin_assignments,
+    read_plugin_basis, read_plugin_cause_kind, read_plugin_certification,
+    read_plugin_hybrid_counterexample, read_plugin_inconclusive_cause,
+    read_plugin_inconclusive_cause_over, AppliedReduction, BackendProviderSource, BoundsMethod,
+    Certification, DeclineCode, EmptyEnvelopeSet, ExactBinding, ExactEntry, ExactOrBounds,
+    ExactRational, Extremum, FslOnlyCause, IncompleteCause, InconclusiveCause, InstanceBound,
+    MemoryBound, MemoryBoundMember, PluginReplayContext, PluginReplayRefusal, PluginResultRefusal,
     PremiseOutcome, ProofBasis, ProofRefusalCause, ProofResultEnvelope, ProofResultRefusal,
     Proviso, ReportedInconclusiveCause, SettlementBasis, StaleIdentity, StatedInstanceBound,
     StatedMemoryBound, StatisticalRequestRefusal, SymmetryBrokenCause, SymmetryRefusal,
     TerminalRecord, TerminalRecordRefusal, TerminalValue, ToolFailure, TransferReason,
     UnavailabilityCause, ValueCheckUnsupported, ValueFault, WeakAccessFailure,
-    read_backend_provider_envelope, read_first_party_solver_basis, read_plugin_assignments,
-    read_plugin_basis, read_plugin_cause_kind, read_plugin_certification,
-    read_plugin_hybrid_counterexample, read_plugin_inconclusive_cause,
-    read_plugin_inconclusive_cause_over,
 };
 // The inputs `call_site` takes and the typed operation name it and FR-115
 // select by. They are defined in `spine` because the spine compile reads
@@ -479,11 +477,11 @@ pub use spine::{
 // FR-535: the bounded `native-run-result/2` consumer boundary, so CG reads and
 // writes the exact result bytes without naming `spine` (ADR-011 FB-05).
 pub use spine::{
+    read_native_run_result_bounded, temporal_disposition_json, write_clause_run_result,
     CallLocationRead, CallLocusRead, CallOriginRead, ClauseDisposition, ClauseRunRecord,
     ClauseRunReport, ClauseRunUsage, CommandErrorRecord, ConsequentSourceEvents, NativeRunLimits,
     NativeRunOutcome, NativeRunReadError, NativeRunResult, NativeRunResultError, RefusalLocusRead,
-    SourceRefRead, SpanRead, TemporalRecord, read_native_run_result_bounded,
-    temporal_disposition_json, write_clause_run_result,
+    SourceRefRead, SpanRead, TemporalRecord,
 };
 // The input refusal a `ReplayRefusal::Input` and a value-parity
 // `ValueParityResult::RefusedInput` carry.
@@ -506,10 +504,10 @@ pub use fsl_foundation::bound::{
 pub use fsl_semantics::model::accounting::ModelNormalizationLimits;
 pub use fsl_semantics::model::domain_package::DomainPackageRef;
 pub use object_environment::{
-    EnvironmentLabels, EnvironmentModel, EnvironmentObject, EnvironmentPopulation,
-    ObjectEnvironmentDocument, ObjectEnvironmentRef, ObjectEnvironmentRefusal,
-    ObjectEnvironmentWriteError, ObjectReferenceError, object_reference_witness,
-    read_object_environment, write_object_environment,
+    object_reference_witness, read_object_environment, write_object_environment, EnvironmentLabels,
+    EnvironmentModel, EnvironmentObject, EnvironmentPopulation, ObjectEnvironmentDocument,
+    ObjectEnvironmentRef, ObjectEnvironmentRefusal, ObjectEnvironmentWriteError,
+    ObjectReferenceError,
 };
 pub use request::{
     ByteProvision, DependencyEntry, DependencyEntryWire, PackageMemberCause, ReplayPackage,
@@ -521,8 +519,8 @@ pub use result::{
     EvaluatedValue, HybridReplayRecord, HybridReplayResult, HybridReplaySettlement,
     HybridTraceDisagreement, InputArmResult, InputSettlement, ObservedTemporalParity,
     ObservedTemporalResult, ObservedTemporalSettlement, ReplayResult, SeparatingWitnessRecord,
-    SeparationReason, SeparationRefusal, TemporalDecisive, Verdict, WitnessArmResult,
-    WitnessCheck, WitnessFailure, WitnessSettlement,
+    SeparationReason, SeparationRefusal, TemporalDecisive, Verdict, WitnessArmResult, WitnessCheck,
+    WitnessFailure, WitnessSettlement,
 };
 pub use supplied_limits::{read_supplied_limits, SuppliedLimitsRefusal};
 // FSpec FR-323: the replay target a packet, envelope and request each carry.
@@ -565,7 +563,7 @@ pub use fsl_semantics::model::observation::{
 // result, and the FR-106 observation types a payload is built from and a
 // refusal names, re-exported so CG can name and build them through this
 // crate (ADR-011 FB-05).
-pub use execute::{ClauseIdentityMismatch, StateClauseReplayResult, replay_state_clause};
+pub use execute::{replay_state_clause, ClauseIdentityMismatch, StateClauseReplayResult};
 pub use fsl_forms::StateClauseKind;
 pub use fsl_semantics::model::observation::{
     AnchorKind, ClauseSelectionInput, ObservationForm, ObservationLimits, SelectedAnchor,
@@ -694,11 +692,9 @@ mod redaction_tests {
         // A separately, validly constructed witness from the trimmed block
         // still returns the marker through its typed accessor.
         let valid_witness = Witness::parse(format!("<<<assertion|h|c|{marker}=1>>>")).unwrap();
-        assert!(
-            valid_witness
-                .concrete_values()
-                .iter()
-                .any(|(name, _)| name == marker)
-        );
+        assert!(valid_witness
+            .concrete_values()
+            .iter()
+            .any(|(name, _)| name == marker));
     }
 }

@@ -13,7 +13,8 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::{CheckedPackage, EmitLimits};
 use fsl_replay::{
-    hybrid_locus_wire, ExactGap, HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter,
+    check_hybrid_certificate, hybrid_locus_wire, ExactGap, HybridCertificateCheck,
+    HybridCertificateRefusal, HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter,
     HybridReplayRefusal, HybridSettlement, HybridSolveRequest, HybridVerdict, IncompleteCause,
     ModelCheckLimit, TerminalValue, UnsupportedConstruct,
 };
@@ -107,6 +108,65 @@ pub(super) fn hybrid_item<'a>(
                 };
                 let answer = provider.solve(&request, cancel);
                 let mut meter = HybridReplayMeter::new(work_units);
+                let certificate = match answer.certificate.as_ref() {
+                    Some(form) => {
+                        let (result, method) = match &answer.verdict {
+                            HybridVerdict::Solved(result) => {
+                                let label = match result
+                                    .terminal_value(&fsl_replay::ClaimHorizon::of(checked))
+                                {
+                                    TerminalValue::Proved { .. } => "proved",
+                                    TerminalValue::Inconclusive(_) => "inconclusive",
+                                    TerminalValue::Incomplete(_) => "incomplete",
+                                    TerminalValue::Refuted => "refuted",
+                                    TerminalValue::Unsupported(_) => "unsupported",
+                                    TerminalValue::Declined { .. }
+                                    | TerminalValue::Failed
+                                    | TerminalValue::ToolFailed(_)
+                                    | TerminalValue::Tested
+                                    | TerminalValue::Measured(_) => "failed",
+                                };
+                                (label, Some(result.method))
+                            }
+                            HybridVerdict::Refuted(_) => ("refuted", None),
+                            HybridVerdict::Unsupported(_) => ("unsupported", None),
+                        };
+                        match check_hybrid_certificate(
+                            graph, checked, result, method, form, &mut meter,
+                        ) {
+                            Ok(check) => Some((form.clone(), check)),
+                            Err(HybridCertificateRefusal::FormMismatch) => {
+                                let mut detail = Map::new();
+                                detail.insert("pointer".to_owned(), "/certificate".into());
+                                return EngineReport::Refused(Refusal::FailedWithDetail(
+                                    CatalogCode::new("invalid_result", "invalid-value"),
+                                    detail,
+                                ));
+                            }
+                            Err(HybridCertificateRefusal::Malformed(pointer)) => {
+                                let mut detail = Map::new();
+                                detail.insert("pointer".to_owned(), pointer.into());
+                                return EngineReport::Refused(Refusal::FailedWithDetail(
+                                    CatalogCode::new("invalid_result", "invalid-value"),
+                                    detail,
+                                ));
+                            }
+                            Err(HybridCertificateRefusal::UnknownModel) => {
+                                return EngineReport::Refused(Refusal::Failed(CatalogCode::new(
+                                    "runtime_invariant",
+                                    "established-invariant-broken",
+                                )));
+                            }
+                            Err(HybridCertificateRefusal::Evaluation) => {
+                                return EngineReport::Refused(Refusal::Failed(CatalogCode::new(
+                                    "runtime_invariant",
+                                    "established-invariant-broken",
+                                )));
+                            }
+                        }
+                    }
+                    None => None,
+                };
                 let settled = match answer.verdict {
                     HybridVerdict::Solved(result) => result.settle(graph, checked, &mut meter),
                     HybridVerdict::Refuted(claimed) => {
@@ -120,6 +180,16 @@ pub(super) fn hybrid_item<'a>(
                 };
                 match settled {
                     Ok(settled) => {
+                        let mut settled = settled;
+                        if matches!(
+                            certificate.as_ref(),
+                            Some((_, HybridCertificateCheck::Accepted))
+                        ) {
+                            if let TerminalValue::Proved { certification, .. } = &mut settled.value
+                            {
+                                *certification = fsl_replay::Certification::Certified;
+                            }
+                        }
                         let wire = match &settled.counterexample {
                             Some(found) => {
                                 counterexample_wire(graph, &wire, position, model, found)
@@ -130,7 +200,18 @@ pub(super) fn hybrid_item<'a>(
                             value: settled.value,
                             counterexample: settled.counterexample.map(Box::new),
                             wire,
-                            certificate: None,
+                            certificate: certificate.map(|(form, check)| {
+                                let accepted = matches!(&check, HybridCertificateCheck::Accepted);
+                                let mut outcome = serde_json::json!({
+                                    "accepted": accepted,
+                                    "form": form,
+                                });
+                                if let HybridCertificateCheck::Rejected { rule, at } = &check {
+                                    outcome["rule"] = rule.clone().into();
+                                    outcome["at"] = at.clone().into();
+                                }
+                                outcome
+                            }),
                         }))
                     }
                     Err(refusal) => fault_of(&refusal, work_units),

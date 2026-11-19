@@ -962,6 +962,9 @@ pub struct OutcomeItem {
     /// FSpec FR-652's hybrid provider certificate and the core check result.
     #[serde(rename = "certificate", skip_serializing_if = "Option::is_none")]
     hybrid_certificate: Option<serde_json::Value>,
+    /// The exact hybrid replay result of a provider's claimed refutation.
+    #[serde(rename = "replay", skip_serializing_if = "Option::is_none")]
+    hybrid_replay: Option<serde_json::Value>,
     /// The values an insufficient-data window held.
     #[serde(skip_serializing_if = "Option::is_none")]
     count: Option<u64>,
@@ -1341,6 +1344,7 @@ impl OutcomeItem {
             evidence: None,
             certificate_document: None,
             hybrid_certificate: None,
+            hybrid_replay: None,
             count: None,
             min_count: None,
             clause: None,
@@ -1437,6 +1441,13 @@ impl OutcomeItem {
         self
     }
 
+    /// Attach the exact replay result for a hybrid provider's trace.
+    #[must_use]
+    pub fn with_hybrid_replay(mut self, reproduced: bool) -> Self {
+        self.hybrid_replay = Some(serde_json::json!({ "reproduced": reproduced }));
+        self
+    }
+
     /// The item whose claim evaluated to an undefined value at `at` for
     /// `cause`: refuted, category violation, never labelled `undefined`.
     pub fn undefined_evaluation(
@@ -1468,6 +1479,7 @@ impl OutcomeItem {
             evidence: None,
             certificate_document: None,
             hybrid_certificate: None,
+            hybrid_replay: None,
             count: None,
             min_count: None,
             clause: None,
@@ -1528,6 +1540,7 @@ impl OutcomeItem {
             evidence: None,
             certificate_document: None,
             hybrid_certificate: None,
+            hybrid_replay: None,
             count: record.count,
             min_count: record.min_count,
             basis: None,

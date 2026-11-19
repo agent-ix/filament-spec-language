@@ -16,12 +16,12 @@
 //! `CheckedHybridModel` and the checked bodies of the functions its terms
 //! call, by the indices the trace carries. Neither reads source.
 
+mod certificate;
 mod eval;
 mod exact;
 mod expand;
 mod flow;
 mod interval;
-mod certificate;
 mod poly;
 mod real;
 mod signal;
@@ -36,13 +36,13 @@ use fsl_semantics::check::{
     CheckedFunctionRef, CheckedGraph, CheckedHybridClaim, CheckedHybridModel, HybridModelIndex,
 };
 
+pub use certificate::{check_hybrid_certificate, HybridCertificateCheck, HybridCertificateRefusal};
 pub use expand::{ExpansionGap, TermLocus};
 pub use fsl_foundation::diagnostic::JsonPointer;
 pub use real::{ExactReal, Root};
 pub use trace::{
     admit, ExactInterval, HybridTrace, TraceBefore, TraceFault, TraceJump, TraceRefusal, TraceState,
 };
-pub use certificate::{check_hybrid_certificate, HybridCertificateCheck, HybridCertificateRefusal};
 
 /// The outcome of static replay (FR-450 "Outputs").
 #[derive(Clone, Debug, Eq, PartialEq)]

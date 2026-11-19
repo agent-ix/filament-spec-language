@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use super::expand::{Expander, ExpansionGap};
 use super::interval::{IValue, Interval, IntervalEvaluator, Tri};
-use super::{HybridReplayMeter, HybridReplayRefusal};
+use super::{HybridReplayMeter, HybridReplayRefusal, SolverMethod};
 
 /// The result of checking one provider-supplied hybrid certificate.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -51,6 +51,7 @@ pub fn check_hybrid_certificate(
     graph: &CheckedGraph,
     claim: &CheckedHybridClaim,
     result: &str,
+    method: Option<SolverMethod>,
     certificate: &Value,
     meter: &mut HybridReplayMeter,
 ) -> Result<HybridCertificateCheck, HybridCertificateRefusal> {
@@ -62,15 +63,20 @@ pub fn check_hybrid_certificate(
         .get("type")
         .and_then(Value::as_str)
         .ok_or_else(|| HybridCertificateRefusal::Malformed("/certificate/type".to_owned()))?;
-    let checked = match (result, kind) {
-        ("proved", "inductive-enclosure") => {
+    let checked = match (result, method, kind) {
+        ("proved", Some(SolverMethod::InductiveEnclosure), "inductive-enclosure") => {
             check_inductive(graph, claim, model, certificate, meter)
         }
-        ("proved", "flowpipe") => check_flowpipe(graph, claim, model, certificate, meter),
-        ("refuted" | "inconclusive", "validated-witness") => {
+        ("proved", Some(SolverMethod::FlowpipeOutwardRounded), "flowpipe") => {
+            check_flowpipe(graph, claim, model, certificate, meter)
+        }
+        ("refuted" | "inconclusive", _, "validated-witness") => {
             check_witness(graph, claim, model, certificate, meter)
         }
-        ("proved", "validated-witness") | ("refuted" | "inconclusive", "flowpipe") => {
+        ("proved", _, "validated-witness")
+        | ("refuted" | "inconclusive", _, "inductive-enclosure")
+        | ("proved", _, "inductive-enclosure")
+        | ("refuted" | "inconclusive", _, "flowpipe") => {
             Err(HybridCertificateRefusal::FormMismatch)
         }
         _ => Err(HybridCertificateRefusal::Malformed(
@@ -262,11 +268,11 @@ fn check_inductive(
 }
 
 fn check_flowpipe(
-    _graph: &CheckedGraph,
-    _claim: &CheckedHybridClaim,
-    _model: &CheckedHybridModel,
+    graph: &CheckedGraph,
+    claim: &CheckedHybridClaim,
+    model: &CheckedHybridModel,
     certificate: &Value,
-    _meter: &mut HybridReplayMeter,
+    meter: &mut HybridReplayMeter,
 ) -> Result<HybridCertificateCheck, HybridCertificateRefusal> {
     let steps = certificate
         .get("steps")
@@ -275,9 +281,155 @@ fn check_flowpipe(
     if steps.is_empty() {
         return Ok(rejected("coverage", "/certificate/steps"));
     }
-    // Full Picard and successor checks are added below; a present but
-    // unchecked flowpipe must never be accepted.
-    Ok(rejected("picard", "/certificate/steps/0"))
+    let mut parsed = Vec::with_capacity(steps.len());
+    for (index, step) in steps.iter().enumerate() {
+        let at = format!("/certificate/steps/{index}");
+        let mode_name = step
+            .get("mode")
+            .and_then(Value::as_str)
+            .ok_or_else(|| HybridCertificateRefusal::Malformed(format!("{at}/mode")))?;
+        let Some(mode_index) = model
+            .modes
+            .iter()
+            .position(|mode| mode.name.as_str() == mode_name)
+        else {
+            return Ok(rejected("box-shape", &format!("{at}/mode")));
+        };
+        let mode = &model.modes[mode_index];
+        let time = step
+            .get("time")
+            .and_then(read_interval)
+            .ok_or_else(|| HybridCertificateRefusal::Malformed(format!("{at}/time")))?;
+        let delta = step
+            .get("step")
+            .and_then(read_rational)
+            .ok_or_else(|| HybridCertificateRefusal::Malformed(format!("{at}/step")))?;
+        if delta.numerator().is_negative() {
+            return Ok(rejected("box-shape", &format!("{at}/step")));
+        }
+        let box_ = read_box(step.get("box"), model)
+            .ok_or_else(|| HybridCertificateRefusal::Malformed(format!("{at}/box")))?;
+        let apriori = read_box(step.get("apriori"), model)
+            .ok_or_else(|| HybridCertificateRefusal::Malformed(format!("{at}/apriori")))?;
+        parsed.push((mode_index, time, delta, box_, apriori));
+    }
+
+    if parsed[0].1.lower.as_ref() != Some(&zero()) {
+        return Ok(rejected("coverage", "/certificate/steps/0/time"));
+    }
+    for (index, (mode_index, _, delta, box_, apriori)) in parsed.iter().enumerate() {
+        let mode = &model.modes[*mode_index];
+        if truth(graph, &mode.invariant, apriori, meter)? != Tri::True {
+            return Ok(rejected("a", &format!("/certificate/steps/{index}")));
+        }
+        let mut rates = Vec::with_capacity(mode.rates.len());
+        for rate in &mode.rates {
+            let IValue::Number(rate) = value(graph, rate, apriori, meter)? else {
+                return Err(HybridCertificateRefusal::Evaluation);
+            };
+            rates.push(rate);
+        }
+        let mut picard = Vec::with_capacity(box_.len());
+        let mut endpoint = Vec::with_capacity(box_.len());
+        for (variable, rate) in rates.iter().enumerate() {
+            let displacement = scale_nonnegative(rate, delta);
+            let tube = add_intervals(&box_[variable], &displacement)
+                .ok_or(HybridCertificateRefusal::Evaluation)?;
+            let point = add_intervals(&box_[variable], &scale_point(rate, delta))
+                .ok_or(HybridCertificateRefusal::Evaluation)?;
+            picard.push(contract_boundary(
+                graph,
+                &mode.invariant,
+                variable,
+                tube,
+                apriori,
+                meter,
+            )?);
+            endpoint.push(contract_boundary(
+                graph,
+                &mode.invariant,
+                variable,
+                point,
+                apriori,
+                meter,
+            )?);
+        }
+        if !subset(&picard, apriori) {
+            return Ok(rejected("picard", &format!("/certificate/steps/{index}")));
+        }
+        if let Some((next_mode_index, _, _, next_box, _)) = parsed.get(index + 1) {
+            if next_mode_index == mode_index {
+                if !subset(&endpoint, next_box) {
+                    return Ok(rejected(
+                        "successor",
+                        &format!("/certificate/steps/{}", index + 1),
+                    ));
+                }
+            } else {
+                let mut image_found = false;
+                for transition in &mode.transitions {
+                    if transition.target.get() != *next_mode_index
+                        || truth(graph, &transition.guard, &picard, meter)? == Tri::False
+                    {
+                        continue;
+                    }
+                    let mut image = picard.clone();
+                    for reset in &transition.resets {
+                        let IValue::Number(value) = value(graph, &reset.value, &picard, meter)?
+                        else {
+                            return Err(HybridCertificateRefusal::Evaluation);
+                        };
+                        image[reset.variable.get()] = value;
+                    }
+                    if subset(&image, next_box) {
+                        image_found = true;
+                        break;
+                    }
+                }
+                if !image_found {
+                    return Ok(rejected(
+                        "jump",
+                        &format!("/certificate/steps/{}", index + 1),
+                    ));
+                }
+                if parsed[index + 1].1.lower.as_ref() != Some(&zero()) {
+                    return Ok(rejected(
+                        "jump",
+                        &format!("/certificate/steps/{}", index + 1),
+                    ));
+                }
+            }
+        }
+    }
+
+    let (horizon, jumps) = match &claim.horizon {
+        Some(fsl_semantics::check::HybridHorizon::Seconds(seconds)) => (Some(seconds), None),
+        Some(fsl_semantics::check::HybridHorizon::Positions(positions)) => (None, Some(*positions)),
+        None => (None, None),
+    };
+    let last = &parsed[parsed.len() - 1];
+    if let Some(horizon) = horizon {
+        if last.1.upper.as_ref().is_none_or(|upper| upper < horizon) {
+            return Ok(rejected(
+                "coverage",
+                &format!("/certificate/steps/{}", parsed.len() - 1),
+            ));
+        }
+    }
+    if jumps.is_some_and(|jumps| {
+        usize::try_from(jumps).map_or(true, |required| parsed.len().saturating_sub(1) < required)
+    }) {
+        return Ok(rejected("coverage", "/certificate/steps"));
+    }
+    if !claim_holds(
+        graph,
+        claim,
+        &parsed.iter().map(|step| step.4.clone()).collect::<Vec<_>>(),
+        meter,
+    )? {
+        return Ok(rejected("claim", "/certificate/steps"));
+    }
+    Ok(HybridCertificateCheck::Accepted)
 }
 
 fn check_witness(
@@ -373,6 +525,118 @@ fn subset(inner: &[Interval], outer: &[Interval]) -> bool {
                     .zip(outer.upper.as_ref())
                     .is_some_and(|(a, b)| a <= b)
         })
+}
+
+fn zero() -> Rational {
+    Rational::from_integer(Integer::from(0))
+}
+
+fn add_intervals(left: &Interval, right: &Interval) -> Option<Interval> {
+    Some(Interval {
+        lower: Some(left.lower.as_ref()?.add(right.lower.as_ref()?)),
+        upper: Some(left.upper.as_ref()?.add(right.upper.as_ref()?)),
+    })
+}
+
+fn scale_nonnegative(value: &Interval, scale: &Rational) -> Interval {
+    let zero = zero();
+    let lower = value.lower.as_ref().map(|lower| {
+        if lower >= &zero {
+            zero.clone()
+        } else {
+            lower.mul(scale)
+        }
+    });
+    let upper = value.upper.as_ref().map(|upper| {
+        if upper <= &zero {
+            zero.clone()
+        } else {
+            upper.mul(scale)
+        }
+    });
+    Interval { lower, upper }
+}
+
+fn scale_point(value: &Interval, scale: &Rational) -> Interval {
+    let lower = value
+        .lower
+        .as_ref()
+        .zip(value.upper.as_ref())
+        .map(|(a, b)| {
+            let left = a.mul(scale);
+            let right = b.mul(scale);
+            if left <= right {
+                left
+            } else {
+                right
+            }
+        });
+    let upper = value
+        .lower
+        .as_ref()
+        .zip(value.upper.as_ref())
+        .map(|(a, b)| {
+            let left = a.mul(scale);
+            let right = b.mul(scale);
+            if left >= right {
+                left
+            } else {
+                right
+            }
+        });
+    Interval { lower, upper }
+}
+
+fn contract_boundary(
+    graph: &CheckedGraph,
+    invariant: &HybridTerm,
+    variable: usize,
+    mut candidate: Interval,
+    domain: &[Interval],
+    meter: &mut HybridReplayMeter,
+) -> Result<Interval, HybridCertificateRefusal> {
+    let epsilon = Rational::from_integer(Integer::from(1));
+    if let (Some(candidate_lower), Some(domain_lower)) =
+        (candidate.lower.as_ref(), domain[variable].lower.as_ref())
+    {
+        if candidate_lower < domain_lower {
+            let mut outside = domain.to_vec();
+            outside[variable] = Interval::point(domain_lower.sub(&epsilon));
+            if truth(graph, invariant, &outside, meter)? == Tri::False {
+                candidate.lower = Some(domain_lower.clone());
+            }
+        }
+    }
+    if let (Some(candidate_upper), Some(domain_upper)) =
+        (candidate.upper.as_ref(), domain[variable].upper.as_ref())
+    {
+        if candidate_upper > domain_upper {
+            let mut outside = domain.to_vec();
+            outside[variable] = Interval::point(domain_upper.add(&epsilon));
+            if truth(graph, invariant, &outside, meter)? == Tri::False {
+                candidate.upper = Some(domain_upper.clone());
+            }
+        }
+    }
+    Ok(candidate)
+}
+
+fn read_box(value: Option<&Value>, model: &CheckedHybridModel) -> Option<Vec<Interval>> {
+    let variables = value?.as_object()?;
+    if variables.len() != model.variables.len() {
+        return None;
+    }
+    model
+        .variables
+        .iter()
+        .map(|variable| {
+            let interval = read_interval(variables.get(variable.name.as_str())?)?;
+            if interval.lower.as_ref()? > interval.upper.as_ref()? {
+                return None;
+            }
+            Some(interval)
+        })
+        .collect()
 }
 
 fn read_interval(value: &Value) -> Option<Interval> {

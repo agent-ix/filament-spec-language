@@ -37,8 +37,8 @@ mod derived_item;
 mod digital_item;
 pub mod document;
 mod exact;
-mod hybrid_item;
 mod finite_hyper_item;
+mod hybrid_item;
 mod invariant_item;
 mod items;
 mod protocol_item;
@@ -89,12 +89,11 @@ pub use clause_item::{
     ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject, CLAUSE_TRANSCRIPT,
 };
 pub use derived_item::{deadlock_model_item, PackageDeadlockSubject};
-pub use invariant_item::{PackageInvariantSubject, PackageItemInputs};
-pub use state_graph_item::PackageStateGraphSubject;
 pub(crate) use derived_item::{derived_target, NoLetters};
 pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
 #[cfg(feature = "test-support")]
 pub use exact::{exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered};
+pub use invariant_item::{PackageInvariantSubject, PackageItemInputs};
 pub(crate) use items::admission;
 pub use items::{
     derived_model_item, derived_protocol_item, derived_zone_item, hyper_form_item, model_item,
@@ -102,6 +101,7 @@ pub use items::{
     ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem, TimedRefinementItem,
 };
 pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
+pub use state_graph_item::PackageStateGraphSubject;
 
 use crate::provider::{ExternalProvider, NotUnbounded, ProviderOptions, ProviderReport};
 use crate::zone_check::ZoneCheckRecord;
@@ -196,11 +196,12 @@ impl Engine {
         descriptor: BackendDescriptor,
         provider: Box<dyn fsl_replay::HybridProvider>,
     ) -> Result<Self, NotHybrid> {
-        let hybrid = descriptor.dynamics().is_some_and(|kinds| {
-            kinds.contains(&fsl_route::DynamicsKind::Hybrid)
-        }) && descriptor
-            .advertises()
-            .any(|(kind, _)| kind == Capability::TemporalSatisfaction);
+        let hybrid = descriptor
+            .dynamics()
+            .is_some_and(|kinds| kinds.contains(&fsl_route::DynamicsKind::Hybrid))
+            && descriptor
+                .advertises()
+                .any(|(kind, _)| kind == Capability::TemporalSatisfaction);
         if !hybrid {
             return Err(NotHybrid {
                 backend: descriptor.id().clone(),
@@ -227,9 +228,7 @@ impl Engine {
             descriptor,
             tool: BackendTool::linked(),
             provider: None,
-            hybrid: Some(std::sync::Arc::new(
-                fsl_hybrid_reference::ReferenceProvider,
-            )),
+            hybrid: Some(std::sync::Arc::new(fsl_hybrid_reference::ReferenceProvider)),
         })
     }
 
@@ -428,7 +427,9 @@ impl Engine {
 /// [`Engine::hybrid`] was given a descriptor that is no hybrid provider's
 /// (FR-750): `invalid_capability`/`invalid-dynamics`.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("invalid-dynamics: {backend:?} does not publish `hybrid` dynamics for temporal-satisfaction")]
+#[error(
+    "invalid-dynamics: {backend:?} does not publish `hybrid` dynamics for temporal-satisfaction"
+)]
 pub struct NotHybrid {
     /// The backend whose descriptor was refused.
     pub backend: BackendId,
@@ -1956,7 +1957,12 @@ impl AnalyzeRecord {
                         Some(output) => item.with_protocol_conformance(output.clone()),
                         None => item,
                     };
-                    item.with_hybrid_certificate(self.hybrid_certificate.clone())
+                    let item = item.with_hybrid_certificate(self.hybrid_certificate.clone());
+                    if self.hybrid_counterexample.is_some() {
+                        item.with_hybrid_replay(true)
+                    } else {
+                        item
+                    }
                 }),
         )
     }
@@ -2015,7 +2021,7 @@ impl Counterexample {
             | Self::GlobalConformance(_)
             | Self::ScheduleMiss(_)
             | Self::Hybrid(_) => None,
-            | Self::FiniteHyper(_) => None,
+            Self::FiniteHyper(_) => None,
         }
     }
 }
@@ -2693,7 +2699,9 @@ fn settle(
             None,
         ),
         EngineReport::Refused(Refusal::FailedWithDetail(code, detail)) => record(
-            terminal(TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(detail)),
+            terminal(
+                TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(detail),
+            ),
             None,
         ),
         EngineReport::Refused(Refusal::UnsupportedConstruct(mut detail)) => {
