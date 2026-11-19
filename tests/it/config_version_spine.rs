@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-108: TC-469's 17-case ConfigVersion spine corpus. Runs the
+//! FR-108: TC-469's 18-case ConfigVersion spine corpus. Runs the
 //! same `examples/config-version/cases.rs` catalog as the fixture test,
 //! through `run_clause` (FR-109) over the spine files
 //! `crate::support::config_version_spine::spine` writes.
@@ -34,12 +34,12 @@ enum Expected {
 
 fn expected(case: Case) -> Expected {
     use Case::{
-        AboveRange, Absent, BelowRange, BoundaryMax, BoundaryZero, Changed, Cycle, Dangling,
-        Distinct, Exhausted, ForbiddenParent, Healthy, Incomplete, MissingModel, SelfLoop,
-        Unchanged, Violating,
+        AboveRange, Absent, Advanced, BelowRange, BoundaryMax, BoundaryZero, Changed, Cycle,
+        Dangling, Distinct, Exhausted, ForbiddenParent, Healthy, Incomplete, MissingModel,
+        SelfLoop, Unchanged, Violating,
     };
     match case {
-        Healthy | Absent | Unchanged | BoundaryZero | BoundaryMax => Expected::Success,
+        Healthy | Absent | Unchanged | Advanced | BoundaryZero | BoundaryMax => Expected::Success,
         Violating | Cycle | SelfLoop | Distinct | Changed => Expected::Violation,
         Dangling => Expected::Refused {
             stage: ClauseRunStage::Admit,
@@ -171,9 +171,11 @@ fn disposition_code(disposition: &ClauseDisposition) -> Option<Code> {
     match disposition {
         ClauseDisposition::Compile(refusal) => Some(refusal.code()),
         ClauseDisposition::Admit(AdmissionFailure::Refused(record))
-        | ClauseDisposition::Admit(AdmissionFailure::Incomplete(record)) => {
-            Code::from_code(record.catalog.code())
-        }
+        | ClauseDisposition::Admit(AdmissionFailure::Incomplete(record))
+        | ClauseDisposition::SnapshotAdmission {
+            failure: AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record),
+            ..
+        } => Code::from_code(record.catalog.code()),
         other => panic!("no catalog code expected for {other:?}"),
     }
 }
@@ -186,9 +188,11 @@ fn maybe_disposition_code(disposition: &ClauseDisposition) -> Option<Code> {
     match disposition {
         ClauseDisposition::Compile(refusal) => Some(refusal.code()),
         ClauseDisposition::Admit(AdmissionFailure::Refused(record))
-        | ClauseDisposition::Admit(AdmissionFailure::Incomplete(record)) => {
-            Code::from_code(record.catalog.code())
-        }
+        | ClauseDisposition::Admit(AdmissionFailure::Incomplete(record))
+        | ClauseDisposition::SnapshotAdmission {
+            failure: AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record),
+            ..
+        } => Code::from_code(record.catalog.code()),
         _ => None,
     }
 }
@@ -351,6 +355,46 @@ fn walkthrough_requests_reproduce_the_documented_exit_codes() {
             let package: Value = serde_json::from_slice(&compiled.stdout).unwrap();
             assert_eq!(package["contract_version"], "filament.checked-package/v2");
         }
+    }
+
+    for (case, exit) in [
+        (Case::Unchanged, 0),
+        (Case::Advanced, 0),
+        (Case::Changed, 10),
+        (Case::ForbiddenParent, 20),
+    ] {
+        let path = directory.path().join(case.id());
+        spine::write(&path, case).unwrap();
+        let mut request = current_clause_request();
+        request["request"]["clause"]["selection"] = json!({"clause": {
+            "name": "VersionAdvances", "observation": "invocation"
+        }});
+        request["request"]["clause"]["observations"] = json!({
+            "pre": "spine-pre-snapshot.json", "post": "spine-post-snapshot.json",
+            "invocation": "spine-invocation.json"
+        });
+        let run = run_clause_file(&path, &request);
+        assert_eq!(run.status.code(), Some(exit), "{}: {run:?}", case.id());
+        let compile_path = path.join("compile.json");
+        std::fs::write(
+            &compile_path,
+            serde_json::to_vec(&json!({
+                "format": "native-compile/1",
+                "request": {
+                    "models": request["request"]["models"],
+                    "program": request["request"]["program"]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let compiled = compile_file(&compile_path);
+        assert_eq!(
+            compiled.status.code(),
+            Some(0),
+            "{}: {compiled:?}",
+            case.id()
+        );
     }
 }
 
@@ -1014,7 +1058,7 @@ fn clause_run_reader_distinguishes_pre_and_invocation_roles() {
     let expected = run_clause(build(&path, Case::Unchanged)).unwrap();
     let mut request = current_clause_request();
     request["request"]["clause"]["selection"] = json!({"clause": {
-        "name":"VersionUnchanged", "observation":"invocation"
+        "name":"VersionAdvances", "observation":"invocation"
     }});
     request["request"]["clause"]["observations"] = json!({
         "pre":"spine-pre-snapshot.json", "post":"spine-post-snapshot.json",
@@ -1207,7 +1251,7 @@ fn clause_run_command_honors_caller_byte_ceilings() {
     assert_eq!(invoke("--request-bytes", bytes).status.code(), Some(0));
 }
 
-/// FR-108-AC-1 (TC-469 step 1): every one of the 17 cases gives the Corpus
+/// FR-108-AC-1 (TC-469 step 1): every one of the 18 cases gives the Corpus
 /// table's disposition and exit code through `run_clause`.
 #[trace(
     "TC-469",
@@ -1221,6 +1265,7 @@ fn clause_run_command_honors_caller_byte_ceilings() {
 fn tc_469_step_1_every_case_matches_the_independent_expected_table() {
     let directory = tempfile::tempdir().unwrap();
     let mut seen = BTreeSet::new();
+    assert_eq!(CASES.len(), 18);
     for &case in CASES {
         let path = directory.path().join(case.id());
         let report = run_case(&path, case);
@@ -1231,6 +1276,43 @@ fn tc_469_step_1_every_case_matches_the_independent_expected_table() {
         seen,
         CASES.iter().map(|case| case.id()).collect::<BTreeSet<_>>()
     );
+}
+
+/// A result that disagrees with the version change violates the postcondition.
+#[trace("TC-469", "FR-032-AC-2")]
+#[test]
+fn version_advances_rejects_mismatched_results() {
+    let directory = tempfile::tempdir().unwrap();
+    for (case, result) in [(Case::Unchanged, true), (Case::Advanced, false)] {
+        let path = directory.path().join(case.id());
+        let mut request = build(&path, case);
+        assert_eq!(request.invocations.len(), 1, "{}", case.id());
+        for bytes in request.invocations.values_mut() {
+            let mut invocation: Value = serde_json::from_slice(bytes).unwrap();
+            invocation["result"]["boolean"] = json!(result);
+            *bytes = serde_json::to_vec(&invocation).unwrap();
+        }
+        let report = run_clause(request).unwrap();
+        assert_eq!(
+            report.disposition.stage(),
+            ClauseRunStage::Evaluate,
+            "{}",
+            case.id()
+        );
+        assert_eq!(
+            report.disposition.category(),
+            Category::Violation,
+            "{}",
+            case.id()
+        );
+        assert_eq!(report.disposition.truth(), Some(false), "{}", case.id());
+        assert_eq!(
+            report.disposition.category().exit_code(),
+            10,
+            "{}",
+            case.id()
+        );
+    }
 }
 
 /// FR-047-AC-8 (TC-131): ConfigVersion's parent semantics on the checked
@@ -1407,7 +1489,7 @@ fn run_report_separates_check_evidence_from_replay_evidence() {
 /// FR-108-AC-4 (TC-469 step 4): generating the corpus twice gives identical
 /// files (bidirectionally: same file sets, not just every file in the first
 /// generation present in the second -- SR-768 FND-003), running every one of
-/// the 17 cases twice gives identical reports (the full disposition, not a
+/// the 18 cases twice gives identical reports (the full disposition, not a
 /// field subset), and a request carrying spine `compile`'s own emitted
 /// `package_id` for the unit gives the same report.
 #[trace("TC-469", "FR-108-AC-4", "FR-032-AC-4")]

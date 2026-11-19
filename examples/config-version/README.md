@@ -1,7 +1,7 @@
 # ConfigVersion example
 
 This example checks the rules from the top-level README's
-[first rule](../../README.md#a-first-rule) against seventeen data sets. The
+[first rule](../../README.md#a-first-rule) against eighteen data sets. The
 unit is `spine-unit.native` (edition `1-draft`), the domain model is
 `example/config-version`, and each case has a snapshot of `ConfigVersion`
 objects. The example and its files are AGPL-3.0-only.
@@ -34,14 +34,15 @@ clause-run request members are `models`, `program` and `clause`
 | --- | --- | --- |
 | healthy-parent | holds: parent version 1 precedes child 2 | 0 |
 | absent-parent | holds: there is no parent to compare | 0 |
-| unchanged-version | holds: the version after an update equals the version before | 0 |
+| unchanged-version | holds: an update from 2 to 2 reports `false` | 0 |
+| advanced-version | holds: an update from 2 to 3 reports `true` | 0 |
 | boundary-zero | holds: root version 0, child 1, the lowest allowed values | 0 |
 | boundary-max | holds: root version 999, child 1000, the highest allowed values | 0 |
 | violating-parent | broken: parent 3 does not precede child 2 | 10 |
 | cycle | broken: `NoCycle` finds a two-object cycle | 10 |
 | self-loop | broken: `NoCycle` finds an object that is its own parent | 10 |
 | distinct-identities | broken: two equal-valued objects are still different objects | 10 |
-| changed-version | broken: an update changes the version, against `VersionUnchanged` | 10 |
+| changed-version | broken: an update from 2 to 4 reports `true`, violating `VersionAdvances` | 10 |
 | dangling-parent | refused: the parent is not in the data | 20 |
 | forbidden-parent-change | refused: the update changes a field the model forbids it to change | 20 |
 | missing-model | refused: the imported model is not supplied | 20 |
@@ -52,7 +53,9 @@ clause-run request members are `models`, `program` and `clause`
 
 [`tests/it/config_version_spine.rs`](../../tests/it/config_version_spine.rs)
 checks every row through the library, and runs `healthy-parent` and
-`violating-parent` through `command::run`. With `requests.sh` the written
+`violating-parent` and the four operation cases through `command::run`.
+The walkthrough test also compiles each operation case's unit. With
+`requests.sh` the written
 requests reproduce the state-rule rows directly: `healthy-parent` 0,
 `violating-parent` 10, `cycle` and `self-loop` with `NoCycle` 10,
 `dangling-parent` 20 and `incomplete-population` 22. The other rows need an
