@@ -327,8 +327,8 @@ impl<'p> PackageModelInput<'p> {
         })
     }
 
-    /// FR-940: the package form of the temporal clause whose node key is
-    /// `clause`, the model checker's clause on the package route: read from
+    /// FR-940: the package form of the temporal clause declared at the
+    /// `claim` occurrence `claim`, the model checker's clause on the package route: read from
     /// the package's nodes ([`BarePackage::temporal_clause_form`]) with the
     /// population domains of the supplied domain packages, and rebuilt as S3
     /// builds it ([`CheckedTemporalClause::of_package_form`]) within S3's
@@ -344,12 +344,13 @@ impl<'p> PackageModelInput<'p> {
     /// (`profile`, `capture`) before any engine runs.
     pub fn temporal_clause(
         &self,
-        clause: &NodeKey,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
         position_limit: u64,
     ) -> Result<CheckedTemporalClause, PendingClauseForm> {
+        let clause = claim.node();
         let mut form = self
             .package
-            .temporal_clause_form(clause)
+            .temporal_clause_form(claim)
             .map_err(PendingClauseForm::Read)?;
         let pending = |fact| -> Result<CheckedTemporalClause, PendingClauseForm> {
             let node = self

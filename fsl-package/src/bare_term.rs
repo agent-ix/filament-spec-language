@@ -778,9 +778,10 @@ impl<'p> BarePackage<'p> {
         Err(BareSelectionFailure::from(SlotSelectionFailure::MissingNode(clause.clone())).into())
     }
 
-    /// FR-940: the package form of the temporal clause whose node key is
-    /// `clause`, read from the package's admitted nodes, source map, name
-    /// rows and type projections: its name, span, profile, `over`, trigger
+    /// FR-940: the package form of the temporal clause declared at the
+    /// `claim` occurrence `claim` (its node key and occurrence), read from
+    /// the package's admitted nodes, source map, name rows and type
+    /// projections: its name, span, profile, `over`, trigger
     /// and capture binders, clock role, activation and formula arena. Its
     /// population domains are the caller's: they are read from the
     /// supplied domain packages, which a package does not hold. Charges
@@ -795,7 +796,7 @@ impl<'p> BarePackage<'p> {
     #[ix_trace_rs::string_edge]
     pub fn temporal_clause_form(
         &self,
-        clause: &NodeKey,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
     ) -> Result<fsl_semantics::check::PackageClauseForm, BareClauseRefusal> {
         use fsl_semantics::check::{BinaryTemporal, PackageFormulaNode, UnaryTemporal};
         let package = self.package();
@@ -806,11 +807,20 @@ impl<'p> BarePackage<'p> {
             .iter()
             .map(|node| (&node.node_id, node))
             .collect();
+        let clause = claim.node();
         let malformed =
             || BareSelectionFailure::from(SlotSelectionFailure::MalformedNode(clause.clone()));
         let node = self.temporal_clause_semantic_node(clause)?;
         let view = temporal_subject(package, &node.node_id).map_err(|_| malformed())?;
-        let row = view.name_row().ok_or_else(malformed)?;
+        // W58: structurally equal clauses share one node; each declaration is
+        // its own `claim` occurrence with its own name row.
+        let row = view
+            .name_row_of(&crate::checked_views::ClauseOccurrence {
+                node: node.node_id.clone(),
+                role: filament_contract_model::CheckedOccurrenceRole::Claim,
+                ordinal: claim.origin().ordinal(),
+            })
+            .ok_or_else(malformed)?;
         let name = row.name.as_ref().to_owned();
         let CheckedTerm::Application { arguments, .. } = &node.body else {
             return Err(malformed().into());

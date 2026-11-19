@@ -875,7 +875,7 @@ pub fn replay_model_trace_from_package(
     }
     let clause = input
         .temporal_clause(
-            envelope.clause_node(),
+            envelope.occurrence_key(),
             filament_semantic_value::checking::CheckingLimits::default().nodes(),
         )
         .map_err(|refusal| {

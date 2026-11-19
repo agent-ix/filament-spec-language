@@ -293,7 +293,10 @@ fn the_model_checker_decides_a_package_form_clause_as_its_source_form() {
         let key = node.identity();
         let clause = input
             .temporal_clause(
-                &key,
+                &fsl_foundation::source::provenance::OccurrenceKey::new(
+                    key.clone(),
+                    node.claim().clone(),
+                ),
                 filament_semantic_value::checking::CheckingLimits::default().nodes(),
             )
             .unwrap_or_else(|refusal| panic!("{}: {refusal}", node.clause().name()));

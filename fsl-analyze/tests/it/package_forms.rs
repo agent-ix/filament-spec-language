@@ -974,7 +974,10 @@ fn the_package_form_of_each_temporal_clause_equals_its_source_form() {
     assert_eq!(clauses.len(), 4);
     for source in clauses {
         let mut form = bare
-            .temporal_clause_form(&source.identity())
+            .temporal_clause_form(&fsl_foundation::source::provenance::OccurrenceKey::new(
+                source.identity(),
+                source.claim().clone(),
+            ))
             .unwrap_or_else(|refusal| panic!("{}: {refusal:?}", source.clause().name()));
         if let filament_exact::ValueType::Reference(object) = &form.over.1 {
             form.populations = model.overlapping_populations(object.clone());

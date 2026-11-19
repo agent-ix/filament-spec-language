@@ -163,7 +163,7 @@ enum Named<'s> {
     Clause {
         index: RequestIndex,
         name: &'s str,
-        key: filament_exact::NodeKey,
+        claim: OccurrenceKey,
         selection: &'s ItemSelection,
     },
     Deadlock {
@@ -262,9 +262,9 @@ pub fn settle_package_run(
             Named::Clause {
                 index,
                 name,
-                key,
+                claim,
                 selection,
-            } => match reads.clause(index, name, &key, selection)? {
+            } => match reads.clause(index, name, &claim, selection)? {
                 Resolution::Settled(settled) => resolved.push(settled),
                 Resolution::Claim(claim, subject) => {
                     let occurrence = subject.occurrence().clone();
@@ -469,10 +469,16 @@ fn resolve_names<'s>(
                         .ok()
                         .and_then(|subject| subject.declaration_key())
                         .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
+                // W58: the declaration is its own `claim` occurrence of a
+                // node structurally equal clauses may share.
+                let claim = OccurrenceKey::new(
+                    key,
+                    filament_exact::Origin::new(filament_exact::Role::new("claim"), row.occurrence),
+                );
                 return Ok(Named::Clause {
                     index,
                     name,
-                    key,
+                    claim,
                     selection,
                 });
             }
@@ -603,7 +609,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         &self,
         index: RequestIndex,
         name: &str,
-        key: &filament_exact::NodeKey,
+        claim: &OccurrenceKey,
         selection: &ItemSelection,
     ) -> Result<Resolution<Box<PackageClauseSubject<'r>>>, PackageRunError> {
         let input = self
@@ -618,7 +624,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             self.supply,
             self.binding.clone(),
             self.limits,
-            key,
+            claim,
             ClauseLimits {
                 limits: form.limits.limits,
                 max_depth: form.max_depth,
