@@ -57,4 +57,3 @@ Touched rustfmt and diff checks passed as supplied by the lead. Scoped Clippy fa
 - an_edf_claim_refuses_jitter_and_blocking -> FR-246-AC-2: correct
 - an_edf_claim_refuses_jitter_and_blocking -> FSpec-FR-419-AC-10: correct
 - each_defect_refuses_with_its_code_naming_its_task -> FR-246-AC-2: correct
-
