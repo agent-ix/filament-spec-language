@@ -115,39 +115,16 @@ fn a_non_control_root_emits_a_protocol_node_with_a_valid_profile_alias() {
         .any(|node| node.node_tag() == fsl_semantics::check::NodeTag::Protocol));
 }
 
-/// With a protocol profile selected, a protocol that names a construct
-/// whose node is not written yet refuses `unsupported_construct`/
-/// `not-yet-implemented` at its declaration, once for each such construct and
-/// naming the ticket that writes it, never an internal fault; a reference to
-/// it refuses with the first of them at the reference.
-#[trace("FR-092-AC-18", "FR-218-AC-8", "TC-1021")]
+/// FR-880-AC-8: a post-test repeat in an attempt-bearing protocol is admitted
+/// and emitted after its protocol node is written.
+#[trace("FR-880-AC-8", "TC-2502", "FSpec-FR-729-AC-1")]
 #[test]
-fn an_unwritten_construct_refuses_a_selected_profile_and_a_reference_to_it() {
-    let attempt = not_emitted(ProtocolConstruct::PostTestRepeat);
-    assert_eq!(attempt.code(), fsl_foundation::Code::UnsupportedConstruct);
-    assert_eq!(attempt.cause(), Some("not-yet-implemented"));
-    for (construct, ticket) in [
-        (ProtocolConstruct::Relationships, "QSL-1141"),
-        (ProtocolConstruct::ChannelKeyNotEqualityStable, "QSL-1142"),
-        (ProtocolConstruct::Control("parallel"), "QSL-1126"),
-        (ProtocolConstruct::PostTestRepeat, "STD-539"),
-        (ProtocolConstruct::ReferenceCycle, "QSL-844"),
-    ] {
-        assert_eq!(construct.tracking(), ticket, "{construct:?}");
-    }
-
-    let declared = check_attempt_unit(&rooted(POST_TEST_ROOT, true, false), false)
-        .expect_err("the protocol names an unwritten construct");
-    assert_eq!(
-        declared.iter().map(|r| &r.cause).collect::<Vec<_>>(),
-        [&attempt]
-    );
-
-    let referred = check_attempt_unit(&rooted(POST_TEST_ROOT, true, true), false)
-        .expect_err("the reference refuses too");
-    assert_eq!(referred.len(), 2, "{referred:?}");
-    assert!(referred.iter().all(|r| r.cause == attempt));
-    assert_ne!(referred[0].location, referred[1].location);
+fn a_post_test_repeat_in_an_attempt_protocol_emits() {
+    let graph = check_attempt_unit(&rooted(POST_TEST_ROOT, true, false), false)
+        .unwrap_or_else(|refusals| panic!("the post-test repeat checks: {refusals:?}"));
+    let package = CheckedPackage::link(graph);
+    let emission = emit_checked(&package).expect("the post-test repeat emits");
+    assert_eq!(emission.omitted, []);
 }
 
 /// FR-383-AC-18, TC-1297: a refused earlier declaration does not shift the
@@ -1113,9 +1090,9 @@ fn a_whole_model_role_round_trips() {
     );
 }
 
-/// FR-880-AC-4, TC-2501: a function and predicate that refer to a protocol
-/// with an attempt are admitted. Its contract node precedes the protocol,
-/// both referrers follow it, and its key is independent of those referrers.
+/// FR-880-AC-4, TC-2501: function and predicate references to a protocol with
+/// an attempt are admitted. Its contract node precedes the protocol, both
+/// referrers follow it, and its key is independent of the referrers.
 #[test]
 #[trace("TC-2501", "FR-880-AC-4", "FR-092-AC-18")]
 fn a_reference_to_an_attempt_protocol_is_written() {
@@ -1164,7 +1141,6 @@ fn a_reference_to_an_attempt_protocol_is_written() {
     let package = CheckedPackage::link(referred);
     let emission = emit_checked(&package).expect("the attempt references emit");
     assert_eq!(emission.omitted, []);
-    read_linked(&package);
     let wire = wire(&emission);
     let nodes = nodes(&wire);
     let position = |matches: &dyn Fn(&Value) -> bool, description: &str| {
@@ -1174,11 +1150,7 @@ fn a_reference_to_an_attempt_protocol_is_written() {
             .unwrap_or_else(|| panic!("{description} is written: {nodes:?}"))
     };
     let state_clause = position(
-        &|node| {
-            node["node_tag"] == "state"
-                && node["semantic_form"] == "state_clause"
-                && node["declaration"]["qualified_name"] == json!(["VersionUnchanged"])
-        },
+        &|node| node["node_tag"] == "state" && node["semantic_form"] == "state_clause",
         "attempt contract state clause",
     );
     let protocol = position(

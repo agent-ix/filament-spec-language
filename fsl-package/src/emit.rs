@@ -3018,38 +3018,91 @@ fn stale_protocol_reference(
     Ok(())
 }
 
-/// FR-093's graph order: ascending by node id, except that a recursion
-/// group's members are written together, in ordinal order, where the group's
-/// first member by node id would be.
+/// Write every local dependency before the node that names it. Among nodes
+/// ready to write, use ascending node id; a recursion group's members stay
+/// together in ordinal order.
 fn graph_order<'c, 'g>(kept: &[&'c Candidate<'g>]) -> Vec<&'c Candidate<'g>> {
-    let mut groups: HashMap<NodeKey, Vec<Option<&'c Candidate<'g>>>> = HashMap::new();
+    let mut recursion_groups: HashMap<NodeKey, Vec<Option<&'c Candidate<'g>>>> = HashMap::new();
     for candidate in kept {
         let Some(recursion) = candidate.node.recursion() else {
             continue;
         };
-        let members = groups
+        let members = recursion_groups
             .entry(recursion.anchor().clone())
             .or_insert_with(|| vec![None; recursion.size()]);
         if let Some(member) = members.get_mut(recursion.ordinal()) {
             *member = Some(*candidate);
         }
     }
-    let mut order = Vec::with_capacity(kept.len());
+
+    let mut units: Vec<(NodeKey, Vec<&'c Candidate<'g>>)> = Vec::new();
     let mut emitted_groups = HashSet::new();
     for candidate in kept {
         match candidate.node.recursion() {
-            None => order.push(*candidate),
+            None => units.push((candidate.key.clone(), vec![*candidate])),
             Some(recursion) => {
                 let group = recursion.anchor().clone();
                 if emitted_groups.insert(group.clone()) {
-                    if let Some(members) = groups.remove(&group) {
-                        order.extend(members.into_iter().flatten());
+                    if let Some(members) = recursion_groups.remove(&group) {
+                        let members: Vec<_> = members.into_iter().flatten().collect();
+                        if let Some(first) = members.iter().map(|member| &member.key).min() {
+                            units.push((first.clone(), members));
+                        }
                     }
                 }
             }
         }
     }
-    order
+
+    let unit_of: HashMap<NodeKey, usize> = units
+        .iter()
+        .enumerate()
+        .flat_map(|(unit, (_, members))| {
+            members.iter().map(move |member| (member.key.clone(), unit))
+        })
+        .collect();
+    let mut dependents = vec![BTreeSet::new(); units.len()];
+    let mut incoming = vec![0usize; units.len()];
+    for (dependent, (_, members)) in units.iter().enumerate() {
+        for member in members {
+            for dependency in &member.names {
+                let Some(&dependency_unit) = unit_of.get(dependency) else {
+                    continue;
+                };
+                if dependency_unit != dependent && dependents[dependency_unit].insert(dependent) {
+                    incoming[dependent] += 1;
+                }
+            }
+        }
+    }
+
+    let mut ready: BTreeSet<(NodeKey, usize)> = units
+        .iter()
+        .enumerate()
+        .filter(|(unit, _)| incoming[*unit] == 0)
+        .map(|(unit, (key, _))| (key.clone(), unit))
+        .collect();
+    let mut order = Vec::with_capacity(kept.len());
+    while let Some((_, unit)) = ready.pop_first() {
+        if let Some((_, members)) = units.get(unit) {
+            order.extend(members.iter().copied());
+        }
+        for dependent in dependents.get(unit).into_iter().flatten() {
+            if let Some(count) = incoming.get_mut(*dependent) {
+                *count -= 1;
+                if *count == 0 {
+                    if let Some((key, _)) = units.get(*dependent) {
+                        ready.insert((key.clone(), *dependent));
+                    }
+                }
+            }
+        }
+    }
+    if order.len() == kept.len() {
+        order
+    } else {
+        kept.to_vec()
+    }
 }
 
 /// `reference` as the wire's `DefinitionRef`, `{authority, identity}`.

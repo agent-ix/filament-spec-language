@@ -1091,8 +1091,8 @@ pub(crate) struct Lowering<'a> {
     composite_placeholders: HashMap<NodeKey, NodeRef>,
     /// Whether a recursive function group is being lowered.
     functions_open: bool,
-    /// A mixed cycle containing an attempt protocol stays open until its
-    /// clause includes the lowered attempt nodes.
+    /// Attempt protocols stay open until their clauses include the lowered
+    /// attempt nodes and pending references can settle against their keys.
     deferred_mixed_settlement: bool,
     /// The `clock_place` template node of each clock place of the unit's
     /// timed models, which a `presence_read` names (FSpec FR-322
