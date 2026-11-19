@@ -324,7 +324,7 @@ fn clause_item_cause_never_null_for_typed_halt() {
         item["cause"].is_object(),
         "typed halt must carry a cause: {item}"
     );
-    assert_eq!(item["cause"]["code"], "sum-out-of-domain", "{item}");
+    assert_eq!(item["cause"]["cause"], "sum-out-of-domain", "{item}");
 }
 
 fn run_sum_clause(domain: &str) -> ClauseRunReport {
