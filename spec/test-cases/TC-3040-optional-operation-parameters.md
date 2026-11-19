@@ -49,7 +49,8 @@ example `shop/staged-optional-parameter` uses the same shape.
 - Step 1: as FR-056-AC-65 states, with the refusals at
   `Operation.params[1].presence`.
 - Step 2: as FR-103-AC-12 states; the omitted and explicit-`absent` calls give
-  equal checked forms.
+  equal `semantic_graph` nodes and `checked_term_data`, only source regions
+  differing.
 - Step 3: the absent, present and omitted invocations are admitted and
   `NoteBy` evaluates false, true and false; the bare-reference invocation
   refuses `invalid_runtime_input`/`wrong-value-kind` at
