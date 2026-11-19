@@ -181,6 +181,9 @@ pub enum ItemRefusal {
     /// A loop-proof item was sent to a model subject.
     #[error("a loop-proof item is decided over a protocol subject only")]
     LoopProofOverModel,
+    /// A protocol loop-proof item's context did not encode.
+    #[error("the protocol loop-proof context does not encode")]
+    LoopProofContext,
     /// FR-125: a population that admits the `over` type has no universe
     /// (`RequiresBound`), or that check could not classify it.
     #[error("the clause's instances are not finite: {0:?}")]
@@ -286,12 +289,21 @@ impl ModelCheckItem<'_> {
                     ),
                 }])
             }
-            Self::LoopInvariant { .. } | Self::LoopTermination { .. } if tp4.is_some() => {
+            Self::LoopInvariant { repeat } if tp4.is_some() => {
                 Ok(vec![Instance {
                     binding: None,
                     translation: Translation::Safety(
-                        SafetyTranslation::deadlock_freedom()
-                            .map_err(|_| ItemRefusal::DeadlockContext)?,
+                        SafetyTranslation::loop_invariant(*repeat)
+                            .map_err(|_| ItemRefusal::LoopProofContext)?,
+                    ),
+                }])
+            }
+            Self::LoopTermination { repeat } if tp4.is_some() => {
+                Ok(vec![Instance {
+                    binding: None,
+                    translation: Translation::Safety(
+                        SafetyTranslation::loop_termination(*repeat)
+                            .map_err(|_| ItemRefusal::LoopProofContext)?,
                     ),
                 }])
             }

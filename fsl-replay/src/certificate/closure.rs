@@ -1701,6 +1701,9 @@ impl<S: SubjectSystem> Check<'_, S> {
                     }
                 }
             }
+            SafetyItem::LoopInvariant | SafetyItem::LoopTermination => {
+                (translation.read(before, true), None)
+            }
             SafetyItem::DeadlockFreedom => {
                 if !self.models.contains(&state_key) {
                     let at = self.product(translation, state_key.clone(), SafetyState::Carried)?;

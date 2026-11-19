@@ -77,7 +77,7 @@ use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
     closure_shape, translate, translate_counted, Atom, AutomatonError, AutomatonKind, BoundedState,
     BoundedTranslation, Gba, GbaBuilder, Guard, KeyRefusal, Letter, Monitor, SafetyAutomaton,
-    SafetyState, StateId,
+    SafetyState, StateId, SubjectKind,
 };
 use fsl_eval::fairness::{EdgeLabel, Vertex};
 use fsl_eval::model_subject::{
@@ -804,12 +804,25 @@ pub fn check_protocol_constrained(
         value: live_instances,
     });
     let (instances, root_cancelled) = if certified {
-        match request.item.instances(
-            &subject.model,
-            &model,
-            request.temporal_clock_selections,
-            cancel,
-        ) {
+        let instances = match request.item {
+            ModelCheckItem::LoopInvariant { .. } | ModelCheckItem::LoopTermination { .. } => {
+                request.item.instances_for(
+                    &subject.model,
+                    &model,
+                    request.temporal_clock_selections,
+                    cancel,
+                    SubjectKind::Protocol,
+                    max_automaton_states,
+                )
+            }
+            _ => request.item.instances(
+                &subject.model,
+                &model,
+                request.temporal_clock_selections,
+                cancel,
+            ),
+        };
+        match instances {
             Ok(instances) => (instances, None),
             Err(ItemRefusal::ClauseRoot(ClauseRootRefusal::Cancelled(cause))) => {
                 (Vec::new(), Some(cause))
@@ -1691,7 +1704,15 @@ fn prepare(
             (ModelCheckItem::RaceFreedom, Counting::ByKind) => Item::Race,
             _ => Item::Deadlock,
         };
-        return Ok((derived, Box::new(deadlock_automaton()?), true));
+        let automaton = if matches!(
+            item,
+            ModelCheckItem::LoopInvariant { .. } | ModelCheckItem::LoopTermination { .. }
+        ) {
+            loop_proof_automaton()?
+        } else {
+            deadlock_automaton()?
+        };
+        return Ok((derived, Box::new(automaton), true));
     };
     let form = clause.property_form();
     let bounded = match form {
@@ -1767,6 +1788,16 @@ fn deadlock_automaton() -> Result<Gba, ModelCheckRefusal> {
     let mut builder = GbaBuilder::new();
     builder
         .add_transition(Gba::INITIAL, holding, Gba::INITIAL)
+        .map_err(|_| fault("the-initial-state-exists"))?;
+    Ok(builder.build())
+}
+
+/// A loop-proof item's monitor imposes no additional state predicate: its
+/// obligation is evaluated by the protocol system at repeat decisions.
+fn loop_proof_automaton() -> Result<Gba, ModelCheckRefusal> {
+    let mut builder = GbaBuilder::new();
+    builder
+        .add_transition(Gba::INITIAL, Guard::always(), Gba::INITIAL)
         .map_err(|_| fault("the-initial-state-exists"))?;
     Ok(builder.build())
 }
