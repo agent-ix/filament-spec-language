@@ -4505,10 +4505,14 @@ fn timed_declaration_owner(
                         .map(|(candidate, _)| (*candidate).to_owned())
                         .collect::<Vec<_>>();
                     if !owners.is_empty() {
-                        evidence.push((
-                            owners,
-                            expression.spans.span(node.id()).unwrap_or(declaration_span),
-                        ));
+                        let span = match node.node() {
+                            ExprNode::Field {
+                                member_span: Some(span),
+                                ..
+                            } => *span,
+                            _ => declaration_span,
+                        };
+                        evidence.push((owners, span));
                     }
                 }
                 _ => {}
