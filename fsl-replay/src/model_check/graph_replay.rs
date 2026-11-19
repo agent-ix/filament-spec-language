@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use filament_exact::ObjectReference;
+use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::catalog::Category;
 use fsl_eval::simulation::model::{
     ModelSimState, ModelSimulationRequest, ModelSystem, PredicateReading, TerminalClass,
@@ -275,7 +276,7 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
             &system,
             timed.as_ref(),
             state_graph_truth,
-            package,
+            Some(package),
             claim,
             envelope.family_payload(),
             model_limits.limits.max_states,
@@ -302,6 +303,121 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
     Ok(crate::result::ReplayResult::ModelGraph(result))
 }
 
+/// FR-850, FR-940: [`replay_model_graph`] over the package route. The replay
+/// reads the request's package bytes and the handoff `supply`, never a source
+/// provision: the strict reader admits the bytes against the request's domain
+/// packages, the model system is built from the package route's model-check
+/// input, and the envelope's claim is the package form of the state-graph
+/// claim at its occurrence ([`fsl_eval::simulation::model::PackageModelInput::state_graph_claim`]),
+/// whose predicates are read through the evaluator port. A claim whose
+/// evidence names an undefined state clause, guard or terminal locus has no
+/// package form here yet and is refused, never replayed from source.
+///
+/// # Errors
+///
+/// [`ReplayRefusal`] as [`replay_model_graph`] refuses, and a fault when the
+/// bytes or supply the analysis admitted do not admit again.
+pub fn replay_model_graph_from_package(
+    wire: ReplayRequestWire,
+    supply: crate::HandoffSupply<'_>,
+    subject: &ModelTraceSubject,
+    replay_limits: ReplayLimits,
+) -> Result<crate::result::ReplayResult, ReplayRefusal> {
+    let fault = |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("FR-850", cause));
+    let request = ReplayRequest::decode_package_route(wire, replay_limits)?;
+    let ReplaySource::ModelGraph(envelope) = request.source() else {
+        return Err(ReplayRefusal::WrongModelGraphSource);
+    };
+    let envelope = envelope.as_ref();
+    if request.obligation_identity() != envelope.obligation_identity() {
+        return Err(ReplayRefusal::ModelGraphMismatch {
+            member: "obligation_identity",
+        });
+    }
+    if request.profile_selections() != envelope.profile_selections() {
+        return Err(ReplayRefusal::ModelGraphMismatch {
+            member: "profile_selections",
+        });
+    }
+    if request.declared_domains() != envelope.declared_domains() {
+        return Err(ReplayRefusal::ModelGraphMismatch {
+            member: "declared_domains",
+        });
+    }
+    if envelope.claim_node() != envelope.occurrence_key().node() {
+        return Err(ReplayRefusal::ModelGraphMismatch {
+            member: "occurrence_key",
+        });
+    }
+    let caller = request_limits(
+        request.stage_limits(),
+        request.accounting_limits(),
+        replay_limits,
+    )?;
+    let packages =
+        fsl_semantics::model::intake::package_input(request.byte_provision().package_documents())
+            .map_err(|refusal| ReplayRefusal::DomainPackages(Box::new(refusal)))?;
+    let read_limits =
+        fsl_package::V2ReadLimits::bounded(crate::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
+    let admitted =
+        fsl_package::admit_checked_package(request.package().bytes(), &packages, read_limits)
+            .map_err(|_| fault("package-bytes-admit"))?;
+    let mut budget = read_limits.native_join_limits().budget();
+    let identities = fsl_package::ReadIdentityRows::read(supply.identities, &admitted, &mut budget)
+        .map_err(|_| fault("handoff-identities-admit"))?;
+    let equality = supply
+        .equality
+        .map(|bytes| fsl_package::ReadEqualityRows::read(bytes, &admitted))
+        .transpose()
+        .map_err(|_| fault("handoff-equality-admit"))?;
+    let bare = fsl_package::BarePackage::new(&admitted)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &identities,
+                equality: equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .map_err(|_| fault("handoff-supply-joins"))?;
+    let input = fsl_eval::simulation::model::PackageModelInput::of(
+        &bare,
+        &packages,
+        caller.spine.model,
+    )
+    .map_err(|_| fault("package-route-input"))?;
+    let claim = input
+        .state_graph_claim(
+            envelope.occurrence_key(),
+            filament_semantic_value::checking::CheckingLimits::default().nodes(),
+        )
+        .map_err(|_| ReplayRefusal::ModelGraphMismatch {
+            member: "claim_identity",
+        })?;
+    let documents = request.byte_provision().snapshots();
+    let system = ModelSystem::new(ModelSimulationRequest {
+        input: input.input(),
+        packages: &packages,
+        normalization: caller.spine.model,
+        snapshots: &documents,
+        initial: subject.initial.clone(),
+        universes: subject.universes.clone(),
+        observation: caller.observation,
+        expansion: subject.expansion,
+        meter: request.accounting_limits(),
+        emit: caller.spine.package.emit(),
+    })
+    .map_err(ReplayRefusal::Admission)?;
+    let model_limits = caller.engines.model_check;
+    Ok(crate::result::ReplayResult::ModelGraph(replay_evidence(
+        &system,
+        None,
+        &claim,
+        envelope.family_payload(),
+        model_limits.limits.max_states,
+        model_limits.limits.max_transitions,
+    )?))
+}
+
 pub(super) type Position = (ModelSimState, StateKey);
 
 struct GraphPathReplay {
@@ -315,7 +431,7 @@ pub(super) fn replay_evidence(
     system: &ModelSystem<'_>,
     timed: Option<&TimedSystem<'_, '_>>,
     state_graph_truth: Option<bool>,
-    package: &fsl_package::CheckedPackage,
+    package: Option<&fsl_package::CheckedPackage>,
     claim: &CheckedStateGraphClaim,
     evidence: &GraphEvidence,
     max_states: usize,
@@ -548,7 +664,7 @@ pub(super) fn replay_evidence(
 
 fn replay_claim_undefined(
     system: &ModelSystem<'_>,
-    package: &fsl_package::CheckedPackage,
+    package: Option<&fsl_package::CheckedPackage>,
     claim: &CheckedStateGraphClaim,
     positions: &[Position],
     over: Option<&ObjectReference>,
@@ -567,6 +683,7 @@ fn replay_claim_undefined(
         let Some(locus) = undefined.locus.as_ref() else {
             return Ok(false);
         };
+        let package = source_package(package)?;
         let Some(clause) = package
             .graph()
             .state_clauses()
@@ -600,6 +717,7 @@ fn replay_claim_undefined(
         let Some(locus) = undefined.locus.as_ref() else {
             return Ok(false);
         };
+        let package = source_package(package)?;
         let mut locus_resolved = false;
         for (index, (state, _)) in positions.iter().enumerate() {
             let expansion = system
@@ -1185,4 +1303,18 @@ pub(super) fn result(
         closure_nodes,
         first_target,
     }
+}
+
+/// The source package an undefined locus is resolved against. The package
+/// route holds none: a locus that names a state clause, an operation guard or
+/// a terminal predicate has no package form in this replay yet, and is
+/// refused rather than read from source.
+fn source_package(
+    package: Option<&fsl_package::CheckedPackage>,
+) -> Result<&fsl_package::CheckedPackage, ReplayRefusal> {
+    package.ok_or_else(|| {
+        refused(ModelTraceRefusal::HyperShape {
+            reason: "an undefined state clause or terminal locus has no package form yet",
+        })
+    })
 }

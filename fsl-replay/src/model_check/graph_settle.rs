@@ -133,33 +133,39 @@ pub fn settle_state_graph(
     // The claim is compared against the request package's own declaration
     // of it: the same name at the same occurrence. A claim of another
     // package can share the structural node key of a declaration here.
-    let Some(package) = subject.simulation.source_package() else {
-        return record_of(Row::failed(), instance, method, None, None);
-    };
-    let held = package
-        .graph()
-        .state_graph_claim(claim.name())
-        .is_some_and(|own| own.occurrence() == claim.occurrence());
-    if !held {
-        return record_of(Row::failed(), instance, method, None, None);
-    }
-    if let Err(refusal) = StateGraphIdentity::resolve(
-        package,
-        subject.simulation.packages,
-        claim,
-        temporal_clock_selections,
-        cancel,
-        subject.simulation.emit,
-    ) {
-        let row = match refusal {
-            ClauseRootRefusal::Cancelled(source) => {
-                Row::incomplete(IncompleteCause::Cancelled { source }, None)
+    // The package route's claim is the package form of the occurrence its
+    // own bytes name ([`PackageModelInput::state_graph_claim`]): there is no
+    // recompiled declaration to compare it with.
+    match subject.simulation.source_package() {
+        None if subject.simulation.input.admitted_package().is_some() => {}
+        None => return record_of(Row::failed(), instance, method, None, None),
+        Some(package) => {
+            let held = package
+                .graph()
+                .state_graph_claim(claim.name())
+                .is_some_and(|own| own.occurrence() == claim.occurrence());
+            if !held {
+                return record_of(Row::failed(), instance, method, None, None);
             }
-            ClauseRootRefusal::Undeclared { .. }
-            | ClauseRootRefusal::Unresolved(_)
-            | ClauseRootRefusal::Package(_) => Row::failed(),
-        };
-        return record_of(row, instance, method, None, None);
+            if let Err(refusal) = StateGraphIdentity::resolve(
+                package,
+                subject.simulation.packages,
+                claim,
+                temporal_clock_selections,
+                cancel,
+                subject.simulation.emit,
+            ) {
+                let row = match refusal {
+                    ClauseRootRefusal::Cancelled(source) => {
+                        Row::incomplete(IncompleteCause::Cancelled { source }, None)
+                    }
+                    ClauseRootRefusal::Undeclared { .. }
+                    | ClauseRootRefusal::Unresolved(_)
+                    | ClauseRootRefusal::Package(_) => Row::failed(),
+                };
+                return record_of(row, instance, method, None, None);
+            }
+        }
     }
     let check = Certified {
         request: StateGraphCertificateRequest {

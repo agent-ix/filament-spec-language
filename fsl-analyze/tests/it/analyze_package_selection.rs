@@ -425,6 +425,17 @@ fn reach_three() -> &'static str {
     "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n"
 }
 
+/// FR-940-AC-11: the four state-graph claims, one of each form, with an
+/// `always possible` claim written without `from`.
+fn state_graph_claims() -> &'static str {
+    concat!(
+        "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n",
+        "always possible Back using v over (c: M::Counter) { c.value = 0 }\n",
+        "always possible FromOne using v over (c: M::Counter) from (c.value = 1) { c.value = 0 }\n",
+        "unique path Straight using v over (c: M::Counter) from (c.value = 0) to (c.value = 1)\n",
+    )
+}
+
 /// FR-850-AC-7 and FR-940-AC-7: the package names its invariant and
 /// state-graph claims in FSpec FR-322's `claim_names`, the package route
 /// resolves them through it with the source route's records, an absent name
@@ -438,7 +449,6 @@ fn reach_three() -> &'static str {
     "FSpec-FR-322-AC-457"
 )]
 #[test]
-#[ignore = "QSL-2402: the state-graph claim ReachThree has no package form yet (the invariant resolves through claim_names)"]
 fn package_claims_resolve_through_the_claim_name_table() {
     let body = format!("{}{}{}", bounded(), not_above_three(), reach_three());
     let items = json!([{"claim": "NotAboveThree"}, {"claim": "ReachThree"}, {"claim": "Missing"}]);
@@ -491,6 +501,42 @@ fn package_claims_resolve_through_the_claim_name_table() {
     let diagnostic = first_diagnostic(&run);
     assert_eq!(diagnostic["code"], "ambiguous_declaration", "{diagnostic}");
     assert_eq!(diagnostic["cause"], "ambiguous-name", "{diagnostic}");
+}
+
+/// FR-940-AC-11: the four state-graph claims, one of each form, settle over
+/// a package with the source route's records, witnesses or counterexamples,
+/// replays and certificates, and no package-route record is `unsupported`.
+#[trace("TC-3034", "FR-940-AC-11")]
+#[test]
+fn a_package_state_graph_claim_settles_as_its_source_claim() {
+    let body = format!("{}{}", bounded(), state_graph_claims());
+    let names = ["ReachThree", "Back", "FromOne", "Straight"];
+    let items = json!(names.map(|name| json!({"claim": name})));
+    let ws = Workspace::new("package-state-graph");
+    let source = analyze(&counter_request(&ws, &body, items.clone()));
+    let (members, _) = package_request(&ws, &body, items);
+    let run = analyze_members(&ws, "analyze-state-graph.json", &members);
+    for (index, name) in names.iter().enumerate() {
+        assert_eq!(
+            run.item(index),
+            source.item(index),
+            "{name}: {}",
+            run.document()
+        );
+        assert!(
+            !run.item(index).to_string().contains("unsupported"),
+            "{name}: {}",
+            run.item(index)
+        );
+    }
+    for member in ["items", "aggregate", "last_stage", "category"] {
+        assert_eq!(
+            run.document()[member],
+            source.document()[member],
+            "{member}"
+        );
+    }
+    assert_eq!(run.exit, source.exit);
 }
 
 /// FR-850-AC-7, FR-940 (review round 1): an `invariant` state clause is
@@ -558,8 +604,8 @@ fn an_absent_handoff_or_package_file_refuses_missing_file() {
 /// row's name is refused the same at that row before any engine runs; with
 /// distinct names both resolve.
 #[trace("TC-2970", "FR-940-AC-8", "FSpec-TC-2012", "FSpec-FR-322-AC-459")]
+#[trace("TC-3034", "FR-940-AC-12")]
 #[test]
-#[ignore = "QSL-2402: the source-route temporal/state-graph name collision refusal and the state-graph package form are not implemented yet"]
 fn a_name_in_both_name_tables_is_refused() {
     let items = json!([{"claim": "Bounded"}]);
     let ws = Workspace::new("claim-name-namespace-source");

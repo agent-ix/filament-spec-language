@@ -31,7 +31,7 @@ use serde_json::{json, Map};
 use super::super::{
     AnalyzeItem, AnalyzeLimits, ClaimItem, ClauseItemRefusal, ClauseLimits, Engines, ItemForm,
     ItemOptions, NegotiatedItem, PackageClauseSubject, PackageDeadlockSubject,
-    PackageInvariantSubject, PackageItemInputs, SubjectBinding,
+    PackageInvariantSubject, PackageItemInputs, PackageStateGraphSubject, SubjectBinding,
 };
 use super::{
     candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
@@ -177,6 +177,13 @@ enum Named<'s> {
         declaration: CheckedNodeId,
         selection: &'s ItemSelection,
     },
+    StateGraph {
+        index: RequestIndex,
+        name: &'s str,
+        declaration: CheckedNodeId,
+        ordinal: u64,
+        selection: &'s ItemSelection,
+    },
 }
 
 /// How a resolved package-route claim item runs.
@@ -184,6 +191,7 @@ enum Route<'a> {
     Clause(Box<PackageClauseSubject<'a>>),
     Deadlock,
     Invariant,
+    StateGraph(Box<PackageStateGraphSubject<'a>>),
 }
 
 /// FR-850, FR-940: resolve `run`'s items against the package's name tables,
@@ -256,6 +264,7 @@ pub fn settle_package_run(
     let mut owners: BTreeMap<OccurrenceKey, Option<String>> = BTreeMap::new();
     let mut clause_claims: Vec<OccurrenceKey> = Vec::new();
     let mut invariant_claims: Vec<OccurrenceKey> = Vec::new();
+    let mut graph_claims: Vec<OccurrenceKey> = Vec::new();
     for item in named {
         match item {
             Named::Settled(settled) => resolved.push(settled),
@@ -301,6 +310,22 @@ pub fn settle_package_run(
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
+            Named::StateGraph {
+                index,
+                name,
+                declaration,
+                ordinal,
+                selection,
+            } => match reads.state_graph(index, name, &declaration, ordinal, selection)? {
+                Resolution::Settled(settled) => resolved.push(settled),
+                Resolution::Claim(claim, subject) => {
+                    let occurrence = claim.item.claim.clone();
+                    owners.insert(occurrence.clone(), owner_of_graph(package, subject.claim()));
+                    graph_claims.push(occurrence);
+                    routes.insert(index, Route::StateGraph(subject));
+                    resolved.push(ResolvedItem::Claim(claim));
+                }
+            },
         }
     }
     let model_input = input.as_ref().map(PackageModelInput::input);
@@ -320,8 +345,7 @@ pub fn settle_package_run(
         ItemKind::Formula if invariant_claims.contains(claim) => {
             Some(DeclarationFamily::StateModel)
         }
-        ItemKind::Formula => clause_claims
-            .contains(claim)
+        ItemKind::Formula => (clause_claims.contains(claim) || graph_claims.contains(claim))
             .then_some(DeclarationFamily::TemporalTrace),
         other => crate::claim_family::kind_family(other),
     };
@@ -406,6 +430,30 @@ fn owner_of_clause(
     }
 }
 
+/// The model package owning a state-graph claim: its `over` object type's
+/// package, else the package's one model selection.
+fn owner_of_graph(
+    package: &BarePackage<'_>,
+    claim: &fsl_semantics::check::CheckedStateGraphClaim,
+) -> Option<String> {
+    match claim.over() {
+        Some(over) => Some(over.object.original().package().to_owned()),
+        None => sole_model(package),
+    }
+}
+
+/// Whether the package node `node` is a `claim`/`state_graph` node (FR-410).
+fn is_state_graph(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
+    view.package()
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|candidate| candidate.node_id == *node)
+        .is_some_and(|candidate| {
+            &*candidate.node_tag == "claim" && candidate.semantic_form.as_ref() == "state_graph"
+        })
+}
+
 /// The package's one model selection, when it has exactly one.
 fn sole_model(package: &BarePackage<'_>) -> Option<String> {
     match AnalysisView::model_selections(package).as_slice() {
@@ -488,6 +536,15 @@ fn resolve_names<'s>(
             if let Some(found) = view.claim_name(name) {
                 if derived {
                     return Err(pending(PendingFamily::Derived));
+                }
+                if is_state_graph(view, &found.declaration) {
+                    return Ok(Named::StateGraph {
+                        index,
+                        name,
+                        declaration: found.declaration,
+                        ordinal: found.occurrence.ordinal,
+                        selection,
+                    });
                 }
                 if !is_invariant(view, &found.declaration) {
                     return Err(pending(PendingFamily::Declaration));
@@ -727,6 +784,134 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 unrouted,
             }),
             Box::new(clause_subject),
+        ))
+    }
+
+    /// FR-620's item over the state-graph claim `name`, whose `claim_names`
+    /// row is on `declaration` at `claim` occurrence `ordinal`, as the source
+    /// route's `resolve_one` resolves it: the record's extent and candidates
+    /// from the package form's requirement record, narrowed to the claim's
+    /// form (FR-628).
+    fn state_graph(
+        &self,
+        index: RequestIndex,
+        name: &str,
+        declaration: &CheckedNodeId,
+        ordinal: u64,
+        selection: &ItemSelection,
+    ) -> Result<Resolution<Box<PackageStateGraphSubject<'r>>>, PackageRunError> {
+        let fault = || PackageRunError::Document(AnalyzeDocumentError::Fault);
+        let input = self.input.ok_or_else(fault)?;
+        let key = input.package().node_key(declaration).ok_or_else(fault)?;
+        let claim = OccurrenceKey::new(
+            key.clone(),
+            filament_exact::Origin::new(filament_exact::Role::new("claim"), ordinal),
+        );
+        let own_subject = self.own_subject(index, selection)?;
+        let temporal = selection.temporal.clone().unwrap_or_default();
+        let mut form = temporal_settings(&temporal);
+        let subject = PackageStateGraphSubject::new(
+            input,
+            self.package_bytes,
+            self.supply,
+            self.binding.clone(),
+            self.limits,
+            &claim,
+        )
+        .map_err(|refusal| {
+            PackageRunError::Pending(PendingPackageFamily {
+                request_index: Some(index),
+                family: refusal
+                    .pending_fact()
+                    .map_or(PendingFamily::Declaration, |(fact, _)| {
+                        PendingFamily::ClauseFact(fact)
+                    }),
+                node: Some(declaration.clone()),
+            })
+        })?;
+        let kind = match selection.kind.as_deref() {
+            Some(label) => match Capability::from_wire(label) {
+                Ok(kind) => kind,
+                Err(_) => {
+                    return Ok(Resolution::Settled(invalid_kind(
+                        index,
+                        Some(name),
+                        "unknown-kind",
+                    )))
+                }
+            },
+            None => Capability::TemporalSatisfaction,
+        };
+        let named = selection.backend.as_deref().map(BackendId::new);
+        let backend_options = selection.options.clone().unwrap_or_default();
+        if kind.applies_to_declaration(DeclarationFamily::TemporalTrace) {
+            if let Some(refused) = unknown_option(
+                index,
+                Some(name),
+                self.registry,
+                named.as_ref(),
+                &backend_options,
+            ) {
+                return Ok(Resolution::Settled(refused));
+            }
+        }
+        let record = kind == Capability::TemporalSatisfaction;
+        let (extent, candidates) = if record {
+            (
+                ExtentClassification::Unbounded {
+                    finite_bound_available: false,
+                },
+                self.registry.restrict_to_state_graph_form(
+                    self.registry.restrict_to_timing(
+                        fsl_route::request::requirement_candidates(
+                            &subject.claim().claim().requirements(key),
+                            self.registry,
+                            named.as_ref(),
+                        ),
+                        false,
+                    ),
+                    fsl_route::StateGraphFormKind::of(subject.claim().form()),
+                ),
+            )
+        } else {
+            (
+                ExtentClassification::Bounded,
+                self.registry.candidates(kind, named.as_ref()),
+            )
+        };
+        if let Some(refused) = super::sampling_refusal(index, name, subject.claim(), &temporal) {
+            return Ok(Resolution::Settled(refused));
+        }
+        form.pending_reductions.clone_from(&selection.reductions);
+        let item_form = (kind == Capability::TemporalSatisfaction
+            || kind == Capability::GlobalConformance)
+            .then(|| ItemForm::Temporal(form));
+        let item = ClaimItem {
+            request_index: index,
+            claim,
+            kind,
+            extent,
+            backend: named,
+            candidates: candidate_list(&candidates),
+            options: options(selection, backend_options),
+            form: item_form,
+        };
+        let unrouted = selection.unrouted_beyond_sampling()
+            || (selection.reductions.is_some() && kind != Capability::TemporalSatisfaction)
+            || reads_no_clocks(selection)
+            || temporal
+                .limits
+                .is_some_and(|limits| limits.sets_memory_limits())
+            || !own_subject.same_model(self.subject);
+        Ok(Resolution::Claim(
+            Box::new(ResolvedClaim {
+                item,
+                claim_name: name.to_owned(),
+                candidates,
+                subject: own_subject,
+                unrouted,
+            }),
+            Box::new(subject),
         ))
     }
 
@@ -1065,6 +1250,11 @@ impl<'a> WorkInputs<'_, 'a> {
                     form,
                 )
                 .item(item.request_index)
+            }
+            (Some(ItemForm::Temporal(form)), Some(Route::StateGraph(subject)))
+                if item.kind == Capability::TemporalSatisfaction =>
+            {
+                subject.configured(form.clone()).item(item.request_index)
             }
             // FR-489's tie routed the invariant over the model subject to
             // EN-1 (FR-625, FR-951), as on the source route.

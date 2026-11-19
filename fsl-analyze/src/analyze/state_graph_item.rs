@@ -15,7 +15,8 @@ use filament_exact::{Cancel, ObjectReference, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{
-    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, TimedState, TimedSystem,
+    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PendingClauseForm,
+    TimedState, TimedSystem,
 };
 use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -31,7 +32,8 @@ use fsl_replay::{
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
 use fsl_route::StateGraphFormKind;
-use fsl_semantics::check::{Capability, CheckedStateGraphClaim, StateGraphForm};
+use fsl_eval::simulation::model::PackageModelInput;
+use fsl_semantics::check::{Capability, CheckedStateGraphClaim, DeclarationFamily, StateGraphForm};
 
 use super::items::{INVALID_VALUE, model_refusal};
 use super::{
@@ -98,11 +100,10 @@ pub(super) fn state_graph_item<'a>(
             move |cancel| {
                 run(
                     &Run {
-                        package,
+                        source: Source::Checked { package, provision },
                         input: &input,
                         binding: &binding,
                         limits,
-                        provision,
                         claim,
                         form: &form,
                         timed: backend == crate::zone_check::manifest::BACKEND_ID,
@@ -119,12 +120,11 @@ pub(super) fn state_graph_item<'a>(
 /// What one state-graph run reads.
 #[derive(Clone, Copy)]
 struct Run<'r, 'a> {
-    package: &'a CheckedPackage,
+    source: Source<'a>,
     input: &'r ModelCheckInput<'a>,
     binding: &'r SubjectBinding<'a>,
     limits: AnalyzeLimits,
-    provision: &'r SourceProvision,
-    claim: &'a CheckedStateGraphClaim,
+    claim: &'r CheckedStateGraphClaim,
     form: &'r TemporalItem,
     timed: bool,
     digital: bool,
@@ -1322,6 +1322,23 @@ fn bound_instance(
         .map(Some)
 }
 
+/// Where a run's evidence replays from.
+#[derive(Clone, Copy)]
+enum Source<'a> {
+    /// The source route: the checked package, recompiled from its
+    /// provision.
+    Checked {
+        package: &'a CheckedPackage,
+        provision: &'a SourceProvision,
+    },
+    /// The package route (FR-940): the admitted package bytes and the
+    /// handoff supply, never a source provision.
+    Bytes {
+        package_bytes: &'a [u8],
+        supply: fsl_replay::HandoffSupply<'a>,
+    },
+}
+
 /// FR-170's replay of an instance's evidence over the same source.
 fn replay_instance(
     read: &Run<'_, '_>,
@@ -1337,14 +1354,27 @@ fn replay_instance(
         .cloned()
         .ok_or_else(|| fault("graph-claim-occurrence"))?;
     let node = occurrence.node().clone();
-    let emission =
-        fsl_package::emit_checked_with_temporal_selections(read.package, &[], read.limits.emit)
+    let (bytes, dependencies, byte_provision) = match read.source {
+        Source::Checked {
+            package,
+            provision,
+        } => {
+            let emission = fsl_package::emit_checked_with_temporal_selections(
+                package,
+                &[],
+                read.limits.emit,
+            )
             .map_err(|_| fault("package-emission"))?;
-    let package = ReplayPackage::read(
-        emission.package().bytes(),
-        ReplayLimits::default().input_bytes,
-    )
-    .map_err(|_| fault("package-emission"))?;
+            (
+                emission.package().bytes().to_vec(),
+                super::request::dependency_wires(package),
+                provision.wire_entries(),
+            )
+        }
+        Source::Bytes { package_bytes, .. } => (package_bytes.to_vec(), Vec::new(), Vec::new()),
+    };
+    let package = ReplayPackage::read(&bytes, ReplayLimits::default().input_bytes)
+        .map_err(|_| fault("package-emission"))?;
     let obligation = ObligationIdentity::new(node.clone(), None, 0);
     let mut envelope = GraphEvidenceEnvelope::new(
         obligation.clone(),
@@ -1362,7 +1392,7 @@ fn replay_instance(
     let wire = ReplayRequestWire {
         package,
         profile_selections: Vec::new(),
-        dependencies: super::request::dependency_wires(read.package),
+        dependencies,
         replay_target: RequestTargetWire::default(),
         source: ReplaySource::ModelGraph(Box::new(envelope)),
         obligation_identity: obligation,
@@ -1373,7 +1403,7 @@ fn replay_instance(
         supplied_limits: None,
         object_environment: None,
         declared_domains: Vec::new(),
-        byte_provision: read.provision.wire_entries(),
+        byte_provision,
         documents: read
             .binding
             .packages
@@ -1402,10 +1432,110 @@ fn replay_instance(
             max_candidates: read.form.max_candidates,
         },
     };
-    match fsl_replay::replay_model_graph(wire, &subject, ReplayLimits::default())
-        .map_err(Box::new)?
-    {
+    let replayed = match read.source {
+        Source::Checked { .. } => {
+            fsl_replay::replay_model_graph(wire, &subject, ReplayLimits::default())
+        }
+        Source::Bytes { supply, .. } => fsl_replay::replay_model_graph_from_package(
+            wire,
+            supply,
+            &subject,
+            ReplayLimits::default(),
+        ),
+    };
+    match replayed.map_err(Box::new)? {
         ReplayResult::ModelGraph(replayed) => Ok(replayed),
         _ => Err(fault("graph-replay-result")),
+    }
+}
+
+/// FR-850, FR-940: the EN-1 item over a state-graph claim on the package
+/// route. The claim is the package form of the occurrence its `claim_names`
+/// row names ([`PackageModelInput::state_graph_claim`]), the model system is
+/// built from the package route's model-check input, every predicate is read
+/// through the evaluator port, and an instance's evidence replays from the
+/// package bytes and the handoff supply, never from a source provision.
+pub struct PackageStateGraphSubject<'a> {
+    input: ModelCheckInput<'a>,
+    claim: CheckedStateGraphClaim,
+    occurrence: OccurrenceKey,
+    binding: SubjectBinding<'a>,
+    limits: AnalyzeLimits,
+    form: TemporalItem,
+    package_bytes: &'a [u8],
+    supply: fsl_replay::HandoffSupply<'a>,
+}
+
+impl<'a> PackageStateGraphSubject<'a> {
+    /// The subject of the state-graph claim at `key`.
+    ///
+    /// # Errors
+    ///
+    /// [`PendingClauseForm`] when the package does not select the claim or
+    /// its facts do not rebuild it.
+    pub fn new(
+        package: &'a PackageModelInput<'a>,
+        package_bytes: &'a [u8],
+        supply: fsl_replay::HandoffSupply<'a>,
+        binding: SubjectBinding<'a>,
+        limits: AnalyzeLimits,
+        key: &OccurrenceKey,
+    ) -> Result<Self, PendingClauseForm> {
+        let claim = package.state_graph_claim(
+            key,
+            filament_semantic_value::checking::CheckingLimits::default().nodes(),
+        )?;
+        Ok(Self {
+            input: package.input(),
+            claim,
+            occurrence: key.clone(),
+            binding,
+            limits,
+            form: TemporalItem::default(),
+            package_bytes,
+            supply,
+        })
+    }
+
+    /// The rebuilt claim.
+    pub fn claim(&self) -> &CheckedStateGraphClaim {
+        &self.claim
+    }
+
+    /// The same subject under the item's settings `form`.
+    #[must_use]
+    pub fn configured(mut self, form: TemporalItem) -> Self {
+        self.form = form;
+        self
+    }
+
+    /// The item that decides the claim as the source route's
+    /// [`state_graph_item`] does.
+    pub fn item(self, index: RequestIndex) -> AnalyzeItem<'a> {
+        let key = self.occurrence.clone();
+        AnalyzeItem::new(
+            index,
+            Capability::TemporalSatisfaction,
+            Some(DeclarationFamily::TemporalTrace),
+            fsl_route::Mode::Bounded,
+            en1::BACKEND_ID,
+            move |cancel| {
+                run(
+                    &Run {
+                        source: Source::Bytes {
+                            package_bytes: self.package_bytes,
+                            supply: self.supply,
+                        },
+                        input: &self.input,
+                        binding: &self.binding,
+                        limits: self.limits,
+                        claim: &self.claim,
+                        form: &self.form,
+                    },
+                    cancel,
+                )
+            },
+        )
+        .claimed(key)
     }
 }

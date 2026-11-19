@@ -224,7 +224,7 @@ pub use model_check::counterexample::{
 };
 pub use model_check::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
 pub use model_check::graph_replay::{
-    replay_model_graph, replay_model_graph_with_cancel,
+    replay_model_graph, replay_model_graph_from_package, replay_model_graph_with_cancel,
     replay_model_graph_with_cancel_and_temporal_selections,
     replay_model_graph_with_temporal_selections,
 };
