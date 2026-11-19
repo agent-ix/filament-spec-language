@@ -14,8 +14,8 @@ relationships:
 
 Verify that a domain-package value type whose `target` names a native value
 type is that native under its own name: a data native gives its own type, a
-bare `Text`, `Rational` or `Decimal` gives no checked type and refuses where
-used, and `Clock` makes the value type an alias of the clock type with clock
+bare `Text` or `Rational` gives no checked type and refuses where used, a
+`Decimal` with its decimal policy gives the Decimal value type, and `Clock` makes the value type an alias of the clock type with clock
 constraints. Scope: FR-056-AC-63, FR-056-AC-64.
 
 ## Test Procedure
@@ -25,8 +25,10 @@ constraints. Scope: FR-056-AC-63, FR-056-AC-64.
    Float32) and object type `Holder` with one field typed by each. Admit and
    assemble it, and check `self.count = 1` and `self.flag = true`.
 2. Add value types `Memo`, `Ratio`, `Amount` (`target` Text, Rational,
-   Decimal) with fields `memo`, `ratio`, `amount`; assemble it, then check the
-   clause `self.memo = self.memo`.
+   Decimal; `Amount` carrying the decimal policy `{precision: 5, scale: 2}`)
+   with fields `memo`, `ratio`, `amount`; assemble it, then check the clauses
+   `self.memo = self.memo` and `self.amount = self.amount`. Then remove
+   `Amount`'s policy and admit the package again.
 3. Build a timed package with value type `Watch` (`target`
    `ix://filament/native/Clock`, constraint `max` `5` applying to `Watch`) and
    object type `Call` with field `w` and optional field `v` typed `Watch`;
@@ -42,8 +44,12 @@ Tag steps 1-2 `#[trace("TC-3031", "FR-056-AC-63")]` and steps 3-4
 - Step 1: no `UnsupportedModelMember` refusal; the fields are `Boolean`,
   `Integer`, `String`, `Float64` (binary64, `exact`) and `Float32` (binary32,
   `exact`), and both clauses check.
-- Step 2: assembly succeeds; the clause refuses `ill_typed`/`operator-ineligible`
-  at the `field` projection, naming `Holder` and `Field.typeRef`.
+- Step 2: assembly succeeds; the `memo` clause refuses
+  `ill_typed`/`operator-ineligible` at the `field` projection, naming `Holder`
+  and `Field.typeRef`; `amount` is `Decimal[-99999, 99999; 2, 2; exact]` and
+  its clause checks. Without the policy, intake refuses
+  `invalid_model_binding`/`malformed-declaration` with the validator's
+  `DECIMAL_POLICY_MISSING`.
 - Step 3: the checked graph has clock places `Call.w` and `Call.v` (`v`
   guarded by its presence), each with the time invariant `x <= 5`.
 - Step 4: `min` refuses `invalid_timed_model`/`time-invariant-shape`;

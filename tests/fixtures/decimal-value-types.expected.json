@@ -1,0 +1,14 @@
+{
+  "comment": "FR-056-AC-65 golden: each member of tests/fixtures/decimal-value-types.semantic-ir.json and the checked Decimal[lo, hi; smin, smax; mode] its FCD decimal policy and bounds give.",
+  "members": [
+    {"member": "Meter.soc", "type": "Decimal[0, 100; 2, 2; exact]", "lo": "0", "hi": "100", "smin": 2, "smax": 2, "mode": "exact"},
+    {"member": "Meter.price", "type": "Decimal[-9999999999, 9999999999; 2, 2; exact]", "lo": "-9999999999", "hi": "9999999999", "smin": 2, "smax": 2, "mode": "exact"},
+    {"member": "Meter.margin", "type": "Decimal[-9, 9; 1, 1; exact]", "lo": "-9", "hi": "9", "smin": 1, "smax": 1, "mode": "exact"},
+    {"member": "Meter.tax", "type": "Decimal[125, 999; 3, 3; exact]", "lo": "125", "hi": "999", "smin": 3, "smax": 3, "mode": "exact"},
+    {"member": "Meter.whole", "type": "Decimal[-99999999999999999999999999999999999999, 99999999999999999999999999999999999999; 0, 0; exact]", "lo": "-99999999999999999999999999999999999999", "hi": "99999999999999999999999999999999999999", "smin": 0, "smax": 0, "mode": "exact"},
+    {"member": "Meter.fee", "type": "Decimal[-999999, 999999; 2, 2; exact]", "lo": "-999999", "hi": "999999", "smin": 2, "smax": 2, "mode": "exact"},
+    {"member": "Meter.rate", "type": "Decimal[1, 10000; 4, 4; exact]", "lo": "1", "hi": "10000", "smin": 4, "smax": 4, "mode": "exact"},
+    {"member": "Meter.adjust.by", "type": "Decimal[-99999, 99999; 2, 2; exact]", "lo": "-99999", "hi": "99999", "smin": 2, "smax": 2, "mode": "exact"},
+    {"member": "Meter.adjust.result", "type": "Decimal[0, 100; 2, 2; exact]", "lo": "0", "hi": "100", "smin": 2, "smax": 2, "mode": "exact"}
+  ]
+}
