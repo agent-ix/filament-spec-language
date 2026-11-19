@@ -594,7 +594,7 @@ fn call_site_refusal_codes_for_operations_clauses_and_intake() {
     let replayed = crate::replay(wire, crate::ReplayLimits::default())
         .expect_err("no domain package is provided");
     assert!(
-        matches!(replayed, crate::ReplayRefusal::Recompile(_)),
+        matches!(replayed, crate::ReplayRefusal::Recompile { .. }),
         "{replayed:?}"
     );
     assert_eq!(refusal.code(), replayed.code());
