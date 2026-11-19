@@ -6,9 +6,7 @@
 
 use filament_exact::Cancel;
 use fsl_foundation::ReductionKind;
-use fsl_replay::{
-    AppliedReduction, HyperOutcome, HyperReductionCause, ModelCheckLimits, RunStats,
-};
+use fsl_replay::{AppliedReduction, HyperOutcome, HyperReductionCause, ModelCheckLimits, RunStats};
 use fsl_route::reductions::{Reductions, SymmetryDeclaration};
 use fsl_semantics::check::HyperForm;
 use ix_trace_rs::trace;
@@ -137,7 +135,6 @@ fn a_key_symmetry_on_an_ineligible_form_settles_unsupported() {
             reduction: ReductionKind::Symmetry
         }
     );
-}
     assert_eq!(stats, fsl_replay::RunStats::default());
     // The eligible HP-2 item is not refused by the same selection.
     let eligible = interference(Vault::Secure)
