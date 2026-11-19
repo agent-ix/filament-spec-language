@@ -8,7 +8,7 @@ use filament_observation::authority::{activation, capture, closure, completeness
 
 pub(in crate::temporal::evidence) struct ActivationCapture<'a> {
     pub(in crate::temporal::evidence) name: &'a str,
-    pub(in crate::temporal::evidence) declared_type: &'a str,
+    pub(in crate::temporal::evidence) declared_type: String,
     pub(in crate::temporal::evidence) fact: Value,
 }
 

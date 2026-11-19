@@ -66,6 +66,12 @@ impl ClauseShape {
         self.captures.iter().map(|(name, _)| &**name)
     }
 
+    pub(super) fn capture_declarations(&self) -> impl Iterator<Item = (&str, &ValueType)> {
+        self.captures
+            .iter()
+            .map(|(name, declared)| (name.as_ref(), declared))
+    }
+
     fn guarded(&self) -> bool {
         matches!(self.activation, ClauseActivation::Each { guarded: true })
     }
@@ -441,6 +447,7 @@ pub fn activate(
                     arrival.payload.clone(),
                     arrival.receipt.cloned(),
                     fault,
+                    arrival.captures.to_vec(),
                 );
                 let instance = instance_of(arrival.identity, &entry, None);
                 ledger = ledger.with_instance(obligation, arrival.identity, entry);
@@ -580,5 +587,6 @@ fn establish(
         arrival.payload.clone(),
         arrival.receipt.cloned(),
         CaptureEnvironment::new(entries),
+        arrival.captures.to_vec(),
     )))
 }

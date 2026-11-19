@@ -866,6 +866,7 @@ fn encode_retained(request: &EvidenceRequest, obligation: &ObligationKey) -> Vec
                 .bytes(identity.as_bytes())
                 .bytes(entry.payload().as_bytes())
                 .u64(entry.evaluations())
+                .bytes(&encode_captures(MemberEncoder::new(), entry.capture_facts()).finish())
                 .u64(entry.receipts().len() as u64);
             for receipt in entry.receipts() {
                 encoder = encoder.bytes(receipt.as_bytes());
@@ -1794,39 +1795,86 @@ fn run_instance(
         Err(ActivationStop::Stop(stop)) => return Ok(Outcome::stopped(incomplete_of(stop))),
     };
     let mut instances = activation.instances.clone();
-    let owner_disposition = if let Some(owner) = owner.as_ref() {
-        let selected = request.trigger.as_ref().and_then(|trigger| {
-            instances
-                .iter()
-                .find(|instance| &instance.identity == trigger)
-        });
-        if selected.is_none() || shape.capture_names().next().is_none() {
-            let supplied = trace
-                .supplied_index(TemporalPosition::new(*activation_position as u64))
-                .ok_or_else(|| fault("activation-anchor-is-supplied"))?;
-            let anchor = request
-                .positions
-                .get(supplied)
-                .ok_or_else(|| fault("activation-anchor-is-supplied"))?;
-            let view = owner.activation_view(
-                &facts.authenticated,
-                request.cover,
-                anchor,
-                selected.map(|instance| super::owner::ActivationInstance {
-                    identity: &instance.identity,
-                    captures: Vec::new(),
-                }),
-                *scope,
-            )?;
-            Some(owner_disposition(view.payload(), *scope, request.execution))
+    let mut owner_dispositions = BTreeMap::new();
+    let mut empty_disposition = None;
+    if let Some(owner) = owner.as_ref() {
+        let supplied = trace
+            .supplied_index(TemporalPosition::new(*activation_position as u64))
+            .ok_or_else(|| fault("activation-anchor-is-supplied"))?;
+        let anchor = request
+            .positions
+            .get(supplied)
+            .ok_or_else(|| fault("activation-anchor-is-supplied"))?;
+        if instances.is_empty() {
+            let view =
+                owner.activation_view(&facts.authenticated, request.cover, anchor, None, *scope)?;
+            empty_disposition = Some(owner_disposition(view.payload(), *scope, request.execution));
         } else {
-            None
+            for instance in &instances {
+                // A refused activation has no instance-creating delivery.
+                if matches!(&instance.state, InstanceState::Unavailable(fault) if !matches!(fault.subject, FaultSubject::Capture(_)))
+                {
+                    continue;
+                }
+                let incoming = activation
+                    .ledger
+                    .instance(&facts.obligation, &instance.identity)
+                    .map(|entry| entry.capture_facts());
+                let mut captures = Vec::new();
+                for (index, (name, declared)) in shape.capture_declarations().enumerate() {
+                    let value = instance
+                        .environment
+                        .get(name)
+                        .map(|entry| entry.value().as_bytes());
+                    let fact = if let Some(value) = value {
+                        serde_json::json!({"value": serde_json::from_slice::<serde_json::Value>(value)
+                            .map_err(|_| fault("retained-capture-is-semantic-json"))?})
+                    } else {
+                        match incoming.and_then(|facts| facts.get(index)) {
+                            Some(CaptureFact::Value { value, .. }) => {
+                                serde_json::json!({"value": serde_json::from_slice::<serde_json::Value>(value.as_bytes())
+                                .map_err(|_| fault("admitted-capture-is-semantic-json"))?})
+                            }
+                            Some(CaptureFact::Missing) | None => {
+                                serde_json::json!({"fault":"missing"})
+                            }
+                            Some(CaptureFact::Null) => serde_json::json!({"fault":"null"}),
+                            Some(CaptureFact::WrongType) => {
+                                serde_json::json!({"fault":"wrong-type"})
+                            }
+                            Some(CaptureFact::Stale) => serde_json::json!({"fault":"stale"}),
+                        }
+                    };
+                    let declared_type =
+                        fsl_semantics::model::domain_package::ValueTypeRef::Resolved(Box::new(
+                            declared.clone(),
+                        ))
+                        .to_string();
+                    captures.push(super::owner::ActivationCapture {
+                        name,
+                        declared_type,
+                        fact,
+                    });
+                }
+                let view = owner.activation_view(
+                    &facts.authenticated,
+                    request.cover,
+                    anchor,
+                    Some(super::owner::ActivationInstance {
+                        identity: &instance.identity,
+                        captures,
+                    }),
+                    *scope,
+                )?;
+                owner_dispositions.insert(
+                    instance.identity.clone(),
+                    owner_disposition(view.payload(), *scope, request.execution),
+                );
+            }
         }
-    } else {
-        None
-    };
+    }
     let mut outcome = match &request.trigger {
-        None => owner_disposition.map_or_else(|| no_instance(*scope, request), disposition_outcome),
+        None => empty_disposition.map_or_else(|| no_instance(*scope, request), disposition_outcome),
         Some(trigger) => {
             let mut resolved = instances
                 .iter()
@@ -1844,7 +1892,7 @@ fn run_instance(
                 }
             }
             match resolved {
-                None => owner_disposition
+                None => empty_disposition
                     .map_or_else(|| no_instance(*scope, request), disposition_outcome),
                 Some(instance) => match &instance.state {
                     InstanceState::Unavailable(instance_fault) => {
@@ -1861,14 +1909,19 @@ fn run_instance(
                             }),
                         )
                     }
-                    InstanceState::Active => evaluate(
-                        facts,
-                        trace,
-                        owner.as_ref(),
-                        *activation_position,
-                        trigger,
-                        call,
-                    )?,
+                    InstanceState::Active => match owner_dispositions.get(trigger) {
+                        Some(disposition) if *disposition != Disposition::Active => {
+                            disposition_outcome(*disposition)
+                        }
+                        Some(_) | None => evaluate(
+                            facts,
+                            trace,
+                            owner.as_ref(),
+                            *activation_position,
+                            trigger,
+                            call,
+                        )?,
+                    },
                 },
             }
         }
