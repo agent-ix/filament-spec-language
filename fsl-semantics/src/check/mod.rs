@@ -1886,6 +1886,11 @@ fn verification_plan_claim_exists(package: &PackageDeclarations, name: &str) -> 
             .hybrid_claims
             .iter()
             .any(|claim| claim.form.name.name == name)
+        || package.hyper_clauses.iter().any(|claim| claim.name() == name)
+        || package
+            .refinements
+            .iter()
+            .any(|claim| claim.form.name.name == name)
         || package.probabilistic.iter().any(|declaration| match declaration {
             ProbabilisticDeclaration::Claim(claim) => claim.name.name == name,
             ProbabilisticDeclaration::Random(_)

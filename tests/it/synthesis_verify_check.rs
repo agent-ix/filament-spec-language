@@ -186,6 +186,79 @@ fn plan_step_name_and_method_refusals() {
     );
 }
 
+/// FSpec FR-192-AC-9/10: a step resolves its claim, method, domain and
+/// prerequisite, and rejects a zero bound and an inapplicable method.
+#[trace("TC-2103", "FR-753-AC-2")]
+#[trace("FSpec-TC-1601", "FSpec-FR-192-AC-9", "FSpec-FR-192-AC-10")]
+#[test]
+fn plan_reference_bound_and_method_applicability_refusals() {
+    let missing_claim = check(
+        "verify MissingClaim using p {\n\
+           check a claim Never method model_check domain Config::ConfigVersion;\n\
+         }",
+    )
+    .unwrap_or_else(|refusal| panic!("S1 and S2 admit `verify`: {refusal}"));
+    assert_eq!(
+        codes(&missing_claim),
+        [Some(CatalogCode::new("missing_declaration", "missing-name"))],
+        "{missing_claim:?}"
+    );
+
+    let missing_domain = check(
+        "verify MissingDomain using p {\n\
+           check a claim Reaches method model_check domain Nowhere;\n\
+         }",
+    )
+    .unwrap_or_else(|refusal| panic!("S1 and S2 admit `verify`: {refusal}"));
+    assert_eq!(
+        codes(&missing_domain),
+        [Some(CatalogCode::new("missing_declaration", "missing-name"))],
+        "{missing_domain:?}"
+    );
+
+    let missing_step = check(
+        "verify MissingStep using p {\n\
+           check a claim Reaches method model_check domain Config::ConfigVersion depends [never];\n\
+         }",
+    )
+    .unwrap_or_else(|refusal| panic!("S1 and S2 admit `verify`: {refusal}"));
+    assert_eq!(
+        codes(&missing_step),
+        [Some(CatalogCode::new("missing_declaration", "missing-name"))],
+        "{missing_step:?}"
+    );
+
+    let zero_bound = check(
+        "verify ZeroBound using p {\n\
+           check a claim Reaches method model_check domain Config::ConfigVersion bound 0;\n\
+         }",
+    )
+    .unwrap_or_else(|refusal| panic!("S1 and S2 admit `verify`: {refusal}"));
+    assert_eq!(
+        codes(&zero_bound),
+        [Some(CatalogCode::new(
+            "invalid_model_binding",
+            "malformed-declaration"
+        ))],
+        "{zero_bound:?}"
+    );
+
+    let inapplicable = check(
+        "verify WrongMethod using p {\n\
+           check a claim Reaches method schedulability domain Config::ConfigVersion;\n\
+         }",
+    )
+    .unwrap_or_else(|refusal| panic!("S1 and S2 admit `verify`: {refusal}"));
+    assert_eq!(
+        codes(&inapplicable),
+        [Some(CatalogCode::new(
+            "invalid_capability",
+            "inapplicable-kind"
+        ))],
+        "{inapplicable:?}"
+    );
+}
+
 /// FSpec FR-194-AC-9: a `grammar` naming nothing refuses
 /// `missing_declaration`/`missing-name`; a `satisfies` block of type
 /// `Integer` refuses `ill_typed`/`non-boolean-root`.
