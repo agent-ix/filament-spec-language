@@ -1063,12 +1063,6 @@ fn bind_snapshot_populations(
     parameters: &[(String, ValueType)],
     call: &Call,
 ) -> Result<ObjectEnvironment, Box<RunRefusal>> {
-    use fsl_semantics::model::dispatch::GeneralizationClosure;
-    use fsl_semantics::model::domain_package::DomainPackageRecord;
-    use fsl_semantics::model::population::{
-        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
-        PopulationDocument, PopulationMember,
-    };
     let mut environment = objects.clone();
     for (position, (name, value_type)) in parameters.iter().enumerate() {
         let ValueType::Population(maximum) = value_type else {
@@ -1083,59 +1077,78 @@ fn bind_snapshot_populations(
         else {
             continue;
         };
-        let Some(members) = objects.population_members(named) else {
-            continue;
-        };
-        let wrong = || Box::new(RunRefusal::WrongValueKind { position });
-        let Some((model, key)) = models.iter().find_map(|model| {
-            model
-                .view
-                .domain_package()
-                .records
-                .iter()
-                .find_map(|record| match record {
-                    DomainPackageRecord::Population(population) if population.key.node == named => {
-                        Some((model, population.key.clone()))
-                    }
-                    _ => None,
-                })
-        }) else {
-            continue;
-        };
-        let documents = members
-            .iter()
-            .map(|member| {
-                model
-                    .view
-                    .type_identities()
-                    .iter()
-                    .find(|(_, identity)| *identity == member.object_type())
-                    .map(|(declaration, _)| PopulationMember {
-                        object: member.object().as_str().to_owned(),
-                        type_identity: declaration.clone(),
-                        field_values: Vec::new(),
-                    })
-            })
-            .collect::<Option<Vec<_>>>()
-            .ok_or_else(wrong)?;
-        let document = PopulationDocument {
-            model_identity: model.view.model_selection().identity.clone(),
-            members: documents,
-        };
-        let mut meter = AdmissionMeter::new(PopulationAdmissionLimits::default());
-        let AdmissionOutcome::Admitted(binding) = admit_binding(
-            &model.view,
-            &document,
-            &key,
-            GeneralizationClosure::Closed,
-            *maximum,
-            &mut meter,
-        ) else {
-            return Err(wrong());
-        };
-        environment = environment.with_population(binding).map_err(|_| wrong())?;
+        environment = bind_snapshot_population(environment, models, named, *maximum, position)?;
     }
     Ok(environment)
+}
+
+/// Binds one named population from an already admitted snapshot, preserving
+/// the declared maximum of its parameter.
+pub(super) fn bind_snapshot_population(
+    objects: ObjectEnvironment,
+    models: &[fsl_semantics::model::intake::SelectedModel],
+    named: &str,
+    maximum: Option<u64>,
+    position: usize,
+) -> Result<ObjectEnvironment, Box<RunRefusal>> {
+    use fsl_semantics::model::dispatch::GeneralizationClosure;
+    use fsl_semantics::model::domain_package::DomainPackageRecord;
+    use fsl_semantics::model::population::{
+        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
+        PopulationDocument, PopulationMember,
+    };
+
+    let Some(members) = objects.population_members(named) else {
+        return Ok(objects);
+    };
+    let wrong = || Box::new(RunRefusal::WrongValueKind { position });
+    let Some((model, key)) = models.iter().find_map(|model| {
+        model
+            .view
+            .domain_package()
+            .records
+            .iter()
+            .find_map(|record| match record {
+                DomainPackageRecord::Population(population) if population.key.node == named => {
+                    Some((model, population.key.clone()))
+                }
+                _ => None,
+            })
+    }) else {
+        return Ok(objects);
+    };
+    let documents = members
+        .iter()
+        .map(|member| {
+            model
+                .view
+                .type_identities()
+                .iter()
+                .find(|(_, identity)| *identity == member.object_type())
+                .map(|(declaration, _)| PopulationMember {
+                    object: member.object().as_str().to_owned(),
+                    type_identity: declaration.clone(),
+                    field_values: Vec::new(),
+                })
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(wrong)?;
+    let document = PopulationDocument {
+        model_identity: model.view.model_selection().identity.clone(),
+        members: documents,
+    };
+    let mut meter = AdmissionMeter::new(PopulationAdmissionLimits::default());
+    let AdmissionOutcome::Admitted(binding) = admit_binding(
+        &model.view,
+        &document,
+        &key,
+        GeneralizationClosure::Closed,
+        maximum,
+        &mut meter,
+    ) else {
+        return Err(wrong());
+    };
+    objects.with_population(binding).map_err(|_| wrong())
 }
 
 /// FR-650 "Arguments": the object world of the call's snapshot, admitted
