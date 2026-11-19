@@ -366,7 +366,7 @@ fn run(fixture: &Fixture, action: Action) -> (Result<Evaluation, CallFailure>, M
         result_units: u64::MAX,
     });
     let result = registry
-        .begin_call(
+        .begin_call_default(
             &fixture.selection,
             vec![fixture.argument.clone()],
             &environment,

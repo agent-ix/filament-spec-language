@@ -514,28 +514,9 @@ impl CheckedClosureHandle {
 
     /// Create a fresh registry over the designated FSL adapter and leaf scheduler.
     pub fn registry(&self) -> ApplicationRegistry {
-        self.registry_with_session_limits(SessionLimits::default())
-    }
-
-    /// Create a fresh acquired-closure registry with an explicit bound for
-    /// its checked calls.
-    ///
-    /// This is the public leaf-session facade, not the native run request
-    /// path. The bound reaches both the leaf scheduler and the synchronous
-    /// S6a machine. Its returned `Evaluation::peak_live_occurrences` remains
-    /// the leaf scheduler's peak; native run uses the per-request call helper
-    /// to merge the S6a peak into its result.
-    pub fn registry_with_session_limits(
-        &self,
-        session_limits: SessionLimits,
-    ) -> ApplicationRegistry {
         ApplicationRegistry {
             acquisition: Arc::clone(&self.acquisition),
-            session_limits,
-            inner: Registry::new(PackageClosure::new_with_session_limits(
-                Arc::clone(&self.package),
-                session_limits,
-            )),
+            inner: Registry::new(PackageClosure::new(Arc::clone(&self.package))),
         }
     }
 }
@@ -895,7 +876,6 @@ pub enum ApplicationBeginRefusal {
 /// A binding set over precisely one retained acquisition.
 pub struct ApplicationRegistry {
     acquisition: Arc<()>,
-    session_limits: SessionLimits,
     inner: Registry<Adapter>,
 }
 
@@ -920,6 +900,7 @@ impl ApplicationRegistry {
         &mut self,
         selection: &CallableSelection,
         arguments: Vec<Value>,
+        limits: SessionLimits,
         environment: &'a ApplicationEnvironment,
         meter: &'a mut Meter,
     ) -> Result<CheckedApplicationSession<'a>, ApplicationBeginRefusal> {
@@ -930,12 +911,32 @@ impl ApplicationRegistry {
             .begin_call(
                 selection.key.clone(),
                 arguments,
-                self.session_limits,
+                limits,
                 &environment.0,
                 meter,
             )
             .map(|inner| CheckedApplicationSession { inner })
             .map_err(ApplicationBeginRefusal::Call)
+    }
+
+    /// Begin an independent call under the default session limit.
+    ///
+    /// Use [`Self::begin_call`] when this call inherits a caller's bound or
+    /// held live-occurrence count.
+    pub fn begin_call_default<'a>(
+        &mut self,
+        selection: &CallableSelection,
+        arguments: Vec<Value>,
+        environment: &'a ApplicationEnvironment,
+        meter: &'a mut Meter,
+    ) -> Result<CheckedApplicationSession<'a>, ApplicationBeginRefusal> {
+        self.begin_call(
+            selection,
+            arguments,
+            SessionLimits::default(),
+            environment,
+            meter,
+        )
     }
 
     /// Whether a successful Begin permanently sealed this binding set.
@@ -1140,7 +1141,7 @@ mod tests {
         let environment = ApplicationEnvironment::new(ObjectClosure::default());
         let mut meter = meter(1000);
         let result = registry
-            .begin_call(&selection, vec![int(3)], &environment, &mut meter)
+            .begin_call_default(&selection, vec![int(3)], &environment, &mut meter)
             .expect("begin")
             .run()
             .expect("run");
@@ -1184,11 +1185,17 @@ mod tests {
             live_occurrences: 8,
             held: 0,
         };
-        let mut registry = handle.registry_with_session_limits(limits);
+        let mut registry = handle.registry();
         let environment = ApplicationEnvironment::new(ObjectClosure::default());
         let mut meter = meter(100_000);
         let evaluation = registry
-            .begin_call(&selection, vec![int(1_000)], &environment, &mut meter)
+            .begin_call(
+                &selection,
+                vec![int(1_000)],
+                limits,
+                &environment,
+                &mut meter,
+            )
             .expect("begin checked recursion")
             .run()
             .expect("bounded evaluation");
@@ -1198,6 +1205,63 @@ mod tests {
         assert_eq!(incomplete.limit_kind, LimitKind::LiveOccurrences);
         assert_eq!(incomplete.limit, limits.live_occurrences);
         assert_eq!(incomplete.consumed, limits.live_occurrences);
+    }
+
+    /// FR-013, NFR-130-AC-5: a host frame and its interpreted recursive child
+    /// consume one live-occurrence budget and report the combined peak.
+    #[trace("NFR-130-AC-5", "FR-485-AC-19")]
+    #[test]
+    fn host_and_fsl_recursion_share_live_occurrence_limit() {
+        let source = format!(
+            "{HEADER}function f using v(n: Int[0, 1000000]): Integer pure decreases(n) {{ if n > 0 then f(n - 1) else 0 }}\nfunction g using v(n: Int[0, 1000000]): Integer pure {{ f(n) }}\n"
+        );
+        let acquired = acquire(&source, &DependencyInput::default());
+        let handle = acquired.handle();
+        let f = handle
+            .lookup_callable(handle.package_name(), &wire(&handle.package, "f"))
+            .expect("recursive FSL function");
+        let g = handle
+            .lookup_callable(handle.package_name(), &wire(&handle.package, "g"))
+            .expect("host root function");
+        let begun = Arc::new(AtomicUsize::new(0));
+        let mut registry = handle.registry();
+        assert_eq!(
+            registry.register(
+                &g,
+                g.signature(),
+                Host {
+                    begun: Arc::clone(&begun),
+                    child: Some(f.key().clone()),
+                },
+            ),
+            Ok(Admission::Accepted)
+        );
+        let limits = SessionLimits {
+            live_occurrences: 10,
+            held: 0,
+        };
+        let environment = ApplicationEnvironment::new(ObjectClosure::default());
+        let mut meter = meter(100_000);
+        let evaluation = registry
+            .begin_call(
+                &g,
+                vec![int(100)],
+                limits,
+                &environment,
+                &mut meter,
+            )
+            .expect("begin bounded host call")
+            .run()
+            .expect("host and FSL evaluation return an incomplete outcome");
+        let FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)) = evaluation.outcome else {
+            panic!("host and FSL frames must share the live-occurrence bound");
+        };
+        assert_eq!(incomplete.limit_kind, LimitKind::LiveOccurrences);
+        assert_eq!(incomplete.limit, limits.live_occurrences);
+        assert_eq!(incomplete.consumed, limits.live_occurrences);
+        assert_eq!(incomplete.next_charge, filament_exact::Integer::from(2_u64));
+        assert_eq!(evaluation.peak_live_occurrences, limits.live_occurrences);
+        assert_eq!(begun.load(Ordering::SeqCst), 1);
     }
 
     /// Owner selection precedes node lookup, including an imported callable.
@@ -1275,7 +1339,7 @@ mod tests {
         let environment = ApplicationEnvironment::new(ObjectClosure::default());
         let mut meter = meter(1000);
         let result = registry
-            .begin_call(&dependency, vec![int(4)], &environment, &mut meter)
+            .begin_call_default(&dependency, vec![int(4)], &environment, &mut meter)
             .expect("begin imported")
             .run()
             .expect("run imported");
@@ -1328,13 +1392,13 @@ mod tests {
         let environment = ApplicationEnvironment::new(ObjectClosure::default());
         let mut meter = meter(1000);
         assert!(matches!(
-            registry.begin_call(&selection, vec![], &environment, &mut meter),
+            registry.begin_call_default(&selection, vec![], &environment, &mut meter),
             Err(ApplicationBeginRefusal::Call(CallFailure::Input(
                 InputRefusal::Arity { .. }
             )))
         ));
         assert!(matches!(
-            registry.begin_call(
+            registry.begin_call_default(
                 &selection,
                 vec![Value::Boolean(true)],
                 &environment,
@@ -1347,11 +1411,11 @@ mod tests {
         assert!(!registry.is_sealed());
         assert_eq!(meter.admission_count(), 0);
         assert!(matches!(
-            registry.begin_call(&foreign, vec![int(3)], &environment, &mut meter),
+            registry.begin_call_default(&foreign, vec![int(3)], &environment, &mut meter),
             Err(ApplicationBeginRefusal::WrongAcquisition)
         ));
         let session = registry
-            .begin_call(&selection, vec![int(3)], &environment, &mut meter)
+            .begin_call_default(&selection, vec![int(3)], &environment, &mut meter)
             .expect("begin");
         assert!(registry.is_sealed());
         assert_eq!(begun.load(Ordering::SeqCst), 0);
@@ -1362,7 +1426,7 @@ mod tests {
             Err(SelectionRefusal::WrongAcquisition)
         );
         assert!(matches!(
-            registry.begin_call(&foreign, vec![int(3)], &environment, &mut meter),
+            registry.begin_call_default(&foreign, vec![int(3)], &environment, &mut meter),
             Err(ApplicationBeginRefusal::WrongAcquisition)
         ));
         assert!(registry.is_sealed());
@@ -1372,7 +1436,7 @@ mod tests {
             Ok(Admission::RegistrySealed)
         );
         let result = registry
-            .begin_call(&selection, vec![int(4)], &environment, &mut meter)
+            .begin_call_default(&selection, vec![int(4)], &environment, &mut meter)
             .expect("second begin")
             .run()
             .expect("host run");
@@ -1380,7 +1444,7 @@ mod tests {
         assert_eq!(begun.load(Ordering::SeqCst), 1);
         assert_eq!(meter.consumed(LimitKind::WorkUnits), 1);
         let later = registry
-            .begin_call(&selection, vec![int(5)], &environment, &mut meter)
+            .begin_call_default(&selection, vec![int(5)], &environment, &mut meter)
             .expect("later begin")
             .run()
             .expect("later host run");
@@ -1439,7 +1503,7 @@ mod tests {
         cancel.cancel(CancelCause::Requested);
         let mut meter = meter(1000).with_cancel(cancel);
         assert!(matches!(
-            registry.begin_call(&selected, vec![int(3)], &environment, &mut meter),
+            registry.begin_call_default(&selected, vec![int(3)], &environment, &mut meter),
             Err(ApplicationBeginRefusal::Call(CallFailure::Cancelled(
                 CancelCause::Requested
             )))
@@ -1553,7 +1617,7 @@ mod tests {
         let environment = ApplicationEnvironment::new(ObjectClosure::default());
         let mut meter = meter(1000);
         let result = registry
-            .begin_call(&g, vec![int(3)], &environment, &mut meter)
+            .begin_call_default(&g, vec![int(3)], &environment, &mut meter)
             .expect("begin")
             .run()
             .expect("child application");
@@ -1617,7 +1681,7 @@ mod tests {
             let mut cancelled_meter = meter(1000).with_cancel(cancel.clone());
             let mut registry = handle.registry();
             let session = registry
-                .begin_call(callable, vec![int(3)], &environment, &mut cancelled_meter)
+                .begin_call_default(callable, vec![int(3)], &environment, &mut cancelled_meter)
                 .expect("begin");
             cancel.cancel(CancelCause::Requested);
             let result = session.run().expect("located cancelled outcome");
@@ -1632,7 +1696,7 @@ mod tests {
             let mut denied_meter = meter(0);
             let result = handle
                 .registry()
-                .begin_call(callable, vec![int(3)], &environment, &mut denied_meter)
+                .begin_call_default(callable, vec![int(3)], &environment, &mut denied_meter)
                 .expect("begin root work denial")
                 .run()
                 .expect("located root work denial");
@@ -1647,7 +1711,7 @@ mod tests {
         let mut baseline = meter(1000);
         let successful = handle
             .registry()
-            .begin_call(&selection, vec![int(3)], &environment, &mut baseline)
+            .begin_call_default(&selection, vec![int(3)], &environment, &mut baseline)
             .expect("begin baseline")
             .run()
             .expect("baseline run");
@@ -1657,7 +1721,7 @@ mod tests {
         let mut limited = meter(spend - 1);
         let result = handle
             .registry()
-            .begin_call(&selection, vec![int(3)], &environment, &mut limited)
+            .begin_call_default(&selection, vec![int(3)], &environment, &mut limited)
             .expect("begin limited")
             .run()
             .expect("incomplete run");
@@ -1670,7 +1734,7 @@ mod tests {
         let mut exact = meter(spend);
         let result = handle
             .registry()
-            .begin_call(&selection, vec![int(3)], &environment, &mut exact)
+            .begin_call_default(&selection, vec![int(3)], &environment, &mut exact)
             .expect("begin exact")
             .run()
             .expect("exact run");
@@ -1750,7 +1814,7 @@ mod tests {
         let environment = ApplicationEnvironment::new(ObjectClosure::default());
         let mut meter = meter(1000);
         let session = registry
-            .begin_call(&selection, vec![int(3)], &environment, &mut meter)
+            .begin_call_default(&selection, vec![int(3)], &environment, &mut meter)
             .expect("begin");
         let session = match session.step() {
             CheckedApplicationProgress::Runnable(session) => session,
@@ -1769,7 +1833,7 @@ mod tests {
         assert_eq!(meter.admission_count(), 1);
 
         let result = registry
-            .begin_call(&selection, vec![int(4)], &environment, &mut meter)
+            .begin_call_default(&selection, vec![int(4)], &environment, &mut meter)
             .expect("second begin")
             .run()
             .expect("second run");
@@ -1883,7 +1947,7 @@ mod tests {
         );
         let environment = ApplicationEnvironment::new(ObjectClosure::default());
         let mut meter = meter(1000);
-        let result = registry.begin_call(
+        let result = registry.begin_call_default(
             &selection,
             vec![Value::Population(PopulationId::new(crate::fixture_node(7)))],
             &environment,
@@ -2049,7 +2113,7 @@ mod tests {
             Ok(Admission::Accepted)
         );
         registry
-            .begin_call(caller, vec![int(3)], &environment, &mut root_only)
+            .begin_call_default(caller, vec![int(3)], &environment, &mut root_only)
             .expect("begin root only")
             .run()
             .expect("root only");
@@ -2070,7 +2134,7 @@ mod tests {
             Ok(Admission::Accepted)
         );
         let result = registry
-            .begin_call(caller, vec![int(3)], &environment, &mut limited)
+            .begin_call_default(caller, vec![int(3)], &environment, &mut limited)
             .expect("begin nested")
             .run()
             .expect("denied nested call");
@@ -2240,7 +2304,7 @@ mod tests {
         assert_eq!(begun.load(Ordering::SeqCst), 0);
         let mut meter_after = meter(1000);
         registry
-            .begin_call(&g, vec![int(3)], &environment, &mut meter_after)
+            .begin_call_default(&g, vec![int(3)], &environment, &mut meter_after)
             .expect("begin after refusals")
             .run()
             .expect("run");
@@ -2276,7 +2340,7 @@ mod tests {
         let environment = ApplicationEnvironment::new(ObjectClosure::default());
         let mut work = meter(1000);
         let session = registry
-            .begin_call(&g, vec![int(3)], &environment, &mut work)
+            .begin_call_default(&g, vec![int(3)], &environment, &mut work)
             .expect("begin");
         assert!(registry.is_sealed());
         let begun = handle

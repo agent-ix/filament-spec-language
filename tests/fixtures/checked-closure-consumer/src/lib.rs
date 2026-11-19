@@ -99,7 +99,7 @@ pub fn run() {
         result_units: limit,
     });
     let session = registry
-        .begin_call(
+        .begin_call_default(
             &selection,
             vec![Value::Integer(Integer::from(3_u64))],
             &environment,
