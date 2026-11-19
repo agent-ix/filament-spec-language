@@ -22,9 +22,9 @@ use fsl_analyze::provider::{HybridAnswer, HybridProvider, HybridSolveRequest};
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::ModeIndex;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::analyze_cli_support::{analyze_with_providers, Run, Workspace};
+use crate::analyze_cli_support::{Run, Workspace, analyze_with_providers};
 
 /// FR-447's `Braking` without `t`; `claims` follow the declaration.
 pub(crate) fn braking(claims: &str) -> String {
@@ -474,8 +474,10 @@ fn hybrid_replay_request(
         profile_selections: Vec::new(),
         dependencies: Vec::new(),
         replay_target: fsl_replay::RequestTargetWire::state_clause(
-            fsl_replay::QualifiedName::new(vec![filament_exact::Identifier::new("TooSlow")
-                .expect("the claim name is an identifier")])
+            fsl_replay::QualifiedName::new(vec![
+                filament_exact::Identifier::new("TooSlow")
+                    .expect("the claim name is an identifier"),
+            ])
             .expect("the claim name is qualified"),
         ),
         source: fsl_replay::ReplaySource::Hybrid(Box::new(counterexample)),
@@ -531,7 +533,7 @@ fn a_process_provider_refutation_settles_by_exact_replay() {
         )],
     );
     assert_eq!(item["record"]["result"], "inconclusive", "{item}");
-    assert_eq!(item["record"]["cause"]["type"], "replay-parity", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "replay-parity", "{item}");
 }
 
 /// FR-751-AC-1 and FSpec FR-652-AC-1: an accepted `inductive-enclosure`
