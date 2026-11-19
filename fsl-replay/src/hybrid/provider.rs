@@ -54,6 +54,7 @@ pub struct HybridAnswer {
 /// What a hybrid provider can answer, one arm per settlement path, so no arm
 /// stands in for another (FR-750).
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)] // a verdict is built once per item and moved, never collected
 pub enum HybridVerdict {
     /// Proved, inconclusive or incomplete: settled by FR-250's map.
     Solved(SolverResult),

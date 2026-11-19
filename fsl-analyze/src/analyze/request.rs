@@ -551,22 +551,6 @@ fn checked_v2_package(
     Some(Box::new(admitted.admitted().clone()))
 }
 
-fn checked_node_named(
-    package: &filament_contract_model::CheckedPackageV2,
-    name: &str,
-) -> Option<filament_contract_model::CheckedNodeId> {
-    package
-        .resolved_graph()
-        .nodes
-        .iter()
-        .find(|node| {
-            node.declaration.as_ref().is_some_and(|declaration| {
-                declaration.qualified_name.last().map(|segment| &**segment) == Some(name)
-            })
-        })
-        .map(|node| node.node_id.clone())
-}
-
 /// The role of `protocol` named `name`. Only a role of that protocol
 /// resolves, so a channel, record or other declaration that shares the
 /// role's name is never taken for it (FR-570).

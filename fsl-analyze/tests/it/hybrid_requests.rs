@@ -102,10 +102,12 @@ pub(crate) fn find<'v>(value: &'v Value, key: &str) -> Option<&'v Value> {
 
 /// What an [`answering`] provider was asked: how often, and the options and
 /// deadline of each request.
+type Asked = (BTreeMap<String, String>, Option<u64>);
+
 #[derive(Debug, Default)]
 pub(crate) struct Seen {
     pub(crate) calls: AtomicUsize,
-    pub(crate) requests: Mutex<Vec<(BTreeMap<String, String>, Option<u64>)>>,
+    pub(crate) requests: Mutex<Vec<Asked>>,
 }
 
 impl Seen {
@@ -114,7 +116,7 @@ impl Seen {
     }
 
     /// The options and deadline of every request, in order.
-    pub(crate) fn requests(&self) -> Vec<(BTreeMap<String, String>, Option<u64>)> {
+    pub(crate) fn requests(&self) -> Vec<Asked> {
         self.requests
             .lock()
             .expect("the log is not poisoned")
