@@ -320,7 +320,7 @@ fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
     unit = unit.replace(
         "profile v = \"filament.model.complete/v1\";",
         "profile v = \"filament.model.complete/v1\";\n\
-         profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         profile inf = \"filament.temporal.event-position.false-extension/v1\";\n\
          import \"test/lib\" as library;",
     );
     unit.push_str(
