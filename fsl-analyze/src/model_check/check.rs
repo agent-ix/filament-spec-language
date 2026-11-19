@@ -753,31 +753,36 @@ pub fn check_protocol_constrained(
             });
         }
     }
-    let protocol = subject
+    let definition = subject
         .model
         .simulation
         .input
-        .evaluator
-        .protocol(&subject.protocol)
+        .protocol_definition(&subject.protocol)
         .ok_or_else(|| {
             ModelCheckRefusal::Protocol(ProtocolRefusal::UnknownProtocol {
                 protocol: subject.protocol.clone(),
             })
         })?;
-    let capacities = Capacities::admit(protocol, &subject.capacities)
-        .map_err(|refusal| ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?;
-    check_protocol_bounds(
-        &model,
-        protocol,
-        &capacities,
-        subject.model.simulation.input.evaluator,
-        BOUND_POSITIONS,
-    )
-    .map_err(not_simulated)?;
+    let source_protocol = match &definition {
+        fsl_eval::simulation::model::ProtocolDefinition::Source(protocol) => Some(*protocol),
+        fsl_eval::simulation::model::ProtocolDefinition::Package(_) => None,
+    };
+    if let Some(protocol) = source_protocol {
+        let capacities = Capacities::admit(protocol, &subject.capacities)
+            .map_err(|refusal| ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?;
+        check_protocol_bounds(
+            &model,
+            protocol,
+            &capacities,
+            subject.model.simulation.input.evaluator,
+            BOUND_POSITIONS,
+        )
+        .map_err(not_simulated)?;
+    }
     let live_instances = live_instance_bound(request.max_live_instances);
-    let instance_bound = activates_on_each(protocol).then_some(InstanceBound {
-        value: live_instances,
-    });
+    let instance_bound = source_protocol
+        .is_some_and(activates_on_each)
+        .then_some(InstanceBound { value: live_instances });
     let (instances, root_cancelled) = if certified {
         match request.item.instances(
             &subject.model,
@@ -837,7 +842,7 @@ pub fn check_protocol_constrained(
         request.max_messages,
     );
     let built = match memory {
-        SubjectMemory::Sc => ProtocolSystem::new(model, subject, Sc).map(|system| {
+        SubjectMemory::Sc => new_protocol_system(model, subject, Sc).map(|system| {
             let bound = system.has_channels().then_some(MemoryBound {
                 member: MemoryBoundMember::MaxMessages,
                 value: request
@@ -862,7 +867,7 @@ pub fn check_protocol_constrained(
                 member: MemoryBoundMember::MaxStoreBuffer,
                 value: tso.max_store_buffer(),
             };
-            ProtocolSystem::new(model, subject, tso).map(|system| {
+            new_protocol_system(model, subject, tso).map(|system| {
                 protocol_run.decide(
                     &system
                         .with_channel_message_bound(
@@ -883,7 +888,7 @@ pub fn check_protocol_constrained(
                 value: ra.max_messages(),
             };
             let channel_bound = ra.max_messages();
-            ProtocolSystem::new(model, subject, ra).map(|system| {
+            new_protocol_system(model, subject, ra).map(|system| {
                 protocol_run.decide(
                     &system
                         .with_channel_message_bound(channel_bound)
@@ -896,6 +901,29 @@ pub fn check_protocol_constrained(
         }
     };
     built.unwrap_or_else(|refusal| construction_refusal(refusal, &meter, max_candidates))
+}
+
+fn new_protocol_system<'a, M: MemoryModel>(
+    model: ModelSystem<'a>,
+    subject: &ProtocolSubject<'a>,
+    memory: M,
+) -> Result<ProtocolSystem<'a, M>, ProtocolRefusal> {
+    match subject
+        .model
+        .simulation
+        .input
+        .protocol_definition(&subject.protocol)
+    {
+        Some(fsl_eval::simulation::model::ProtocolDefinition::Source(_)) => {
+            ProtocolSystem::new(model, subject, memory)
+        }
+        Some(fsl_eval::simulation::model::ProtocolDefinition::Package(_)) => {
+            ProtocolSystem::new_package(model, subject, memory)
+        }
+        None => Err(ProtocolRefusal::UnknownProtocol {
+            protocol: subject.protocol.clone(),
+        }),
+    }
 }
 
 /// FR-126 and FR-212 for a liveness clause over a protocol subject
@@ -1699,8 +1727,11 @@ trait Reducer<State> {
         group: &SymmetryGroup,
     ) -> Result<(State, Permutation), ExpansionStop>;
 
-    fn constraint_value(&self, state: &State, name: &str)
-        -> Result<ConstraintValue, ExpansionStop>;
+    fn constraint_value(
+        &self,
+        state: &State,
+        name: &str,
+    ) -> Result<ConstraintValue, ExpansionStop>;
 }
 
 impl Reducer<ModelSimState> for ModelSystem<'_> {
