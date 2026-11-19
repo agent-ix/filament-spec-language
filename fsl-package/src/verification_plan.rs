@@ -62,13 +62,26 @@ pub struct VerificationPlanEdge {
 pub enum VerificationPlanRefusal {
     /// The checked package has no plan with the requested name.
     #[error("verification plan {name:?} is not declared in package {package:?}")]
-    PlanNotFound { package: String, name: String },
+    PlanNotFound {
+        /// The checked package identity.
+        package: String,
+        /// The requested plan name.
+        name: String,
+    },
     /// The supplied document is malformed or violates the plan graph shape.
     #[error("invalid verification plan document: {reason}")]
-    InvalidDocument { reason: String },
+    InvalidDocument {
+        /// The parsing or validation failure.
+        reason: String,
+    },
     /// The document is bound to a different checked package.
     #[error("verification plan package identity mismatch: expected {expected:?}, got {actual:?}")]
-    PackageIdentityMismatch { expected: String, actual: String },
+    PackageIdentityMismatch {
+        /// The identity of the package being executed.
+        expected: String,
+        /// The identity carried by the plan document.
+        actual: String,
+    },
 }
 
 /// Emit each checked plan as its own `filament.verification-plan/v1`
