@@ -41,10 +41,13 @@ const DECLARATIONS: &str = "\
     function decimal using v(t: Text[0, 64; unicode-scalars]): Decimal[0, 1000; 0, 2; nearest-even] pure { convert<Decimal[0, 1000; 0, 2; nearest-even]>(t) }\n\
     function decimal_exact using v(t: Text[0, 64; unicode-scalars]): Decimal[0, 1000; 0, 2; exact] pure { convert<Decimal[0, 1000; 0, 2; exact]>(t) }\n\
     function float using v(t: Text[0, 64; unicode-scalars]): Float64[nearest-even] pure { convert<Float64[nearest-even]>(t) }\n\
+    function float_exact using v(t: Text[0, 64; unicode-scalars]): Float64 pure { convert<Float64>(t) }\n\
     function quantity using v(t: Text[0, 64; unicode-scalars]): Quantity<ms> pure { convert<Quantity<ms>>(t) }\n\
     function nfkc using v(t: Text[0, 64; nfkc]): Integer pure { convert<Integer>(t) }\n\
     function nfc using v(t: Text[0, 64; nfc]): Integer pure { convert<Integer>(t) }\n\
-    function string_integer using v(s: String): Integer pure { convert<Integer>(s) }\
+    function string_integer using v(s: String): Integer pure { convert<Integer>(s) }\n\
+    function string_rational using v(s: String): Rational[-9, 9; 1, 9] pure { convert<Rational[-9, 9; 1, 9]>(s) }\n\
+    function string_float using v(s: String): Float64[nearest-even] pure { convert<Float64[nearest-even]>(s) }\
 ";
 
 fn compile(source: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
@@ -123,7 +126,7 @@ fn undefined(evaluation: &Evaluation, reason: Undefined) {
     ));
 }
 
-#[trace("TC-964", "FR-478-AC-1", "FR-478-AC-3")]
+#[trace("TC-964", "FR-478-AC-1", "FR-478-AC-6", "FR-478-AC-7")]
 #[test]
 fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     let package = package();
@@ -232,7 +235,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     ));
 }
 
-#[trace("TC-964", "FR-478-AC-2", "FR-478-AC-4")]
+#[trace("TC-964", "FR-478-AC-2", "FR-478-AC-7", "FR-478-AC-11")]
 #[test]
 fn malformed_numeric_text_is_undefined_and_profile_normalization_is_used() {
     let package = package();
@@ -266,6 +269,26 @@ fn malformed_numeric_text_is_undefined_and_profile_normalization_is_used() {
         )),
         &Value::Integer(Integer::from(42_i64))
     );
+    assert!(matches!(
+        completed(&call(
+            &package,
+            "string_rational",
+            Value::String("2/4".to_owned()),
+        )),
+        Value::Rational(value) if value == &Rational::new(Integer::from(1_i64), Integer::from(2_i64)).unwrap()
+    ));
+    assert!(matches!(
+        completed(&call(
+            &package,
+            "string_float",
+            Value::String("0.1".to_owned()),
+        )),
+        Value::Float(value) if value.bits() == 0x3fb9_9999_9999_999a
+    ));
+    undefined(
+        &call(&package, "string_float", Value::String("５".to_owned())),
+        Undefined::MalformedNumber,
+    );
     for text in [".5", "5.", "-0.00", "1.2.3", "1,5", "1e3", "3/4"] {
         undefined(
             &call(
@@ -290,7 +313,7 @@ fn malformed_numeric_text_is_undefined_and_profile_normalization_is_used() {
     }
 }
 
-#[trace("TC-964", "FR-478-AC-1", "FR-478-AC-10")]
+#[trace("TC-964", "FR-478-AC-1", "FR-478-AC-7", "FR-478-AC-10")]
 #[test]
 fn range_and_quantity_unit_outcomes_are_typed() {
     let package = package();
@@ -346,7 +369,7 @@ fn range_and_quantity_unit_outcomes_are_typed() {
     }
 }
 
-#[trace("TC-964", "FR-478-AC-8", "FR-478-AC-11")]
+#[trace("TC-964", "FR-478-AC-8", "FR-478-AC-9")]
 #[test]
 fn finite_ieee_text_rounds_once_to_the_target_width() {
     let package = package();
@@ -389,6 +412,23 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
             evaluation.outcome
         );
     }
+    let exact_finite = call(
+        &package,
+        "float_exact",
+        text_value("0.25", TextProfile::UnicodeScalars),
+    );
+    assert!(
+        matches!(completed(&exact_finite), Value::Float(value) if value.bits() == 0x3fd0_0000_0000_0000)
+    );
+    let exact_inexact = call(
+        &package,
+        "float_exact",
+        text_value("0.1", TextProfile::UnicodeScalars),
+    );
+    assert!(matches!(
+        exact_inexact.outcome,
+        FamilyOutcome::Evaluated(Outcome::Refused(Refusal::IeeeNotExact { .. }))
+    ));
     for text in [
         "1E3", "1e+3", "1e03", "1e-0", ".5", "5.", "1e", "Infinity", "NaN", "-nan", "+inf", "0x1p3",
     ] {
