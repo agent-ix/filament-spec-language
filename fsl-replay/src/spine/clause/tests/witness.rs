@@ -1636,6 +1636,7 @@ fn tc_741_corpus_and_function_reports_carry_their_basis() {
     let unit = config_version_unit();
     let implication = occurrence(&unit, "ParentOrder", &[], Operator::Binary);
     let comparison = occurrence(&unit, "ParentOrder", &[1], Operator::Binary);
+    let version_comparison = occurrence(&unit, "VersionUnchanged", &[], Operator::Binary);
     let assert_parent_order_record =
         |request: ClauseRunRequest, basis, parent_version, child_version| {
             let report = run_clause(request).expect("a well-formed request always reports");
@@ -1672,16 +1673,40 @@ fn tc_741_corpus_and_function_reports_carry_their_basis() {
         3,
         2,
     );
-    let changed = run_config_version_invocation_report(
-        config_version_request,
-        "VersionUnchanged",
-        InvocationVersions::root_unchanged(1, 2, 3),
-        "child",
+    let assert_version_unchanged_record =
+        |report: crate::spine::ClauseRunReport, basis, truth, post_version, pre_version| {
+            assert_eq!(report.basis, basis);
+            assert_eq!(report.disposition.truth(), Some(truth));
+            let record = report.witness.expect("the decisive report has a witness record");
+            assert_eq!(record.deciding_comparison, Some(version_comparison.clone()));
+            let operands = record.operands.as_ref().expect("comparison operands");
+            assert!(crate::result::same_element(&operands[0], &integer(post_version)));
+            assert!(crate::result::same_element(&operands[1], &integer(pre_version)));
+            assert_eq!(record.decision_path, Some(vec![version_comparison.clone()]));
+        };
+    assert_version_unchanged_record(
+        run_config_version_invocation_report(
+            config_version_request,
+            "VersionUnchanged",
+            InvocationVersions::root_unchanged(1, 2, 3),
+            "child",
+        ),
+        decisive_counterexample.0,
+        false,
+        3,
+        2,
     );
-    assert_eq!(changed.disposition.truth(), Some(false));
-    assert_eq!(
-        (changed.basis, changed.witness.is_some()),
-        decisive_counterexample
+    assert_version_unchanged_record(
+        run_config_version_invocation_report(
+            config_version_request,
+            "VersionUnchanged",
+            InvocationVersions::root_unchanged(1, 2, 2),
+            "child",
+        ),
+        decisive_witness.0,
+        true,
+        2,
+        2,
     );
 
     let mut missing_model = parent_order_request("healthy-parent", healthy(), true);
