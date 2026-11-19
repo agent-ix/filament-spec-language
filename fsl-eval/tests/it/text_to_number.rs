@@ -262,13 +262,13 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
         &rational,
         Rational::new(Integer::from(1_i64), Integer::from(2_i64)).unwrap(),
     );
-    let unbounded_rational = call(
+    let wide_rational = call(
         &package,
         "convert_rational_wide",
         text_value("6/4", TextProfile::UnicodeScalars),
     );
     assert_rational(
-        &unbounded_rational,
+        &wide_rational,
         Rational::new(Integer::from(3_i64), Integer::from(2_i64)).unwrap(),
     );
 
