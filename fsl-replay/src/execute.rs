@@ -2170,21 +2170,33 @@ fn locate_dependency_clock_refusal(
         } => (refusal, Some(protocol_results)),
         other => return other,
     };
-    let fsl_replay_clock = match refusal.as_ref() {
-        CompileRefusal::Emit(fsl_package::EmitRefusal::ClockSelection(selection), region) => {
-            let dependency_locus = region
+    let mut current = refusal.as_ref();
+    let mut nested_dependency = false;
+    let mut clock_refusal = None;
+    loop {
+        match current {
+            CompileRefusal::Dependency { refusal, .. } => {
+                nested_dependency = true;
+                current = refusal;
+            }
+            CompileRefusal::Emit(fsl_package::EmitRefusal::ClockSelection(selection), region) => {
+                clock_refusal = Some((selection, region));
+                break;
+            }
+            _ => break,
+        }
+    }
+    let fsl_replay_clock = clock_refusal.and_then(|(selection, region)| {
+        let dependency_locus = nested_dependency
+            || region
                 .as_ref()
                 .is_some_and(|region| !package.is_program_source(region.source()));
-            let unused_dependency_row =
-                selection.cause == fsl_package::ClockSelectionCause::UnusedClockSelection;
-            if dependency_locus || unused_dependency_row {
-                package.dependency_clock_pointer(&selection.clock, selection.cause)
-            } else {
-                None
-            }
-        }
-        _ => None,
-    };
+        let unused_dependency_row =
+            selection.cause == fsl_package::ClockSelectionCause::UnusedClockSelection;
+        (dependency_locus || unused_dependency_row)
+            .then(|| package.dependency_clock_pointer(&selection.clock, selection.cause))
+            .flatten()
+    });
     match fsl_replay_clock {
         Some(pointer) => ReplayRefusal::Recompile {
             refusal,
