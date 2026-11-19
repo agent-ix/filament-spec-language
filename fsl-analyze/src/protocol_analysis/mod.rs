@@ -35,4 +35,6 @@ pub use realize::{
     RealizabilityRequest, ANALYZER,
 };
 pub use step_view::protocol_step_view;
-pub use subject::{protocol_subject, SubjectBindings, SubjectPackage, SubjectRefusal};
+pub use subject::{
+    protocol_subject, protocol_subject_from_input, SubjectBindings, SubjectPackage, SubjectRefusal,
+};

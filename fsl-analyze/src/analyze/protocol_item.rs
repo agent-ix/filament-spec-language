@@ -94,7 +94,6 @@ fn simulation<'a>(
 }
 
 pub(super) fn subject_of<'a>(
-    package: &'a CheckedPackage,
     input: &ModelCheckInput<'a>,
     binding: &SubjectBinding<'a>,
     limits: &AnalyzeLimits,
@@ -104,7 +103,6 @@ pub(super) fn subject_of<'a>(
 ) -> Result<ProtocolSubject<'a>, SubjectRefusal> {
     protocol_subject(
         SubjectPackage {
-            package,
             input: input.clone(),
             packages: binding.packages,
             snapshots: binding.snapshots,
@@ -225,7 +223,6 @@ pub(super) fn protocol_clause_item<'a>(
                 let over = over_instance(&binding, &(population, key));
                 let subject = |max_candidates| {
                     subject_of(
-                        package,
                         &input,
                         &binding,
                         &limits,
