@@ -6,15 +6,15 @@
 
 use std::collections::BTreeMap;
 
-use filament_exact::NodeKey;
+use filament_exact::{Meter, NodeKey};
 use fsl_foundation::MemoryModelName;
 use fsl_package::protocol_view::{
     ControlBody, ControlOperation, ParallelJoinPolicy, ProtocolExecutionView, ProtocolNodeId,
 };
 
 use super::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
-use crate::simulation::model::{ModelCheckInput, ProtocolDefinition};
-use crate::value::ProtocolSlot;
+use crate::simulation::model::{CallFailure, ModelCheckInput, ModelEvaluator, ProtocolDefinition};
+use crate::value::{ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply};
 
 /// One admitted package control in the normalized execution tree.
 #[derive(Clone, Debug)]
@@ -76,6 +76,8 @@ pub struct PackageProtocolProgram<'a> {
     pub roles: Vec<PackageRole>,
     /// The admitted control form used to evaluate package expression slots.
     pub form: ProtocolExecutionView<'a>,
+    /// The package evaluator selected by the model-check input.
+    evaluator: &'a dyn ModelEvaluator,
     /// The admitted `finish` slot, when its constraint is present.
     pub finish: Option<ProtocolSlot>,
 }
@@ -284,7 +286,45 @@ impl<'a> PackageProtocolProgram<'a> {
             controls,
             roles,
             form,
+            evaluator: input.evaluator,
             finish,
         })
+    }
+
+    /// Evaluate one admitted package expression slot for a control. Controls
+    /// without a constraint have no expression to evaluate. The supplied
+    /// binder values and population provenance are checked by the package
+    /// evaluator against the slot's admitted identity.
+    pub fn evaluate_control_constraint(
+        &self,
+        control: ProtocolNodeId,
+        supply: &ProtocolSupply<'_>,
+        meter: &mut Meter,
+    ) -> Result<Option<ProtocolSlotEvaluation>, CallFailure> {
+        let Some(slot) = self
+            .controls
+            .get(&control)
+            .and_then(|control| control.constraint.as_ref())
+        else {
+            return Ok(None);
+        };
+        self.evaluator
+            .evaluate_package_protocol_slot(slot, supply, meter)
+            .map(Some)
+    }
+
+    /// Evaluate the admitted package `finish` expression when present in the
+    /// execution program.
+    pub fn evaluate_finish(
+        &self,
+        supply: &ProtocolSupply<'_>,
+        meter: &mut Meter,
+    ) -> Result<Option<ProtocolSlotEvaluation>, CallFailure> {
+        let Some(slot) = self.finish.as_ref() else {
+            return Ok(None);
+        };
+        self.evaluator
+            .evaluate_package_protocol_slot(slot, supply, meter)
+            .map(Some)
     }
 }
