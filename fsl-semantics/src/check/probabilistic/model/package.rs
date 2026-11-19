@@ -23,7 +23,7 @@ use filament_checked::node::CheckedLiteral;
 
 use super::{
     CheckedProbabilisticModel, Delay, DelayDistribution, ProbabilisticOperation, RandomParameter,
-    SupportValue, Workload,
+    ReadReward, SupportValue, Workload,
 };
 use crate::check::DelayFault;
 use crate::model::operation::{OperationLookup, OperationTable};
@@ -125,8 +125,23 @@ pub struct PackageDelay {
     pub family: PackageDelayFamily,
 }
 
-/// The random parameters, workloads and delays of a package, as its nodes spell
-/// them, in the package's node order.
+/// A `reward` node of a package.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackageReward {
+    /// The `model` object type node that declares the operation.
+    pub declaring: NodeKey,
+    /// The operation's name.
+    pub operation: String,
+    /// The reward's name.
+    pub name: String,
+    /// The integer or quantity type node of the reward.
+    pub value_type: NodeKey,
+    /// The clause function node the reward's expression lowered to.
+    pub function: NodeKey,
+}
+
+/// The random parameters, workloads, delays and rewards of a package, as its
+/// nodes spell them, in the package's node order.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PackageProbabilistic {
     /// Every `random_parameter` node.
@@ -135,6 +150,8 @@ pub struct PackageProbabilistic {
     pub workloads: Vec<PackageWorkload>,
     /// Every `delay_distribution` node.
     pub delays: Vec<PackageDelay>,
+    /// Every `reward` node.
+    pub rewards: Vec<PackageReward>,
 }
 
 /// Why a package's probabilistic nodes do not rebuild S3's records.
@@ -171,6 +188,14 @@ pub enum PackageProbabilisticRefusal {
         operation: String,
         /// The rule it breaks.
         fault: DelayFault,
+    },
+    /// Two rewards of one name on one operation.
+    #[error("operation `{operation}` has two rewards named `{reward}`")]
+    DuplicateReward {
+        /// The operation.
+        operation: String,
+        /// The reward.
+        reward: String,
     },
     /// A package's weights sum to zero.
     #[error("the weights of `{operation}({parameter})` sum to zero")]
@@ -237,6 +262,27 @@ impl StateModel {
                     }
                     PackageDelayFamily::Discrete(rows) => DelayDistribution::Discrete(rows.clone()),
                 },
+            });
+            declared += 1;
+        }
+        for reward in &read.rewards {
+            let (operation, declaration) =
+                self.operation(operations, &reward.declaring, &reward.operation)?;
+            if model.read_rewards.iter().any(|earlier| {
+                earlier.operation.key == operation.key && earlier.name == reward.name
+            }) {
+                return Err(PackageProbabilisticRefusal::DuplicateReward {
+                    operation: reward.operation.clone(),
+                    reward: reward.name.clone(),
+                });
+            }
+            model.read_rewards.push(ReadReward {
+                declared,
+                name: reward.name.clone(),
+                operation,
+                parameters: declaration.parameters().to_vec(),
+                value_type: reward.value_type.clone(),
+                function: reward.function.clone(),
             });
             declared += 1;
         }

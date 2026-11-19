@@ -19,7 +19,7 @@ use filament_contract_model::{
 use filament_exact::{NodeKey, PathSegment, Rational, UnitId, Value};
 use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::{
-    CheckedGraph, Delay, DelayDistribution, ProbabilisticFeature, RandomParameter, Workload,
+    CheckedGraph, Delay, DelayDistribution, ProbabilisticFeature, RandomParameter, Reward, Workload,
 };
 
 use super::{
@@ -33,8 +33,8 @@ struct Pending {
     region: CheckedSourceRegion,
 }
 
-/// Write a `probabilistic` node for each checked random parameter, workload
-/// and delay of `graph`, with its source-map entry.
+/// Write a `probabilistic` node for each checked random parameter, workload,
+/// delay and reward of `graph`, with its source-map entry.
 ///
 /// # Errors
 ///
@@ -58,6 +58,9 @@ pub(super) fn append_probabilistic_nodes(
     }
     for delay in model.delays() {
         pending.push(delay_node(ids, graph, nodes, source_map, delay)?);
+    }
+    for reward in model.rewards() {
+        pending.push(reward_node(ids, graph, nodes, source_map, reward)?);
     }
     pending.sort_by(|left, right| left.node.node_id.cmp(&right.node.node_id));
     for Pending { node, region } in pending {
@@ -498,6 +501,85 @@ fn delay_node(
     ];
     Ok(Pending {
         node: node(graph, ids, "delay_distribution", operand, body)?,
+        region,
+    })
+}
+
+/// The `(tag, form)` of the type nodes FSpec FR-640 admits as a reward's
+/// `value_type`: an integer, a unit, a compound unit, a carried or bounded
+/// quantity, or an integer range.
+const REWARD_TYPE_FORMS: [(&str, &str); 6] = [
+    ("scalar_type", "integer"),
+    ("scalar_type", "unit"),
+    ("scalar_type", "compound_unit"),
+    ("scalar_type", "carried_quantity"),
+    ("scalar_type", "bounded_quantity"),
+    ("bounded_domain", "integer_range"),
+];
+
+/// FSpec FR-640 `reward`: `declaring`, `operation`, `name`, `value_type` and
+/// `expression`, the reference to the clause function S3 lowered the
+/// reward's expression to. The `value_type` is the function's own type, which
+/// the reader requires to be the reward's.
+fn reward_node(
+    ids: &StructuralIds,
+    graph: &CheckedGraph,
+    nodes: &mut Vec<CheckedSemanticNodeV2>,
+    source_map: &mut Vec<CheckedSourceMapEntry>,
+    reward: &Reward,
+) -> Result<Pending, EmitRefusal> {
+    let operation = reward.operation();
+    let location = reward.declaration_location();
+    let unwritable = || {
+        refusal(
+            graph,
+            ProbabilisticFeature::Reward,
+            reward.name().to_owned(),
+            &location,
+        )
+    };
+    let region = region_of(graph, &location)?;
+    let (declaring_key, declaring) = model_node(
+        ids,
+        nodes,
+        operation.declaring_key().ok_or_else(unwritable)?,
+    )
+    .ok_or_else(unwritable)?;
+    let function_key = reward.function().ok_or_else(unwritable)?;
+    let function = node_id(ids, function_key);
+    let function_node = nodes
+        .iter()
+        .find(|node| node.node_id == function)
+        .ok_or_else(unwritable)?;
+    let value_type = function_node.semantic_type.clone();
+    let typed = nodes.iter().any(|node| {
+        node.node_id == value_type
+            && REWARD_TYPE_FORMS
+                .iter()
+                .any(|(tag, form)| node.node_tag.as_ref() == *tag && &*node.semantic_form == *form)
+    });
+    if !typed {
+        return Err(unwritable());
+    }
+    let text = scalar_type(ids, graph, nodes, source_map, "text", &region)?;
+    let body = claim_aggregate(vec![
+        claim_binding("declaring", reference(declaring)),
+        claim_binding("operation", text_literal(&text, operation.name())?),
+        claim_binding("name", text_literal(&text, reward.name())?),
+        claim_binding("value_type", reference(value_type)),
+        claim_binding("expression", reference(function)),
+    ]);
+    let operand = vec![
+        PathSegment::Node(declaring_key),
+        PathSegment::Text(operation.name().into()),
+        PathSegment::Text(reward.name().into()),
+        // The function's key ranks equal paths by lowering order and holds
+        // no content, so the expression's canonical spelling carries it:
+        // changing the expression changes the identity (FSpec FR-640-AC-3).
+        PathSegment::Text(reward.expression_spelling()),
+    ];
+    Ok(Pending {
+        node: node(graph, ids, "reward", operand, body)?,
         region,
     })
 }

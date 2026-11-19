@@ -15,12 +15,13 @@
 use std::collections::hash_map;
 
 use filament_exact::{NodeKey, PathSegment};
+use fsl_forms::DeclaredClauseKind;
 
 use super::temporal::stage_fault;
-use super::{Lowering, NodeContent, NodeRef, SemanticNode};
+use super::{FunctionInput, Lowering, ModelClause, NodeContent, NodeRef, SemanticNode};
 use crate::check::family::OccurrenceRole;
 use crate::check::node_key::{BodyTerm, NodeTag};
-use crate::check::probabilistic::{CheckedProbabilisticClaim, CheckedProbabilisticModel};
+use crate::check::probabilistic::{CheckedProbabilisticClaim, CheckedProbabilisticModel, Reward};
 use crate::check::refusal::CheckRefusal;
 
 /// The semantic form of a probabilistic claim's node.
@@ -35,7 +36,7 @@ impl Lowering<'_> {
     pub(crate) fn probabilistic_declarations(
         &mut self,
         model: &CheckedProbabilisticModel,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<Vec<Option<NodeKey>>, CheckRefusal> {
         for random in model.random_parameters() {
             let at = random.declaration_location();
             self.charge(1, &at)?;
@@ -58,7 +59,21 @@ impl Lowering<'_> {
                 self.rooted_model_node(model, &at)?;
             }
         }
-        Ok(())
+        // Functions of one owner share a key path and take their ordinals in
+        // the order they are lowered, so the rewards are lowered by
+        // (operation, name), not by declaration order: writing them in
+        // another order changes no key.
+        let rewards = model.rewards();
+        let mut order: Vec<usize> = (0..rewards.len()).collect();
+        order.sort_by(|&left, &right| {
+            (rewards[left].operation().key(), rewards[left].name())
+                .cmp(&(rewards[right].operation().key(), rewards[right].name()))
+        });
+        let mut keys = vec![None; rewards.len()];
+        for at in order {
+            keys[at] = self.reward_function(&rewards[at])?;
+        }
+        Ok(keys)
     }
 
     /// The model node of `declaration`, given a `generated` occurrence at
@@ -163,5 +178,59 @@ impl Lowering<'_> {
             })
             .transpose()?;
         Ok((key, over))
+    }
+}
+
+impl Lowering<'_> {
+    /// FSpec FR-640 `reward`: the clause function of `reward`'s expression,
+    /// owned by the operation member it is declared on (FR-094), with a
+    /// parameter for each of the operation's parameters in declared order,
+    /// the random ones included. A reward whose operation's declaring type
+    /// has no `model` node (a source-declared object type) lowers to
+    /// nothing, and emission refuses it with its locus.
+    ///
+    /// FSpec FR-640 states no `clause` binding for this function. The
+    /// reader joins a `ModelOwner` on an operation member only for a
+    /// `precondition` or a `body` clause, and a `body` clause function makes
+    /// the operation's `operation_bodies` row a function row (FR-576), which
+    /// a reward must not do to an operation with no body; so the function
+    /// carries `precondition`, the one kind the join admits for every
+    /// operation. Whether that is the intended kind is a spec question.
+    fn reward_function(&mut self, reward: &Reward) -> Result<Option<NodeKey>, CheckRefusal> {
+        let at = reward.declaration_location();
+        self.charge(1, &at)?;
+        let operation = reward.operation();
+        let Some(declaring) = operation.declaring_key() else {
+            return Ok(None);
+        };
+        self.rooted_model_node(declaring, &at)?;
+        let clause = ModelClause {
+            declaration: operation.key().clone(),
+            kind: DeclaredClauseKind::Precondition,
+            source_declaration: None,
+        };
+        let location = reward.expression_location();
+        let name = format!("{}::{}", operation.name(), reward.name());
+        let input = FunctionInput {
+            name: &name,
+            kind: fsl_forms::DeclarationKind::Function,
+            location: &location,
+            parameters: reward.parameters(),
+            parameter_spans: None,
+            result: reward.value_type(),
+            body: reward.expression(),
+            body_slots: reward.slot_names(),
+            measure: None,
+            measure_slots: &[],
+            population_targets: &[],
+            result_population_target: None,
+            clause: Some(&clause),
+        };
+        // No function-table slot belongs to a reward.
+        let index = self.functions.len();
+        match self.function(index, &input)? {
+            NodeRef::Admitted(key) => Ok(Some(key)),
+            NodeRef::Pending(_) => Err(stage_fault(&at, "reward-function-is-keyed")),
+        }
     }
 }
