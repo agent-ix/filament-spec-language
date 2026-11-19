@@ -28,13 +28,13 @@ use fsl_foundation::MemoryModelName;
 use fsl_semantics::check::AccessOrdering;
 use fsl_semantics::check::{AccessClass, CheckedProtocol, ControlStep, ProtocolNodeId};
 
+use super::ProtocolRefusal;
 use super::identity::ThreadPath;
 use super::program::Program;
-use super::ProtocolRefusal;
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::Location;
-use crate::simulation::model::encode::{reference_enc, Enc};
 use crate::simulation::model::FootprintError;
+use crate::simulation::model::encode::{Enc, reference_enc};
 use crate::simulation::model::{Cell, ModelSimState, ModelSystem, OperationRef};
 
 /// What one instantiated attempt is (ADR-025 MA-2, MA-4).

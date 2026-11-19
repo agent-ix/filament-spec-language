@@ -494,6 +494,10 @@ pub enum ItemKindSelection {
     RaceFreedom,
     /// A refinement item.
     Refinement,
+    /// A repeat's invariant obligation (FR-730).
+    LoopInvariant,
+    /// A repeat's termination obligation (FR-730).
+    LoopTermination,
 }
 
 impl ItemKindSelection {
@@ -504,6 +508,8 @@ impl ItemKindSelection {
             Self::TimeLockFreedom => ItemKind::TimeLockFreedom,
             Self::RaceFreedom => ItemKind::RaceFreedom,
             Self::Refinement => ItemKind::Refinement,
+            Self::LoopInvariant => ItemKind::LoopInvariant,
+            Self::LoopTermination => ItemKind::LoopTermination,
         }
     }
 }

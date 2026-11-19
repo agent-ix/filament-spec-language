@@ -100,7 +100,11 @@ pub fn claim_family(
 /// `formula` item, which takes the family of its claim's node.
 pub(crate) fn kind_family(item_kind: ItemKind) -> Option<DeclarationFamily> {
     match item_kind {
-        ItemKind::DeadlockFreedom | ItemKind::TimeLockFreedom | ItemKind::RaceFreedom => {
+        ItemKind::DeadlockFreedom
+        | ItemKind::TimeLockFreedom
+        | ItemKind::RaceFreedom
+        | ItemKind::LoopInvariant
+        | ItemKind::LoopTermination => {
             Some(DeclarationFamily::TemporalTrace)
         }
         ItemKind::Refinement => Some(DeclarationFamily::RelationClaim),

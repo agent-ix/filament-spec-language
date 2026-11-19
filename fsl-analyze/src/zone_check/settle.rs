@@ -240,7 +240,8 @@ pub fn settle_zone_check<S>(
                     CounterexampleKind::Formula
                     | CounterexampleKind::Deadlock
                     | CounterexampleKind::Race(_)
-                    | CounterexampleKind::UndefinedEvaluation(_) => {
+                    | CounterexampleKind::UndefinedEvaluation(_)
+                    | CounterexampleKind::LoopProof(_) => {
                         SettlementBasis::DecisiveCounterexample
                     }
                 };

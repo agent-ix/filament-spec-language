@@ -22,7 +22,7 @@ use fsl_semantics::check::AccessOrdering;
 
 use super::identity::ThreadPath;
 use crate::simulation::footprint::Location;
-use crate::simulation::model::encode::{map_enc, Enc};
+use crate::simulation::model::encode::{Enc, map_enc};
 
 /// One access of a thread to a shared location, as the race summary reads it.
 #[derive(Clone, Debug, Eq, PartialEq)]

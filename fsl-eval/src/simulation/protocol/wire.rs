@@ -11,9 +11,9 @@ use super::fairness::ProtocolFairness;
 use super::identity::{BlockedThread, ProtocolTransition, SendRecord, WaitCause};
 use super::over_value;
 use crate::model_subject::ModelInstance;
+use crate::simulation::Location;
 use crate::simulation::model::encode::Enc;
 use crate::simulation::model::{ModelSimulationRequest, ModelSystem};
-use crate::simulation::Location;
 
 use crate::simulation::model::canonical_json as json;
 

@@ -26,7 +26,9 @@ use fsl_eval::automaton::{
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ModelSubject};
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::NotSimulated;
-use fsl_semantics::check::{Activation, CheckedStateClause, CheckedTemporalClause};
+use fsl_semantics::check::{
+    Activation, CheckedStateClause, CheckedTemporalClause, ProtocolNodeId,
+};
 
 use crate::model_check::identity::{ClauseIdentity, ClauseRootRefusal};
 
@@ -52,6 +54,16 @@ pub enum ModelCheckItem<'a> {
     Invariant {
         /// The `invariant` state clause, by name and claim occurrence.
         clause: InvariantClause<'a>,
+    },
+    /// FR-730's invariant obligation for one checked protocol repeat.
+    LoopInvariant {
+        /// The checked repeat node.
+        repeat: ProtocolNodeId,
+    },
+    /// FR-730's termination obligation for one checked protocol repeat.
+    LoopTermination {
+        /// The checked repeat node.
+        repeat: ProtocolNodeId,
     },
 }
 
@@ -166,6 +178,9 @@ pub enum ItemRefusal {
     /// The invariant item's context did not encode.
     #[error("the invariant context does not encode")]
     InvariantContext,
+    /// A loop-proof item was sent to a model subject.
+    #[error("a loop-proof item is decided over a protocol subject only")]
+    LoopProofOverModel,
     /// FR-125: a population that admits the `over` type has no universe
     /// (`RequiresBound`), or that check could not classify it.
     #[error("the clause's instances are not finite: {0:?}")]
@@ -270,6 +285,18 @@ impl ModelCheckItem<'_> {
                             .map_err(|_| ItemRefusal::InvariantContext)?,
                     ),
                 }])
+            }
+            Self::LoopInvariant { .. } | Self::LoopTermination { .. } if tp4.is_some() => {
+                Ok(vec![Instance {
+                    binding: None,
+                    translation: Translation::Safety(
+                        SafetyTranslation::deadlock_freedom()
+                            .map_err(|_| ItemRefusal::DeadlockContext)?,
+                    ),
+                }])
+            }
+            Self::LoopInvariant { .. } | Self::LoopTermination { .. } => {
+                Err(ItemRefusal::LoopProofOverModel)
             }
             Self::Clause { clause, .. } => {
                 // The source route reads the clause's identity from its own

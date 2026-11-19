@@ -72,7 +72,8 @@ use fsl_eval::model_subject::{
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, TerminalClass};
 use fsl_eval::simulation::protocol::{
     activates_on_each, check_protocol_bounds, live_instance_bound, Capacities,
-    ProtocolFairnessError, ProtocolRefusal, ProtocolSystem, Sc, SubjectMemory,
+    ProtocolFairnessError, ProtocolLoopProofKind, ProtocolLoopProofTarget, ProtocolRefusal,
+    ProtocolSystem, Sc, SubjectMemory,
 };
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
@@ -425,7 +426,12 @@ fn check_protocol(
         request.max_messages,
     ) {
         SubjectMemory::Sc => {
-            let system = ProtocolSystem::new(model, subject, Sc)
+            let system = ProtocolSystem::new_with_loop_proof(
+                model,
+                subject,
+                Sc,
+                loop_proof_target(request.item),
+            )
                 .map_err(ClosureRefusal::Protocol)?
                 .with_max_live_instances(live_instances)
                 .with_cycle_keys(BTreeSet::new());
@@ -447,7 +453,12 @@ fn check_protocol(
                 member: MemoryBoundMember::MaxStoreBuffer,
                 value: tso.max_store_buffer(),
             };
-            let system = ProtocolSystem::new(model, subject, tso)
+            let system = ProtocolSystem::new_with_loop_proof(
+                model,
+                subject,
+                tso,
+                loop_proof_target(request.item),
+            )
                 .map_err(ClosureRefusal::Protocol)?
                 .with_max_live_instances(live_instances)
                 .with_cycle_keys(BTreeSet::new());
@@ -469,7 +480,12 @@ fn check_protocol(
                 member: MemoryBoundMember::MaxMessages,
                 value: ra.max_messages(),
             };
-            let system = ProtocolSystem::new(model, subject, ra)
+            let system = ProtocolSystem::new_with_loop_proof(
+                model,
+                subject,
+                ra,
+                loop_proof_target(request.item),
+            )
                 .map_err(ClosureRefusal::Protocol)?
                 .with_max_live_instances(live_instances)
                 .with_cycle_keys(BTreeSet::new());
@@ -486,6 +502,20 @@ fn check_protocol(
                 cancel,
             )
         }
+    }
+}
+
+fn loop_proof_target(item: ModelCheckItem<'_>) -> Option<ProtocolLoopProofTarget> {
+    match item {
+        ModelCheckItem::LoopInvariant { repeat } => Some(ProtocolLoopProofTarget {
+            repeat,
+            kind: ProtocolLoopProofKind::Invariant,
+        }),
+        ModelCheckItem::LoopTermination { repeat } => Some(ProtocolLoopProofTarget {
+            repeat,
+            kind: ProtocolLoopProofKind::Termination,
+        }),
+        _ => None,
     }
 }
 
@@ -1617,6 +1647,14 @@ impl<S: SubjectSystem> Check<'_, S> {
         missing: CertificateRule,
         visited: &mut BTreeSet<StateKey>,
     ) -> Step<Option<Pending<S>>> {
+        if matches!(
+            self.item,
+            ModelCheckItem::LoopInvariant { .. } | ModelCheckItem::LoopTermination { .. }
+        ) && self.system.loop_proof_violation(&state).is_some()
+        {
+            let at = self.product(translation, state_key, SafetyState::Rejected)?;
+            return Err(Self::reject(CertificateRule::BadState, at));
+        }
         if visited.contains(&state_key) {
             return Ok(None);
         }

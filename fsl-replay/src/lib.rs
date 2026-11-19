@@ -265,7 +265,8 @@ pub use identity::{
 };
 pub use limits::{AccountingLimits, CallerLimits, EngineLimits, RenderLimits};
 pub use model_check::counterexample::{
-    undefined_finding, ClaimPredicate, CounterexampleKind, Lasso, MappingSite, ModelStep,
+    undefined_finding, ClaimPredicate, CounterexampleKind, Lasso, LoopProofCounterexample,
+    LoopProofFailure, LoopProofObligation, MappingSite, ModelStep,
     ObservedTemporalCounterexample, ObservedTemporalKind, ObservedTemporalStep, Race,
     TemporalCounterexample, TimedPoint, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
