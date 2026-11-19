@@ -30,13 +30,13 @@ maximum, are written in the quantified form. Scope: FR-230-AC-70.
 
 ## Expected Results
 
-- Step 1: one `time_invariant`, predicate `true`, one slot `parameter`
+- Step 1: one `time_invariant`, predicate `true`, one place
   binder `ts#0` in `binders`, at the level the source binder `e` takes, one upper-bound `clock_constraint` on `ts`'s
   element clock template whose slot term is that binder; both emissions give
   the same node ids.
 - Step 2: the same node shape as step 1 except the binder name `e`.
 - Step 3: a second `time_invariant` with binders `ws#0` then `ys#1`.
-- Step 4: one family part with the slot `parameter` binder `e`, a
+- Step 4: one family part with the place binder `e`, a
   `clock_constraint` whose slot term is `e` and `quantifier` `each` for
   `forall`, `some` for `exists`; the two guards have different node ids.
   Empty `us`: `each` enabled, `some` not; 3 ms and 7 ms: `each` not

@@ -24,7 +24,7 @@ that collection: the guard `self.x >= 1 ms and forall(e in self.q: present(e))`,
 the time invariant `when { forall(e in self.q: present(e)) } { self.x <= 9 ms }`
 and the urgency `urgent when { forall(e in self.q: present(e)) }`. The emitter
 SHALL write such a quantifier inside the clause's predicate expression, as the
-collection quantifier application that binds its own slot parameter, and SHALL
+collection quantifier application that binds its own place binder, and SHALL
 NOT lift its binder into the guard part's or invariant's `binders`. A binder
 belongs in `binders` only when a clock constraint of that part or a bound of
 that invariant has it as a slot term (FSpec FR-322-AC-295); a binder that only
