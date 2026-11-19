@@ -283,9 +283,12 @@ the `requirements` hook, and no source clause refers to it.
   that declaration's row on its own node. FSpec FR-322 requires a row for
   every `claim` occurrence. Rows with one `declaration_region` are one
   declaration, so they are not duplicate names. A derived node holds a row
-  for every declaration of each clause it conjoins, so it holds more rows than
-  any contributing clause's own node, and a request naming the clause resolves
-  to that own node ("Rows of one declaration").
+  for every declaration of each clause it conjoins, so its declaration set
+  (the declaration keys of its rows) strictly contains the set of each
+  contributing clause's node. That clause's node is then the name's own node,
+  and a request naming the clause resolves to it. The strict reader refuses
+  a name whose nodes' sets do not nest (FSpec FR-322 "Rows of one
+  declaration").
 - **Transition node.** `anchor` is the no-point operation anchor, `subject` is
   the `expression`/`query` node FR-093 lowers `deref(self).F` to, `inputs`
   are the operation's parameters in declared order, and the application

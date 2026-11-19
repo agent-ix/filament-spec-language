@@ -343,7 +343,8 @@ restated here for the emitter and is deterministic and injective:
   the wrapper in every node would share it.
 - **Consequence.** FR-370 gives a `temporal_clause` node `claim`
   occurrences only, and FSpec FR-402 "Body wrapper" makes the wrapper's
-  occurrences and name rows the hyper clause's, so every consumer, inside
+  `claim` occurrences the hyper clause's and gives it no name row (the
+  clause's name is on its `hyperproperty` node's `claim_names` row), so every consumer, inside
   FSL or not, SHALL exclude it from the single-trace temporal claims. Inside
   FSL: the I2 reader SHALL skip a
   `temporal`/`temporal_clause` node that is the `body` target of a
