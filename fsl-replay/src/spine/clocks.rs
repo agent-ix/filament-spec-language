@@ -14,16 +14,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_checked::key::DeclarationKey;
 use filament_contract_model::{ClockConfiguration, ClockExactNumber};
 use filament_exact::ValueType;
-use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::Span;
+use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_package as pkg;
 use fsl_package::{
-    clock_kind, is_model_binding_name, profile_clock_kind, ClockSelectionCause,
-    ClockSelectionDeclaration, ClockSelectionRefusal, EmitRefusal, TemporalClockSelection,
+    ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal, EmitRefusal,
+    TemporalClockSelection, clock_kind, is_model_binding_name, profile_clock_kind,
 };
 use fsl_semantics::check::TemporalProfile;
 
-use super::{region, CheckedUnit, CompileRefusal, ParsedUnitSource};
+use super::{CheckedUnit, CompileRefusal, ParsedUnitSource, region};
 
 /// FR-640: the clock configurations a request supplies, by clock name.
 /// Member order is not kept: two selections with equal members are equal.
@@ -269,13 +269,13 @@ impl RequestClocks {
             let Some(expected) = configured_kind(declaration.profile) else {
                 continue;
             };
-            let clock = if let Some(traces) = &declaration.model {
+            let clocks = if let Some(traces) = &declaration.model {
                 // A model subject: the model supplies the binding, and the
                 // configuration is derived from it and the profile.
-                let Some(clock) = derived_configuration(&declaration, traces)? else {
+                let Some(clocks) = derived_configurations(&declaration, traces)? else {
                     continue;
                 };
-                clock
+                clocks
             } else if is_model_binding_name(declaration.clock) {
                 continue;
             } else {
@@ -316,13 +316,17 @@ impl RequestClocks {
                     self.is_program_source(&declaration.source),
                     declaration.clock.to_owned(),
                 ));
-                clock.clone()
+                vec![(None, clock.clone())]
             };
-            selections.push(TemporalClockSelection::new(
-                declaration.source.clone(),
-                declaration.span,
-                clock,
-            ));
+            for (trace, clock) in clocks {
+                let mut selection = TemporalClockSelection::new(
+                    declaration.source.clone(),
+                    declaration.span,
+                    clock,
+                );
+                selection.trace = trace.map(Into::into);
+                selections.push(selection);
+            }
         }
         Ok(selections)
     }
@@ -402,6 +406,7 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
                 }
                 _ => None,
             },
+            trace_aliases: None,
             source,
             span: clause.span(),
         });
@@ -433,10 +438,11 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
                     .collect::<Vec<_>>();
                 types.sort();
                 types.dedup();
-                match types.as_slice() {
+                let authority = match types.as_slice() {
                     [only] => Some(only.clone()),
                     _ => None,
-                }
+                };
+                (quantifier.alias.to_string(), authority)
             })
             .collect();
         declarations.push(Declaration {
@@ -444,6 +450,13 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
             profile: hyper.profile(),
             clock: "model-steps",
             model: Some(traces),
+            trace_aliases: Some(
+                hyper
+                    .quantifiers()
+                    .iter()
+                    .map(|quantifier| quantifier.alias.to_string())
+                    .collect(),
+            ),
             source,
             span: hyper.span(),
         });
@@ -458,6 +471,7 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
                 profile,
                 clock: &template.clock,
                 model: None,
+                trace_aliases: None,
                 source: graph.source().clone(),
                 span: template.span,
             });
@@ -490,6 +504,7 @@ struct Declaration<'a> {
     /// determined. `None` over a trace subject and for a `compensate`
     /// template.
     model: Option<Vec<Option<String>>>,
+    trace_aliases: Option<Vec<String>>,
     source: RawSourceRef,
     span: Span,
 }
@@ -501,12 +516,12 @@ struct Declaration<'a> {
 /// authority, needs one configuration per trace, which a binding row cannot
 /// carry yet: it refuses `unsupported_construct`/`not-yet-implemented` naming
 /// the clause (FR-763's form).
-fn derived_configuration(
+fn derived_configurations(
     declaration: &Declaration<'_>,
     traces: &[Option<String>],
-) -> Result<Option<ClockConfiguration>, Box<CompileRefusal>> {
-    let mut derived: Option<Option<ClockConfiguration>> = None;
-    for authority in traces {
+) -> Result<Option<Vec<(Option<String>, ClockConfiguration)>>, Box<CompileRefusal>> {
+    let mut derived = Vec::with_capacity(traces.len());
+    for (index, authority) in traces.iter().enumerate() {
         let clock = match authority {
             Some(authority) => {
                 model_configuration(declaration.profile, declaration.clock, authority)
@@ -516,24 +531,16 @@ fn derived_configuration(
             }
             None => model_configuration(declaration.profile, declaration.clock, ""),
         };
-        match &derived {
-            Some(first) if first != &clock => return Err(per_trace_clocks(declaration)),
-            Some(_) => {}
-            None => derived = Some(clock),
+        if let Some(clock) = clock {
+            let trace = declaration
+                .trace_aliases
+                .as_ref()
+                .and_then(|aliases| aliases.get(index))
+                .cloned();
+            derived.push((trace, clock));
         }
     }
-    Ok(derived.flatten())
-}
-
-/// The implementation-gap refusal of a clause whose traces need different
-/// clock configurations.
-fn per_trace_clocks(declaration: &Declaration<'_>) -> Box<CompileRefusal> {
-    Box::new(CompileRefusal::Emit(
-        EmitRefusal::PerTraceClockConfigurations {
-            declaration: declaration.name.to_owned(),
-        },
-        region(&declaration.source, declaration.span),
-    ))
+    Ok((!derived.is_empty()).then_some(derived))
 }
 
 /// The `kind` of the configuration a declaration under `profile` takes a

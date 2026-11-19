@@ -4,7 +4,7 @@
 //! one `clocks` member.
 use crate::command_harness::compile_file;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 const MODEL: &[u8] = include_bytes!("../../examples/config-version/model.semantic-ir.json");
@@ -288,7 +288,6 @@ fn config_version_authority(package: &str) -> String {
 /// and each trace has its own row with an equal configuration.
 #[trace("TC-2243", "FR-640-AC-12", "FSpec-TC-1680", "FSpec-FR-322-AC-453")]
 #[test]
-#[ignore = "QSL-2277: one temporal binding row per quantified trace of a hyper clause is not implemented yet"]
 fn a_hyper_clause_over_one_model_derives_the_single_trace_authority() {
     let directory = tempfile::tempdir().unwrap();
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
@@ -328,7 +327,6 @@ fn a_hyper_clause_over_one_model_derives_the_single_trace_authority() {
 /// traces derive the same configuration, and the clause compiles too.
 #[trace("TC-2243", "FR-640-AC-12", "FSpec-TC-1680", "FSpec-FR-322-AC-453")]
 #[test]
-#[ignore = "QSL-2277: a hyper clause over two models under event-position compiles with one clock row per trace, not implemented yet"]
 fn a_hyper_clause_over_two_models_binds_one_clock_per_trace() {
     let directory = tempfile::tempdir().unwrap();
     let unit = |identity: &str| {

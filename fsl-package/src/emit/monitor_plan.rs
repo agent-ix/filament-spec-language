@@ -16,13 +16,13 @@ use filament_contract_model::CheckedNodePathSegment as Segment;
 use filament_contract_model::{CheckedSemanticNodeV2, CheckedTerm};
 use filament_exact::Rational;
 
-use crate::wire_form::{has_form, has_tag, WireForm, WireTag};
+use crate::wire_form::{WireForm, WireTag, has_form, has_tag};
 
 use super::{
-    own_evidence, read_index_segments, write_index_segments, CheckedNodeId, CheckedOccurrence,
-    CheckedOccurrenceRole, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
-    CheckedPackageV2, CheckedSemanticGraphV2, CheckedSourceMapEntry, Emission, EmitRefusal,
-    EmittedPackage, ForeignNodes, OmittedNode, StructuralIds, GRAPH_V2,
+    CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, CheckedPackageSidecarsRef,
+    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedSemanticGraphV2,
+    CheckedSourceMapEntry, Emission, EmitRefusal, EmittedPackage, ForeignNodes, GRAPH_V2,
+    OmittedNode, StructuralIds, own_evidence, read_index_segments, write_index_segments,
 };
 
 /// What the writer needs of one plan.

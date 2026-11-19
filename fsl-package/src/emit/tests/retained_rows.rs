@@ -12,7 +12,7 @@ use filament_semantic_value::checking::CheckMode;
 
 use super::converted_equality::emitted as emitted_quantities;
 use super::state_transition::{operation_member_rows, operation_unit};
-use super::variant_types::{emitted_enums, UNIT};
+use super::variant_types::{UNIT, emitted_enums};
 use super::*;
 use crate::emit::monitor_plan::carry_rows;
 use crate::emit::{EqualityFactWitness, OmissionCause, OmittedNode};
@@ -536,7 +536,7 @@ fn a_row_naming_a_node_no_rename_touches_is_carried_unchanged() {
 #[test]
 fn the_writers_renames_reach_the_rows_it_carries() {
     use super::admission_corpus::config_version_unit;
-    use crate::emit::{emit_monitor_plan_over, MonitorPlanWire};
+    use crate::emit::{MonitorPlanWire, emit_monitor_plan_over};
 
     let body = "temporal C using tt over (c: Config::ConfigVersion) clock \"model-time\" on origin { always holds(c.versionNumber = 2) }\n\
         record State { now: Integer; }\n\
