@@ -33,7 +33,7 @@ struct PopulationTrace {
 
 pub(super) fn item<'a>(
     analysis: &'a RunInput<'a>,
-    binding: &SubjectBinding<'_>,
+    binding: &SubjectBinding<'a>,
     item: &ClaimItem,
     form: &FiniteHyperItem,
     limits: &AnalyzeLimits,
