@@ -83,15 +83,15 @@ use fsl_eval::fairness::{EdgeLabel, Vertex};
 use fsl_eval::model_subject::{
     AtomStop, ModelInstance, ModelLetters, ModelSubject, ProtocolSubject,
 };
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{
-    check_model_bounds, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, TerminalClass,
+    ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, TerminalClass, check_model_bounds,
 };
 use fsl_eval::simulation::protocol::{
-    activates_on_each, check_protocol_bounds, live_instance_bound, Capacities, DataRace,
-    MemoryModel, ProtocolFairnessError, ProtocolRefusal, ProtocolState, ProtocolSystem,
-    ProtocolTransition, Sc, SubjectMemory, UnboundCapacity, WeakAccessShape,
+    Capacities, DataRace, MemoryModel, ProtocolFairnessError, ProtocolRefusal, ProtocolState,
+    ProtocolSystem, ProtocolTransition, Sc, SubjectMemory, UnboundCapacity, WeakAccessShape,
+    activates_on_each, check_protocol_bounds, live_instance_bound,
 };
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
     ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, FairLoop,
     Location, NotSimulated, Permutation, RequiresBound, SubjectSystem, SubjectTransition,
@@ -782,7 +782,9 @@ pub fn check_protocol_constrained(
     let live_instances = live_instance_bound(request.max_live_instances);
     let instance_bound = source_protocol
         .is_some_and(activates_on_each)
-        .then_some(InstanceBound { value: live_instances });
+        .then_some(InstanceBound {
+            value: live_instances,
+        });
     let (instances, root_cancelled) = if certified {
         match request.item.instances(
             &subject.model,
@@ -946,36 +948,43 @@ fn check_protocol_liveness(
             });
         }
     }
-    let protocol = subject
+    let definition = subject
         .model
         .simulation
         .input
-        .evaluator
-        .protocol(&subject.protocol)
+        .protocol_definition(&subject.protocol)
         .ok_or_else(|| {
             ModelCheckRefusal::Protocol(ProtocolRefusal::UnknownProtocol {
                 protocol: subject.protocol.clone(),
             })
         })?;
-    let capacities = Capacities::admit(protocol, &subject.capacities)
-        .map_err(|refusal| ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?;
-    check_protocol_bounds(
-        &model,
-        protocol,
-        &capacities,
-        subject.model.simulation.input.evaluator,
-        BOUND_POSITIONS,
-    )
-    .map_err(not_simulated)?;
+    let source_protocol = match definition {
+        fsl_eval::simulation::model::ProtocolDefinition::Source(protocol) => Some(protocol),
+        fsl_eval::simulation::model::ProtocolDefinition::Package(_) => None,
+    };
+    if let Some(protocol) = source_protocol {
+        let capacities = Capacities::admit(protocol, &subject.capacities)
+            .map_err(|refusal| ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?;
+        check_protocol_bounds(
+            &model,
+            protocol,
+            &capacities,
+            subject.model.simulation.input.evaluator,
+            BOUND_POSITIONS,
+        )
+        .map_err(not_simulated)?;
+    }
     let memory = SubjectMemory::of(
         &subject.memory,
         request.max_store_buffer,
         request.max_messages,
     );
     let live_instances = live_instance_bound(request.max_live_instances);
-    let instance_bound = activates_on_each(protocol).then_some(InstanceBound {
-        value: live_instances,
-    });
+    let instance_bound = source_protocol
+        .is_some_and(activates_on_each)
+        .then_some(InstanceBound {
+            value: live_instances,
+        });
     let channel_bound = request
         .max_messages
         .unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND);
@@ -985,7 +994,7 @@ fn check_protocol_liveness(
                 member: MemoryBoundMember::MaxMessages,
                 value: ra.max_messages(),
             };
-            ProtocolSystem::new(model, subject, ra).map(|system| {
+            new_protocol_system(model, subject, ra).map(|system| {
                 super::liveness::check_protocol(
                     subject,
                     &system
@@ -1011,7 +1020,7 @@ fn check_protocol_liveness(
                 member: MemoryBoundMember::MaxStoreBuffer,
                 value: tso.max_store_buffer(),
             };
-            ProtocolSystem::new(model, subject, tso).map(|system| {
+            new_protocol_system(model, subject, tso).map(|system| {
                 super::liveness::check_protocol(
                     subject,
                     &system
@@ -1032,7 +1041,7 @@ fn check_protocol_liveness(
                 )
             })
         }
-        SubjectMemory::Sc => ProtocolSystem::new(model, subject, Sc).map(|system| {
+        SubjectMemory::Sc => new_protocol_system(model, subject, Sc).map(|system| {
             super::liveness::check_protocol(
                 subject,
                 &system
@@ -1727,11 +1736,8 @@ trait Reducer<State> {
         group: &SymmetryGroup,
     ) -> Result<(State, Permutation), ExpansionStop>;
 
-    fn constraint_value(
-        &self,
-        state: &State,
-        name: &str,
-    ) -> Result<ConstraintValue, ExpansionStop>;
+    fn constraint_value(&self, state: &State, name: &str)
+    -> Result<ConstraintValue, ExpansionStop>;
 }
 
 impl Reducer<ModelSimState> for ModelSystem<'_> {
