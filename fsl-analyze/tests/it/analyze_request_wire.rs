@@ -413,11 +413,10 @@ fn an_analyze_request_supplies_the_integer_division_law() {
     assert_eq!(document["diagnostics"][0]["cause"], "unsupported-selection");
 }
 
-/// FR-620-AC-11 (TC-2215): `hashed_bytes` bounds no work in FSL, so a
+/// FR-620-AC-11 (TC-2215): `hashed_bytes` is not a normalization limit, so a
 /// `limits.normalization` member of that name refuses the whole request.
 #[trace("TC-2215", "FR-620-AC-11")]
 #[test]
-#[ignore = "QSL-2269: the analyze request still accepts limits.normalization.hashed_bytes"]
 fn hashed_bytes_is_not_a_normalization_limit() {
     for (n, (normalization, exit)) in [
         (json!({"hashed_bytes": 1}), 20),
