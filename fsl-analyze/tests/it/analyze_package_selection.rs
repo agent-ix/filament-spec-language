@@ -539,6 +539,57 @@ fn a_package_state_graph_claim_settles_as_its_source_claim() {
     assert_eq!(run.exit, source.exit);
 }
 
+/// FR-940-AC-11 under `reductions.partial_order`: the four state-graph
+/// claims and a refuted and a proved temporal claim of the same unit settle
+/// over the package with the source route's whole item, reduced state counts,
+/// counterexample, replay and certificate included, and none settles
+/// `unsupported`: the package route derives the operation footprints and the
+/// atom reads through the evaluator port.
+#[trace("TC-3034", "FR-940-AC-11")]
+#[test]
+fn a_package_partial_order_run_settles_as_its_source_run() {
+    let body = format!("{}{}{}", bounded(), at_most_two(), state_graph_claims());
+    let names = [
+        "ReachThree",
+        "Back",
+        "FromOne",
+        "Straight",
+        "Bounded",
+        "AtMostTwo",
+    ];
+    let items = json!(names.map(|name| json!({
+        "claim": name,
+        "reductions": {"partial_order": true}
+    })));
+    let ws = Workspace::new("package-partial-order");
+    let source = analyze(&counter_request(&ws, &body, items.clone()));
+    let (members, _) = package_request(&ws, &body, items);
+    let run = analyze_members(&ws, "analyze-partial-order.json", &members);
+    for (index, name) in names.iter().enumerate() {
+        assert_eq!(
+            run.item(index),
+            source.item(index),
+            "{name}: {}",
+            run.document()
+        );
+        assert!(
+            !run.item(index).to_string().contains("unsupported"),
+            "{name}: {}",
+            run.item(index)
+        );
+    }
+    assert_eq!(label(&run.item(5)), "refuted", "{}", run.item(5));
+    assert_eq!(run.item(5)["replay"]["reproduced"], true);
+    for member in ["items", "aggregate", "last_stage", "category"] {
+        assert_eq!(
+            run.document()[member],
+            source.document()[member],
+            "{member}"
+        );
+    }
+    assert_eq!(run.exit, source.exit);
+}
+
 /// FR-850-AC-7, FR-940 (review round 1): an `invariant` state clause is
 /// named by its `claim_names` row, so a request naming it over the package
 /// is never settled `unknown-claim` while the source route decides it: it

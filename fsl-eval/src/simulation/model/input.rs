@@ -21,13 +21,14 @@ use filament_exact::{
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::TypeEnvironment;
 use fsl_package::{
-    BarePackage, CheckedNodeId, CheckedPackage, PackageTerminalDeclaration, TerminalResolveRefusal,
-    UnreadModelForm,
+    BarePackage, CheckedNodeId, CheckedPackage, ClauseBinder, PackageTerminalDeclaration,
+    TerminalResolveRefusal, UnreadModelForm,
 };
 use fsl_semantics::check::footprint::{
-    derive_atom_reads, derive_attempt_footprint_fallback, derive_constraint_reads,
-    derive_footprint, derive_guard_reads, derive_node_reads, derive_selected_footprint,
-    derive_slot_reads, FootprintRefusal, SymbolicFootprint, SymbolicLocation,
+    FootprintRefusal, ReferenceLiterals, SymbolicFootprint, SymbolicLocation, derive_atom_reads,
+    derive_attempt_footprint_fallback_with_reference_literals, derive_constraint_reads,
+    derive_footprint, derive_guard_reads, derive_node_reads,
+    derive_selected_footprint_with_reference_literals, derive_slot_reads, reference_literals_of,
 };
 use fsl_semantics::check::{
     CheckedBody, CheckedHyperClause, CheckedNode, CheckedProbabilisticModel, CheckedProtocol,
@@ -46,6 +47,16 @@ use crate::value::{
     CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, PostTargets, QualifiedName,
     WrittenCollection,
 };
+
+/// The reads a body derivation reports, and the reference literals the body
+/// names, which the subject's bindings turn into membership reads.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BodyReads {
+    /// The symbolic locations read.
+    pub reads: BTreeSet<SymbolicLocation>,
+    /// The (object type, identity) of each reference literal of the body.
+    pub literals: Vec<(EffectiveId, Vec<u8>)>,
+}
 
 /// One state clause as a model check reads it: its name, node, context,
 /// operation and observation (FR-107, FR-120 "Contract clauses").
@@ -836,7 +847,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         model: &StateModel,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         role: fsl_semantics::check::PredicateRole,
-    ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal>;
+    ) -> Result<BodyReads, FootprintRefusal>;
 
     /// [`Self::evaluate_state_graph_predicate`] for an instance whose key
     /// holds no object conforming to the `over` parameter's type, as
@@ -998,6 +1009,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         declaring: EffectiveId,
         operation: &OperationDeclaration,
         arguments: &[(String, EffectiveId)],
+        reference_literals: &ReferenceLiterals,
         select: &dyn Fn(NodeKey) -> bool,
     ) -> Result<SymbolicFootprint, FootprintRefusal>;
 
@@ -1014,6 +1026,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         declaring: EffectiveId,
         operation: &OperationDeclaration,
         arguments: &[(String, EffectiveId)],
+        reference_literals: &ReferenceLiterals,
         select: &dyn Fn(NodeKey) -> bool,
     ) -> Result<SymbolicFootprint, FootprintRefusal>;
 
@@ -1031,7 +1044,8 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         arguments: &[(String, EffectiveId)],
     ) -> Result<SymbolicFootprint, FootprintRefusal>;
 
-    /// FR-156 "Visibility": the reads of the state constraint `clause`.
+    /// FR-156 "Visibility": the reads of the state constraint `name`, `None`
+    /// for a name the package declares no state clause under.
     ///
     /// # Errors
     ///
@@ -1039,8 +1053,36 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     fn constraint_reads(
         &self,
         model: &StateModel,
-        clause: &CheckedStateClause,
-    ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal>;
+        name: &str,
+    ) -> Option<Result<BodyReads, FootprintRefusal>>;
+
+    /// FR-156 "Atom footprints" over the package route: the reads of the
+    /// `holds` atom at use `position` of the temporal clause `clause`,
+    /// read from the package's own nodes. The source route reads its atoms
+    /// from checked bodies and refuses this.
+    ///
+    /// # Errors
+    ///
+    /// [`FootprintRefusal`] as the derivation reports it.
+    fn holds_reads(
+        &self,
+        model: &StateModel,
+        clause: &NodeKey,
+        position: usize,
+    ) -> Result<BodyReads, FootprintRefusal>;
+
+    /// FR-337 over the package route: the reads of the `when` guard of the
+    /// `on each` activation of the temporal clause `clause`, over `binders`,
+    /// `None` for a clause with no guard.
+    ///
+    /// # Errors
+    ///
+    /// [`FootprintRefusal`] as the derivation reports it.
+    fn activation_guard_reads(
+        &self,
+        model: &StateModel,
+        clause: &NodeKey,
+    ) -> Result<Option<BodyReads>, FootprintRefusal>;
 
     /// ADR-027 FT-3: the reads of a protocol expression.
     ///
@@ -1211,17 +1253,21 @@ impl ModelEvaluator for CheckedPackage {
         model: &StateModel,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         role: fsl_semantics::check::PredicateRole,
-    ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
+    ) -> Result<BodyReads, FootprintRefusal> {
         let body =
             source_predicate(self, claim, role).map_err(|_| FootprintRefusal::Unresolved {
                 what: "state-graph predicate",
             })?;
-        derive_atom_reads(
+        let reads = derive_atom_reads(
             self.graph(),
             model,
             &(String::new(), ValueType::Boolean),
             body.body(),
-        )
+        )?;
+        Ok(BodyReads {
+            reads,
+            literals: reference_literals_of(body.body()),
+        })
     }
 
     fn evaluate_state_graph_predicate(
@@ -1376,15 +1422,17 @@ impl ModelEvaluator for CheckedPackage {
         declaring: EffectiveId,
         operation: &OperationDeclaration,
         arguments: &[(String, EffectiveId)],
+        reference_literals: &ReferenceLiterals,
         select: &dyn Fn(NodeKey) -> bool,
     ) -> Result<SymbolicFootprint, FootprintRefusal> {
-        derive_selected_footprint(
+        derive_selected_footprint_with_reference_literals(
             self.graph(),
             model,
             receiver_type,
             declaring,
             operation,
             arguments,
+            reference_literals,
             select,
         )
     }
@@ -1396,15 +1444,17 @@ impl ModelEvaluator for CheckedPackage {
         declaring: EffectiveId,
         operation: &OperationDeclaration,
         arguments: &[(String, EffectiveId)],
+        reference_literals: &ReferenceLiterals,
         select: &dyn Fn(NodeKey) -> bool,
     ) -> Result<SymbolicFootprint, FootprintRefusal> {
-        derive_attempt_footprint_fallback(
+        derive_attempt_footprint_fallback_with_reference_literals(
             self.graph(),
             model,
             receiver_type,
             declaring,
             operation,
             arguments,
+            reference_literals,
             select,
         )
     }
@@ -1430,9 +1480,32 @@ impl ModelEvaluator for CheckedPackage {
     fn constraint_reads(
         &self,
         model: &StateModel,
-        clause: &CheckedStateClause,
-    ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-        derive_constraint_reads(self.graph(), model, clause)
+        name: &str,
+    ) -> Option<Result<BodyReads, FootprintRefusal>> {
+        let clause = self.state_clause(name)?;
+        Some(
+            derive_constraint_reads(self.graph(), model, clause).map(|reads| BodyReads {
+                reads,
+                literals: reference_literals_of(clause.body()),
+            }),
+        )
+    }
+
+    fn holds_reads(
+        &self,
+        _model: &StateModel,
+        _clause: &NodeKey,
+        _position: usize,
+    ) -> Result<BodyReads, FootprintRefusal> {
+        Err(SOURCE_ROUTE_FOOTPRINT)
+    }
+
+    fn activation_guard_reads(
+        &self,
+        _model: &StateModel,
+        _clause: &NodeKey,
+    ) -> Result<Option<BodyReads>, FootprintRefusal> {
+        Err(SOURCE_ROUTE_FOOTPRINT)
     }
 
     fn slot_reads(
@@ -1474,8 +1547,14 @@ impl ModelEvaluator for CheckedPackage {
     }
 }
 
-/// The refusal a footprint derivation over a source checked form raises on
-/// the package route, whose input holds no such form.
+/// The refusal a package-route derivation raises on the source route, whose
+/// input holds checked bodies and no package nodes.
+const SOURCE_ROUTE_FOOTPRINT: FootprintRefusal = FootprintRefusal::Unresolved {
+    what: "package form on the source route",
+};
+
+/// The refusal a footprint derivation over a source checked body raises on
+/// the package route, whose input holds no such body.
 const NO_SOURCE_FOOTPRINT: FootprintRefusal = FootprintRefusal::Unresolved {
     what: "source checked form on the package route",
 };
@@ -1595,7 +1674,7 @@ impl ModelEvaluator for BarePackage<'_> {
         model: &StateModel,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         role: fsl_semantics::check::PredicateRole,
-    ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
+    ) -> Result<BodyReads, FootprintRefusal> {
         let unresolved = || FootprintRefusal::Unresolved {
             what: "state-graph predicate",
         };
@@ -1603,7 +1682,13 @@ impl ModelEvaluator for BarePackage<'_> {
             .project_state_graph_predicate(claim, role)
             .map_err(|_| unresolved())?;
         let world = self.world().map_err(|_| unresolved())?;
-        crate::value::projection_atom_reads(predicate.projection(), world.types(), model)
+        let over = predicate
+            .parameters()
+            .first()
+            .map(|(_, slot)| *slot)
+            .into_iter()
+            .collect::<Vec<_>>();
+        crate::value::package_term_reads(predicate.projection(), world.types(), model, &over)
     }
 
     fn evaluate_state_graph_predicate(
@@ -1761,45 +1846,123 @@ impl ModelEvaluator for BarePackage<'_> {
 
     fn selected_footprint(
         &self,
-        _model: &StateModel,
-        _receiver_type: EffectiveId,
-        _declaring: EffectiveId,
-        _operation: &OperationDeclaration,
-        _arguments: &[(String, EffectiveId)],
-        _select: &dyn Fn(NodeKey) -> bool,
+        model: &StateModel,
+        receiver_type: EffectiveId,
+        declaring: EffectiveId,
+        operation: &OperationDeclaration,
+        arguments: &[(String, EffectiveId)],
+        reference_literals: &ReferenceLiterals,
+        select: &dyn Fn(NodeKey) -> bool,
     ) -> Result<SymbolicFootprint, FootprintRefusal> {
-        Err(NO_SOURCE_FOOTPRINT)
+        package_footprint(
+            self,
+            model,
+            receiver_type,
+            declaring,
+            operation,
+            arguments,
+            reference_literals,
+            select,
+        )
     }
 
     fn attempt_footprint_fallback(
         &self,
-        _model: &StateModel,
-        _receiver_type: EffectiveId,
-        _declaring: EffectiveId,
-        _operation: &OperationDeclaration,
-        _arguments: &[(String, EffectiveId)],
-        _select: &dyn Fn(NodeKey) -> bool,
+        model: &StateModel,
+        receiver_type: EffectiveId,
+        declaring: EffectiveId,
+        operation: &OperationDeclaration,
+        arguments: &[(String, EffectiveId)],
+        reference_literals: &ReferenceLiterals,
+        select: &dyn Fn(NodeKey) -> bool,
     ) -> Result<SymbolicFootprint, FootprintRefusal> {
-        Err(NO_SOURCE_FOOTPRINT)
+        package_footprint(
+            self,
+            model,
+            receiver_type,
+            declaring,
+            operation,
+            arguments,
+            reference_literals,
+            select,
+        )
     }
 
     fn footprint(
         &self,
-        _model: &StateModel,
-        _receiver_type: EffectiveId,
-        _declaring: EffectiveId,
-        _operation: &OperationDeclaration,
-        _arguments: &[(String, EffectiveId)],
+        model: &StateModel,
+        receiver_type: EffectiveId,
+        declaring: EffectiveId,
+        operation: &OperationDeclaration,
+        arguments: &[(String, EffectiveId)],
     ) -> Result<SymbolicFootprint, FootprintRefusal> {
-        Err(NO_SOURCE_FOOTPRINT)
+        package_footprint(
+            self,
+            model,
+            receiver_type,
+            declaring,
+            operation,
+            arguments,
+            &ReferenceLiterals::new(),
+            &|_| true,
+        )
     }
 
     fn constraint_reads(
         &self,
-        _model: &StateModel,
-        _clause: &CheckedStateClause,
-    ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-        Err(NO_SOURCE_FOOTPRINT)
+        model: &StateModel,
+        name: &str,
+    ) -> Option<Result<BodyReads, FootprintRefusal>> {
+        let declarations = match self.state_clause_declarations() {
+            Ok(declarations) => declarations,
+            Err(failure) => return Some(Err(selection_refusal(name, failure))),
+        };
+        let declaration = declarations
+            .into_iter()
+            .find(|declaration| declaration.name == name)?;
+        Some(projected_clause(self, declaration).and_then(|clause| {
+            let world = self
+                .world()
+                .map_err(|_| unresolved_package("package world"))?;
+            crate::value::package_constraint_reads(world.types(), model, &clause)
+        }))
+    }
+
+    fn holds_reads(
+        &self,
+        model: &StateModel,
+        clause: &NodeKey,
+        position: usize,
+    ) -> Result<BodyReads, FootprintRefusal> {
+        let term = self
+            .project_holds(clause, position)
+            .map_err(|failure| selection_refusal("holds", failure))?;
+        let world = self
+            .world()
+            .map_err(|_| unresolved_package("package world"))?;
+        let over = receiver_slots(term.binders(), |binder| binder == ClauseBinder::Over);
+        crate::value::package_term_reads(term.projection(), world.types(), model, &over)
+    }
+
+    fn activation_guard_reads(
+        &self,
+        model: &StateModel,
+        clause: &NodeKey,
+    ) -> Result<Option<BodyReads>, FootprintRefusal> {
+        let Some(term) = self
+            .project_guard(clause)
+            .map_err(|failure| selection_refusal("guard", failure))?
+        else {
+            return Ok(None);
+        };
+        let world = self
+            .world()
+            .map_err(|_| unresolved_package("package world"))?;
+        let receivers = receiver_slots(term.binders(), |binder| {
+            matches!(binder, ClauseBinder::Over | ClauseBinder::Trigger)
+        });
+        crate::value::package_guard_reads(term.projection(), world.types(), model, &receivers)
+            .map(Some)
     }
 
     fn slot_reads(
@@ -1841,6 +2004,95 @@ impl ModelEvaluator for BarePackage<'_> {
     }
 }
 
+/// The local slots of a projected clause term whose binder `reads_as_receiver`
+/// selects. A package term gives frame slots only to the binders it reads, so
+/// the receiver is found by the binder, never by a fixed slot.
+fn receiver_slots(
+    binders: &[(usize, ClauseBinder)],
+    reads_as_receiver: impl Fn(ClauseBinder) -> bool,
+) -> Vec<usize> {
+    binders
+        .iter()
+        .filter(|(_, binder)| reads_as_receiver(*binder))
+        .map(|(slot, _)| *slot)
+        .collect()
+}
+
+/// A package-route footprint refusal for a fact the package does not hold.
+fn unresolved_package(what: &'static str) -> FootprintRefusal {
+    FootprintRefusal::Unresolved { what }
+}
+
+/// The refusal of a package node that does not project: a form with no
+/// footprint rule is unsupported as the source route reports it; any other
+/// selection failure leaves the node unresolved.
+fn selection_refusal(clause: &str, failure: fsl_package::BareSelectionFailure) -> FootprintRefusal {
+    match failure {
+        fsl_package::BareSelectionFailure::Unsupported(_) => FootprintRefusal::UnsupportedForm {
+            clause: clause.to_owned(),
+            form: "package expression form",
+        },
+        _ => unresolved_package("package node"),
+    }
+}
+
+/// `declaration`'s body projected from the package's nodes.
+fn projected_clause(
+    package: &BarePackage<'_>,
+    declaration: fsl_package::BareStateClauseDeclaration,
+) -> Result<crate::value::ProjectedClause, FootprintRefusal> {
+    let clause = package
+        .project_state_clause(&declaration.identity, &declaration.name)
+        .map_err(|failure| selection_refusal(&declaration.name, failure))?;
+    Ok(crate::value::ProjectedClause {
+        declaration,
+        clause,
+    })
+}
+
+/// FR-155 "Derivation" over the package route: the footprint of `operation`
+/// from the state clauses the package names for it, `select` admitting each
+/// by its node key, by the derivation the source route runs.
+fn package_footprint(
+    package: &BarePackage<'_>,
+    model: &StateModel,
+    receiver_type: EffectiveId,
+    declaring: EffectiveId,
+    operation: &OperationDeclaration,
+    arguments: &[(String, EffectiveId)],
+    reference_literals: &ReferenceLiterals,
+    select: &dyn Fn(NodeKey) -> bool,
+) -> Result<SymbolicFootprint, FootprintRefusal> {
+    let world = package
+        .world()
+        .map_err(|_| unresolved_package("package world"))?;
+    let mut clauses = Vec::new();
+    for declaration in package
+        .state_clause_declarations()
+        .map_err(|_| unresolved_package("state clause declarations"))?
+    {
+        let anchored = declaration.operation.as_ref().is_some_and(|owner| {
+            owner.declaring == declaring && owner.operation == operation.name()
+        });
+        if anchored && select(declaration.identity.clone()) {
+            clauses.push(projected_clause(package, declaration)?);
+        }
+    }
+    crate::value::package_operation_footprint(
+        world.types(),
+        model,
+        &clauses,
+        reference_literals,
+        fsl_semantics::check::footprint::PackageOperation {
+            receiver_type,
+            declaring,
+            operation,
+            arguments,
+        },
+        select,
+    )
+}
+
 /// The checked predicate of `role` of the source package's state-graph claim
 /// at `claim`: a written one, which the port evaluates.
 fn source_predicate<'p>(
@@ -1868,5 +2120,41 @@ fn source_predicate<'p>(
     match predicate {
         Some(CheckedStatePredicate::Checked(body)) => Ok(body),
         _ => Err(fault("state-graph-predicate-is-written")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ClauseBinder, receiver_slots};
+    use ix_trace_rs::trace;
+
+    /// FR-940-AC-11, FR-156: a package term gives frame slots to the binders
+    /// it reads and the next slots to the variables it introduces, so the
+    /// receiver is the slot of the `over` binder (and, for a guard, of the
+    /// trigger binder), whatever number that is.
+    #[trace("TC-3034", "FR-940-AC-11")]
+    #[test]
+    fn the_receiver_slots_follow_the_binder_a_term_reads() {
+        let binders = [(0, ClauseBinder::Trigger), (1, ClauseBinder::Capture(0))];
+        assert_eq!(
+            receiver_slots(&binders, |b| b == ClauseBinder::Over),
+            Vec::<usize>::new()
+        );
+        assert_eq!(
+            receiver_slots(&binders, |b| matches!(
+                b,
+                ClauseBinder::Over | ClauseBinder::Trigger
+            )),
+            [0]
+        );
+        let binders = [(2, ClauseBinder::Over), (3, ClauseBinder::Trigger)];
+        assert_eq!(receiver_slots(&binders, |b| b == ClauseBinder::Over), [2]);
+        assert_eq!(
+            receiver_slots(&binders, |b| matches!(
+                b,
+                ClauseBinder::Over | ClauseBinder::Trigger
+            )),
+            [2, 3]
+        );
     }
 }

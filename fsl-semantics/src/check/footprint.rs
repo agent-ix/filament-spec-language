@@ -21,6 +21,18 @@ use crate::model::state::StateModel;
 use filament_checked::key::DeclarationKey;
 use filament_checked::node::NodeKind;
 
+mod read_node;
+
+pub use read_node::{
+    ClauseBody, PackageOperation, ReadNode, derive_constraint_reads_over, derive_guard_reads_over,
+    derive_node_reads_over, derive_selected_footprint_over, derive_slot_reads_over,
+    pre_observed_locations, reference_literals_of,
+};
+
+/// The populations each created reference literal of a subject names, by the
+/// literal's object type and identity.
+pub type ReferenceLiterals = BTreeMap<(EffectiveId, Vec<u8>), Vec<DeclarationKey>>;
+
 /// The object a symbolic location is about: the operation's receiver or the
 /// argument bound to one of its parameters.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -181,7 +193,7 @@ pub fn derive_selected_footprint_with_reference_literals(
     declaring: EffectiveId,
     operation: &OperationDeclaration,
     arguments: &[(String, EffectiveId)],
-    reference_literals: &BTreeMap<(EffectiveId, Vec<u8>), Vec<DeclarationKey>>,
+    reference_literals: &ReferenceLiterals,
     select: &dyn Fn(NodeKey) -> bool,
 ) -> Result<SymbolicFootprint, FootprintRefusal> {
     derive_from(
@@ -235,12 +247,12 @@ pub fn derive_attempt_footprint_fallback_with_reference_literals(
     declaring: EffectiveId,
     operation: &OperationDeclaration,
     arguments: &[(String, EffectiveId)],
-    reference_literals: &BTreeMap<(EffectiveId, Vec<u8>), Vec<DeclarationKey>>,
+    reference_literals: &ReferenceLiterals,
     select: &dyn Fn(NodeKey) -> bool,
 ) -> Result<SymbolicFootprint, FootprintRefusal> {
     let derivation = Derivation {
         reader: Reader::for_graph_with_reference_literals(graph, model, reference_literals)?,
-        clauses: graph.state_clauses(),
+        clauses: source_clauses(graph.state_clauses()),
         receiver_type,
         declaring,
         operation,
@@ -248,6 +260,21 @@ pub fn derive_attempt_footprint_fallback_with_reference_literals(
         select,
     };
     derivation.run()
+}
+
+/// The state clauses of a checked package as a derivation reads them.
+fn source_clauses(clauses: &[CheckedStateClause]) -> Vec<DerivationClause<'_, CheckedNode<'_>>> {
+    clauses
+        .iter()
+        .map(|clause| DerivationClause {
+            identity: clause.identity.clone(),
+            owner: clause
+                .operation()
+                .map(|owner| (owner.declaring.clone(), owner.declaration.name().to_owned())),
+            scope: BodyScope::of_clause(clause),
+            root: clause.body(),
+        })
+        .collect()
 }
 
 /// The operation a derivation reads: its receiver's type, its declaring
@@ -267,7 +294,7 @@ pub(crate) fn derive_from(
     clauses: &[CheckedStateClause],
     model: &StateModel,
     graph: Option<&CheckedGraph>,
-    reference_literals: Option<&BTreeMap<(EffectiveId, Vec<u8>), Vec<DeclarationKey>>>,
+    reference_literals: Option<&ReferenceLiterals>,
     operation: Operation<'_>,
     select: &dyn Fn(NodeKey) -> bool,
 ) -> Result<SymbolicFootprint, FootprintRefusal> {
@@ -285,7 +312,7 @@ pub(crate) fn derive_from(
             (Some(graph), None) => Reader::for_graph(graph, model)?,
             _ => Reader::new(types, model)?,
         },
-        clauses,
+        clauses: source_clauses(clauses),
         receiver_type,
         declaring,
         operation,
@@ -380,7 +407,7 @@ pub fn derive_atom_reads(
     _over: &(String, ValueType),
     condition: CheckedNode<'_>,
 ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-    derive_atom_reads_over(graph.scope().types(), model, condition)
+    derive_atom_reads_over(graph.scope().types(), model, &[0], condition)
 }
 
 /// FR-125-AC-18, FR-156: the locations the `when` guard of an `on each`
@@ -400,9 +427,10 @@ pub fn derive_guard_reads(
     let reader = Reader::new(graph.scope().types(), model)?;
     let scope = BodyScope {
         name: "guard",
+        receivers: &[0],
         binds_result: false,
         parameters,
-        observations: None,
+        observed: Observed::None,
         observation: Observation::Current,
     };
     let alias = |object: FootprintObject| match object {
@@ -445,9 +473,10 @@ pub fn derive_slot_reads(
     let reader = Reader::new(graph.scope().types(), model)?;
     let scope = BodyScope {
         name,
+        receivers: &[0],
         binds_result: false,
         parameters,
-        observations: None,
+        observed: Observed::None,
         observation: Observation::Current,
     };
     Ok(reader
@@ -481,9 +510,10 @@ pub fn derive_node_reads(
     let reader = Reader::new(graph.scope().types(), model)?;
     let scope = BodyScope {
         name,
+        receivers: &[0],
         binds_result: false,
         parameters,
-        observations: None,
+        observed: Observed::None,
         observation: Observation::Current,
     };
     Ok(reader
@@ -513,8 +543,25 @@ pub fn derive_constraint_reads(
     clause: &CheckedStateClause,
 ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
     let reader = Reader::new(graph.scope().types(), model)?;
+    constraint_reads_of(
+        &reader,
+        &BodyScope::of_clause(clause),
+        clause.body(),
+        &clause.context(),
+    )
+}
+
+/// The reads of a state constraint whose body is `root`: the context's
+/// `self` reads are reads on any object, and the membership of every
+/// population that can hold such an object is read.
+fn constraint_reads_of<'a, N: ReadNode<'a>>(
+    reader: &Reader<'a>,
+    scope: &BodyScope<'_>,
+    root: N,
+    context: &EffectiveId,
+) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
     let mut reads = BTreeSet::new();
-    for (location, _) in reader.body_reads(&BodyScope::of_clause(clause), clause.body())? {
+    for (location, _) in reader.body_reads(scope, root)? {
         reads.insert(match location {
             SymbolicLocation::Field {
                 object: FootprintObject::Receiver,
@@ -527,7 +574,7 @@ pub fn derive_constraint_reads(
         if population
             .members
             .iter()
-            .any(|member| reader.conforms(member.clone(), clause.context()))
+            .any(|member| reader.conforms(member.clone(), context.clone()))
         {
             reads.insert(SymbolicLocation::AnyMembership {
                 population: population.key.clone(),
@@ -542,27 +589,46 @@ pub fn derive_constraint_reads(
 /// model read observes.
 struct BodyScope<'c> {
     name: &'c str,
+    /// The local slots that read as the receiver: `self`, or the `over`
+    /// parameter. A package term lays its slots out by the binders it reads,
+    /// so the slot is the term's own, not always 0.
+    receivers: &'c [usize],
     binds_result: bool,
     parameters: &'c [(String, ValueType)],
-    observations: Option<&'c Observations>,
+    observed: Observed<'c>,
     observation: Observation,
+}
+
+/// Where a body's per-read observations come from: a source clause's own
+/// walk, the locations a package projection reads under `pre(..)`, or none.
+#[derive(Clone, Copy)]
+enum Observed<'c> {
+    None,
+    Clause(&'c Observations),
+    Pre(&'c BTreeSet<Location>),
 }
 
 impl<'c> BodyScope<'c> {
     fn of_clause(clause: &'c CheckedStateClause) -> Self {
         Self {
             name: clause.name(),
+            receivers: &[0],
             binds_result: clause.binds_result(),
             parameters: clause.parameters(),
-            observations: Some(&clause.observations),
+            observed: Observed::Clause(&clause.observations),
             observation: clause.observation(),
         }
     }
 
-    fn observation_of(&self, location: &Location) -> Observation {
-        self.observations
-            .and_then(|observations| observations.of_read(location))
-            .unwrap_or(self.observation)
+    fn observation_of(&self, location: Option<&Location>) -> Observation {
+        let found = match (self.observed, location) {
+            (Observed::Clause(observations), Some(location)) => observations.of_read(location),
+            (Observed::Pre(pre), Some(location)) => {
+                pre.contains(location).then_some(Observation::Pre)
+            }
+            _ => None,
+        };
+        found.unwrap_or(self.observation)
     }
 }
 
@@ -573,7 +639,7 @@ struct Reader<'a> {
     model: &'a StateModel,
     populations: Vec<PopulationTypes>,
     graph: Option<&'a CheckedGraph>,
-    reference_literals: Option<&'a BTreeMap<(EffectiveId, Vec<u8>), Vec<DeclarationKey>>>,
+    reference_literals: Option<&'a ReferenceLiterals>,
 }
 
 impl<'a> Reader<'a> {
@@ -584,6 +650,21 @@ impl<'a> Reader<'a> {
             populations: populations(model)?,
             graph: None,
             reference_literals: None,
+        })
+    }
+
+    fn over(
+        types: &'a TypeEnvironment,
+        model: &'a StateModel,
+        graph: Option<&'a CheckedGraph>,
+        reference_literals: Option<&'a ReferenceLiterals>,
+    ) -> Result<Self, FootprintRefusal> {
+        Ok(Self {
+            types,
+            model,
+            populations: populations(model)?,
+            graph,
+            reference_literals,
         })
     }
 
@@ -600,7 +681,7 @@ impl<'a> Reader<'a> {
     fn for_graph_with_reference_literals(
         graph: &'a CheckedGraph,
         model: &'a StateModel,
-        reference_literals: &'a BTreeMap<(EffectiveId, Vec<u8>), Vec<DeclarationKey>>,
+        reference_literals: &'a ReferenceLiterals,
     ) -> Result<Self, FootprintRefusal> {
         Ok(Self {
             types: graph.scope().types(),
@@ -615,19 +696,21 @@ impl<'a> Reader<'a> {
         self.types.conforms(sub, sup)
     }
 
-    fn call_reads_no_model_state(&self, index: usize, visiting: &mut BTreeSet<usize>) -> bool {
-        let Some(graph) = self.graph else {
-            return false;
-        };
+    fn call_reads_no_model_state<N: ReadNode<'a>>(
+        &self,
+        call: N,
+        index: usize,
+        visiting: &mut BTreeSet<usize>,
+    ) -> bool {
         if !visiting.insert(index) {
             return false;
         }
-        let Some(function) = graph.function_state(index) else {
+        let Some(body) = call.callee(self.graph, index) else {
             visiting.remove(&index);
             return false;
         };
-        let safe = std::iter::once(function.body)
-            .chain(function.body.descendants())
+        let safe = std::iter::once(body)
+            .chain(descendants(body))
             .all(|node| match node.kind() {
                 NodeKind::Attribute { .. }
                 | NodeKind::Reaches { .. }
@@ -640,7 +723,7 @@ impl<'a> Reader<'a> {
                 | NodeKind::ImportedCall { .. }
                 | NodeKind::Dispatch { .. } => false,
                 NodeKind::Call { function, .. } => {
-                    self.call_reads_no_model_state(*function, visiting)
+                    self.call_reads_no_model_state(node, *function, visiting)
                 }
                 _ => true,
             });
@@ -648,10 +731,10 @@ impl<'a> Reader<'a> {
         safe
     }
 
-    fn function_body_reads(
+    fn function_body_reads<N: ReadNode<'a>>(
         &self,
         scope: &BodyScope<'_>,
-        call: CheckedNode<'_>,
+        call: N,
         index: usize,
         reads: &mut Vec<(SymbolicLocation, Observation)>,
     ) -> Result<(), FootprintRefusal> {
@@ -659,16 +742,13 @@ impl<'a> Reader<'a> {
             clause: scope.name.to_owned(),
             form: "function call",
         };
-        let Some(graph) = self.graph else {
-            return Err(unsupported());
-        };
-        let Some(function) = graph.function_state(index) else {
+        let Some(body) = call.callee(self.graph, index) else {
             return Err(unsupported());
         };
         let NodeKind::Call { arguments, .. } = call.kind() else {
             return Err(unsupported());
         };
-        for node in std::iter::once(function.body).chain(function.body.descendants()) {
+        for node in std::iter::once(body).chain(descendants(body)) {
             match node.kind() {
                 NodeKind::Attribute {
                     reference, field, ..
@@ -732,7 +812,7 @@ impl<'a> Reader<'a> {
         Ok(())
     }
 
-    fn local_slot(&self, mut node: CheckedNode<'_>) -> Option<usize> {
+    fn local_slot<N: ReadNode<'a>>(&self, mut node: N) -> Option<usize> {
         loop {
             match node.kind() {
                 NodeKind::Value(operand) | NodeKind::Coerce(operand, _) => {
@@ -777,28 +857,24 @@ impl<'a> Reader<'a> {
 
     /// Every location the body at `root` reads, with the instant it reads
     /// it at.
-    fn body_reads(
+    fn body_reads<N: ReadNode<'a>>(
         &self,
         scope: &BodyScope<'_>,
-        root: CheckedNode<'_>,
+        root: N,
     ) -> Result<Vec<(SymbolicLocation, Observation)>, FootprintRefusal> {
         let mut reads = Vec::new();
         let mut pending = vec![root];
         while let Some(node) = pending.pop() {
             self.node_reads(scope, node, &mut reads)?;
-            pending.extend(
-                super::ir::node_children(node.kind())
-                    .into_iter()
-                    .map(|id| node.at(id)),
-            );
+            pending.extend(node.children());
         }
         Ok(reads)
     }
 
-    fn node_reads(
+    fn node_reads<N: ReadNode<'a>>(
         &self,
         scope: &BodyScope<'_>,
-        node: CheckedNode<'_>,
+        node: N,
         reads: &mut Vec<(SymbolicLocation, Observation)>,
     ) -> Result<(), FootprintRefusal> {
         let observation = scope.observation_of(node.location());
@@ -897,7 +973,7 @@ impl<'a> Reader<'a> {
             NodeKind::Navigate { .. } => return Err(unsupported("relationship navigation")),
             NodeKind::ReachesEnd { .. } => return Err(unsupported("relationship reachability")),
             NodeKind::Call { function, .. }
-                if self.call_reads_no_model_state(*function, &mut BTreeSet::new()) => {}
+                if self.call_reads_no_model_state(node, *function, &mut BTreeSet::new()) => {}
             NodeKind::Call { function, .. } => {
                 self.function_body_reads(scope, node, *function, reads)?;
             }
@@ -910,13 +986,13 @@ impl<'a> Reader<'a> {
     }
 
     /// Which object a field read is taken from.
-    fn holder(&self, scope: &BodyScope<'_>, mut node: CheckedNode<'_>) -> Holder {
+    fn holder<N: ReadNode<'a>>(&self, scope: &BodyScope<'_>, mut node: N) -> Holder {
         loop {
             match node.kind() {
                 NodeKind::Value(operand) | NodeKind::Coerce(operand, _) => {
                     node = node.at(*operand);
                 }
-                NodeKind::Local(0) => return Holder::Receiver,
+                NodeKind::Local(slot) if scope.receivers.contains(slot) => return Holder::Receiver,
                 NodeKind::Local(slot) => {
                     let first = 1 + usize::from(scope.binds_result);
                     return match scope.parameters.get(*slot) {
@@ -934,9 +1010,17 @@ impl<'a> Reader<'a> {
     }
 }
 
-struct Derivation<'a> {
+/// One clause body a derivation reads, with the operation it is anchored on.
+struct DerivationClause<'a, N> {
+    identity: NodeKey,
+    owner: Option<(EffectiveId, String)>,
+    scope: BodyScope<'a>,
+    root: N,
+}
+
+struct Derivation<'a, N> {
     reader: Reader<'a>,
-    clauses: &'a [CheckedStateClause],
+    clauses: Vec<DerivationClause<'a, N>>,
     receiver_type: EffectiveId,
     declaring: EffectiveId,
     operation: &'a OperationDeclaration,
@@ -944,7 +1028,7 @@ struct Derivation<'a> {
     select: &'a dyn Fn(NodeKey) -> bool,
 }
 
-impl Derivation<'_> {
+impl<'a, N: ReadNode<'a>> Derivation<'a, N> {
     /// The populations whose member type `object` conforms to.
     fn populations_holding(&self, object: EffectiveId) -> impl Iterator<Item = &DeclarationKey> {
         self.reader
@@ -1096,20 +1180,17 @@ impl Derivation<'_> {
         }
 
         // The clause bodies.
-        for clause in self.clauses {
-            let Some(owner) = clause.operation() else {
+        for clause in &self.clauses {
+            let Some((declaring, name)) = &clause.owner else {
                 continue;
             };
-            if owner.declaring != self.declaring
-                || owner.declaration.name() != self.operation.name()
+            if *declaring != self.declaring
+                || name != self.operation.name()
                 || !(self.select)(clause.identity.clone())
             {
                 continue;
             }
-            for (location, observation) in self
-                .reader
-                .body_reads(&BodyScope::of_clause(clause), clause.body())?
-            {
+            for (location, observation) in self.reader.body_reads(&clause.scope, clause.root)? {
                 // A post-state read inside the write footprint reads a value
                 // the step itself chooses.
                 let chosen = observation == Observation::Post
@@ -1244,9 +1325,12 @@ pub trait AtomNode<'a>: Copy {
 
 impl<'a> AtomNode<'a> for CheckedNode<'a> {
     fn form(self) -> AtomForm<'a, Self> {
-        atom_form(self.kind(), self.value_type(), |child| self.at(child), |child| {
-            self.at(child).kind()
-        })
+        atom_form(
+            self.kind(),
+            self.value_type(),
+            |child| self.at(child),
+            |child| self.at(child).kind(),
+        )
     }
 
     fn children(self) -> Vec<Self> {
@@ -1267,6 +1351,7 @@ impl<'a> AtomNode<'a> for CheckedNode<'a> {
 pub fn derive_atom_reads_over<'a, N: AtomNode<'a>>(
     types: &TypeEnvironment,
     model: &StateModel,
+    receivers: &[usize],
     root: N,
 ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
     let reader = Reader::new(types, model)?;
@@ -1289,7 +1374,7 @@ pub fn derive_atom_reads_over<'a, N: AtomNode<'a>>(
                     match holder.form() {
                         AtomForm::Wrap(operand) => holder = operand,
                         // The `over` parameter is slot 0, the receiver.
-                        AtomForm::Local(0) => {
+                        AtomForm::Local(slot) if receivers.contains(&slot) => {
                             break SymbolicLocation::Field {
                                 object: FootprintObject::Receiver,
                                 field,
@@ -1376,4 +1461,15 @@ pub fn atom_form<'a, C: Copy, L, N>(
         NodeKind::ProtocolReference { .. } => AtomForm::Unsupported("protocol reference"),
         _ => AtomForm::Other,
     }
+}
+
+/// Every node under `root`, root excluded, in pre-order.
+fn descendants<'a, N: ReadNode<'a>>(root: N) -> Vec<N> {
+    let mut found = Vec::new();
+    let mut pending: Vec<N> = root.children().into_iter().rev().collect();
+    while let Some(node) = pending.pop() {
+        found.push(node);
+        pending.extend(node.children().into_iter().rev());
+    }
+    found
 }
