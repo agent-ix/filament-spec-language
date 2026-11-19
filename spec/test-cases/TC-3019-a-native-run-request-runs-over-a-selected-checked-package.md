@@ -13,7 +13,7 @@ relationships:
 Verify that a package-only `native-run/1` request runs from the package's
 own records, never reads or compiles source, and refuses a package that
 cannot run with the code and locus stated. Scope: FR-1039-AC-1 to
-FR-1039-AC-4.
+FR-1039-AC-5.
 
 ## Test Procedure
 
@@ -30,6 +30,12 @@ FR-1039-AC-4.
    the source removed; send it without `source_package`, with `null` (refused `wrong-value-kind`), with a
    missing file, and with each malformed `source_package` of FR-1039-AC-4;
    call `half` over the package with and without `source_package`.
+5. Compile `Even` (FR-961-AC-2) and RR-12 (FR-062) to package files, remove
+   the sources, and run `Even` and `f` (`n = 4`) with `call.requirements`
+   `{}` over each package; run the same requests over the sources; call `g`
+   over RR-12's package with `requirements` `{}`; send a call of `g` whose
+   `items` names a claim of `f`; remove the row of `f`'s `+` record from the
+   package and run `f` again.
 
 ## Expected Results
 
@@ -44,3 +50,9 @@ FR-1039-AC-4.
   each refusal is `invalid-request` with `invalid_runtime_input` and the
   cause and `details.path` FR-1039-AC-4 states, exit 20, no file opened;
   the call returns `-4` both times.
+- Step 5: the package runs' `requirements`, `registry` and `execute`
+  `items` equal the source runs' byte for byte; `g` writes `requirements`
+  `[]`; the `items` request refuses `UnknownRequirementClaim` before any
+  negotiation; the package without the row refuses at stage `request`, exit
+  20, `invalid_package`/`invalid-value` at
+  `/request/package/semantic_graph/nodes/{n}/body`, with no item settled.

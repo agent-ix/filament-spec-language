@@ -181,6 +181,31 @@ entry defines no result type of its own.
 | dependency closure | the direct dependencies the package retains from its read evidence | the source package's closure |
 | clause name, capture names and capture value types | the occurrence's `temporal_clause_names` row, the captures argument's binding names and the typed result types of the capture initializer terms | the source clause's `name()` and `captures()` |
 | arithmetic exactness and bounds | the lock and the nodes' types | the same, through the source |
+| the package's requirement records: each record's occurrence key, capability kind and extent, its request index (its position in package order) and, for a `value-validity` record, its owner function, application occurrence, result bound, direct conversion, path condition, extent roots and object types | the `requirement_items` rows and their `claim`/`value_validity` nodes (FSpec FR-825), through Contract IR's `requirement_items()` and `value_validity_records_of()` | the same rows of its own S4 emission, through `AdmittedPackageRead` |
+
+**Requirement records in the bytes.** S4 SHALL write every record of
+`CheckedGraph::requirements()` (FR-062 "Records") as one FSpec FR-825
+`requirement_items` row, in the order `RequirementMap` iterates, which is
+FR-825's package order (structural node key, occurrence role, occurrence
+ordinal, then capability spelling), so a row's position is the record's
+FR-395 request index. Each row's `claim` is the record's occurrence key,
+`kind` is `Capability::to_wire()` and `extent` is the record's `ClaimExtent`
+(no domain for `Bounded`; each `DomainKey` and `DomainKind` of `Unbounded`, in
+domain-key order). Each `value-validity` record SHALL also be written as a
+`claim`/`value_validity` node whose `owner` is the function node of the
+record's owner, `application` and `occurrence` its key, `result_bound` the
+type node of its `ResultBound`, `conversion` its conversion context,
+`path_condition` its `PathGuard`s in order, `extent_roots` its
+`extent_roots()` and `objects` the declaration nodes of its references'
+object types; its `generated` ordinal is its position among its owner's
+records. S4 writes no record by any other route and omits none, because the
+package order counts every record of every kind. A record S4 cannot write
+(an owner with no function node, a key with no `source_map` occurrence, an
+object type with no declaration node) is `EmitRefusal::UnlocatedOccurrence`
+with no bytes, as FR-062-AC-9 refuses an unlocatable occurrence; it is never
+dropped. The package route reads the records from these rows and nodes, and
+the source route reads the same rows of its own emission, so both routes
+hold one value per record.
 
 Every row of the in-process column that names the source is replaced on the
 bare route by the bytes column, and FR-532 and FR-533 state that the in-process
@@ -222,6 +247,7 @@ from the bare package, or is listed here with the reason it needs source:
 | `evaluate_protocol_slot` and `evaluate_selected_protocol_slot` | available; FR-533 |
 | `AdmittedEvaluationView::admit_protocol_observation` | available as `BarePackage::admit_protocol_observation`; FR-533 "Observation admission" |
 | `call`, `call_supplied`, `call_observing_applications` (call by `QualifiedName`) | available; FR-945: the one-segment name resolves by the `declaration.qualified_name` of the package's function declarations (FSpec FR-322), and parameter and result types are read from its checked type nodes |
+| `call_requirements` (the items of a called function, FR-395) | available as `BarePackage::call_requirements(function)`: the `value-validity` rows whose record's `owner` is the function node `declaration.qualified_name` resolves (FR-945), each with its row index as request index, in package order; the empty list for a function that owns none; never rebuilt from the graph |
 | `evaluate` (a `CheckedExpression`) | unmet parity: its argument is a source-checked value a bytes-only consumer cannot hold; the slot call is its package form |
 | `evaluate_holds`, `evaluate_holds_traced`, `evaluate_guard`, `evaluate_hyper_holds`, `evaluate_step_predicate`, `evaluate_clause`, `evaluate_clause_set`, `evaluate_value_invariants`, `check_separation`, `evaluate_frame`, `evaluate_collection_write`, `evaluate_state_predicate`, `evaluate_state_predicate_at_absent_key` | required in a package form for analysis of a selected package (FR-940 "Package forms of the source-checked evaluators"): each source form takes a source-checked clause, node or state clause, which analysis from source keeps reading from its `CheckedGraph`; the evidence route takes the `holds` valuations as request facts (FR-516) |
 
@@ -932,6 +958,7 @@ outcome map. Each carries a "Consumer entry" section that points here.
 | FR-531-AC-32 | A real tick-monitor plan's retained context supplies the same emission's plan, obligations, admitted order and progress association to the actual native row join and selected type-closure projection. The resulting native nodes, original declaration/member identities and Exact types equal those of that emission. Substituting another genuine emission's context, even with identical authored names, or omitting required order/progress authority returns a typed refusal and no executable context. Borrowing retained context leaves native storage consumption unchanged. | Test |
 | FR-531-AC-33 | Allocation observation encloses only the adapter/conversion call, with fixture preparation and assertions outside it. A successful owned materialization performs observed allocations; a denial before its first allocation performs none, and a later denial allocates neither the denied material nor an owned diagnostic. The controls include fresh owner-produced lazy numeric payloads, values `2^127` and `-(2^127 + 1)`, and larger heap-backed values without prior warming or formatting. These values remain exact on successful copies; insufficient work/storage retains the first real row locus and original bound. | Test |
 | FR-531-AC-34 | Over the unit `record W { c: Clock; n: Integer; }`, `tuple P (Clock, Integer);`, `union U { armed(Clock), idle }`, `object O { w: W; d: Clock; q: Sequence<Clock>[0, 3]; p: P; u: U; operation arm(x: Clock, k: Integer) modifies self.d; }` and `time O dense unit ms;`, `identities.json` has `format` `/5`; `O`'s `source_objects` row has the data entries `w`, `p`, `u` and the clock entries `d` (`member_type` `ix://filament/native/Clock`, `collections` `[]`) and `q` (`Sequence<ix://filament/native/Clock>`, `[{"kind": "sequence", "minimum": "0", "maximum": "3"}]`) in field order, and the operation `{"identity": "O::arm", "query": false, "clock_parameters": ["x"]}`; `W`'s `source_records` row has the clock entry `c` and the data entry `n`; `P`'s `source_tuples` row has the clock position `0` and the data position `1`; `U`'s `armed` member has empty `payload_nodes` and one `clock_payload` entry; the file reads back equal. A `/4` document, an absent `source_tuples`, an entry with both `type_node` and `member_type`, one with neither, a clock entry named `w`, and an operation entry without `clock_parameters` each refuse `Malformed` with no partial read. | Test (TC-1331) |
+| FR-531-AC-35 | The unit of FR-062's RR-12 (`g` and `f`) and RR-16 (`g`, `h` and `f`, renamed `g2`, `h2` and `f2`), with RR-5's `sq` added, is emitted with one `requirement_items` row per record of `CheckedGraph::requirements()` in its iteration order (eight rows: three for `f`, two for `f2`, three for `sq`), each row's `claim`, `kind` and `extent` equal to its record's key, capability and extent and each `value-validity` row's record node equal to its record's owner, bound, conversion, guards, roots and objects; the package read with `read_checked_package` gives a `BarePackage` whose `call_requirements("f")`, `("f2")` and `("sq")` equal, member for member and request index for request index, FR-395's `call_requirements_for` over the compiled unit, and `call_requirements("g")` is empty. The same package with `f2`'s second row removed is refused by the strict reader (FSpec FR-825 rule 14), so no `BarePackage` gives a shorter member list. | Test (TC-1331) |
 
 ## Dependencies
 

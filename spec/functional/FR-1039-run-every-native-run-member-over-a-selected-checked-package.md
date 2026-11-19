@@ -17,6 +17,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-825
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-961
+    type: depends_on
 ---
 # FR-1039: Run every native-run member over a selected checked package without source
 
@@ -107,6 +111,49 @@ none falls back to source:
 | a `models` entry matches no recorded model selection | `invalid-request` | `/request/models/<i>`, naming its identity |
 | the member's target is absent from the package's name rows | the member's own refusal (FR-945, FR-850, FR-1037, FSpec FR-824) | the member's pointer |
 
+### The requirement items of a package call
+
+A `call` carrying `requirements` (FR-960) over a package SHALL settle the
+called function's requirement items by FR-961's steps 4 to 6, with FR-395's
+items read from the package and not from a compile:
+
+- The items of the call SHALL be the package's FSpec FR-825
+  `value-validity` rows whose record's `owner` is the function node the call
+  resolves through `declaration.qualified_name` (FR-945), in package order,
+  each with its row's position in `requirement_items` as its request index
+  (FR-531 "Requirement records in the bytes", `BarePackage::call_requirements`).
+  A function that owns no row has no items, and its `requirements` member is
+  `[]`, as on the source route.
+- Each item's claim, kind, extent, result bound, path condition and the rest
+  of its FR-331 request item SHALL be read from its row and record node
+  (FR-940 "Requirement records"), and the item SHALL be negotiated, settled
+  and replayed through the same path as on the source route, its process
+  provider requests carrying the admitted bytes of the selected package as
+  `package`. An `items` entry whose claim names no item of the call refuses
+  `UnknownRequirementClaim` before any item is negotiated, as on the source
+  route.
+- The `requirements` and `registry` members of the `spine-run-result/1`
+  document, the `RunResult.requirements` field and the `execute` outcome's
+  `items` SHALL equal, byte for byte, the source route's for the same request
+  over the source the package was compiled from. A package whose
+  `requirement_items` the strict reader refuses (a row removed, a record node
+  without its row) refuses at stage `request` as "A package that cannot run"
+  states for a reader refusal, and never settles a shorter item list.
+
+### Decision: the package carries the records, the route does not rebuild them
+
+The source route takes a call's items from the checker's requirement
+records: the owner it recorded, the package order of every record, each
+record's capability and extent, and each claim site's bound, guards and
+roots. None of these is a name row or a `state_clause` node: a
+`value-validity` record belongs to a scalar application inside a function
+body, and an operation contract's `state_clause` node has no function owner.
+Rebuilding them from the graph would re-run the checker's ownership,
+guard and extent classification on the package route, and answering with
+the records that happen to be derivable would be a partial map. So the
+package carries them (FSpec FR-825) and the package route reads them, as it
+reads every other fact of FR-531's table.
+
 ### The source package reference of a package export
 
 FSpec FR-817's export outcome, and FSpec FR-299's package key, carry
@@ -174,6 +221,7 @@ reader refusal in the table.
 | FR-1039-AC-2 | The FR-517 handoff of FR-754-AC-3's `Pick` unit selected as `package` `{directory}`, and its package file selected as `{file}`, each run the `synthesis` member `{"declaration": "Pick"}` to the source route's `candidate` 7; a `clause` member over a `{file}` selection refuses `invalid-request` with `details` `{"member": "clause", "requires": "directory"}`, exit 20. | Test (TC-3019) |
 | FR-1039-AC-3 | Each defect of "A package that cannot run" refuses at stage `request`, exit 20, with the code and locus its row states: a missing file; a document whose `contract_version` is `filament.checked-package/v1` (`unknown_wire`/`unsupported-wire` with `actual` `filament.checked-package/v1` at `/request/package/contract_version`, never `invalid_package`); a package with an unknown top-level member (`invalid_package` at the reader's pointer); a spine-model package run with no `models` entry for its recorded selection (`missing_import`/`missing-selection` at `/request/models`); and the value package run with one `models` entry, the spine document (`invalid-request` at `/request/models/0`). | Test (TC-3019) |
 | FR-1039-AC-4 | FR-1015-AC-4's counter compiled to a package file and exported over `package` `{"file": P, "source_package": {"identity": "example/counter-unit", "version": "7"}}`, with the source file removed, writes `package.source_package` `{"identity": "example/counter-unit", "version": "7"}` and otherwise the source export's `records` and `target_text`; the same request without `source_package` refuses `invalid-request` with `invalid_runtime_input`/`missing-member` at `/request/package/source_package`, exit 20, before the package file is opened (a request naming a missing file gives this refusal, not the missing-file one); `"source_package": null` and `"source_package": "x"` each refuse `wrong-value-kind` at `/request/package/source_package`, `{"identity": "a"}` `missing-member` at `/request/package/source_package/version`, `{"identity": 7, "version": "1"}` `wrong-value-kind` at `/request/package/source_package/identity`, `{"identity": "", "version": "1"}` `invalid-value` there, and an extra member `digest` `unknown-member` at `/request/package/source_package/digest`, each exit 20; FR-1039-AC-1's `call` request over the package runs to `-4` with and without a well-formed `source_package`. | Test (TC-3019) |
+| FR-1039-AC-5 | FR-961-AC-2's `Even` request with `call.requirements` `{}` and no providers, and FR-062's RR-12 unit called as `f` with `n = 4` and `requirements` `{}`, each compiled to a package file and run over `package` `{"file": P}` with the source file removed, write `requirements` and `registry` members equal byte for byte to the source route's (the same request indices, claims, extents, path conditions, records and categories), and the `execute` outcome's `items` equal the source route's; RR-12's `g` called over the package writes `requirements` `[]`; an `items` entry naming a claim of `f` in a call of `g` refuses `UnknownRequirementClaim` before any item is negotiated, as on the source route; the package with the row of `f`'s `+` record removed refuses at stage `request`, exit 20, `invalid_package`/`invalid-value` at `/request/package/semantic_graph/nodes/{n}/body` (FSpec FR-825 rule 14), and settles no item; no request over the package refuses `call.requirements` as not implemented. | Test (TC-3019) |
 
 ## Dependencies
 
