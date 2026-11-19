@@ -414,6 +414,26 @@ protocol Purchase using P over (view: M::Node) on origin {
 }
 
 #[test]
+#[trace("FR-731-AC-1")]
+fn a_related_by_clause_limits_protocol_effect_bindings_to_its_relationship_instance() {
+    let source = SOURCE
+        .replace(
+            "  channel Charge from Buyer",
+            "  relationship Owns = M::owns;\n  channel Charge from Buyer",
+        )
+        .replace(
+            "effect Paid of Main::Pay as (applied: M::Receipt) { true }",
+            "effect Paid of Main::Pay as (applied: M::Link) \
+             related by Owns (applied.source, view) { true }",
+        );
+    let graph = reachable_with_relation(&source, true);
+    assert_eq!(
+        bound_reference_ids(&graph, StepKind::Event),
+        ["node-2".to_owned()].into_iter().collect()
+    );
+}
+
+#[test]
 #[trace("TC-2528", "FR-894-AC-1")]
 fn a_duplicate_delivery_applies_its_effect_once() {
     let graph = reachable(SOURCE);
