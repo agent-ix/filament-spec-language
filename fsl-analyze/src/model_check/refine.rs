@@ -63,6 +63,7 @@ use fsl_replay::{
     open_systems,
 };
 use fsl_semantics::check::CheckedRefinement;
+use fsl_semantics::model::state::ModelState;
 
 use super::check::{BOUND_POSITIONS, ModelCheckRefusal, fault, not_simulated, widen};
 use super::fair_walk::{FairModel, fairness_constraints};
@@ -152,7 +153,7 @@ struct CandidateEnabled {
     key: Vec<u8>,
     /// The underlying abstract model state used for operation enabledness.
     state_key: Vec<u8>,
-    state: ModelSimState,
+    state: ModelState,
     protocol: Option<fsl_replay::ProtocolCandidate>,
     transitions: Vec<ModelTransition>,
 }
@@ -2458,8 +2459,13 @@ impl Run<'_, '_> {
                         })?;
                         let (key, _) = Self::encoding(protocol.state_key(candidate))?;
                         let (state_key, _) =
-                            Self::encoding(self.abstract_system.state_key_of(state))?;
-                        Ok((key, state_key, state.clone(), Some(candidate.clone())))
+                            Self::encoding(self.abstract_system.state_key_of(state.state()))?;
+                        Ok((
+                            key,
+                            state_key,
+                            state.state().clone(),
+                            Some(candidate.clone()),
+                        ))
                     })
                     .collect::<Result<Vec<_>, End>>()?
             } else {
@@ -2986,10 +2992,10 @@ impl Run<'_, '_> {
 
     fn protocol_candidate_path_labels(
         &mut self,
-        initial: &ModelSimState,
+        initial: &ModelState,
         path: &[fsl_eval::simulation::protocol::ProtocolTransition],
         classes: &[AbstractClass],
-    ) -> Result<Vec<(ModelSimState, FairLabel)>, End> {
+    ) -> Result<Vec<(ModelState, FairLabel)>, End> {
         if path.is_empty() {
             let expansion = self
                 .abstract_system
