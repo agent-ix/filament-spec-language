@@ -47,8 +47,7 @@ use fsl_replay::{
 use fsl_route::reductions::Reductions;
 use fsl_semantics::check::footprint::SymbolicLocation;
 use fsl_semantics::check::{
-    CheckedPredicateBody, CheckedStateGraphClaim, CheckedStatePredicate, PredicateRole,
-    StateGraphForm,
+    CheckedStateGraphClaim, CheckedStatePredicate, PredicateRole, StateGraphForm,
 };
 
 use super::check::{fault, BOUND_POSITIONS};
@@ -254,7 +253,7 @@ fn predicates(form: &StateGraphForm) -> Vec<(PredicateRole, &CheckedStatePredica
             vec![(PredicateRole::From, from), (PredicateRole::Target, target)]
         }
         StateGraphForm::UniquePath { from, to } => {
-            vec![(PredicateRole::From, from), (PredicateRole::To, to)]
+            vec![(PredicateRole::From, from), (PredicateRole::Target, to)]
         }
     }
 }
@@ -267,7 +266,9 @@ struct InstanceView<'a> {
     model_instance: Option<ModelInstance>,
     /// The instance's orbit under the declared symmetry group.
     orbit: Vec<String>,
-    predicates: Vec<(PredicateRole, Option<&'a CheckedPredicateBody>)>,
+    /// Each predicate role, with the claim when the role is a written
+    /// predicate of it (the constant `true` has none).
+    predicates: Vec<(PredicateRole, Option<&'a CheckedStateGraphClaim>)>,
 }
 
 /// The instances of `items`, item by item, derived from `system`'s
@@ -282,13 +283,7 @@ fn instances<'a>(
         .map(|(item, entry)| {
             let bodies: Vec<_> = predicates(entry.claim.form())
                 .into_iter()
-                .map(|(role, predicate)| {
-                    let body = match predicate {
-                        CheckedStatePredicate::ConstantTrue => None,
-                        CheckedStatePredicate::Checked(body) => Some(body),
-                    };
-                    (role, body)
-                })
+                .map(|(role, predicate)| (role, predicate.is_written().then_some(entry.claim)))
                 .collect();
             let mut bindings: Vec<(Option<ObjectReference>, Option<ModelInstance>)> =
                 match entry.claim.over() {
@@ -656,17 +651,10 @@ pub fn check_state_graph(
     let por = if request.reductions.partial_order {
         let mut reads = BTreeSet::<SymbolicLocation>::new();
         for item in &request.items {
-            let Some(over) = item.claim.over() else {
-                continue;
-            };
-            let parameter = (over.name.clone(), ValueType::Reference(over.object.clone()));
-            for (_, predicate) in predicates(item.claim.form()) {
-                let CheckedStatePredicate::Checked(body) = predicate else {
-                    continue;
-                };
+            for (role, _) in predicates(item.claim.form()) {
                 reads.extend(
                     system
-                        .atom_reads(&parameter, body.body())
+                        .state_graph_reads(item.claim, role)
                         .map_err(|refusal| ModelCheckRefusal::Footprint(refusal.into()))?,
                 );
             }

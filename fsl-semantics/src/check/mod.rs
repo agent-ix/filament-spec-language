@@ -560,6 +560,8 @@ pub use refusal::{
 };
 pub use state_graph_claim::{
     CheckedPredicateBody, CheckedStateGraphClaim, CheckedStatePredicate, OverParameter,
+    PackagePredicate, PackageStateGraphForm, PackageStateGraphKind, PackageStatePredicate,
+    state_graph_predicate_site,
     StateGraphClaim, StateGraphDeclaration, StateGraphFamily, StateGraphForm, StatePredicate,
 };
 #[cfg(any(test, feature = "test-support"))]

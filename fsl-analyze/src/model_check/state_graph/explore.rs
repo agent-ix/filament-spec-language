@@ -220,14 +220,17 @@ impl Exploration<'_, '_, '_> {
         let mut keys = Vec::new();
         let mut predicates = Vec::new();
         for view in self.views.iter().flatten() {
-            for (role, body) in &view.predicates {
-                if let Some(body) = body {
+            for (role, claim) in &view.predicates {
+                if let Some(claim) = claim {
                     keys.push((view.item, view.instance, *role));
-                    predicates.push((*body, view.over.as_ref()));
+                    predicates.push((*claim, *role, view.over.as_ref()));
                 }
             }
         }
-        let readings = match self.system.state_predicates(&walk.states[at], &predicates) {
+        let readings = match self
+            .system
+            .state_graph_predicates(&walk.states[at], &predicates)
+        {
             Ok(readings) => readings,
             Err(stop) => return expansion_stop(&stop, self.budgets).map(Err),
         };

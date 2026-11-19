@@ -792,13 +792,15 @@ fn path_initial(path: &WitnessPath) -> usize {
     }
 }
 
-fn target_role(claim: &CheckedStateGraphClaim) -> PredicateRole {
-    match claim.form() {
-        StateGraphForm::Possible { .. } | StateGraphForm::AlwaysPossible { .. } => {
-            PredicateRole::Target
-        }
-        StateGraphForm::UniquePath { .. } => PredicateRole::To,
-    }
+/// One predicate of a claim, read through the evaluator port by its role.
+#[derive(Clone, Copy)]
+struct Slot<'a> {
+    claim: &'a CheckedStateGraphClaim,
+    role: PredicateRole,
+}
+
+fn target_role(_claim: &CheckedStateGraphClaim) -> PredicateRole {
+    PredicateRole::Target
 }
 
 fn source_role(claim: &CheckedStateGraphClaim) -> PredicateRole {
@@ -809,47 +811,46 @@ fn source_role(claim: &CheckedStateGraphClaim) -> PredicateRole {
     }
 }
 
-fn from_target_roles(
-    claim: &CheckedStateGraphClaim,
-) -> (Option<&CheckedStatePredicate>, &CheckedStatePredicate) {
+fn from_target_roles(claim: &CheckedStateGraphClaim) -> (Option<Slot<'_>>, Slot<'_>) {
+    let slot = |role| Slot { claim, role };
     match claim.form() {
-        StateGraphForm::Possible { target } => (None, target),
-        StateGraphForm::AlwaysPossible { from, target } => (Some(from), target),
-        StateGraphForm::UniquePath { from, to } => (Some(from), to),
+        StateGraphForm::Possible { .. } => (None, slot(PredicateRole::Target)),
+        StateGraphForm::AlwaysPossible { .. } | StateGraphForm::UniquePath { .. } => {
+            (Some(slot(PredicateRole::From)), slot(PredicateRole::Target))
+        }
     }
 }
 
-fn claim_predicates(
-    claim: &CheckedStateGraphClaim,
-) -> Vec<(PredicateRole, &CheckedStatePredicate)> {
-    match claim.form() {
-        StateGraphForm::Possible { target } => vec![(PredicateRole::Target, target)],
-        StateGraphForm::AlwaysPossible { from, target } => {
-            vec![(PredicateRole::From, from), (PredicateRole::Target, target)]
-        }
-        StateGraphForm::UniquePath { from, to } => {
-            vec![(PredicateRole::From, from), (PredicateRole::To, to)]
-        }
-    }
+fn claim_predicates(claim: &CheckedStateGraphClaim) -> Vec<(PredicateRole, Slot<'_>)> {
+    let (from, target) = from_target_roles(claim);
+    from.into_iter()
+        .chain([target])
+        .map(|slot| (slot.role, slot))
+        .collect()
 }
 
 fn read_predicate(
     system: &ModelSystem<'_>,
-    predicate: &CheckedStatePredicate,
+    slot: Slot<'_>,
     state: &ModelSimState,
     over: Option<&ObjectReference>,
 ) -> Result<PredicateReading, ReplayRefusal> {
-    match predicate {
-        CheckedStatePredicate::ConstantTrue => Ok(PredicateReading::True),
-        CheckedStatePredicate::Checked(body) => system
-            .state_predicates(state, &[(body, over)])
-            .map_err(|_| fault("state-graph-predicate-reading"))
-            .and_then(|mut readings| {
-                readings
-                    .pop()
-                    .ok_or_else(|| fault("state-graph-predicate-result"))
-            }),
+    let (from, target) = slot.claim.node_predicates();
+    let predicate = match slot.role {
+        PredicateRole::From => from,
+        PredicateRole::Target => Some(target),
+    };
+    if predicate.is_none_or(CheckedStatePredicate::is_constant_true) {
+        return Ok(PredicateReading::True);
     }
+    system
+        .state_graph_predicates(state, &[(slot.claim, slot.role, over)])
+        .map_err(|_| fault("state-graph-predicate-reading"))
+        .and_then(|mut readings| {
+            readings
+                .pop()
+                .ok_or_else(|| fault("state-graph-predicate-result"))
+        })
 }
 
 fn target_read(
@@ -1068,7 +1069,7 @@ fn replay_steps(
 
 fn check_first_target(
     system: &ModelSystem<'_>,
-    target: &CheckedStatePredicate,
+    target: Slot<'_>,
     states: &[Position],
     over: Option<&ObjectReference>,
     evaluated: &mut Vec<(PredicateRole, bool)>,
@@ -1077,11 +1078,11 @@ fn check_first_target(
         let reading = read_predicate(system, target, state, over)?;
         match reading {
             PredicateReading::True => {
-                evaluated.push((target_role_from_predicate(target), true));
+                evaluated.push((target.role, true));
                 return Ok(index + 1 == states.len());
             }
             PredicateReading::False => {
-                evaluated.push((target_role_from_predicate(target), false));
+                evaluated.push((target.role, false));
             }
             PredicateReading::Undefined { .. } | PredicateReading::Refused(_) => return Ok(false),
         }
@@ -1089,28 +1090,10 @@ fn check_first_target(
     Ok(false)
 }
 
-fn check_target_endpoint(
-    system: &ModelSystem<'_>,
-    target: &CheckedStatePredicate,
-    states: &[Position],
-    over: Option<&ObjectReference>,
-    evaluated: &mut Vec<(PredicateRole, bool)>,
-) -> Result<bool, ReplayRefusal> {
-    let Some((state, _)) = states.last() else {
-        return Err(fault("target-path-has-no-endpoint"));
-    };
-    let reading = read_predicate(system, target, state, over)?;
-    record_reading(target_role_from_predicate(target), reading, evaluated)
-}
-
-fn target_role_from_predicate(_predicate: &CheckedStatePredicate) -> PredicateRole {
-    PredicateRole::To
-}
-
 fn explore_closure(
     system: &ModelSystem<'_>,
     initial: &ModelSimState,
-    target: &CheckedStatePredicate,
+    target: Slot<'_>,
     over: Option<&ObjectReference>,
     max_states: usize,
     max_transitions: usize,
@@ -1127,10 +1110,10 @@ fn explore_closure(
         let reading = read_predicate(system, target, &state, over)?;
         match reading {
             PredicateReading::True => {
-                evaluated.push((target_role_from_predicate(target), true));
+                evaluated.push((target.role, true));
                 return Ok((seen.len() as u64, Some(key), None));
             }
-            PredicateReading::False => evaluated.push((target_role_from_predicate(target), false)),
+            PredicateReading::False => evaluated.push((target.role, false)),
             PredicateReading::Undefined { .. } | PredicateReading::Refused(_) => {
                 return Ok((seen.len() as u64, Some(key), None));
             }

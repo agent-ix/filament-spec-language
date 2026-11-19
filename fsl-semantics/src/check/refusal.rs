@@ -2516,12 +2516,10 @@ pub enum StateGraphCause {
 /// Which predicate of a state-graph claim a refusal is about.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PredicateRole {
-    /// `possible`'s and `always possible`'s `P`.
+    /// `possible`'s, `always possible`'s and `unique path`'s end predicate (FSpec FR-475 slot `target`).
     Target,
     /// `always possible`'s `Q` and `unique path`'s `X`.
     From,
-    /// `unique path`'s `Y`.
-    To,
 }
 
 impl StateGraphCause {

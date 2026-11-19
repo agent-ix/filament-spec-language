@@ -273,7 +273,7 @@ pub(super) fn model_graph(
                 role: match role {
                     PredicateRole::Target => "target",
                     PredicateRole::From => "from",
-                    PredicateRole::To => "to",
+
                 },
                 value: *value,
             })

@@ -58,11 +58,11 @@ impl BareClauseTerm {
     }
 }
 
-fn fault(invariant: &'static str) -> BareSelectionFailure {
+pub(crate) fn fault(invariant: &'static str) -> BareSelectionFailure {
     SlotSelectionFailure::Fault(InternalFault::new("FR-940", invariant)).into()
 }
 
-fn walk_failure(failure: WalkFailure) -> BareSelectionFailure {
+pub(crate) fn walk_failure(failure: WalkFailure) -> BareSelectionFailure {
     match failure {
         WalkFailure::Unsupported(view) => BareSelectionFailure::Unsupported(Box::new(view)),
         WalkFailure::FunctionParameterType { view, .. }
@@ -686,7 +686,7 @@ impl<'p> BarePackage<'p> {
 /// The rank of `node`'s first `claim` occurrence among every `claim`
 /// occurrence of the nodes of `form` in the same source, by the start of
 /// their source-map regions: the node's declaration index in source order.
-fn declaration_index(
+pub(crate) fn declaration_index(
     package: &filament_contract_model::CheckedPackageV2,
     node: &CheckedNodeId,
     form: &str,

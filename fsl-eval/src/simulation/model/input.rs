@@ -377,6 +377,34 @@ impl<'p> PackageModelInput<'p> {
             .map_err(PendingClauseForm::Build)
     }
 
+    /// FR-940 "Package form of a state-graph claim": the state-graph claim
+    /// declared at the `claim` occurrence `claim`, read from the package's
+    /// nodes ([`BarePackage::state_graph_claim_form`]) and rebuilt as S3
+    /// builds it ([`CheckedStateGraphClaim::of_package_form`]) within S3's
+    /// domain `position_limit`. Its predicates are evaluated through the
+    /// evaluator port ([`ModelEvaluator::evaluate_state_graph_predicate`]).
+    ///
+    /// # Errors
+    ///
+    /// [`PendingClauseForm`] for a claim the package does not select or
+    /// whose facts do not rebuild it.
+    pub fn state_graph_claim(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        position_limit: u64,
+    ) -> Result<fsl_semantics::check::CheckedStateGraphClaim, PendingClauseForm> {
+        let form = self
+            .package
+            .state_graph_claim_form(claim)
+            .map_err(PendingClauseForm::Read)?;
+        fsl_semantics::check::CheckedStateGraphClaim::of_package_form(
+            form,
+            self.world.types(),
+            position_limit,
+        )
+        .map_err(PendingClauseForm::Build)
+    }
+
     /// The state clause declared at the `claim` occurrence `claim` of the
     /// node `clause`, as its `claim_names` row names it (FR-940).
     pub fn state_clause(
@@ -618,6 +646,44 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     fn evaluate_state_predicate_at_absent_key(
         &self,
         predicate: &dyn StatePredicate,
+        current: &ObjectEnvironment,
+        key: ObjectReference,
+        binding: String,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault>;
+
+    /// FR-940 "Package form of a state-graph claim": the predicate of
+    /// `role` of the state-graph claim declared at `claim`, with its `over`
+    /// parameter bound to `over` (`None` for a claim with no `over`) and
+    /// the slots after it to `further`, at the state whose objects are
+    /// `current`. Both routes evaluate it: the source route its checked
+    /// body, the package route the predicate node's reader projection, so a
+    /// predicate has one value on both.
+    ///
+    /// # Errors
+    ///
+    /// An internal fault when the claim has no written predicate of `role`.
+    fn evaluate_state_graph_predicate(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+        current: &ObjectEnvironment,
+        over: Option<ObjectReference>,
+        further: Vec<Value>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault>;
+
+    /// [`Self::evaluate_state_graph_predicate`] for an instance whose key
+    /// holds no object conforming to the `over` parameter's type, as
+    /// [`crate::value::evaluate_state_predicate_at_absent_key`] reads it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::evaluate_state_graph_predicate`].
+    fn evaluate_state_graph_predicate_at_absent_key(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
         current: &ObjectEnvironment,
         key: ObjectReference,
         binding: String,
@@ -975,6 +1041,34 @@ impl ModelEvaluator for CheckedPackage {
         )
     }
 
+    fn evaluate_state_graph_predicate(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+        current: &ObjectEnvironment,
+        over: Option<ObjectReference>,
+        further: Vec<Value>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        let body = source_predicate(self, claim, role)?;
+        crate::value::evaluate_state_predicate_with(self, body, current, over, further, meter)
+    }
+
+    fn evaluate_state_graph_predicate_at_absent_key(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+        current: &ObjectEnvironment,
+        key: ObjectReference,
+        binding: String,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        let body = source_predicate(self, claim, role)?;
+        crate::value::evaluate_state_predicate_at_absent_key(
+            self, body, current, key, binding, meter,
+        )
+    }
+
     fn evaluate_activation_guard(
         &self,
         guard: &dyn StatePredicate,
@@ -1304,6 +1398,44 @@ impl ModelEvaluator for BarePackage<'_> {
         Err(SOURCE_FORM)
     }
 
+    fn evaluate_state_graph_predicate(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+        current: &ObjectEnvironment,
+        over: Option<ObjectReference>,
+        further: Vec<Value>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        let over = over.map_or(
+            crate::value::StateGraphOver::None,
+            crate::value::StateGraphOver::Bound,
+        );
+        crate::value::evaluate_bare_state_graph_predicate(
+            self, claim, role, current, over, further, meter,
+        )
+    }
+
+    fn evaluate_state_graph_predicate_at_absent_key(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+        current: &ObjectEnvironment,
+        key: ObjectReference,
+        binding: String,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        crate::value::evaluate_bare_state_graph_predicate(
+            self,
+            claim,
+            role,
+            current,
+            crate::value::StateGraphOver::Absent { key, binding },
+            Vec::new(),
+            meter,
+        )
+    }
+
     fn evaluate_activation_guard(
         &self,
         _guard: &dyn StatePredicate,
@@ -1489,5 +1621,35 @@ impl ModelEvaluator for BarePackage<'_> {
         _condition: CheckedNode<'_>,
     ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
         Err(NO_SOURCE_FOOTPRINT)
+    }
+}
+
+/// The checked predicate of `role` of the source package's state-graph claim
+/// at `claim`: a written one, which the port evaluates.
+fn source_predicate<'p>(
+    package: &'p CheckedPackage,
+    claim: &fsl_foundation::source::provenance::OccurrenceKey,
+    role: fsl_semantics::check::PredicateRole,
+) -> Result<&'p fsl_semantics::check::CheckedPredicateBody, InternalFault> {
+    use fsl_semantics::check::{CheckedStatePredicate, PredicateRole, StateGraphForm};
+    let fault = |cause: &'static str| InternalFault::new("FR-940", cause);
+    let claim = package
+        .graph()
+        .state_graph_claims()
+        .iter()
+        .find(|held| held.occurrence() == Some(claim))
+        .ok_or_else(|| fault("state-graph-claim-is-in-the-package"))?;
+    let (from, target) = match claim.form() {
+        StateGraphForm::Possible { target } => (None, target),
+        StateGraphForm::AlwaysPossible { from, target } => (Some(from), target),
+        StateGraphForm::UniquePath { from, to } => (Some(from), to),
+    };
+    let predicate = match role {
+        PredicateRole::From => from,
+        PredicateRole::Target => Some(target),
+    };
+    match predicate {
+        Some(CheckedStatePredicate::Checked(body)) => Ok(body),
+        _ => Err(fault("state-graph-predicate-is-written")),
     }
 }

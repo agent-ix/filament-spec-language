@@ -29,6 +29,8 @@ mod bare;
 #[cfg(feature = "std")]
 mod bare_slot;
 #[cfg(feature = "std")]
+mod bare_state_graph;
+#[cfg(feature = "std")]
 mod bare_term;
 #[cfg(feature = "std")]
 mod bare_units;
@@ -82,6 +84,9 @@ pub use bare::{
 };
 #[cfg(feature = "std")]
 pub use bare_slot::{BareSelectionFailure, BareSlot, BareSource};
+#[cfg(feature = "std")]
+#[cfg(feature = "std")]
+pub use bare_state_graph::BareStatePredicate;
 #[cfg(feature = "std")]
 pub use bare_term::{
     BareClauseRefusal, BareClauseTerm, BareFrameOperation, BareStateClause,

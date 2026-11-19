@@ -43,10 +43,7 @@ use filament_exact::{Cancel, ObjectReference, ValueType};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem, PredicateReading};
 use fsl_eval::simulation::{StateKey, TransitionSystem};
-use fsl_semantics::check::{
-    CheckedPredicateBody, CheckedStateGraphClaim, CheckedStatePredicate, PredicateRole,
-    StateGraphForm,
-};
+use fsl_semantics::check::{CheckedStateGraphClaim, PredicateRole, StateGraphForm};
 
 use crate::certificate::check::{
     admit, expansion_halt, finish, poll, stopped, widen, Budgets, Checker, Halt, Step,
@@ -116,6 +113,7 @@ pub fn check_state_graph(
         budgets,
         cancel,
         over: over.as_ref(),
+        claim: request.claim,
         predicates: &predicates,
     };
     finish(check.run(request.claim.form()))
@@ -147,23 +145,22 @@ fn bound_over(
     }
 }
 
-/// The claim's written predicates, each with its role; an omitted `from`
-/// holds everywhere and has none.
-fn predicates(form: &StateGraphForm) -> Vec<(PredicateRole, &CheckedPredicateBody)> {
+/// The roles of the claim's written predicates; an omitted `from` holds
+/// everywhere and has none. Each is read through the evaluator port, keyed
+/// by the claim's occurrence and the role.
+fn predicates(form: &StateGraphForm) -> Vec<PredicateRole> {
     let all = match form {
         StateGraphForm::Possible { target } => vec![(PredicateRole::Target, target)],
         StateGraphForm::AlwaysPossible { from, target } => {
             vec![(PredicateRole::From, from), (PredicateRole::Target, target)]
         }
         StateGraphForm::UniquePath { from, to } => {
-            vec![(PredicateRole::From, from), (PredicateRole::To, to)]
+            vec![(PredicateRole::From, from), (PredicateRole::Target, to)]
         }
     };
     all.into_iter()
-        .filter_map(|(role, predicate)| match predicate {
-            CheckedStatePredicate::ConstantTrue => None,
-            CheckedStatePredicate::Checked(body) => Some((role, body)),
-        })
+        .filter(|(_, predicate)| predicate.is_written())
+        .map(|(role, _)| role)
         .collect()
 }
 
@@ -246,7 +243,8 @@ struct Check<'c, 'a> {
     budgets: Budgets,
     cancel: &'c Cancel,
     over: Option<&'c ObjectReference>,
-    predicates: &'c [(PredicateRole, &'c CheckedPredicateBody)],
+    claim: &'c CheckedStateGraphClaim,
+    predicates: &'c [PredicateRole],
 }
 
 impl Check<'_, '_> {
@@ -413,16 +411,16 @@ impl Check<'_, '_> {
         let bodies: Vec<_> = self
             .predicates
             .iter()
-            .map(|(_, body)| (*body, self.over))
+            .map(|role| (self.claim, *role, self.over))
             .collect();
         for (state_key, entry) in states {
             self.poll()?;
             let readings = self
                 .system
-                .state_predicates(&entry.state, &bodies)
+                .state_graph_predicates(&entry.state, &bodies)
                 .map_err(|stop| self.halt(&stop))?;
             let mut holds = Vec::with_capacity(readings.len());
-            for ((role, _), reading) in self.predicates.iter().zip(readings) {
+            for (role, reading) in self.predicates.iter().zip(readings) {
                 match reading {
                     PredicateReading::True => holds.push((*role, true)),
                     PredicateReading::False => holds.push((*role, false)),
@@ -485,7 +483,7 @@ impl Check<'_, '_> {
             let Some((count, order)) = counts.get(state_key) else {
                 continue;
             };
-            if *count >= 2 || state.holds(PredicateRole::To) {
+            if *count >= 2 || state.holds(PredicateRole::Target) {
                 continue;
             }
             let backward = state.successors.iter().any(|successor| {
@@ -499,7 +497,7 @@ impl Check<'_, '_> {
         }
         for (state_key, state) in reached {
             let count = counts.get(state_key).map_or(0, |(count, _)| *count);
-            let expected = if state.holds(PredicateRole::To) {
+            let expected = if state.holds(PredicateRole::Target) {
                 1
             } else {
                 state

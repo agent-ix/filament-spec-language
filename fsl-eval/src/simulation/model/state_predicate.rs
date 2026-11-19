@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use filament_exact::{Meter, ObjectReference};
 use filament_semantic_value::catalog::{UndefinedReason, UndefinedRecord};
 use filament_semantic_value::location::ExpressionLocation as Location;
-use fsl_semantics::check::StatePredicate;
+use fsl_semantics::check::{CheckedStateGraphClaim, PredicateRole, StatePredicate};
 use fsl_semantics::model::object_environment::PlacePresences;
 
 use super::contracts::{verdict, Verdict};
@@ -76,6 +76,91 @@ impl ModelSystem<'_> {
         cancel: &filament_exact::Cancel,
     ) -> Result<Vec<PredicateReading>, ExpansionStop> {
         self.state_predicates_impl(state, predicates, Some(cancel))
+    }
+
+    /// FR-940 "Package form of a state-graph claim": each of `predicates`,
+    /// a claim's predicate of one role with the claim's `over` binding, at
+    /// `state`, in order, as [`Self::state_predicates`] reads them. The
+    /// predicate is evaluated through the evaluator port keyed by the
+    /// claim's occurrence and role
+    /// ([`super::ModelEvaluator::evaluate_state_graph_predicate`]), so a
+    /// package-route claim, which holds no checked body, reads as the source
+    /// route's does. The source route keeps the subject's FR-1000 reference
+    /// bindings, which the port does not carry.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::state_predicates`]; a claim with no occurrence, or no
+    /// written predicate of the role, is `runtime_invariant`.
+    pub fn state_graph_predicates(
+        &self,
+        state: &ModelSimState,
+        predicates: &[(
+            &CheckedStateGraphClaim,
+            PredicateRole,
+            Option<&ObjectReference>,
+        )],
+    ) -> Result<Vec<PredicateReading>, ExpansionStop> {
+        let mut walk = walk_of(self, state, None)?;
+        walk.observation
+            .environment
+            .set_place_presence(PlacePresences::default());
+        let mut readings = Vec::with_capacity(predicates.len());
+        for (claim, role, over) in predicates {
+            let bound = match over {
+                None => None,
+                Some(binding) => {
+                    let Some(row) = walk.rows.iter().find(|row| {
+                        row.reference.universe() == binding.universe()
+                            && row.reference.object() == binding.object()
+                    }) else {
+                        readings.push(PredicateReading::Undefined {
+                            cause: UndefinedCause::Family(UndefinedRecord {
+                                reason: UndefinedReason::AbsentKey,
+                                fields: BTreeMap::new(),
+                            }),
+                            location: None,
+                        });
+                        continue;
+                    };
+                    Some(row.reference.clone())
+                }
+            };
+            let mut meter = Meter::new(self.meter);
+            let evaluation = match (self.source_package(), claim.occurrence()) {
+                (Some(package), _) => {
+                    let (from, target) = claim.node_predicates();
+                    let predicate = match role {
+                        PredicateRole::From => from,
+                        PredicateRole::Target => Some(target),
+                    };
+                    let Some(body) = predicate.and_then(|predicate| predicate.written()) else {
+                        return Err(stop(BROKEN));
+                    };
+                    evaluate_state_predicate_with_reference_bindings(
+                        package,
+                        body,
+                        &walk.observation.environment,
+                        bound,
+                        Vec::new(),
+                        Some(&self.reference_bindings),
+                        &mut meter,
+                    )
+                }
+                (None, Some(occurrence)) => self.evaluator().evaluate_state_graph_predicate(
+                    occurrence,
+                    *role,
+                    &walk.observation.environment,
+                    bound,
+                    Vec::new(),
+                    &mut meter,
+                ),
+                (None, None) => return Err(stop(BROKEN)),
+            }
+            .map_err(|_| stop(BROKEN))?;
+            readings.push(reading_of(evaluation)?);
+        }
+        Ok(readings)
     }
 
     fn state_predicates_impl<P: StatePredicate>(
@@ -163,25 +248,35 @@ impl ModelSystem<'_> {
                     )
                     .map_err(|_| stop(BROKEN))?
             };
-            readings.push(match verdict(&evaluation.outcome) {
-                Verdict::True => PredicateReading::True,
-                Verdict::False => PredicateReading::False,
-                Verdict::Undecided(outcome) => {
-                    if let Some(cause) = outcome.undefined_cause() {
-                        PredicateReading::Undefined {
-                            cause,
-                            location: evaluation.location,
-                        }
-                    } else if let ClauseOutcome::Incomplete(incomplete) = outcome {
-                        return Err(exhausted(ExpansionLimit::EvaluationMeter(
-                            incomplete.limit_kind,
-                        )));
-                    } else {
-                        PredicateReading::Refused(outcome)
-                    }
-                }
-            });
+            readings.push(reading_of(evaluation)?);
         }
         Ok(readings)
     }
+}
+
+/// How `evaluation` reads as a predicate: its truth, its undefinedness, or
+/// the refusal that leaves its truth unknown.
+///
+/// # Errors
+///
+/// `resource_exhausted` naming the evaluation meter when it was exhausted.
+fn reading_of(evaluation: filament_eval::Evaluation) -> Result<PredicateReading, ExpansionStop> {
+    Ok(match verdict(&evaluation.outcome) {
+        Verdict::True => PredicateReading::True,
+        Verdict::False => PredicateReading::False,
+        Verdict::Undecided(outcome) => {
+            if let Some(cause) = outcome.undefined_cause() {
+                PredicateReading::Undefined {
+                    cause,
+                    location: evaluation.location,
+                }
+            } else if let ClauseOutcome::Incomplete(incomplete) = outcome {
+                return Err(exhausted(ExpansionLimit::EvaluationMeter(
+                    incomplete.limit_kind,
+                )));
+            } else {
+                PredicateReading::Refused(outcome)
+            }
+        }
+    })
 }

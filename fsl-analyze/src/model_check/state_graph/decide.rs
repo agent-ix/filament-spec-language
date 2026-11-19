@@ -322,7 +322,7 @@ impl<'g> Reader<'g> {
     /// known one with none, else an undefined evaluation, else `Holds` on a
     /// complete run.
     fn unique_path(&self) -> Result<StateGraphOutcome, ModelCheckRefusal> {
-        let to: Vec<usize> = self.nodes_where(PredicateRole::To);
+        let to: Vec<usize> = self.nodes_where(PredicateRole::Target);
         let is_to = {
             let mut flags = vec![false; self.count()];
             for node in &to {

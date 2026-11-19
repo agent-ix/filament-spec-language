@@ -19,9 +19,9 @@ use filament_exact::{EffectiveId, NodeKey, ObjectReference, Value, ValueType};
 use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape, TypeEnvironment};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::check::footprint::{
-    FootprintObject, FootprintRefusal, SymbolicFootprint, SymbolicLocation,
     derive_attempt_footprint_fallback_with_reference_literals,
-    derive_selected_footprint_with_reference_literals,
+    derive_selected_footprint_with_reference_literals, FootprintObject, FootprintRefusal,
+    SymbolicFootprint, SymbolicLocation,
 };
 use fsl_semantics::check::CheckedNode;
 use fsl_semantics::model::clause_observation::Observation;
@@ -654,9 +654,9 @@ impl<'a> ModelSystem<'a> {
         parameters: &[(String, ValueType)],
         body: &fsl_semantics::check::CheckedBody,
     ) -> Result<BTreeSet<Location>, FootprintError> {
-        let mut symbolic = self
-            .evaluator()
-            .slot_reads(&self.model, name, parameters, body.root())?;
+        let mut symbolic =
+            self.evaluator()
+                .slot_reads(&self.model, name, parameters, body.root())?;
         self.add_reference_literal_memberships(body.root(), &mut symbolic);
         Ok(symbolic
             .iter()
@@ -695,9 +695,9 @@ impl<'a> ModelSystem<'a> {
         body: &fsl_semantics::check::CheckedBody,
         over: Option<&ObjectReference>,
     ) -> Result<Option<BTreeSet<Location>>, FootprintError> {
-        let mut symbolic = self
-            .evaluator()
-            .node_reads(&self.model, name, parameters, body.root())?;
+        let mut symbolic =
+            self.evaluator()
+                .node_reads(&self.model, name, parameters, body.root())?;
         self.add_reference_literal_memberships(body.root(), &mut symbolic);
         if over.is_none() && !symbolic.is_empty() {
             return Ok(None);
@@ -747,6 +747,45 @@ impl<'a> ModelSystem<'a> {
         let mut reads = self.evaluator().atom_reads(&self.model, over, condition)?;
         self.add_reference_literal_memberships(condition, &mut reads);
         Ok(reads)
+    }
+
+    /// FR-156, FR-940 "Package form of a state-graph claim": the symbolic
+    /// locations the predicate of `role` of `claim` reads, with the claim's
+    /// `over` parameter as the receiver; none for the constant `true`. The
+    /// source route derives them from the checked body. A package-route
+    /// predicate holds no checked body, and its reads are not derived from
+    /// the reader projection yet, so the port reports them as unresolved and
+    /// the partial-order reduction is not applied to it.
+    ///
+    /// # Errors
+    ///
+    /// [`FootprintRefusal`] as [`Self::atom_reads`] refuses, and for a
+    /// package-route predicate.
+    pub fn state_graph_reads(
+        &self,
+        claim: &fsl_semantics::check::CheckedStateGraphClaim,
+        role: fsl_semantics::check::PredicateRole,
+    ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
+        use fsl_semantics::check::PredicateRole;
+        let (from, target) = claim.node_predicates();
+        let predicate = match role {
+            PredicateRole::From => from,
+            PredicateRole::Target => Some(target),
+        };
+        let Some(over) = claim.over() else {
+            return Ok(BTreeSet::new());
+        };
+        let parameter = (over.name.clone(), ValueType::Reference(over.object.clone()));
+        match predicate {
+            None => Ok(BTreeSet::new()),
+            Some(predicate) if predicate.package().is_some() => Err(FootprintRefusal::Unresolved {
+                what: "package-form state-graph predicate footprint",
+            }),
+            Some(predicate) => match predicate.body() {
+                Some(body) => self.atom_reads(&parameter, body),
+                None => Ok(BTreeSet::new()),
+            },
+        }
     }
 
     /// FR-125-AC-18, FR-337: the symbolic locations the activation's
