@@ -636,11 +636,125 @@ pub(crate) type UnavailableRead = (
     Option<Location>,
 );
 
+/// Where a node is evaluated in a float ordering composition (FR-397
+/// "Ordering parts"): the composition's root, its pair of operand
+/// self-equalities, its tail, the negated equality of its tail, or one of its
+/// three `numeric_equal` parts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Position {
+    Ordering,
+    Parts,
+    Tail,
+    NotPart,
+    Part,
+}
+
+impl Position {
+    fn left(self) -> Option<Self> {
+        match self {
+            Self::Ordering => Some(Self::Parts),
+            Self::Parts => Some(Self::Part),
+            Self::Tail | Self::NotPart | Self::Part => None,
+        }
+    }
+
+    fn right(self, operand_is_not: bool) -> Position {
+        match self {
+            Self::Ordering => Self::Tail,
+            Self::Tail if operand_is_not => Self::NotPart,
+            Self::Parts | Self::Tail | Self::NotPart | Self::Part => Self::Part,
+        }
+    }
+}
+
+/// The one local or IEEE literal an ordering operand reads.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OperandRead {
+    Local(Slot),
+    Literal(IeeeValue),
+}
+
+fn operand_read<'a, N: NodeSource<'a>>(node: N) -> Option<OperandRead> {
+    match node.kind() {
+        NodeKind::Local(slot) => Some(OperandRead::Local(*slot)),
+        NodeKind::Literal(literal) => match N::literal(literal) {
+            Value::Float(value) => Some(OperandRead::Literal(*value)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether `node` is `numeric_equal(a, b)` whose operands read `a` and `b`.
+fn numeric_equal_of<'a, N: NodeSource<'a>>(
+    node: N,
+    a: &Option<OperandRead>,
+    b: &Option<OperandRead>,
+) -> bool {
+    let NodeKind::IeeeNumericEquality(left, right) = node.kind() else {
+        return false;
+    };
+    operand_read(node.at(*left)) == *a && operand_read(node.at(*right)) == *b
+}
+
+/// FR-397 "Ordering parts": whether `node` is an ordering composition,
+/// `and(and(ne(x, x), ne(y, y)), and(total(x, y), not(ne(x, y))))` or its
+/// `or(total(x, y), ne(x, y))` tail, with `x` and `y` each one local or
+/// literal read. Read from node kinds, operator identities and operand reads
+/// only, so the source and the package route decide alike.
+fn ordering_composition<'a, N: NodeSource<'a>>(node: N) -> bool {
+    let NodeKind::Connective(Connective::And, _, parts, tail) = node.kind() else {
+        return false;
+    };
+    let (parts, tail) = (node.at(*parts), node.at(*tail));
+    let NodeKind::Connective(Connective::And, _, left, right) = parts.kind() else {
+        return false;
+    };
+    let (left, right) = (parts.at(*left), parts.at(*right));
+    let (NodeKind::IeeeNumericEquality(x, _), NodeKind::IeeeNumericEquality(y, _)) =
+        (left.kind(), right.kind())
+    else {
+        return false;
+    };
+    let x = operand_read(left.at(*x));
+    let y = operand_read(right.at(*y));
+    if x.is_none()
+        || y.is_none()
+        || !numeric_equal_of(left, &x, &x)
+        || !numeric_equal_of(right, &y, &y)
+    {
+        return false;
+    }
+    let NodeKind::Connective(connective, _, total, equal) = tail.kind() else {
+        return false;
+    };
+    let (total, equal) = (tail.at(*total), tail.at(*equal));
+    let NodeKind::IeeeTotalOrder(_, a, b) = total.kind() else {
+        return false;
+    };
+    if operand_read(total.at(*a)) != x || operand_read(total.at(*b)) != y {
+        return false;
+    }
+    match connective {
+        Connective::And => match equal.kind() {
+            NodeKind::Not(inner) => numeric_equal_of(equal.at(*inner), &x, &y),
+            _ => false,
+        },
+        Connective::Or => numeric_equal_of(equal, &x, &y),
+        Connective::Implies => false,
+    }
+}
+
 enum Task<'a, N> {
     Eval(N),
     Apply(N),
+    /// FR-397 "Ordering parts": a `numeric_equal` evaluated as an ordering
+    /// part, which decides without charging.
+    ApplyPart(N),
+    /// Evaluate `N` at a position of an ordering composition.
+    EvalAt(N, Position),
     Branch(N),
-    Short(N),
+    Short(N, Option<Position>),
     /// FR-322: the `case` at this node has evaluated its scrutinee; select
     /// the arm of its active member and evaluate only that arm's body.
     Select(N),
@@ -1169,7 +1283,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// FR-265: retain a completed authored comparison on the claim's own
     /// level, alongside its result and operands.
     fn note_comparison(&mut self, node: N, left: &Value, right: &Value, result: bool) {
-        if !self.on_claim_level() || node.is_ordering_part() {
+        if !self.on_claim_level() {
             return;
         }
         let Some(location) = node.location() else {
@@ -1377,7 +1491,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 Task::Eval(node)
                 | Task::Apply(node)
                 | Task::Branch(node)
-                | Task::Short(node)
+                | Task::Short(node, _)
+                | Task::ApplyPart(node)
+                | Task::EvalAt(node, _)
                 | Task::Select(node)
                 | Task::Retain(node, _)
                 | Task::ObserveApplication(node)
@@ -2115,6 +2231,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         match task {
             Task::Eval(node) => self.eval(node),
             Task::Apply(node) => self.apply(node),
+            Task::ApplyPart(node) => self.apply_ordering_part(node),
+            Task::EvalAt(node, position) => self.eval_at(node, position),
             Task::Branch(node) => {
                 let NodeKind::If {
                     then, otherwise, ..
@@ -2128,7 +2246,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 self.tasks.push(Task::Eval(node.at(*taken)));
                 Ok(())
             }
-            Task::Short(node) => {
+            Task::Short(node, position) => {
                 let NodeKind::Connective(connective, origin, _, right) = node.kind() else {
                     return Err(invariant("evaluation-connective-node-expected"));
                 };
@@ -2153,7 +2271,10 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     }
                     None => {
                         self.tasks.push(Task::Retain(node, left_owner));
-                        self.tasks.push(Task::Eval(node.at(*right)));
+                        let right_position = position.map(|position| {
+                            position.right(matches!(node.at(*right).kind(), NodeKind::Not(_)))
+                        });
+                        self.push_operand(node.at(*right), right_position);
                     }
                 }
                 Ok(())
@@ -2300,6 +2421,50 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         Ok(())
     }
 
+    /// Queue `node`, evaluated at `position` of an ordering composition when
+    /// it has one.
+    fn push_operand(&mut self, node: N, position: Option<Position>) {
+        self.tasks.push(match position {
+            Some(position) => Task::EvalAt(node, position),
+            None => Task::Eval(node),
+        });
+    }
+
+    /// FR-397 "Ordering parts": evaluate `node`, reached along an ordering
+    /// composition's operand edges at `position`.
+    fn eval_at(&mut self, node: N, position: Position) -> Result<(), Halt> {
+        match (position, node.kind()) {
+            (
+                Position::Ordering | Position::Parts | Position::Tail,
+                NodeKind::Connective(_, _, left, _),
+            ) => {
+                self.tasks.push(Task::Short(node, Some(position)));
+                self.push_operand(node.at(*left), position.left());
+                Ok(())
+            }
+            (Position::NotPart, NodeKind::Not(operand)) => {
+                self.tasks.push(Task::Apply(node));
+                self.push_operand(node.at(*operand), Some(Position::Part));
+                Ok(())
+            }
+            (Position::Part, NodeKind::IeeeNumericEquality(left, right)) => {
+                self.tasks.push(Task::ApplyPart(node));
+                self.tasks.push(Task::Eval(node.at(*right)));
+                self.tasks.push(Task::Eval(node.at(*left)));
+                Ok(())
+            }
+            _ => Err(invariant("ordering-composition-position-mismatch")),
+        }
+    }
+
+    fn apply(&mut self, node: N) -> Result<(), Halt> {
+        self.apply_as(node, false)
+    }
+
+    fn apply_ordering_part(&mut self, node: N) -> Result<(), Halt> {
+        self.apply_as(node, true)
+    }
+
     fn eval(&mut self, node: N) -> Result<(), Halt> {
         match node.kind() {
             NodeKind::ReferenceLiteral {
@@ -2386,8 +2551,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 return Ok(());
             }
             NodeKind::Connective(_, _, left, _) => {
-                self.tasks.push(Task::Short(node));
-                self.tasks.push(Task::Eval(node.at(*left)));
+                let position = ordering_composition(node).then_some(Position::Ordering);
+                self.tasks.push(Task::Short(node, position));
+                self.push_operand(node.at(*left), position.and_then(Position::left));
                 return Ok(());
             }
             NodeKind::Collection { elements, .. } => {
@@ -2471,7 +2637,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// (or expressed as a refutable `let ... else`, which this lint does not
     /// reach) rather than left to this `deny` -- see each site's own note.
     #[deny(clippy::wildcard_enum_match_arm)]
-    fn apply(&mut self, node: N) -> Result<(), Halt> {
+    fn apply_as(&mut self, node: N, ordering_part: bool) -> Result<(), Halt> {
         let value = match node.kind() {
             NodeKind::Literal(_)
             | NodeKind::ReferenceLiteral { .. }
@@ -3095,7 +3261,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         "typed-ieee-equality-operands-are-not-floats",
                     )));
                 };
-                if !node.is_ordering_part() {
+                if !ordering_part {
                     // A standalone `=` or `numericEqual` is the one owned
                     // core of FR-148: it charges its operands and result.
                     if !self.world.has_ieee_profile() {

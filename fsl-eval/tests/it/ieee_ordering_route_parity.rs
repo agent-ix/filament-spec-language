@@ -149,7 +149,6 @@ fn f64v(bits: u64) -> Value {
 #[trace("TC-3077", "FR-397-AC-30")]
 #[trace("TC-3077", "FR-940-AC-15")]
 #[test]
-#[ignore = "QSL-2566: the package-route call refuses a Float64 argument (unknown_required_feature), and its reader reads no ordering part, so it would charge N(p), N(q) and numericEqual(p, q)"]
 fn an_ordering_charges_the_same_on_the_source_and_package_routes() {
     let one = f64v(0x3ff0_0000_0000_0000);
     let two = f64v(0x4000_0000_0000_0000);
@@ -160,7 +159,6 @@ fn an_ordering_charges_the_same_on_the_source_and_package_routes() {
         "p > q",
         "p >= q",
         "-p < -q",
-        "filament::value::ieee::sqrt(p) <= filament::value::ieee::sqrt(q)",
     ] {
         for p in [&one, &nan] {
             let (source, packaged) = both_routes(body, &[p.clone(), two.clone(), two.clone()]);
@@ -174,7 +172,6 @@ fn an_ordering_charges_the_same_on_the_source_and_package_routes() {
 /// ordering charge each `numeric_equal` they reach, on both routes alike.
 #[trace("TC-3077", "FR-397-AC-31")]
 #[test]
-#[ignore = "QSL-2566: the package-route call refuses a Float64 argument, and the ordering part is a source-only node flag, not the FR-397 shape rule"]
 fn the_ordering_part_rule_reads_the_shape_on_both_routes() {
     let args = [
         f64v(0x3ff0_0000_0000_0000),
@@ -219,4 +216,20 @@ fn the_ordering_part_rule_reads_the_shape_on_both_routes() {
         operands(&ordering.charges) + 1,
         "{beside}"
     );
+}
+
+/// FR-397-AC-30 and FR-940-AC-15 for an ordering over `sqrt` operands. The
+/// source route records the inexact flag of `sqrt(2.0)` as a value loss at the
+/// node's location, and a function body of a package carries no expression
+/// location rows, so the package route faults (`value-loss-site-is-located`,
+/// FR-390) where it must write the source route's log.
+#[trace("TC-3077", "FR-397-AC-30")]
+#[trace("TC-3077", "FR-940-AC-15")]
+#[test]
+#[ignore = "QSL-2566: a package function body has no location for the sqrt inexact-flag value loss, and FR-390 faults rather than invent one; the specs state no location rule for it"]
+fn an_ordering_over_square_roots_charges_the_same_on_both_routes() {
+    let two = f64v(0x4000_0000_0000_0000);
+    let body = "filament::value::ieee::sqrt(p) <= filament::value::ieee::sqrt(q)";
+    let (source, packaged) = both_routes(body, &[two.clone(), two.clone(), two]);
+    assert_eq!(source, packaged, "{body}");
 }

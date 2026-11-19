@@ -223,7 +223,6 @@ impl<'a> UnionMember<'a> {
             value_type: ValueType::Composite(self.declaration),
             location: location.clone(),
             equality_producer: None,
-            ordering_part: false,
             field_population: None,
             equality_range_context: None,
         }

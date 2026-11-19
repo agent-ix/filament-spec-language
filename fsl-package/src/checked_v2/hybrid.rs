@@ -346,6 +346,33 @@ fn is_text(text: &str, expected: &str) -> bool {
     text == expected
 }
 
+/// The `Float32`/`Float64` type with a rounding mode that the
+/// `bounded_domain/float_rounding` node `id` declares (FR-397), as the exact
+/// type its parameters and results carry.
+pub(crate) fn float_rounding_type(
+    package: &CheckedPackageV2,
+    id: &CheckedNodeId,
+) -> Option<ValueType> {
+    let node = package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| &node.node_id == id)?;
+    if !matches!(
+        package.node_kind(id)?,
+        CheckedNodeKind::BoundedDomain(BoundedDomainForm::FloatRounding)
+    ) {
+        return None;
+    }
+    let rounding = RoundingMode::from_code(text(bound(package.term(id)?, "rounding").ok()?).ok()?)?;
+    let width = match package.node_kind(&node.semantic_type)? {
+        CheckedNodeKind::ScalarType(ScalarTypeForm::Float32) => IeeeWidth::Binary32,
+        CheckedNodeKind::ScalarType(ScalarTypeForm::Float64) => IeeeWidth::Binary64,
+        _ => return None,
+    };
+    Some(ValueType::Float(FloatType::new(width, rounding)))
+}
+
 // ---------------------------------------------------------- body navigation
 
 /// The members of the aggregate `term`.
