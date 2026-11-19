@@ -222,8 +222,9 @@ pub fn execute_plan(
         }
         if let Some(binding) = inputs.bindings.get(&node.name) {
             if consumes_initial(package, node) {
-                match fsl_eval::simulation::model::ModelSystem::new(
+                match fsl_eval::simulation::model::ModelSystem::over_model(
                     crate::analyze::request::simulation(&input, binding, limits),
+                    &node.domain.package,
                 ) {
                     Ok(system) => {
                         admitted_initial |= !binding.initial.is_empty();
@@ -365,8 +366,9 @@ fn claim(package: &CheckedPackage, node: &VerificationPlanNode) -> Option<Occurr
         let structural =
             serde_json::to_value(fsl_semantics::check::wire_id::structural_id(&key)).ok()?;
         let requested = serde_json::to_value(&node.claim.node).ok()?;
+        let requested_role = serde_json::to_value(&node.claim.occurrence.role).ok()?;
         (structural == requested
-            && origin.role().as_str() == "claim"
+            && requested_role.as_str() == Some(origin.role().as_str())
             && origin.ordinal() == node.claim.occurrence.ordinal)
             .then(|| OccurrenceKey::new(key, origin))
     })
@@ -536,11 +538,32 @@ impl Execution<'_> {
         let outcome = analyze(package, &request, engines, limits, cancel)
             .map_err(|_| fault("analyze-adapter"))?
             .into_value();
-        let record = outcome
+        let mut record = outcome
             .records
             .into_iter()
             .next()
             .ok_or_else(|| fault("missing-step-record"))?;
+        if record.diagnostic()
+            == Some(fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code())
+        {
+            let mut detail = record.diagnostic_detail().cloned().unwrap_or_default();
+            detail.insert(
+                "kind".into(),
+                serde_json::Value::String(kind.to_wire().into()),
+            );
+            detail.insert(
+                "extent".into(),
+                serde_json::Value::String(
+                    if bound.is_some() {
+                        "bounded"
+                    } else {
+                        "unbounded"
+                    }
+                    .into(),
+                ),
+            );
+            record = record.with_diagnostic_detail(detail);
+        }
         let status = status(&record);
         let evidence = match status {
             PlanStatus::Proved | PlanStatus::Refuted | PlanStatus::Measured

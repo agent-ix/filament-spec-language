@@ -1766,6 +1766,18 @@ impl<'a> ModelSystem<'a> {
             granted.iter().collect()
         };
         for key in root_fields {
+            // FR-190 classes E/C keep clock-bearing roots under FR-230;
+            // their eval-side count/presence encoding is not a size-bound
+            // mathematical Integer generation domain.
+            if preserve_types
+                && self
+                    .input
+                    .timed_models
+                    .iter()
+                    .any(|timed| timed.clocks().iter().any(|clock| clock.field() == key))
+            {
+                continue;
+            }
             if let (Some(value_type), Some((owner, ordinal))) =
                 (field_types.get(key), field_homes.get(key))
             {

@@ -21,6 +21,7 @@ use crate::model_world::World;
 #[derive(Default)]
 struct Recording {
     calls: RefCell<Vec<usize>>,
+    items: RefCell<Vec<ClaimItem>>,
 }
 
 impl Negotiate for Recording {
@@ -30,6 +31,7 @@ impl Negotiate for Recording {
         candidates: &CandidateOutcome,
     ) -> (Disposition, Option<Diagnostic>) {
         self.calls.borrow_mut().push(item.request_index.get());
+        self.items.borrow_mut().push(item.clone());
         match candidates {
             CandidateOutcome::Candidates(set) if set.candidates().len() == 1 => {
                 (Disposition::Supported(set.candidates()[0].clone()), None)
@@ -187,6 +189,11 @@ fn unsupported_blocks_only_descendants_and_does_not_require_trace_bound() {
     let Some(PlanResult::Analysis(safe)) = result.dispositions[0].1.result.as_ref() else {
         panic!("terminal record");
     };
+    let detail = safe
+        .diagnostic_detail()
+        .expect("unsupported kind and extent");
+    assert_eq!(detail["kind"], "temporal-satisfaction");
+    assert_eq!(detail["extent"], "bounded");
     assert_eq!(
         safe.diagnostic(),
         Some(NegotiationOutcome::UnsupportedRequestedCapability.code())
@@ -458,4 +465,57 @@ fn direct_call_cycle_is_rejected_before_negotiation() {
         VerificationPlanRefusal::InvalidDocument { reason }
     )) if reason == "requires cycle"));
     assert!(negotiate.calls.borrow().is_empty());
+}
+
+#[trace("FR-753-AC-5", "TC-3028")]
+#[test]
+fn contract_method_negotiates_an_operation_contract_item() {
+    let world = world();
+    let mut plan = plan(&world, &[("contract", "contract_check")], &[]);
+    let clause = world
+        .package
+        .graph()
+        .state_clauses()
+        .iter()
+        .find(|clause| clause.name() == "Inc")
+        .expect("postcondition");
+    plan.nodes[0].claim.node = serde_json::from_value(
+        serde_json::to_value(fsl_semantics::check::wire_id::structural_id(
+            &clause.identity(),
+        ))
+        .expect("identity"),
+    )
+    .expect("plan identity");
+    plan.nodes[0].claim.occurrence.ordinal = clause.claim().ordinal();
+    plan.nodes[0].method.kind = "operation-contract".into();
+    let negotiate = Recording::default();
+    let result = execute_plan(
+        &world.package,
+        &plan,
+        &inputs(&world, &plan),
+        &Engines::default(),
+        &negotiate,
+        &AnalyzeLimits::unbounded(),
+        &Cancel::new(),
+    )
+    .expect("contract route")
+    .into_value();
+    assert_eq!(*negotiate.calls.borrow(), [0]);
+    let items = negotiate.items.borrow();
+    assert_eq!(
+        items[0].kind,
+        fsl_semantics::check::Capability::OperationContract
+    );
+    assert_eq!(
+        items[0].options.max_cases.map(std::num::NonZeroU64::get),
+        Some(5)
+    );
+    assert_eq!(result.dispositions[0].1.status, PlanStatus::Unsupported);
+    let Some(PlanResult::Analysis(record)) = &result.dispositions[0].1.result else {
+        panic!("contract record");
+    };
+    assert_eq!(
+        record.diagnostic(),
+        Some(NegotiationOutcome::UnsupportedRequestedCapability.code())
+    );
 }
