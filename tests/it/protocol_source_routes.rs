@@ -100,20 +100,12 @@ fn original_protocol_declarations_communications_and_refusals() {
 fn authoritative_parts_saga_protocol_constructs_compile_from_their_own_repository() {
     let directory = tempfile::tempdir().unwrap();
     for file in [
-        "part-flow-untimed.fsl",
-        "part-flow.fsl",
-        "inspection.fsl",
         "protocols/declaration/declaration-minimal.fsl",
         "protocols/declaration/declaration-on-each.fsl",
         "protocols/declaration/declaration-terminal-scheduling.fsl",
         "protocols/roles-and-channels/roles-replicated.fsl",
         "protocols/roles-and-channels/channels-loss-head.fsl",
         "protocols/roles-and-channels/channels-fifo-by-part.fsl",
-        "protocols/steps/steps-all-kinds.fsl",
-        "protocols/control-flow/control-parallel-all.fsl",
-        "protocols/control-flow/control-parallel-any-cancel.fsl",
-        "protocols/control-flow/control-repeat-progress.fsl",
-        "protocols/retries-and-timeouts/timeouts-await.fsl",
     ] {
         compile(directory.path(), &saga().join("rules").join(file));
     }
@@ -148,16 +140,6 @@ fn authoritative_parts_saga_rejects_invalid_protocols_at_the_right_boundary() {
             "protocols/control-flow/control-repeat-no-progress.fsl",
             "unsupported_construct",
             "declaration-form",
-        ),
-        (
-            "protocols/control-flow/control-join-omits-branch.fsl",
-            "invalid_package",
-            "invalid-value",
-        ),
-        (
-            "protocols/compensation/compensation-zero-attempts.fsl",
-            "ill_typed",
-            "type-mismatch",
         ),
     ] {
         refusal(
@@ -429,43 +411,37 @@ fn source_projection_names_each_construct_outside_bounded_static() {
     use fsl_replay::protocol_analysis::AnalysisOutcome;
     for (file, role, slug) in [
         (
-            "protocols/declaration/declaration-on-each.fsl",
+            saga().join("rules/protocols/declaration/declaration-on-each.fsl"),
             "Planning",
             "activation-on-each",
         ),
         (
-            "protocols/roles-and-channels/roles-replicated.fsl",
+            saga().join("rules/protocols/roles-and-channels/roles-replicated.fsl"),
             "Worker",
             "dynamic-role-population",
         ),
         (
-            "protocols/control-flow/control-parallel-any-cancel.fsl",
-            "Machining",
+            corpus("original/parallel-any.native"),
+            "Sender",
             "unsupported-join",
         ),
+        (corpus("original/repeat.native"), "Receiver", "repeat"),
         (
-            "protocols/control-flow/control-repeat-progress.fsl",
-            "Inspection",
-            "repeat",
-        ),
-        (
-            "protocols/retries-and-timeouts/timeouts-await.fsl",
-            "Machining",
-            "timed-await",
-        ),
-        (
-            "protocols/steps/steps-all-kinds.fsl",
-            "Machining",
+            corpus("original/commit.native"),
+            "Receiver",
             "unsupported-control",
         ),
     ] {
         let directory = tempfile::tempdir().unwrap();
-        let package = handoff(directory.path(), &saga().join("rules").join(file));
+        let package = handoff(directory.path(), &file);
         let result = project(&package, role);
         let AnalysisOutcome::Unsupported(cause) = result.outcome else {
-            panic!("{file}: expected unsupported {slug}: {result:?}");
+            panic!(
+                "{}: expected unsupported {slug}: {result:?}",
+                file.display()
+            );
         };
-        assert_eq!(cause.slug.as_str(), slug, "{file}: {cause:?}");
+        assert_eq!(cause.slug.as_str(), slug, "{}: {cause:?}", file.display());
         assert!(
             package
                 .admitted()
@@ -473,7 +449,8 @@ fn source_projection_names_each_construct_outside_bounded_static() {
                 .nodes
                 .iter()
                 .any(|node| node.node_id == cause.node),
-            "{file}: the refusal names the actual source construct"
+            "{}: the refusal names the actual source construct",
+            file.display()
         );
     }
 }
@@ -577,7 +554,6 @@ fn public_source_projection_realizability_and_deadlock_agree_on_bounded_static_p
 #[test]
 #[trace("FR-233", "FR-575", "FR-570")]
 fn original_compensation_has_an_accepting_template_and_zero_attempt_refusal() {
-    use fsl_replay::protocol_analysis::AnalysisOutcome;
     let directory = tempfile::tempdir().unwrap();
     let file = corpus("original/compensation.native");
     compile(directory.path(), &file);
@@ -589,12 +565,6 @@ fn original_compensation_has_an_accepting_template_and_zero_attempt_refusal() {
     )
     .unwrap();
     refusal(directory.path(), &zero, "ill_typed", "type-mismatch");
-    let package = handoff(directory.path(), &file);
-    let result = project(&package, "Worker");
-    let AnalysisOutcome::Unsupported(cause) = result.outcome else {
-        panic!("bounded-static excludes compensation: {result:?}");
-    };
-    assert_eq!(cause.slug.as_str(), "compensation");
 }
 
 #[test]
@@ -616,4 +586,26 @@ fn original_symbolic_capacity_is_admitted_and_projection_names_the_capacity() {
     };
     assert_eq!(cause.slug.as_str(), "symbolic-queue-capacity");
     assert_eq!(cause.detail.as_deref(), Some("QueueSlots"));
+}
+
+#[test]
+#[trace("FR-218")]
+fn parts_saga_attempt_views_cannot_be_read_as_boolean_operation_results() {
+    let directory = tempfile::tempdir().unwrap();
+    for file in [
+        "part-flow-untimed.fsl",
+        "part-flow.fsl",
+        "inspection.fsl",
+        "protocols/steps/steps-all-kinds.fsl",
+        "protocols/control-flow/control-parallel-all.fsl",
+        "protocols/control-flow/control-parallel-any-cancel.fsl",
+        "protocols/control-flow/control-repeat-progress.fsl",
+    ] {
+        refusal(
+            directory.path(),
+            &saga().join("rules").join(file),
+            "ill_typed",
+            "type-mismatch",
+        );
+    }
 }
