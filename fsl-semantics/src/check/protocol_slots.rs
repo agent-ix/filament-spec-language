@@ -107,6 +107,9 @@ pub struct CheckedRepeat {
     /// Whether the guard reads a binder declared in this repeat's body.
     /// Such a repeat is post-test and executes its body before the first guard.
     pub post_test: bool,
+    /// The binders readable by the repeat's decision slots: those at its
+    /// entry plus the binders its body produces on every path.
+    pub decision_readable: BTreeSet<usize>,
     /// Whether a `visible` entry, the invariant or the variant reads a
     /// binder declared in this repeat's body. Only the guard decides
     /// post-test semantics.
@@ -1508,6 +1511,7 @@ pub(crate) fn check(
             visible,
             max: repeat.max.as_ref().map(|max| max.value),
             post_test,
+            decision_readable: readable.clone(),
             decisions_read_body,
             loop_proof,
             guard,
