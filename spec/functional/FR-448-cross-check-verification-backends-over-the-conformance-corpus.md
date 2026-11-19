@@ -118,7 +118,15 @@ not settle a raw backend outcome.
 The gate SHALL then replay the counterexample of every `refuted` record
 again through the `replay` facade, as a re-check of the provider. If that
 replay settles `ReproducedWithEvaluatedWitness`, then the record stays
-`refuted`. If it settles `Inconclusive` (the replayed verdict differs, or
+`refuted`. A hybrid counterexample whose trace exact replay cannot decide
+(FR-450 `NotExact`) and whose record was refuted through an accepted FSpec
+FR-652 `validated-witness` SHALL be re-checked by running FR-751's witness
+check again on the witness the record carries, against the recompiled
+claim and hybrid model: if the check accepts it, the replay settles
+`ReproducedWithValidatedWitness` and the record stays `refuted`; if it
+rejects it, or the record carries no witness, the replay settles
+`Inconclusive` and the record is handled as the `Inconclusive` case below;
+a check the work limit stops is a replay refusal, handled as below. If it settles `Inconclusive` (the replayed verdict differs, or
 the replay completed no value), then the record SHALL count as not
 definite, and the item SHALL be `conflict`, naming the backend, its
 `refuted` record and the gate's replay result: the backend and the

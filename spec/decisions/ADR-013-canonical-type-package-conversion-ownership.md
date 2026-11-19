@@ -569,7 +569,11 @@ including the E9 replay of every counterexample:
 
 - Definite records are `proved` (any `ProofBasis` that maps to success) and
   `refuted` (a counterexample whose replay settles
-  `ReproducedWithEvaluatedWitness`). Every other record is not definite:
+  `ReproducedWithEvaluatedWitness`, or, for a hybrid counterexample exact
+  replay cannot decide, `ReproducedWithValidatedWitness`: FSpec FR-652's
+  accepted `validated-witness` proves in exact interval arithmetic that
+  every enclosed solution violates the claim, so the refutation is as
+  definite as an exactly replayed one). Every other record is not definite:
   `tested`, `measured`, and the inconclusive, incomplete, unsupported,
   refusal and internal-failure categories, including a vacuous `Proved`
   and a counterexample settled `replay_parity` or `replay_refused`. A

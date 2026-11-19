@@ -274,8 +274,9 @@ item's `Counterexample`.
   `counterexamples` entry, with the cause `UndefinedEvaluation{where, cause}`
   for that kind, whether the provider reported the trace as
   `solver-inconclusive` or as `refuted`.
-- A `NotReproduced` or `NotExact` trace from a `solver-inconclusive` cause
-  SHALL leave the item `inconclusive`, `SolverInconclusive{trace, replay}`.
+- A `NotReproduced` trace, or a `NotExact` trace with no accepted
+  `validated-witness`, from a `solver-inconclusive` cause SHALL leave the
+  item `inconclusive`, `SolverInconclusive{trace, replay}`.
 - A `HybridReplayRefusal::ResourceExhausted { counter: WorkUnits }` from either replay
   function SHALL settle the item
   `incomplete`, `Incomplete(LimitReached{limit, value, setting})`, whether
@@ -284,8 +285,34 @@ item's `Counterexample`.
   `work_units` bound, and `setting` `accounting.work_units`; the caller can
   raise the bound through that
   setting. The item SHALL carry no counterexample and no verdict.
-- A provider's `refuted` entry whose trace gives `NotReproduced` or
-  `NotExact` SHALL settle the item `inconclusive` with
+- A `NotExact` trace whose entry, a provider's `refuted` entry or a
+  `solver-inconclusive` cause, carries an FSpec FR-652 `validated-witness`
+  that FR-751 accepts SHALL settle the item `refuted` (ADR-018 V-4) with
+  that trace as its `HybridCounterexample` and one `counterexamples` entry,
+  its kind `undefined-evaluation{where, cause}` when the witness's decisive
+  box is one over which an expression is definitely without value and
+  `formula` otherwise. Its replay settlement is FSpec FR-364's
+  `reproduced-with-validated-witness`: exact replay cannot decide the trace,
+  and the accepted witness proves in exact interval arithmetic that every
+  solution its boxes enclose, the one solution from the trace's start among
+  them, violates the claim. A `NotReproduced` trace never settles `refuted`
+  through a witness, because exact replay decided that trace and found no
+  violation.
+- The kind a provider's `refuted` entry claims SHALL agree with the kind
+  its accepted witness gives, by the agreement rule above with the
+  witness's decisive box in place of the reproduced decisive instant: both
+  `Formula`, or both `UndefinedEvaluation` with equal `where.position`,
+  equal `where.locus`, equal `cause` and a claimed `where.time` that
+  contains the decisive box's instant, or the step's `time` for an a-priori
+  box. A claim whose kind does not agree SHALL settle the item
+  `inconclusive` with
+  `ReplayParity(DisagreementCause::HybridTrace(NotExact{counterexample}))`,
+  carrying the provider's complete counterexample, and no `counterexamples`
+  entry, because the witness proves a different violation from the one the
+  provider claimed.
+- A provider's `refuted` entry whose trace gives `NotReproduced`, or gives
+  `NotExact` with no `validated-witness` or one FR-751 rejects, SHALL settle
+  the item `inconclusive` with
   `ReplayParity(DisagreementCause::HybridTrace(disagreement))` (FSpec FR-364).
   `disagreement` SHALL be `HybridTraceDisagreement::NotReproduced` when exact
   replay returned `NotReproduced`, and
@@ -311,6 +338,7 @@ item's `Counterexample`.
 | FR-450-AC-7 | Over `Bounce` and its `Up`/`Down` point lasso from FR-450-AC-6 with `loop_to` 0, a provider's `refuted` trace against `eventually [999999, 1000000] holds(h.x = 2)` needs at least 500,000 `ClaimSegment`s to evaluate the finite interval because the lasso repeats every 2 seconds and replay reaches the 1,000,000-second upper bound; with `work_units` 100,000, the meter cannot cover all required segment charges and exhausts deterministically before deciding the formula, so replay returns `HybridReplayRefusal::ResourceExhausted{counter: WorkUnits}` and settles `incomplete`, `LimitReached{limit: work_units, value: 100000, setting: accounting.work_units}`, with no verdict or `counterexamples` entry. | Test (TC-1221) |
 | FR-450-AC-8 | In a `Bounce` variant whose `Up` transition guard is `descending(x) and x = 1`, define the nonrecursive pure Boolean wrapper `descending(s: Rational[0, 20000]): Boolean pure { descend(20000) }` and the recursive pure Boolean function `descend(n: Int[0, 20000]): Boolean pure decreases(n) { if n = 0 then true else descend(n - 1) }`. S3 admits the guard call to `descending` because its argument and parameter are rational, while the `Int` recursion stays in the wrapper body outside the hybrid-term call boundary; FSpec FR-146 admits `n` as an integer measure. Static replay evaluates 20,000 recursive edges, making 20,001 recursive `descend` calls plus the one `descending` wrapper call, on an explicit stack; with `work_units` 100, the meter exhausts while evaluating the guard and replay returns `HybridReplayRefusal::ResourceExhausted{counter: WorkUnits}`, settling `incomplete`, `LimitReached{limit: work_units, value: 100, setting: accounting.work_units}`, with no verdict or counterexample; with `work_units` `u64::MAX`, it returns `Consistent` without stack overflow. | Test (TC-1221) |
 | FR-450-AC-10 | Over FR-447's `Braking` without `t`, against `always [0, 10] holds(h.v > 5)`, the point trace from `(Moving, v = 20, a = 2, time 0)` with no jump and `end` `(time 8, v = 4, a = 2)` replays statically `Consistent` and exactly `Reproduced` with kind `Formula`, the bad prefix ending at `end`; with `end` `v = 5` it gives `NotReproduced` at `/end`; with `end` `v = 25` static replay gives `Inconsistent` at check `End`; a trace carrying `end` and `loop_to` 0 refuses `invalid_result`/`invalid-value` at `/end`. | Test (TC-1221) |
+| FR-450-AC-11 | Over FSpec FR-652-AC-3's `Grow`, whose flow `v' = 1 - 1 / (1 + v * v)` is not a polynomial flow so its point trace from `v = 1` gives `NotExact`, a provider's `refuted` entry carrying that trace with FR-652-AC-3's nine-step `validated-witness`, which FR-751 accepts, settles `refuted` with the trace as its `HybridCounterexample` of kind `Formula` and one `counterexamples` entry; the same entry with the witness cut after its step at `[28, 32]`, which FR-751 rejects `witness-violation`, settles `inconclusive`, `ReplayParity(DisagreementCause::HybridTrace(NotExact{counterexample}))` as FR-450-AC-9 states, with no `counterexamples` entry. | Test (TC-1221) |
 
 ## Dependencies
 
