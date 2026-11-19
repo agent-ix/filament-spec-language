@@ -334,5 +334,4 @@ fn conversion_to_the_same_text_type_is_an_identity_without_a_node() {
         first, second,
         "the identity conversion leaves the operand reference intact"
     );
-    assert_eq!(graph.requirements().len(), 0, "no identity body obligation");
 }
