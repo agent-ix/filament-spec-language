@@ -2138,10 +2138,18 @@ pub enum ExecuteResult {
 enum OutcomeResult {
     Execute(ExecuteResult),
     Parsed(ParsedOutcome),
+    Formatted(FormattedOutcome),
     Exported(ExportedOutcome),
     Replayed(ReplayedOutcome),
     #[cfg(feature = "test-support")]
     Raw(serde_json::Value),
+}
+
+/// The formatted source text of a successful `format` operation (FR-286).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct FormattedOutcome {
+    kind: &'static str,
+    text: String,
 }
 
 /// FR-286 "Export outcomes": the `exported` result holding the FSpec FR-817
@@ -2238,9 +2246,9 @@ impl From<&CallIncomplete> for ResultLimit {
 ///
 /// `items` is always written, an empty array for an operation with no
 /// requested items. `last_stage` is `null` when no stage is known to have
-/// run. `result` is always written: `null` except for a completed,
-/// undefined or incomplete `execute` outcome. `artifacts` is always written
-/// as an empty array.
+/// run. `result` is always written: `null` unless the operation returns a
+/// value, including formatted source text. `artifacts` is always written as
+/// an empty array.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutcomeDocument {
     #[cfg(feature = "quire-extraction")]
@@ -2490,7 +2498,15 @@ impl OutcomeDocument {
         for<'a> &'a E: Into<FormatOutcomeRefusal>,
     {
         match result {
-            Ok(_) => Self::new(Operation::Format, Some(OutcomeStage::S2), Category::Success),
+            Ok(text) => {
+                let mut document =
+                    Self::new(Operation::Format, Some(OutcomeStage::S2), Category::Success);
+                document.result = Some(OutcomeResult::Formatted(FormattedOutcome {
+                    kind: "formatted",
+                    text: text.value().clone(),
+                }));
+                document
+            }
             Err(refusal) => {
                 let refusal: FormatOutcomeRefusal = refusal.into();
                 let stage = if refusal.category == Category::InternalFailure {
