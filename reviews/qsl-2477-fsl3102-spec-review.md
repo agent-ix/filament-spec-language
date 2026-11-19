@@ -51,3 +51,32 @@ Sound as written: hint-on-diagnostics-only, the versioning rule (/1 for additive
 | FND-010 | low | "re-encoding through ix-cli-kit's json module is the identity": ix-cli-kit FR-006 sorts keys by UTF-8 byte order, RFC 8785 by UTF-16 code units; they differ for user-keyed maps (FR-650 record `fields`) mixing supplementary and U+E000-U+FFFF keys | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:524-529 |
 | FND-011 | low | "Every object it describes is closed ... a member the type writes and the schema does not list fails" does not say how user-keyed maps (FR-650 record `fields`, counterexample assignments) are described | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:559-560 |
 | FND-012 | low | FR-286-AC-28's and FR-865-AC-8's blank-label clauses ("the hint its pair's row gives or none", "when its pair has a row") cannot fail on hint presence, since the table has no `invalid_source_identity`/`blank-label` row | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:619 |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-013 | high | `OutcomeItem.seed` is written as a JSON number from a `u64` (outcome.rs:930, 1392), FSpec FR-331 spells `seed` as a decimal string, and FR-392 admits any u64 seed. Through the one quire-canonical encoder, a seed above 2^53 is refused, so the outcome of a legal request cannot be written, and a schema transcribed from FR-331 rejects the number at any value | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:617 |
+| FND-014 | high | "Every writer of an FSL JSON document shall encode it through `fsl_foundation::canonical_json::encode`" (also "Every JSON document FSL writes is encoded by one function") contradicts FR-517, whose handoff `inventory.json`, `selection.json` and `identities.json` are pretty-printed with two-space indent and a fixed member order, with exact-bytes ACs | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:374-376 |
+| FND-015 | medium | The completeness test cannot enumerate "every member path a writer can emit". It collects paths only from hand-built full-member values. For the `Value`-assembled writers (fsl-analyze item_document and simulation_item, the monitor events), and for a new serde field left `None` in the fixture, an added member with no fixture change passes. "A writer member added without a schema change fails this test" is therefore not delivered, and AC-31's mutation only catches a removed declaration of an already exercised member | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:645-652 |
+| FND-016 | medium | The `OutcomeItem` row lists `label`, which is `#[serde(skip)]` and never written, and omits `category`, which every item writes (outcome.rs:906-907, 978-979) | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:617 |
+| FND-017 | medium | The `CATALOG_PAIRS` crate list omits filament-semantic-value. That pinned external crate defines typed causes producing table pairs (`missing_declaration`/`missing-name` in call.rs:79, `invalid_runtime_input`/`missing-member` in definition.rs), and the spec says neither which crate exports its pairs nor how string-literal causes (`OutcomeDiagnostic::new(Some("missing-member"), ..)`) enter the aggregate | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:491-502 |
+| FND-018 | medium | "every `io-error` diagnostic is a selected file that could not be opened or read" is false. `RunCause::Io` also carries output-file write failures (fsl-command/src/command/output_file.rs:40) and monitor checkpoint writes (monitor.rs:714), so the read-file hint misdirects them | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:547-550 |
+| FND-019 | low | FR-286 now says the driver writes FSL's bytes unchanged and never re-encodes through ix-cli-kit. Driver FR-002-AC-9 still requires machine-mode outcomes to be encoded through ix-cli-kit's `json` module, so a driver spec change (a tracked follow-up) is needed | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:581-588 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |
+| FND-005 | fixed | - |
+| FND-006 | fixed | - |
+| FND-007 | fixed | - |
+| FND-008 | fixed | - |
+| FND-009 | fixed | - |
+| FND-010 | fixed | - |
+| FND-011 | fixed | - |
+| FND-012 | fixed | - |

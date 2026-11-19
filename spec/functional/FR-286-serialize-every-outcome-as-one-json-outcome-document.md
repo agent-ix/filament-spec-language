@@ -381,6 +381,11 @@ The outcome document's bytes.
   schema `urn:filament:outcome:1`.
 - The published schema shall declare every member path a writer of the
   document can emit.
+- If a document holds a JSON integer outside -(2^53 - 1) to 2^53 - 1, then
+  `fsl_foundation::canonical_json::encode` shall refuse it with
+  `CanonicalJsonError::UnsafeInteger` naming its pointer.
+- The serialization shall write an item's `seed` as FSpec FR-331's
+  `U64String`, a decimal string.
 - When the hint catalog has a row for a diagnostic's code and cause, the
   serialization shall write that row's text as the diagnostic's `hint`.
 - When the hint catalog has no row for a diagnostic's code and cause, the
@@ -501,6 +506,26 @@ crate's `CATALOG_PAIRS`, is the one place that sees every pair. A typed
 cause added to a crate is added to that crate's `CATALOG_PAIRS` in the same
 change.
 
+`filament-semantic-value`, the external crate pinned in the workspace
+manifest, also defines typed causes (its call, definition and admission
+causes produce, among others, `missing_declaration`/`missing-name` and
+`invalid_runtime_input`/`missing-member`) and exports no pair list. Its
+pairs are contributed by `fsl_replay::outcome::hint::SEMANTIC_VALUE_PAIRS`,
+a table in the hint module, included in `diagnostic_pairs()`. A test of
+`fsl-replay` guards the table: it builds every variant of every
+`filament-semantic-value` cause type through an exhaustive `match` (so a
+new variant fails to compile until the test names it), and fails when a
+variant's `CatalogCode` is missing from the table or a table row is
+produced by no variant. When that crate exports its own list, the table is
+replaced by it.
+
+A cause written as a string literal at a call site, such as
+`OutcomeDiagnostic::new(Some("missing-member"), ..)`, belongs to no typed
+cause and adds no pair to `known`. Its pair is in the catalog's reach only
+when a typed cause also produces it; a hint row for a pair that only string
+literals write is refused as `UnknownPair`, which keeps the catalog tied to
+the closed cause variants FSpec FR-272 lists.
+
 The catalog is checked by `fsl_replay::outcome::hint::check_hint_catalog(rows,
 known) -> Result<(), HintCatalogError>`, run with `known` the aggregate
 `fsl_command::diagnostic_pairs()` as a test of `fsl-command`, so a catalog
@@ -544,10 +569,14 @@ refusals a new user most often meets, one or more per class of mistake:
 | A run over its work budget | `stage_limit_exceeded` | `work-budget-exceeded` |
 | A request document member left out | `invalid_runtime_input` | `missing-member` |
 | A request document member the format does not have | `invalid_runtime_input` | `unknown-member` |
-| A file that does not exist or cannot be read | `io-error` | none |
+| A file that cannot be opened, read or written, such as a missing input, a missing output directory or a denied checkpoint write | `io-error` | none |
 
 `io-error` has a row with no cause because every `io-error` diagnostic is a
-selected file that could not be opened or read, so one text fits them all.
+file operation the operating system refused: a selected input that could
+not be opened or read, or an output file or monitor checkpoint that could
+not be written. Its text names both, for example `Check that the path
+exists and that you may read it, or write to it for an output file.`, so it
+is true for every `io-error` diagnostic.
 A row is added for a pair whenever a journey test of the CLI finds a
 refusal a user cannot act on from its message alone.
 
@@ -558,15 +587,50 @@ not extend, so it carries no `hint`.
 
 ### Canonical encoding and key order
 
-Every JSON document FSL writes is encoded by one function,
+The machine-output documents are encoded by one function,
 `fsl_foundation::canonical_json::encode<T: Serialize>(value: &T) ->
 Result<Vec<u8>, CanonicalJsonError>`, which writes the RFC 8785 (JCS)
-canonical encoding through `quire-canonical`. `OutcomeDocument::to_bytes`
-calls it, and so does every writer that builds a document as a
-`serde_json::Value`: the analyze document `fsl-analyze` assembles (with its
-`aggregate` and `registry`), the monitor events, summary and run document
-`fsl-command` writes, and the command-error envelope. No writer encodes a
-document through `serde_json::to_vec` or its own sort.
+canonical encoding through `quire-canonical`. The rule covers the
+`filament-outcome/1` document of every operation, the `analyze` document
+`fsl-analyze` assembles (with its `aggregate` and `registry`), the
+`filament.monitor-event/1` events, the `filament.monitor-summary/1` summary
+and the `filament.monitor-run/1` document `fsl-command` writes (FR-644), and
+the command-error envelope. `OutcomeDocument::to_bytes` calls it, and so
+does every writer of these documents that builds one as a
+`serde_json::Value`; none of them is encoded through `serde_json::to_vec` or
+its own sort.
+
+The rule does not cover files whose own requirement fixes another form. The
+FR-517 checked-package handoff files (`inventory.json`, `selection.json`,
+`identities.json` and their siblings) keep the pretty-printed form with
+two-space indentation and the fixed member order FR-517 states, and its
+exact-bytes acceptance criteria stay as written; those files are read by
+their strict readers, not compared with an outcome's bytes.
+
+#### Numbers
+
+The encoder refuses, with `CanonicalJsonError::UnsafeInteger` naming the
+member's pointer, any JSON integer outside -(2^53 - 1) to 2^53 - 1: RFC 8785
+writes numbers as IEEE 754 doubles, so a larger integer would not survive a
+round trip, and `quire-canonical` refuses it. A member whose value can
+exceed that range is therefore written as a decimal string. `seed`, the
+state-graph seed an item carries, is FSpec FR-331's `U64String`, the
+canonical decimal string of a `u64` from `"0"` to
+`"18446744073709551615"`, because FSpec FR-392 admits any `u64` seed;
+`OutcomeItem` writes it as that string, and a simulation item's `seed` is
+the same string. Counts, bounds and limits the Description gives as ASCII
+decimal strings (`bound`, `counter`, exploration counts) stay strings. The
+other unsigned integers of the document are JSON numbers, each bounded
+below 2^53 by where its value comes from:
+
+| Member | Bound |
+| --- | --- |
+| `request_index`, an item's `position`, `count`, `min_count` | a position or count over a request or trace held in memory, below 2^53 |
+| `max_depth`, `witness_samples`, the values of a state-graph `limits` | request settings the request reader admits only from 0 to 2^53 - 1, as FSpec FR-520 admits `deadline_ms` and `limits.accounting`; a larger value refuses `invalid-request` naming the member |
+| `details.position` | a parameter position, below the declared parameter count |
+
+A member added to this table or to the document with a `u64` that can
+exceed 2^53 - 1 is a decimal string, not a number.
 
 RFC 8785 orders an object's members, at every depth, by their names'
 UTF-16 code units, writes no insignificant whitespace, and writes each
@@ -614,9 +678,9 @@ every depth. The writers and the members each contributes:
 | --- | --- |
 | `OutcomeDocument` (every operation) | the root members `format`, `operation`, `last_stage`, `category`, `items`, `diagnostics`, `artifacts` and `result` of the Description; and `registry`, FR-635's registry, on an `execute` document of a call carrying `requirements`, whose `items` are FR-963's settled requirement items in FR-621's item spelling |
 | `OutcomeDiagnostic` | the "Diagnostic members" table, with `details` from "Diagnostic details" |
-| `OutcomeItem` (`prove`, `monitor`, clause runs) | `request_index`, `result`, `label`, `cause`, `diagnostic`, `basis`, `certification`, `measured`, `method`, `max_depth`, `seed`, `witness_samples`, `limits`, `limit_reached`, `position`, `counterexample`, `decisive`, `witness`, `evidence`, `certificate_document`, `count`, `min_count`, `clause`, `axes`, and the FR-990 protocol conformance members `obligations`, `closure`, `global`, `max_messages`, `projections`, `recording` and `replay` |
+| `OutcomeItem` (`prove`, `monitor`, clause runs) | `request_index`, `category`, `result`, `cause`, `diagnostic`, `basis`, `certification`, `measured`, `method`, `max_depth`, `seed` (a decimal string, "Numbers"), `witness_samples`, `limits`, `limit_reached`, `position`, `counterexample`, `decisive`, `witness`, `evidence`, `certificate_document`, `count`, `min_count`, `clause`, `axes`, and the FR-990 protocol conformance members `obligations`, `closure`, `global`, `max_messages`, `projections`, `recording` and `replay` |
 | The `analyze` document (`fsl-analyze`) | the root `aggregate` (`status`, `gaps`, each gap `request_index`, `reason`, `result`) and `registry` (FR-635); each item's FR-621 members (`request_index`, `claim_name`, `request`, `category`, `record`, `certificate`, `counterexample`, `replay`, `accounting`, `exploration`, `axes`), `disposition` for a finite-replay item (FR-941), and `obligations`, `closure`, `global`, `projections` and `recording` (FR-990, FR-1032); the record's `settled_by`, `backend`, `non_zeno`, `memory_bound`, `trace` and `steps` |
-| A `simulation` item (FR-634) | FR-634's members in place of `record`, with `coverage` and `frontier` |
+| A `simulation` item (FR-634, `fsl-analyze` `simulation_item`) | `request_index`, `kind` (`simulation`), `simulation` (the admitted settings: `mode`, `seed` and `samples` for `sample`, `max_steps`, `max_states`, `max_state_key_bytes`), `category`, `seed` for a `sample` run, `traces`, `coverage` (`states`, `transitions`, `choices`), `findings` (always present, an empty array when none), `frontier`, and `cause` when the run stopped at a limit or could not simulate; no `record` |
 | `check_fences` (`from_native_fences`) | FR-355's fence entries as `items` |
 | `result` | each kind of the Description: `completed`, `undefined`, `incomplete`, `parsed` (FR-663), `formatted`, `replayed` (FSpec FR-323 rows), `exported` (FSpec FR-817) |
 
@@ -643,13 +707,31 @@ every depth. The writers and the members each contributes:
   `check_hint_catalog`, since a schema counts code points.
 
 The schema is complete when no writer can emit a member it does not
-describe. A completeness test checks this from the writers' side: for each
-writer in the table it builds full-member values (every optional member
-present, every enum variant once, every `result` kind and `Counterexample`
-variant), encodes them, collects every member path (a JSON pointer with
-array indices and declared-name map keys replaced by `*`), and fails naming
-each path the schema does not declare. A writer member added without a
-schema change fails this test.
+describe. Each writer declares its own member list, and the list is tied to
+the writer so a new member cannot be added to one without the other:
+
+- A typed writer (`OutcomeDocument`, `OutcomeDiagnostic`, `OutcomeItem` and
+  the structs they hold) declares `const MEMBERS: &[&str]`, the names it can
+  write. Its test builds a full-member fixture through a constructor that
+  takes every field by exhaustive struct destructuring or a struct literal
+  with no `..`, so adding a field fails to compile until the fixture sets
+  it; the fixture sets every optional field to `Some`, serializes, and the
+  test fails unless the emitted keys equal `MEMBERS` exactly.
+- A writer that assembles a `serde_json::Value` (the analyze document and
+  item, the simulation item, the monitor events and summary) declares
+  `const MEMBERS: &[&str]` beside the function, and inserts each member
+  through a helper that takes a name from `MEMBERS` (an index or a typed
+  key), never a free string, so a member it emits is a member it declares.
+  Its test runs the writer over fixtures that reach every branch and fails
+  when an emitted key is not in `MEMBERS` or a `MEMBERS` entry is never
+  emitted.
+
+The completeness test then reads every writer's `MEMBERS`, at every
+nesting level, as member paths (a JSON pointer with array indices and
+declared-name map keys replaced by `*`), and fails naming each path the
+schema does not declare. A member added to a writer reaches its `MEMBERS`
+(through the fixture's compile error or the helper), and from there fails
+the completeness test until the schema declares it.
 
 The schema is versioned with the format. The file for `filament-outcome/1`
 changes in the same change as the outcome type: a new optional member, such
@@ -727,9 +809,16 @@ member goes untested against a real writer's bytes.
 | FR-286-AC-28 | FR-286-AC-2's `ill_typed`/`type-mismatch` diagnostic carries `hint` equal to `hint_for(Code::IllTyped, Some("type-mismatch"))`, a nonempty sentence ending in `.`; the `io-error` diagnostic of FR-865-AC-4's `fsl run nosuch.json` carries `hint` equal to `hint_for(Code::IoError, None)`. FR-286-AC-23's `output-failure`/`output-failure` diagnostic, the cause-less `invalid-request` diagnostic of a malformed request document, and FR-286-AC-15's `invalid_source_identity`/`blank-label` diagnostic, pairs with no catalog row, have no `hint` member; the blank-label diagnostic has none through `from_source_diagnostic` and through a compile, a parse and a format refusal alike. | Test (TC-3112) |
 | FR-286-AC-29 | `check_hint_catalog(HINTS, fsl_command::diagnostic_pairs())` returns `Ok`, and `diagnostic_pairs()` holds every pair of the "Fix hints" table; with a row `(Code::IllTyped, Some("type-mistmatch"))` added it returns `Err(HintCatalogError::UnknownPair)` naming `ill_typed` and `type-mistmatch`; with a second `(Code::IllTyped, Some("type-mismatch"))` row added, `Err(DuplicatePair)`; with a row whose text holds a line feed, one holding U+0085, one that does not end in `.`, and one of 101 `é` and a final `.` (203 bytes, 102 code points), `Err(MalformedText)` naming its pair. | Test (TC-3113) |
 | FR-286-AC-30 | `hint_for` returns a text for every one of the 23 pairs of the "Fix hints" table, `io-error` with no cause included, and returns `None` for `(Code::OutputFailure, Some("output-failure"))` and for `(Code::InvalidRequest, None)`. | Test (TC-3113) |
-| FR-286-AC-31 | The schema completeness test passes over every writer of the "Published schema" table: the golden `execute` document of FR-963-AC-1's call with `requirements` and its root `registry`, an FR-990-AC-1 `analyze` item with `obligations`, `closure` and `global`, an FR-990-AC-3 item with `recording`, FR-634-AC-1's simulation item, a diagnostic with `construct`, `declaration`, `profile` and `text`, and an FR-650 record value whose `fields` hold the names `a` and `zz` all validate. Run against a copy of the schema with `max_messages` removed from the item definition, it fails naming `/items/*/max_messages`; the corpus coverage test run against a copy declaring a diagnostic member `unused` fails naming `/diagnostics/*/unused`. | Test (TC-3116) |
+| FR-286-AC-31 | The schema completeness test passes over every writer of the "Published schema" table: the golden `execute` document of FR-963-AC-1's call with `requirements` and its root `registry`, an FR-990-AC-1 `analyze` item with `obligations`, `closure` and `global`, an FR-990-AC-3 item with `recording`, FR-634-AC-1's simulation item, a diagnostic with `construct`, `declaration`, `profile` and `text`, and an FR-650 record value whose `fields` hold the names `a` and `zz` all validate. Run against a copy of the schema with `max_messages` removed from the item definition, it fails naming `/items/*/max_messages`. A new optional field added to `OutcomeItem` with the full-member fixture left unchanged fails to compile; set in the fixture but absent from `MEMBERS`, it fails the writer's `MEMBERS` test; added to `MEMBERS` and not to the schema, it fails the completeness test naming its path. A Value-built writer that emits a key outside its `MEMBERS` fails its `MEMBERS` test; the corpus coverage test run against a copy declaring a diagnostic member `unused` fails naming `/diagnostics/*/unused`. | Test (TC-3116) |
+| FR-286-AC-32 | A `prove` item from a state-graph record with seed 18446744073709551615 encodes `"seed":"18446744073709551615"`, validates against the schema, and reads back to the same `u64`; with seed 7 it encodes `"seed":"7"`. `fsl_foundation::canonical_json::encode` refuses `{"n": 9007199254740992}` with `CanonicalJsonError::UnsafeInteger` at `/n` and accepts `{"n": 9007199254740991}`. A request whose `witness_samples` is 9007199254740992 refuses `invalid-request` naming `witness_samples`. The handoff tree FR-517-AC-5 writes keeps its `selection.json` pretty-printed with two-space indentation and FR-517's member order, which the encoder rule does not touch. | Test (TC-3117) |
 
 ## Status
+
+Driver follow-up: driver FR-002-AC-9 still states that the CLI encodes
+machine-mode outcomes through ix-cli-kit's `json` module, which orders keys
+by UTF-8 bytes. Its change to writing FSL's canonical bytes unchanged is
+tracked by QSL-2606; until it lands the two disagree only for keys mixing a
+supplementary character with one from U+E000 to U+FFFF.
 
 The Reference-completion amendment under QSL-665 is source-only; producer,
 serializer and consumer qualification for AC-7 remain UNRUN. Existing
