@@ -53,7 +53,7 @@ use crate::hybrid_replay::{
 use crate::identity::{DefinitionSourceRef, ProfileSelection, QualifiedName};
 use crate::limits::CallerLimits;
 use crate::request::StageLimits;
-use crate::request::{ReplayRequest, ReplayRequestRefusal, ReplayRequestWire};
+use crate::request::{ReplayPackage, ReplayRequest, ReplayRequestRefusal, ReplayRequestWire};
 use crate::result::{
     EvaluatedValue, HybridReplayRecord, HybridReplayResult, HybridReplaySettlement, InputArmResult,
     ObservedTemporalResult, ReplayResult, Verdict, WitnessArmResult, WitnessCheck,
@@ -2415,7 +2415,12 @@ fn run_spine_units(
             bytes,
         })
         .collect::<Vec<_>>();
-    spine::preflight_unit_list(&requests, dependencies).map_err(ReplayRefusal::Recompile)?;
+    spine::preflight_unit_list(&requests, dependencies).map_err(|refusal| {
+        ReplayRefusal::Recompile {
+            refusal,
+            pointer: None,
+        }
+    })?;
     let parsed = requests
         .iter()
         .map(|request| {
@@ -2424,8 +2429,12 @@ fn run_spine_units(
                 .map_err(&refusal)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let admitted =
-        spine::admit_parsed_unit_list(parsed, dependencies).map_err(ReplayRefusal::Recompile)?;
+    let admitted = spine::admit_parsed_unit_list(parsed, dependencies).map_err(|refusal| {
+        ReplayRefusal::Recompile {
+            refusal,
+            pointer: None,
+        }
+    })?;
     let models = spine::select_units(&admitted, packages, limits.model, limits.source, &cancel)
         .map_err(&refusal)?
         .into_value();
@@ -2475,7 +2484,10 @@ fn run_spine_units(
             let units: Vec<_> = admitted.units().iter().collect();
             clocks
                 .package_selections(&checked, &units)
-                .map_err(ReplayRefusal::Recompile)?
+                .map_err(|refusal| ReplayRefusal::Recompile {
+                    refusal,
+                    pointer: None,
+                })?
         }
     };
     let emitted = spine::package_with_temporal_selections(

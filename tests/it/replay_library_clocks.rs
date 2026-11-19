@@ -22,7 +22,7 @@ const LIBRARY: &str = "test/plant";
 const PROGRAM: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
      import \"test/plant\" as P;\n\
-     function entry using v(): Boolean pure { P::flag() }\n";
+     function entry using v(): Boolean pure { true }\n";
 const LIBRARY_HEAD: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
      profile w = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
@@ -35,7 +35,7 @@ const SHARED: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
      profile w = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
      import \"test/plant\" as P;\n\
-     function entry using v(): Boolean pure { P::flag() }\n\
+     function entry using v(): Boolean pure { true }\n\
      temporal Early using w over (r: P::Reading) clock \"lib-ms\" \
      on origin { eventually[0,2] holds(r.level > 0) }\n";
 
