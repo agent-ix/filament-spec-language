@@ -13,7 +13,7 @@ protocol Exchange using p over (job: Job) on origin {
     ordering unordered delivery exactly-once-premise capacity 1 overflow block;
   run sequence Main {
     send Sent via Queue as (sent: Note) { true };
-    await Wait after Sent using absent clock "timer" within [0, 2] match receive Seen via Queue of Sent as (got: Note) { true }; then sequence InTime {} timeout sequence Late {}
+    await Wait after Sent using missing_clock_profile clock "timer" within [0, 2] match receive Seen via Queue of Sent as (got: Note) { true }; then sequence InTime {} timeout sequence Late {}
   }
   finish Done as (done: Boolean) { true };
 }

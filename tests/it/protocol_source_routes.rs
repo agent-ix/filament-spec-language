@@ -26,8 +26,19 @@ fn source(file: &Path) -> Value {
 }
 
 fn compile_request(file: &Path) -> Value {
+    let text = std::fs::read_to_string(file).unwrap();
+    let clocks = ["timer", "line-clock"]
+        .into_iter()
+        .filter(|name| text.contains(&format!("clock \"{name}\"")))
+        .map(|name| {
+            (
+                name.to_owned(),
+                json!({"kind":"timestamped_event","timestamp_unit":"s"}),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
     json!({"format":"native-compile/1","request":{
-        "program":{"source":source(file)},
+        "program":{"source":source(file)},"clocks":clocks,
         "models":[{"format":"semantic-ir/2.0.0",
             "source":source(&saga().join("model/parts-saga.semantic-ir.json"))}]}})
 }
@@ -239,26 +250,13 @@ fn assessed_root() -> fsl_replay::protocol_analysis::AssessedRootDraft {
 }
 
 fn handoff(directory: &Path, file: &Path) -> fsl_command::checked_handoff::CompiledHandoff {
-    use fsl_command::checked_handoff::{self, CheckedHandoffRequest, Corpus};
-    let output = directory.join("handoff");
-    checked_handoff::write(
-        &CheckedHandoffRequest {
-            emit: fsl_command::emit_checked_v2::Request {
-                source: file.to_path_buf(),
-                package_name: "protocol-corpus".into(),
-                models: vec![saga().join("model/parts-saga.semantic-ir.json")],
-                libraries: Vec::new(),
-                execution_points: None,
-                temporal_selections: Vec::new(),
-                out: None,
-            },
-            corpus: Corpus::None,
-            native_join: fsl_package::NativeJoinLimits::new(1 << 28, 1 << 24),
-        },
-        &output,
-    )
-    .expect("source protocol handoff");
-    checked_handoff::compile(&output).expect("read and compile the real handoff")
+    let mut request = compile_request(file);
+    request["request"]["handoff"] = json!({"directory":"handoff","package_name":"protocol-corpus",
+        "native_join":{"work_units":1_u64<<28,"storage":1_u64<<24}});
+    command::compile_outcome(&write(directory, &request))
+        .expect("compile and emit the source handoff");
+    fsl_command::checked_handoff::compile(&directory.join("handoff"))
+        .expect("read and compile the real handoff")
 }
 
 fn project(
