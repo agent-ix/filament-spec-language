@@ -415,7 +415,10 @@ fn check_with(
     };
     let liveness = if refinement.abstract_operation_fairness().next().is_none() {
         None
-    } else if matches!(safety, SafetyOutcome::Holds { .. }) {
+    } else if matches!(
+        safety,
+        SafetyOutcome::Holds { .. } | SafetyOutcome::HoldsUncertified { .. }
+    ) {
         Some(LivenessHalf::Checked(run.liveness()?))
     } else {
         None
