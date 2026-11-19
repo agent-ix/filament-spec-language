@@ -1490,23 +1490,50 @@ impl<'c> Builder<'_, '_, 'c> {
         local: &Local,
         planned: &mut Vec<Planned>,
     ) -> Step<()> {
-        if let Some(delayed) = self.unit_delay(local, state)? {
-            let unit = self.delay_move(
-                at,
-                state,
-                ProductAction::UnitDelay,
-                delayed.clone(),
-                Tail::Running,
-            )?;
-            if self.subdivisions == 1 || unit.target.key != self.nodes[at].key {
-                planned.push(unit);
+        if let Some(first_delay) = self.unit_delay(local, state)? {
+            if self.subdivisions == 1 {
+                let unit = self.delay_move(
+                    at,
+                    state,
+                    ProductAction::UnitDelay,
+                    first_delay.clone(),
+                    Tail::Running,
+                )?;
+                if unit.target.key != self.nodes[at].key {
+                    planned.push(unit);
+                }
+            } else {
+                let current_key = self.nodes[at].key.clone();
+                let mut cursor = state.clone();
+                for _ in 0..self.subdivisions {
+                    self.poll()?;
+                    let Some(delayed) = self.unit_delay(local, &cursor)? else {
+                        break;
+                    };
+                    let unit = self.delay_move(
+                        at,
+                        &cursor,
+                        ProductAction::UnitDelay,
+                        delayed.clone(),
+                        Tail::Running,
+                    )?;
+                    if unit.target.key != current_key {
+                        planned.push(unit);
+                        break;
+                    }
+                    if delayed.0 == cursor.clocks && delayed.1 == cursor.deadline {
+                        break;
+                    }
+                    cursor.clocks = delayed.0;
+                    cursor.deadline = delayed.1;
+                }
             }
             if local.quiescent {
                 planned.push(self.delay_move(
                     at,
                     state,
                     ProductAction::EnterIdleDelay,
-                    delayed,
+                    first_delay,
                     Tail::IdleDelayed,
                 )?);
             }
