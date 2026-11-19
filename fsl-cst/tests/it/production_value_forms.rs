@@ -1018,3 +1018,105 @@ fn minimal_hybrid_guarantee_and_composition_bodies_keep_only_authored_members() 
     )
     .is_empty());
 }
+
+fn temporal(body: &str) -> String {
+    unit(&format!(
+        "temporal Window using v over (s: Plant::State) on origin {{ {body} }}"
+    ))
+}
+
+#[test]
+#[trace("FSpec-FR-339-AC-1")]
+fn temporal_aggregate_kinds_keep_projection_filter_and_window_members() {
+    for (kind, kind_expressions) in [
+        ("count", vec![]),
+        ("sum", vec![]),
+        ("min", vec![]),
+        ("max", vec![]),
+        ("fraction holds(s.ready)", vec!["s.ready"]),
+        ("quantile rational(9, 10)", vec![]),
+    ] {
+        for options in [
+            "",
+            " of s.value",
+            " where holds(s.ready)",
+            " of s.value where holds(s.ready)",
+        ] {
+            let term = format!("{kind}{options} over past[0, 3] min_count 2");
+            let source = temporal(&format!("{term} >= 1"));
+            let parsed = accepted(&source);
+            let aggregate = one(&source, &parsed, Production::AggregateTerm, &term);
+            let expected: Vec<&str> = match options {
+                "" => vec![],
+                " of s.value" => vec!["s.value"],
+                " where holds(s.ready)" => vec!["s.ready"],
+                _ => vec!["s.value", "s.ready"],
+            };
+            assert_eq!(
+                children(&source, &parsed, aggregate, Production::Expression),
+                expected
+            );
+            assert_eq!(
+                children(&source, &parsed, aggregate, Production::PastWindow),
+                ["[0, 3]"]
+            );
+            let kind_node = one(&source, &parsed, Production::AggregateKind, kind);
+            assert_eq!(
+                children(&source, &parsed, kind_node, Production::Expression),
+                kind_expressions
+            );
+            if kind.starts_with("quantile") {
+                assert_eq!(
+                    children(&source, &parsed, kind_node, Production::ExactValue),
+                    ["rational(9, 10)"]
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[trace("FSpec-FR-339-AC-1")]
+fn aggregate_thresholds_and_step_or_time_windows_preserve_boolean_boundaries() {
+    for window in ["[0, 0]", "[1 ms, 3 ms]"] {
+        for operator in ["<", "<=", "=", ">=", ">"] {
+            let atom = format!("count over past{window} {operator} s.limit + 1");
+            let formula = format!("{atom} and holds(s.ready)");
+            let source = temporal(&formula);
+            let parsed = accepted(&source);
+            let conjunction = one(&source, &parsed, Production::TemporalConjunction, &formula);
+            assert_eq!(
+                children(&source, &parsed, conjunction, Production::TemporalRelation),
+                [atom.as_str(), "holds(s.ready)"]
+            );
+            let aggregate = one(&source, &parsed, Production::AggregateAtom, &atom);
+            assert_eq!(
+                children(&source, &parsed, aggregate, Production::Sum),
+                ["s.limit + 1"]
+            );
+            let window_node = one(&source, &parsed, Production::PastWindow, window);
+            assert_eq!(
+                children(&source, &parsed, window_node, Production::Horizon),
+                if window.contains("ms") {
+                    vec!["1 ms", "3 ms"]
+                } else {
+                    vec!["0", "0"]
+                }
+            );
+        }
+    }
+}
+
+#[test]
+#[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-4")]
+fn incomplete_aggregates_and_unwrapped_boolean_thresholds_refuse_locally() {
+    for (formula, marker, width) in [
+        ("count where holds() over past[0, 3] >= 1", ") over", 1),
+        ("sum of over past[0, 3] >= 1", "over past", 4),
+        ("count over past[0,] >= 1", "]", 1),
+        ("count over past[0, 3] min_count >= 1", ">=", 2),
+        ("count over past[0, 3] >= s.limit and s.ready", "s.ready", 1),
+    ] {
+        refused(&temporal(formula), marker, width);
+    }
+}
