@@ -28,3 +28,5 @@ Round 1, head 0164e023bb27ec3330a142f6549b621bdea6bf53.
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-001 | accepted-no-change | The new assertion `cause.parity.reason == "hybrid-trace"` does not tell `NotExact` from `NotReproduced`: both are `ReplayParity(HybridTrace(..))` per FR-750-AC-12. A reviewer probe printed the full unfair item JSON. Its record is `{"kind":"replay-parity","parity":{"reason":"hybrid-trace"}}` and the item carries no exact-replay outcome, so this layer cannot assert the distinction. fsl-replay's `shuttle_fairness_over_a_nondeterministic_reset_is_decided_exactly` pins `NotReproduced { Claim }` for the same inputs. |
+
+Round 2, head a1f0506e5a4e4a33db2b3bb27d7279016e5cb68b: FND-001's latest outcome is already accepted-no-change, so this round adds no row.
