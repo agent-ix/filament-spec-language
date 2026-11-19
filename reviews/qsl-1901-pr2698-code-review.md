@@ -44,3 +44,10 @@ The region is wired through every Compile construction site, and it matches
 main's FR-121-AC-37. No correctness defect. FND-001 is a downstream coordination
 item, not a defect in this repository. The PR can merge once the stale review
 files are dropped or replaced (FND-002) and the CG follow-up is recorded (FND-001).
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | 5d190a286: the PR body now has a "Downstream note" naming filament-contract-codegen main 7f24256e, `src/kani/terminal/constrained/tests.rs:200` and `tests/it/terminal_map.rs:634`, and stating that the field is spec-mandated (FR-121-AC-37) and the codegen follow-up is routed to its owner. No code change in this repository, as intended. |
+| FND-002 | fixed | 5d190a286: the PR is retitled "QSL-1901: carry the unproved node's region on call-site compile refusals (FR-121-AC-37)". The stale `reviews/qsl-1901-code-review.md` and `reviews/qsl-1901-gap-analysis.md` are removed, and `reviews/qsl-1901-pr2698-*.md` are committed byte-identical to the review-pass SRs. |

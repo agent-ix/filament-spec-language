@@ -56,3 +56,9 @@ asserts the region span. Both pass.
 The ticket acceptance holds on the PR head, and FR-121-AC-37 moves from unmet on
 main to tested. FND-001 is a small strengthening of a test and does not block the
 merge.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | 5d190a286: the FR-121-AC-37 test binds `Compile { code, region, .. }` and asserts `assert_eq!(code, fsl_foundation::Code::UndefinedExpression);` before it checks the region. Re-run on 5d190a286: the focused postcondition_range / proof_result / execute tests pass. |
