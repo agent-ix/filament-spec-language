@@ -505,6 +505,11 @@ fn a_seeded_regression_on_each_edge_fails_naming_its_case() {
         Some(&mut supporting_all),
     );
     let rendered = report.to_json().expect("the regression report renders");
+    assert_eq!(report.exit, 10, "a seeded regression exits non-zero");
+    assert!(matches!(
+        xtask::refinement::layering_check::expected_run(Some(10), rendered.as_bytes()),
+        Err(xtask::refinement::layering_check::Mismatch::Exit { found: Some(10) })
+    ));
     let regressions: Vec<_> = report
         .results
         .iter()
