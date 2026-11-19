@@ -260,6 +260,28 @@ mod source_journeys {
     }
 
     #[test]
+    #[trace("FR-330")]
+    fn an_unknown_observation_key_is_not_an_empty_or_false_trace() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = source_request(
+            directory.path(),
+            "NextDerived",
+            json!({"finite": ["unbound-observation"]}),
+        );
+        let error = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+            .expect_err("an observation key must resolve before evaluation");
+        assert_eq!(error.category().exit_code(), 20, "{error}");
+        let document = error.value().unwrap();
+        assert_eq!(document["code"], "invalid-request", "{document}");
+        assert!(
+            document["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("unbound-observation")),
+            "{document}"
+        );
+    }
+
+    #[test]
     #[trace("FR-330", "FR-327")]
     fn authored_event_clock_compiles_and_settles_the_closed_window() {
         let directory = tempfile::tempdir().unwrap();
