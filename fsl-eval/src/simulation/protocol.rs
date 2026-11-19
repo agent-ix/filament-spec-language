@@ -2235,11 +2235,13 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         let Some(control) = package.controls.get(&node) else {
             return Ok(None);
         };
-        if control.constraint.is_none() {
+        let Some(slot) = control.constraint.as_ref() else {
             return Ok(None);
-        }
+        };
         let binders = package_binder_values(&self.program, frame);
-        let supply = package.supply(binders, None).map_err(|_| broken())?;
+        let supply = package
+            .supply_for_slot(slot, binders, None)
+            .map_err(|_| broken())?;
         let result = package
             .evaluate_control_constraint(node, &supply, &mut Meter::new(self.model.meter()))
             .map_err(|_| broken())?;
@@ -2254,11 +2256,13 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         let Some(package) = self.package_program.as_ref() else {
             return Ok(None);
         };
-        if package.finish.is_none() {
+        let Some(slot) = package.finish.as_ref() else {
             return Ok(None);
-        }
+        };
         let binders = package_binder_values(&self.program, frame);
-        let supply = package.supply(binders, None).map_err(|_| broken())?;
+        let supply = package
+            .supply_for_slot(slot, binders, None)
+            .map_err(|_| broken())?;
         let result = package
             .evaluate_finish(&supply, &mut Meter::new(self.model.meter()))
             .map_err(|_| broken())?;
@@ -2360,14 +2364,17 @@ fn package_binder_values(
         .package_binders
         .iter()
         .zip(frame)
-        .filter_map(|(binder, value)| Some((binder.clone()?, value?)))
-        .map(|(binder, value)| {
-            (
-                binder,
-                crate::value::ProtocolSuppliedValue::from(crate::value::SuppliedValue::Value(
-                    value,
-                )),
-            )
+        .filter_map(|(binder, value)| {
+            binder.clone().map(|binder| {
+                let value = match value {
+                    Some(value) => crate::value::SuppliedValue::Value(value),
+                    None => crate::value::SuppliedValue::Unavailable(CatalogCode::new(
+                        "runtime_invariant",
+                        "established-invariant-broken",
+                    )),
+                };
+                (binder, crate::value::ProtocolSuppliedValue::from(value))
+            })
         })
         .collect()
 }

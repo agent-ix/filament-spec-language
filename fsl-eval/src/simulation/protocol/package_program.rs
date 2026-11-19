@@ -140,6 +140,9 @@ pub enum PackageProgramRefusal {
     /// The package form lacks a model-evaluator identity for a referenced node.
     #[error("the package has no evaluator identity for node {0:?}")]
     MissingIdentity(fsl_package::CheckedNodeId),
+    /// The evaluator cannot expose the admitted binders of a selected slot.
+    #[error("the package has no admitted binder inventory for slot {node:?}.{member}")]
+    MissingSlotBinders { node: NodeKey, member: String },
     /// The execution engine does not step this checked package operation yet.
     #[error("unsupported_construct/not-yet-implemented: package control {0:?}")]
     Unsupported(ControlOperation),
@@ -591,6 +594,43 @@ impl<'a> PackageProtocolProgram<'a> {
             binders,
             observation,
         })
+    }
+
+    /// Build a supply containing exactly the binders selected by `slot`.
+    /// FR-390 rejects both missing and unrelated caller-supplied binders, so
+    /// package execution projects the live protocol frame through the
+    /// evaluator's admitted slot inventory before calling it.
+    pub fn supply_for_slot<'obs>(
+        &self,
+        slot: &ProtocolSlot,
+        binders: impl IntoIterator<Item = (fsl_package::CheckedNodeId, ProtocolSuppliedValue)>,
+        observation: Option<
+            &'obs filament_semantic_value::admission::ObservationAdmission<
+                fsl_package::AdmittedProtocolObservation<'obs>,
+            >,
+        >,
+    ) -> Result<ProtocolSupply<'obs>, PackageProgramRefusal> {
+        let required = self
+            .evaluator
+            .package_protocol_slot_binders(slot)
+            .ok_or_else(|| PackageProgramRefusal::MissingSlotBinders {
+                node: slot.node.clone(),
+                member: slot.member.clone(),
+            })?;
+        let required = required
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut selected = Vec::new();
+        for (node, value) in binders {
+            let key = self
+                .evaluator
+                .package_node_key(&node)
+                .ok_or_else(|| PackageProgramRefusal::MissingIdentity(node.clone()))?;
+            if required.contains(&key) {
+                selected.push((node, value));
+            }
+        }
+        self.supply(selected, observation)
     }
 
     /// The outermost `parallel` whose memory model governs `control`, if the
