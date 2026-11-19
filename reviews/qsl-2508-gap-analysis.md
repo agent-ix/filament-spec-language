@@ -36,3 +36,14 @@ FR-753-AC-5 has no binder in the computed matrix. The criterion specifies observ
 - **Reverse gaps and stubs:** inspected all changed source files and their S3 call sites; the new verification-plan logic is explicitly tied to FR-753/FSpec FR-192, and no TODO/FIXME/placeholder stub was found in the changed logic. No repository-wide source-symbol ownership inventory was generated beyond the computed matrix.
 - **Semantic review:** skipped (optional; not requested).
 - **Plan completion: not assessed.**
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The active cycle test asserts the ordered `a -> b -> a` edges, and the active refusal tests assert exact source spans for every FR-192-AC-9/10 refusal in this S3 slice. The matrix still confirms FR-753-AC-2 is bound to four active tests. |
+| FND-002 | deferred | QSL-2511 is the Specced downstream ticket that owns `fsl_analyze::plan::execute_plan`, TC-3028 and FR-753-AC-5 plan execution. That execution criterion is outside QSL-2508's S3 declaration-checking scope; FR-753-AC-5 remains untagged pending QSL-2511. |
+
+## Disposition pass 2 review note
+
+At head `e687e202aa25aaef7ad3988943b4b04953cc0dcf`, the matrix still binds FR-753-AC-2 to the four active focused tests. The AC-5 gap remains assigned downstream to Specced QSL-2511, which owns `execute_plan` and TC-3028; QSL-2508 is now linked to QSL-2511 in Linear. The QSL-2252 zero-evaluator adapters are confined to unrelated fixtures with no reward declaration and introduce no additional trace gap.
