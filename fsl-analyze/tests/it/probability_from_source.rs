@@ -92,7 +92,10 @@ fn timed_unit(claims: &str) -> String {
     let header = "profile inf = \"filament.temporal.infinite-trace/v1\";\n";
     let source = LINK_UNIT.replace(
         header,
-        &format!("{header}profile t = \"filament.temporal.timed/v1\";\n"),
+        &format!(
+            "{header}profile tc = \"filament.temporal.complete/v1\";\n\
+             profile t = \"filament.temporal.timed/v1\";\n"
+        ),
     );
     format!(
         "{source}\n\
