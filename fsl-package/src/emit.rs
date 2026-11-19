@@ -8893,7 +8893,7 @@ fn temporal_binding_rows(
                 source.clone(),
                 span.start,
                 span.end,
-                Some(Box::<str>::from(quantifier.alias.as_str())),
+                Some(Box::<str>::from(quantifier.variable.as_str())),
             );
             let Some(selection) = selected.remove(&key) else {
                 missing.push((
@@ -8903,7 +8903,7 @@ fn temporal_binding_rows(
                     format!(
                         "bounded temporal rule `{}` trace `{}`",
                         hyper.name(),
-                        quantifier.alias.as_str()
+                        quantifier.variable
                     ),
                 ));
                 continue;
@@ -8916,7 +8916,7 @@ fn temporal_binding_rows(
                 occurrence: occurrence.origin().ordinal(),
                 clock_name: clock_name.into(),
                 clock: clock.clone(),
-                trace: Some(quantifier.alias.as_str().into()),
+                trace: Some(quantifier.variable.as_str().into()),
             };
             keyed.rows.push((occurrence.node().clone(), row.clone()));
             rows.push(row);

@@ -710,7 +710,7 @@ fn build(profile: &str, aliases: &[&str], declarations: &str) -> Built {
                             sequence_authority: "test-hyper-events".into(),
                         },
                     );
-                    selection.trace = Some(quantifier.alias.as_str().into());
+                    selection.trace = Some(quantifier.variable.as_str().into());
                     selection
                 })
             }),

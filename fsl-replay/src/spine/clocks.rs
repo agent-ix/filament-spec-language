@@ -455,7 +455,7 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
                 hyper
                     .quantifiers()
                     .iter()
-                    .map(|quantifier| quantifier.alias.as_str().to_owned())
+                    .map(|quantifier| quantifier.variable.clone())
                     .collect(),
             ),
             source,
