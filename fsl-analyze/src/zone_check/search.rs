@@ -110,6 +110,41 @@ pub enum ZoneCheckItem<'a> {
     TimeLockFreedom,
 }
 
+/// A node in a closed timed state graph. The model state is paired with the
+/// reachable clock zone; state-graph predicates read only `state`.
+#[derive(Clone, Debug)]
+pub struct TimedStateGraphNode {
+    /// The discrete model state.
+    pub state: ModelSimState,
+    /// The reachable valuations of the model's clocks at this state.
+    pub zone: Dbm,
+}
+
+/// A discrete-step edge in a timed state graph. Delay choices are represented
+/// by zones and do not create distinct state-graph paths.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimedStateGraphEdge {
+    /// The source node index.
+    pub from: usize,
+    /// The target node index.
+    pub to: usize,
+    /// The transition identity of the discrete step.
+    pub transition: filament_semantic_value::model_transition::ModelTransition,
+}
+
+/// The finite symbolic graph explored for one timed state-graph item.
+#[derive(Clone, Debug)]
+pub struct TimedStateGraph {
+    /// Nodes in discovery order.
+    pub nodes: Vec<TimedStateGraphNode>,
+    /// Discrete-step edges in discovery and transition order.
+    pub edges: Vec<TimedStateGraphEdge>,
+    /// Each initial state's graph node, in the subject's initial order.
+    pub initials: Vec<usize>,
+    /// Counts for the exploration.
+    pub stats: ZoneStats,
+}
+
 /// A request to EN-6.
 pub struct ZoneCheckRequest<'r, 's, 'a, S> {
     /// The timed subject (FR-231).
@@ -341,6 +376,62 @@ pub enum ZoneCheckOutcome<S> {
         /// The run's counts.
         stats: ZoneStats,
     },
+}
+
+/// Explore the timed state graph, without applying a temporal-property
+/// judgement. The completed graph is the input to the state-graph forms.
+///
+/// # Errors
+///
+/// [`ZoneCheckRefusal`] if the timed subject cannot be explored or the
+/// caller cancels the run.
+pub fn explore_timed_state_graph(
+    subject: &TimedSystem<'_, '_>,
+    limits: ZoneCheckLimits,
+    cancel: &Cancel,
+) -> Result<TimedStateGraph, ZoneCheckRefusal> {
+    let mut run = Run::new(subject, Judged::StateGraph, None, &[], limits, cancel);
+    let (initials, stats) = match run.search() {
+        Ok(Searched::Graph { initials, stats }) => (initials, stats),
+        Ok(Searched::Undecided { .. }) | Ok(Searched::Stopped { .. }) => {
+            return Err(ZoneCheckRefusal::Fault("state-graph-stopped"));
+        }
+        Ok(_) => return Err(ZoneCheckRefusal::Fault("state-graph-outcome")),
+        Err(Halt::Refusal(refusal)) => return Err(refusal),
+        Err(Halt::Outcome(_)) => return Err(ZoneCheckRefusal::Fault("state-graph-halt")),
+    };
+    let nodes = run
+        .nodes
+        .iter()
+        .map(|node| TimedStateGraphNode {
+            state: node.state.clone(),
+            zone: node.zone.clone(),
+        })
+        .collect();
+    let mut edges = Vec::new();
+    for edge in &run.edges {
+        let Some((step_index, _part_index)) = edge.step else {
+            continue;
+        };
+        let steps = run
+            .steps_of(edge.from)
+            .map_err(|_| ZoneCheckRefusal::Fault("state-graph-step"))?;
+        let step = steps
+            .get(step_index)
+            .ok_or(ZoneCheckRefusal::Fault("state-graph-step-index"))?;
+        edges.push(TimedStateGraphEdge {
+            from: edge.from,
+            to: edge.to,
+            transition: step.transition().clone(),
+        });
+    }
+    edges.dedup();
+    Ok(TimedStateGraph {
+        nodes,
+        edges,
+        initials,
+        stats,
+    })
 }
 
 /// Why EN-6 does not take the request.
@@ -768,6 +859,10 @@ fn renamed_zone(
 
 /// A run's outcome before its certificate names the item's obligation.
 pub(super) enum Searched {
+    Graph {
+        initials: Vec<usize>,
+        stats: ZoneStats,
+    },
     Holds {
         proof: Box<Proof>,
         stats: ZoneStats,
@@ -793,6 +888,8 @@ pub(super) enum Searched {
 
 /// What a run judges its nodes by.
 pub(super) enum Judged<'r> {
+    /// A graph-only run; the caller evaluates its state-graph predicates.
+    StateGraph,
     /// An authored clause.
     Claim(Claim<'r>),
     /// The deadlock-freedom item: a node holding deadlocked valuations.
@@ -921,7 +1018,10 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     pub(super) fn claim(&self) -> Option<&Claim<'r>> {
         match &self.judged {
             Judged::Claim(claim) | Judged::Liveness(claim) => Some(claim),
-            Judged::DeadlockFreedom | Judged::TimeLockFreedom | Judged::Refinement => None,
+            Judged::StateGraph
+            | Judged::DeadlockFreedom
+            | Judged::TimeLockFreedom
+            | Judged::Refinement => None,
         }
     }
 
@@ -1087,6 +1187,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         let dim = self.dim();
         let mut queue = VecDeque::new();
         let mut roots = Vec::new();
+        let mut graph_initials = Vec::new();
         let mut delayed_deadlock = false;
         for (index, state) in initial.iter().enumerate() {
             let discrete = state.discrete().clone();
@@ -1102,7 +1203,16 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             if zone.is_empty() {
                 continue;
             }
-            if let Some(node) = self.insert(discrete, q, zone, Some(index), None)? {
+            if matches!(self.judged, Judged::StateGraph) {
+                match self.insert_at(discrete, q, zone, Some(index), None)? {
+                    Inserted::New(node) => {
+                        roots.push(node);
+                        graph_initials.push(node);
+                        queue.push_back(node);
+                    }
+                    Inserted::Covered(node) => graph_initials.push(node),
+                }
+            } else if let Some(node) = self.insert(discrete, q, zone, Some(index), None)? {
                 roots.push(node);
                 queue.push_back(node);
                 delayed_deadlock |= self.judge(node)?;
@@ -1117,6 +1227,12 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                 queue.push_back(created);
                 delayed_deadlock |= self.judge(created)?;
             }
+        }
+        if matches!(self.judged, Judged::StateGraph) {
+            return Ok(Searched::Graph {
+                initials: graph_initials,
+                stats: self.stats(),
+            });
         }
         // FR-240: the time-lock-freedom item's search runs on the completed
         // graph, before vacuity, which bars a proof only.
@@ -1649,6 +1765,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     fn badness(&mut self, node: usize) -> Result<Option<Result<Badness, ()>>, Halt> {
         let claim = match &self.judged {
             Judged::Claim(claim) => claim,
+            Judged::StateGraph => return Ok(None),
             Judged::DeadlockFreedom => return self.deadlock(node),
             Judged::TimeLockFreedom | Judged::Liveness(_) | Judged::Refinement => return Ok(None),
         };
