@@ -6636,9 +6636,13 @@ fn terminal_declarations(
                 let self_span = predicate
                     .expression
                     .iter()
-                    .find_map(|node| match node.node() {
-                        ExprNode::Name(name) if name.name == "self" => Some(name.span),
-                        _ => None,
+                    .find(|node| matches!(node.node(), ExprNode::SelfRef))
+                    .and_then(|node| {
+                        predicate
+                            .spans
+                            .of_nodes(&predicate.expression)?
+                            .get(node.id().index())
+                            .copied()
                     });
                 let context = match (self_span, objects.as_slice()) {
                     (Some(_), [_]) => objects.first().cloned(),
