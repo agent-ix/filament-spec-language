@@ -1013,7 +1013,12 @@ fn an_unknown_member_of_a_model_enum_refuses_missing_name() {
 
     let model_case = refusals
         .iter()
-        .find(|refusal| matches!(&refusal.cause, CheckCause::MissingName(name) if name == "Lost"))
+        .find(|refusal| {
+            matches!(
+                &refusal.cause,
+                CheckCause::MissingQualifiedName(name) if name.name == "Config::Tier::Lost"
+            )
+        })
         .expect("the undeclared model variant case is identified");
     assert_eq!(
         model_case.cause.code(),
