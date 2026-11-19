@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-944: derive and admit the checked temporal trace through its owner.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use filament_eval::CallFailure;
 use filament_observation::authority::{
@@ -90,17 +90,12 @@ fn admit_defined(
 ) -> Result<OwnerObservation, CallFailure> {
     let owner_limits = Limits::owner_max();
     if positions.len() > owner_limits.max_population_entries {
-        return Err(refusal(
-            "stage-limit-exceeded",
-            "positions",
-            &[
-                ("bound", owner_limits.max_population_entries.to_string()),
-                ("actual", positions.len().to_string()),
-                (
-                    "setting",
-                    "filament_observation::authority::Limits.max_population_entries".to_owned(),
-                ),
-            ],
+        return Err(owner_limit(
+            "node-count-exceeded",
+            owner_limits.max_population_entries,
+            positions.len(),
+            "filament_observation::authority::Limits.max_population_entries",
+            None,
         ));
     }
     let bytes = subject.canonical_package_bytes;
@@ -113,18 +108,12 @@ fn admit_defined(
     for position in positions {
         let value = canonical_position_value(position)?;
         if value.len() > owner_limits.max_string_bytes {
-            return Err(refusal(
-                "stage-limit-exceeded",
-                "positions",
-                &[
-                    ("bound", owner_limits.max_string_bytes.to_string()),
-                    ("actual", value.len().to_string()),
-                    (
-                        "setting",
-                        "filament_observation::authority::Limits.max_string_bytes".to_owned(),
-                    ),
-                    ("position", position.observation.identity.clone()),
-                ],
+            return Err(owner_limit(
+                "input-bytes-exceeded",
+                owner_limits.max_string_bytes,
+                value.len(),
+                "filament_observation::authority::Limits.max_string_bytes",
+                Some(&position.observation.identity),
             ));
         }
         let nanos = scaled_nanos(position.position, &time_factor, position)?;
@@ -351,7 +340,6 @@ fn admit_defined(
     match admit(admission_request) {
         AdmissionOutcome::Available { observation } => {
             let partial_facts = derive_partial_facts(
-                subject,
                 binding,
                 &observation,
                 &package_digest,
@@ -440,7 +428,6 @@ impl OwnerObservation {
 }
 
 fn derive_partial_facts(
-    subject: &TraceDefinition<'_>,
     binding: &AuthenticatedBinding,
     qualified: &filament_observation::QualifiedObservation,
     package_digest: &Digest,
@@ -451,10 +438,7 @@ fn derive_partial_facts(
         return Err(fault("observation-scope-is-a-snapshot"));
     };
     let authority = AuthoritySelection {
-        definition_identity: Identity::new(format!(
-            "{}#{}",
-            subject.package_identity, subject.occurrence
-        )),
+        definition_identity: qualified.binding().identity.clone(),
         definition_revision: Identity::new(PACKAGE_REVISION),
         definition_digest: *package_digest,
     };
@@ -470,7 +454,11 @@ fn derive_partial_facts(
         None,
     );
     let mut facts = Vec::new();
+    let mut selected_records = BTreeSet::new();
     for (identity, stamp, ingestion_position, position) in positions {
+        if !selected_records.insert(identity.clone()) {
+            continue;
+        }
         let interval = quarter_interval(binding, *stamp, position, cover)?;
         let mut values = Vec::new();
         values.extend(
@@ -522,7 +510,7 @@ fn derive_partial_facts(
                 Valuation::Undefined(_) => continue,
             };
             let possibilities = partial::PossibilitySet::new(can_be_false, can_be_true, reason)
-                .map_err(|error| owner_fault("partial-selection", &error.to_string()))?;
+                .map_err(|error| owner_fault(error.code().as_str(), error.detail()))?;
             let selection = partial::Selection::new(
                 identity.clone(),
                 possibilities,
@@ -530,9 +518,9 @@ fn derive_partial_facts(
                 *ingestion_position,
             );
             let document = partial::derive(context, &selection, Limits::owner_max())
-                .map_err(|error| owner_fault("partial-derive", &error.to_string()))?;
+                .map_err(|error| owner_fault(error.code().as_str(), error.detail()))?;
             let view = partial::read(document.bytes(), context, &selection, Limits::owner_max())
-                .map_err(|error| owner_fault("partial-read", &error.to_string()))?;
+                .map_err(|error| owner_fault(error.code().as_str(), error.detail()))?;
             facts.push(PartialFact {
                 record_identity: identity.clone(),
                 atom,
@@ -589,7 +577,7 @@ fn quarter_interval(
         latest,
         Limits::owner_max(),
     )
-    .map_err(|error| owner_fault("partial-interval", &error.to_string()))
+    .map_err(|error| owner_fault(error.code().as_str(), error.detail()))
 }
 
 fn owner_fault(code: &str, cause: &str) -> CallFailure {
@@ -599,6 +587,41 @@ fn owner_fault(code: &str, cause: &str) -> CallFailure {
             ("cause", cause.to_owned()),
         ]),
     )
+}
+
+fn owner_limit(
+    cause: &'static str,
+    bound: usize,
+    actual: usize,
+    setting: &'static str,
+    position: Option<&str>,
+) -> CallFailure {
+    use filament_eval::{CallAdmissionFailure, CallAdmissionLocus, CallAdmissionRecord};
+    use filament_semantic_value::admission::AdmissionRecord;
+    use filament_semantic_value::catalog::CatalogCode;
+    let mut fields = BTreeMap::from([
+        ("stage", "admit".to_owned()),
+        ("bound", bound.to_string()),
+        ("actual", actual.to_string()),
+        ("setting", setting.to_owned()),
+    ]);
+    if let Some(position) = position {
+        fields.insert("position", position.to_owned());
+    }
+    CallFailure::Admission(Box::new(CallAdmissionFailure::Refused(
+        CallAdmissionRecord {
+            record: AdmissionRecord {
+                catalog: CatalogCode::new("stage_limit_exceeded", cause),
+                fields,
+                path: Vec::new(),
+                kernel: None,
+            },
+            locus: CallAdmissionLocus::Member {
+                name: "positions".to_owned(),
+                index: None,
+            },
+        },
+    )))
 }
 
 fn node_wire_text(node: &CheckedNodeId) -> Result<String, CallFailure> {
@@ -776,6 +799,7 @@ fn kernel_reason(reason: &filament_exact::Undefined) -> &'static str {
         Undefined::NoneValue => "none-value",
         Undefined::NoElement => "no-element",
         Undefined::SumOutOfDomain => "sum-out-of-domain",
+        Undefined::MalformedNumber => "malformed-number",
     }
 }
 
@@ -803,7 +827,7 @@ fn nanos_per_tick(
     use filament_exact::{Integer, Rational};
     let Some(scale) = scale else {
         return match binding.clock {
-            ClockConfiguration::EventPosition { .. } => {
+            ClockConfiguration::EventPosition { .. } | ClockConfiguration::FixedSample { .. } => {
                 Ok(Rational::from_integer(Integer::from(1_i64)))
             }
             _ => Err(fault("checked-clock-has-time-unit-scale")),
@@ -1026,6 +1050,16 @@ mod tests {
         cover: ClockCover,
         event_positions: bool,
     ) -> Result<OwnerObservation, CallFailure> {
+        let scale = filament_exact::Rational::new(1_i64.into(), 1000_i64.into()).expect("ms scale");
+        admitted_with_scale(positions, cover, event_positions, &scale)
+    }
+
+    fn admitted_with_scale(
+        positions: &[EvidencePosition],
+        cover: ClockCover,
+        event_positions: bool,
+        scale: &filament_exact::Rational,
+    ) -> Result<OwnerObservation, CallFailure> {
         use crate::temporal::finite_window::{
             LowerBoundary, TimestampedObservation, Watermark, WindowClock, WindowProgress,
         };
@@ -1056,11 +1090,10 @@ mod tests {
             clock_name: "clock".into(),
             clock,
         };
-        let scale = filament_exact::Rational::new(1.into(), 1000.into()).expect("ms scale");
         let definition = TraceDefinition {
             package_identity: "recipe",
             canonical_package_bytes: b"{}",
-            time_unit_scale: (!event_positions).then_some(&scale),
+            time_unit_scale: (!event_positions).then_some(scale),
             declaration: &declaration,
             signal: &declaration,
             occurrence: 0,
@@ -1218,6 +1251,7 @@ mod tests {
             .expect("equal facts coalesce");
         assert_eq!(owner.qualified.records().len(), 1);
         assert_eq!(owner.qualified.scope().members.len(), 1);
+        assert_eq!(owner.partial_facts.len(), 1);
         assert_eq!(
             owner.side_map.values().next(),
             Some(&vec!["first".to_owned(), "second".to_owned()])
@@ -1229,6 +1263,64 @@ mod tests {
             owner.qualified.records()[0].identity,
             successor.qualified.records()[0].identity
         );
+    }
+
+    #[test]
+    #[ix_trace_rs::trace("TC-3036", "FR-944-AC-11")]
+    fn every_position_content_change_changes_its_record_but_reference_labels_do_not() {
+        let instance = SemanticTriggerIdentity::new(vec![0, 255]).expect("trigger");
+        let mut original = position("original", 3, Valuation::True);
+        original
+            .aggregate_samples
+            .insert(1, AggregateSample::Counted);
+        original
+            .instance_valuations
+            .insert(instance.clone(), BTreeMap::from([(2, Valuation::True)]));
+        original.instance_aggregate_samples.insert(
+            instance.clone(),
+            BTreeMap::from([(3, AggregateSample::Excluded)]),
+        );
+        let identity = |position| {
+            admitted(&[position], ClockCover::Exact, false)
+                .expect("admitted fact")
+                .qualified
+                .records()[0]
+                .identity
+                .clone()
+        };
+        let baseline = identity(original.clone());
+        let mut relabelled = original.clone();
+        relabelled.observation.identity = "renamed".to_owned();
+        relabelled.observation.authority_identity = "new-authority-label".to_owned();
+        relabelled.observation.authority_revision = "new-revision-label".to_owned();
+        relabelled.observation.scope = "new-scope-label".to_owned();
+        relabelled.observation.population = "new-population-label".to_owned();
+        assert_eq!(identity(relabelled), baseline);
+        let mut content = original.clone();
+        content.observation.digest = vec![0xab];
+        let mut valuation = original.clone();
+        valuation.valuations.insert(0, Valuation::False);
+        let mut aggregate = original.clone();
+        aggregate
+            .aggregate_samples
+            .insert(1, AggregateSample::Excluded);
+        let mut bound_value = original.clone();
+        bound_value
+            .instance_valuations
+            .insert(instance.clone(), BTreeMap::from([(2, Valuation::False)]));
+        let mut bound_aggregate = original;
+        bound_aggregate
+            .instance_aggregate_samples
+            .insert(instance, BTreeMap::from([(3, AggregateSample::Counted)]));
+        for (member, changed) in [
+            ("content", content),
+            ("valuation", valuation),
+            ("aggregate", aggregate),
+            ("instance valuation", bound_value),
+            ("instance aggregate", bound_aggregate),
+        ] {
+            assert_ne!(identity(changed), baseline, "changed {member}");
+        }
     }
 
     #[test]
@@ -1251,12 +1343,69 @@ mod tests {
     }
 
     #[test]
+    #[ix_trace_rs::trace("TC-3036", "FR-944-AC-9")]
+    fn oversized_record_values_are_admission_limits_before_owner_derivation() {
+        use filament_eval::CallAdmissionFailure;
+        let mut observed = position("oversized", 3, Valuation::True);
+        let maximum = Limits::owner_max().max_string_bytes;
+        observed.observation.contract = "x".repeat(maximum);
+        let expected_length = canonical_position_value(&observed)
+            .expect("canonical text")
+            .len();
+        let failure = match admitted(&[observed], ClockCover::Exact, false) {
+            Ok(_) => panic!("oversized record value must refuse"),
+            Err(failure) => failure,
+        };
+        let CallFailure::Admission(failure) = failure else {
+            panic!("admission limit");
+        };
+        let CallAdmissionFailure::Refused(record) = *failure else {
+            panic!("refused input limit");
+        };
+        assert_eq!(record.record.catalog.code(), "stage_limit_exceeded");
+        assert_eq!(record.record.catalog.cause(), "input-bytes-exceeded");
+        assert_eq!(record.record.fields["bound"], maximum.to_string());
+        assert_eq!(record.record.fields["actual"], expected_length.to_string());
+        assert_eq!(record.record.fields["position"], "oversized");
+        assert_eq!(
+            record.record.fields["setting"],
+            "filament_observation::authority::Limits.max_string_bytes"
+        );
+    }
+
+    #[test]
+    #[ix_trace_rs::trace("TC-2624", "FR-944-AC-2")]
+    fn a_nonintegral_nanosecond_stamp_refuses_without_rounding() {
+        use filament_eval::CallAdmissionFailure;
+        let half_nanosecond = filament_exact::Rational::new(1_i64.into(), 2_000_000_000_i64.into())
+            .expect("half-nanosecond unit");
+        let failure = match admitted_with_scale(
+            &[position("half-ns", 3, Valuation::True)],
+            ClockCover::Exact,
+            false,
+            &half_nanosecond,
+        ) {
+            Ok(_) => panic!("nonintegral nanoseconds must refuse"),
+            Err(failure) => failure,
+        };
+        let CallFailure::Admission(failure) = failure else {
+            panic!("admission refusal");
+        };
+        let CallAdmissionFailure::Refused(record) = *failure else {
+            panic!("invalid value");
+        };
+        assert_eq!(record.record.catalog.code(), "invalid_runtime_input");
+        assert_eq!(record.record.catalog.cause(), "invalid-value");
+        assert_eq!(record.record.fields["position"], "half-ns");
+    }
+
+    #[test]
     #[ix_trace_rs::trace("TC-3036", "FR-944-AC-11", "FR-944-AC-12")]
     fn record_value_preserves_unbounded_rationals_instances_and_all_undefined_causes() {
         use crate::temporal::letters::UndefinedCause;
         use crate::temporal::window::InsufficientData;
         use filament_semantic_value::catalog::{UndefinedReason, UndefinedRecord};
-        let instance = SemanticTriggerIdentity::new(&[0, 255]).expect("opaque trigger");
+        let instance = SemanticTriggerIdentity::new(vec![0, 255]).expect("opaque trigger");
         let family = UndefinedCause::Family(UndefinedRecord {
             reason: UndefinedReason::AbsentKey,
             fields: BTreeMap::from([("key", "missing".to_owned())]),
@@ -1272,7 +1421,7 @@ mod tests {
                 AggregateSample::Value(
                     filament_exact::Rational::new(
                         "18446744073709551616".parse().expect("unbounded integer"),
-                        3.into(),
+                        3_i64.into(),
                     )
                     .expect("unbounded rational"),
                 ),
