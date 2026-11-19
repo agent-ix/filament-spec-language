@@ -974,6 +974,54 @@ fn a_lasso_of_a_strong_constraint_replays_when_enabled_at_some_loop_state() {
     )));
 }
 
+/// FR-899-AC-5 (TC-2537): the strong abstract-fairness lasso reproduces, but
+/// a loop that takes the constrained abstract transition does not.
+#[trace("TC-2537", "FR-899-AC-5")]
+#[test]
+fn strong_abstract_unfairness_replays_and_rejects_a_fair_loop() {
+    let unit = Unit::probe_pair(
+        probe_contracts(["", "self.a = 0", "", ""], ["", "self.a = 0", ""]),
+        &[(0, 0)],
+    );
+    let rows = [
+        "assume fair weak each Impl::Pair::flipA;",
+        "ensure fair strong whole Spec::Pair::flipB;",
+    ];
+    let world = unit.world(&probe_refinement(&rows));
+    let subject = aux(&world);
+    let checked = outcome(&subject);
+    let payload = match checked.liveness {
+        Some(LivenessHalf::Checked(ModelCheckOutcome::Violated { counterexample, .. })) => {
+            *counterexample
+        }
+        other => panic!("strong fairness refutation: {other:?}"),
+    };
+    assert!(matches!(
+        payload.refinement.as_ref(),
+        Some(RefinementFailure::AbstractUnfair { .. })
+    ));
+    assert!(agrees(replay(&subject, &payload)));
+
+    let system = world.concrete_system(AUX_UNLIMITED);
+    let steps = walk(
+        &system,
+        &pair_operations(&unit, &["flipB", "flipB", "flipA", "flipA"]),
+    );
+    let constraint = world
+        .refinement()
+        .abstract_operation_fairness()
+        .next()
+        .expect("the strong abstract fairness constraint")
+        .clone();
+    let edited = handmade(
+        steps,
+        0,
+        false,
+        RefinementFailure::AbstractUnfair { constraint },
+    );
+    assert!(!agrees(replay(&subject, &edited)));
+}
+
 /// FR-144 Settlement (TC-549): a liveness half that a limit stops settles
 /// `Incomplete` naming the limit, never `failed`, and one that cannot decide
 /// settles `inconclusive` with `UndecidedSuccessor`.
