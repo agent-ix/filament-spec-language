@@ -48,8 +48,9 @@ pub fn decide_timed_state_graph(
     cancel: &Cancel,
 ) -> Result<TimedStateGraphDecision, ZoneCheckRefusal> {
     let target = match claim.form() {
-        StateGraphForm::Possible { target }
-        | StateGraphForm::AlwaysPossible { target, .. } => target,
+        StateGraphForm::Possible { target } | StateGraphForm::AlwaysPossible { target, .. } => {
+            target
+        }
         StateGraphForm::UniquePath { .. } => {
             return decide_unique_path(system, graph, claim, over, cancel);
         }
@@ -124,18 +125,16 @@ fn decide_unique_path(
         .iter()
         .map(|node| predicate(system, to, &node.state, over, cancel))
         .collect::<Result<Vec<_>, _>>()?;
-    for (node, is_from) in x.iter().enumerate().filter(|(_, is_from)| **is_from) {
+    for (node, _) in x.iter().enumerate().filter(|(_, is_from)| **is_from) {
         let dfa = determinize(graph, node, &y);
         let words = first_accepted_words(&dfa);
         if words.len() != 1 {
             let paths = match words.as_slice() {
                 [first, second, ..] => Some((
-                    path_for_word(graph, node, first, &y).ok_or(
-                        ZoneCheckRefusal::Fault("state-graph-first-path"),
-                    )?,
-                    path_for_word(graph, node, second, &y).ok_or(
-                        ZoneCheckRefusal::Fault("state-graph-second-path"),
-                    )?,
+                    path_for_word(graph, node, first, &y)
+                        .ok_or(ZoneCheckRefusal::Fault("state-graph-first-path"))?,
+                    path_for_word(graph, node, second, &y)
+                        .ok_or(ZoneCheckRefusal::Fault("state-graph-second-path"))?,
                 )),
                 _ => None,
             };
@@ -281,9 +280,12 @@ fn path_for_word(
         if target.get(node).copied().unwrap_or(false) {
             continue;
         }
-        for (edge_index, edge) in graph.edges.iter().enumerate().filter(|(_, edge)| {
-            edge.from == node && edge.transition == word[at]
-        }) {
+        for (edge_index, edge) in graph
+            .edges
+            .iter()
+            .enumerate()
+            .filter(|(_, edge)| edge.from == node && edge.transition == word[at])
+        {
             let next_at = at + 1;
             if seen
                 .get(edge.to)
@@ -364,7 +366,11 @@ fn path_to(graph: &TimedStateGraph, initial: usize, target: &[bool]) -> Option<V
     *seen.get_mut(initial)? = true;
     let mut queue = VecDeque::from([initial]);
     while let Some(node) = queue.pop_front() {
-        for (edge_index, edge) in graph.edges.iter().enumerate().filter(|(_, edge)| edge.from == node)
+        for (edge_index, edge) in graph
+            .edges
+            .iter()
+            .enumerate()
+            .filter(|(_, edge)| edge.from == node)
         {
             if seen.get(edge.to).copied().unwrap_or(true) {
                 continue;
@@ -393,8 +399,11 @@ fn path_from_initial(graph: &TimedStateGraph, target: usize) -> Vec<usize> {
                 if node == target {
                     return path_from_parent(initial, node, &parent);
                 }
-                for (edge_index, edge) in
-                    graph.edges.iter().enumerate().filter(|(_, edge)| edge.from == node)
+                for (edge_index, edge) in graph
+                    .edges
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, edge)| edge.from == node)
                 {
                     if seen.get(edge.to).copied().unwrap_or(true) {
                         continue;
