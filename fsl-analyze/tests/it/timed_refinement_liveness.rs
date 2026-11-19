@@ -6,18 +6,18 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::zone_check::{
-    check_timed_refinement, TimedLivenessHalf, TimedLivenessOutcome, TimedRefinementOutcome,
-    TimedRefinementUndecided, TimedSafetyOutcome, ZoneUndecided,
+    TimedLivenessHalf, TimedLivenessOutcome, TimedRefinementOutcome, TimedRefinementUndecided,
+    TimedSafetyOutcome, ZoneUndecided, check_timed_refinement,
 };
 use fsl_eval::simulation::Limits;
 use fsl_replay::{
-    open_systems, replay_timed_refinement_trace, Lasso, ModelTraceRefusal, RefinementFailure,
-    RefinementTraceSettlement, ReplayRefusal, TemporalCounterexample, UnavailabilityCause,
+    Lasso, ModelTraceRefusal, RefinementFailure, RefinementTraceSettlement, ReplayRefusal,
+    TemporalCounterexample, UnavailabilityCause, open_systems, replay_timed_refinement_trace,
 };
 use ix_trace_rs::trace;
 
 use crate::timed_refinement::{analyzed, refinement, replay, safety_request};
-use crate::timed_world::{document, refining, renamed_package, Refining, DENSE};
+use crate::timed_world::{DENSE, Refining, document, refining, renamed_package};
 
 /// FR-430-AC-5's `Req`: `send` with the precondition `not self.sent` (here
 /// `inflight`), and `ensure fair weak Req::send`.
@@ -239,6 +239,49 @@ fn world_of(
         &format!("{time}{ASEND}{contracts}{body}"),
     )
     .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+}
+
+/// FR-899-AC-9's abstract `Req` has a hidden Boolean `h`; the concrete
+/// polling loop cannot take `send`, and the caller chooses the admitted
+/// hidden initial valuations and fairness strength.
+fn hidden_timed_world(values: &[bool], strength: &str, invariant: bool) -> Refining {
+    let mut abstract_document: serde_json::Value =
+        serde_json::from_slice(&document(&[], &[("send", &["inflight"])]))
+            .expect("abstract package JSON");
+    abstract_document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("abstract object fields")
+        .push(crate::timed_world::wire_field(
+            "h",
+            "ix://filament/native/Boolean",
+        ));
+    let abstract_document =
+        renamed_package(&abstract_document.to_string().into_bytes(), "test/req");
+    let concrete = document(&["x"], &[("send", &["inflight"]), ("poll", &["x"])]);
+    let contracts = format!(
+        "pre ASendable using v on A::Call::send {{ not self.inflight and not self.h }}\n\
+         post ASend using v on A::Call::send {{ self.inflight }}\n\
+         pre MSend using v on M::Call::send {{ not self.inflight }}\n\
+         post MSent using v on M::Call::send {{ self.inflight }}\n\
+         pre MPoll using v on M::Call::poll {{ not self.inflight }}\n\
+         post MPolled using v on M::Call::poll {{ self.x = 0 ms }}\n\
+         ensure fair {strength} A::Call::send;\n"
+    );
+    let wait = invariant
+        .then_some("time invariant Wait when { not self.inflight } { self.x <= 0 ms }\n")
+        .unwrap_or_default();
+    let body = refinement("self.inflight").replace(
+        "step M::Call::send -> A::Call::send(self);",
+        "step M::Call::send -> A::Call::send(self);\n\
+         step M::Call::poll -> stutter;",
+    );
+    refining(
+        &abstract_document,
+        &concrete,
+        &format!("{DENSE}{contracts}{wait}{body}"),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_hidden_initials(&abstract_document, values)
 }
 
 /// The liveness half's violation of `outcome`, beside safety `Holds`.
@@ -520,15 +563,86 @@ fn the_timed_liveness_half_honours_strong_abstract_fairness() {
         );
     let hidden = refining(&req(), &model, &format!("{DENSE}{ASEND}{POLL}{body}"))
         .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let counterexample = violation(check(&hidden));
+    assert!(matches!(
+        counterexample.refinement,
+        Some(RefinementFailure::HiddenUnfair { .. })
+    ));
+    assert!(matches!(
+        replay(&hidden, &counterexample),
+        RefinementTraceSettlement::Reproduced {
+            failure: RefinementFailure::HiddenUnfair { .. },
+            ..
+        }
+    ));
+}
+
+/// FR-899-AC-9: with free initial `h`, the candidate with `h = true` has
+/// `send` disabled, so the weak fairness obligation has a coherent fair run.
+#[trace("TC-2536", "FR-899-AC-9")]
+#[test]
+fn timed_hidden_free_initial_valuation_can_disable_weak_send() {
+    let outcome = check(&hidden_timed_world(&[false, true], "weak", false));
+    assert!(matches!(outcome.safety, TimedSafetyOutcome::Holds { .. }));
+    assert!(matches!(
+        outcome.liveness,
+        Some(TimedLivenessHalf::Checked(
+            TimedLivenessOutcome::Holds { .. }
+        ))
+    ));
+}
+
+/// FR-899-AC-9: fixing `h = false` leaves `send` continuously enabled; the
+/// positive-delay poll lasso is hidden-unfair and can be replayed.
+#[trace("TC-2536", "FR-899-AC-9")]
+#[test]
+fn timed_hidden_false_initial_has_replayable_positive_delay_unfair_lasso() {
+    let world = hidden_timed_world(&[false], "weak", false);
+    let counterexample = violation(check(&world));
+    assert_eq!(names(&counterexample), ["poll"]);
     assert_eq!(
-        format!("{:?}", check(&hidden).liveness),
-        format!(
-            "{:?}",
-            Some(TimedLivenessHalf::Unsupported(
-                UnavailabilityCause::HiddenFieldLiveness
-            ))
-        )
+        counterexample.prefix[0].delay,
+        Some(Rational::from_integer(Integer::one()))
     );
+    assert!(matches!(
+        counterexample.refinement,
+        Some(RefinementFailure::HiddenUnfair { .. })
+    ));
+    assert!(matches!(
+        replay(&world, &counterexample),
+        RefinementTraceSettlement::Reproduced {
+            failure: RefinementFailure::HiddenUnfair { .. },
+            ..
+        }
+    ));
+}
+
+/// FR-899-AC-9: strong `send` fairness rejects the positive-delay poll loop
+/// when no invariant prevents time from diverging.
+#[trace("TC-2536", "FR-899-AC-9")]
+#[test]
+fn timed_hidden_strong_send_without_invariant_is_violated() {
+    let counterexample = violation(check(&hidden_timed_world(&[false], "strong", false)));
+    assert!(matches!(
+        counterexample.refinement,
+        Some(RefinementFailure::HiddenUnfair { constraint })
+            if constraint.kind() == filament_semantic_value::fairness::FairnessKind::Strong
+    ));
+}
+
+/// FR-899-AC-9: the invariant bounds the non-taking loop to zero delay, so
+/// strong fairness has no time-divergent hidden-unfair witness.
+#[trace("TC-2536", "FR-899-AC-9")]
+#[test]
+fn timed_hidden_strong_send_with_invariant_holds() {
+    let outcome = check(&hidden_timed_world(&[false], "strong", true));
+    assert!(matches!(outcome.safety, TimedSafetyOutcome::Holds { .. }));
+    assert!(matches!(
+        outcome.liveness,
+        Some(TimedLivenessHalf::Checked(
+            TimedLivenessOutcome::Holds { .. }
+        ))
+    ));
 }
 
 /// FR-900-AC-6: the timed abstract `send` guard holds at every instant of a
@@ -561,15 +675,17 @@ fn timed_abstract_enabledness_is_read_over_the_positive_delay_loop() {
     )
     .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let counterexample = violation(check(&world));
-    assert!(counterexample
-        .prefix
-        .iter()
-        .filter(|step| step.transition.operation().contains("/Call/poll\""))
-        .any(|step| {
-            step.delay
-                .as_ref()
-                .is_some_and(|delay| delay > &Rational::from_integer(Integer::zero()))
-        }));
+    assert!(
+        counterexample
+            .prefix
+            .iter()
+            .filter(|step| step.transition.operation().contains("/Call/poll\""))
+            .any(|step| {
+                step.delay
+                    .as_ref()
+                    .is_some_and(|delay| delay > &Rational::from_integer(Integer::zero()))
+            })
+    );
     assert!(matches!(
         replay(&world, &counterexample),
         RefinementTraceSettlement::Reproduced { .. }
@@ -640,9 +756,11 @@ fn a_tick_source_refutes_by_a_loop_of_ticks() {
     );
     let counterexample = violation(check(&world));
     let entry = counterexample.lasso.expect("a lasso").entry;
-    assert!(names(&counterexample)[entry..]
-        .iter()
-        .all(|name| name == "tick"));
+    assert!(
+        names(&counterexample)[entry..]
+            .iter()
+            .all(|name| name == "tick")
+    );
     assert!(matches!(
         counterexample.refinement,
         Some(RefinementFailure::Divergence { .. })
