@@ -3200,7 +3200,6 @@ mod float_members {
 
     #[trace("TC-3005", "FR-056-AC-58")]
     #[test]
-    #[ignore = "QSL-2176: IEEE equality and comparison over float model fields not implemented yet"]
     fn a_float_field_equality_follows_the_ieee_rules() {
         for clause in [
             "self.a = self.b",
