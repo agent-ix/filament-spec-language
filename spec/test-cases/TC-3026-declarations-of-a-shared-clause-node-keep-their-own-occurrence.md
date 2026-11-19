@@ -1,12 +1,12 @@
 ---
-id: TC-3023
+id: TC-3026
 title: "Declarations of a shared clause node keep their own claim occurrence on both routes"
 type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-940
     type: verifies
 ---
-# TC-3023: Declarations of a shared clause node keep their own claim occurrence on both routes
+# TC-3026: Declarations of a shared clause node keep their own claim occurrence on both routes
 
 ## Description
 

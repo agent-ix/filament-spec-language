@@ -1,12 +1,12 @@
 ---
-id: TC-3022
+id: TC-3025
 title: "An absent equality file refuses a package that holds an equality application"
 type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-850
     type: verifies
 ---
-# TC-3022: An absent equality file refuses a package that holds an equality application
+# TC-3025: An absent equality file refuses a package that holds an equality application
 
 ## Description
 
