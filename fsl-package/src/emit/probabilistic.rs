@@ -21,7 +21,7 @@ use filament_exact::{NodeKey, PathSegment, Rational, UnitId, Value};
 use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::{
     CheckedGraph, ClaimReadFault, Delay, DelayDistribution, ProbScheduler, ProbabilisticFeature,
-    RandomParameter, Reward, SchedulerRead, Workload,
+    RandomParameter, Reward, SchedulerRead, Statement, Workload,
 };
 
 use super::{
@@ -534,6 +534,47 @@ fn reward_node(
     })
 }
 
+/// The term of `statement` in a claim body: a text as a text literal, a
+/// reference as a reference to its emitted node, an exact value as a literal of
+/// its type node. `None` when a node it names is not emitted.
+fn statement_term(
+    ids: &StructuralIds,
+    nodes: &[CheckedSemanticNodeV2],
+    text: &CheckedNodeId,
+    statement: &Statement,
+) -> Option<Result<CheckedTerm, EmitRefusal>> {
+    let emitted = |key: &NodeKey| {
+        let id = node_id(ids, key);
+        nodes.iter().any(|node| node.node_id == id).then_some(id)
+    };
+    Some(match statement {
+        Statement::Text(value) => text_literal(text, value),
+        Statement::Ref(key) => Ok(reference(emitted(key)?)),
+        Statement::Exact {
+            kind,
+            ty,
+            text: value,
+        } => {
+            let kind = match *kind {
+                "integer" => LiteralKind::Integer,
+                "quantity" => LiteralKind::Quantity,
+                _ => LiteralKind::Rational,
+            };
+            literal(&emitted(ty)?, kind, value)
+        }
+        Statement::Aggregate(members) => {
+            let mut written = Vec::with_capacity(members.len());
+            for (name, value) in members {
+                match statement_term(ids, nodes, text, value)? {
+                    Ok(value) => written.push(claim_binding(name, value)),
+                    Err(refusal) => return Some(Err(refusal)),
+                }
+            }
+            Ok(claim_aggregate(written))
+        }
+    })
+}
+
 /// FSpec FR-640 "Probabilistic claim node": write the body of each claim node
 /// S3 keyed, the five bindings `subject`, `scheduler`, `reward`,
 /// `distributions` and `delays`, referencing the nodes the claim's path holds.
@@ -633,13 +674,21 @@ pub(super) fn write_claim_bodies(
             })?;
         let distributions = refs(&reads.distributions).ok_or_else(missing)?;
         let delays = refs(&reads.delays).ok_or_else(missing)?;
-        let body = claim_aggregate(vec![
+        let statement = claim.statement().ok_or_else(unkeyed)?;
+        let CheckedTerm::Aggregate { members: stated } =
+            statement_term(ids, nodes, &text, statement).ok_or_else(missing)??
+        else {
+            return Err(EmitRefusal::SourceMapInvariant);
+        };
+        let mut members = vec![
             claim_binding("subject", reference(subject)),
             claim_binding("scheduler", scheduler),
             claim_binding("reward", claim_aggregate(read_rewards)),
             claim_binding("distributions", claim_aggregate(distributions)),
             claim_binding("delays", claim_aggregate(delays)),
-        ]);
+        ];
+        members.extend(stated);
+        let body = CheckedTerm::Aggregate { members };
         let written = nodes
             .iter_mut()
             .find(|node| node.node_id == claim_id)

@@ -201,12 +201,13 @@ mod time_units;
 pub use time_units::is_clock_unit_node;
 mod timed_model;
 pub use probabilistic::{
-    Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedProbabilisticModel, ClaimReadFault, ClaimReads, FairnessRead, SchedulerRead,
-    CheckedTemporalFormula, ClaimActivation, ClaimNormalForm, Confidence, ConfidenceFault, Delay,
-    DelayDistribution, DelayFault, Event, FractionMeasure, ModelSubjectRef, OverBinding,
-    PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause, ProbabilisticDeclaration,
-    ProbabilisticFeature, ProbabilisticOperation, QualitativeForm, RandomParameter, ReachTarget,
-    Reward, SupportValue, WeightOwner, Workload,
+    Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedProbabilisticModel,
+    CheckedTemporalFormula, ClaimActivation, ClaimNormalForm, ClaimReadFault, ClaimReads,
+    Confidence, ConfidenceFault, Delay, DelayDistribution, DelayFault, Event, FairnessRead,
+    FractionMeasure, ModelSubjectRef, OverBinding, PreconditionSite, ProbForm, ProbScheduler,
+    ProbabilisticCause, ProbabilisticDeclaration, ProbabilisticFeature, ProbabilisticOperation,
+    QualitativeForm, RandomParameter, ReachTarget, Reward, SchedulerRead, Statement, SupportValue,
+    WeightOwner, Workload,
 };
 pub use probabilistic::{
     PackageDelay, PackageDelayFamily, PackageLiteral, PackageProbabilistic,
@@ -7355,7 +7356,7 @@ impl PackageDeclarations {
         {
             reward.set_function(function);
         }
-        for (claim, (key, over_node)) in probabilistic_model
+        for (claim, (key, over_node, statement)) in probabilistic_model
             .claims_mut()
             .iter_mut()
             .zip(lowered_probabilistic)
@@ -7373,6 +7374,7 @@ impl PackageDeclarations {
             if let Some(over) = &mut claim.over {
                 over.node = over_node;
             }
+            claim.statement = Some(statement);
         }
         let lowered_temporal = lowered_temporal
             .into_iter()

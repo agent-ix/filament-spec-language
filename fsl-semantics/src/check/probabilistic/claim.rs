@@ -138,6 +138,8 @@ impl Bound {
 pub struct CheckedPredicate {
     body: CheckedBody,
     slots: usize,
+    /// The name each evaluation slot was bound under.
+    slot_names: Vec<String>,
     /// The predicate's normal form (FR-174), which the claim's normal form
     /// binds.
     normal_form: Vec<u8>,
@@ -153,6 +155,11 @@ impl CheckedPredicate {
     /// local the predicate binds.
     pub fn slots(&self) -> usize {
         self.slots
+    }
+
+    /// The name each evaluation slot was bound under.
+    pub fn slot_names(&self) -> &[String] {
+        &self.slot_names
     }
 }
 
@@ -184,6 +191,11 @@ impl CheckedTemporalFormula {
     /// The predicate of the `holds` atom at arena index `node`.
     pub fn condition(&self, node: usize) -> Option<&CheckedPredicate> {
         self.conditions.get(&node)
+    }
+
+    /// Every `holds` condition by its formula node's arena index.
+    pub fn conditions(&self) -> &BTreeMap<usize, CheckedPredicate> {
+        &self.conditions
     }
 }
 
@@ -427,6 +439,12 @@ pub struct CheckedProbabilisticClaim {
     /// The `claim` occurrence of the claim's `claim`/`probabilistic_claim`
     /// node, set when a package is assembled (FR-498 "Outputs").
     pub(crate) occurrence: Option<OccurrenceKey>,
+    /// The nominal node of the subject's model time unit, when the subject
+    /// is timed (FSpec FR-640 rule 7).
+    pub(crate) time_unit: Option<NodeKey>,
+    /// What the claim states, as lowering wrote it into the claim node's
+    /// `form`, `over`, `activation` and `confidence` bindings.
+    pub(crate) statement: Option<super::node_key::Statement>,
 }
 
 /// How a probabilistic claim is instantiated (FR-186).
@@ -444,6 +462,8 @@ pub enum ClaimActivation {
         guard: Option<Box<CheckedBody>>,
         /// The guard's evaluation slot count.
         guard_slots: usize,
+        /// The name each slot of the guard was bound under.
+        guard_slot_names: Vec<String>,
         /// The guard's stable normal-form encoding.
         guard_normal_form: Option<Vec<u8>>,
     },
@@ -494,6 +514,13 @@ impl CheckedProbabilisticClaim {
             ClaimExtent::from_domains(domains),
         )
         .with_evidence(evidence)
+    }
+
+    /// What the claim states in its `form`, `over`, `activation` and
+    /// `confidence` bindings, once lowered.
+    #[must_use]
+    pub fn statement(&self) -> Option<&super::node_key::Statement> {
+        self.statement.as_ref()
     }
 
     /// The location of the whole claim declaration: its `claim`
@@ -844,6 +871,11 @@ impl Pass<'_, '_> {
                 confidence.as_ref(),
             ),
         )?;
+        let time_unit = self
+            .input
+            .time_source(&subject.alias, &subject.package.identity)
+            .and_then(|source| self.input.time_units.target(&source.unit).ok().flatten())
+            .map(|target| target.unit());
         Some(CheckedProbabilisticClaim {
             name: form.name.name.clone(),
             span: form.span,
@@ -860,6 +892,8 @@ impl Pass<'_, '_> {
             declared: index,
             content: form.content.clone(),
             occurrence: None,
+            time_unit,
+            statement: None,
         })
     }
 
@@ -912,6 +946,7 @@ impl Pass<'_, '_> {
                 value_type: Box::new(value_type),
                 guard: None,
                 guard_slots: 0,
+                guard_slot_names: Vec::new(),
                 guard_normal_form: None,
             });
         };
@@ -948,6 +983,7 @@ impl Pass<'_, '_> {
             ));
         }
         let slots = typer.slots();
+        let guard_slot_names = typer.slot_names().to_vec();
         let observations = Observations::of(body.root(), Observation::Current, bound.len());
         Definedness::new(
             bound.len(),
@@ -965,6 +1001,7 @@ impl Pass<'_, '_> {
             )),
             guard: Some(Box::new(body)),
             guard_slots: slots,
+            guard_slot_names,
         })
     }
 
@@ -1951,6 +1988,7 @@ impl Pass<'_, '_> {
             });
         }
         let slots = typer.slots();
+        let slot_names = typer.slot_names().to_vec();
         let observations = Observations::of(body.root(), Observation::Current, bound.len());
         Definedness::new(
             bound.len(),
@@ -1962,6 +2000,7 @@ impl Pass<'_, '_> {
         Ok(CheckedPredicate {
             body,
             slots,
+            slot_names,
             normal_form: encode_predicate(&expression.expression, claim.binder()),
         })
     }

@@ -40,9 +40,6 @@ pub use claim::{
     OverBinding, ProbForm, ProbScheduler, ReachTarget,
 };
 pub(crate) use model::{check, precondition_reads, site_spans, ProbabilisticInput, Unresolved};
-pub use node_key::{
-    ClaimReadFault, ClaimReads, FairnessRead, SchedulerRead,
-};
 pub use model::{
     CheckedProbabilisticModel, Delay, DelayDistribution, PackageDelay, PackageDelayFamily,
     PackageLiteral, PackageProbabilistic, PackageProbabilisticRefusal, PackageRandomParameter,
@@ -50,6 +47,7 @@ pub use model::{
     ProbabilisticFeature, ProbabilisticOperation, RandomParameter, ReadReward, Reward,
     SupportValue, Workload,
 };
+pub use node_key::{ClaimReadFault, ClaimReads, FairnessRead, SchedulerRead, Statement};
 
 use filament_exact::Integer;
 use filament_semantic_value::location::{

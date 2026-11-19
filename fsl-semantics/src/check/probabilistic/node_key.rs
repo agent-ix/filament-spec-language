@@ -395,3 +395,85 @@ impl CheckedProbabilisticClaim {
         }
     }
 }
+
+/// What a claim states in its `form`, `over`, `activation` and `confidence`
+/// bindings (FSpec FR-640 "Probabilistic claim node"), as lowering holds it:
+/// the nodes it references are keyed, each exact value is its canonical text.
+/// The claim's path spells it ([`Statement::spell`]) and S4 writes the same
+/// tree as the body's terms, so the path and the body cannot disagree.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Statement {
+    /// A text literal.
+    Text(String),
+    /// A reference to a node.
+    Ref(NodeKey),
+    /// An exact value: its `value_kind`, the node it is typed at (the unit
+    /// node of a quantity) and its canonical text.
+    Exact {
+        /// The literal's `value_kind`.
+        kind: &'static str,
+        /// The type node of the literal.
+        ty: NodeKey,
+        /// The canonical value text.
+        text: String,
+    },
+    /// An aggregate of named bindings; the empty aggregate states nothing.
+    Aggregate(Vec<(&'static str, Statement)>),
+}
+
+impl Statement {
+    /// The exact rational `value`.
+    #[must_use]
+    pub fn rational(ty: NodeKey, value: &Rational) -> Self {
+        Self::Exact {
+            kind: "rational",
+            ty,
+            text: spelling(value),
+        }
+    }
+
+    /// The exact integer `value`.
+    #[must_use]
+    pub fn integer(ty: NodeKey, value: u64) -> Self {
+        Self::Exact {
+            kind: "integer",
+            ty,
+            text: value.to_string(),
+        }
+    }
+
+    /// The exact quantity `value` of the unit node `unit`.
+    #[must_use]
+    pub fn quantity(unit: NodeKey, value: &Rational) -> Self {
+        Self::Exact {
+            kind: "quantity",
+            ty: unit,
+            text: spelling(value),
+        }
+    }
+
+    /// The path segments that spell this statement: an aggregate as each
+    /// binding name then its value, a text as itself, a reference as an
+    /// operand, an exact value as its kind, the unit operand of a quantity
+    /// and its canonical text. A literal's type is no segment of an integer
+    /// or a rational, since its position fixes it.
+    pub fn spell(&self, path: &mut Vec<PathSegment>) {
+        match self {
+            Self::Text(text) => path.push(PathSegment::Text(text.clone())),
+            Self::Ref(key) => path.push(PathSegment::Node(key.clone())),
+            Self::Exact { kind, ty, text } => {
+                path.push(PathSegment::Text((*kind).into()));
+                if *kind == "quantity" {
+                    path.push(PathSegment::Node(ty.clone()));
+                }
+                path.push(PathSegment::Text(text.clone()));
+            }
+            Self::Aggregate(members) => {
+                for (name, value) in members {
+                    path.push(PathSegment::Text((*name).into()));
+                    value.spell(path);
+                }
+            }
+        }
+    }
+}
