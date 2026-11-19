@@ -10,11 +10,11 @@ use ix_trace_rs::trace;
 
 const SOURCE_WITH_PLAN: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile p = \"filament.temporal.infinite-trace/v1\";\n\
-    temporal Reaches using p over (c: Integer) clock \"model-steps\" on origin { eventually holds(c > 0) }\n\
+    temporal Reaches using p over (c: Int) clock \"model-steps\" on origin { eventually holds(c > 0) }\n\
     verify Release using p {\n\
-      check safe claim Reaches method model_check domain Integer bound 20;\n\
-      check tested claim Reaches method model_based_test domain Integer bound 500;\n\
-      check timely claim Reaches method model_check domain Integer depends [safe];\n\
+      check safe claim Reaches method model_check domain Int bound 20;\n\
+      check tested claim Reaches method model_based_test domain Int bound 500;\n\
+      check timely claim Reaches method model_check domain Int depends [safe];\n\
     }\n";
 
 fn checked(source_text: &str) -> CheckedPackage {
