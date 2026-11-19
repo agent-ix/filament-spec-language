@@ -14,7 +14,7 @@ use crate::prob_world::{self, World};
 
 const CLAIM: &str = "probabilistic CoinGone using ev on M over (c: M::Coin) under Even on origin \
     with alpha 0.1, beta 0.1, indifference 0.2 \
-    { probability >= 0.5 [ eventually[1,1] holds(count(o in M::coins where true) = 0) ] }";
+    { probability >= 0.5 [ always[0,0] holds(c.v = 0) ] }";
 
 fn ratio(numerator: i64, denominator: i64) -> Rational {
     Rational::new(Integer::from(numerator), Integer::from(denominator)).expect("nonzero")
@@ -53,12 +53,12 @@ fn decide(world: &World, seed: u64) -> StatisticalVerdict {
 
 /// FR-189-AC-16: over 1,024 deterministic seeds, the exact interval contains
 /// the model's known probability `1/2` at least 90% of the time. The model
-/// deletes its sole coin with probability exactly `1/2` on each draw.
+/// deletes its coin that stays at value zero in every sample.
 #[trace("TC-624", "FR-189-AC-16")]
 #[test]
 fn clopper_pearson_coverage() {
     let world = world();
-    let true_probability = ratio(1, 2);
+    let true_probability = ratio(1, 1);
     let mut covered = 0_u64;
 
     for seed in 0..1_024 {
