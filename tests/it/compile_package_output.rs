@@ -226,6 +226,24 @@ fn output_and_handoff_are_independent_writes() {
     );
     assert!(!directory.path().join("handoff").exists());
     assert!(!directory.path().join("handoff/pkg.json").exists());
+
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir(directory.path().join("existing")).unwrap();
+    let path = both(
+        directory.path(),
+        json!({"package": "existing/../handoff/pkg.json"}),
+    );
+    let (exit, value) = refusal(&path);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    let text = value.to_string();
+    assert!(
+        text.contains("output") && text.contains("handoff"),
+        "{value}"
+    );
+    assert!(!directory.path().join("handoff").exists());
+    assert!(!directory.path().join("handoff/pkg.json").exists());
 }
 
 /// The `check_mode` values of every node of the package at `path`.
