@@ -1486,8 +1486,6 @@ impl Diagnostic {
 pub enum DispositionKind {
     /// `requires-bound`.
     RequiresBound,
-    /// A finite trace population exceeds the bound declared by its hyper clause.
-    RequiresFiniteHyperBound { bound: u64, found: usize },
     /// `unsupported`.
     Unsupported,
     /// `invalid-request`.
@@ -1588,6 +1586,8 @@ pub(crate) enum Refusal {
     ),
     /// An unbounded extent: `unsupported` with `unbounded-extent`.
     RequiresBound,
+    /// A finite trace population exceeds the bound declared by its hyper clause.
+    RequiresFiniteHyperBound { bound: u64, found: usize },
     /// EN-4 `NotStatistical`: `invalid-request` with `not-statistical`.
     NotStatistical,
     /// A published option's value outside its domain (FSpec FR-779-AC-2):
