@@ -299,7 +299,6 @@ fn a_supported_clause_lowers_to_a_tl_formula() {
 /// `layering-check`, the check that passes only on the CLI's exit 21 run.
 #[test]
 #[trace("TC-2108", "FR-345-AC-15")]
-#[ignore = "QSL-2246: `refinement-layering` is not in CI_CHECKS yet"]
 fn ci_checks_include_the_layering_gate() {
     let makefile = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Makefile"))
         .expect("the Makefile");
@@ -314,8 +313,10 @@ fn ci_checks_include_the_layering_gate() {
         "{checks}"
     );
     assert!(
-        makefile.contains("refinement layering-check"),
-        "the recipe runs layering-check"
+        makefile.contains("refinement generate-layering")
+            && makefile.contains("refinement layering-check")
+            && makefile.contains("trap 'rm -rf \"$$corpus\"' EXIT"),
+        "the recipe generates the corpus, checks it, and removes the temporary directory"
     );
     // The check accepts no exit other than 21: 0 and 10 are rejected.
     for code in [0, 10] {
