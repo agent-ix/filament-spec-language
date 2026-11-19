@@ -894,6 +894,24 @@ fn work<'a>(
         }
         Some(ItemForm::Temporal(form))
             if item.kind == Capability::TemporalSatisfaction
+                && package
+                    .graph()
+                    .hyper_clauses()
+                    .iter()
+                    .any(|clause| clause.assembled_occurrence() == Some(&item.claim)) =>
+        {
+            super::hyper_item::hyper_item(
+                analysis,
+                binding,
+                *limits,
+                &item.claim,
+                item.request_index,
+                form,
+            )
+            .unwrap_or_else(absent)
+        }
+        Some(ItemForm::Temporal(form))
+            if item.kind == Capability::TemporalSatisfaction
                 && super::document::is_state_graph(package, &item.claim) =>
         {
             super::state_graph_item::state_graph_item(

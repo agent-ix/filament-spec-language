@@ -91,12 +91,11 @@ pub use clause_item::{
     ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject, CLAUSE_TRANSCRIPT,
 };
 pub use derived_item::{deadlock_model_item, PackageDeadlockSubject};
-pub use invariant_item::{PackageInvariantSubject, PackageItemInputs};
-pub use state_graph_item::PackageStateGraphSubject;
 pub(crate) use derived_item::{derived_target, NoLetters};
 pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
 #[cfg(feature = "test-support")]
 pub use exact::{exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered};
+pub use invariant_item::{PackageInvariantSubject, PackageItemInputs};
 pub(crate) use items::admission;
 pub use items::{
     derived_model_item, derived_protocol_item, derived_zone_item, hyper_form_item, model_item,
@@ -104,6 +103,7 @@ pub use items::{
     ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem, TimedRefinementItem,
 };
 pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
+pub use state_graph_item::PackageStateGraphSubject;
 
 use crate::provider::{
     ExternalProvider, ProviderOptions, ProviderRegistrationCause, ProviderRegistrationRefusal,
@@ -225,11 +225,12 @@ impl Engine {
         descriptor: BackendDescriptor,
         provider: Box<dyn fsl_replay::HybridProvider>,
     ) -> Result<Self, NotHybrid> {
-        let hybrid = descriptor.dynamics().is_some_and(|kinds| {
-            kinds.contains(&fsl_route::DynamicsKind::Hybrid)
-        }) && descriptor
-            .advertises()
-            .any(|(kind, _)| kind == Capability::TemporalSatisfaction);
+        let hybrid = descriptor
+            .dynamics()
+            .is_some_and(|kinds| kinds.contains(&fsl_route::DynamicsKind::Hybrid))
+            && descriptor
+                .advertises()
+                .any(|(kind, _)| kind == Capability::TemporalSatisfaction);
         if !hybrid {
             return Err(NotHybrid {
                 backend: descriptor.id().clone(),
@@ -517,7 +518,9 @@ impl Engine {
 /// [`Engine::hybrid`] was given a descriptor that is no hybrid provider's
 /// (FR-750): `invalid_capability`/`invalid-dynamics`.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("invalid-dynamics: {backend:?} does not publish `hybrid` dynamics for temporal-satisfaction")]
+#[error(
+    "invalid-dynamics: {backend:?} does not publish `hybrid` dynamics for temporal-satisfaction"
+)]
 pub struct NotHybrid {
     /// The backend whose descriptor was refused.
     pub backend: BackendId,
@@ -835,6 +838,8 @@ impl PartialEq for ItemCounterexample {
 /// the in-process engines produce.
 #[derive(Debug)]
 pub enum Counterexample {
+    /// A hyperproperty's reproduced tuple of model behaviours.
+    Hyper(Box<fsl_replay::HyperCounterexample>),
     /// EN-1 and EN-6's temporal counterexample over a model subject, with
     /// the object its `over` parameter is bound to when the run named one.
     Temporal {
@@ -1485,6 +1490,8 @@ pub struct Disposed {
 /// What an engine reports for one item. Only the crate's item adapters
 /// construct one, from the engine's own layer-6 settlement.
 pub(crate) enum EngineReport {
+    /// EN-1's replay-gated hyperproperty settlement.
+    Hyper(Box<fsl_replay::HyperRecord>),
     /// EN-1's record, settled by `settle_model_check`.
     Model(Box<ModelCheckRecord>),
     /// EN-1's record over an authored clause, with the object the clause's
@@ -1843,6 +1850,8 @@ fn unsupported_kind(kind: Capability) -> Diagnostic {
 /// One item's settlement.
 #[derive(Debug)]
 pub struct AnalyzeRecord {
+    /// EN-1's hyperproperty record, retaining a reproduced trace tuple.
+    pub hyper_check: Option<Box<fsl_replay::HyperRecord>>,
     /// The item's request index.
     pub request_index: RequestIndex,
     /// The item's claim, when the request named one.
@@ -1927,6 +1936,7 @@ impl AnalyzeRecord {
     fn of(request_index: RequestIndex, settlement: Settlement) -> Self {
         Self {
             request_index,
+            hyper_check: None,
             claim: None,
             settlement,
             non_zeno: None,
@@ -1962,6 +1972,13 @@ impl AnalyzeRecord {
         package: Option<&CheckedPackage>,
     ) -> Option<Result<serde_json::Value, CounterexampleWireError>> {
         let claim = self.claim.as_ref();
+        if let Some(found) = self
+            .hyper_check
+            .as_ref()
+            .and_then(|record| record.counterexample.as_ref())
+        {
+            return Some(fsl_replay::hyper_counterexample_wire(found, claim));
+        }
         if let Some(found) = self
             .model_check
             .as_ref()
@@ -2032,6 +2049,13 @@ impl AnalyzeRecord {
     /// Move out the counterexample the engine that settled this record
     /// holds.
     fn take_counterexample(&mut self) -> Option<Counterexample> {
+        if let Some(found) = self
+            .hyper_check
+            .as_mut()
+            .and_then(|record| record.counterexample.take())
+        {
+            return Some(Counterexample::Hyper(Box::new(found)));
+        }
         if let Some(found) = self
             .model_check
             .as_mut()
@@ -2189,6 +2213,7 @@ impl Counterexample {
             }
             Self::Assignments(found) => undefined_cause(None, Some(found)),
             Self::Probabilistic(_)
+            | Self::Hyper(_)
             | Self::Contract(_)
             | Self::StateGraph(_)
             | Self::GlobalConformance(_)
@@ -2614,6 +2639,14 @@ fn settle(
         )
     };
     match report {
+        EngineReport::Hyper(hyper) => {
+            let terminal_record = TerminalRecord::of_hyper(index, backend.clone(), &hyper)
+                .unwrap_or_else(|_| TerminalRecord::failed(index, backend));
+            AnalyzeRecord {
+                hyper_check: Some(hyper),
+                ..AnalyzeRecord::of(index, terminal(terminal_record))
+            }
+        }
         EngineReport::Model(model) => record(
             // A refuted value without its reproduced counterexample is an
             // engine fault, never a verdict.
@@ -2876,7 +2909,9 @@ fn settle(
             None,
         ),
         EngineReport::Refused(Refusal::FailedWithDetail(code, detail)) => record(
-            terminal(TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(detail)),
+            terminal(
+                TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(detail),
+            ),
             None,
         ),
         EngineReport::Refused(Refusal::UnsupportedConstruct(mut detail)) => {

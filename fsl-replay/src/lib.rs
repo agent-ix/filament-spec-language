@@ -397,7 +397,7 @@ pub use outcome::{
     ItemCause, ItemLabel, OUTCOME_FORMAT, Operation, OutcomeDiagnostic, OutcomeDocument,
     OutcomeItem, OutcomeItemError, OutcomeLocus, OutcomeStage, OutcomeWriteError, ParityReason,
     ProtocolConformanceOutput, ProtocolWire, ResultLimit, ResultValue, assignments_wire,
-    certificate_identity_wire, claim_locus_wire, graph_evidence_wire, probabilistic_wire,
+    certificate_identity_wire, claim_locus_wire, graph_evidence_wire, hyper_counterexample_wire, probabilistic_wire,
     protocol_temporal_wire, temporal_wire,
 };
 pub use planner::{
@@ -456,16 +456,16 @@ pub use proof_result::{
     read_backend_provider_envelope, read_first_party_solver_basis, read_plugin_assignments,
     read_plugin_basis, read_plugin_cause_kind, read_plugin_certification,
     read_plugin_hybrid_counterexample, read_plugin_hybrid_counterexample_over,
-    read_plugin_inconclusive_cause,
-    read_plugin_inconclusive_cause_over, AppliedReduction, BackendProviderSource, BoundsMethod,
-    Certification, DeclineCode, EmptyEnvelopeSet, ExactBinding, ExactEntry, ExactOrBounds,
-    ExactRational, Extremum, FslOnlyCause, IncompleteCause, InconclusiveCause, InstanceBound,
-    MemoryBound, MemoryBoundMember, PluginReplayContext, PluginReplayRefusal, PluginResultRefusal,
-    PremiseOutcome, ProofBasis, ProofRefusalCause, ProofResultEnvelope, ProofResultRefusal,
-    Proviso, ReportedInconclusiveCause, SettlementBasis, StaleIdentity, StatedInstanceBound,
-    StatedMemoryBound, StatisticalRequestRefusal, SymmetryBrokenCause, SymmetryRefusal,
-    TerminalRecord, TerminalRecordRefusal, TerminalValue, ToolFailure, TransferReason,
-    UnavailabilityCause, ValueCheckUnsupported, ValueFault, WeakAccessFailure,
+    read_plugin_inconclusive_cause, read_plugin_inconclusive_cause_over, AppliedReduction,
+    BackendProviderSource, BoundsMethod, Certification, DeclineCode, EmptyEnvelopeSet,
+    ExactBinding, ExactEntry, ExactOrBounds, ExactRational, Extremum, FslOnlyCause,
+    IncompleteCause, InconclusiveCause, InstanceBound, MemoryBound, MemoryBoundMember,
+    PluginReplayContext, PluginReplayRefusal, PluginResultRefusal, PremiseOutcome, ProofBasis,
+    ProofRefusalCause, ProofResultEnvelope, ProofResultRefusal, Proviso, ReportedInconclusiveCause,
+    SettlementBasis, StaleIdentity, StatedInstanceBound, StatedMemoryBound,
+    StatisticalRequestRefusal, SymmetryBrokenCause, SymmetryRefusal, TerminalRecord,
+    TerminalRecordRefusal, TerminalValue, ToolFailure, TransferReason, UnavailabilityCause,
+    ValueCheckUnsupported, ValueFault, WeakAccessFailure,
 };
 // The inputs `call_site` takes and the typed operation name it and FR-115
 // select by. They are defined in `spine` because the spine compile reads

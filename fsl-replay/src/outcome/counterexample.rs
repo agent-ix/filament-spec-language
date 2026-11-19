@@ -368,6 +368,86 @@ pub fn temporal_wire(
     temporal(counterexample, over, claim)
 }
 
+/// Spell a replayed hyper trace tuple using FSpec FR-400's wire form.
+///
+/// # Errors
+///
+/// Returns an error for a malformed key, transition or undefined source locus.
+pub fn hyper_counterexample_wire(
+    counterexample: &crate::HyperCounterexample,
+    claim: Option<&OccurrenceKey>,
+) -> Result<Json, CounterexampleWireError> {
+    use crate::{HyperCounterexampleKind, HyperStep, StepMark};
+    let mut traces = Vec::with_capacity(counterexample.traces.len());
+    for trace in &counterexample.traces {
+        let mut steps = Vec::with_capacity(trace.steps.len());
+        for (index, found) in trace.steps.iter().enumerate() {
+            let mut written = match found {
+                HyperStep::Model(found) => {
+                    let mut written = step(found)?;
+                    written["type"] = json!("step");
+                    written["post_state"] = key_text(&found.post_state)?;
+                    written
+                }
+                HyperStep::TerminalStutter => json!({"type": "terminal-stutter"}),
+            };
+            if let Some(mark) = trace.marks.get(index) {
+                written["mark"] = json!(match mark {
+                    StepMark::Skipped => "skipped",
+                    StepMark::Visible => "visible",
+                });
+            }
+            steps.push(written);
+        }
+        traces.push(json!({"type": "hyper-trace", "variable": trace.variable,
+            "alias": trace.alias, "initial": trace.initial.to_string(), "steps": steps}));
+    }
+    let instance: Vec<Json> = counterexample
+        .instance
+        .iter()
+        .map(|(parameter, key)| json!({"parameter": parameter, "key": key}))
+        .collect();
+    let mut written = json!({"type": "hyper-counterexample", "instance": instance,
+        "traces": traces, "trace_position": counterexample.trace_position.to_string()});
+    match &counterexample.kind {
+        HyperCounterexampleKind::Lockstep { loop_entry } => {
+            written["kind"] = json!("lockstep");
+            written["loop_entry"] = json!(loop_entry.to_string());
+        }
+        HyperCounterexampleKind::WitnessExhausted {
+            loop_entry,
+            position,
+        } => {
+            written["kind"] = json!("witness-exhausted");
+            written["loop_entry"] = json!(loop_entry.to_string());
+            written["position"] = json!(position.to_string());
+        }
+        HyperCounterexampleKind::Projected => written["kind"] = json!("projected"),
+        HyperCounterexampleKind::StepTuple => written["kind"] = json!("step-tuple"),
+        HyperCounterexampleKind::Undefined(undefined) => {
+            written["kind"] = json!("undefined");
+            let variables: Vec<Json> = undefined
+                .variables
+                .iter()
+                .map(|(variable, alias)| json!({"variable": variable, "alias": alias}))
+                .collect();
+            let state_keys = undefined
+                .state_keys
+                .iter()
+                .map(key_text)
+                .collect::<Result<Vec<_>, _>>()?;
+            written["undefined"] = json!({"type": "undefined-evaluation", "where": {
+                "position": undefined.position.to_string(), "state_keys": state_keys,
+                "variables": variables, "locus": locus(claim)?,
+            }, "cause": undefined_reason(&undefined.cause)});
+            if let Some(transition) = &undefined.transition {
+                written["undefined"]["where"]["transition"] = model_transition(transition)?;
+            }
+        }
+    }
+    Ok(written)
+}
+
 /// The protocol subject a counterexample was found over (FSpec FR-433's
 /// `subject` and `max_live_instances` members).
 #[derive(Clone, Debug)]
@@ -685,7 +765,6 @@ pub fn graph_evidence_wire(
                     StateGraphPropertyForm::AlwaysPossible,
                 ) => "Q",
                 (fsl_semantics::check::PredicateRole::From, _) => "X",
-                
             });
             let mut at = json!({
                 "position": stem.steps.len(),
