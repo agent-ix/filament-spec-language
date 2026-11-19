@@ -938,7 +938,9 @@ fn two_extension_forms_of_one_name_refuse_naming_both_declarations() {
 }
 
 fn extension_causes(refusal: &CompileRefusal) -> Vec<&ExtensionCause> {
-    let CompileRefusal::Check { refusals, .. } = refusal else {
+    let (CompileRefusal::Check { refusals, .. }
+    | CompileRefusal::CheckDiagnostics { refusals, .. }) = refusal
+    else {
         panic!("expected a check refusal, got {refusal:?}");
     };
     refusals
