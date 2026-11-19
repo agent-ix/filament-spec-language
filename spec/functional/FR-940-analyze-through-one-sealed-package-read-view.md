@@ -108,6 +108,8 @@ pub trait AnalysisView: sealed::Sealed {
     fn dependencies(&self) -> DependencyClosure<'_>;
     fn claim_name(&self, name: &str) -> Option<ClaimOccurrence>;
     fn claim_names(&self) -> ClaimNameRows<'_>;
+    fn requirement_items(&self) -> &[RequirementItemRow];
+    fn value_validity_records_of(&self, owner: &CheckedNodeId) -> &[usize];
     // ... one accessor per fact row of FR-531 "What the entry derives from
     // the bytes", each reading `package()`.
 }
@@ -157,6 +159,31 @@ and `FR-621`'s outcome document is unchanged.
   with the verdict, record, counterexample and replay the source route gives
   (FR-850 "Equality with the source route"). No package-route item SHALL
   settle `unsupported` for a fact or an evaluator the source route reads.
+
+### Requirement records
+
+- `AnalysisView` SHALL expose the package's requirement records as Contract
+  IR's typed read of FSpec FR-825's `requirement_items` rows and
+  `claim`/`value_validity` nodes: `requirement_items()` in package order, a
+  row's index being its record's request index, and
+  `value_validity_records_of(owner)`, the indices of the rows a function
+  node owns. Both implementations read their admitted package, so the source
+  route's `AdmittedPackageRead` and the package route's `BarePackage` return
+  equal rows for a package and the bytes it was written to.
+- On the package route, the settlement of a run call's items (FR-961 steps 4
+  and 5) SHALL take each item from these rows: its claim, request index,
+  kind and extent from the row, and its result bound, conversion context,
+  path condition, extent roots and referenced object types from the row's
+  record node. The FR-331 request item it writes, the candidates FR-075
+  computes from that kind and extent, and the record the linked engine or
+  provider settles SHALL equal the source route's for the same item. The
+  linked engine evaluates the application, its guards and its bound from
+  the package's nodes through the package call path (FR-945), never from a
+  `CheckedGraph`, and counterexample replay of a `refuted` item calls the
+  owner function through the same path, binding only the parameters the
+  record's `extent_roots` name (FR-098). No item is rebuilt from the graph,
+  none is dropped, and none settles `unsupported` for a fact these rows
+  carry.
 
 ### Claim names
 
@@ -331,6 +358,7 @@ route reads them and settles the item with the source route's record.
 | FR-940-AC-10 | AC-4's Counter unit declares `BelowThree` and then `AtMostTwo`, both `always holds(c.value <= 2)`, which share one `temporal_clause` node. `claim_name("BelowThree")` returns that node's `claim` occurrence 0 and `claim_name("AtMostTwo")` returns occurrence 1, over the `AdmittedPackageRead` and over the `BarePackage` of its handoff directory. Each equals the source checked clause's `claim` origin and its `temporal_clause_names` row. With the two declarations swapped in source, the ordinals swap. A `program` request and a `package` request with the items `[{"claim": "BelowThree"}, {"claim": "AtMostTwo"}]`, and with `[{"claim": "AtMostTwo"}]` alone, each negotiate every item and settle it `refuted`, with `replay.reproduced` `true`, at its own declaration's occurrence key. The item records, counterexamples and replays are equal across the two routes. No item settles `unsupported` or `invalid-request`. | Test (TC-3026) |
 | FR-940-AC-11 | Over AC-4's Counter unit with the state-graph claims `possible ReachThree using v over (c: M::Counter) { c.value = 3 }`, `always possible Back ... { c.value = 0 }` written without `from`, `always possible FromOne ... from (c.value = 1) { c.value = 0 }` and `unique path Straight ... from (c.value = 0) to (c.value = 1)`, `BarePackage::state_graph_claim_form` of each claim's `claim_name` occurrence, rebuilt by `CheckedStateGraphClaim::of_package_form`, equals the source route's checked claim in name, span, `over`, form, capability, requirements and occurrence, `Back`'s `from` being the constant predicate; a `program` request and a `package` request over its handoff directory with those four items give equal item records, witnesses or counterexamples, replays and certificates, and no package-route record is `unsupported`; each predicate evaluated through the evaluator port under its FR-475 role, `from` or `target` (`Straight`'s end predicate under `target`), at each explored state gives the same value on both routes. | Test (TC-3034) |
 | FR-940-AC-12 | AC-8's colliding source unit refuses at S3 with `ambiguous_declaration`/`ambiguous-name` at the second `Bounded`, naming both declarations, exit `20`, no item settled; AC-8's package with the `ReachThree` row renamed `Bounded` refuses the whole `package` request at the request stage, category refusal, `ambiguous_declaration`/`ambiguous-name` with `details.path` `/claim_names/{i}/name` of that row, `items` `[]`, `last_stage` `null`, exit `20`, and runs no engine. | Test (TC-3034) |
+| FR-940-AC-13 | Over FR-531-AC-35's unit, the `AdmittedPackageRead` of its emission and the `BarePackage` of its written bytes return equal `requirement_items()` and equal `value_validity_records_of` for `f`, `f2`, `sq` and `g`, and their rows equal `CheckedGraph::requirements()` position for position. For FR-961-AC-1's `Even` unit, the FR-331 request items written on the package route from these rows (claim, request index, kind, extent, result bound, path condition, candidates) equal the source route's for the same registry, and the linked engine settles each item with the source route's record; for RR-12's `f` with `n` an `Integer`, each item is `unbounded` with one `integer` domain at `n`'s parameter node and `finite_bound_available` true on both routes. A test-only view whose record of `f`'s `+` row lacks its one guard makes the package-route linked engine's record differ from the source route's (the guard `n >= 0 and n < 10` is no longer assumed), so the comparison can fail. | Test (TC-2620) |
 
 ## Dependencies
 
