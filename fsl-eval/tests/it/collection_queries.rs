@@ -2337,10 +2337,11 @@ fn positive() -> Expression {
     binary(BinaryOperator::Greater, name("x"), literal(0))
 }
 
-const COUNTED_KINDS: [CollectionKind; 3] = [
+const COUNTED_KINDS: [CollectionKind; 4] = [
     CollectionKind::Sequence,
     CollectionKind::Bag,
     CollectionKind::Set,
+    CollectionKind::OrderedSet,
 ];
 
 /// FR-766-AC-1 and AC-3: a linked `count<N>` whose `[0, size maximum]` is not
@@ -2386,6 +2387,47 @@ fn q14_count_refuses_unproved_range_at_check() {
         .unwrap_err()
         .cause,
         unproved_count((0, 5), (0, None))
+    );
+}
+
+/// Kernel count membership is decided at the count and retains its domain.
+#[trace("TC-2195", "FR-766-AC-4", "FR-096-AC-8")]
+#[test]
+fn q14_count_kernel_refusal_records_its_domain_at_the_count() {
+    let package = plain();
+    let source = of(CollectionKind::Sequence, ValueType::Boolean, 0, 5);
+    let checked = check(
+        &package,
+        &[("q", source.clone())],
+        &count("Three", "q", name("x")),
+    )
+    .expect("kernel checking leaves the final count membership to evaluation");
+    let evaluation = package
+        .evaluate(
+            &checked,
+            vec![collection(&source, vec![Value::Boolean(true); 5])],
+            &ObjectEnvironment::default(),
+            &mut Meter::new(UNLIMITED),
+        )
+        .unwrap();
+    assert_eq!(
+        refused_domain(&evaluation.outcome),
+        IntegerInterval::spanning(0_i64.into(), 3_i64.into())
+    );
+    assert_eq!(
+        evaluation.location.as_ref(),
+        Some(checked.root().location())
+    );
+    let record =
+        fsl_eval::value::refusal_record(&evaluation, |location| package.graph().region(location))
+            .expect("a refused count carries its record");
+    assert_eq!(
+        (record.code().code(), record.code().cause()),
+        ("integer_out_of_domain", "outside-domain")
+    );
+    assert_eq!(
+        record.fields().get("expected").map(String::as_str),
+        Some("Int[0, 3]")
     );
 }
 
