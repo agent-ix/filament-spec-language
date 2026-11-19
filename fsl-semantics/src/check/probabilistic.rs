@@ -36,7 +36,7 @@ mod model;
 pub use claim::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedTemporalFormula,
     ClaimActivation, ClaimNormalForm, Confidence, Event, FractionMeasure, ModelSubjectRef,
-    OverBinding, ProbForm, ProbScheduler, ReachTarget, TimeTypeMismatchReason, Weighting,
+    OverBinding, ProbForm, ProbScheduler, ReachTarget, Weighting,
 };
 pub(crate) use model::{check, precondition_reads, site_spans, ProbabilisticInput, Unresolved};
 pub use model::{
@@ -530,7 +530,7 @@ pub enum ProbabilisticCause {
 }
 
 /// The reason a probabilistic time-valued position is ill typed.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum TimeTypeMismatchReason {
     /// The subject's model does not declare a model-time binding.
     MissingTimeBinding,
