@@ -96,6 +96,8 @@ pub enum Shape {
     Lifecycle,
     /// Also a subtype `SubRegister` that declares a field `last`.
     Subtype,
+    /// Also a non-mutating `peek` operation, for an infinite stutter loop.
+    Peeker,
 }
 
 /// The operations of the concrete `Register`.
@@ -115,6 +117,9 @@ fn concrete_register_operations(package: &str, shape: Shape) -> Vec<Json> {
         let mut remove = operation(package, "Register", "remove", &[], None, &[]);
         remove["frame"]["deletes"] = json!([node(package, "Register")]);
         operations.extend([spawn, remove]);
+    }
+    if shape == Shape::Peeker {
+        operations.push(operation(package, "Register", "peek", &[], None, &[]));
     }
     operations
 }
