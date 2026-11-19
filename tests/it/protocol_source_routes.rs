@@ -272,7 +272,7 @@ fn project(
         .resolved_graph()
         .nodes
         .iter()
-        .find(|node| node.semantic_form == "protocol_clause")
+        .find(|node| &*node.semantic_form == "protocol_clause")
         .expect("source protocol");
     let role = package
         .resolved_graph()
@@ -283,7 +283,7 @@ fn project(
                 declaration
                     .qualified_name
                     .last()
-                    .is_some_and(|name| name.as_ref() == role)
+                    .is_some_and(|name| &**name == role)
             })
         })
         .expect("source role");
@@ -291,7 +291,17 @@ fn project(
         package,
         fsl_analyze::protocol_analysis::ProjectionRequest {
             protocol: protocol.node_id.clone(),
-            definition_key: Some("Exchange".into()),
+            definition_key: Some(
+                protocol
+                    .declaration
+                    .as_ref()
+                    .expect("named protocol")
+                    .qualified_name
+                    .iter()
+                    .map(|part| part.as_ref())
+                    .collect::<Vec<&str>>()
+                    .join("::"),
+            ),
             role: role.node_id.clone(),
             profile: Some("bounded-static".into()),
             bounds: Some(ProjectionBoundsDraft {
@@ -374,5 +384,98 @@ fn public_source_analysis_distinguishes_consumed_and_stranded_messages() {
         if expected == "refuted" {
             assert!(item.get("counterexample").is_some(), "{item}");
         }
+    }
+}
+
+#[test]
+#[trace("FR-225", "FR-226", "FR-227", "FR-230")]
+fn original_choice_parallel_and_repeat_have_positive_negative_and_zero_bound_controls() {
+    let directory = tempfile::tempdir().unwrap();
+    let original = std::fs::read_to_string(corpus("original/exchange.native")).unwrap();
+    let marker = "receive Seen via Queue of Sent as (got: Note) { true };";
+    for (name, control) in [
+        ("exclusive-choice", "choice Decision by Receiver visible (got.ok) { case yes when { got.ok } sequence Yes {} case no when { not got.ok } sequence No {} }"),
+        ("zero-repeat", "repeat Again by Receiver visible (got.ok) max 0 while { got.ok } sequence Cycle { commit Tick by Receiver as (tick: Boolean) { true }; } exhausted sequence Exhausted {}"),
+        ("bounded-repeat", "repeat Again by Receiver visible (got.ok) max 2 while { got.ok } sequence Cycle { commit Tick by Receiver as (tick: Boolean) { true }; } exhausted sequence Exhausted {}"),
+    ] {
+        let file = directory.path().join(format!("{name}.native"));
+        std::fs::write(&file,original.replace(marker,&format!("{marker}\n{control}"))).unwrap();
+        compile(directory.path(),&file);
+    }
+    for (name, control, code, cause) in [
+        ("overlapping-choice", "choice Decision by Receiver visible (got.ok) { case a when { got.ok } sequence A {} case b when { got.ok } sequence B {} }", "undefined_expression", "unproved-exhaustiveness"),
+        ("nonexhaustive-choice", "choice Decision by Receiver visible (got.ok) { case a when { got.ok } sequence A {} }", "undefined_expression", "unproved-exhaustiveness"),
+        ("no-progress-repeat", "repeat Again by Receiver visible (got.ok) max 2 while { got.ok } sequence Cycle {} exhausted sequence Exhausted {}", "unsupported_construct", "declaration-form"),
+    ] {
+        let file = directory.path().join(format!("{name}.native"));
+        std::fs::write(&file,original.replace(marker,&format!("{marker}\n{control}"))).unwrap();
+        refusal(directory.path(),&file,code,cause);
+    }
+    let start = original.find("  run sequence Main {").unwrap();
+    let end = original.find("  finish Done").unwrap();
+    for (name, join) in [
+        ("all", "all [A, B]"),
+        ("any-cancel", "any [A, B] outstanding cancel"),
+        ("any-continue", "any [A, B] outstanding continue"),
+    ] {
+        let file = directory.path().join(format!("parallel-{name}.native"));
+        let program = format!("{} run parallel Both {{ branch A sequence First {{ commit One by Sender as (one: Boolean) {{ true }}; }} branch B sequence Second {{ commit Two by Receiver as (two: Boolean) {{ true }}; }} }} join {join};\n{}",&original[..start],&original[end..]);
+        std::fs::write(&file, program).unwrap();
+        compile(directory.path(), &file);
+    }
+}
+
+#[test]
+#[trace("FR-575", "FR-570")]
+fn source_projection_names_each_construct_outside_bounded_static() {
+    use fsl_replay::protocol_analysis::AnalysisOutcome;
+    for (file, role, slug) in [
+        (
+            "protocols/declaration/declaration-on-each.fsl",
+            "Planning",
+            "activation-on-each",
+        ),
+        (
+            "protocols/roles-and-channels/roles-replicated.fsl",
+            "Worker",
+            "dynamic-role-population",
+        ),
+        (
+            "protocols/control-flow/control-parallel-any-cancel.fsl",
+            "Machining",
+            "unsupported-join",
+        ),
+        (
+            "protocols/control-flow/control-repeat-progress.fsl",
+            "Inspection",
+            "repeat",
+        ),
+        (
+            "protocols/retries-and-timeouts/timeouts-await.fsl",
+            "Machining",
+            "timed-await",
+        ),
+        (
+            "protocols/steps/steps-all-kinds.fsl",
+            "Machining",
+            "unsupported-control",
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let package = handoff(directory.path(), &saga().join("rules").join(file));
+        let result = project(&package, role);
+        let AnalysisOutcome::Unsupported(cause) = result.outcome else {
+            panic!("{file}: expected unsupported {slug}: {result:?}");
+        };
+        assert_eq!(cause.slug.as_str(), slug, "{file}: {cause:?}");
+        assert!(
+            package
+                .admitted()
+                .resolved_graph()
+                .nodes
+                .iter()
+                .any(|node| node.node_id == cause.node),
+            "{file}: the refusal names the actual source construct"
+        );
     }
 }
