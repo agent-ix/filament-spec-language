@@ -8,6 +8,7 @@ use filament_semantic_value::location::{
 };
 
 use super::{CheckCause, CheckRefusal, Scope, Signatures, Typer};
+use crate::family::{CheckContext, DiagnosticSink, ScopeStack, StageLimits};
 
 /// Resolve and type-check each source synthesis declaration (FR-754 S3).
 pub(crate) fn check_forms(
@@ -84,11 +85,11 @@ fn check_expression(
         fsl_forms::ClauseKind::Body,
     );
     let mut meter = filament_exact::Meter::new(super::family::SCALAR_LIMITS_UNLIMITED);
-    let mut diagnostics = super::family::DiagnosticSink::default();
-    let mut scopes = super::family::ScopeStack::default();
-    let mut typer = typer.with_context(super::family::CheckContext::new(
+    let mut diagnostics = DiagnosticSink::default();
+    let mut scopes = ScopeStack::default();
+    let mut typer = typer.with_context(CheckContext::new(
         scope,
-        super::family::StageLimits {
+        StageLimits {
             input_bytes: limits.input_bytes(),
             node_count: limits.nodes(),
         },
