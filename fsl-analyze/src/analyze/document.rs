@@ -340,7 +340,14 @@ impl SubjectSelection {
             {
                 let (keys, seen) = universes
                     .entry(DeclarationKey {
-                        package: read.model.identity.clone(),
+                        package: population
+                            .population
+                            .strip_prefix("ix://")
+                            .and_then(|identity| identity.rsplit_once('/'))
+                            .map_or_else(
+                                || read.model.identity.clone(),
+                                |(package, _)| package.to_owned(),
+                            ),
                         node: population.population.clone(),
                     })
                     .or_default();
