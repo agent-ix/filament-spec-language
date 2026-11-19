@@ -130,8 +130,12 @@ intersect the interval of a `+` or `-` node over the same two paths with it
 wherever the node stands, including a call argument checked against an
 `Int[lo,hi]` parameter. So `if x + y <= 9 then narrow(x + y) else 0`, for
 `x`, `y` of `Int[0, 9]` and a parameter `Int[0, 9]` of `narrow`, checks.
-Item 8 is the whole of this rule: a term of three or more operands, `!=`, and
-any combination of two bounds add no fact.
+Item 8 is the whole of this rule. It reads operands as FR-577 does, through
+`convert<Integer>` of an integer path and by (observation, path) key; a
+one-path term shifted by a literal, such as `x + 1 != 10` or `9 - x <= 3`, is an
+interval fact on that path; a two-path term compared with `!=` or with a
+non-literal, a term of three or more operands, and any combination of two
+bounds add no fact.
 
 ## Acceptance Criteria
 

@@ -97,7 +97,8 @@ This requirement does not change FR-103's refinement guard facts
   the checker SHALL transfer no precondition fact into `Q`.
 - In that conjunction the checker SHALL intersect the interval facts of one
   (observation, path) key and keep, for one ordered pair, the difference
-  bound with the smaller `c`. If an intersection is empty, the checker SHALL
+  bound with the smaller `c`, and, for one unordered pair, the sum bounds
+  (FSpec FR-146 item 8) with the smaller upper and the larger lower end. If an intersection is empty, the checker SHALL
   treat the conjunction as unreachable and transfer no fact from it.
 - The checker SHALL transfer a precondition fact only when it is keyed on a
   path rooted at `self` or at an operation parameter.
@@ -165,9 +166,14 @@ transferred fact matches a read under `pre(e)` in `Q` and never one of `Q`'s
   following yields no fact and refines no interval:
   - `=` or `!=` between two non-literal operands;
   - an ordering with an operand that is an arithmetic node, call, `size` or
-    any other non-path form, so `self.balance + amount <= 100` yields none;
-  - a bound used for a `+`, `*` or unary `-` node, or for a difference written
-    `-b + a`;
+    any other non-path form, with one exception: a two-path `+` or `-` term
+    compared with an integer literal adds the sum or difference bound FSpec
+    FR-146 item 8 defines (FR-680 "Two-path term guards"), and that bound
+    transfers as a precondition fact like any other, so
+    `self.balance + amount <= 100` bounds `pre(self.balance) + amount` in a
+    postcondition, while `amount + 0 <= self.balance` yields none;
+  - a difference bound used for a `+`, `*` or unary `-` node, or for a
+    difference written `-b + a`;
   - a transitive chain: `a <= b` and `b <= c` give no bound on `c - a`.
 - The checker SHALL apply difference facts wherever FR-104's definedness
   check runs: a state clause's own guards, transferred precondition facts,
@@ -240,7 +246,7 @@ the refusal located at the node `D`.
 | FR-577-AC-15 | Over the bank fixture with `deposit(amount: Int[0, 100])` added, the bank unit with `CanAfford` on `Bank::Account::deposit` refuses at `pre(self.balance) - amount`. | Test (TC-1416) |
 | FR-577-AC-16 | The bank unit with `CanAfford`'s body `amount = self.balance` refuses at `pre(self.balance) - amount`. | Test (TC-1416) |
 | FR-577-AC-17 | The bank unit with `CanAfford`'s body `amount + 0 <= self.balance` refuses at `pre(self.balance) - amount`. | Test (TC-1416) |
-| FR-577-AC-18 | The bank unit with `CanAfford`'s body `self.balance + amount <= 100` and `Debited` replaced by `post Credited using v on Bank::Account::withdraw { self.balance = pre(self.balance) + amount }` refuses at `pre(self.balance) + amount`. | Test (TC-1416) |
+| FR-577-AC-18 | The bank unit with `CanAfford`'s body `self.balance + amount <= 100` and `Debited` replaced by `post Credited using v on Bank::Account::withdraw { self.balance = pre(self.balance) + amount }` checks, the transferred sum bound typing `pre(self.balance) + amount` as `Int[0, 100]`; with `CanAfford`'s body `self.balance + amount <= 101` the same unit refuses at `pre(self.balance) + amount` (proved `[0, 101]`). | Test (TC-1416) |
 | FR-577-AC-19 | The bank unit with `CanAfford`'s body `amount <= self.limit and self.limit <= self.balance` refuses at `pre(self.balance) - amount`. | Test (TC-1416) |
 | FR-577-AC-20 | The bank unit with `CanAfford`'s body `let x = amount + 1 in x <= self.balance` and `Debited`'s body `let x = amount + 1 in self.balance = pre(self.balance) - x` refuses at `pre(self.balance) - x`. | Test (TC-1416) |
 | FR-577-AC-21 | The bank unit with `CanAfford`'s body `let b = self.balance in amount <= b` checks. | Test (TC-1416) |
