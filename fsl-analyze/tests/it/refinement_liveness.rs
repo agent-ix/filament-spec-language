@@ -23,7 +23,8 @@ use ix_trace_rs::trace;
 
 use crate::refinement_aux::{
     halting_refinement, hidden_register_history, pair_refinement, probe_contracts,
-    probe_refinement, Unit, World as AuxWorld, NEVER, UNLIMITED as AUX_UNLIMITED,
+    probe_refinement, Shape as AuxShape, Unit, World as AuxWorld, NEVER,
+    UNLIMITED as AUX_UNLIMITED,
 };
 use crate::refinement_fixture::{
     cas_refines_counter, divergence_refinement, key, mutated, World, CAS, UNLIMITED,
@@ -264,6 +265,24 @@ fn liveness_through_a_hidden_abstract_field_is_decided() {
         check_aux(&unit.world(&ensured.replace("ensure fair weak Spec::Register::write;\n", "")));
     assert!(matches!(outcome.safety, SafetyOutcome::Holds { .. }));
     assert_eq!(outcome.liveness, None);
+}
+
+/// FR-899-AC-1 (TC-2536): a recurrent concrete `peek` loop has no candidate
+/// run that can take the abstract `write`, so hidden-field liveness refutes it.
+#[trace("TC-2536", "FR-899-AC-1")]
+#[test]
+fn a_hidden_field_with_an_always_enabled_abstract_write_refutes_a_peek_loop() {
+    let unit = Unit::registers(&["r"], &["r"], AuxShape::Peeker);
+    let refinement = hidden_register_history().replace(
+        "step Impl::Register::write",
+        "step Impl::Register::peek -> stutter;\nstep Impl::Register::write",
+    );
+    let outcome = check_aux(&unit.world(&refinement));
+    assert!(matches!(outcome.safety, SafetyOutcome::Holds { .. }));
+    assert!(matches!(
+        outcome.liveness,
+        Some(LivenessHalf::Checked(ModelCheckOutcome::Violated { .. }))
+    ), "{:?}", outcome.liveness);
 }
 
 /// `Probe` over the concrete guards `concrete` (`flipA`, `flipB`, `setA`,
