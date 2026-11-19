@@ -567,7 +567,7 @@ fn a_finite_domain_hyper_clause_emits_one_row_per_trace_on_its_domain_binder() {
          profile e = \"filament.temporal.event-position.false-extension/v1\";\n\
          record Obs { inp: Int[0, 3]; out: Int[0, 3]; }\n\
          hyper Det using e over t in Obs bounded 3 forall trace a forall trace b \
-         { (a.inp = b.inp) -> (a.out = b.out) }\n";
+         { (a.inp = b.inp) implies (a.out = b.out) }\n";
     write(directory.path(), "unit.native", unit.as_bytes());
     let clock = json!({"kind": "event_position", "sequence_authority": "obs"});
     let request = |clocks: Option<Value>| {
