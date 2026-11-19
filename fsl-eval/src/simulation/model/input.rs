@@ -55,6 +55,8 @@ pub struct StateClauseEntry {
     pub name: String,
     /// The clause's node identity.
     pub identity: NodeKey,
+    /// The declaration's `claim` occurrence of the node.
+    pub claim: filament_exact::Origin,
     /// The object type the clause constrains.
     pub context: EffectiveId,
     /// The declaring type and name of the operation the clause belongs to;
@@ -126,6 +128,7 @@ impl<'a> ModelCheckInput<'a> {
                 .map(|clause| StateClauseEntry {
                     name: clause.name().to_owned(),
                     identity: clause.identity(),
+                    claim: clause.claim().clone(),
                     context: clause.context(),
                     operation: clause.operation().map(|operation| {
                         (
@@ -305,6 +308,7 @@ impl<'p> PackageModelInput<'p> {
             .map(|declaration| StateClauseEntry {
                 name: declaration.name,
                 identity: declaration.identity,
+                claim: declaration.claim,
                 context: declaration.context,
                 operation: declaration
                     .operation
@@ -370,6 +374,18 @@ impl<'p> PackageModelInput<'p> {
         }
         CheckedTemporalClause::of_package_form(form, self.world.types(), position_limit)
             .map_err(PendingClauseForm::Build)
+    }
+
+    /// The state clause declared at the `claim` occurrence `claim` of the
+    /// node `clause`, as its `claim_names` row names it (FR-940).
+    pub fn state_clause(
+        &self,
+        clause: &NodeKey,
+        claim: &filament_exact::Origin,
+    ) -> Option<&StateClauseEntry> {
+        self.state_clauses
+            .iter()
+            .find(|entry| entry.identity == *clause && entry.claim == *claim)
     }
 
     /// The input this package lends.

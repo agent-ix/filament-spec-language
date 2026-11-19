@@ -225,7 +225,7 @@ fn declaration_key(row: &ClaimNameRow) -> (&str, &str, u64, u64) {
 
 /// The claim row of the one declaration whose `qualified_name` `name`
 /// names (whole, or by its last segment), on that declaration's own node.
-fn own_claim_row(rows: &[ClaimNameRow], name: &str) -> Option<ClaimOccurrence> {
+pub(crate) fn own_claim_row(rows: &[ClaimNameRow], name: &str) -> Option<ClaimOccurrence> {
     use filament_contract_model::CheckedOccurrenceRole;
     let path: Vec<&str> = name.split("::").collect();
     let matches = |row: &ClaimNameRow| {

@@ -356,6 +356,8 @@ pub struct BareStateClauseDeclaration {
     pub name: String,
     /// The clause node's key.
     pub identity: NodeKey,
+    /// The declaration's `claim` occurrence of the node, from its row.
+    pub claim: filament_exact::Origin,
     /// The object type the clause constrains: its `self` parameter's type.
     pub context: filament_exact::EffectiveId,
     /// The operation a precondition or postcondition is anchored on; `None`
@@ -399,14 +401,27 @@ impl BarePackage<'_> {
                     _ => None,
                 })
         };
-        let mut rows: Vec<&filament_contract_model::ClaimNameRow> = package
-            .claim_names()
-            .unwrap_or_default()
+        let all = package.claim_names().unwrap_or_default();
+        // Each declaration once, at its claim row on its own node: a derived
+        // conjunction's rows name declarations whose own node is elsewhere
+        // (FSpec FR-322 "Rows of one declaration").
+        let mut rows: Vec<&filament_contract_model::ClaimNameRow> = all
             .iter()
             .filter(|row| {
                 nodes
                     .get(&row.declaration)
                     .is_some_and(|node| node.semantic_form.as_ref() == "state_clause")
+            })
+            .filter(|row| {
+                let path = row
+                    .qualified_name
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .collect::<Vec<&str>>()
+                    .join("::");
+                crate::analysis_view::own_claim_row(all, &path).is_some_and(|own| {
+                    own.declaration == row.declaration && own.occurrence == row.occurrence
+                })
             })
             .collect();
         rows.sort_by(|left, right| {
@@ -484,6 +499,10 @@ impl BarePackage<'_> {
             declarations.push(BareStateClauseDeclaration {
                 name: row.name.as_ref().to_owned(),
                 identity: key,
+                claim: filament_exact::Origin::new(
+                    filament_exact::Role::new("claim"),
+                    row.occurrence.ordinal,
+                ),
                 context,
                 operation,
                 observation,
