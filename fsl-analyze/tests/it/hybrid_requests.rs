@@ -1014,6 +1014,20 @@ fn an_undefined_evaluation_counterexample_reads_back() {
     assert!(counterexample.contains("division-by-zero"), "{item}");
 }
 
+/// FR-750-AC-15: a `Below` replay request carrying FSpec FR-652-AC-3's
+/// witness at `/replay/certificate` writes the `hybrid` row
+/// `reproduced-with-validated-witness`; the cut witness or none writes
+/// `inconclusive` `not-exact`; the witness on a `function` request refuses
+/// `unknown-member` at `/replay/certificate`. `ReplayRequestWire` has no
+/// certificate member yet, so the request cannot be built until it lands.
+#[test]
+#[trace("TC-3035", "FR-750-AC-15")]
+#[ignore = "QSL-2531: the replay request's validated-witness certificate is not implemented yet"]
+fn a_witness_refuted_hybrid_item_replays_with_validated_witness() {
+    let _witnesses = (grow_witness(9), grow_witness(8), GROW);
+    todo!("QSL-2531: FR-750-AC-15 needs `ReplayRequestWire`'s certificate member");
+}
+
 /// FR-750-AC-10: the refuted `TooSlow` item's `replay` resolves to the
 /// hybrid claim and FR-098 writes the FSpec FR-323 `hybrid` row
 /// `reproduced-with-evaluated-witness`; a non-reproducing trace writes

@@ -298,6 +298,18 @@ item's `Counterexample`.
   them, violates the claim. A `NotReproduced` trace never settles `refuted`
   through a witness, because exact replay decided that trace and found no
   violation.
+- The kind a provider's `refuted` entry claims SHALL agree with the kind
+  its accepted witness gives, by the agreement rule above with the
+  witness's decisive box in place of the reproduced decisive instant: both
+  `Formula`, or both `UndefinedEvaluation` with equal `where.position`,
+  equal `where.locus`, equal `cause` and a claimed `where.time` that
+  contains the decisive box's instant, or the step's `time` for an a-priori
+  box. A claim whose kind does not agree SHALL settle the item
+  `inconclusive` with
+  `ReplayParity(DisagreementCause::HybridTrace(NotExact{counterexample}))`,
+  carrying the provider's complete counterexample, and no `counterexamples`
+  entry, because the witness proves a different violation from the one the
+  provider claimed.
 - A provider's `refuted` entry whose trace gives `NotReproduced`, or gives
   `NotExact` with no `validated-witness` or one FR-751 rejects, SHALL settle
   the item `inconclusive` with
