@@ -618,11 +618,8 @@ fn canonical_condition_functions(
             }
             if let NodeKind::Call { function, .. } = node.kind() {
                 if let Some(identity) = graph.function_identity_at(*function) {
-                    if let Some(declaration) = graph.resolve_declaration(identity) {
-                        functions.insert(
-                            *function,
-                            format!("ix://{}/{}", declaration.package, declaration.node),
-                        );
+                    if let Some(identity) = source_function_identity(&identity) {
+                        functions.insert(*function, identity);
                     }
                 }
             }
@@ -670,13 +667,17 @@ fn canonical_condition_declarations(
             if !visited.insert(node.id()) {
                 continue;
             }
+            if let NodeKind::ImportedCall { callee, .. } = node.kind() {
+                if let Some(identity) = source_function_identity(callee) {
+                    declarations.insert(callee.clone(), identity);
+                }
+            }
             let key = match node.kind() {
                 NodeKind::Literal(CheckedLiteral(filament_exact::Value::Enum(member))) => {
                     Some(member.variant().owner().clone())
                 }
                 NodeKind::Field { field, .. } => Some(field.declaration()),
                 NodeKind::Record { declaration, .. } => Some(declaration.clone()),
-                NodeKind::ImportedCall { callee, .. } => Some(callee.clone()),
                 _ => None,
             };
             if let Some(key) = key {
@@ -699,6 +700,24 @@ fn canonical_condition_declarations(
         }
     }
     declarations
+}
+
+/// The source declaration identity carried by a checked function key. Its
+/// package is the source owner's identity, and its text path is the
+/// alias-free qualified declaration name.
+fn source_function_identity(key: &filament_exact::NodeKey) -> Option<String> {
+    let path = key
+        .view()
+        .path()
+        .map(|segment| match segment {
+            filament_exact::PathSegmentView::Text(text) => Some(text.to_owned()),
+            filament_exact::PathSegmentView::Node(_) => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if path.is_empty() {
+        return None;
+    }
+    Some(format!("ix://{}/{}", key.package(), path.join("/")))
 }
 
 impl ClauseDisposition {
