@@ -439,6 +439,53 @@ fn a_count_refused_at_compile_is_a_declined_run_item_with_its_cause() {
     assert_eq!(item["cause"]["kind"], "unproved-range", "{item}");
 }
 
+/// Declared clause obligations stay Linked; a function body follows its mode.
+#[trace("TC-2240", "FR-766-AC-8")]
+#[test]
+fn count_range_separates_declared_clauses_from_kernel_function_bodies() {
+    use filament_semantic_value::checking::CheckMode;
+    let (base, packages) = config_version_unit_and_packages();
+    let clause = format!("{base}type Zero = Int[0, 0];\n\
+        invariant I using v on Config::ConfigVersion at current {{ count<Zero>(m in sequence[self.versionNumber]: m >= 0) = 0 }}\n");
+    let function = format!("{base}function f using v(q: Sequence<Integer>[0, 1]): Int[0, 0] pure {{ count<Int[0, 0]>(m in q: m >= 0) }}\n");
+    for mode in [CheckMode::Linked, CheckMode::Kernel] {
+        let (declarations, _) =
+            super::fixture_declarations(source(), "count.native", clause.as_bytes(), &packages);
+        let refusals = declarations.check(mode, Default::default()).unwrap_err();
+        assert_eq!(refusals.len(), 1, "{mode:?}: {refusals:?}");
+        assert!(
+            matches!(
+                &refusals[0].cause,
+                fsl_semantics::check::CheckCause::Unproved(
+                    fsl_semantics::check::Obligation::Range { .. }
+                )
+            ),
+            "{mode:?}: {refusals:?}"
+        );
+        let (declarations, _) =
+            super::fixture_declarations(source(), "count.native", function.as_bytes(), &packages);
+        let result = declarations.check(mode, Default::default());
+        match mode {
+            CheckMode::Linked => {
+                let refusals = result.unwrap_err();
+                assert_eq!(refusals.len(), 1, "{refusals:?}");
+                assert!(
+                    matches!(
+                        &refusals[0].cause,
+                        fsl_semantics::check::CheckCause::Unproved(
+                            fsl_semantics::check::Obligation::Range { .. }
+                        )
+                    ),
+                    "{refusals:?}"
+                );
+            }
+            CheckMode::Kernel => {
+                result.expect("a kernel function leaves count membership to evaluation");
+            }
+        }
+    }
+}
+
 /// FR-766-AC-7 (TC-2195): a clause-run report whose S6a outcome is a kernel
 /// refusal record projects that record's code and cause onto its run item.
 #[trace("TC-2195", "FR-766-AC-7")]

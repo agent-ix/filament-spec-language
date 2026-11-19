@@ -3834,7 +3834,6 @@ impl PackageDeclarations {
                     &operation_precondition_facts,
                 );
                 let declarations = state_clause::ClauseDeclarations {
-                    mode,
                     unit: self.source_owners.get(&format!("state_clause:{index}")),
                     scope: &scope,
                     signatures: &signatures,
@@ -3956,7 +3955,6 @@ impl PackageDeclarations {
         for clause in &self.operation_clauses {
             let location = clause.location();
             let declarations = state_clause::ClauseDeclarations {
-                mode,
                 unit: None,
                 scope: &scope,
                 signatures: &signatures,
@@ -4012,7 +4010,6 @@ impl PackageDeclarations {
         for invariant in &self.type_invariants {
             let location = invariant.location();
             let declarations = state_clause::ClauseDeclarations {
-                mode,
                 unit: None,
                 scope: &scope,
                 signatures: &signatures,
@@ -4092,7 +4089,6 @@ impl PackageDeclarations {
                 continue;
             }
             let declarations = state_clause::ClauseDeclarations {
-                mode,
                 unit: None,
                 scope: &scope,
                 signatures: &signatures,
@@ -4166,7 +4162,6 @@ impl PackageDeclarations {
         let mut timed_models = {
             let location = Location::root(Origin::Expression);
             let declarations = state_clause::ClauseDeclarations {
-                mode,
                 unit: None,
                 scope: &scope,
                 signatures: &signatures,
@@ -4262,7 +4257,6 @@ impl PackageDeclarations {
             ($index:expr, $refinement:expr, $views:expr, $defer_abstract:expr) => {{
                 let location = Location::root(Origin::Expression);
                 let declarations = state_clause::ClauseDeclarations {
-                    mode,
                     unit: None,
                     scope: &scope,
                     signatures: &signatures,
@@ -4616,7 +4610,6 @@ impl PackageDeclarations {
             // stage may read.
             let obligation_location = root(Origin::Expression);
             let obligation_declarations = state_clause::ClauseDeclarations {
-                mode,
                 unit: self.source_owners.get(&protocol.name.name),
                 scope: &scope,
                 signatures: &signatures,
@@ -4704,7 +4697,6 @@ impl PackageDeclarations {
                     // over the binders readable at it, after the
                     // obligations' node total.
                     let slot_declarations = state_clause::ClauseDeclarations {
-                        mode,
                         nodes_used,
                         ..obligation_declarations
                     };
@@ -4744,7 +4736,6 @@ impl PackageDeclarations {
                     // FR-218: the protocol's channels, joins and
                     // `terminal`/`scheduling` members.
                     let control_declarations = state_clause::ClauseDeclarations {
-                        mode,
                         nodes_used,
                         ..obligation_declarations
                     };
@@ -4946,7 +4937,6 @@ impl PackageDeclarations {
             };
             let location = Location::root(Origin::Expression);
             let declarations = state_clause::ClauseDeclarations {
-                mode,
                 unit: None,
                 scope: &scope,
                 signatures: &signatures,
@@ -4987,7 +4977,6 @@ impl PackageDeclarations {
         {
             let location = Location::root(Origin::Expression);
             let declarations = state_clause::ClauseDeclarations {
-                mode,
                 unit: None,
                 scope: &scope,
                 signatures: &signatures,
@@ -5089,7 +5078,6 @@ impl PackageDeclarations {
             if body_refused {
                 let location = lowering::temporal_location(index, lowering::TemporalSite::Claim);
                 let condition_declarations = state_clause::ClauseDeclarations {
-                    mode,
                     unit: self.source_owners.get(&clause.form.name.name),
                     scope: &scope,
                     signatures: &signatures,
@@ -5128,7 +5116,6 @@ impl PackageDeclarations {
                     let location =
                         lowering::temporal_location(index, lowering::TemporalSite::Claim);
                     let condition_declarations = state_clause::ClauseDeclarations {
-                        mode,
                         unit: self.source_owners.get(&clause.form.name.name),
                         scope: &scope,
                         signatures: &signatures,
@@ -5341,7 +5328,6 @@ impl PackageDeclarations {
                 continue;
             }
             let declarations = state_clause::ClauseDeclarations {
-                mode,
                 unit: self.source_owners.get(&claim.form.name.name),
                 scope: &scope,
                 signatures: &signatures,
