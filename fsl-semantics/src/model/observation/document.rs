@@ -3,7 +3,7 @@
 //! (check 1), admitting its populations and objects (checks 5 to 8) and
 //! resolving `self`, `parameters` and `result` (checks 9 and 10).
 
-use super::{admission_record, AdmissionRecordExt};
+use super::{AdmissionRecordExt, admission_record};
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{
@@ -13,12 +13,12 @@ use filament_exact::{
 use fsl_foundation::diagnostic::Code;
 
 use super::helpers::object_reference;
-use super::tree::{read_raw_value, Json, Object};
+use super::tree::{Json, Object, read_raw_value};
 use super::{
-    check_document_valid, collection_tag, fault, incomplete, population_universe, refuse,
     AdmissionFailure, AdmissionRecord, DocumentRef, ModelView, NativeKind, ObservationLimits,
     OutOfRange, PathStep, PostStateRange, RawForm, RawNative, RawNativeKind, RawValue, ReadMeter,
-    SelectedObject, SnapshotValue,
+    SelectedObject, SnapshotValue, check_document_valid, collection_tag, fault, incomplete,
+    population_universe, refuse,
 };
 use crate::model::object_environment::ObjectEnvironment;
 use crate::model::operation::OperationDeclaration;

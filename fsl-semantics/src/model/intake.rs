@@ -7131,6 +7131,7 @@ mod tests {
             })
             .expect("the option-typed operation is read");
         assert_eq!(operation.parameters.len(), 1);
+        assert_eq!(operation.parameters[0].presence, Presence::Required);
         assert_eq!(
             operation.parameters[0].value_type,
             ValueTypeRef::Package(declaration_key(
@@ -7145,6 +7146,47 @@ mod tests {
                 "ix://acme/optionals/OptInt",
             )))
         );
+    }
+
+    #[trace("FSpec-FR-154-AC-40")]
+    #[test]
+    fn operation_parameter_presence_is_required_and_rejects_unknown_values() {
+        let mut document = option_wire_document(Some(serde_json::json!(
+            "ix://filament/native/Integer"
+        )));
+        document["types"][1]["operations"][0]["params"][0]["presence"] =
+            serde_json::json!("optional");
+        let records = read_records(
+            "acme/optionals",
+            &parse_document(document.to_string().as_bytes()),
+        )
+        .expect("optional presence is read from the operation parameter");
+        assert!(records.iter().any(|record| matches!(
+            record,
+            DomainPackageRecord::OperationMember(operation)
+                if operation.parameters[0].presence == Presence::Optional
+        )));
+
+        for invalid_presence in [serde_json::Value::Null, serde_json::json!("sometimes")] {
+            let mut invalid = option_wire_document(Some(serde_json::json!(
+                "ix://filament/native/Integer"
+            )));
+            invalid["types"][1]["operations"][0]["params"][0]["presence"] =
+                invalid_presence;
+            let refusals = read_records(
+                "acme/optionals",
+                &parse_document(invalid.to_string().as_bytes()),
+            )
+            .expect_err("unknown parameter presence refuses");
+            assert!(matches!(
+                &refusals[0].cause,
+                ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
+                    if *member == MemberPath::new(MemberRoot::Operation)
+                        .name("params")
+                        .index(0)
+                        .name("presence")
+            ));
+        }
     }
 
     #[trace("FSpec-FR-154-AC-41")]

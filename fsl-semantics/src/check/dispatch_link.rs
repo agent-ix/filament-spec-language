@@ -27,13 +27,13 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_forms::{BinaryOperator, DeclaredClauseKind, ExprNode, Expression, StateClauseKind};
-use fsl_foundation::diagnostic::Code;
 use fsl_foundation::Span;
+use fsl_foundation::diagnostic::Code;
 
 use super::check::DispatchOperation;
 use super::checked_dispatch::{
-    body_clause, body_function, checked_dispatch_core, rename_names, DispatchBridgeRefusal,
-    DispatchRoot, OperationClauses,
+    DispatchBridgeRefusal, DispatchRoot, OperationClauses, body_clause, body_function,
+    checked_dispatch_core, rename_names,
 };
 use super::ir::{DispatchCandidate, DispatchTable};
 use super::lowering::ModelClause;

@@ -2824,11 +2824,7 @@ impl<'a> Typer<'a> {
                     ..
                 } = *frame;
                 if index == arguments.len() {
-                    for (position, parameter) in operation
-                        .parameters
-                        .iter()
-                        .enumerate()
-                        .skip(index)
+                    for (position, parameter) in operation.parameters.iter().enumerate().skip(index)
                     {
                         let at = location.child(position + 1);
                         let absent = self.absent_literal(Some(parameter), &at)?;

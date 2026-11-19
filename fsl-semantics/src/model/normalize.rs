@@ -109,11 +109,11 @@ use crate::model::domain_package::{
 };
 use crate::model::index::{ModelIndex, RecordIndex, Redefiner};
 use crate::model::key::{
-    EffectiveDeclarationPreimage, EffectiveId, Fact, RuleRef, RULE_INHERIT, RULE_QUALIFY,
-    RULE_REDEFINE, RULE_SUBSET,
+    EffectiveDeclarationPreimage, EffectiveId, Fact, RULE_INHERIT, RULE_QUALIFY, RULE_REDEFINE,
+    RULE_SUBSET, RuleRef,
 };
 use filament_checked::key::DeclarationKey;
-use filament_exact::{length_amount, Cancel, Presence};
+use filament_exact::{Cancel, Presence, length_amount};
 use fsl_foundation::diagnostic::{Code, JsonPointer};
 
 /// Re-exported from [`crate::model::refusal`] (#141 finding 4): that module
@@ -1832,7 +1832,9 @@ fn validate_process_meanings(domain_package: &DomainPackage) -> Vec<ModelRefusal
                 ),
                 Some(record) => format!(
                     "{}: TypeDefinition.supertypes[{position}]: {} resolves to {:?}, a process may generalize only a process",
-                    process.key.node, supertype.node, record.key()
+                    process.key.node,
+                    supertype.node,
+                    record.key()
                 ),
                 None => format!(
                     "{}: TypeDefinition.supertypes[{position}]: {} names no type of this domain package",
@@ -5028,11 +5030,12 @@ mod tests {
         else {
             panic!("the declared operation may own its contract clause");
         };
-        assert!(view
-            .domain_package()
-            .records
-            .iter()
-            .any(|record| record.key() == &clause_key));
+        assert!(
+            view.domain_package()
+                .records
+                .iter()
+                .any(|record| record.key() == &clause_key)
+        );
     }
 
     /// Quire container clauses refuse even when constructed after intake.
@@ -5234,11 +5237,12 @@ mod tests {
                 let NormalizeOutcome::Completed(view) = outcome else {
                     panic!("a foreign-language clause is retained: {outcome:?}");
                 };
-                assert!(view
-                    .domain_package()
-                    .records
-                    .iter()
-                    .any(|record| record.key() == &clause_key));
+                assert!(
+                    view.domain_package()
+                        .records
+                        .iter()
+                        .any(|record| record.key() == &clause_key)
+                );
             }
         }
 
