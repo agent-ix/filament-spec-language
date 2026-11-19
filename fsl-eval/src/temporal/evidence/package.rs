@@ -150,6 +150,42 @@ struct SourceCheck<'p> {
     clauses: Vec<TemporalClauseRef>,
 }
 
+fn collect_time_unit_scales(
+    rows: &PackageRows,
+    source: Option<&SourceCheck<'_>>,
+    bare: Option<&BarePackage<'_>>,
+) -> BTreeMap<Box<str>, filament_exact::Rational> {
+    let mut scales = BTreeMap::new();
+    for binding in &rows.bindings {
+        let unit = match &binding.clock {
+            fsl_package::ClockConfiguration::EventPosition { .. } => continue,
+            fsl_package::ClockConfiguration::FixedSample { unit, .. }
+            | fsl_package::ClockConfiguration::Timed { unit } => unit.as_ref(),
+            fsl_package::ClockConfiguration::TimestampedEvent { timestamp_unit } => {
+                timestamp_unit.as_ref()
+            }
+        };
+        let scale = bare
+            .and_then(|bare| bare.time_unit_scale(unit))
+            .or_else(|| {
+                source
+                    .and_then(|source| {
+                        source
+                            .read
+                            .source()
+                            .graph()
+                            .time_unit_scale(unit)
+                            .ok()
+                            .cloned()
+                    })
+            });
+        if let Some(scale) = scale {
+            scales.insert(unit.into(), scale);
+        }
+    }
+    scales
+}
+
 /// The evaluation package of one checked package, whichever route built it.
 ///
 /// ```compile_fail,E0599
@@ -161,6 +197,7 @@ struct SourceCheck<'p> {
 /// ```
 pub struct EvidencePackage<'p> {
     package: &'p CheckedPackageV2,
+    canonical_package_bytes: Option<&'p [u8]>,
     source: Option<SourceCheck<'p>>,
     /// Capture types projected once under the admission entry's native budget.
     /// The bare route borrows the projections retained by its owner.
@@ -170,6 +207,7 @@ pub struct EvidencePackage<'p> {
     >,
     rows: PackageRows,
     activation_map: Vec<ActivationRow>,
+    time_unit_scales: BTreeMap<Box<str>, filament_exact::Rational>,
     progress_capacity: u64,
     max_window_values: u64,
 }
@@ -214,6 +252,7 @@ impl<'p> EvidencePackage<'p> {
         let clauses = held.clauses().to_vec();
         Self::with_rows(
             read.admitted(),
+            Some(read.canonical_bytes()),
             Some(SourceCheck { read, clauses }),
             rows,
             budget,
@@ -259,6 +298,7 @@ impl<'p> EvidencePackage<'p> {
         }
         Self::with_rows(
             read.admitted(),
+            Some(read.canonical_bytes()),
             Some(SourceCheck { read, clauses }),
             rows,
             budget,
@@ -307,11 +347,19 @@ impl<'p> EvidencePackage<'p> {
                 budget,
             )?)
         };
-        Ok(Self::assemble(bare.package(), None, projections, rows))
+        Ok(Self::assemble(
+            bare.package(),
+            bare.canonical_bytes(),
+            None,
+            projections,
+            collect_time_unit_scales(&rows, None, Some(bare)),
+            rows,
+        ))
     }
 
     fn with_rows(
         package: &'p CheckedPackageV2,
+        canonical_package_bytes: Option<&'p [u8]>,
         source: Option<SourceCheck<'p>>,
         rows: PackageRows,
         budget: &mut NativeJoinBudget,
@@ -333,10 +381,13 @@ impl<'p> EvidencePackage<'p> {
             Some(Err(_)) | None => SelectedExactIdentities::empty(),
         };
         let projections = Self::project_captures(package, &rows, &identities, budget)?;
+        let time_unit_scales = collect_time_unit_scales(&rows, source.as_ref(), None);
         Ok(Self::assemble(
             package,
+            canonical_package_bytes,
             source,
             std::borrow::Cow::Owned(projections),
+            time_unit_scales,
             rows,
         ))
     }
@@ -379,11 +430,13 @@ impl<'p> EvidencePackage<'p> {
 
     fn assemble(
         package: &'p CheckedPackageV2,
+        canonical_package_bytes: Option<&'p [u8]>,
         source: Option<SourceCheck<'p>>,
         projections: std::borrow::Cow<
             'p,
             BTreeMap<CheckedNodeId, Result<ExactTypeProjection, ExactTypeProjectionError>>,
         >,
+        time_unit_scales: BTreeMap<Box<str>, filament_exact::Rational>,
         rows: PackageRows,
     ) -> Self {
         let activation_map = activation_relation(package)
@@ -392,10 +445,12 @@ impl<'p> EvidencePackage<'p> {
             .collect();
         Self {
             package,
+            canonical_package_bytes,
             source,
             projections,
             rows,
             activation_map,
+            time_unit_scales,
             progress_capacity: DEFAULT_COVERED_POSITIONS,
             max_window_values: crate::temporal::DEFAULT_MAX_WINDOW_VALUES,
         }
@@ -578,9 +633,23 @@ impl<'p> EvidencePackage<'p> {
             formula,
         );
         let key = view.declaration_key().ok_or_else(unresolved)?;
+        let time_unit_scale = chosen.clock.and_then(|clock| {
+            let unit = match &clock.clock {
+                fsl_package::ClockConfiguration::EventPosition { .. } => return None,
+                fsl_package::ClockConfiguration::FixedSample { unit, .. }
+                | fsl_package::ClockConfiguration::Timed { unit } => unit.as_ref(),
+                fsl_package::ClockConfiguration::TimestampedEvent { timestamp_unit } => {
+                    timestamp_unit.as_ref()
+                }
+            };
+            self.time_unit_scales.get(unit).cloned()
+        });
         Ok(EvidenceSubject {
             package_identity: self.package.name().to_owned(),
+            canonical_package_bytes: self.canonical_package_bytes,
+            time_unit_scale,
             declaration: &named.declaration,
+            signal: view.over(),
             profile: profile_row,
             occurrences,
             facts,

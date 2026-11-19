@@ -85,6 +85,7 @@ pub(super) fn refusal(
 
 /// The subject with the occurrence the request selected and its clock row.
 struct ResolvedSubject<'p> {
+    package_subject: &'p EvidenceSubject<'p>,
     selection: ClauseSelection<'p>,
     facts: &'p crate::temporal::facts::ClauseFacts,
     instance_bound: &'p BTreeSet<u64>,
@@ -135,6 +136,7 @@ fn resolve<'p>(
     let occurrence_key = serde_json::to_vec(&(subject.declaration, &chosen.occurrence))
         .map_err(|_| fault("clause-identity-encodes"))?;
     Ok(ResolvedSubject {
+        package_subject: subject,
         selection: ClauseSelection {
             declaration: subject.declaration,
             profile: subject.profile,
@@ -263,6 +265,7 @@ pub fn evaluate_temporal_evidence(
     meter: &mut Meter,
 ) -> Result<EvaluatedEvidence, CallFailure> {
     let resolved = resolve(subject, request)?;
+    super::producer::admitted().map_err(|_| fault("observation-producer-bundle-admits"))?;
     let facts = admit(&resolved, request, meter)?;
     let shape = resolved.shape();
     let outcome = assess(&facts, &shape, meter)?;
@@ -1095,6 +1098,7 @@ impl WindowCharge for UnitCharger<'_, '_> {
 /// (FR-524 "Instance-bound atoms").
 struct EvidenceLetters<'a> {
     request: &'a EvidenceRequest,
+    owner: Option<&'a super::owner::OwnerObservation>,
     trace: &'a TimestampedTrace,
     bound: &'a BTreeSet<u64>,
     formula: &'a crate::temporal::facts::ClauseFormula,
@@ -1315,7 +1319,10 @@ impl TemporalLetters for EvidenceLetters<'_> {
         }
         if !self.bound.contains(&atom_index) {
             return Ok(match supplied.valuations.get(&atom_index) {
-                Some(valuation) => valuation.clone(),
+                Some(valuation) => match self.owner {
+                    Some(owner) => owner.valuation(&supplied.observation.identity, atom_index, None, valuation)?,
+                    None => valuation.clone(),
+                },
                 None => {
                     self.absent.push((position.index(), atom_index));
                     Valuation::Missing
@@ -1327,7 +1334,10 @@ impl TemporalLetters for EvidenceLetters<'_> {
             .and_then(|assessed| supplied.instance_valuations.get(assessed))
             .and_then(|valuations| valuations.get(&atom_index));
         if let Some(valuation) = own {
-            return Ok(valuation.clone());
+            return match self.owner {
+                Some(owner) => Ok(owner.valuation(&supplied.observation.identity, atom_index, self.assessed, valuation)?),
+                None => Ok(valuation.clone()),
+            };
         }
         let others = supplied
             .instance_valuations
@@ -1433,7 +1443,7 @@ fn admit_trace(
         | fsl_package::ClockConfiguration::FixedSample { .. }
         | fsl_package::ClockConfiguration::Timed { .. } => String::new(),
     };
-    TimestampedTrace::admit(
+    TimestampedTrace::admit_uncertain(
         clause_facts.name(),
         WindowClock {
             name: request.binding.clock_name.to_string(),
@@ -1444,10 +1454,15 @@ fn admit_trace(
         request
             .positions
             .iter()
-            .map(|position| TimestampedObservation {
-                stamp: position.position,
-                order_key: position.order_key.clone(),
-                observation: position.observation.identity.clone(),
+            .map(|position| {
+                (
+                    TimestampedObservation {
+                        stamp: position.position,
+                        order_key: position.order_key.clone(),
+                        observation: position.observation.identity.clone(),
+                    },
+                    position.interval,
+                )
             })
             .collect(),
         WindowProgress {
@@ -1579,6 +1594,20 @@ fn assess(
         Ok(trace) => trace,
         Err(stopped) => return Ok(*stopped),
     };
+    let owner = facts
+        .subject
+        .package_subject
+        .canonical_package_bytes
+        .map(|_| {
+            super::owner::admit_trace(
+                facts.subject.package_subject,
+                request,
+                &facts.authenticated,
+                facts.subject.occurrence,
+                &trace,
+            )
+        })
+        .transpose()?;
     let canonical_anchor = (0..trace.len())
         .find(|index| {
             trace
@@ -1612,6 +1641,7 @@ fn assess(
         scope,
         input,
         trace,
+        owner,
         activation_position,
         anchor_tick,
     };
@@ -1625,6 +1655,7 @@ struct Prepared {
     scope: TriggerScope,
     input: ActivationInput,
     trace: TimestampedTrace,
+    owner: Option<super::owner::OwnerObservation>,
     activation_position: usize,
     anchor_tick: u64,
 }
@@ -1643,6 +1674,7 @@ fn run_instance(
         trace,
         activation_position,
         anchor_tick,
+        owner,
     } = prepared;
     if let Some(trigger) = &request.trigger {
         call.assess(trigger.as_bytes());
@@ -1726,7 +1758,7 @@ fn run_instance(
                         )
                     }
                     InstanceState::Active => {
-                        evaluate(facts, trace, *activation_position, trigger, call)?
+                        evaluate(facts, trace, owner.as_ref(), *activation_position, trigger, call)?
                     }
                 },
             }
@@ -1753,6 +1785,7 @@ fn run_instance(
 fn evaluate(
     facts: &Facts<'_>,
     trace: &TimestampedTrace,
+    owner: Option<&super::owner::OwnerObservation>,
     activation_position: usize,
     trigger: &SemanticTriggerIdentity,
     call: &mut CallMeter<'_>,
@@ -1761,6 +1794,7 @@ fn evaluate(
     let clause_facts = facts.subject.facts;
     let mut letters = EvidenceLetters {
         request,
+        owner,
         trace,
         bound: facts.subject.instance_bound,
         formula: facts.subject.facts.formula(),
