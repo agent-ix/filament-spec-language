@@ -24,7 +24,7 @@ that native replay reproduces.
 
 A checked package, one clause identity, a generator profile, a seed,
 `max_cases`, `max_trace_length`, `max_value_bits` (1 to 64) when a
-generation root has no finite bound (FSpec FR-190 "Value domains"), and the
+generation root or an operation result has no finite bound (FSpec FR-190 "Value domains"), and the
 run's limits and cancellation. A `verify` plan step with method
 `model_based_test` (FR-753) supplies the clause, domain and bound
 (`max_cases`), and the plan request supplies `seed`, `max_trace_length` and
@@ -41,8 +41,8 @@ retained counterexample.
 - The generator SHALL be a deterministic function of the package, clause,
   profile, seed and limits; it SHALL first emit every boundary partition of
   FSpec FR-190 "Generation and shrinking contract", then seeded cases.
-- The generator SHALL classify each generation root as FSpec FR-190 "Value
-  domains" states. The generator SHALL draw a root with no finite bound from
+- The generator SHALL classify each generation root and operation result as
+  FSpec FR-190 "Value domains" states. The generator SHALL draw a root with no finite bound from
   the size-bounded domain of `max_value_bits` in size order, and every other
   root from its declared domain unchanged, so `max_value_bits` never narrows
   a declared finite domain. The provenance SHALL record `max_value_bits`,
@@ -51,7 +51,8 @@ retained counterexample.
   size-bounded domain of each root with no finite bound (an operation result
   included), and the indexed declared domain of each declared-finite root
   FR-120 does not enumerate, as that root's bound for the requires-bound
-  check (FR-120 "Bounds"). An enabled application whose postcondition has no
+  check (FR-120 "Bounds"); a clock-bearing root FR-120 lists as unbounded keeps
+  its `RequiresBound` refusal. An enabled application whose postcondition has no
   candidate post-state or result inside a size-bounded domain SHALL be
   counted as a value-bound cut and yields no successor; it is never a
   deadlock.
@@ -116,7 +117,7 @@ retained counterexample.
 | FR-752-AC-4 | Over a counter model with `inc` (enabled while `value < 5`, `value` in `Int[0, 5]`), `reset` (enabled at `value = 5`) and `jam` (enabled at `value > 5`), seed 7, `max_cases` 100 and `max_trace_length` 8, `operations` lists `inc` and `reset` `covered` with their first case and `jam` `uncovered`, reason `unreachable`, and `coverage` is `partial`; with `max_trace_length` 3, `reset` is `uncovered`, reason `unreachable-within-bound` with `bounds` `["max_trace_length"]`. Two equal runs give equal `operations`, and the passing run stays `tested` with no verdict. | Test (TC-2956) |
 | FR-752-AC-5 | Over the predicate `Square` with parameter `x: Integer` and body `x * x >= 0`, seed 7, `max_cases` 20 and `max_value_bits` 8: the first five cases are `x` = 0, -1, 1, -255 and 255 (`size-least`, `size-unit` twice, `size-extreme-low`, `size-extreme-high`); no case has `x` outside `[-255, 255]` and no partition kind ends in `-refusal`; `provenance.max_value_bits` is 8 and `provenance.size_bounded` has one entry with `values` `"511"`; the run is `tested` with `cases.generated` 20. Over the body `x < 200` the retained counterexample is `x` = 200, which native replay fails. `max_value_bits` 0 and 65 each refuse `invalid_runtime_input`/`invalid-value`, and `max_value_bits` 8 over the predicate `value <= 3` with parameter `value: Int[0, 5]` refuses `invalid_runtime_input`/`unknown-member`; each refusal names `max_value_bits` and runs no case. | Test (TC-2102) |
 | FR-752-AC-6 | Over a counter with `value: Integer` (initial 0), `add(by: Int[1, 100])` (`value' = value + by`) and `big()` (enabled when `value >= 300`), seed 7, `max_cases` 100, `max_trace_length` 8 and `max_value_bits` 8: `big` is `uncovered` with reason `unreachable-within-bound` and `bounds` `["max_value_bits"]`, never `unreachable`; `provenance.value_bound_cuts.count` is at least 1; the run is `tested`. With `max_value_bits` 10, `big` is `covered`, or `not-generated` with an `enabled_at` prefix of `add` invocations whose arguments sum to at least 300. | Test (TC-2956) |
-| FR-752-AC-7 | Over a counter with `value` in `Int[0, 5]` (initial 0), `inc(by: Int[1, 6])` (enabled when `value + by <= 5`) and `jam()` (enabled when `value > 5`), the postcondition clause `Inc` of `inc`, seed 7, `max_cases` 100 and `max_trace_length` 8: cases 0 to 7 are the partitions of `value` (-1, 0, 5, 6) followed by those of `by` (0, 1, 6, 7); the cases for `value` -1 and 6 and `by` 0 and 7 are refusal cases discarded `domain-refusal` with their partitions `refused`; the `by` 6 case is discarded `precondition-false` and its partition is `uncovered` with reason `precondition-false` and `bounds` `[]`; `cases.generated` is 100 and equals `passed + failed + discarded`; the run is `tested`. The precondition clause of `inc` over the same model has `discarded_by.precondition-false.count` 0, because a false precondition is a defined, passing point. The postcondition clause of `jam` discards every case `no-check-point` or `domain-refusal`, has `cases.passed` 0, and settles `inconclusive` with cause `no-evaluated-case`, never `tested`; as step `j` of a plan whose step `k` has `depends [j]`, `k` is `blocked` by `j` and the exit is `22`. | Test (TC-2102) |
+| FR-752-AC-7 | Over a counter with `value` in `Int[0, 5]` (initial 0), `inc(by: Int[1, 6])` (enabled when `value + by <= 5`) and `jam()` (enabled when `value > 5`), the postcondition clause `Inc` of `inc`, seed 7, `max_cases` 100 and `max_trace_length` 8: cases 0 to 7 are the partitions of `value` (-1, 0, 5, 6) followed by those of `by` (0, 1, 6, 7); the cases for `value` -1 and 6 and `by` 0 and 7 are refusal cases discarded `domain-refusal` with their partitions `refused`; the `by` 6 case is discarded `precondition-false` and its partition is `uncovered` with reason `precondition-false` and `bounds` `[]`; `cases.generated` is 100 and equals `passed + failed + discarded`; the run is `tested`. The precondition clause of `inc` over the same model has `discarded_by.precondition-false.count` 0, because a false precondition is a defined, passing point. The postcondition clause of `jam` discards all 100 cases, with `discarded_by` `domain-refusal` `{count: 4, first_case: 0}`, `precondition-false` `{count: 1, first_case: 6}` (the `by` 6 partition case), `invariant-false` `{count: 0, first_case: null}` and `no-check-point` `{count: 95, first_case: 1}`, has `cases.passed` 0, and settles `inconclusive` with cause `no-evaluated-case`, never `tested`; as step `j` of a plan whose step `k` has `depends [j]`, `k` is `blocked` by `j` and the exit is `22`. | Test (TC-2102) |
 | FR-752-AC-8 | Over AC-7's model with a test-double argument admission that accepts `by` 7, the run settles `failed` with `{"type": "tool-failure", "defect": "oracle-disagreement"}`, exit `30`, and writes no `tested` record. Two runs of AC-7 with equal inputs give byte-equal `cases`, `checks`, `partitions` and `partition_coverage`. | Test (TC-2102) |
 
 ## Dependencies

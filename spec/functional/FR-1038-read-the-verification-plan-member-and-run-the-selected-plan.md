@@ -54,7 +54,8 @@ coordinator when `execute` holds, and write FSpec FR-824's
   `/request/verification_plan/max_value_bits`. When `execute` holds and the
   selected plan has a step that consumes one of them, an absent member
   refuses `invalid_runtime_input`/`missing-member` at its pointer, naming
-  the first consuming step in source order, before any step runs; FSL sets
+  the first consuming step in source order, before any step runs and after
+  the selection, `max_trace_length` first when both are missing; FSL sets
   no default, because FSpec FR-190 forbids inventing a bound.
 - A `measured` step's decision is written only in its disposition's
   `result`, at `result.verdict.decision`, and the disposition carries no

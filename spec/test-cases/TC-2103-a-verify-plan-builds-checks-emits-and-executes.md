@@ -17,11 +17,11 @@ Verify the `verify` declaration through S2, S3, S4 and the coordinator. Scope: F
 1. Build FSpec FR-192's `Release` plan at S2.
 2. Check it and each mutation FSpec FR-192-AC-9 and AC-10 list at S3.
 3. Compile the unit with and without `Release`; emit the plan document.
-4. Execute `Release` with `safe` settling `refuted`.
+4. Execute `Release` with `max_trace_length` `Some(8)` and `safe` settling `refuted`; then with `max_trace_length` `None`; then a plan of `model_check` steps only with `None`.
 
 ## Expected Results
 
 - Step 1: one `VerificationPlan` form, three steps with names, methods, bounds and `depends`, each with its span.
 - Step 2: each refusal with its cause and span, the cycle as `invalid_package`/`definition-cycle`.
 - Step 3: equal package identities; a document with three nodes and one `requires` edge.
-- Step 4: `tested` runs, `timely` is `blocked` naming `safe`, one disposition per node.
+- Step 4: `tested` runs, `timely` is `blocked` naming `safe`, one disposition per node; then `PlanRefusal` `invalid_runtime_input`/`missing-member` naming `max_trace_length` and `tested`, no step run; then the `model_check` plan runs.
