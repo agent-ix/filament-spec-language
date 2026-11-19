@@ -18,7 +18,8 @@ Verify that the package route builds the protocol subject from the package's
 protocol nodes, model selections and `parallel` memory defaults, so an item
 over the `SB` store-buffering protocol, with and without a `tso` selection,
 and a race-freedom item over its racing variant settle with the source
-route's records. Scope: FR-850-AC-11.
+route's records, and that the package-built `SB` clause and subject equal the
+source route's. Scope: FR-850-AC-11, FR-940-AC-14.
 
 ## Test Procedure
 
@@ -30,6 +31,10 @@ route's records. Scope: FR-850-AC-11.
 3. Repeat step 2 with no `memory`.
 4. Analyze the race-freedom item `SB::Both` under `tso` over the variant's
    source and over its handoff directory.
+5. Build the `SB` protocol clause and subject on both routes, with `roles`
+   `w` and `c` bound to `test/litmus`, with and without the `tso` entry, and
+   with `w` bound to a model the package does not select; repeat with a
+   test-only package whose `SB::Both` `parallel` node carries `memory` `tso`.
 
 ## Expected Results
 
@@ -40,4 +45,8 @@ route's records. Scope: FR-850-AC-11.
 - Step 3: both routes settle `NoBothZero` `proved` with equal records.
 - Step 4: both routes settle the item `refuted` with equal `Race`
   counterexamples naming both writes.
+- Step 5: the clauses are equal in every member; `w` binds `M::Cell` and `c`
+  `M::Core` with equal selections, `over` universes and resolved models (`Sc`,
+  then `Tso`); the unselected model settles `declined` `wrong-role-mapping`
+  naming `w` on both routes; the test-only package's clause differs.
 - No package-route record is `unsupported`.

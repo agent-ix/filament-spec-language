@@ -35,3 +35,14 @@ Scope: FR-317-AC-6.
   qualified name, naming `Status` and `Pending`, and `Level` and `Top`.
 - Step 3: `ill_typed`/`type-mismatch`, the same code and tag as steps 1 and 2.
 - Step 4: `missing_declaration`/`missing-name` at `Nope::Open`.
+- The four steps give exactly four refusals, one per unknown member.
+
+## Notes
+
+The live test
+`fsl-semantics/tests/it/variant_fields.rs::undeclared_variant_cases_name_the_declared_owner_and_keep_source_enum_names_missing`
+still asserts `missing_declaration`/`missing-name` for the source enum's
+`Status::Unknown`, which contradicts FR-317-AC-6. The coder implementing
+FR-317-AC-6 flips that half of it to `ill_typed`/`type-mismatch` in the same
+change that removes the `ignore` from
+`an_unknown_member_of_a_source_enum_refuses_type_mismatch_like_a_model_variant_case`.
