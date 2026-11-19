@@ -773,7 +773,33 @@ fn temporal_binary_and_boolean_operators_keep_their_operand_precedence() {
 #[test]
 #[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-4")]
 fn incomplete_temporal_headers_guards_captures_and_intervals_refuse_locally() {
-    for (declaration,marker,width) in [("temporal P using t on origin { holds(true) }","on origin",2),("temporal P using t over (s: M::S) on each () { holds(true) }",") {",1),("temporal P using t over (s: M::S) on each (x: M::S) when x.ready { holds(true) }","x.ready",1),("temporal P using t over (s: M::S) on origin { capture saved: Boolean = ; holds(true) }","; holds",1),("temporal P using t over (s: M::S) on origin { eventually[0 2] holds(true) }","2]",1)] {
-        refused(&unit(declaration),marker,width);
+    for (declaration, marker, width) in [
+        (
+            "temporal P using t on origin { holds(true) }",
+            "on origin",
+            2,
+        ),
+        (
+            "temporal P using t over (s: M::S) on each () { holds(true) }",
+            ") {",
+            1,
+        ),
+        (
+            "temporal P using t over (s: M::S) on each (x: M::S) when x.ready { holds(true) }",
+            "x.ready",
+            1,
+        ),
+        (
+            "temporal P using t over (s: M::S) on origin { capture saved: Boolean = ; holds(true) }",
+            "; holds",
+            1,
+        ),
+        (
+            "temporal P using t over (s: M::S) on origin { eventually[0 2] holds(true) }",
+            "2]",
+            1,
+        ),
+    ] {
+        refused(&unit(declaration), marker, width);
     }
 }
