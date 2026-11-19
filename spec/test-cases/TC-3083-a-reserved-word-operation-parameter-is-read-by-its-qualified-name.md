@@ -31,10 +31,23 @@ FR-104-AC-18.
    `M::Meter::reset::by >= 0.00`; check `M::Meter::adjust::by >= 0.00` in
    `invariant I using v on M::Meter at current`.
 5. Check `pre B using v on M::Meter::adjust { by >= 0.00 }`.
-6. Through `fsl compile`, compile the operations-parameters source corpus case
-   `decimal-keyword-parameter.native` (a `pre` on `M::Meter::adjust` of the
-   `test/decimal` model) with its body written `M::Meter::adjust::by >= 0.00`,
-   and keep a corpus case with the bare body `by >= 0.00`.
+6. In a `pre` on `adjust`, check `let step = M::Meter::adjust::by in M::Meter::adjust::step >= step`.
+7. With `Gauge` a subtype of `Meter` inheriting `adjust`: check
+   `pre G1 using v on M::Gauge::adjust { M::Gauge::adjust::by >= 0.00 }`;
+   check `M::Meter::adjust::by >= 0.00` in a `pre` on `M::Gauge::adjust` and
+   `M::Gauge::adjust::by >= 0.00` in a `pre` on `M::Meter::adjust`.
+8. Check `M::Meter::adjust::by >= 0.00` in
+   `constraint K using v on M::Meter at current`.
+9. In a unit whose source declares object type `Dial` with operation
+   `turn(by: P)`, check `pre T using v on Dial::turn { Dial::turn::by >= 0.00 }`.
+10. Through `fsl compile`, compile the source corpus case
+    `tests/corpus/operations/parameters/decimal-keyword-parameter.native`
+    (a `pre` on `M::Meter::adjust` of the `test/decimal` model) with its body
+    written `M::Meter::adjust::by >= 0.00`, and a sibling case with the bare
+    body `by >= 0.00`. The corpus case is added by the code change that
+    implements this resolution; until then it is staged as
+    `tests/corpus/operations/parameters/pending/decimal-keyword-parameter.native`
+    on branch `codex/qsl-2041-parameters`.
 
 Tag the tests `#[trace("TC-3083", "FR-104-AC-18")]`.
 
@@ -46,5 +59,11 @@ Tag the tests `#[trace("TC-3083", "FR-104-AC-18")]`.
 - Step 3: `wrong_snapshot`/`forbidden-pre-read` at the `pre`.
 - Step 4: each refuses `missing_declaration`/`missing-name` at the name.
 - Step 5: `invalid_syntax`/`unexpected-token` at `by`, stage S1.
-- Step 6: the qualified case compiles, exit 0, last stage S4; the bare case
+- Step 6: checks; the qualified name lowers to `adjust`'s `step`
+  `value`/`parameter` node and the bare `step` to the `let` binder.
+- Step 7: `G1` checks; the other two each refuse
+  `missing_declaration`/`missing-name` at the name.
+- Step 8: `missing_declaration`/`missing-name` at the name.
+- Step 9: checks, the name read as `turn`'s parameter `by`.
+- Step 10: the qualified case compiles, exit 0, last stage S4; the bare case
   exits 20 at S1 with `invalid_syntax`/`unexpected-token`.

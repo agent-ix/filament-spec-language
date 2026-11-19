@@ -202,23 +202,39 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
 - In a `pre` or `post` body the checker SHALL also resolve the qualified name
   `<op>::p`, where `<op>` is the clause's operation name spelled exactly as
   its `on` authors it (`M::T::op`, or `T::op` for a source-declared context)
-  and `p` names a parameter of that operation, to that parameter: the same
-  parameter reference, type and observation rules as the bare name `p`, and
-  the same `value`/`parameter` node FR-105 lowers it to. This is how a body
-  reads a parameter whose name is a reserved word of the edition, such as
-  `by`: the domain model declares parameters and fields with one identifier
-  class, so intake admits the name, and the shared grammar's `member-name`
-  accepts a reserved word after `::` while a bare reserved word is no
-  expression (`invalid_syntax`/`unexpected-token` at S1). The grammar has no
-  escape form for a reserved word, so the qualified name is the one spelling.
-  It is admitted for every parameter, reserved or not.
-- If the last segment of such a name names no parameter of the clause's
-  operation, or its prefix is any other operation (another operation of `T`,
-  or the same operation spelled through another type), then the checker SHALL
-  refuse `missing_declaration`/`missing-name` at the name and SHALL NOT
-  resolve it to that other operation's parameter. In an invariant or
-  constraint, which has no operation, every such name SHALL refuse
-  `missing_declaration`/`missing-name` at the name.
+  and `p` names a parameter of that operation, to that parameter (FSpec
+  [FR-012](ix://agent-ix/filament-specification/FR-012)): its declared type,
+  the observation rules of a parameter read, and the `value`/`parameter` node
+  FR-105 lowers the parameter to. The qualified name denotes the parameter
+  whatever `let` or quantifier binder is in scope; the bare name `p` resolves
+  the innermost binder of that name first and denotes the parameter only when
+  no such binder is in scope. This is how a body reads a parameter whose name
+  is a reserved word of the edition, such as `by`: the domain model declares
+  parameters and fields with one identifier class, so intake admits the name,
+  and the shared grammar's `member-name` accepts a reserved word after `::`
+  while a bare reserved word is no expression (`invalid_syntax`/
+  `unexpected-token` at S1). The grammar has no escape form for a reserved
+  word, so the qualified name is the one spelling. It is admitted for every
+  parameter, reserved or not. `pre(<op>::p)` refuses
+  `wrong_snapshot`/`forbidden-pre-read` at the `pre`, as `pre(p)` does.
+- The prefix is matched against the clause's authored operation name, not
+  resolved through FR-081's effective view. If the last segment names no
+  parameter of the clause's operation, or the prefix spells any other name
+  (another operation of `T`, or the same operation spelled through an
+  ancestor or subtype of the `on` type), then the checker SHALL refuse
+  `missing_declaration`/`missing-name` at the name and SHALL NOT resolve it to
+  that operation's parameter. In an invariant or constraint, which has no
+  operation, every such name SHALL refuse `missing_declaration`/`missing-name`
+  at the name.
+- This resolution is disjoint from the qualified resolution of enum, union
+  and import names. A model-side parameter name `M::T::op::p` has four
+  segments, while an enum or union member path has at most three
+  (`M::E::case`, `E::case`). A source-side `T::op::p` has three segments whose
+  first is a source object type, and FR-569 refuses a source declaration named
+  like a model or import alias, so no `M::E::case` path shares its first
+  segment. The checker SHALL try the parameter resolution only for a name
+  whose prefix equals the clause's authored operation name; every other
+  qualified name keeps its existing resolution and refusals.
 - Equality of two `Reference<M::T>` values SHALL check as identity equality,
   as it does for function parameters today.
 - The checker SHALL type every `=` and `!=` in a clause by FSpec FR-149's
@@ -456,7 +472,7 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
 | FR-104-AC-15 | `spine::check_with_execution_points` accepts `StateClauseExecutionPoints`; the native `CheckBindings.clauses` vector is projected only after its existing complete/no-extra validation, without weakening that contract. A supplied exact authored clause name retains its accepted point unchanged; an absent entry has no point, and none is inferred. An unknown or non-clause key refuses `missing_declaration`/`missing-name` at the check unit's source-start region before lowering or identity minting; duplicate `CheckBindings` names/identities refuse at the native check source-start region. Existing clause/function ambiguity takes precedence. An `invariant` or `constraint` accepts only initialization/handler; a `pre` accepts only pre and a `post` only post. For a pre/post clause, the accepted point's operation name equals the resolved operation member from its authored `on M::T::op`. Every inapplicable variant or mismatched operation name refuses `invalid_model_binding`/`malformed-declaration` at the clause-name span with no checked clause or node identity. A point-bearing pre/post clause is excluded from derived state-transition eligibility; an unbound clause retains FR-105-AC-16's eligibility rule. | Test (TC-475) |
 | FR-104-AC-16 | The six FSpec TC-185 D25 expressions are FSL source (QSL-1394), each built by S2 as `DecimalValue` operands wherever an operand may stand (FR-091-AC-57). With `type P = Decimal[0, 1000; 2, 2; exact];`, `type R = Decimal[0, 1000; 1, 1; exact];` and parameters `p: P`, `r: R`: `function e1 using v(): P pure { let v = decimal(15, 1) + decimal(225, 2) in v }` refuses `ill_typed`/`ambiguous-literal` at the sum, because a `let` binding supplies no expected type; `function e2 using v(): Boolean pure { decimal(15, 1) = decimal(150, 2) }` refuses `ill_typed`/`ambiguous-literal` at its first literal `decimal(15, 1)`, because neither operand fixes a type; both refuse before any charge. `function e3 using v(p: P): P pure { p + decimal(15, 1) }` checks with the literal typed `P` (target scale 2); `function e4 using v(p: P, r: R): P pure { p + r }` refuses `ill_typed`/`type-mismatch` at the sum; `function e5 using v(p: P, r: R): P pure { p + convert<P>(r) }` checks; `function e6 using v(): P pure { decimal(15, 1) + decimal(225, 2) }` checks with both literals typed `P` by the declared result. | Test (TC-1084) |
 | FR-104-AC-17 | A qualified field edge `M::Order::trail` resolves to the declared `trail` field and `M::Order::next` to the declared relationship end, including a subtype receiver. An unknown qualifier or member, including an unknown member on a foreign qualifier, refuses `missing_declaration`/`missing-name` retaining the full edge name before conformance is tested. A qualifier to which the source does not conform refuses `ill_typed`/`operator-ineligible`, without selecting a same-spelled member of the source. Unqualified edges retain their existing resolution. | Test |
-| FR-104-AC-18 | Over a model `M` whose object type `Meter` declares operations `adjust(by: P, step: P)` and `reset(by: P)`, `P` a declared `Decimal` type of scale 2: `pre A using v on M::Meter::adjust { M::Meter::adjust::by >= 0.00 }` checks, the qualified name typed `P` and read as `adjust`'s parameter `by`, the literal `0.00` typed `P`; the same body as a `post` checks. `pre S1 using v on M::Meter::adjust { M::Meter::adjust::step >= 0.00 }` and `pre S2 using v on M::Meter::adjust { step >= 0.00 }` lower to one node id. In a `post` on `adjust`, `pre(M::Meter::adjust::by) >= 0.00` refuses `wrong_snapshot`/`forbidden-pre-read` at the `pre`, as `pre(step)` does. Each of these refuses `missing_declaration`/`missing-name` at the name: `M::Meter::adjust::nope >= 0.00` in a `pre` on `adjust`; `M::Meter::reset::by >= 0.00` in a `pre` on `adjust`; `M::Meter::adjust::by >= 0.00` in `invariant I using v on M::Meter at current`. `pre B using v on M::Meter::adjust { by >= 0.00 }` refuses `invalid_syntax`/`unexpected-token` at `by` at S1. | Test (TC-3083) |
+| FR-104-AC-18 | Over a model `M` whose object type `Meter` declares operations `adjust(by: P, step: P)` and `reset(by: P)`, `P` a declared `Decimal` type of scale 2: `pre A using v on M::Meter::adjust { M::Meter::adjust::by >= 0.00 }` checks, the qualified name typed `P` and read as `adjust`'s parameter `by`, the literal `0.00` typed `P`; the same body as a `post` checks. `pre S1 using v on M::Meter::adjust { M::Meter::adjust::step >= 0.00 }` and `pre S2 using v on M::Meter::adjust { step >= 0.00 }` lower to one node id. In a `post` on `adjust`, `pre(M::Meter::adjust::by) >= 0.00` refuses `wrong_snapshot`/`forbidden-pre-read` at the `pre`, as `pre(step)` does. Each of these refuses `missing_declaration`/`missing-name` at the name: `M::Meter::adjust::nope >= 0.00` in a `pre` on `adjust`; `M::Meter::reset::by >= 0.00` in a `pre` on `adjust`; `M::Meter::adjust::by >= 0.00` in `invariant I using v on M::Meter at current`. `pre B using v on M::Meter::adjust { by >= 0.00 }` refuses `invalid_syntax`/`unexpected-token` at `by` at S1. In a `pre` on `adjust`, `let step = M::Meter::adjust::by in M::Meter::adjust::step >= step` checks with the qualified name lowered to `adjust`'s `step` `value`/`parameter` node and the bare `step` to the `let` binder. With an object type `Gauge` that is a subtype of `Meter` and inherits `adjust`, `pre G1 using v on M::Gauge::adjust { M::Gauge::adjust::by >= 0.00 }` checks, while `M::Meter::adjust::by >= 0.00` in a `pre` on `M::Gauge::adjust`, and `M::Gauge::adjust::by >= 0.00` in a `pre` on `M::Meter::adjust`, each refuse `missing_declaration`/`missing-name` at the name. `M::Meter::adjust::by >= 0.00` in `constraint K using v on M::Meter at current` refuses `missing_declaration`/`missing-name` at the name. In a unit whose source declares an object type `Dial` with operation `turn(by: P)` (FR-569), `pre T using v on Dial::turn { Dial::turn::by >= 0.00 }` checks with the name read as `turn`'s parameter `by`. | Test (TC-3083) |
 
 ## Dependencies
 
