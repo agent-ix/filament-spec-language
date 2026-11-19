@@ -29,7 +29,25 @@
     ],
     "items": [
       {
-        "claim": "CounterIdentity"
+        "claim": "CounterIdentity",
+        "kind": "refinement",
+        "temporal": {
+          "item_kind": "refinement",
+          "subject": {
+            "initial_states": [
+              {
+                "authority": "test",
+                "identity": "v0"
+              }
+            ],
+            "universes": [
+              {
+                "authority": "test",
+                "identity": "v0"
+              }
+            ]
+          }
+        }
       }
     ]
   }

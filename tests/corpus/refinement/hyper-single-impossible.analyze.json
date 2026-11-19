@@ -29,7 +29,25 @@
     ],
     "items": [
       {
-        "claim": "CanReachFour"
+        "claim": "CanReachFour",
+        "kind": "temporal-satisfaction",
+        "temporal": {
+          "item_kind": "formula",
+          "subject": {
+            "initial_states": [
+              {
+                "authority": "test",
+                "identity": "v0"
+              }
+            ],
+            "universes": [
+              {
+                "authority": "test",
+                "identity": "v0"
+              }
+            ]
+          }
+        }
       }
     ]
   }
