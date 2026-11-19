@@ -1454,10 +1454,16 @@ fn a_reset_below_two_collections_holds_a_slot_per_level() {
         let span = cause.span();
         assert_eq!(&unit[span.start..span.end], at, "refused at the slot {at}");
     }
-    let (_, wire) = emitted(
-        &nested_timer_document(),
+    let document = nested_timer_document();
+    let (unit, checked) = checked(
+        &document,
         &pre("size(self.ts) >= 1 and size(self.ts[0].ys) >= 2"),
     );
+    let graph = checked.unwrap_or_else(|refusals| panic!("{unit}: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    let wire = wire(&emission);
+    read_presence_package(&document, emission.package().bytes(), &wire)
+        .unwrap_or_else(|failure| panic!("the emitted nested-reset package reads back: {failure}"));
     let [reset] = timed(&wire, "clock_reset")[..] else {
         panic!("one reset");
     };
