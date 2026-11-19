@@ -573,9 +573,10 @@ owner as a requirement, as FR-013 was):
 - `AdmittedRecord.ingestion_time_nanos` SHALL be `Option<i128>`, `None`
   meaning the ingestion instant was not recorded, never an instant;
 - the FR-288 record identity preimage and the observation document SHALL
-  spell an absent ingestion instant as JSON `null`, under a new record
-  contract and identity version as the owner's own versioning rule requires
-  (filament-observation FR-005, "Owner artifact versioning");
+  spell an absent ingestion instant as the member present with JSON value
+  `null`; the owner edits its partial-fact/v1 contract and its identity
+  derivation in place (pre-release, no compatibility layer), with no v2
+  contract and no new identity version;
 - `partial::Selection`'s ingestion position SHALL take the same `Option`, and
   no owner rule SHALL order, compare or classify by an absent ingestion
   instant.
