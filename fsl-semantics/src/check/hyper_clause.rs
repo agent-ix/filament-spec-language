@@ -469,6 +469,7 @@ pub struct CheckedFiniteHyperClause {
     name: String,
     span: Span,
     profile: TemporalProfile,
+    domain_clock: String,
     record: NodeKey,
     bound: u64,
     quantifiers: Vec<CheckedFiniteTraceQuantifier>,
@@ -494,6 +495,10 @@ impl CheckedFiniteHyperClause {
     /// The finite temporal profile.
     pub fn profile(&self) -> TemporalProfile {
         self.profile
+    }
+    /// The finite trace domain's clock role.
+    pub fn domain_clock(&self) -> &str {
+        &self.domain_clock
     }
     /// The record type shared by every trace position.
     pub fn record(&self) -> &NodeKey {
@@ -1604,6 +1609,7 @@ fn check_finite(
         name: form.name.name.clone(),
         span: form.span,
         profile,
+        domain_clock: form.domain.variable.name.clone(),
         record: record.clone(),
         bound: form.domain.bound,
         quantifiers,
