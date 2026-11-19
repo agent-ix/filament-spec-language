@@ -5,7 +5,7 @@ use filament_exact::Cancel;
 use fsl_replay::{Operation, OutcomeDocument};
 use ix_trace_rs::trace;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -1670,10 +1670,8 @@ fn corpus_runner_compares_lifecycle_members_of_every_command_kind() {
     let directory = tempfile::tempdir().unwrap();
     let unit = format!(
         "{}temporal Q using t0 over (c: M::Counter) clock \"model-steps\" on origin {{ always holds(c.value <= 3) }}\n",
-        std::str::from_utf8(include_bytes!(
-            "../../fsl-conformance/cases/counter-step.native"
-        ))
-        .unwrap()
+        std::str::from_utf8(include_bytes!("../../fsl-conformance/cases/counter-step.native"))
+            .unwrap()
     );
     write_case(
         directory.path(),
