@@ -35,13 +35,15 @@ use serde_json::Value;
 use super::checked_handoff::{request as handoff_request, KINDS};
 use fsl_command::checked_handoff::Corpus;
 
+mod remaining_routes;
+
 mod source_journeys {
     use crate::command_harness::compile_file;
     use ix_trace_rs::trace;
     use serde_json::{json, Value};
     use std::path::{Path, PathBuf};
 
-    fn rover_root() -> PathBuf {
+    pub(super) fn rover_root() -> PathBuf {
         let directory = std::env::var_os("FSL_EXAMPLES_DIR")
             .expect("set FSL_EXAMPLES_DIR to the authoritative filament-examples checkout");
         let root = PathBuf::from(directory).join("examples/rover");
@@ -53,7 +55,7 @@ mod source_journeys {
         root
     }
 
-    fn run(path: &Path) -> (u8, Value, Value) {
+    pub(super) fn run(path: &Path) -> (u8, Value, Value) {
         let output = fsl_command::command::run(path, &crate::negotiation::Fr290)
             .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
         let outcome = output.outcome.as_ref().expect("a lifecycle outcome");
