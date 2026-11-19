@@ -618,6 +618,7 @@ pub fn check_with_internals(
                 CheckMode::Linked
             },
             CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
         )
         .map_err(|refusals| format!("{refusals:?}"))
 }
