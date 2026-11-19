@@ -418,7 +418,11 @@ pub(crate) fn package_over(
     body: &str,
 ) -> CheckedPackage {
     let graph = declarations_over(document, package_name, profiles, body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -432,7 +436,11 @@ pub(crate) fn check_refusals(
     let regions = declarations.regions();
     let text = unit_text_with("", body);
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .err()
         .unwrap_or_else(|| panic!("{body}: the unit refuses"))
         .into_iter()
@@ -534,7 +542,11 @@ pub(crate) fn package_without_protocol_profile_selection(body: &str) -> CheckedP
     declarations.protocol_profile = None;
     let graph = declarations
         .with_unwritten_refinements()
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }

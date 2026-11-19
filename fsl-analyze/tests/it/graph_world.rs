@@ -282,7 +282,11 @@ impl World {
             .expect("the division profile admits"),
         );
         let graph = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
         let package = CheckedPackage::link(graph);
         let mut world = Self {
