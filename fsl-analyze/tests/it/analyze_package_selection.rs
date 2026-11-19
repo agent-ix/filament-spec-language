@@ -432,7 +432,7 @@ fn reach_three() -> &'static str {
     "FSpec-FR-322-AC-457"
 )]
 #[test]
-#[ignore = "QSL-2402: the checked package's claim_names table and package-route claim resolution through it not implemented yet"]
+#[ignore = "QSL-2402: the state-graph claim ReachThree has no package form yet (the invariant resolves through claim_names)"]
 fn package_claims_resolve_through_the_claim_name_table() {
     let body = format!("{}{}{}", bounded(), not_above_three(), reach_three());
     let items = json!([{"claim": "NotAboveThree"}, {"claim": "ReachThree"}, {"claim": "Missing"}]);
@@ -553,7 +553,7 @@ fn an_absent_handoff_or_package_file_refuses_missing_file() {
 /// distinct names both resolve.
 #[trace("TC-2970", "FR-940-AC-8", "FSpec-TC-2012", "FSpec-FR-322-AC-459")]
 #[test]
-#[ignore = "QSL-2402: one claim namespace across claim_names and temporal_clause_names not implemented yet"]
+#[ignore = "QSL-2402: the source-route temporal/state-graph name collision refusal and the state-graph package form are not implemented yet"]
 fn a_name_in_both_name_tables_is_refused() {
     let items = json!([{"claim": "Bounded"}]);
     let ws = Workspace::new("claim-name-namespace-source");
