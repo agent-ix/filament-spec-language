@@ -17,19 +17,18 @@ use filament_contract_model::{
     CheckedAbstractionPopulation, CheckedArtifactRef, CheckedCapability,
     CheckedCapabilityDisposition, CheckedComponentClause, CheckedCompositionComponent,
     CheckedCompositionPremise, CheckedDeclaration, CheckedDependencyClockSelection,
-    CheckedDependencySelection,
-    CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEffectiveId, CheckedEnvironmentEntry,
-    CheckedEnvironmentSupplies, CheckedFairnessGranularity, CheckedFairnessKind,
-    CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification, CheckedGuaranteeMeasure,
-    CheckedGuaranteeProgress, CheckedJson, CheckedNodeId, CheckedNodeKind, CheckedNodeOwner,
-    CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry,
-    CheckedOperationAnchorBody, CheckedOriginalDeclarationId, CheckedPackageEvidence,
-    CheckedPackageLockV2, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
-    CheckedPackageV2, CheckedRational, CheckedRefinementStepRowRegion, CheckedScopedDeletion,
-    CheckedSelection, CheckedSelectionRole, CheckedSemanticGraphV2, CheckedSemanticNodeV2,
-    CheckedSourceMapEntry, CheckedSourceRef, CheckedSourceRegion, CheckedTerm, DimensionTerm,
-    LiteralKind, NominalBody, OperationBody, OperationBodyRow, ProtocolForm, ScalarTypeForm,
-    StateForm, ValueForm,
+    CheckedDependencySelection, CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEffectiveId,
+    CheckedEnvironmentEntry, CheckedEnvironmentSupplies, CheckedFairnessGranularity,
+    CheckedFairnessKind, CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification,
+    CheckedGuaranteeMeasure, CheckedGuaranteeProgress, CheckedJson, CheckedNodeId, CheckedNodeKind,
+    CheckedNodeOwner, CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole,
+    CheckedOperandEntry, CheckedOperationAnchorBody, CheckedOriginalDeclarationId,
+    CheckedPackageEvidence, CheckedPackageLockV2, CheckedPackageSidecarsRef,
+    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedRational,
+    CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection, CheckedSelectionRole,
+    CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef,
+    CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody, OperationBody,
+    OperationBodyRow, ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
 };
 use serde::Deserialize;
 
@@ -3824,10 +3823,9 @@ fn checked_equality_term_data(
         };
         let operation = application_body.operation.identity();
         let operator_matches = match (row.producer_data.schedule(), row.producer_data.operator()) {
-            (
-                filament_semantic_value::declaration::EqualitySchedule::Float,
-                _,
-            ) => operation == "filament.op.ieee.numeric_equal",
+            (filament_semantic_value::declaration::EqualitySchedule::Float, _) => {
+                operation == "filament.op.ieee.numeric_equal"
+            }
             (_, filament_semantic_value::declaration::EqualityOperator::Equal) => {
                 OperationSuffix::of(operation) == Some(OperationSuffix::Eq)
             }
@@ -7733,7 +7731,8 @@ fn source_object_rows(
                 .parameters
                 .iter()
                 .filter(|parameter| {
-                    parameter.value_type == fsl_semantics::model::domain_package::ValueTypeRef::Clock
+                    parameter.value_type
+                        == fsl_semantics::model::domain_package::ValueTypeRef::Clock
                 })
                 .map(|parameter| {
                     parameter
