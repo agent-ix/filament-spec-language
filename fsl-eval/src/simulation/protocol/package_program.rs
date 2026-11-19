@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use filament_eval::CallFailure;
 use filament_exact::{Meter, NodeKey};
 use fsl_foundation::MemoryModelName;
 use fsl_package::protocol_view::{
@@ -13,7 +14,7 @@ use fsl_package::protocol_view::{
 };
 
 use super::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
-use crate::simulation::model::{CallFailure, ModelCheckInput, ModelEvaluator, ProtocolDefinition};
+use crate::simulation::model::{ModelCheckInput, ModelEvaluator, ProtocolDefinition};
 use crate::value::{ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply};
 
 /// One admitted package control in the normalized execution tree.
