@@ -14,7 +14,7 @@
 use filament_checked::node::{CheckedLiteral, Connective, NodeKind};
 use std::collections::BTreeMap;
 
-use filament_exact::{Cancel, Identifier, MemberId, Meter, ScalarLimits, Value, ValueType};
+use filament_exact::{Cancel, Identifier, Meter, ScalarLimits, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_foundation::SourceIdentity;
 use fsl_foundation::source::Source;
@@ -492,8 +492,6 @@ pub struct TemporalValuation {
     /// Alias-free declaration spellings referenced by the checked conditions.
     /// Structural package keys never provide surface labels by themselves.
     pub canonical_declarations: BTreeMap<filament_exact::NodeKey, String>,
-    /// Alias-free member spellings referenced by the checked conditions.
-    pub canonical_fields: BTreeMap<MemberId, String>,
     /// Alias-free identities of local functions called by checked conditions.
     pub canonical_functions: BTreeMap<usize, String>,
     /// Declared field order of record constructors in checked conditions.
@@ -535,23 +533,12 @@ impl TemporalValuation {
             }
         }
         let canonical_declarations = canonical_condition_declarations(graph, &checked_conditions);
-        let canonical_fields = graph
-            .selected_exact_field_rows()
-            .iter()
-            .map(|row| {
-                (
-                    row.member_id.clone(),
-                    row.field_original_identity.to_string(),
-                )
-            })
-            .collect();
         let canonical_functions = canonical_condition_functions(graph, &checked_conditions);
         let canonical_record_fields = canonical_condition_record_fields(graph, &checked_conditions);
         Self {
             clause: clause.clone(),
             checked_conditions,
             canonical_declarations,
-            canonical_fields,
             canonical_functions,
             canonical_record_fields,
             positions,

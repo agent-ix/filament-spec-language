@@ -6,9 +6,9 @@
 //! adapter (`fsl_command::command::run`) and asserts on the output document,
 //! because the engines' own entry points do not exist yet.
 
-use crate::support::config_version_spine::{spine, Case};
+use crate::support::config_version_spine::{Case, spine};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 const MODEL_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -290,7 +290,10 @@ fn a_supported_clause_lowers_to_a_tl_formula() {
     let lowered = &value["tl_lowering"];
     assert_eq!(lowered["correspondence"], "mltl.closed-trace/v1", "{value}");
     assert_eq!(lowered["formula"], "G[0,3] p0", "{value}");
-    assert!(lowered["atoms"]["p0"].is_string(), "{value}");
+    assert_eq!(
+        lowered["atoms"]["p0"], "holds(c.versionNumber <= 2)",
+        "{value}"
+    );
 }
 
 // ---- FR-345: the layering gate in CI -----------------------------------
@@ -944,7 +947,10 @@ fn a_tl_lowering_request_selects_its_correspondence() {
     assert_eq!(record["disposition"], "supported", "{default}");
     assert_eq!(record["correspondence"], "mltl.closed-trace/v1");
     assert_eq!(record["formula"], "G[0,3] p0");
-    assert!(record["atoms"]["p0"].is_string(), "{default}");
+    assert_eq!(
+        record["atoms"]["p0"], "holds(c.versionNumber <= 2)",
+        "{default}"
+    );
     let (code, named) = lower(json!({"clause": "Low", "correspondence": "mltl.closed-trace/v1"}));
     assert_eq!(code, 0);
     assert_eq!(
@@ -1679,6 +1685,10 @@ fn a_fairness_constraint_over_a_lasso_settles_missing_fairness_premise() {
     let (code, value) = lower(unit(""));
     assert_eq!(code, 0, "{value}");
     assert_eq!(value["tl_lowering"]["cross_evaluation"]["agree"], true);
+    assert_eq!(
+        value["tl_lowering"]["atoms"]["p0"], "holds(c.level = 0)",
+        "{value}"
+    );
 
     let (code, value) = lower(unit(
         "fair weak each Config::ConfigVersion::attemptUpdate; ",
