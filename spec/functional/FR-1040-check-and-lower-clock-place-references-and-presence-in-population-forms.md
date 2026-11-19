@@ -59,17 +59,23 @@ population holds, so there is no absent owner to test.
 - **Paths through a reference.** A place path that crosses an object
   reference (`ref(self.r.x)`, `ref(self.r.ts[0].x)`, `present(self.r.v)`)
   the checker SHALL check with the data read up to the last object reference on the path
-  (`self.r`) as the owner, carried as the `filament.op.model.deref`
-  application over that read (FSpec FR-829 "Owner terms"), and the remaining steps as a place path of that
+  (`self.r`) as the owner term, written directly as that `Reference<O>`-typed
+  read with no `filament.op.model.deref` wrapper (FSpec FR-829 "Owner
+  terms"), and the remaining steps as a place path of that
   object's type. Several reference hops chain the same way. An owner read of
   type `Option<Reference<T>>` is not of the owner type and refuses
   `ill_typed`/`type-mismatch` at the `ref` or `present`; `value(self.r)` reads
-  it under FR-146's presence obligation.
+  it under FSpec FR-146's presence obligation.
 - **Presence reads.** `present(p)` of a guarded place SHALL lower to FSpec
   FR-322's `presence_read` over the place's `clock_place` template, the owner
   term and the slot terms, whichever owner term it has: `self`, another
   object, a parameter, a population binder or a data read through a
-  reference. `forall(e in p: present(e))` and `exists` over a clock
+  reference, each written directly as its `Reference<O>`-typed term (FSpec
+  FR-829 "Owner terms"). The slot terms are the binders of the slot
+  quantifiers that select the place. An indexed `present(x.q[i])` is not a
+  presence form of FSpec FR-322 "Presence" in this version, and this
+  requirement adds none: its selector carries FR-230 "Selection"'s
+  obligation and nothing here changes how it is checked. `forall(e in p: present(e))` and `exists` over a clock
   collection place SHALL lower to the quantifier over FSpec FR-772's
   slot-domain application at that owner term, with the `presence_read` of
   `e` as its body, in a population form and in every other data position. The
@@ -82,7 +88,7 @@ population holds, so there is no absent owner to test.
   or union-case place SHALL check whether or not the place is present. A slot
   place keeps FR-230 "Selection"'s obligation on its selector: `ref(x.q[i])`
   checks where `i < size(x.q)` is established by the population form's
-  `where` condition, by a conjunct guarding the read under FR-146's rules,
+  `where` condition, by a conjunct guarding the read under FSpec FR-146's rules,
   by the precondition or by the time invariant's predicate. Otherwise it
   refuses `undefined_expression`/`unproved-presence` at the selector.
 - **Refusals that remain.** These forms are wrong, and each SHALL refuse with
@@ -120,11 +126,11 @@ form either lowers or refuses with one of the typed causes above.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-1040-AC-1 | Over FSpec FR-415-AC-15's `Call` model, `ref(self.x)` and `ref(self.q[0])` (under `size(self.q) >= 1`) in a postcondition write `self.r = ref(self.x)` and in a precondition `self.r = ref(self.q[0])` check as `PlaceReference` nodes typed `Reference<Clock>` and lower to `filament.op.clock_reference.ref` applications with `result_type` the `scalar_type`/`clock_reference` node, and the unit compiles with no `unsupported-feature` refusal. | Test (TC-3084) |
-| FR-1040-AC-2 | With `peer: Reference<Call>`, `ref(self.peer.x)` and `ref(self.peer.ts[0].x)` (where `ts: Sequence<Timer>[0, 2]`, `size(self.peer.ts) >= 1` established) check and lower with the owner term the `filament.op.model.deref` application over the `peer` field read; with `peer: Option<Reference<Call>>`, `ref(self.peer.x)` refuses `ill_typed`/`type-mismatch` at the `ref` and `ref(value(self.peer).x)` under `present(self.peer)` checks. | Test (TC-3084) |
-| FR-1040-AC-3 | In a refinement row over `calls = {c1, c2}`, `only(c in M::calls where c.n = 2: ref(c.x))` and `count(c in M::calls where ref(c.x) = self.r)` check, lower with the dereferenced binder `c` as owner term, and evaluate as FSpec FR-829-AC-2 states; the same `count` in a state invariant (FR-391) checks and lowers. | Test (TC-3084) |
-| FR-1040-AC-4 | `count(c in M::calls where present(c.v))`, `sum(c in M::calls: if present(c.v) then 1 else 0)`, `all(c in M::calls: exists(e in c.q: present(e)))` and `exists(c in M::calls: forall(e in c.q: present(e)))` check, lower to `presence_read` nodes whose owner term is the dereferenced binder `c` and, for the slot quantifiers, to FSpec FR-772's slot-domain application at `c`, and evaluate as FSpec FR-829-AC-3 states. | Test (TC-3084) |
-| FR-1040-AC-5 | `ref(self.v)` over `v: Option<Clock>` with no presence premise checks; `ref(c.q[i])` in `count(c in M::calls where i < size(c.q) and ref(c.q[i]) = self.r)` checks; `ref(c.q[i])` in `count(c in M::calls where ref(c.q[i]) = self.r)` refuses `undefined_expression`/`unproved-presence` at `i`. | Test (TC-3084) |
-| FR-1040-AC-6 | Negative: `sum(c in M::calls: c.x)` and `only(c in M::calls: c.x)` refuse `invalid_timed_model`/`clock-read-outside-constraint` at `c.x`; `sum(c in M::calls: ref(c.x))` and `sum(c in M::calls: M::calls)` refuse `ill_typed`/`type-mismatch` at the summand; `ref(c.m[k].x)` over a `Map` value refuses `ill_typed`/`type-mismatch` at the `ref`; `ref(c.x) < ref(c.y)` refuses `ill_typed`/`operator-ineligible`; and a call `late(c.x)` to a function `late(t: Clock): Boolean` in a `count` condition refuses `invalid_timed_model`/`clock-read-outside-constraint` at the call. | Test (TC-3084) |
+| FR-1040-AC-2 | With `peer: Reference<Call>`, `ref(self.peer.x)` and `ref(self.peer.ts[0].x)` (where `ts: Sequence<Timer>[0, 2]`, `size(self.peer.ts) >= 1` established) check and lower with the owner term the `peer` field read itself, typed `Reference<Call>`, with no `deref`; with `peer: Option<Reference<Call>>`, `ref(self.peer.x)` refuses `ill_typed`/`type-mismatch` at the `ref` and `ref(value(self.peer).x)` under `present(self.peer)` checks. | Test (TC-3084) |
+| FR-1040-AC-3 | In a refinement row over `calls = {c1, c2}`, `only(c in M::calls where c.n = 2: ref(c.x))` and `count(c in M::calls where ref(c.x) = self.r)` check, lower with the binder `c` itself (typed `Reference<Call>`) as owner term, and evaluate as FSpec FR-829-AC-2 states; the same `count` in a state invariant (FR-391) checks and lowers. | Test (TC-3084) |
+| FR-1040-AC-4 | `count(c in M::calls where present(c.v))`, `sum(c in M::calls: if present(c.v) then 1 else 0)`, `all(c in M::calls: exists(e in c.q: present(e)))` and `exists(c in M::calls: forall(e in c.q: present(e)))` check, lower to `presence_read` nodes whose owner term is the binder `c` itself and, for the slot quantifiers, to FSpec FR-772's slot-domain application at `c`, and evaluate as FSpec FR-829-AC-3 states. | Test (TC-3084) |
+| FR-1040-AC-5 | `ref(self.v)` over `v: Option<Clock>` with no presence premise checks; in the precondition of the operation `pick(i: Int[0, 1], k: Text)` of `Call` (TC-3084's fixture), `ref(c.q[i])` in `count(c in M::calls where i < size(c.q) and ref(c.q[i]) = self.r) >= 0` checks, and `ref(c.q[i])` in `count(c in M::calls where ref(c.q[i]) = self.r) >= 0` refuses `undefined_expression`/`unproved-presence` at `i`. | Test (TC-3084) |
+| FR-1040-AC-6 | Negative: `sum(c in M::calls: c.x)` and `only(c in M::calls: c.x)` refuse `invalid_timed_model`/`clock-read-outside-constraint` at `c.x`; `sum(c in M::calls: ref(c.x))` and `sum(c in M::calls: M::calls)` refuse `ill_typed`/`type-mismatch` at the summand; `ref(c.m[k].x)` in `pick`'s precondition, `k` its `Text` parameter, over a `Map` value refuses `ill_typed`/`type-mismatch` at the `ref`; `ref(c.x) < ref(c.y)` refuses `ill_typed`/`operator-ineligible`; and a call `late(c.x)` to a function `late(t: Clock): Boolean` in a `count` condition refuses `invalid_timed_model`/`clock-read-outside-constraint` at the call. | Test (TC-3084) |
 | FR-1040-AC-7 | A pure function `same(a: Reference<Clock>, b: Reference<Clock>): Boolean { a = b }` has a function node whose parameters are typed by the `scalar_type`/`clock_reference` node, and a refinement row or clause calling it lowers its call to that node; with the function's body made ill-typed, the unit refuses once at the function body and not at the call. | Test (TC-3084) |
 
 ## Dependencies

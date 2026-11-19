@@ -21,8 +21,11 @@ Scope: FR-1040-AC-1 to FR-1040-AC-7.
 Fixture: FSpec FR-415-AC-15's `Call` model under `time dense unit ms`, with
 the fields `v: Option<Clock>`, `q: Sequence<Option<Clock>>[0, 2]`,
 `ts: Sequence<Timer>[0, 2]` (`Timer { x: Clock; n: Int }`), `m: Map<Text, Timer>[0, 2]`, `peer: Reference<Call>` and
-`n: Int[0, 9]` added, a population `calls`, and a
-refinement whose subject admits `calls = {c1, c2}`.
+`n: Int[0, 9]` added, an operation
+`pick(i: Int[0, 1], k: Text)` of `Call` whose precondition holds the forms of
+FR-1040-AC-5 and the `Map` form of FR-1040-AC-6, a population `calls`, and a
+refinement whose subject admits `calls = {c1, c2}`; the other forms sit in
+refinement rows.
 
 1. Compile the `ref` forms of FR-1040-AC-1 and FR-1040-AC-2 and read the
    checked and emitted nodes.

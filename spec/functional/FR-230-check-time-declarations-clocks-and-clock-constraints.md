@@ -603,8 +603,11 @@ what each such position means.
   **Presence reads.** `present(p)` of a clock place SHALL be written as
   FSpec FR-322's `presence_read` (FR-322-AC-155): the application of
   `filament.op.option.present`, typed `Boolean`, over the place's
-  `clock_place` template and the owner term (`self`, or another object's
-  term such as `self.peer`). A postcondition's top-level `present(self.v)`
+  `clock_place` template and the owner term (`self`, another object's
+  term such as `self.peer`, a parameter or a population binder), written
+  directly as its `Reference<O>`-typed term with no `filament.op.model.deref`
+  wrapper, so one owner has one encoding (FSpec FR-829 "Owner terms";
+  FR-1040). A postcondition's top-level `present(self.v)`
   or `not present(self.v)` (FSpec `CW-05`) SHALL stay in the lowered
   postcondition as that `presence_read` (its `not`), with no clause node,
   and the evaluator SHALL read it at the candidate post-state's presence
