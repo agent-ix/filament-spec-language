@@ -187,6 +187,29 @@ fn only_refusal(rows: &str) -> (Code, Option<&'static str>, String) {
     )
 }
 
+/// FR-998-AC-1: a refinement `only` lowers to a catalogued collection
+/// operation over the population's all-instances value.
+#[trace("TC-2822", "FR-998-AC-1", "FSpec-FR-376-AC-3")]
+#[test]
+fn only_over_a_population_lowers() {
+    let graph = checked(&ring_is_queue(
+        "lone = only(s in R::slots where s.ring = self: s.value);",
+    ))
+    .graph;
+    let identities: Vec<_> = graph
+        .semantic_graph()
+        .nodes()
+        .filter_map(|node| match node.body() {
+            fsl_semantics::check::BodyTerm::Application(application) => {
+                Some(application.operation.identity())
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(identities.contains(&"filament.op.collection.only"));
+    assert!(identities.contains(&"filament.op.model.all_instances"));
+}
+
 /// FR-139-AC-2 (TC-544 step 2): `only` over a condition that is not Boolean
 /// refuses `ill_typed`/`type-mismatch` at the condition.
 #[trace("TC-544", "FR-139-AC-2", "FSpec-TC-311", "FSpec-FR-376-AC-4")]
@@ -289,6 +312,21 @@ fn a_row_bound_depending_on_population_size_checks() {
     assert_eq!(count.value(), &PopulationValue::Count);
     assert_eq!(count.admitted_type(2), Some(interval(0, 2)));
     assert_eq!(refinement.admit_universes(&BTreeMap::from([(slots(), 2)])), Ok(()));
+}
+
+/// FR-145: population sums admit decimal summands and lower to the decimal
+/// collection sum operation.
+#[trace("TC-544", "FSpec-FR-376-AC-1")]
+#[test]
+fn sum_over_a_population_with_a_decimal_body_checks() {
+    let graph = checked(&ring_is_queue(
+        "busy = sum(s in R::slots: decimal(1, 1)) = decimal(2, 1);",
+    ))
+    .graph;
+    assert!(graph.semantic_graph().nodes().any(|node| {
+        matches!(node.body(), fsl_semantics::check::BodyTerm::Application(application)
+            if application.operation.identity() == "filament.op.collection.sum.decimal")
+    }));
 }
 
 /// FR-139: `sum` refuses a Boolean summand as ill-typed.
