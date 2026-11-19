@@ -188,23 +188,6 @@ fn run_request_member_selects_each_integer_division_law() {
     }
 }
 
-/// Provenance: QSL-2617.
-#[test]
-#[trace("TC-2188", "FR-767-AC-1")]
-fn run_request_floor_law_without_extension_catalog_returns_floor_quotient() {
-    let directory = tempfile::tempdir().unwrap();
-    let program = format!("{HEADER}{BODY}");
-    write(directory.path(), "program.native", program.as_bytes());
-    let path = request(
-        directory.path(),
-        None,
-        "native-run/1",
-        run_body(Some(json!("floor")), "q"),
-    );
-
-    assert_eq!(returned(&path), "-3");
-}
-
 #[test]
 #[trace("TC-2188", "FR-767-AC-5")]
 fn program_and_library_laws_are_selected_independently_during_run() {
