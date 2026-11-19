@@ -70,6 +70,7 @@ mod exact_decimals;
 mod extension_forms;
 mod extension_s1_parse;
 mod family_outcome_layering;
+mod first_rule_readme;
 mod formal_source;
 mod formatter_identity;
 mod forms_refusal_cause;
