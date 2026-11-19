@@ -1056,6 +1056,11 @@ fn an_unknown_member_of_a_source_enum_refuses_type_mismatch_like_a_model_variant
          function model_case using v(): Config::Tier pure { Config::Tier::Lost }\n\
          function no_type using v(): Boolean pure { Nope::Open = Status::Open }",
     );
+    assert_eq!(
+        refusals.len(),
+        4,
+        "one refusal per unknown member, none for its comparison: {refusals:?}"
+    );
 
     for (owner, case) in [("Status", "Pending"), ("Level", "Top"), ("Tier", "Lost")] {
         let refusal = refusals

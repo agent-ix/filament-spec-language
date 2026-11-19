@@ -379,3 +379,67 @@ fn a_role_binding_the_protocol_does_not_admit_declines_the_item() {
         run.document()
     );
 }
+
+/// Analyze `extra` over the `SB` unit `body` from source and from the
+/// handoff directory its program compiles into; returns both runs.
+fn sb_both_routes(
+    name: &str,
+    body: &str,
+    extra: Value,
+) -> (
+    crate::analyze_cli_support::Run,
+    crate::analyze_cli_support::Run,
+) {
+    let ws = Workspace::new(name);
+    let path = litmus_request(&ws, body, extra);
+    let source = analyze(&path);
+    let document: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the request")).expect("JSON");
+    let (members, _) = crate::analyze_cli_support::package_selection(&ws, &document["request"]);
+    let package_request = json!({"format": "native-analyze/1", "request": members});
+    let package = analyze(&ws.write(
+        "analyze-package.json",
+        package_request.to_string().as_bytes(),
+    ));
+    (source, package)
+}
+
+/// FR-850-AC-11, FR-940-AC-14: `SB` under `tso`, `SB` with no `memory` and
+/// the race-freedom item over its racing variant settle from the package
+/// with the source route's records, and the package request is not refused
+/// for carrying `memory`.
+#[trace("TC-3050", "FR-850-AC-11")]
+#[trace("TC-3050", "FR-940-AC-14")]
+#[test]
+#[ignore = "QSL-2405: the package-route protocol subject is not implemented yet"]
+fn a_protocol_subject_settles_from_the_package_as_from_source() {
+    let body = sb_unit(&sb_run("", "release", "acquire"));
+    let tso = json!({"subject": sb_subject(), "memory": [{"parallel": "SB::Both", "model": "tso"}],
+        "items": [{"claim": "NoBothZero"}]});
+    let sc = json!({"subject": sb_subject(), "items": [{"claim": "NoBothZero"}]});
+    let race_body = sb_unit(&sb_run("memory tso", "", "acquire"));
+    let race = json!({"subject": sb_subject(),
+        "items": [{"claim": "SB::Both", "temporal": {"item_kind": "race-freedom"}}]});
+    for (name, unit, extra, expected) in [
+        ("package-protocol-tso", &body, tso, "refuted"),
+        ("package-protocol-sc", &body, sc, "proved"),
+        ("package-protocol-race", &race_body, race, "refuted"),
+    ] {
+        let (source, package) = sb_both_routes(name, unit, extra);
+        assert_eq!(label(&source.item(0)), expected, "{}", source.document());
+        assert!(
+            !package.document().to_string().contains("unsupported"),
+            "{}",
+            package.document()
+        );
+        for member in ["items", "aggregate", "last_stage", "category", "registry"] {
+            assert_eq!(
+                package.document()[member],
+                source.document()[member],
+                "{name} {member}: {}",
+                package.document()
+            );
+        }
+        assert_eq!(package.exit, source.exit, "{name}");
+    }
+}

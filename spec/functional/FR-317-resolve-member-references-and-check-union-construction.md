@@ -61,7 +61,9 @@ check the construction against FSpec FR-143's construction rule (ADR-012
     cannot hold. This is the refusal FR-360 gives an undeclared case of a
     model variant type and this requirement gives an undeclared union member
     (FSpec TC-262 U04, ADR-012), so an unknown member reports one code and
-    tag whichever kind of type its qualifier names.
+    tag whichever kind of type its qualifier names. A `case` arm pattern is
+    not such a reference: FR-318 resolves arm heads, and an arm naming no
+    member of the scrutinee's union stays FR-318's `unknown-member`.
   - With no candidate and no type `q`, the checker SHALL refuse exactly as an
     unresolved name is refused, `missing_declaration`/`missing-name`.
 - Every unqualified name SHALL resolve exactly as it does without unions,
