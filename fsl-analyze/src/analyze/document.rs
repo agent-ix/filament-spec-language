@@ -830,6 +830,8 @@ struct ItemSelectionWire {
     #[serde(default)]
     trace: Option<DocumentSelection>,
     #[serde(default)]
+    traces: Option<DocumentSelection>,
+    #[serde(default)]
     recording: Option<DocumentSelection>,
     #[serde(default, deserialize_with = "present_json_value")]
     population: Option<Value>,
@@ -876,6 +878,7 @@ impl TryFrom<ItemSelectionWire> for ItemSelection {
             premises: wire.premises,
             assessed_root: wire.assessed_root,
             trace: wire.trace,
+            traces: wire.traces,
             recording: wire.recording,
             population: wire.population,
             simulation: wire.simulation,
