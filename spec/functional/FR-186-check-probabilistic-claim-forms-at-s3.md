@@ -88,6 +88,7 @@ pub enum Event {
 pub enum BoundedMeasure {
     Accumulate { reward: Identifier, from: CheckedPredicate, until: CheckedPredicate, within: u64 },
     Steps { from: CheckedPredicate, until: CheckedPredicate, within: u64 },
+    Elapsed { from: CheckedPredicate, until: CheckedPredicate, within: Rational }, // timed subject; `within` in its time unit
     Fraction(FractionMeasure),
 }
 pub struct FractionMeasure { pub predicate: CheckedPredicate, pub window: u64, pub weight: Option<Weighting> }
@@ -193,7 +194,14 @@ FR-185 states (setting pending, QSL-883).
   not a reward name: it is FSpec FR-407's delay weighting, which weights each
   position by the delay of the step that leaves it, and S3 SHALL record it as
   `Weighting::Delay` without looking up a reward. A claim weighted by delay
-  reads the subject's delays and no reward (FR-498).
+  reads the subject's delays and no reward (FR-498). In the weighting
+  position the spelling `delay` always means the delay weighting and
+  shadows any reward named `delay`: S3 SHALL NOT look such a reward up there
+  and adds no refusal of its declaration for this reason, and the reward
+  stays readable wherever a reward name is read, such as `accumulate delay`
+  and `expected accumulate delay`. FSpec FR-407 fixes the
+  spelling `weighted by delay` for the delay weighting, so one spelling keeps
+  one meaning whatever rewards a model declares.
 - Every declaration of a reward name by the operations of one model SHALL have
   one value type. If operations of the subject's model declare `R` with
   different value types, S3 SHALL refuse a claim that names `R`
@@ -201,7 +209,8 @@ FR-185 states (setting pending, QSL-883).
   second `R` on one operation.
 - A comparison `M <= c` or `M >= c` SHALL have a threshold `c` that is a
   literal of `M`'s type: a natural number for `steps`, the reward's dimension
-  for `accumulate`, a rational for `fraction`. If `c` is not a literal, or its
+  for `accumulate`, a time quantity for `elapsed` (converted exactly into the
+  subject's time unit), a rational for `fraction`. If `c` is not a literal, or its
   type is not `M`'s (a rational for `steps`, a duration where a natural number
   is due), S3 SHALL refuse the claim `ill_typed`/`type-mismatch`.
 - If a `fraction` comparison's threshold is not strictly between 0 and 1, such
@@ -220,8 +229,11 @@ FR-185 states (setting pending, QSL-883).
 - If a probability, quantile, mean-of-fraction or long-run threshold is 0 or
   1, S3 SHALL refuse the claim [`qualitative-threshold`], naming the
   qualitative form (an ADR-018 TP-2 claim, or a possible property).
-- A quantile SHALL be over an `accumulate` or `steps` measure, and a
-  `mean of` SHALL be over a fraction measure.
+- A quantile SHALL be over an `accumulate`, `steps` or `elapsed` measure
+  (FSpec FR-407 "Forms"), and a `mean of` SHALL be over a fraction measure.
+  An `elapsed` measure is recorded as `BoundedMeasure::Elapsed` with its
+  horizon in the subject's time unit, and "Time positions" decides whether
+  the subject admits it.
 - If a quantile is over a fraction measure, S3 SHALL refuse the claim
   [`quantile-over-fraction`].
 - A threshold with a dimension SHALL have the reward's dimension. A
@@ -305,6 +317,7 @@ literal. No position refuses a quantity literal as not yet implemented.
 | --- | --- | --- |
 | `accumulate R` measure threshold | `R`'s dimension | this requirement |
 | quantile threshold (`quantile q of (M) <= c`) | the measure's dimension | this requirement |
+| `elapsed` measure threshold (`elapsed … <= c`) | time | this requirement |
 | `expected accumulate R` threshold, quantity reward | `R`'s dimension | FR-195 |
 | `expected elapsed` threshold | time | FR-195 |
 | measure horizon (`within h`) and fraction window (`over [0, h]`) | time, over a timed subject; otherwise a natural number | this requirement |
@@ -363,6 +376,7 @@ literal. No position refuses a quantity literal as not yet implemented.
 | FR-186-AC-13 | A claim under the timed profile over the untimed service model is refused `invalid_timed_model`/`model-time-on-untimed-model` naming `Service`, at the `using` alias, and not `timed-event-profile`; under the timed profile over `Retx`, `probability >= 0.99 [ eventually[0 ms, 4 ms] holds(c.late) ]` checks. | Test (TC-2170) |
 | FR-186-AC-14 | For each quantity row of "Quantity positions" a quantity of the position's dimension checks and a quantity of length (`5 m`) is refused `ill_typed`/`unit-mismatch` naming `Length` at the literal; `fraction holds(P) over [0, 10] <= 5 ms` and `steps from holds(A) until holds(B) within 5 >= 5 ms` are refused `ill_typed`/`type-mismatch` at `5 ms`; no position refuses a quantity literal `not-yet-implemented`. | Test (TC-2171) |
 | FR-186-AC-15 | Over the timed `Retx` subject under the timed profile, `long_run_fraction holds(c.late) weighted by delay <= 0.5` checks as `LongRunFraction{AtMost(1/2), weight: Some(Weighting::Delay)}` and `probability >= 0.5 [fraction holds(c.late) over [0, 5 ms] weighted by delay <= rational(1, 2)]` checks with a `FractionMeasure` whose `weight` is `Some(Weighting::Delay)`; neither is refused `missing_declaration`/`missing-name`, although `Retx` declares no reward named `delay`; the weighted and the unweighted long-run claim have different normal forms. Over the untimed service model, `long_run_fraction holds(s.phase = Busy) weighted by delay >= 0.5` is refused `ill_typed`/`type-mismatch` located at the `delay` word, with a message stating that the subject's model declares no time binding, and not `missing-name`; `long_run_fraction holds(s.phase = Busy) weighted by duration >= 0.5` checks with `Some(Weighting::Reward(duration))`. | Test (TC-2168, TC-2169) |
+| FR-186-AC-16 | Over the timed `Retx` subject under the timed profile, `quantile 0.5 of (elapsed from holds(not c.late) until holds(c.late) within 5 ms) <= 3 ms` checks as `Quantile{q: 1/2, Elapsed{within: 5}, AtMost(3)}`, its threshold and horizon in milliseconds; written `<= 0.003 s` it records `3`, and written with the bare `<= 3` it is refused `ill_typed`/`type-mismatch` at `3`. Over the untimed service model, `quantile 0.5 of (elapsed from holds(s.phase = Busy) until holds(s.phase = Done) within 5) <= 3 ms` is refused `ill_typed`/`type-mismatch` at the `elapsed` measure, and is not refused `quantile-over-fraction` or `not-yet-implemented`. | Test (TC-2168, TC-2169) |
 
 ## Dependencies
 

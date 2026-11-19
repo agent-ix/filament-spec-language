@@ -112,14 +112,27 @@ its `reward` node; `fsl analyze` then runs the vote claim from that package.
 - The repository SHALL carry, as worked examples of this emission, the rover
   and architecture probabilistic units of agent-ix/filament-examples commit
   `b6c0fdc`, vendored byte for byte under `examples/rover/` and
-  `examples/architecture/`: the units `staged-vote-probability.fsl` and
-  `staged-vote-probability-missed.fsl` with the domain model
-  `rover.semantic-ir.json`, and `staged-availability.fsl` and
-  `staged-availability-missed.fsl` with `architecture.semantic-ir.json`. Each
-  vendored file keeps its MIT licence in a `.license` sidecar that names the
-  source repository and commit, as the `config-version` example's sidecars
-  do. A test compiles the four units through S4 from those files and reads
-  each package with the strict reader. Each unit is a formula-event claim
+  `examples/architecture/` in the upstream `rules/`, `requests/` and `model/`
+  subdirectories, so that each request's relative `file` paths resolve: the
+  units `rules/staged-vote-probability.fsl` and
+  `rules/staged-vote-probability-missed.fsl`, their `native-compile/1` requests
+  `requests/staged-vote-probability.json` and
+  `requests/staged-vote-probability-missed.json`, and the domain model
+  `model/rover.semantic-ir.json`; and `rules/staged-availability.fsl`,
+  `rules/staged-availability-missed.fsl`, `requests/staged-availability.json`,
+  `requests/staged-availability-missed.json` and
+  `model/architecture.semantic-ir.json`. Each vendored file keeps its MIT licence
+  in a `.license` sidecar holding `SPDX-FileCopyrightText: 2026 Agent IX`,
+  `SPDX-License-Identifier: MIT` and a `Source:` line naming the repository,
+  path and commit, as the MIT fixtures under `fsl-analyze/tests/fixtures/rover/`
+  do (whose `rover.semantic-ir.json` is already byte-identical to the one at
+  `b6c0fdc`). A test compiles the four units through S4 from those files,
+  each with the program `identity` its request names
+  (`example:rover/staged-vote-probability`,
+  `example:rover/staged-vote-probability-missed`,
+  `example:architecture/staged-availability` and
+  `example:architecture/staged-availability-missed`) as its unit package,
+  and reads each package with the strict reader. Each unit is a formula-event claim
   under a workload over random parameters, which is how a modeller first
   writes a probability claim, so the examples keep that path compiling to a
   package that a provider can run.
@@ -146,7 +159,7 @@ its `reward` node; `fsl analyze` then runs the vote claim from that package.
 | FR-740-AC-5 | A unit that selects no domain package and declares `object O { d: Clock; operation step() modifies self.d; }`, `object Other { n: Integer; operation poke() modifies self.n; }`, `time O dense unit ms;`, `delay O::step ~ uniform;` and `delay Other::poke ~ discrete { 1 ms: 9, 3 ms: 1 };` checks and emits two `delay_distribution` nodes, one whose `declaring` references the source `model`/`object_type` node of `O` and one whose `declaring` references that of `Other`, the second with the delays `1` and `3` typed by the unit node of `ms`; the strict reader admits the package and the identity-row join admits both operation references. Without the `time` member, `delay O::step ~ uniform;` refuses `invalid_probabilistic_model`/`delay-on-untimed-model` at its span. | Test (TC-3012) |
 | FR-740-AC-6 | A unit that selects no domain package and declares `object O { n: Integer; operation step(k: Int[1, 3]) modifies self.n; }`, `random O::step(k) ~ { 1: 1, 3: 3 };` and `workload W on O { weight O::step = 1; }` checks and emits one `random_parameter` node and one `workload` node whose `declaring` and `model` reference the source `model`/`object_type` node of `O`; the strict reader and the identity-row join admit the package, and FSL's reader rebuilds a `RandomParameter` with probabilities `1/4` and `3/4` and a `Workload` equal to S3's. | Test (TC-3012) |
 | FR-740-AC-7 | `Service` emits the `duration` reward function with `clause` `"reward"`, owner the `Server::attempt` operation member and no `precondition` or `body` clause function built for it; the IR strict reader admits the package with `Server::attempt`'s `operation_bodies` row `no_body`, and FSL's reader rebuilds the reward with its clause kind `reward`. FSpec FR-640-AC-3's three declaration orders of `cost`, `load`, `stable`, the random parameter, the workload and the claim emit byte-identical packages, and changing `load`'s expression changes the `load` node id and no reward function id. FR-740-AC-6's unit with a reward `cost` on `O::step` returning `k` emits a `reward` node whose function carries the unit's `SourceOwner` and `declaration` `["O", "step", "reward", "cost"]`, and the strict reader admits it. | Test (TC-2062) |
-| FR-740-AC-8 | The vendored `examples/rover/staged-vote-probability.fsl`, compiled with `examples/rover/rover.semantic-ir.json` selected as `example/rover`, emits a package with three `random_parameter` nodes on `Rover::sample` (`faultA`, `faultB`, `faultC`, each with support `true` at weight 1 and `false` at weight 999), one `workload` node `Driving` with weight 1 on each of `sample`, `loseLidar`, `brake`, `halt` and `enterFailsafe`, and one `probabilistic_claim` node `VoteRarelyWrong` whose `subject` references the `example/rover` `model_root`, whose `scheduler` references `Driving`'s node, whose `reward` and `delays` are empty and whose `distributions` holds the three `random_parameter` nodes in ascending node-id order. `examples/architecture/staged-availability.fsl` with `architecture.semantic-ir.json` emits one `random_parameter` node on `Arch::Service::call` (`ok`, `true` at 999 and `false` at 1), one `workload` node `Traffic` and one claim node `CheckoutAvailable` with `scheduler` `Traffic`'s node, empty `reward` and `delays`, and `distributions` that one node. The strict reader admits both packages. The two `-missed` units emit too, with the same `scheduler` and `distributions`; `VoteAlmostNeverWrong`'s path differs from `VoteRarelyWrong`'s only in its name segment, and the two `CheckoutAvailable` claims, which differ only in their threshold, have equal paths and each take ordinal 0 in its own package. | Test (TC-2062) |
+| FR-740-AC-8 | The vendored `examples/rover/rules/staged-vote-probability.fsl`, compiled by its request `examples/rover/requests/staged-vote-probability.json` (unit package `example:rover/staged-vote-probability`, with `model/rover.semantic-ir.json` selected as `example/rover`), emits a package with three `random_parameter` nodes on `Rover::sample` (`faultA`, `faultB`, `faultC`, each with support `true` at weight 1 and `false` at weight 999), one `workload` node `Driving` with weight 1 on each of `sample`, `loseLidar`, `brake`, `halt` and `enterFailsafe`, and one `probabilistic_claim` node `VoteRarelyWrong` whose `subject` references the `example/rover` `model_root`, whose `scheduler` references `Driving`'s node, whose `reward` and `delays` are empty and whose `distributions` holds the three `random_parameter` nodes in ascending node-id order. `examples/architecture/rules/staged-availability.fsl`, compiled by its request (unit package `example:architecture/staged-availability`, `model/architecture.semantic-ir.json` selected as `example/architecture`), emits one `random_parameter` node on `Arch::Service::call` (`ok`, `true` at 999 and `false` at 1), one `workload` node `Traffic` and one claim node `CheckoutAvailable` with `scheduler` `Traffic`'s node, empty `reward` and `delays`, and `distributions` that one node. The strict reader admits both packages. The two `-missed` units, compiled by their requests (unit packages `example:rover/staged-vote-probability-missed` and `example:architecture/staged-availability-missed`), emit too, and the strict reader admits them. Their claim nodes have the same `subject`, `scheduler`, `reward`, `distributions` and `delays` as the passing units', so `VoteAlmostNeverWrong`'s path is structurally equal to `VoteRarelyWrong`'s except for its name segment, and the two `CheckoutAvailable` paths are structurally equal (compared by FSpec FR-322 structural keys, operand slot numbers aside); each claim is at ordinal 0. The two `CheckoutAvailable` thresholds differ, and the threshold is not yet a body member or path operand (FSpec FR-640 "Open"), so this criterion asserts nothing about whether the two are one obligation. | Test (TC-2062) |
 
 ## Dependencies
 

@@ -22,7 +22,7 @@ Scope: FR-185-AC-7, FR-185-AC-12, FR-186-AC-5 (emission), FR-740-AC-1 to FR-740-
 4. Emit a claim `under Steady` with `Service`, a claim `under Bursty` and a claim `under every scheduler`, and a claim followed by a reward declaration; read each claim node's `scheduler` and `distributions` bindings and path operands, and read the package with the strict reader.
 5. Force an S4 refusal concerning a random parameter (for example a value family S4 cannot write) and read its diagnostic.
 6. Compile `Service` and read the reward function's `clause`, owner and the `Server::attempt` `operation_bodies` row; compile FSpec FR-640-AC-3's three-reward unit in its three declaration orders and with `load`'s expression changed (FR-740-AC-7).
-7. Compile the vendored `examples/rover` and `examples/architecture` units, passing and `-missed`, through S4 from their files; read each package's `probabilistic` nodes and claim node bodies and paths with the strict reader (FR-740-AC-8).
+7. Compile the vendored `examples/rover` and `examples/architecture` units, passing and `-missed`, through S4 from their vendored `requests/*.json` (each unit package the request's program identity); read each package's `probabilistic` nodes and claim node bodies and paths with the strict reader (FR-740-AC-8).
 
 Tag the tests `#[trace("TC-2062", "FR-740-AC-n")]` (step 7 in `fsl-package/tests/probabilistic_examples.rs`, with `include_bytes!` of the vendored files) (and `FR-185-AC-7`, `FR-185-AC-12`, `FR-186-AC-5`).
 

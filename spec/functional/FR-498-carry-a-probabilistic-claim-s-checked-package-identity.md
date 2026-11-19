@@ -103,7 +103,10 @@ checked-package identity from the producer to the carrier and to those causes.
   that order, built from the checked claim (FR-186, FR-195) and the emitted
   `probabilistic` nodes (FR-740). `subject` references the `model_root` of the
   claim's subject. `scheduler` references `W`'s `workload` node for `under W`;
-  for `under every scheduler` it holds the claim's fairness set.
+  for `under every scheduler` it holds the claim's fairness set, one member
+  per constraint with its kind, its granularity (`whole` when none is
+  written, FR-123) and its operation, so `fair weak whole X` and `fair weak
+  each X` are two members.
 - `reward` SHALL hold the `reward` nodes, on operations of the subject's
   model, of the one reward the claim's form reads, and SHALL be empty for
   every other form. The forms that read a reward `R` are
@@ -176,6 +179,11 @@ checked-package identity from the producer to the carrier and to those causes.
   claim and FR-322 sidecar row.
 - **Resolved by FSpec FR-640:** the `probabilistic_claim` body and path that
   carry what the claim reads.
-- **Open:** the causes' member path within the claim body waits for FSpec to
-  define the form members of the `probabilistic_claim` body; until then the
+- **Open:** FSpec FR-640 has not yet defined the form members of the
+  `probabilistic_claim` body (form, event or measure, threshold, `over`
+  binding, activation and confidence parameters), which FSpec FR-407
+  "Obligation identity" requires the identity to cover. Until it does, the
+  claim's `node_id` covers what the claim reads and its subject, scheduler and
+  name; a change to one of those members changes the written content, which
+  re-ranks the ordinal only among claims that share the path, and the
   causes carry the `{node, occurrence}` locus alone.
