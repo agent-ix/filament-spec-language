@@ -3398,6 +3398,8 @@ mod float_members {
                 refusal.location.path(),
                 if clause.contains("self.a + 1") {
                     vec![0]
+                } else if clause.contains("convert<Float64") {
+                    vec![1]
                 } else {
                     Vec::new()
                 },
