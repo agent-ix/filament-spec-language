@@ -34,7 +34,8 @@ fn incomplete_refinement_rows_identify_the_missing_member() {
         ("refinement-unknown-abstract-operation", "absent"),
     ] {
         let error = command::compile_outcome(&corpus().join(format!("{stem}.request.json")))
-            .expect_err("incomplete refinement coverage is refused");
+            .err()
+            .expect("incomplete refinement coverage is refused");
         let message = error.to_string();
         assert!(message.contains(member), "{stem}: {message}");
         messages.push(message);
