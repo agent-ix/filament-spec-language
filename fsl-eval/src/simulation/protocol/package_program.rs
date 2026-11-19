@@ -56,6 +56,8 @@ pub struct PackageRole {
     pub node: fsl_package::CheckedNodeId,
     /// The selected model type node.
     pub model: fsl_package::CheckedNodeId,
+    /// The FR-531 declaration identity of the selected model type.
+    pub model_key: NodeKey,
     /// Whether this is a replicated role.
     pub replicated: bool,
     /// The declared replication maximum, when present.
@@ -275,10 +277,15 @@ impl<'a> PackageProtocolProgram<'a> {
             .roles
             .iter()
             .map(|role| {
+                let model_key = input
+                    .evaluator
+                    .package_node_key(role.model)
+                    .ok_or_else(|| PackageProgramRefusal::MissingIdentity(role.model.clone()))?;
                 Ok(PackageRole {
                     name: role.path.last().cloned().unwrap_or_default(),
                     node: role.node.node_id.clone(),
                     model: role.model.clone(),
+                    model_key,
                     replicated: role.replicated,
                     maximum: role.maximum,
                 })
