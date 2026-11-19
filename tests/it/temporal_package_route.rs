@@ -35,6 +35,208 @@ use serde_json::Value;
 use super::checked_handoff::{request as handoff_request, KINDS};
 use fsl_command::checked_handoff::Corpus;
 
+mod source_journeys {
+    use crate::command_harness::compile_file;
+    use ix_trace_rs::trace;
+    use serde_json::{json, Value};
+    use std::path::{Path, PathBuf};
+
+    fn rover_root() -> PathBuf {
+        let directory = std::env::var_os("FSL_EXAMPLES_DIR")
+            .expect("set FSL_EXAMPLES_DIR to the authoritative filament-examples checkout");
+        let root = PathBuf::from(directory).join("examples/rover");
+        assert!(
+            root.join("example.toml").is_file(),
+            "{} is not the rover example",
+            root.display()
+        );
+        root
+    }
+
+    fn run(path: &Path) -> (u8, Value, Value) {
+        let output = fsl_command::command::run(path, &crate::negotiation::Fr290)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        let outcome = output.outcome.as_ref().expect("a lifecycle outcome");
+        let document = serde_json::from_slice(&outcome.to_bytes().unwrap()).unwrap();
+        (output.exit_code, document, output.value.as_value().clone())
+    }
+
+    /// Source, model, observations and request paths are read in place from
+    /// their owning repository; none is copied into the language repository.
+    #[test]
+    #[trace("FR-330", "FR-328", "FR-329")]
+    fn rover_examples_match_baseline() {
+        let root = rover_root();
+        for (case, exit, result) in [
+            ("safe-stop-in-time", 0, "tested"),
+            ("safe-stop-late", 10, "refuted"),
+            ("recording-cut-short", 0, "pending"),
+            ("recording-in-time", 0, "pending"),
+            ("recording-late", 10, "refuted"),
+            ("safe-stop-late-without-always", 0, "tested"),
+            ("never-stops", 10, "refuted"),
+            ("in-time-small-budget", 22, "incomplete"),
+            ("keeps-sampling", 21, "unsupported"),
+            ("op-within-3", 0, "tested"),
+            ("op-eventually", 0, "tested"),
+            ("op-eventually-from-2", 0, "tested"),
+            ("op-always", 0, "tested"),
+            ("op-until", 0, "tested"),
+            ("op-release", 0, "tested"),
+            ("op-once", 0, "tested"),
+            ("op-historically", 0, "tested"),
+            ("op-since", 0, "tested"),
+            ("op-triggered", 0, "tested"),
+            ("stop-after-loss-in-time", 0, "tested"),
+            ("stop-after-loss-late", 10, "refuted"),
+        ] {
+            let (actual_exit, document, _) =
+                run(&root.join("requests").join(format!("{case}.json")));
+            assert_eq!(actual_exit, exit, "{case}: {document}");
+            let items = document["items"].as_array().expect("clause outcome items");
+            assert_eq!(items.len(), 1, "{case}: {document}");
+            assert_eq!(items[0]["result"], result, "{case}: {document}");
+            if case == "never-stops" {
+                let witness = &items[0]["counterexample"];
+                let prefix = witness["prefix"].as_array().expect("lasso prefix");
+                let cycle = witness["loop"].as_array().expect("lasso loop");
+                assert_eq!(prefix.len(), 2, "{document}");
+                assert_eq!(cycle.len(), 1, "{document}");
+                assert_eq!(
+                    prefix[0]["document"]["identity"],
+                    "ix://example/rover/data/t0-driving"
+                );
+                assert_eq!(
+                    prefix[1]["document"]["identity"],
+                    "ix://example/rover/data/t1-lidar-lost"
+                );
+                assert_eq!(
+                    cycle[0]["document"]["identity"],
+                    "ix://example/rover/data/u2-still-driving"
+                );
+                assert_eq!(witness["trace_position"], 0, "{document}");
+            }
+            if case == "keeps-sampling" {
+                assert_eq!(items[0]["cause"], "missing-fairness-premise", "{document}");
+            }
+        }
+        let output = compile_file(&root.join("requests/timed-safe-stop-compiles.json"));
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert!(
+            !output.stdout.is_empty(),
+            "the compiler emits a checked package"
+        );
+    }
+
+    fn source_request(directory: &Path, clause: &str, trace: Value) -> PathBuf {
+        let source =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/temporal/operators.native");
+        let request = json!({"format":"native-run/1", "request": {
+            "models": [], "program": {"source": {
+                "file": source, "authority": "agent-ix", "identity": "test:temporal-corpus",
+                "document": "TemporalCorpus", "formal_revision": 1}},
+            "clause": {"selection": {"temporal": {"name": clause, "trace": trace}},
+                "observations": {}}
+        }});
+        let path = directory.join("request.json");
+        std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+        path
+    }
+
+    fn sample(ready: bool) -> Value {
+        json!({"sample": {"ready": {"boolean": ready}}})
+    }
+
+    #[test]
+    #[trace("FR-330", "FR-328", "FR-329")]
+    fn bounded_nested_and_derived_next_have_real_trace_verdicts() {
+        let directory = tempfile::tempdir().unwrap();
+        for (clause, trace, exit, expected) in [
+            (
+                "BoundedUntil",
+                json!({"lasso":{"prefix":[sample(false)],"loop":[sample(true)]}}),
+                0,
+                "tested",
+            ),
+            (
+                "BoundedUntil",
+                json!({"lasso":{"prefix":[],"loop":[sample(false)]}}),
+                10,
+                "refuted",
+            ),
+            (
+                "Nested",
+                json!({"lasso":{"prefix":[sample(false)],"loop":[sample(true)]}}),
+                0,
+                "tested",
+            ),
+            (
+                "Nested",
+                json!({"lasso":{"prefix":[],"loop":[sample(false)]}}),
+                10,
+                "refuted",
+            ),
+            (
+                "Nested",
+                json!({"finite":[sample(true),sample(true)]}),
+                0,
+                "pending",
+            ),
+            (
+                "NextDerived",
+                json!({"lasso":{"prefix":[sample(false)],"loop":[sample(true)]}}),
+                0,
+                "tested",
+            ),
+            (
+                "NextDerived",
+                json!({"lasso":{"prefix":[sample(true)],"loop":[sample(false)]}}),
+                10,
+                "refuted",
+            ),
+            (
+                "NextDerived",
+                json!({"finite":[sample(false)]}),
+                0,
+                "pending",
+            ),
+            (
+                "NamedClock",
+                json!({"lasso":{"prefix":[sample(false)],"loop":[sample(true)]}}),
+                0,
+                "tested",
+            ),
+        ] {
+            let (actual_exit, document, _) =
+                run(&source_request(directory.path(), clause, trace.clone()));
+            assert_eq!(actual_exit, exit, "{clause} {trace}: {document}");
+            assert_eq!(
+                document["items"][0]["result"], expected,
+                "{clause} {trace}: {document}"
+            );
+            assert_eq!(document["items"][0]["clause"], clause, "{document}");
+        }
+    }
+
+    #[test]
+    #[trace("FR-645-AC-1", "FR-645-AC-2")]
+    fn empty_corpus_traces_refuse_with_the_precise_reason() {
+        let directory = tempfile::tempdir().unwrap();
+        for (trace, reason) in [
+            (json!({"lasso":{"prefix":[],"loop":[]}}), "empty-lasso-loop"),
+            (json!({"finite":[]}), "empty-finite-trace"),
+        ] {
+            let (exit, _, document) = run(&source_request(directory.path(), "NextDerived", trace));
+            assert_eq!(exit, 20, "{document}");
+            assert_eq!(
+                document["disposition"]["temporal"]["reason"], reason,
+                "{document}"
+            );
+            assert_eq!(document["disposition"]["category"], "refusal", "{document}");
+        }
+    }
+}
+
 /// A compiled unit with the emission its clock selections give.
 pub(super) struct Built {
     unit: fsl_replay::spine::CheckedUnit,

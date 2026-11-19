@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile t = "filament.temporal.infinite-trace/v1";
+record Reading { ready: Boolean; }
+temporal MissingProfile over (r: Reading) clock "steps" on origin {
+  eventually holds(r.ready)
+}
