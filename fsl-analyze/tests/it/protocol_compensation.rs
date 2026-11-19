@@ -1532,7 +1532,7 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
         .find(|(transition, _)| {
             transition
                 .binder_record()
-                .is_some_and(|record| matches!(record.slots(), [FieldValue::Present(Value::Integer(value))] if value.to_string() == "1"))
+                .is_some_and(|value| matches!(value, Value::Composite(record) if matches!(record.slots(), [FieldValue::Present(Value::Integer(balance))] if balance.to_string() == "1")))
         })
         .expect("bal 1 produces the unrecovered successor");
     let (bytes, _) = SubjectSystem::state_key(&system, &unrecovered.1)
