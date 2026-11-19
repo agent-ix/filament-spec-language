@@ -72,9 +72,11 @@ fn check_with(
     declarations: &str,
 ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
     let (_, assembled) = unit(extra, declarations);
-    assembled
-        .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+    assembled.expect("the unit assembles").check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
 }
 
 fn checked(declarations: &str) -> CheckedGraph {
