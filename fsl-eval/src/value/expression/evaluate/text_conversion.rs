@@ -221,9 +221,12 @@ fn declared_unit_name<'a>(table: &'a UnitTable, unit: &filament_exact::UnitId) -
 }
 
 fn parse_integer(text: &str) -> Option<Integer> {
-    unsigned_digits(text)?;
-    let value = Integer::from_str(text).ok()?;
-    (text != "-0").then_some(value)
+    let (negative, digits) = unsigned_body(text)?;
+    if !natural(digits) || (negative && digits == "0") {
+        return None;
+    }
+    let value = Integer::from_str(digits).ok()?;
+    Some(if negative { value.neg() } else { value })
 }
 
 fn parse_decimal(text: &str) -> Option<Decimal> {
@@ -242,7 +245,9 @@ fn parse_decimal_parts(text: &str, allow_negative_zero: bool) -> Option<(Integer
         return None;
     }
     let digits = fraction.map_or(whole.to_owned(), |fraction| format!("{whole}{fraction}"));
-    let mut coefficient = Integer::from_str(&digits).ok()?;
+    let digits = digits.trim_start_matches('0');
+    let digits = if digits.is_empty() { "0" } else { digits };
+    let mut coefficient = Integer::from_str(digits).ok()?;
     if negative {
         if coefficient.is_zero() && !allow_negative_zero {
             return None;
@@ -375,11 +380,6 @@ fn decimal_to_rational(decimal: Decimal) -> Option<Rational> {
         Integer::power_of_ten(u64::from(representation.scale())),
     )
     .ok()
-}
-
-fn unsigned_digits(text: &str) -> Option<&str> {
-    let (_, digits) = unsigned_body(text)?;
-    natural(digits).then_some(digits)
 }
 
 fn unsigned_body(text: &str) -> Option<(bool, &str)> {
