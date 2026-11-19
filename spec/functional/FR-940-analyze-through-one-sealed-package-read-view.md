@@ -244,6 +244,75 @@ same way and key every later step on the whole key.
   per `claim` occurrence, so the first declaration of the node is not
   necessarily the declaration a request names.
 
+### Package form of a state-graph claim
+
+A state-graph claim (`possible`, `always possible`, `unique path`, FR-165)
+is analyzed on the package route from the `claim`/`state_graph` node FR-410
+writes, and from nothing else. That node and the rows beside it already hold
+every fact the source route's `CheckedStateGraphClaim` holds, so the package
+route reads them and settles the item with the source route's record.
+
+- FSL SHALL read a package state-graph claim from these package facts:
+
+  | Fact of the checked claim | Package source |
+  | --- | --- |
+  | the claim's occurrence key | its `claim_names` row's (`declaration`, `occurrence`), resolved by `claim_name` ("Claim names", "Claim occurrence ordinals") |
+  | name and span | the row's `name` and `declaration_region` (FR-850 "Equality with the source route") |
+  | form | the node body's `kind` binding: `possible` is `Possible`, `always-possible` is `AlwaysPossible`, `unique-path` is `UniquePath` (FR-410) |
+  | `over` | the body's `over` binding: a reference to the `value`/`parameter` node, whose `Reference<T>` type projection gives the object type `T`, or the empty aggregate for no `over` |
+  | each predicate | the node the body's `from` or `target` binding references: an `expression` node is a written predicate, whose term is read through the same reader projection FR-940 "Package forms of the source-checked evaluators" uses for a state clause body, with the `over` parameter at slot 0; a Boolean `value`/`literal` node `true` is the constant predicate; `from` the empty aggregate is no `from` (`Possible`) |
+  | the claim's capability and requirements | the form and the `over` type, classified by FR-165's rules over the package's type environment within S3's position limit, as the source route classifies them |
+
+  The `from` of an `always possible` claim written without `from` is the
+  `true` literal node (FR-410), so it reads back as the constant predicate,
+  as the source route's claim holds it.
+- The package route SHALL rebuild the claim as S3 builds it, through
+  `CheckedStateGraphClaim::of_package_form`, from the record
+  `BarePackage::state_graph_claim_form(claim)` returns for the claim's
+  occurrence key. The rebuilt claim's name, span, `over`, form, capability,
+  requirements and occurrence SHALL equal the source route's checked claim
+  for the package and the source it was compiled from. A written predicate
+  of the rebuilt claim holds its package node key and slot count, and no
+  source-checked body (FR-087 R-10).
+- A state-graph predicate SHALL be evaluated through the model-check
+  evaluator port keyed by the claim's occurrence key and the predicate's
+  role (`from`, `target`, `to`), on both routes, as a temporal clause's
+  `holds` atom is keyed by its clause and formula position. The source route
+  evaluates the checked predicate body of its `CheckedGraph`; the package
+  route evaluates the predicate node's reader projection. Both run the one
+  `fsl-eval` expression evaluator over its two node sources, under the same
+  meter and charges, so a predicate gives the same value, `Undefined` or
+  refusal at every state on both routes. Every consumer of a predicate, the
+  state labels of the exploration, the partial-order reduction's atom reads,
+  counterexample and witness replay (FR-170) and the state-graph
+  certificate's recomputation (FR-169, and over a timed subject the zone
+  certificate of FR-852 and FR-244), SHALL read the predicate through
+  that port or through the predicate's reads as the port reports them, never
+  through a `CheckedNode` on the package route.
+- So a package state-graph item SHALL settle with the record, verdict,
+  witness or counterexample, replay and certificate the source route gives
+  for the same item (FR-850 "Equality with the source route"). No package
+  state-graph item settles `unsupported` for a fact this section lists.
+- A `claim`/`state_graph` node that FR-475's reader admitted but whose
+  `over` reference names no `value`/`parameter` node, or whose predicate
+  node is neither an `expression` node nor a Boolean literal, is a reader
+  defect, not an analysis outcome; the package form refuses it as the
+  malformed node it is (`MalformedNode` with the node key), and the item
+  settles `failed` with that internal fault, never a verdict.
+- A name in both name tables is refused before any state-graph package form
+  is built. On the source route, S3 refuses the later of two claim-bearing
+  declarations that share a name `ambiguous_declaration`/`ambiguous-name` at
+  its name, naming both ("Claim names"); the whole request refuses at S3,
+  exit `20`, with no item settled. On the package route, the strict reader
+  refuses the first `claim_names` row whose `name` equals a
+  `temporal_clause_names` row's `name`, `ambiguous_declaration`/
+  `ambiguous-name` at `/claim_names/{i}/name`, naming both rows (FSpec
+  FR-322 "One claim namespace"). FR-850 "Admission" turns that reader
+  refusal into a whole-request refusal at the request stage: category
+  refusal, the reader's code and cause, `details.path`
+  `/claim_names/{i}/name`, `items` `[]`, `last_stage` `null`, exit `20`,
+  before any item is resolved and before any engine runs.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -258,6 +327,8 @@ same way and key every later step on the whole key.
 | FR-940-AC-8 | AC-4's Counter unit declaring the temporal clause `Bounded` and the state-graph claim `possible Bounded` is refused `ambiguous_declaration`/`ambiguous-name` before any item is analyzed; with the claim named `ReachThree` both items settle with equal records over source and over the package, and that package with its `ReachThree` `claim_names` row renamed `Bounded` is refused `ambiguous_declaration`/`ambiguous-name` with no item settled (FSpec FR-322-AC-459). | Test (TC-2970) |
 | FR-940-AC-9 | A unit declaring `probabilistic Stable ... { probability >= 0.5 [ holds(true) ] }` and `probabilistic Stable ... { probability >= 0.25 [ holds(true) ] }` is refused `ambiguous_declaration`/`ambiguous-name` at the second `Stable`, naming both; with the second named `Other` it checks, and its package carries one `claim_names` row per claim. The package of a unit whose operation has two postconditions `Q1` and `Q2` constraining one field (a derived conjunction, FR-105-AC-14) is admitted by the strict reader, and `claim_name("Q1")` returns `Q1`'s own node, never the derived node, over the source route and over the package. A step relation's package carries rows for its `declaration` and `claim` occurrences under one name and region, is admitted, and `claim_name` returns the `claim` occurrence. A hyper clause's package is admitted with its name on its `hyperproperty` node's `claim_names` row, and `claim_name` returns that node. | Test (TC-3015) |
 | FR-940-AC-10 | AC-4's Counter unit declares `BelowThree` and then `AtMostTwo`, both `always holds(c.value <= 2)`, which share one `temporal_clause` node. `claim_name("BelowThree")` returns that node's `claim` occurrence 0 and `claim_name("AtMostTwo")` returns occurrence 1, over the `AdmittedPackageRead` and over the `BarePackage` of its handoff directory. Each equals the source checked clause's `claim` origin and its `temporal_clause_names` row. With the two declarations swapped in source, the ordinals swap. A `program` request and a `package` request with the items `[{"claim": "BelowThree"}, {"claim": "AtMostTwo"}]`, and with `[{"claim": "AtMostTwo"}]` alone, each negotiate every item and settle it `refuted`, with `replay.reproduced` `true`, at its own declaration's occurrence key. The item records, counterexamples and replays are equal across the two routes. No item settles `unsupported` or `invalid-request`. | Test (TC-3026) |
+| FR-940-AC-11 | Over AC-4's Counter unit with the state-graph claims `possible ReachThree using v over (c: M::Counter) { c.value = 3 }`, `always possible Back ... { c.value = 0 }` written without `from`, `always possible FromOne ... from (c.value = 1) { c.value = 0 }` and `unique path Straight ... from (c.value = 0) to (c.value = 1)`, `BarePackage::state_graph_claim_form` of each claim's `claim_name` occurrence, rebuilt by `CheckedStateGraphClaim::of_package_form`, equals the source route's checked claim in name, span, `over`, form, capability, requirements and occurrence, `Back`'s `from` being the constant predicate; a `program` request and a `package` request over its handoff directory with those four items give equal item records, witnesses or counterexamples, replays and certificates, and no package-route record is `unsupported`; each predicate evaluated through the evaluator port at each explored state gives the same value on both routes. | Test (TC-3034) |
+| FR-940-AC-12 | AC-8's colliding source unit refuses at S3 with `ambiguous_declaration`/`ambiguous-name` at the second `Bounded`, naming both declarations, exit `20`, no item settled; AC-8's package with the `ReachThree` row renamed `Bounded` refuses the whole `package` request at the request stage, category refusal, `ambiguous_declaration`/`ambiguous-name` with `details.path` `/claim_names/{i}/name` of that row, `items` `[]`, `last_stage` `null`, exit `20`, and runs no engine. | Test (TC-3034) |
 
 ## Dependencies
 
