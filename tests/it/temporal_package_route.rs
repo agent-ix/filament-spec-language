@@ -63,6 +63,25 @@ mod source_journeys {
         (output.exit_code, document, output.value.as_value().clone())
     }
 
+    /// The canonical stop-speed-0 capture example retains its source,
+    /// observation and false guard, and produces no active true obligation.
+    #[test]
+    #[trace("FSpec-FR-093-AC-5", "FSpec-FR-093-AC-6")]
+    fn the_canonical_false_guard_capture_example_is_inactive() {
+        let root = rover_root();
+        let request = root
+            .parent()
+            .unwrap()
+            .join("docs-captures/requests/false-guard-inactive.json");
+        let (exit, outcome, _) = run(&request);
+        assert_eq!(exit, 0, "{outcome}");
+        let item = &outcome["items"][0];
+        assert_eq!(item["clause"], "StopForEachFastStart", "{outcome}");
+        assert_eq!(item["axes"]["activation"], "inactive", "{outcome}");
+        assert_eq!(item["axes"]["execution"], "completed", "{outcome}");
+        assert_eq!(item["axes"]["truth"], Value::Null, "{outcome}");
+    }
+
     /// Source, model, observations and request paths are read in place from
     /// their owning repository; none is copied into the language repository.
     #[test]

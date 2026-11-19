@@ -270,6 +270,7 @@ impl<'a> ClauseState<'a> {
         if let Some((found_at, atom)) = self.snapshot_cache.borrow().as_ref() {
             if *found_at == at && for_good {
                 return Some(ObservedRun {
+                    inactive: false,
                     result: Ok(fsl_eval::temporal::TemporalOutcome::Violated {
                         at: fsl_eval::temporal::TemporalPosition::new(at),
                     }),
@@ -436,6 +437,7 @@ impl<'a> ClauseState<'a> {
             _ => fsl_eval::temporal::SampleStop::default(),
         };
         let observed = ObservedRun {
+            inactive: false,
             result,
             stopped: read.stopped,
             undefined: read.undefined,

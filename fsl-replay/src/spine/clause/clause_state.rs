@@ -886,6 +886,7 @@ impl<'a> ClauseState<'a> {
             .map(|(index, sample)| read_sample_stop(self.package, self.node, sample, *index, meter))
             .unwrap_or_default();
         let observed = ObservedRun {
+            inactive: false,
             result,
             stopped: read.stopped,
             undefined: read.undefined,

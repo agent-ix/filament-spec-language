@@ -2226,12 +2226,18 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             &mut meter,
         ),
     };
+    let inactive = observed.inactive;
     let (disposition, refused_at) = observed_disposition(
         observed.stopped,
         observed.result,
         run.package.graph(),
         run.sources,
     );
+    let disposition = if inactive {
+        ClauseDisposition::Temporal(TemporalVerdict::Inactive)
+    } else {
+        disposition
+    };
     let (disposition, counterexample, decisive) = match objects {
         Some((environments, reference)) => {
             let (disposition, counterexample) =

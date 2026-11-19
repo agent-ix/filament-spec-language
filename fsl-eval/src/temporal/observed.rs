@@ -53,6 +53,11 @@ pub enum HoldsStop {
 /// condition stopped the run, why (the result is then the stop's fault).
 #[derive(Debug)]
 pub struct ObservedRun {
+    /// A completed guarded clause over a closed lasso whose every guard
+    /// was false. No instance exists, even though the formula scan holds.
+    /// Open prefixes, unresolved guards and formula-at-position calls never
+    /// establish this fact.
+    pub inactive: bool,
     /// The evaluator's result.
     pub result: Result<TemporalOutcome, TemporalRefusal>,
     /// The condition stop that ended the run, if one did.
@@ -416,6 +421,7 @@ fn evaluate_observed_goal(
         fixed: BTreeMap::new(),
         active: None,
         windows: None,
+        activated: false,
     };
     let (result, decisive) = super::engine::run_seeking(
         super::engine::Subject::of_clause(clause.clause()),
@@ -438,7 +444,16 @@ fn evaluate_observed_goal(
         }
         _ => Vec::new(),
     };
+    let inactive = matches!(goal, super::engine::Goal::Clause)
+        && matches!(trace, TemporalTrace::Lasso { .. })
+        && matches!(
+            clause.clause().activation(),
+            fsl_semantics::check::Activation::Each { guarded: true }
+        )
+        && matches!(result, Ok(TemporalOutcome::Holds))
+        && !letters.activated;
     ObservedRun {
+        inactive,
         result,
         stopped,
         undefined: letters.undefined,
@@ -546,6 +561,7 @@ fn evaluate_window_over(
         fixed: BTreeMap::new(),
         active: None,
         windows: None,
+        activated: false,
     };
     // A window aggregate is read as an atom of its own (FR-194 "Evaluation"):
     // a clause that holds one reads its duration window against the stamps of
@@ -678,6 +694,7 @@ impl CarriedWindow {
             fixed: BTreeMap::new(),
             active: None,
             windows: None,
+            activated: false,
         };
         // FR-194 "Evaluation": a window aggregate reads the stamps of the
         // admitted trace, so a carried run reads the contents the one-shot
@@ -766,6 +783,8 @@ const ACTIVATION_CODES: [&str; 2] = [
 ];
 
 pub(super) struct ObservedLetters<'a> {
+    /// Whether a guard admitted any represented activation.
+    activated: bool,
     package: &'a CheckedPackage,
     clause: &'a TemporalClauseNode,
     positions: ObservedPositions<'a>,
@@ -816,6 +835,7 @@ impl<'a> ObservedLetters<'a> {
             fixed: BTreeMap::new(),
             active: None,
             windows: None,
+            activated: false,
         }
     }
 
@@ -1095,21 +1115,23 @@ impl TemporalLetters for ObservedLetters<'_> {
         position: TemporalPosition,
         meter: &mut Meter,
     ) -> Result<AtomReading, LetterStop> {
-        if let Some(letter) = self.taped(position) {
-            return match letter.activation() {
+        let reading = if let Some(letter) = self.taped(position) {
+            match letter.activation() {
                 Some(true) => Ok(AtomReading::True),
                 Some(false) => Ok(AtomReading::False),
                 None => Err(LetterStop::Fault(InternalFault::new(
                     "temporal.observed",
                     "tape-letter-reads-the-guard",
                 ))),
-            };
-        }
-        let (objects, over) = self.subject(position)?;
-        let evaluation = self
-            .package
-            .evaluate_guard(&self.clause.identity(), over, objects, meter);
-        let reading = Self::reading(&mut self.stopped, position, evaluation, ACTIVATION_CODES)?;
+            }?
+        } else {
+            let (objects, over) = self.subject(position)?;
+            let evaluation =
+                self.package
+                    .evaluate_guard(&self.clause.identity(), over, objects, meter);
+            Self::reading(&mut self.stopped, position, evaluation, ACTIVATION_CODES)?
+        };
+        self.activated |= matches!(reading, AtomReading::True);
         if let AtomReading::Undefined(cause) = &reading {
             self.note(|| ObservedLocus::Activation, position, cause);
         }
@@ -1735,6 +1757,7 @@ pub fn observed_valuation(
         fixed: BTreeMap::new(),
         active: None,
         windows: None,
+        activated: false,
     };
     letters_valuation(clause.clause(), &mut letters, trace, meter)
 }

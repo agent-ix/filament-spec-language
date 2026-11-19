@@ -366,6 +366,84 @@ fn monitored(directory: &Path, name: &str, levels: &[i64]) -> Value {
     status
 }
 
+const GUARDED: &str = "temporal Guarded using i over (r: Reading) clock \"steps\" \
+    on each (trigger: Reading) when (trigger.level > 0) { \
+    capture beganFast: Boolean = trigger.level > 3; \
+    eventually[0,1] holds(r.stopped or not beganFast) }\n";
+
+/// Exercise the same closed lasso through source and a source-free handoff.
+fn guarded_routes(level: i64, stopped: bool) -> Vec<Value> {
+    let directory = tempfile::tempdir().unwrap();
+    let request = run_request(json!({"name": "Guarded", "trace": {
+        "lasso": {"prefix": [], "loop": [sample(level, stopped)]}}}));
+    let path = write_with(directory.path(), GUARDED, "source.json", &request);
+    let source = result(&run_file(&path));
+    let compile = json!({"format": "native-compile/1", "request": {
+        "models": [], "program": program(), "clocks": clocks(),
+        "handoff": {"directory": "handoff", "package_name": "guarded",
+            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}});
+    let compile_path = directory.path().join("compile.json");
+    std::fs::write(&compile_path, serde_json::to_vec(&compile).unwrap()).unwrap();
+    fsl_command::command::compile(&compile_path).expect("guarded capture compiles");
+    std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+    let mut package = request;
+    package["request"]
+        .as_object_mut()
+        .unwrap()
+        .remove("program");
+    package["request"].as_object_mut().unwrap().remove("clocks");
+    package["request"]["package"] = json!({"directory": "handoff"});
+    let package_path = directory.path().join("package-run.json");
+    std::fs::write(&package_path, serde_json::to_vec(&package).unwrap()).unwrap();
+    vec![source, result(&run_file(&package_path))]
+}
+
+/// A closed, complete stop-only lasso has no activation and no truth.
+#[test]
+#[trace("FSpec-FR-093-AC-5", "FR-622-AC-1")]
+fn a_closed_false_guard_capture_scope_is_inactive_on_both_routes() {
+    for document in guarded_routes(0, true) {
+        assert_eq!(document["axes"]["activation"], "inactive", "{document}");
+        assert_eq!(document["axes"]["execution"], "completed", "{document}");
+        assert_eq!(document["axes"]["truth"], Value::Null, "{document}");
+        assert!(document["disposition"].get("truth").is_none(), "{document}");
+        assert_eq!(temporal(&document)["kind"], "inactive", "{document}");
+        let bytes = serde_json::to_vec(&document).unwrap();
+        let fsl_replay::spine::NativeRunResult::Clause(record) =
+            fsl_replay::spine::read_native_run_result(&bytes).expect("inactive result round-trips")
+        else {
+            panic!("expected a clause result");
+        };
+        assert_eq!(
+            record.axes().activation,
+            fsl_replay::ActivationAxis::Inactive
+        );
+        assert_eq!(record.truth(), None);
+    }
+}
+
+/// The actual guard, rather than the captured predicate or body truth,
+/// decides whether an obligation exists. Active controls still hold/refute.
+#[test]
+#[trace("FSpec-FR-093-AC-6", "FR-860-AC-3")]
+fn false_guard_deliveries_create_no_capture_obligation_on_both_routes() {
+    for document in guarded_routes(0, false) {
+        assert_eq!(document["axes"]["activation"], "inactive", "{document}");
+        assert_eq!(document["axes"]["truth"], Value::Null, "{document}");
+    }
+    for (level, stopped, kind, truth) in [
+        (1, false, "holds", "true"),
+        (5, true, "holds", "true"),
+        (5, false, "violated", "false"),
+    ] {
+        for document in guarded_routes(level, stopped) {
+            assert_eq!(document["axes"]["activation"], "active", "{document}");
+            assert_eq!(document["axes"]["truth"], truth, "{document}");
+            assert_eq!(temporal(&document)["kind"], kind, "{document}");
+        }
+    }
+}
+
 /// FR-860-AC-4, FR-337 "Captures": a possibly-zero `mod` written in a
 /// capture's initializer is an `unproved-nonzero` obligation that S3 refuses
 /// under Linked (FR-495-AC-3), because a declared clause is always checked
