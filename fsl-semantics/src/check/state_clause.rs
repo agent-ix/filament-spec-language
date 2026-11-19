@@ -1206,6 +1206,11 @@ impl CheckedStateClause {
         &self.name
     }
 
+    /// The whole source declaration that introduced this clause.
+    pub fn declaration_span(&self) -> fsl_foundation::Span {
+        self.spans.declaration
+    }
+
     /// Invariant, precondition or postcondition.
     pub fn kind(&self) -> StateClauseKind {
         self.kind
