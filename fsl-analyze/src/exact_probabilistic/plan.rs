@@ -117,12 +117,12 @@ impl<'c> Plan<'c> {
             ProbForm::Probability {
                 event: Event::Compare { measure, bound },
                 ..
-            } => Self::of_measure(measure, threshold(bound))?,
+            } => Self::of_measure(measure, threshold(bound), claim.span)?,
             ProbForm::Quantile {
                 measure,
                 threshold: bound,
                 ..
-            } => Self::of_measure(measure, threshold(bound))?,
+            } => Self::of_measure(measure, threshold(bound), claim.span)?,
             ProbForm::MeanOfFraction { fraction, .. } => (
                 Self::Fraction {
                     window: fraction.window,
@@ -157,6 +157,7 @@ impl<'c> Plan<'c> {
     fn of_measure(
         measure: &'c BoundedMeasure,
         threshold: &Rational,
+        span: Span,
     ) -> Result<(Self, Reads<'c>), PlanFault> {
         let role = |role, predicate| (UndefinedRead::Predicate(role), predicate);
         Ok(match measure {
@@ -199,7 +200,7 @@ impl<'c> Plan<'c> {
             BoundedMeasure::Fraction(fraction) => (
                 Self::Fraction {
                     window: fraction.window,
-                    weight: reward_weight(fraction.weight.as_ref(), claim.span)?,
+                    weight: reward_weight(fraction.weight.as_ref(), span)?,
                 },
                 vec![role(PredicateRole::Target, &fraction.predicate)],
             ),
