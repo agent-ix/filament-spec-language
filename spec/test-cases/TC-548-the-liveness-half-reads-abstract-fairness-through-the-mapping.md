@@ -12,8 +12,8 @@ relationships:
 
 Verify the second phase: no liveness half without `ensure` rows,
 `Divergence` and `AbstractUnfair` lassos, concrete halts read through the
-terminal stutter independently of `terminal` declarations, `unsupported` with
-hidden fields or a strong `F_A` constraint, and the scheduler constraints in the `F_C` filter.
+terminal stutter independently of `terminal` declarations, a decided half
+(never `unsupported`) with hidden fields or a strong `F_A` constraint (FR-899), and the scheduler constraints in the `F_C` filter.
 
 Scope: FR-143-AC-1 to FR-143-AC-7.
 
@@ -47,8 +47,8 @@ Tag the tests `#[trace("TC-548", "FR-143-AC-n")]`.
   in every combination.
 - Step 3: `AbstractUnfair{flipB}`, empty stem, two `flipA` loop steps;
   `Checked(HoldsReduced{reductions: []})`.
-- Step 4: safety `Holds{Exhaustive}`, liveness `Unsupported` with the typed hidden-field cause (wire cause `unsupported-requested-capability`); `None`.
+- Step 4: safety `Holds{Exhaustive}`, liveness `Checked(HoldsReduced{reductions: []})` by FR-899's hidden-field rule, never `Unsupported`; without the `ensure` row, `None`.
 - Step 5: the SCC fails the filter through `B`'s `Scheduler` constraint; it
   passes and is returned as the violation.
-- Step 6: safety `Holds{Exhaustive}`, liveness `Unsupported` with the typed strong-fairness cause; the same beside a violated safety half; `Checked(HoldsReduced{reductions: []})` for the weak variant; the hidden-field cause for `RegisterHistory`.
+- Step 6: safety `Holds{Exhaustive}`, liveness `Checked(Violated)` with the lasso looping `flipA, flipA` through `a = 0`; `None` beside a violated safety half; `Checked(HoldsReduced{reductions: []})` for the weak variant; for `RegisterHistory` a `Checked` liveness half by FR-899, never `Unsupported`.
 - Step 7: a refusal carrying the fault and no outcome; the item settles `failed`.

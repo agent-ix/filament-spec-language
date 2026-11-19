@@ -291,8 +291,10 @@ these differences:
   the operation's FSpec FR-322 `operation_bodies` row a `function` row: a
   reward is pure over the operation's parameters, random parameters
   included, reads no state, has the reward's value type as its result and is
-  neither. It is `Linked` (FR-952), as every declared non-`body` clause
-  function is.
+  neither. Its check mode is `Linked` by FR-952's declared-clause rule,
+  which names `reward` beside `invariant` and `precondition` (FSpec
+  FR-770), and never by the declaration-less function rule that gives a
+  `body` clause function the mode its unit's bodies were checked under.
 
 An operation's postconditions are lowered by the `ProtocolClause` family
 with its checked operation header (ADR-012 §3, §4.3; #218), which gives each
@@ -310,7 +312,14 @@ leaves the node id unchanged.
 The clause functions of one owner share one `package` and `path` (FR-322
 "Structural node identity") and `check` assigns their `ordinal`s in the order
 this section lists them: authored precondition `0`, effective precondition
-`1`, body `2`; an invariant is `0`. No reader derives an ordinal.
+`1`, body `2`; an invariant is `0`. Reward functions (FR-740) are lowered
+after every other clause function, in ascending order of (operation key,
+reward name), and each takes the next ordinal of its path after every
+clause function lowered before it on that path, so a reward's ordinal never
+depends on the source order of any declaration (FSpec FR-640 "Reward
+identity"). A reward on a source-declared type has its own `declaration`
+path and ordinal `0` (FSpec FR-322 "Source-declared object types" item 5).
+No reader derives an ordinal.
 
 A redefining candidate's own clauses are built both by its own dispatch
 operation and as a candidate of the operation it redefines, and `check`

@@ -22,6 +22,7 @@ FR-952-AC-1, FR-952-AC-2, FR-952-AC-3, FR-952-AC-4.
 2. Replay `r`'s `10 mod x` claim at `x = 0` from the Kernel package.
 3. Build the probabilistic world under `Kernel` with the target calling `z`, then with `1 mod x.phase = 0` written in the clause.
 4. Read packages with the member removed, set to `"strict"`, and set to `"kernel"` on an invariant clause function.
+5. Compile a unit holding `Service`'s reward `duration` under `Kernel`; read the reward function's `check_mode`, then read the package with it rewritten to `"kernel"` (FR-952-AC-4).
 
 Test: `fsl-analyze/tests/it/check_mode_record.rs`; replay case in
 `fsl-replay/src/execute/tests/application_claim.rs`
@@ -33,3 +34,4 @@ Test: `fsl-analyze/tests/it/check_mode_record.rs`; replay case in
 - Step 2: `reproduced-without-witness`.
 - Step 3: `z` checks and evaluates undefined at `p = 0`; the clause form refuses `unproved-nonzero` at S3.
 - Step 4: `malformed_wire` twice, then `invalid_package`/`invalid-value`.
+- Step 5: `"linked"`; the rewrite refuses `invalid_package`/`invalid-value` at its `check_mode`.

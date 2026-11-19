@@ -12,7 +12,7 @@ relationships:
 
 Verify the `tl_lowering` member's default and named correspondences, and the
 unsupported record when the clause does not have the named reading. Scope:
-FR-931-AC-1, FR-931-AC-2, FR-931-AC-11.
+FR-931-AC-1, FR-931-AC-2, FR-931-AC-11, FR-931-AC-12.
 
 ## Test Procedure
 
@@ -21,6 +21,7 @@ FR-931-AC-1, FR-931-AC-2, FR-931-AC-11.
 3. Run the past-only clause with no `correspondence`.
 4. Run the timed form of `Low`: over the ConfigVersion model timed by `time Config dense unit ms`, under `filament.temporal.timed/v1` with no `clock` member, body `always [0 ms, 3 ms] holds(c.versionNumber <= 2)`.
 5. Run `Low` written with extra spaces and grouping, and FR-931-AC-11's operator and text leaves, from source and from the unit's checked package with the source removed; read each `atoms` entry.
+6. Run FR-931-AC-12's enumeration and `allInstances` leaves under the alias `Config`, under `K`, and from each checked package with the source removed.
 
 Test: `tests/it/request_surface_s1_16.rs` `a_tl_lowering_request_selects_its_correspondence`.
 
@@ -31,3 +32,4 @@ Test: `tests/it/request_surface_s1_16.rs` `a_tl_lowering_request_selects_its_cor
 - Step 3: `supported` under `mltl.origin-complete-history/v1`.
 - Step 4: `unsupported`, no `classified`, no `formula`, exit 21.
 - Step 5: each atom text exactly as FR-931-AC-11 states; the source and package routes give byte-equal `atoms`.
+- Step 6: the two atom texts FR-931-AC-12 states, byte-equal across both aliases and both routes.

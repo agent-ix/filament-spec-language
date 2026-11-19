@@ -70,7 +70,12 @@ its `reward` node; `fsl analyze` then runs the vote claim from that package.
   parameters included, result type the reward's value type, and clause kind
   `reward` (FR-094 `DeclaredClauseKind::Reward`, FSpec FR-322 and FR-640),
   never `precondition` or `body`, so the reward adds no guard to its
-  operation and gives an operation without a body no body. The reward
+  operation and gives an operation without a body no body. For a reward on
+  an operation of a source-declared type (FR-569), the function carries the
+  unit's `SourceOwner` and the `declaration` `[<type>, <operation>,
+  "reward", <reward name>]` (FSpec FR-322 "Source-declared object types"
+  item 5) instead of a `ModelOwner`, and is keyed by that path at ordinal 0;
+  the reward is emitted, never refused for its type's origin. The reward
   node's identity carries the content operand FSpec FR-640 "Reward identity"
   names (the key of the expression node the function's `body` references, or
   a literal body's text), and S3 lowers the rewards after every other clause
@@ -122,7 +127,7 @@ its `reward` node; `fsl analyze` then runs the vote claim from that package.
 | FR-740-AC-4 | A claim `under Steady` emitted with `Service` resolves its scheduler to the `Steady` workload node, and the package holding the claim, the random parameters, the reward and the workload is admitted by the strict reader. | Test (TC-2062) |
 | FR-740-AC-5 | A unit that selects no domain package and declares `object O { d: Clock; operation step() modifies self.d; }`, `object Other { n: Integer; operation poke() modifies self.n; }`, `time O dense unit ms;`, `delay O::step ~ uniform;` and `delay Other::poke ~ discrete { 1 ms: 9, 3 ms: 1 };` checks and emits two `delay_distribution` nodes, one whose `declaring` references the source `model`/`object_type` node of `O` and one whose `declaring` references that of `Other`, the second with the delays `1` and `3` typed by the unit node of `ms`; the strict reader admits the package and the identity-row join admits both operation references. Without the `time` member, `delay O::step ~ uniform;` refuses `invalid_probabilistic_model`/`delay-on-untimed-model` at its span. | Test (TC-3012) |
 | FR-740-AC-6 | A unit that selects no domain package and declares `object O { n: Integer; operation step(k: Int[1, 3]) modifies self.n; }`, `random O::step(k) ~ { 1: 1, 3: 3 };` and `workload W on O { weight O::step = 1; }` checks and emits one `random_parameter` node and one `workload` node whose `declaring` and `model` reference the source `model`/`object_type` node of `O`; the strict reader and the identity-row join admit the package, and FSL's reader rebuilds a `RandomParameter` with probabilities `1/4` and `3/4` and a `Workload` equal to S3's. | Test (TC-3012) |
-| FR-740-AC-7 | `Service` emits the `duration` reward function with `clause` `"reward"`, owner the `Server::attempt` operation member and no `precondition` or `body` clause function built for it; the IR strict reader admits the package with `Server::attempt`'s `operation_bodies` row `no_body`, and FSL's reader rebuilds the reward with its clause kind `reward`. FSpec FR-640-AC-3's three declaration orders of `cost`, `load`, `stable`, the random parameter, the workload and the claim emit byte-identical packages, and changing `load`'s expression changes the `load` node id and no reward function id. | Test (TC-2062) |
+| FR-740-AC-7 | `Service` emits the `duration` reward function with `clause` `"reward"`, owner the `Server::attempt` operation member and no `precondition` or `body` clause function built for it; the IR strict reader admits the package with `Server::attempt`'s `operation_bodies` row `no_body`, and FSL's reader rebuilds the reward with its clause kind `reward`. FSpec FR-640-AC-3's three declaration orders of `cost`, `load`, `stable`, the random parameter, the workload and the claim emit byte-identical packages, and changing `load`'s expression changes the `load` node id and no reward function id. FR-740-AC-6's unit with a reward `cost` on `O::step` returning `k` emits a `reward` node whose function carries the unit's `SourceOwner` and `declaration` `["O", "step", "reward", "cost"]`, and the strict reader admits it. | Test (TC-2062) |
 
 ## Dependencies
 

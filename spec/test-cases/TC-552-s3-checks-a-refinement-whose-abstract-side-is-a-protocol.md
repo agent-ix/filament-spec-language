@@ -45,7 +45,7 @@ protocol `OnImpl` over `Impl` only (FR-147-AC-16).
 6. Resolve each defect variant of FR-147-AC-6, one value per variant.
 7. Give the refinement check a non-empty resolved list for `CasTwice` and for
    `CasRefinesCounter`, and an empty one.
-8. Resolve a value naming one entry of every class over `Full` and `Rich`.
+8. Resolve a value naming one entry of every class over `Full` and `Rich`, `Full` with a `recommend` node added; check a step row whose right side names that `recommend` node.
 9. Resolve `CasTwice`'s list, rename the abstract alias to `S` with the value
    renamed to match, and resolve again; compare with the empty list.
 10. Place one defect in the unit's value and the same defect in a supplied
@@ -99,7 +99,8 @@ Tag the tests `#[trace("TC-552", "FR-147-AC-n")]`.
   `unsupported`, with no `CheckedRefinement`; the empty list is not refused
   for the list.
 - Step 8: each entry makes exactly its own class internal; the resolved list
-  is in the byte order of the alias-free spellings.
+  is in the byte order of the alias-free spellings, the `recommend` node's
+  bare path among them; the `recommend` right side is admitted.
 - Step 9: `abstract_internal = [Twice::Done]` before and after the rename,
   with the same node identity; the empty list gives a different identity.
 - Step 10: the unit's defect is located at (the unit's value, pointer), the

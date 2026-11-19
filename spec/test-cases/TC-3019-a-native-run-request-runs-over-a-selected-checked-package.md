@@ -27,7 +27,7 @@ FR-1039-AC-4.
    the value package.
 4. Export FR-1015-AC-4's counter from its package file with
    `source_package` `{"identity": "example/counter-unit", "version": "7"}`,
-   the source removed; send it without `source_package`, with `null`, with a
+   the source removed; send it without `source_package`, with `null` (refused `wrong-value-kind`), with a
    missing file, and with each malformed `source_package` of FR-1039-AC-4;
    call `half` over the package with and without `source_package`.
 
