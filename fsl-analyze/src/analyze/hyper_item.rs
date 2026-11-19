@@ -7,15 +7,15 @@ use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{
     CheckedHyperLetters, ExpansionLimits, ModelSimulationRequest, ModelSystem,
 };
-use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_replay::{HyperReplay, replay_hyper_trace_tuple, settle_hyper_check};
+use fsl_foundation::RequestIndex;
+use fsl_replay::{replay_hyper_trace_tuple, settle_hyper_check, HyperReplay};
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, DeclarationFamily};
 
-use super::items::{BROKEN, admission, model_refusal};
+use super::items::{admission, model_refusal, BROKEN};
 use super::{AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SubjectBinding, TemporalItem};
-use crate::model_check::{HyperCheckRequest, check_hyper, manifest};
+use crate::model_check::{check_hyper, manifest, HyperCheckRequest};
 
 /// Build an item only when the occurrence identifies a checked hyper clause.
 pub(super) fn hyper_item<'a>(
@@ -114,7 +114,7 @@ pub(super) fn hyper_item<'a>(
                 let settled = settle_hyper_check(
                     &outcome,
                     &form.limits,
-                    &[],
+                    &form.requested_limits,
                     Some(&certificate),
                     cancel,
                     |payload| {
@@ -213,6 +213,10 @@ fn single(
         simulation,
         proof_bounds: form.proof_bounds.clone(),
     }];
+    let system = match ModelSystem::new(subjects[0].simulation.clone()) {
+        Ok(system) => system,
+        Err(_) => return EngineReport::Refused(Refusal::Failed(BROKEN)),
+    };
     let request = fsl_replay::ProductClosureRequest {
         package,
         clause,
@@ -242,6 +246,16 @@ fn single(
                 | GraphEvidence::PathPair { over, .. }
                 | GraphEvidence::Undefined { over, .. } => over.as_ref(),
             };
+            let reference = match (clause.parameters().first(), over) {
+                (Some(parameter), Some(instance)) => {
+                    match system.bound_reference(parameter.population.object(), instance) {
+                        Ok(reference) => Some(reference),
+                        Err(_) => return EngineReport::Refused(Refusal::Failed(BROKEN)),
+                    }
+                }
+                (None, None) => None,
+                _ => return EngineReport::Refused(Refusal::Failed(BROKEN)),
+            };
             wire = match fsl_replay::graph_evidence_wire(
                 evidence,
                 StateGraphPropertyForm::Possible,
@@ -249,7 +263,7 @@ fn single(
                     .parameters()
                     .first()
                     .map(|parameter| parameter.name.as_str()),
-                over,
+                reference.as_ref(),
                 &[],
                 clause.assembled_occurrence(),
             ) {

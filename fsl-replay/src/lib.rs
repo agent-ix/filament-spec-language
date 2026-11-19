@@ -165,11 +165,12 @@ pub use certificate::closure::{
     ProtocolCertificateRequest, TemporalCertificateCheck, check_closure, check_components,
     check_protocol_closure, check_protocol_components,
 };
-pub use certificate::scc::{Component, ComponentCertificate, ComponentWitness, ProofCertificate};
 pub use certificate::product::{
-    HyperProductMember, ProductClosureCertificate, ProductClosureRefusal, ProductClosureRequest,
-    ProductEvidence, ProductStateKey, check_product_closure, product_certificate, product_state_key,
+    check_product_closure, product_certificate, product_state_key, HyperProductMember,
+    ProductClosureCertificate, ProductClosureRefusal, ProductClosureRequest, ProductEvidence,
+    ProductStateKey,
 };
+pub use certificate::scc::{Component, ComponentCertificate, ComponentWitness, ProofCertificate};
 pub use certificate::simulation::{
     CertifiedEdge, CertifiedPosition, EvaluationOutcome, FailedStep, IncompleteLimit,
     SimulationCertificate, SimulationCertificateRequest, SimulationRefusal, UndeterminedStep,

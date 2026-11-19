@@ -5,8 +5,8 @@
 //!
 //! The shapes are FR-168's [`StateGraphOutcome`](crate::StateGraphOutcome)
 //! with a lasso for a witness: [`ModelLasso`] is FR-170's `WitnessPath::Lasso`.
-//! A `Witnessed` outcome carries no product-closure certificate yet: FR-163's
-//! certificate and its core checker are not built, so it settles no `proved`.
+//! A `Witnessed` instance carries the positive product's closure certificate;
+//! settlement checks it and replays each witness before certifying a proof.
 
 use std::collections::BTreeSet;
 

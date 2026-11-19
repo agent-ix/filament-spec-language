@@ -38,47 +38,44 @@
 //! path are all at its end and repeat the terminal state, so dropping them
 //! leaves the same infinite behaviour.
 //!
-//! Not built here, and absent rather than approximated: the product-closure
-//! certificate a `Witnessed` outcome carries (FR-163), the replay of a witness
-//! lasso and of a trap (FR-170, FR-181 Replay) and the settlement of the
-//! outcome (FR-169, FR-182).
+//! A witnessed instance carries its retained product's closure certificate;
+//! the core checks closure and replays witnesses during settlement.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Cancel, Meter, ScalarLimits};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{
-    Analysis, EdgeLabel, FairnessError, Graph, Identity, LassoFairness, LoopStep, Vertex, analyze,
-    check_loop,
+    analyze, check_loop, Analysis, EdgeLabel, FairnessError, Graph, Identity, LassoFairness,
+    LoopStep, Vertex,
 };
 use fsl_eval::hyper::{
     BodySense, ComponentStep, HyperFinding, HyperInputs, HyperLetters, HyperProduct, HyperState,
     HyperTransition, ParameterBinding, Property,
 };
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::{ModelSimState, ModelSystem, WalkMemo, check_model_bounds};
+use fsl_eval::simulation::model::{check_model_bounds, ModelSimState, ModelSystem, WalkMemo};
 use fsl_eval::simulation::{Limit, Outcome, SampleProvenance, StopReason, TransitionSystem};
-use fsl_eval::temporal::{ComponentTrace, TemporalOutcome, evaluate_tuple};
+use fsl_eval::temporal::{evaluate_tuple, ComponentTrace, TemporalOutcome};
 use fsl_foundation::IdentityLimits;
 use fsl_replay::{
-    DEFAULT_WITNESS_SEED, ExistentialInstanceOutcome, ExistentialOutcome, IncompleteCause,
-    LassoWitness, ModelCheckLimit, ModelCheckLimits, ModelLasso, ModelPath, ModelStep, OpenCause,
-    ReachedLimit, RunEnd, RunStats, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
-    WitnessSource,
+    ExistentialInstanceOutcome, ExistentialOutcome, IncompleteCause, LassoWitness, ModelCheckLimit,
+    ModelCheckLimits, ModelLasso, ModelPath, ModelStep, OpenCause, ReachedLimit, RunEnd, RunStats,
+    UndefinedEvaluation, UndefinedLocus, UndefinedSite, WitnessSource, DEFAULT_WITNESS_SEED,
 };
 use fsl_semantics::check::{CheckedHyperClause, HyperForm};
 
 use super::{
-    BOUND_POSITIONS, FairModel, HyperGraph, HyperRefusal, Positions, ProductStateId, RetainedEdge,
-    Totals, fault, instances, retain, tree_path, widen,
+    fault, instances, retain, tree_path, widen, FairModel, HyperGraph, HyperRefusal, Positions,
+    ProductStateId, RetainedEdge, Totals, BOUND_POSITIONS,
 };
-use crate::model_check::ModelCheckRefusal;
 use crate::model_check::check::not_simulated;
 use crate::model_check::fair_walk::fairness_constraints;
 use crate::model_check::state_graph::{
-    Budgets, Halt, budget_is_ceiling, cancelled, expansion_stop, sampler, step_ceiling, stopped,
-    trace_index, trace_indices_fit,
+    budget_is_ceiling, cancelled, expansion_stop, sampler, step_ceiling, stopped, trace_index,
+    trace_indices_fit, Budgets, Halt,
 };
+use crate::model_check::ModelCheckRefusal;
 
 /// One EN-1 run over an HP-5 item (FR-181 Inputs).
 pub struct SingleExistentialRequest<'a> {

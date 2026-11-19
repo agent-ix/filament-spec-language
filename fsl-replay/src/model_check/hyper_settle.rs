@@ -13,9 +13,8 @@
 //! counterexamples and checking a supplied FR-183 match witness itself.
 //!
 //! A `Holds` or `HoldsReduced` outcome settles `proved` only after FR-163's product-closure
-//! certificate checker accepts its certificate. Neither the certificate nor
-//! the checker is built, so the map refuses them rather than settle a
-//! `proved` no checker stands behind.
+//! certificate checker accepts every binding's certificate using the original
+//! checked request, independently of the engine's search.
 
 use crate::bounds::{BoundExceeded, ReplayLimits};
 use crate::execute::ReplayRefusal;
@@ -24,19 +23,19 @@ use crate::model_check::hyper_counterexample::{
 };
 use crate::model_check::hyper_outcome::{BoundCovers, HyperOutcome, HyperReductionCause};
 use crate::model_check::hyper_replay::{
-    HyperReplay, check_match_witness, replay_hyper_trace_tuple,
+    check_match_witness, replay_hyper_trace_tuple, HyperReplay,
 };
 use crate::model_check::hyper_smt_outcome::{HyperSmtOutcome, HyperSmtResult};
 use crate::model_check::hyper_smt_query::{HyperProductIdentity, HyperQueryRequest};
 use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits, ReachedLimit};
 use crate::model_check::replay::ModelTraceSettlement;
-use crate::model_check::settle::{EXPLICIT_STATE, Execution, K_INDUCTION, ResultLabel, Row, Truth};
+use crate::model_check::settle::{Execution, ResultLabel, Row, Truth, EXPLICIT_STATE, K_INDUCTION};
 use crate::witness::FamilyPayload;
 use filament_exact::Cancel;
 use fsl_eval::hyper::{CheckedHyperLetters, CheckedStepMatch, ParameterBinding};
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::smt::{Measure, Refusal as SmtRefusal, SmtEncodingRefusal};
 use fsl_foundation::bound::DomainKey;
 use fsl_semantics::check::HyperForm;
@@ -203,8 +202,8 @@ impl ProductMember {
 ///
 /// # Errors
 ///
-/// [`HyperSettleRefusal`] for a `Holds` or `HoldsReduced` outcome, or a
-/// reduction a hyper form's row refuses.
+/// [`HyperSettleRefusal`] when a holding outcome lacks its original request,
+/// reconstruction fails, or a reduction cannot be represented.
 pub fn settle_hyper_check(
     outcome: &HyperOutcome,
     limits: &ModelCheckLimits,

@@ -7,16 +7,16 @@ use filament_exact::{ObjectReference, Rational, Value};
 use filament_semantic_value::fairness::FairnessConstraint;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::SubjectTransition;
 use fsl_eval::simulation::protocol::{
-    ProtocolFairness, ProtocolTransition, blocked_json, fairness_json, location_json,
-    send_record_json, transition_json,
+    blocked_json, fairness_json, location_json, send_record_json, transition_json,
+    ProtocolFairness, ProtocolTransition,
 };
+use fsl_eval::simulation::SubjectTransition;
 use fsl_foundation::node_wire::node_key_to_json;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
-use super::{TimedStateWire, TimedTransitionWire, undefined_reason};
+use super::{undefined_reason, TimedStateWire, TimedTransitionWire};
 use crate::model_check::counterexample::{
     CounterexampleKind, ModelStep, Race, TemporalCounterexample, UndefinedEvaluation,
     UndefinedLocus,
@@ -405,7 +405,7 @@ pub fn hyper_counterexample_wire(
     let instance: Vec<Json> = counterexample
         .instance
         .iter()
-        .map(|(parameter, key)| json!({"parameter": parameter, "key": key}))
+        .map(|(parameter, key)| json!({"parameter": parameter, "key": {"type": "string", "value": key}}))
         .collect();
     let mut written = json!({"type": "hyper-counterexample", "instance": instance,
         "traces": traces, "trace_position": counterexample.trace_position.to_string()});
@@ -700,8 +700,7 @@ fn graph_witness(
 ///
 /// # Errors
 ///
-/// [`CounterexampleWireError`] for a lasso witness, which no state-graph
-/// claim yields, and for a state or transition with no spelling.
+/// [`CounterexampleWireError`] for a state or transition with no spelling.
 pub fn graph_evidence_wire(
     evidence: &crate::model_check::state_graph::GraphEvidence,
     form: crate::model_check::state_graph::StateGraphPropertyForm,

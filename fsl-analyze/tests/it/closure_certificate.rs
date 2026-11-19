@@ -1458,3 +1458,71 @@ fn an_invariant_proof_is_certified_under_the_invariant_root() {
         "{refused:?}"
     );
 }
+
+#[trace("TC-645", "FR-163-AC-1", "FR-163-AC-2", "FR-163-AC-4", "FR-163-AC-5")]
+#[test]
+fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
+    use crate::hyper_world::{non_interference, Vault, World, EQUAL_INPUTS, STARTS};
+    use filament_exact::Cancel;
+    use fsl_replay::{
+        check_product_closure, CertificateLocus, CertificateMember, CertificateRule, HyperOutcome,
+        ModelCheckLimits, ProductClosureRequest, TemporalCertificateCheck,
+    };
+    let world = World::new(
+        Vault::Secure,
+        false,
+        &STARTS,
+        &non_interference(EQUAL_INPUTS),
+    );
+    let cancel = Cancel::new();
+    let outcome = world
+        .run(ModelCheckLimits::default(), &cancel)
+        .expect("secure product search");
+    let HyperOutcome::HoldsReduced { certificates, .. } = outcome else {
+        panic!("secure copy-swap proof");
+    };
+    let subjects = vec![world.subject()];
+    let request = ProductClosureRequest {
+        package: &world.package,
+        clause: &world.clause,
+        subjects: &subjects,
+        meter: crate::counter::UNLIMITED,
+    };
+    let checked = |proof, limits| {
+        check_product_closure(&request, proof, limits, &cancel).expect("core check")
+    };
+    let proof = certificates.first().expect("one instance certificate");
+    let limits = ModelCheckLimits::default();
+    assert_eq!(checked(proof, &limits), TemporalCertificateCheck::Accepted);
+    assert_eq!(checked(proof, &limits), TemporalCertificateCheck::Accepted);
+    let mut malformed = proof.clone();
+    malformed.components = None;
+    assert!(
+        matches!(checked(&malformed, &limits), TemporalCertificateCheck::Rejected(rejection)
+        if rejection.rule == CertificateRule::Malformed
+            && rejection.at == CertificateLocus::CertificateMember(CertificateMember::Components))
+    );
+    let mut duplicate = proof.clone();
+    duplicate.closure.insert(0, duplicate.closure[0].clone());
+    assert!(
+        matches!(checked(&duplicate, &limits), TemporalCertificateCheck::Rejected(rejection)
+        if rejection.rule == CertificateRule::Malformed)
+    );
+    let mut missing = proof.clone();
+    missing.closure.clear();
+    assert!(
+        matches!(checked(&missing, &limits), TemporalCertificateCheck::Rejected(rejection)
+        if rejection.rule == CertificateRule::InitialMissing)
+    );
+    let tight = ModelCheckLimits {
+        limits: fsl_eval::simulation::Limits {
+            max_states: 1,
+            ..limits.limits
+        },
+        ..limits
+    };
+    assert!(matches!(
+        checked(proof, &tight),
+        TemporalCertificateCheck::Stopped(_)
+    ));
+}
