@@ -44,8 +44,8 @@ use fsl_semantics::model::operation::{OperationDeclaration, OperationTable};
 use fsl_semantics::model::state::StateModel;
 
 use crate::value::{
-    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, PostTargets, QualifiedName,
-    WrittenCollection,
+    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, PostTargets,
+    ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply, QualifiedName, WrittenCollection,
 };
 
 /// The reads a body derivation reports, and the reference literals the body
@@ -1175,6 +1175,18 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault>;
 
+    /// FR-940: evaluate a package protocol slot from its admitted node
+    /// descriptor and supplied package binders. This is separate from the
+    /// source `CheckedBody` path so package execution never synthesizes one.
+    fn evaluate_package_protocol_slot(
+        &self,
+        _slot: &ProtocolSlot,
+        _supply: &ProtocolSupply<'_>,
+        _meter: &mut Meter,
+    ) -> Result<ProtocolSlotEvaluation, CallFailure> {
+        Err(CallFailure::Fault(SOURCE_FORM))
+    }
+
     /// [`crate::value::evaluate_join_predicate`].
     ///
     /// # Errors
@@ -1212,6 +1224,18 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         &self,
         _name: &str,
     ) -> Option<fsl_package::protocol_view::ProtocolExecutionView<'_>> {
+        None
+    }
+
+    /// FR-940: form a package protocol-slot descriptor from its admitted
+    /// structural identity. `None` means this evaluator has no package-side
+    /// identity row for `node`.
+    fn package_protocol_slot(
+        &self,
+        _node: &CheckedNodeId,
+        _member: &str,
+        _index: Option<usize>,
+    ) -> Option<ProtocolSlot> {
         None
     }
 
@@ -2036,6 +2060,15 @@ impl ModelEvaluator for BarePackage<'_> {
         Err(SOURCE_FORM)
     }
 
+    fn evaluate_package_protocol_slot(
+        &self,
+        slot: &ProtocolSlot,
+        supply: &ProtocolSupply<'_>,
+        meter: &mut Meter,
+    ) -> Result<ProtocolSlotEvaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_protocol_slot(self, slot, supply, meter)
+    }
+
     fn evaluate_join_predicate(
         &self,
         _function: &NodeKey,
@@ -2069,6 +2102,19 @@ impl ModelEvaluator for BarePackage<'_> {
         fsl_package::AnalysisView::protocol_execution_named(self, name)
             .ok()
             .flatten()
+    }
+
+    fn package_protocol_slot(
+        &self,
+        node: &CheckedNodeId,
+        member: &str,
+        index: Option<usize>,
+    ) -> Option<ProtocolSlot> {
+        Some(ProtocolSlot {
+            node: self.node_key(node)?,
+            member: member.to_owned(),
+            index,
+        })
     }
 
     fn protocol_node_keys(&self, _name: &str) -> Option<&CheckedProtocolNodeKeys> {
