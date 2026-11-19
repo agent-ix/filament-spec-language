@@ -18,6 +18,9 @@ const MEMBERS: [&str; 8] = [
     "output",
 ];
 
+/// The observers of FSpec FR-817.
+const OBSERVERS: [&str; 4] = ["sany", "tlc", "apalache", "lean"];
+
 /// The selected output-mapping profile (FSpec FR-297).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Target {
@@ -190,7 +193,17 @@ pub(super) fn read(member: &Value, given: &fsl_replay::spine::ExportLimits) -> R
             ))
         }
     };
-    let observer = text(object, "observer")?.map(str::to_owned);
+    let observer = match text(object, "observer")? {
+        None => None,
+        Some(name) if OBSERVERS.contains(&name) => Some(name.to_owned()),
+        Some(name) => {
+            return Err(refuse(
+                "/observer",
+                "invalid-value",
+                format!("`{name}` is none of sany, tlc, apalache and lean"),
+            ))
+        }
+    };
     let limits = limits(object, given)?;
     let output = match object.get("output") {
         None | Some(Value::Null) => None,

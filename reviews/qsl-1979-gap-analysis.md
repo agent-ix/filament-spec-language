@@ -62,3 +62,12 @@ Round 1, head d0b22461599864133bc136765ba904d34a4b10ed. The focused run of expor
 | FND-003 | fixed | The stubs are un-ignored and cover the missing clauses. AC-2: override-only `incomplete` 22, and the doubled `export.output_bytes` naming `limits`. AC-3: override byte-identical, existing path with `last_stage`/`result` null, member+override naming `output`/`--output` with no file. AC-4: the key set, two equal runs, the 99999 difference. FR-286-AC-22: `items`/`artifacts` `[]`, success, incomplete, unsupported (via the AC-1 test). They run over `Braking` instead of the AC's counter, because the counter's invariant is now a mapper failure until FR-812 |
 | FND-004 | fixed | The stale "not implemented" stubs are un-ignored or carry accurate reasons (FR-812 lowering), and the weaker duplicate tests were removed from export_surface.rs |
 | FND-005 | fixed | Un-ignored and passing: AC-5's hybrid part (`a_hybrid_claim_is_unrepresented_by_its_flow_nodes`, tla and lean), AC-6 (`obligations_are_nonempty_declared_names`), AC-7 (`the_floor_is_decided_before_the_text_is_charged`) and AC-8 (`the_generator_is_the_application`). The parts that need a preserved Bounded record are split into ignored tests keyed QSL-1979 |
+| FND-006 | fixed | The mis-tags are gone: `an_unlowered_invariant_is_a_mapper_failure` and `the_initial_member_must_name_a_snapshot` are untagged; `a_refused_record_fails_the_floor_before_a_mapper_failure` is retagged FR-1015-AC-6 (refused not-an-obligation records failing the floor, exit 21), which it does assert; the observer test was removed in favour of the AC-10 stub |
+
+Round 2, head 94d3a82647b51c8eac60a9316f8f98aa04533076. Focused run (export_surface::, plan_export_surface::, export_rulings::, --test-threads=1, house skips): 20 passed, 38 ignored. FR-1015-AC-9..13 stubs are un-ignored and pass.
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | low | `an_observer_the_build_cannot_run_is_unsupported` (FR-1015-AC-10) sets `output` `{"file": "m.tla"}` but never asserts AC-10's "no file at its `output` path". It also asserts neither the Behavior's `last_stage` null nor `details.path`, which is how FND-014 of the code review went unnoticed | tests/it/export_rulings.rs:492-515 |

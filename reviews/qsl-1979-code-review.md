@@ -94,3 +94,17 @@ Round 1, head d0b22461599864133bc136765ba904d34a4b10ed (fix commit d0b224615 on 
 | FND-010 | fixed | `assembled()` now runs in this order: the floor (21), then the mapper failure (30), then `export.output_bytes` (22). Classification limits are charged in `map::run` before that. The below-floor request with output_bytes 1 now exits 21 (test `the_floor_is_decided_before_the_text_is_charged`) |
 | FND-011 | fixed | `generator` is `build_inventory(..).application`: `{"identity": "filament-spec-language", "version": "0.3.0"}` (probe), equal to `filament_spec_language::VERSION` (test `the_generator_is_the_application`) |
 | FND-012 | still-open | W53 is merged in (cac423ef2), but the branch again conflicts with origin/main. `git merge-tree` reports a content conflict in fsl-replay/src/outcome.rs against 2ad065147 (#2940, replay result rows), so a rebase or merge is needed before merge |
+| FND-006 | fixed | An admission failure of the run's own compiled package is now `RunCause::ExportMapper` (internal-failure, exit 30) with a fixed message and no Debug dump |
+| FND-007 | fixed | Following the W61 ruling, a valid `observer` is no longer invalid-request: it refuses `unsupported_projection`/`unsupported-requested-capability` naming the observer, exit 21, no package or file, before any limit charge (probe O1; test `an_observer_the_build_cannot_run_is_unsupported`). The remaining W61 gaps are FND-014 and FND-015 |
+| FND-008 | fixed | tests/it/main.rs now orders `mod exact_decimals;` before `mod export_rulings;`/`mod export_surface;` |
+| FND-012 | fixed | `git merge-tree --write-tree origin/main 94d3a8264` merges cleanly; W61 (38bf72188) and #2940 are merged in |
+| FND-013 | fixed | `RunError::outcome_document` gives `ExportMapper` `last_stage` `S4`, and the native result reports stage `emit` (probe M1: category internal-failure, exit 30, last_stage S4, result null; asserted in `an_unlowered_invariant_is_a_mapper_failure`) |
+
+Round 2, head 94d3a82647b51c8eac60a9316f8f98aa04533076 (fix commit 94d3a8264 on merge a740f2a16). Verified by code reading, the focused tests (20 passed) and a temporary reviewer probe (never committed). Round-2 rows cover only findings whose latest outcome was still-open or deferred.
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-014 | medium | The unsupported-observer refusal does not match W61 FR-1015 Behavior in two ways. It writes `last_stage` `S4` (probe O1), where Behavior says "`last_stage` null" and places the refusal "after admission and before classification". The check runs inside the `check_sources` closure, after S1 to S4 compile and packaging, and `finish()` always stamps S4. It also carries no `details` `{"path": "/request/export/observer"}`, which Behavior requires; the refusal object has `capability`/`observer`/`reason` only, and the outcome has no diagnostic. Moving the check ahead of the compile (right after `request::read`) would give a null `last_stage` and avoid a wasted compile | fsl-command/src/command/export.rs:286-290,327-338 |
+| FND-015 | low | `observer` is not checked against FSpec FR-817's four structural observers (`sany`, `tlc`, `apalache`, `lean`). `"observer": "bogus"` is refused `unsupported-requested-capability`, exit 21 (probe O2), so a misspelt name reads as a missing build capability rather than a malformed member (`invalid_runtime_input`/`invalid-value`, exit 20). Behavior says the member "names one of" the four | fsl-command/src/command/export/request.rs:193 |

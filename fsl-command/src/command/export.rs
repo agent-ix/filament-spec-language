@@ -84,9 +84,6 @@ pub(super) enum Mapped {
     },
     /// A denied export charge: the setting that stopped it and its bound.
     Incomplete { setting: &'static str, bound: u64 },
-    /// A valid `observer` this build cannot run (FSpec FR-817): refused
-    /// `unsupported` before any charge, whatever the limits.
-    Unsupported { observer: String },
 }
 
 /// An obligation the mapper met and does not lower (FSpec FR-811: a mapper
@@ -130,6 +127,9 @@ pub(super) fn run_bytes(
         .map(|limits| limits.export)
         .unwrap_or_default();
     let request = request::read(&member, &given)?;
+    if let Some(observer) = &request.observer {
+        return Ok(Some(unsupported_observer(&request, observer)));
+    }
     for name in ["output", "handoff"] {
         if body.contains_key(name) {
             return Err(RunCause::ClauseRequest {
@@ -145,6 +145,48 @@ pub(super) fn run_bytes(
     let compile: wire::CompileRequest = super::request(&compile)?;
     let mapped = compile_and_map(directory, &compile, &request, limits, overrides)?;
     finish(&request, &mapped.0, &mapped.1, output.as_deref())
+}
+
+/// A valid `observer` this build cannot run (FSpec FR-817): `unsupported`,
+/// raised after the request is read and before any stage, so `last_stage` is
+/// null and no limit, floor or file applies.
+fn unsupported_observer(request: &Request, observer: &str) -> RunResult {
+    let path = "/request/export/observer";
+    let reason = format!("observer `{observer}` is not run by this build");
+    let export = json!({
+        "format": "filament.export-outcome/v1",
+        "mapping_profile_id": request.target.profile(),
+        "target_family": request.target.family(),
+        "status": "refused",
+        "records": [],
+        "refusal": {
+            "code": "unsupported_projection",
+            "cause": "unsupported-requested-capability",
+            "capability": "observer",
+            "observer": observer,
+            "reason": reason,
+            "details": {"path": path},
+        },
+    });
+    let document = OutcomeDocument::new(fsl_replay::Operation::Export, None, Category::Unsupported)
+        .with_export(export.clone())
+        .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+            Some("unsupported-requested-capability"),
+            "unsupported_projection",
+            None,
+            reason,
+        )
+        .with_details(Some(serde_json::Map::from_iter([(
+            "path".to_owned(),
+            Value::String(path.to_owned()),
+        )])))]);
+    RunResult {
+        exit_code: Category::Unsupported.exit_code(),
+        value: NativeResult::export_document(json!({"export": export})),
+        outcome: Some(document),
+        requirements: None,
+        sources: crate::Sources::default(),
+    }
 }
 
 /// The file the export writes: the member's, the caller's, or none. A path
@@ -283,11 +325,6 @@ fn compile_and_map(
                         }),
                 )
                 .collect();
-            if let Some(observer) = &request.observer {
-                return Ok(Mapped::Unsupported {
-                    observer: observer.clone(),
-                });
-            }
             map::run(&admitted, &program.identity, &clauses, request, &effective)
         },
     )?;
@@ -323,18 +360,6 @@ fn finish(
         Mapped::Incomplete { setting, bound } => {
             incomplete(&mut export, setting, *bound);
             Category::Incomplete
-        }
-        Mapped::Unsupported { observer } => {
-            export["status"] = json!("refused");
-            export["records"] = json!([]);
-            export["refusal"] = json!({
-                "code": "unsupported_projection",
-                "cause": "unsupported-requested-capability",
-                "capability": "observer",
-                "observer": observer,
-                "reason": format!("observer `{observer}` is not run by this build"),
-            });
-            Category::Unsupported
         }
     };
     let written = match (mapped, category) {

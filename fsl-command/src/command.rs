@@ -680,8 +680,8 @@ impl PreparedRun {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RunCause {
-    /// Local file could not be opened or read.
-    #[error("cannot read {path}: {error}")]
+    /// Local file could not be opened, read or written.
+    #[error("cannot access {path}: {error}")]
     Io {
         /// Actual selected filesystem path.
         path: PathBuf,

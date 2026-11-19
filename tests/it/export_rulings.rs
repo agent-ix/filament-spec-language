@@ -4,7 +4,7 @@
 //! unrepresentable cause, obligation names, the stop order, the generator,
 //! the `fsl:` comment spelling, population bounds and `Init`.
 
-use crate::plan_export_surface::counter_export;
+use crate::plan_export_surface::{braking_request, counter_export, outcome_json};
 use crate::support::config_version_spine::{spine, Case};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -499,19 +499,39 @@ fn an_observer_the_build_cannot_run_is_unsupported() {
     assert_eq!(exit, 0, "{value}");
     member["observer"] = json!("tlc");
     member["output"] = json!({"file": "m.tla"});
-    let (exit, value) = export(BRAKING, false, member);
-    assert_eq!(exit, 21, "{value}");
+    let directory = tempfile::tempdir().unwrap();
+    let path = braking_request(directory.path(), member);
+    let result = fsl_command::command::run(&path, &crate::negotiation::Fr290).expect("a result");
+    assert_eq!(result.exit_code, 21);
+    let value: Value = serde_json::from_str(&result.value.to_string()).unwrap();
     names(&value, "unsupported_projection");
     names(&value, "unsupported-requested-capability");
     names(&value, "tlc");
     assert!(!value.to_string().contains("invalid-request"), "{value}");
     assert!(value["export"].get("target_text").is_none(), "{value}");
     assert!(value["export"].get("package").is_none(), "{value}");
+    assert!(!directory.path().join("m.tla").exists());
+    let document = outcome_json(&result.outcome.expect("an outcome"));
+    assert_eq!(document["last_stage"], Value::Null, "{document}");
+    assert_eq!(
+        document["diagnostics"][0]["details"]["path"], "/request/export/observer",
+        "{document}"
+    );
     let mut limited = member_with_observer();
     limited["limits"] = json!({"export.nodes": 1});
     let (exit, value) = export(BRAKING, false, limited);
     assert_eq!(exit, 21, "{value}");
     names(&value, "unsupported-requested-capability");
+    let mut unknown = member_with_observer();
+    unknown["observer"] = json!("coq");
+    let (exit, value) = export(BRAKING, false, unknown);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_runtime_input", "{value}");
+    assert_eq!(value["cause"], "invalid-value", "{value}");
+    assert_eq!(
+        value["details"]["path"], "/request/export/observer",
+        "{value}"
+    );
 }
 
 fn member_with_observer() -> Value {
