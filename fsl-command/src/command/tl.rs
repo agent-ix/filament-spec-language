@@ -12,7 +12,7 @@ use fsl_replay::spine::{TemporalValuation, TlClosure, TlSupport, TlTarget, TlUnm
 use fsl_semantics::check::{
     BinaryTemporal, CheckedFormula, CheckedInterval, FormulaNode, FormulaNodeId, UnaryTemporal,
 };
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use tl_syntax::{
     Formula, InfiniteClock, InfiniteFormulaDocument, InfiniteNode, InfiniteNodeKind, Interval,
     LassoTraceDocument, Node, NodeId, NodeKind, PartialValuation, PartialValue, PropositionId,

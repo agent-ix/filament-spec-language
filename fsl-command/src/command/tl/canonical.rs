@@ -398,10 +398,10 @@ fn literal_text(value: &Value, declarations: &BTreeMap<NodeKey, String>) -> Resu
         )),
         Value::Decimal(value) => Ok(format!(
             "decimal({}, {})",
-            value.coefficient(),
-            value.scale()
+            value.representation().coefficient(),
+            value.representation().scale()
         )),
-        Value::Text(value) => serde_json::to_string(value.as_str()).map_err(|e| e.to_string()),
+        Value::Text(value) => serde_json::to_string(value.retained()).map_err(|e| e.to_string()),
         Value::String(value) => serde_json::to_string(value).map_err(|e| e.to_string()),
         Value::Enum(member) => {
             let owner = member.variant().owner();
