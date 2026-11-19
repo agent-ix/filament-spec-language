@@ -1024,6 +1024,9 @@ fn probabilistic_item(
                     "sprt" if min_cycles.is_none() => {
                         fsl_replay::statistical::StatisticalMethod::Sprt
                     }
+                    "clopper-pearson" if min_cycles.is_none() => {
+                        fsl_replay::statistical::StatisticalMethod::ClopperPearson
+                    }
                     "regenerative" => fsl_replay::statistical::StatisticalMethod::Regenerative {
                         min_cycles: min_cycles.ok_or(())?,
                     },
@@ -2922,6 +2925,9 @@ impl ClaimItem {
                         }
                         Some(fsl_replay::statistical::StatisticalMethod::Sprt) => {
                             json!({"type": "sprt"})
+                        }
+                        Some(fsl_replay::statistical::StatisticalMethod::ClopperPearson) => {
+                            json!({"type": "clopper-pearson"})
                         }
                         Some(fsl_replay::statistical::StatisticalMethod::Regenerative {
                             min_cycles,
