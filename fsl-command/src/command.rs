@@ -1777,6 +1777,9 @@ fn run_configured(
                 Ok(Some(result))
             } else if let Some(result) = check_argv(directory, bytes)? {
                 Ok(Some(result))
+            } else if let Some(result) = synthesis::run_bytes(directory, bytes, limits, overrides)?
+            {
+                Ok(Some(result))
             } else {
                 if let Some(result) =
                     items::run_bytes(directory, bytes, limits, overrides, &settle)?

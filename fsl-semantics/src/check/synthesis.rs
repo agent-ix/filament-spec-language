@@ -5,7 +5,7 @@ use filament_exact::ValueType;
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use filament_semantic_value::location::ExpressionLocation as Location;
 
-use super::ir::CheckedBody;
+use super::ir::{CheckedBody, NodeKind};
 use super::{CheckCause, CheckRefusal, Scope, Signatures, Typer};
 use crate::family::{CheckContext, DiagnosticSink, ScopeStack, StageLimits};
 
@@ -91,6 +91,14 @@ impl CheckedSynthesis {
     /// The checked objective expression, when authored.
     pub fn objective(&self) -> Option<&CheckedBody> {
         self.objective.as_ref()
+    }
+
+    /// Whether the objective is exactly the candidate binder, whose value
+    /// order proves the first satisfying value optimal.
+    pub fn objective_is_candidate(&self) -> bool {
+        self.objective
+            .as_ref()
+            .is_some_and(|body| matches!(body.root().kind(), NodeKind::Local(_)))
     }
 
     /// Candidate binder names in evaluation frame order.
