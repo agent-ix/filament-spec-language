@@ -61,6 +61,7 @@ protocol Purchase using P over (view: M::Node) on origin {
 
 fn fixture(
     source: &str,
+    related: bool,
 ) -> (
     CheckedPackage,
     fsl_semantics::model::intake::PackageInput,
@@ -105,7 +106,7 @@ fn fixture(
         authority: "test".to_owned(),
         identity: "qsl-2208-start".to_owned(),
     };
-    let snapshot = serde_json::to_vec(&json!({
+    let mut document = json!({
         "format": "filament.state.snapshot/v1",
         "identity": {"authority": "test", "identity": "qsl-2208-start"},
         "observation": "current",
@@ -120,15 +121,40 @@ fn fixture(
                 "fields": {"total": {"integer": "5"}}
             }]
         }]
-    }))
-    .expect("snapshot serializes");
+    });
+    if related {
+        document["populations"][0]["objects"]
+            .as_array_mut()
+            .expect("population objects")
+            .push(json!({
+                "key": "node-2",
+                "type": tc1070::model::id("Node"),
+                "fields": {"total": {"integer": "6"}}
+            }));
+        document["relationships"] = json!([{
+            "relationship": tc1070::model::id("relationship/owns"),
+            "complete": true,
+            "instances": [{
+                "source": {"population": tc1070::model::id("nodes"), "key": "node-2"},
+                "target": {"population": tc1070::model::id("nodes"), "key": "node-1"}
+            }]
+        }]);
+    }
+    let snapshot = serde_json::to_vec(&document).expect("snapshot serializes");
     let source_ref = document_reference(&snapshot).expect("snapshot has identity");
     let snapshots = BTreeMap::from([(source_ref, snapshot)]);
     (package, packages, snapshots, identity)
 }
 
 fn reachable(source: &str) -> fsl_eval::simulation::protocol::Reachable<Sc> {
-    let (package, packages, snapshots, initial) = fixture(source);
+    reachable_with_relation(source, false)
+}
+
+fn reachable_with_relation(
+    source: &str,
+    related: bool,
+) -> fsl_eval::simulation::protocol::Reachable<Sc> {
+    let (package, packages, snapshots, initial) = fixture(source, related);
     let population = filament_checked::key::DeclarationKey {
         package: tc1070::model::PACKAGE.to_owned(),
         node: tc1070::model::id("nodes"),
@@ -142,7 +168,11 @@ fn reachable(source: &str) -> fsl_eval::simulation::protocol::Reachable<Sc> {
         initial: vec![initial],
         universes: vec![PopulationUniverse {
             population: population.clone(),
-            keys: vec!["node-1".to_owned()],
+            keys: if related {
+                vec!["node-1".to_owned(), "node-2".to_owned()]
+            } else {
+                vec!["node-1".to_owned()]
+            },
         }],
         observation: ObservationLimits::default(),
         expansion: ExpansionLimits {
@@ -246,6 +276,39 @@ fn duplicate_then_effect(
         }
     }
     None
+}
+
+#[test]
+#[trace("TC-2023", "FR-731-AC-1")]
+fn a_related_by_clause_limits_protocol_event_bindings_to_its_relationship_instance() {
+    let source = r#"
+language "ix:native" edition "1-draft";
+profile P = "filament.protocol.finite-global/v1";
+model M = "test/orders";
+protocol Purchase using P over (view: M::Node) on origin {
+  role Buyer on M::Node;
+  role Seller on M::Node;
+  relationship Owns = M::owns;
+  run sequence Main {
+    event Paid by Buyer as (paid: M::Node) related by Owns (paid, view) { true };
+  }
+  finish Closed as (closed: M::Flag) { true };
+}
+"#;
+    let graph = reachable_with_relation(source, true);
+    let paid: std::collections::BTreeSet<_> = graph
+        .states
+        .iter()
+        .flat_map(|state| &state.steps)
+        .filter(|(transition, _)| transition.kind() == StepKind::Event)
+        .filter_map(|(transition, _)| match transition.binder_record() {
+            Some(filament_exact::Value::Reference(reference)) => {
+                Some(reference.object().as_str().to_owned())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(paid, ["node-2".to_owned()].into_iter().collect());
 }
 
 #[test]
