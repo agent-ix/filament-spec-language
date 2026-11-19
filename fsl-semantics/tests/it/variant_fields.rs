@@ -1041,6 +1041,61 @@ fn undeclared_variant_cases_name_the_declared_owner_and_keep_source_enum_names_m
     assert_eq!(source_case.cause.cause(), Some("missing-name"));
 }
 
+/// TC-3051 (FR-317-AC-6): an unknown member of a source enum or ordered enum
+/// refuses `type-mismatch` naming the type and the member, like an undeclared
+/// model variant case; a qualifier that names no type stays `missing-name`.
+#[trace("TC-3051", "FR-317-AC-6")]
+#[test]
+#[ignore = "QSL-2170: a qualified unknown member of a source enum refusing type-mismatch is not implemented yet"]
+fn an_unknown_member_of_a_source_enum_refuses_type_mismatch_like_a_model_variant_case() {
+    let refusals = check_refusals(
+        "enum Status { Open, Closed }\n\
+         ordered enum Level { Low, Mid, High }\n\
+         function source_case using v(): Boolean pure { Status::Pending = Status::Open }\n\
+         function ordered_case using v(): Level pure { Level::Top }\n\
+         function model_case using v(): Config::Tier pure { Config::Tier::Lost }\n\
+         function no_type using v(): Boolean pure { Nope::Open = Status::Open }",
+    );
+
+    for (owner, case) in [("Status", "Pending"), ("Level", "Top"), ("Tier", "Lost")] {
+        let refusal = refusals
+            .iter()
+            .find(|refusal| {
+                matches!(
+                    &refusal.cause,
+                    CheckCause::UndeclaredVariantCase { owner: found, case: written }
+                        if found == owner && written == case
+                )
+            })
+            .unwrap_or_else(|| panic!("`{owner}::{case}` refuses naming both: {refusals:?}"));
+        assert_eq!(refusal.cause.code(), fsl_foundation::Code::IllTyped);
+        assert_eq!(refusal.cause.cause(), Some("type-mismatch"));
+    }
+    assert!(
+        !refusals.iter().any(|refusal| matches!(
+            &refusal.cause,
+            CheckCause::MissingQualifiedName(name)
+                if name.name == "Status::Pending" || name.name == "Level::Top"
+        )),
+        "{refusals:?}"
+    );
+
+    let no_type = refusals
+        .iter()
+        .find(|refusal| {
+            matches!(
+                &refusal.cause,
+                CheckCause::MissingQualifiedName(name) if name.name == "Nope::Open"
+            )
+        })
+        .expect("a qualifier that names no type remains a missing name");
+    assert_eq!(
+        no_type.cause.code(),
+        fsl_foundation::Code::MissingDeclaration
+    );
+    assert_eq!(no_type.cause.cause(), Some("missing-name"));
+}
+
 /// TC-1007 step 6 (FR-360-AC-5): a variant type name in a type position that
 /// resolves to no variant type refuses at the assembler as `missing-name`.
 #[trace("TC-1007", "FR-360-AC-5")]

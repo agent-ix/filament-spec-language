@@ -159,6 +159,17 @@ and `FR-621`'s outcome document is unchanged.
   with the verdict, record, counterexample and replay the source route gives
   (FR-850 "Equality with the source route"). No package-route item SHALL
   settle `unsupported` for a fact or an evaluator the source route reads.
+- On the package route, the subject builder SHALL build an item's protocol
+  subject (FR-205) from FR-531's protocol-subject row: the protocol clause
+  it builds from the admitted `protocol` nodes and `protocol_locations` rows
+  SHALL equal S3's FR-218 checked clause for the package and the source it
+  was compiled from in every member, as FR-850-AC-8 requires of a temporal
+  clause; its static roles are bound to the package's `model_root`
+  selections, and each outermost `parallel` is resolved by FR-219 from the
+  request's `memory` member and the `parallel` node's source default. An
+  item over a protocol subject, and a request carrying `memory`, therefore
+  settle on the package route with the source route's record, and never
+  settle `unsupported` or refuse because a package is selected.
 
 ### Requirement records
 
