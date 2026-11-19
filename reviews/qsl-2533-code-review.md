@@ -38,3 +38,17 @@ The `HybridTrace.end` member is serialized, read back, admitted against `loop`, 
 | Finding | Requirement and consequence |
 | --- | --- |
 | FND-001 | FR-750-AC-14 requires parameter payloads to round-trip from a provider's undefined-evaluation wire result. The checked term locus names the call node, and its structural path does not encode the parameter index; root calls cannot be decoded and nested calls may be assigned a sibling index. Reconstruct the parameter index from an unambiguous wire field or the actual range-fault locus, and cover a root call plus a nonzero parameter. |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Call-node loci now map unary argument zero, and nested argument paths resolve relative to the nearest call. Root and nested call cases were added; the focused round-trip test passed. |
+
+FND-001 after_excerpt:
+
+```rust
+if let HybridTerm::Call(function, arguments) = term {
+    return Some((*function, (arguments.len() == 1).then_some(0)));
+}
+```

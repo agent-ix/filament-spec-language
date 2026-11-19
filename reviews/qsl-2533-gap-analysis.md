@@ -38,3 +38,17 @@ A repository matrix and manual changed-criteria-to-test review covered undefined
 | Finding | Requirement and evidence |
 | --- | --- |
 | FND-001 | FR-750-AC-14 requires read-back of the exact function parameter for `outside-parameter-range`. The tagged test's parameter-0 call at structural path `[0]` makes the current implementation's incorrect `locus.term.term.last()` derivation pass. It does not cover a root call (empty path) or a nonzero parameter; the reader refuses the former and can mislabel the latter. |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The AC-14 round-trip test now covers a root call and a call nested at path `[0, 1]`; the focused round-trip test passed. |
+
+FND-001 after_excerpt:
+
+```rust
+if HybridTerm::Call(function, arguments) = term {
+    return Some((*function, (arguments.len() == 1).then_some(0)));
+}
+```
