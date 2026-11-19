@@ -1289,16 +1289,17 @@ fn the_delay_unit_is_that_of_the_dense_source_of_the_declaring_nodes_root() {
 /// unit ms`) is accepted by S3 and refused at S4 with its declaration's locus,
 /// whether the delay is on the timed object or on another source object.
 ///
-/// A documented deferral, not a design. S4 finds no `model` node for the
-/// declaring object (a source declaration is written under its source-owner
-/// identity, not the model-owned object type key `delay_node` looks up). Fixing
-/// that lookup would not be enough under IR v0.1.4: `join.operation` resolves
-/// the `declaring` node through the selected domain packages
-/// (`RetainedModels::owner_by_key`), which hold no source-declared object, so
-/// IR refuses a delay (and likewise a random parameter or workload) whose
-/// declaring node is a source object. Emitting these needs IR to admit
-/// source-owned operation owners; until then the package is refused here, with
-/// the declaration's locus, rather than written without the delay.
+/// An interim refusal, not a deferral of scope: arch has ruled (FSpec FR-740
+/// AC-5/6, FR-569-AC-18, TC-3012; language #2959, FSpec #716) that delays,
+/// random parameters and workloads on a timed source model are in scope and S4
+/// SHALL emit them. Until contract-ir admits a source-owned declaring node
+/// (contract-ir #1053, FR-369-AC-25/26) and QSL-2463 emits them, S4 finds no
+/// `model` node for the declaring source object (a source declaration is
+/// written under its source-owner identity, not the model-owned object type
+/// key `delay_node` looks up), and IR's `join.operation` resolves the
+/// `declaring` node only through the selected domain packages, so the package
+/// is refused here, with the declaration's locus, rather than written without
+/// the delay. QSL-2463 replaces this test with the emission test.
 #[trace("TC-2062", "FR-185-AC-12")]
 #[test]
 fn a_delay_on_a_timed_source_model_refuses_emission_with_its_locus() {

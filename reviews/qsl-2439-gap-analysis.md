@@ -62,3 +62,10 @@ Round 1, head c4aea60878421a962cdf80497d98628a059ecd80 (fix commit 5d65b7f59).
 | --- | --- | --- |
 | FND-001 | still-open | The refusal arm is reachable (a timed source model's delay refuses at S4, see SR-2026111612172400000042 FND-001 round 1), and no test yet asserts that refusal or its locus; `the_delay_unit_is_that_of_the_dense_source_of_the_declaring_nodes_root` checks only `dense_unit` returning None for a non-root node, and `a_delay_beside_a_second_object_type_is_refused_at_the_time_source` stops at S3 |
 | FND-002 | fixed | `reordering_two_delays_changes_no_delay_node` emits two delays in both declaration orders and asserts byte-equal delay nodes in the same order |
+
+Round 2, head d96a20f73d8715544191e2b083d3091a41675307 (fix commit 24c065b91).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `a_delay_on_a_timed_source_model_refuses_emission_with_its_locus` drives S3 accept and the S4 delay refusal and asserts the declaration name and a non-empty region (the FR-185-AC-12 convention of the other refusal tests); emission itself is deferred under QSL-2463 (SR-2026111612172400000042 FND-001) |
+

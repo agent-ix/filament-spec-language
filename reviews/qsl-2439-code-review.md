@@ -85,3 +85,11 @@ Round 1, head c4aea60878421a962cdf80497d98628a059ecd80 (fix commit 5d65b7f59, th
 | FND-002 | fixed | `delay_fault` re-checks FR-253 on read-back and refuses `PackageProbabilisticRefusal::InvalidDelay`; `a_package_delay_that_breaks_fr_253_is_refused_on_read_back` covers all six faults |
 | FND-003 | fixed | `delay_round_trips` and `each_delay_family_is_emitted_as_a_delay_distribution_node` now assert FR-640-AC-2's literal values (1/4 ms, 1/2, 1 ms:90, 3 ms:10) and that each time is typed by the unit `ms` |
 | FND-004 | fixed | `append_probabilistic_nodes` and the `probabilistic_read` module doc now name delays |
+
+Round 2, head d96a20f73d8715544191e2b083d3091a41675307 (fix commit 24c065b91, then a merge of origin/main 8218f1cd9).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | QSL-2463 (timed source model probabilistic declarations refused at S4; FR-640/FR-740 coverage ruling asked of draco:QSL:arch). The refusal is explicit and fail-safe: `a_delay_on_a_timed_source_model_refuses_emission_with_its_locus` asserts S3 accepts one delay and S4 refuses ProbabilisticModelNotEmitted{Delay} naming the operation with a non-empty region, for the timed object and a second source object, and documents the deferral. IR claim verified at v0.1.5 (the new pin): probabilistic_join `operation` resolves `declaring` only through a Model-kind node owned in RetainedModels' selected documents (`owner_by_key`) and has no source-object path |
+| FND-005 | fixed | retagged `#[trace("TC-685", "FR-230-AC-38")]` (AC-38 is the ambiguous-name time-source refusal the test asserts); the doc no longer claims S4 is unreachable and points at the source-model test |
+
