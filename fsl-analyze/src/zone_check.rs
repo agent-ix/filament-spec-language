@@ -23,6 +23,7 @@ mod refine;
 mod scale;
 mod search;
 mod settle;
+mod state_graph;
 mod time_lock;
 
 pub use certificate::certificate_item;
@@ -40,6 +41,7 @@ pub use search::{
     ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRefusal,
     ZoneCheckRequest, ZoneReduction, ZoneStats, ZoneStop, ZoneUndecided,
 };
+pub use state_graph::{decide_timed_state_graph, TimedStateGraphDecision};
 pub use settle::{
     settle_timed_refinement, settle_zone_check, ZoneCheckRecord, ZoneItem, ZONE_CERTIFIED,
 };
