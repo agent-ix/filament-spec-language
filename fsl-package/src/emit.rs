@@ -9195,6 +9195,64 @@ fn temporal_binding_rows(
         }
     }
 
+    for hyper in graph.finite_hyper_clauses() {
+        let profile = hyper.profile();
+        if !matches!(
+            profile,
+            TemporalProfile::EventPositionFalseExtension
+                | TemporalProfile::FixedSampleFalseExtension
+                | TemporalProfile::TimestampedEventFiniteWindow
+        ) {
+            continue;
+        }
+        let identity = hyper
+            .identity()
+            .ok_or(EmitRefusal::SourceMapInvariant)?
+            .clone();
+        let occurrence = hyper.occurrence().ok_or(EmitRefusal::SourceMapInvariant)?;
+        let location = graph
+            .occurrence(occurrence.node().clone(), occurrence.origin())
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let region = graph
+            .region(location)
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let source = region.source().clone();
+        let span = hyper.span();
+        let key = (source.clone(), span.start, span.end);
+        let Some(selection) = selected.remove(&key) else {
+            missing.push((
+                MissingClockKind::Other,
+                source,
+                span,
+                format!("bounded temporal rule `{}`", hyper.name()),
+            ));
+            continue;
+        };
+        check_selected_definition(&source, span, profile, selection)?;
+        let clock = &selection.clock;
+        let clock_name = hyper.domain_clock();
+        validate_temporal_clock(&source, span, clock_name, clock)?;
+        let declaration = emitted_node_ids
+            .get(&identity)
+            .cloned()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let claim_ordinal = occurrence.origin().ordinal();
+        keyed
+            .declarations
+            .push((identity.clone(), claim_ordinal, declaration.clone()));
+        for quantifier in hyper.quantifiers() {
+            let row = filament_contract_model::TemporalBinding {
+                declaration: declaration.clone(),
+                occurrence: claim_ordinal,
+                clock_name: clock_name.into(),
+                clock: clock.clone(),
+                trace: Some(quantifier.variable.clone()),
+            };
+            keyed.rows.push((identity.clone(), row.clone()));
+            rows.push(row);
+        }
+    }
+
     // FSpec FR-464: an `await` control reads a clock, so it gets one binding
     // row at its own declaration locus, alongside temporal clauses and
     // compensation templates.

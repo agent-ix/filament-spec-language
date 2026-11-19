@@ -561,7 +561,6 @@ fn reversed_prefix_hyper_clauses_share_one_body_wrapper() {
 /// `temporal_profile` selection.
 #[trace("TC-3001", "FR-898-AC-7", "FSpec-TC-2028", "FSpec-FR-322-AC-464")]
 #[test]
-#[ignore = "QSL-2400: a finite-domain hyper clause emits one clock row per trace on role `t`, not implemented yet"]
 fn a_finite_domain_hyper_clause_emits_one_row_per_trace_on_its_domain_binder() {
     let directory = tempfile::tempdir().unwrap();
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
