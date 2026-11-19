@@ -416,6 +416,9 @@ impl PackageDeclarations {
                 std::iter::once(("self".to_owned(), ValueType::Reference(owner)))
                     .chain(declaration.parameters().iter().cloned())
                     .collect();
+            clauses
+                .required_arity
+                .insert(key.clone(), declaration.required_arity());
             if let Some(result) = declaration.result() {
                 clauses.result.insert(key.clone(), result.clone());
             }
@@ -583,6 +586,7 @@ impl PackageDeclarations {
                         receiver_type,
                         member: call.member.clone(),
                         parameters: call.parameters.clone(),
+                        required_arity: call.required_arity,
                         result: call.result.clone(),
                         selected_operation_owner: selected_operation_owner.clone(),
                         selected_operation: selected_operation.clone(),
@@ -683,6 +687,8 @@ struct CallSite {
     member: String,
     /// The arguments after the receiver.
     parameters: Vec<ValueType>,
+    /// The minimum number of positional data arguments.
+    required_arity: usize,
     result: ValueType,
 }
 
@@ -702,6 +708,11 @@ impl CallSite {
                 .skip(1)
                 .map(|(_, value_type)| value_type.clone())
                 .collect(),
+            required_arity: clauses
+                .required_arity
+                .get(root)
+                .copied()
+                .unwrap_or_else(|| signature.len().saturating_sub(1)),
             result: clauses.result.get(root)?.clone(),
         })
     }

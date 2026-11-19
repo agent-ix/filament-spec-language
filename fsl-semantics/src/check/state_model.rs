@@ -551,7 +551,7 @@ impl FamilyContract for StateModelFamily {
                             }
                             refusal
                         })?;
-                    if operation.parameters.len() != *arity {
+                    if *arity < operation.required_arity || *arity > operation.parameters.len() {
                         return Err(mismatch(location));
                     }
                     Checked::Operation(index)

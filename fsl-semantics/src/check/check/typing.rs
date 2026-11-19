@@ -2818,10 +2818,23 @@ impl<'a> Typer<'a> {
                 let DispatchArgumentsFrame {
                     receiver,
                     operation_index,
+                    arguments,
                     location,
-                    typed,
+                    mut typed,
                     ..
                 } = *frame;
+                if index == arguments.len() {
+                    for (position, parameter) in operation
+                        .parameters
+                        .iter()
+                        .enumerate()
+                        .skip(index)
+                    {
+                        let at = location.child(position + 1);
+                        let absent = self.absent_literal(Some(parameter), &at)?;
+                        typed.push(self.push(absent));
+                    }
+                }
                 let receiver = self.push(receiver);
                 self.model_node(
                     super::super::state_model::Form::Dispatch {

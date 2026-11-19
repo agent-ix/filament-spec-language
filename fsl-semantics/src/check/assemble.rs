@@ -2944,6 +2944,7 @@ fn model_operation(
             )
     };
     let mut parameters = Vec::with_capacity(operation.parameters.len());
+    let mut optional_parameters = Vec::with_capacity(operation.parameters.len());
     let mut clock_parameters = Vec::new();
     for (index, parameter) in operation.parameters.iter().enumerate() {
         let parameter_name = member_identity_name(&operation.key.node, &parameter.key.node)
@@ -2989,6 +2990,7 @@ fn model_operation(
         } else {
             value_type
         };
+        optional_parameters.push(parameter.presence == filament_exact::Presence::Optional);
         parameters.push((parameter_name.to_owned(), value_type));
     }
     let clock_result = operation
@@ -3035,6 +3037,7 @@ fn model_operation(
     };
     Ok((
         OperationDeclaration::new(name, parameters, result, operation.effect.clone())
+            .with_optional_parameters(&optional_parameters)
             .with_clocks(clock_parameters, clock_result),
         untyped_locus.map(|locus| (locus, untyped_parameters)),
     ))

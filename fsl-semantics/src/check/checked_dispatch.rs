@@ -141,6 +141,9 @@ pub struct OperationClauses {
     /// call site's own argument types) is everything after that receiver
     /// element; this bridge strips it when building the call site.
     pub parameters: BTreeMap<DeclarationKey, Vec<(String, ValueType)>>,
+    /// Required data-argument count for each declared operation; any
+    /// remaining arguments in the signature are optional.
+    pub required_arity: BTreeMap<DeclarationKey, usize>,
     /// The declared result type.
     pub result: BTreeMap<DeclarationKey, ValueType>,
     /// This operation's own precondition clause, when it declares one.
@@ -1256,6 +1259,11 @@ pub(crate) fn checked_dispatch_core(
         .iter()
         .map(|(_, value_type)| value_type.clone())
         .collect();
+    let required_arity = clauses
+        .required_arity
+        .get(&root.key)
+        .copied()
+        .unwrap_or(call_arguments.len());
     // One `DispatchOperation` entry per exposing static type (#176), all
     // sharing this same `member`/`parameters`/`result` signature and
     // pointing at the identical `table: 0` -- the receiver's *runtime* type
@@ -1269,6 +1277,7 @@ pub(crate) fn checked_dispatch_core(
             receiver_type,
             member: member.clone(),
             parameters: call_arguments.clone(),
+            required_arity,
             result: result.clone(),
             selected_operation_owner: selected_operation_owner.clone(),
             selected_operation: selected_operation.clone(),

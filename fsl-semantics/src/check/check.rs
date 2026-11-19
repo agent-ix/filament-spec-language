@@ -932,6 +932,8 @@ pub struct DispatchOperation {
     pub member: String,
     /// The declared parameter types, in order.
     pub parameters: Vec<ValueType>,
+    /// Minimum number of positional arguments accepted by this signature.
+    pub required_arity: usize,
     /// The declared result type.
     pub result: ValueType,
     /// The declaring model type selected for this operation family.

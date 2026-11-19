@@ -4152,13 +4152,23 @@ pub(super) fn admit_parameters(
     parameters: &[(String, SnapshotValue)],
 ) -> Result<Vec<(String, Value)>, AdmissionFailure> {
     let mut admitted = Vec::with_capacity(operation.parameters().len());
-    for (name, value_type) in operation.parameters() {
-        let raw = raw_field(parameters, name).ok_or_else(|| {
-            refuse(
+    for (position, (name, value_type)) in operation.parameters().iter().enumerate() {
+        let Some(raw) = raw_field(parameters, name) else {
+            if operation.parameter_is_optional(position) {
+                let filament_exact::ValueType::Option(payload) = value_type else {
+                    return Err(fault("optional-operation-parameter-is-an-option"));
+                };
+                admitted.push((
+                    name.clone(),
+                    Value::Option(filament_exact::OptionValue::none((**payload).clone())),
+                ));
+                continue;
+            }
+            return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "missing-member")
                     .with("field", name.clone()),
-            )
-        })?;
+            ));
+        };
         if !field_kind_matches(raw, value_type) {
             return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")

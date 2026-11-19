@@ -4506,7 +4506,8 @@ mod tests {
 
     use crate::model::domain_package::{
         AliasTypeRecord, ClauseRecord, FieldMemberRecord, Multiplicity, NamespaceRecord,
-        NativeValueType, OptionTypeRecord, ValueTypeRef,
+        NativeValueType, OperationEffect, OperationMemberRecord, OperationParameterRecord,
+        OptionTypeRecord, ValueTypeRef,
     };
 
     use super::*;
@@ -4521,6 +4522,8 @@ mod tests {
         let self_key = DeclarationKey::fixture("model.OptSelf");
         let clock_key = DeclarationKey::fixture("model.OptClock");
         let field_key = DeclarationKey::fixture("model.Holder/value");
+        let operation_key = DeclarationKey::fixture("model.Holder/check");
+        let parameter_key = DeclarationKey::fixture("model.Holder/check/value");
         let records = vec![
             DomainPackageRecord::OptionType(OptionTypeRecord {
                 key: option_key.clone(),
@@ -4549,7 +4552,7 @@ mod tests {
             DomainPackageRecord::FieldMember(FieldMemberRecord {
                 key: field_key.clone(),
                 owner: DeclarationKey::fixture("model.Holder"),
-                value_type: ValueTypeRef::Package(option_key),
+                value_type: ValueTypeRef::Package(option_key.clone()),
                 multiplicity: Multiplicity {
                     lower: 1,
                     upper: Some(1),
@@ -4561,10 +4564,31 @@ mod tests {
                 redefines: None,
                 position: 0,
             }),
+            DomainPackageRecord::OperationMember(OperationMemberRecord {
+                key: operation_key,
+                owner: DeclarationKey::fixture("model.Holder"),
+                parameters: vec![OperationParameterRecord {
+                    key: parameter_key.clone(),
+                    value_type: ValueTypeRef::Package(option_key),
+                    multiplicity: Multiplicity {
+                        lower: 1,
+                        upper: Some(1),
+                        ordered: false,
+                        unique: true,
+                    },
+                    presence: Presence::Optional,
+                }],
+                result: None,
+                effect: OperationEffect::default(),
+                requires: Vec::new(),
+                ensures: Vec::new(),
+                has_body: false,
+                redefines: None,
+            }),
         ];
         let package = DomainPackage::new(DomainPackageRef::fixture("model"), records);
         let refusals = validate_option_types(&package);
-        assert_eq!(refusals.len(), 5);
+        assert_eq!(refusals.len(), 6);
         assert!(refusals.iter().any(|refusal| matches!(
             &refusal.cause,
             ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
@@ -4584,6 +4608,15 @@ mod tests {
             ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
                 if node == &field_key.node
                     && *member == MemberPath::new(MemberRoot::Field).name("presence")
+        )));
+        assert!(refusals.iter().any(|refusal| matches!(
+            &refusal.cause,
+            ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
+                if node == &parameter_key.node
+                    && *member == MemberPath::new(MemberRoot::Operation)
+                        .name("params")
+                        .index(0)
+                        .name("presence")
         )));
     }
 
