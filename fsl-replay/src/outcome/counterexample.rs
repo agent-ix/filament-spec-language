@@ -548,11 +548,15 @@ fn key_text(key: &fsl_eval::simulation::StateKey) -> Result<Json, Counterexample
 fn graph_step(
     step: &crate::model_check::counterexample::ModelStep,
 ) -> Result<Json, CounterexampleWireError> {
-    Ok(json!({
+    let mut written = json!({
         "type": "step",
         "transition": model_transition(&step.transition)?,
         "post_state": key_text(&step.post_state)?,
-    }))
+    });
+    if let Some(delay) = &step.delay {
+        written["delay"] = rational(delay);
+    }
+    Ok(written)
 }
 
 fn graph_steps(
@@ -720,6 +724,24 @@ mod tests {
             post_state: key(index),
             delay: None,
         }
+    }
+
+    /// FSpec FR-712 timed state-graph paths retain the chosen exact delay
+    /// before each discrete step. Untimed paths keep the FR-393 shape.
+    #[test]
+    fn a_timed_graph_step_carries_its_exact_delay() {
+        let mut found = step(1);
+        found.delay = Some(rational(3, 2));
+
+        assert_eq!(
+            graph_step(&found).expect("spelled"),
+            json!({
+                "type": "step",
+                "transition": {"type": "transition", "operation": {"name": "s1"}, "receiver": null, "arguments": []},
+                "post_state": key_text(&key(1)).expect("key"),
+                "delay": {"numerator": "3", "denominator": "2"},
+            })
+        );
     }
 
     fn counterexample(steps: usize, kind: CounterexampleKind) -> TemporalCounterexample {
