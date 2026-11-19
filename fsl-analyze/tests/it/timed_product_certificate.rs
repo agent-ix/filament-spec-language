@@ -4,21 +4,23 @@
 //! over ADR-028 §15.5's `Retx`, and the core checker that rebuilds the
 //! digital or region product itself.
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::analyze::{
-    analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered, AnalyzeRecord,
-    Engines,
+    AnalyzeRecord, Engines, analyze_items, exact_probabilistic_item,
+    exact_probabilistic_item_tampered,
 };
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    check_probability_certificate_document, CertificateRule, ExactProbabilityCertificate,
-    ExactProbabilityCertificateCheck, InconclusiveCause, ProbabilityCertificateLocus,
-    ProbabilityCertificateRule, ProbabilityDocumentError, ProofBasis, TerminalValue,
+    CertificateRule, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
+    InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule,
+    ProbabilityDocumentError, ProofBasis, TerminalValue, check_probability_certificate_document,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::long_run_certificate::limits;
 use crate::timed_world::{self, World};
@@ -285,14 +287,28 @@ fn region_document_keeps_fraction_order() {
     let world = retx(STRICT, true, "", &every_deadlines());
     let doc = document(&settle(&world, "Deadline"));
     assert_eq!(doc["objective"]["timed"]["route"], "region");
-    let keys: std::collections::BTreeSet<String> = doc["values"]
-        .as_array()
-        .expect("values")
+    let rows = doc["values"].as_array().expect("values");
+    let keys = rows
         .iter()
-        .map(|row| row["state"].to_string())
-        .collect();
-    assert_eq!(keys.len(), doc["values"].as_array().unwrap().len());
-    assert!(keys.iter().all(|key| key.contains("region")));
+        .map(|row| {
+            let encoded = row["state"].as_str().expect("encoded product key");
+            let bytes = URL_SAFE_NO_PAD.decode(encoded).expect("base64 product key");
+            serde_json::from_slice::<Value>(&bytes).expect("canonical product key")
+        })
+        .collect::<Vec<_>>();
+    let unique: std::collections::BTreeSet<String> =
+        keys.iter().map(serde_json::Value::to_string).collect();
+    assert_eq!(unique.len(), rows.len());
+    assert!(keys.iter().all(|key| key[2][1][0] == "region"));
+    assert!(keys.iter().all(|key| {
+        key[2][1][4].as_array().is_some_and(|clocks| {
+            clocks.iter().all(|clock| {
+                clock
+                    .as_array()
+                    .is_some_and(|parts| parts.len() == 4 && parts[3].as_str().is_some())
+            })
+        })
+    }));
 }
 
 /// FR-920-AC-3: a document has no component member; adding one rejects.
