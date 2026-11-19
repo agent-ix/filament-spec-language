@@ -158,8 +158,8 @@ fn a_package_that_cannot_run_refuses_at_the_request() {
         (
             "v1.json",
             json!([]),
-            "unknown_contract_version",
-            "/request/package",
+            "unsupported-wire",
+            "/request/package/contract_version",
         ),
         (
             "extra.json",
