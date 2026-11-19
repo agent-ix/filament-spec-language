@@ -5226,11 +5226,12 @@ impl<'a> Lowering<'a> {
             NodeKind::PopulationObjects { population } => {
                 let population = self.population_reference_node(population, node.location())?;
                 let result_type = self.type_ref(node.value_type(), node.location())?;
+                let operation = self.all_instances_operation(node.value_type(), node.location())?;
                 let term = self.typed_application(
                     node.location(),
                     result_type,
                     Operator::Query,
-                    self.all_instances_operation(node.value_type(), node.location())?,
+                    operation,
                     vec![MemberTerm::Leaf(LeafTerm::reference_node(population.into()))],
                 )?;
                 return Ok(LowerStep::Lowered(term));
