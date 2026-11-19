@@ -845,7 +845,8 @@ pub fn check_protocol_constrained(
                             .max_messages
                             .unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND),
                     )
-                    .with_max_live_instances(live_instances),
+                    .with_max_live_instances(live_instances)
+                    .with_cycle_keys(BTreeSet::new()),
                 automaton,
                 bound,
             )
@@ -863,7 +864,8 @@ pub fn check_protocol_constrained(
                                 .max_messages
                                 .unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND),
                         )
-                        .with_max_live_instances(live_instances),
+                        .with_max_live_instances(live_instances)
+                        .with_cycle_keys(BTreeSet::new()),
                     automaton,
                     Some(bound),
                 )
@@ -879,7 +881,8 @@ pub fn check_protocol_constrained(
                 protocol_run.decide(
                     &system
                         .with_channel_message_bound(channel_bound)
-                        .with_max_live_instances(live_instances),
+                        .with_max_live_instances(live_instances)
+                        .with_cycle_keys(BTreeSet::new()),
                     automaton,
                     Some(bound),
                 )
@@ -940,7 +943,9 @@ fn check_protocol_liveness(
             ProtocolSystem::new(model, subject, ra).map(|system| {
                 super::liveness::check_protocol(
                     subject,
-                    &system.with_max_live_instances(live_instances),
+                    &system
+                        .with_max_live_instances(live_instances)
+                        .with_cycle_keys(BTreeSet::new()),
                     Some(bound),
                     request.item,
                     request.temporal_clock_selections,
@@ -962,7 +967,9 @@ fn check_protocol_liveness(
             ProtocolSystem::new(model, subject, tso).map(|system| {
                 super::liveness::check_protocol(
                     subject,
-                    &system.with_max_live_instances(live_instances),
+                    &system
+                        .with_max_live_instances(live_instances)
+                        .with_cycle_keys(BTreeSet::new()),
                     Some(bound),
                     request.item,
                     request.temporal_clock_selections,
@@ -979,7 +986,9 @@ fn check_protocol_liveness(
         SubjectMemory::Sc => ProtocolSystem::new(model, subject, Sc).map(|system| {
             super::liveness::check_protocol(
                 subject,
-                &system.with_max_live_instances(live_instances),
+                &system
+                    .with_max_live_instances(live_instances)
+                    .with_cycle_keys(BTreeSet::new()),
                 None,
                 request.item,
                 request.temporal_clock_selections,
@@ -1570,9 +1579,7 @@ fn prepare(
         // The derived items read one atom, true at every position, so they
         // share an automaton.
         let derived = match (item, counting) {
-            (ModelCheckItem::Invariant { clause }, _) => Item::Invariant {
-                name: clause.name,
-            },
+            (ModelCheckItem::Invariant { clause }, _) => Item::Invariant { name: clause.name },
             (ModelCheckItem::RaceFreedom, Counting::Every) => {
                 return Err(ModelCheckRefusal::RaceOverModel);
             }
@@ -1960,7 +1967,16 @@ impl<S: SubjectSystem> Run<'_, S> {
                     let counterexample = match self.counterexample(kind, at, binding) {
                         Ok(counterexample) => counterexample,
                         Err(Halt::Refusal(refusal)) => return Err(refusal),
-                        Err(Halt::Finish(_)) => return Err(fault("an-unreduced-path-is-concrete")),
+                        Err(Halt::Finish(Finish::Stopped(cause, limit))) => {
+                            return Ok(ModelCheckOutcome::Stopped {
+                                cause,
+                                limit,
+                                stats: self.stats(),
+                            })
+                        }
+                        Err(Halt::Finish(_)) => {
+                            return Err(fault("a-concretisation-stops-or-refuses"))
+                        }
                     };
                     return Ok(ModelCheckOutcome::Violated {
                         counterexample: Box::new(counterexample),
@@ -2056,7 +2072,14 @@ impl<S: SubjectSystem> Run<'_, S> {
                 let counterexample = match self.counterexample(kind, at, binding) {
                     Ok(counterexample) => counterexample,
                     Err(Halt::Refusal(refusal)) => return Err(refusal),
-                    Err(Halt::Finish(_)) => return Err(fault("an-unreduced-path-is-concrete")),
+                    Err(Halt::Finish(Finish::Stopped(cause, limit))) => {
+                        return Ok(ModelCheckOutcome::Stopped {
+                            cause,
+                            limit,
+                            stats: self.stats(),
+                        })
+                    }
+                    Err(Halt::Finish(_)) => return Err(fault("a-concretisation-stops-or-refuses")),
                 };
                 Ok(ModelCheckOutcome::Violated {
                     counterexample: Box::new(counterexample),
@@ -2562,12 +2585,9 @@ impl<S: SubjectSystem> Run<'_, S> {
                 .copied()
                 .ok_or_else(|| fault("a-vertex-is-a-node"))
         };
-        let mut counterexample = self.counterexample(
-            CounterexampleKind::Formula,
-            node_of(entry)?,
-            self.binding_of(instance),
-        )?;
-        let entry_position = counterexample.prefix.len();
+        let (initial_state, mut lift) = self.lift_path(node_of(entry)?)?;
+        let entry_position = lift.len();
+        let entry_key = lift.loop_key().map_err(|stop| self.lift_stop(stop))?;
         for (_, edge) in &walk {
             let EdgeLabel::Transition(identity) = edge.label else {
                 return Err(fault("a-zero-progress-edge-is-a-transition").into());
@@ -2577,15 +2597,19 @@ impl<S: SubjectSystem> Run<'_, S> {
                 .and_then(|number| transitions.get(number))
                 .ok_or_else(|| fault("an-edge-names-a-transition"))?;
             let node = &self.nodes[node_of(edge.target)?];
-            counterexample.prefix.push(ModelStep {
-                transition: self
-                    .system
-                    .reported(transition.clone(), &node.state)
-                    .map_err(|stop| self.expansion_stop(stop))?,
-                post_state: node.key.clone(),
-                delay: None,
-            });
+            lift.edge(transition, &node.state, &Permutation::identity())
+                .map_err(|stop| self.lift_stop(stop))?;
         }
+        if lift.loop_key().map_err(|stop| self.lift_stop(stop))? != entry_key {
+            return Err(fault("a-lifted-zero-progress-loop-closes-by-cycle-key").into());
+        }
+        let mut counterexample = self.finished(
+            CounterexampleKind::Formula,
+            node_of(entry)?,
+            self.binding_of(instance),
+            initial_state,
+            lift.into_steps(),
+        )?;
         counterexample.lasso = Some(Lasso {
             entry: entry_position,
             terminal_stutter: false,
@@ -3114,33 +3138,53 @@ impl<S: SubjectSystem> Run<'_, S> {
     /// waiting threads of its last state (ADR-027 PD-4).
     fn counterexample(
         &self,
-        kind: CounterexampleKind,
+        mut kind: CounterexampleKind,
         at: usize,
         over_binding: Option<ModelInstance>,
     ) -> Step<TemporalCounterexample<S::TransitionId>> {
         if !self.group.is_trivial() {
             return Err(fault("an-unreduced-path-is-concrete").into());
         }
+        let (initial_state, lift) = self.lift_path(at)?;
+        lift.site(&mut kind).map_err(|stop| self.lift_stop(stop))?;
+        self.finished(kind, at, over_binding, initial_state, lift.into_steps())
+    }
+
+    fn lift_path(&self, at: usize) -> Step<(usize, Lift<'_, S>)> {
         let path = self.path(at);
-        let mut prefix = Vec::with_capacity(path.len());
-        for index in &path {
+        let root = path.first().ok_or_else(|| fault("a-path-has-a-root"))?;
+        let (initial_state, mut lift) = Lift::start(
+            self.system,
+            None,
+            &self.group,
+            &self.nodes[*root].state,
+            self.limits
+                .limits
+                .max_transitions
+                .saturating_sub(self.edges),
+        )
+        .map_err(|stop| self.lift_stop(stop))?;
+        for index in path.iter().skip(1) {
             let node = &self.nodes[*index];
             let Some((_, Some(transition))) = node.parent.as_ref() else {
                 continue;
             };
-            prefix.push(ModelStep {
-                transition: self
-                    .system
-                    .reported(transition.clone(), &node.state)
-                    .map_err(|stop| self.expansion_stop(stop))?,
-                post_state: node.key.clone(),
-                delay: None,
-            });
+            lift.edge(transition, &node.state, &Permutation::identity())
+                .map_err(|stop| self.lift_stop(stop))?;
         }
-        let initial_state = path
-            .first()
-            .map_or(0, |root| self.nodes[*root].initial_index);
-        self.finished(kind, at, over_binding, initial_state, prefix)
+        Ok((initial_state, lift))
+    }
+
+    fn lift_stop(&self, stop: LiftStop) -> Halt {
+        match stop {
+            LiftStop::Expansion(stop) => self.expansion_stop(stop),
+            LiftStop::Transitions => Self::stopped(
+                ModelCheckLimit::MaxTransitions,
+                widen(self.limits.limits.max_transitions),
+            )
+            .into(),
+            LiftStop::Refusal(refusal) => refusal.into(),
+        }
     }
 
     fn finished(

@@ -1243,17 +1243,17 @@ impl ProtocolReplay<'_> {
         // fairness set that differs, which a change of memory model changes
         // too (FR-227-AC-1).
         let replayed = replay_prefix(system, payload, &PROTOCOL_STEPS)?;
-        if self.clause.is_some() && payload.fairness != fairness {
-            return Err(refused(ModelTraceRefusal::ProtocolFairnessSet {
-                payload: payload.fairness.clone(),
-                recompiled: fairness,
-            }));
-        }
         let Some((positions, steps)) = replayed else {
             return Ok(no_value());
         };
         if let Some(lasso) = payload.lasso {
             close_loop(system, &positions, lasso)?;
+        }
+        if self.clause.is_some() && payload.fairness != fairness {
+            return Err(refused(ModelTraceRefusal::ProtocolFairnessSet {
+                payload: payload.fairness.clone(),
+                recompiled: fairness,
+            }));
         }
         Ok(match (&payload.kind, self.clause) {
             (CounterexampleKind::Deadlock, _) => deadlock(system, payload, &positions, &steps)?,
@@ -1942,7 +1942,14 @@ pub(super) fn close_loop<S: SubjectSystem>(
     }
     let entry = positions.get(lasso.entry).ok_or_else(open)?;
     let last = positions.last().ok_or_else(|| fault("a-position-exists"))?;
-    if lasso.entry >= steps || entry.state_key != last.state_key {
+    if lasso.entry >= steps
+        || system
+            .loop_state_key(&entry.state)
+            .map_err(|_| fault("a-loop-key-encodes"))?
+            != system
+                .loop_state_key(&last.state)
+                .map_err(|_| fault("a-loop-key-encodes"))?
+    {
         return Err(open());
     }
     Ok(())
