@@ -7280,6 +7280,7 @@ impl PackageDeclarations {
         for (finite_index, clause) in checked_finite_hyper.iter().enumerate() {
             use hyper_clause::lowering::{hyper_site, Site};
             let index = checked_hyper.len() + finite_index;
+            type_spans.insert(hyper_site(index, Site::Claim), clause.span());
             type_spans.insert(hyper_site(index, Site::FiniteDomain), clause.span());
             for slot in 0..clause.body_parameters().len() {
                 type_spans.insert(hyper_site(index, Site::FiniteSlot(slot)), clause.span());
