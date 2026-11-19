@@ -31,7 +31,11 @@ pub(super) fn checked_graph(declarations: &str) -> fsl_semantics::check::Checked
     let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
     PackageDeclarations::assemble(raw, "pkg".to_owned(), unit, Vec::new(), Vec::new())
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"))
 }
 
@@ -1560,7 +1564,11 @@ fn a_converted_quantity_equality_converts_the_quantity_operand() {
         ];
         declarations.functions = vec![declared];
         let graph = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the package checks");
         let emission = emit(&CheckedPackage::link(graph));
         assert_reader_outcome_for_equality_sidecar(&emission);
@@ -1632,7 +1640,11 @@ fn a_guard_over_an_integer_conversion_bounds_only_what_it_states() {
         let refused =
             PackageDeclarations::assemble(raw, "pkg".to_owned(), unit, Vec::new(), Vec::new())
                 .expect("the unit assembles")
-                .check(CheckMode::Linked, CheckingLimits::default());
+                .check(
+                    CheckMode::Linked,
+                    CheckingLimits::default(),
+                    &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+                );
         assert!(refused.is_err(), "{body}: the body is not in [0, 3]");
     }
 }
