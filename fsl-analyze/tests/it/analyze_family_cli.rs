@@ -878,7 +878,7 @@ fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
         include_bytes!("../../../examples/config-version/model.semantic-ir.json");
     const SAVING: &str = "example/device-saving";
     const NORMAL: &str = "example/device-normal";
-    let model = |identity: &str| {
+    let model_document = |identity: &str| {
         String::from_utf8(BASE_MODEL.to_vec())
             .expect("model fixture is UTF-8")
             .replace("example/config-version", identity)
@@ -893,8 +893,8 @@ fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
          forall trace s of S forall trace n of N \
          {{ always[0,3] holds(d.versionNumber @ s <= e.versionNumber @ n) }}\n"
     );
-    let model = model(SAVING);
-    let other = model(NORMAL);
+    let model = model_document(SAVING);
+    let other = model_document(NORMAL);
     let snapshot = config_version_snapshot(SAVING, NORMAL, 1, 0);
     let ws = Workspace::new("family-hyper-two-models");
     ws.write("other.json", &other);
