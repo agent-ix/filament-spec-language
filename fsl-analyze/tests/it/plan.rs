@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use filament_exact::Cancel;
+use filament_semantic_value::catalog::{CatalogCode, CatalogCoded};
 use fsl_analyze::analyze::document::Negotiate;
 use fsl_analyze::analyze::{AnalyzeLimits, ClaimItem, Diagnostic, Engine, Engines};
 use fsl_analyze::plan::{execute_plan, PlanInputs, PlanRefusal, PlanResult, PlanStatus};
@@ -93,6 +94,303 @@ fn inputs<'a>(world: &'a World, plan: &VerificationPlan) -> PlanInputs<'a> {
         seed: Some(7),
         max_trace_length: None,
         max_value_bits: None,
+    }
+}
+
+fn value_world(parameter: &str) -> World {
+    World::with_kernel_functions(
+        crate::model_world::counter(),
+        crate::counter::CONTRACT,
+        &format!("function Subject using v(x: {parameter}): Boolean pure {{ x = x }}\n"),
+        crate::model_world::INFINITE,
+        &[crate::model_world::Clause {
+            activation: "on each (q: M::Counter)",
+            formula: "always holds(c.value <= 1)",
+        }],
+        &[("c", json!({"value": {"integer": "0"}}))],
+    )
+}
+
+fn select_value_claim(
+    world: &World,
+    node: &mut fsl_package::verification_plan::VerificationPlanNode,
+) {
+    let graph = world.package.graph();
+    let callable = graph.callable("Subject").expect("value function");
+    let body = graph
+        .semantic_graph()
+        .node(callable.identity)
+        .and_then(|node| node.function_body())
+        .expect("Boolean body");
+    let (key, origin, _) = graph
+        .occurrences()
+        .find(|(key, origin, _)| *key == body && origin.role().as_str() == "declaration")
+        .expect("value declaration occurrence");
+    node.claim.node = serde_json::from_value(
+        serde_json::to_value(fsl_semantics::check::wire_id::structural_id(&key))
+            .expect("structural identity"),
+    )
+    .expect("plan identity");
+    node.claim.occurrence.role = filament_contract_model::CheckedOccurrenceRole::Declaration;
+    node.claim.occurrence.ordinal = origin.ordinal();
+    node.method.kind = "value-validity".into();
+}
+
+#[trace("FR-753-AC-4", "TC-2103")]
+#[test]
+fn value_generation_requires_only_its_consumed_bound_and_reports_catalog_fields() {
+    let world = value_world("Integer");
+    let mut plan = plan(
+        &world,
+        &[
+            ("safe", "model_check"),
+            ("value", "model_based_test"),
+            ("later", "model_based_test"),
+        ],
+        &[],
+    );
+    select_value_claim(&world, &mut plan.nodes[1]);
+    select_value_claim(&world, &mut plan.nodes[2]);
+    let negotiate = Recording::default();
+    let mut inputs = inputs(&world, &plan);
+    let failure = execute_plan(
+        &world.package,
+        &plan,
+        &inputs,
+        &Engines::default(),
+        &negotiate,
+        &AnalyzeLimits::unbounded(),
+        &Cancel::new(),
+    )
+    .expect_err("unbounded value requires size, but no trace bound");
+    let StageFailure::Refused(refusal @ PlanRefusal::MissingMember { .. }) = failure else {
+        panic!("missing value size");
+    };
+    assert_eq!(
+        refusal.catalog_code(),
+        CatalogCode::new("invalid_runtime_input", "missing-member")
+    );
+    assert_eq!(
+        refusal.catalog_fields(),
+        Some(BTreeMap::from([
+            ("member", "max_value_bits".into()),
+            ("step", "value".into()),
+        ]))
+    );
+    assert!(negotiate.calls.borrow().is_empty());
+    inputs.max_value_bits = Some(8);
+    let failure = execute_plan(
+        &world.package,
+        &plan,
+        &inputs,
+        &Engines::default(),
+        &negotiate,
+        &AnalyzeLimits::unbounded(),
+        &Cancel::new(),
+    )
+    .expect_err("only the FR-752 entry remains");
+    assert!(matches!(failure, StageFailure::Fault(fault)
+        if fault.invariant() == "model-based-test-entry-unavailable-QSL-2237"));
+    assert_eq!(*negotiate.calls.borrow(), [0]);
+}
+
+#[trace("FR-753-AC-4", "TC-2103")]
+#[test]
+fn declared_finite_value_generation_consumes_neither_trace_nor_size() {
+    for parameter in ["Int[0, 3]", "Text[0, 8; unicode-scalars]"] {
+        let world = value_world(parameter);
+        let mut plan = plan(&world, &[("value", "model_based_test")], &[]);
+        select_value_claim(&world, &mut plan.nodes[0]);
+        let negotiate = Recording::default();
+        let failure = execute_plan(
+            &world.package,
+            &plan,
+            &inputs(&world, &plan),
+            &Engines::default(),
+            &negotiate,
+            &AnalyzeLimits::unbounded(),
+            &Cancel::new(),
+        )
+        .expect_err("finite value reaches FR-752 seam without generation bounds");
+        assert!(
+            matches!(failure, StageFailure::Fault(fault)
+            if fault.invariant() == "model-based-test-entry-unavailable-QSL-2237"),
+            "{parameter}"
+        );
+        assert!(negotiate.calls.borrow().is_empty());
+    }
+}
+
+#[trace("FR-753-AC-5", "TC-3028")]
+#[test]
+fn value_check_negotiates_value_validity_without_generation_inputs() {
+    let world = value_world("Integer");
+    let mut plan = plan(&world, &[("value", "value_check")], &[]);
+    select_value_claim(&world, &mut plan.nodes[0]);
+    let negotiate = Recording::default();
+    let outcome = execute_plan(
+        &world.package,
+        &plan,
+        &inputs(&world, &plan),
+        &Engines::default(),
+        &negotiate,
+        &AnalyzeLimits::unbounded(),
+        &Cancel::new(),
+    )
+    .expect("negotiated value route")
+    .into_value();
+    assert_eq!(*negotiate.calls.borrow(), [0]);
+    let items = negotiate.items.borrow();
+    assert_eq!(
+        items[0].kind,
+        fsl_semantics::check::Capability::ValueValidity
+    );
+    assert_eq!(outcome.dispositions[0].1.status, PlanStatus::Unsupported);
+    assert_eq!(outcome.dispositions[0].1.evidence, None);
+    let Some(PlanResult::Analysis(record)) = &outcome.dispositions[0].1.result else {
+        panic!("value terminal record");
+    };
+    assert_eq!(
+        record.diagnostic_detail().expect("unsupported kind")["kind"],
+        "value-validity"
+    );
+}
+
+#[trace("FR-753-AC-4", "FR-753-AC-5", "TC-2103", "TC-3028")]
+#[test]
+fn successful_simulation_satisfies_a_prerequisite_without_negotiation() {
+    let world = world();
+    let plan = plan(
+        &world,
+        &[("runs", "simulate"), ("dependent", "model_check")],
+        &[("dependent", "runs")],
+    );
+    let negotiate = Recording::default();
+    let outcome = execute_plan(
+        &world.package,
+        &plan,
+        &inputs(&world, &plan),
+        &Engines::default(),
+        &negotiate,
+        &AnalyzeLimits::unbounded(),
+        &Cancel::new(),
+    )
+    .expect("simulation prerequisite")
+    .into_value();
+    assert_eq!(*negotiate.calls.borrow(), [1]);
+    assert_eq!(outcome.dispositions[0].1.status, PlanStatus::Tested);
+    assert_eq!(
+        outcome.dispositions[0].1.evidence.as_deref(),
+        Some("simulation-runs")
+    );
+    assert_eq!(outcome.dispositions[1].1.status, PlanStatus::Unsupported);
+    assert_eq!(outcome.dispositions[1].1.blocked_by, None);
+}
+
+#[trace("FR-753-AC-4", "TC-2103")]
+#[test]
+fn absent_initial_still_requires_the_first_state_trace_consumer() {
+    let world = value_world("Integer");
+    let mut plan = plan(
+        &world,
+        &[("value", "model_based_test"), ("state", "model_based_test")],
+        &[],
+    );
+    select_value_claim(&world, &mut plan.nodes[0]);
+    let mut inputs = inputs(&world, &plan);
+    for binding in inputs.bindings.values_mut() {
+        binding.initial.clear();
+    }
+    let negotiate = Recording::default();
+    let failure = execute_plan(
+        &world.package,
+        &plan,
+        &inputs,
+        &Engines::default(),
+        &negotiate,
+        &AnalyzeLimits::unbounded(),
+        &Cancel::new(),
+    )
+    .expect_err("state trace bound precedes earlier value size consumer");
+    assert!(
+        matches!(failure, StageFailure::Refused(PlanRefusal::MissingMember {
+        member: "max_trace_length", step,
+    }) if step == "state")
+    );
+    assert!(negotiate.calls.borrow().is_empty());
+}
+
+#[trace("FR-753-AC-4", "TC-2103")]
+#[test]
+fn proved_prerequisite_runs_its_dependent_and_transitive_blocking_skips_descendants() {
+    let world = World::new(
+        crate::model_world::counter(),
+        crate::counter::CONTRACT,
+        crate::model_world::INFINITE,
+        &[crate::model_world::Clause {
+            activation: "on each (q: M::Counter)",
+            formula: "always holds(c.value <= 3)",
+        }],
+        &[("c", json!({"value": {"integer": "0"}}))],
+    );
+    let plan = plan(
+        &world,
+        &[
+            ("last", "model_check"),
+            ("middle", "model_check"),
+            ("first", "model_check"),
+            ("independent", "model_check"),
+        ],
+        &[("last", "middle"), ("middle", "first")],
+    );
+    let mut engines = Engines::default();
+    engines
+        .with(Engine::model_check().expect("EN-1 manifest"))
+        .expect("one engine");
+    for (engines, calls, statuses) in [
+        (&engines, vec![2, 1, 0, 3], vec![PlanStatus::Proved; 4]),
+        (
+            &Engines::default(),
+            vec![2, 3],
+            vec![
+                PlanStatus::Blocked,
+                PlanStatus::Blocked,
+                PlanStatus::Unsupported,
+                PlanStatus::Unsupported,
+            ],
+        ),
+    ] {
+        let negotiate = Recording::default();
+        let outcome = execute_plan(
+            &world.package,
+            &plan,
+            &inputs(&world, &plan),
+            engines,
+            &negotiate,
+            &AnalyzeLimits::unbounded(),
+            &Cancel::new(),
+        )
+        .expect("dependency graph")
+        .into_value();
+        assert_eq!(*negotiate.calls.borrow(), calls);
+        assert_eq!(
+            outcome
+                .dispositions
+                .iter()
+                .map(|(_, step)| step.status)
+                .collect::<Vec<_>>(),
+            statuses
+        );
+        if outcome.dispositions[0].1.status == PlanStatus::Blocked {
+            assert_eq!(
+                outcome.dispositions[0].1.blocked_by.as_deref(),
+                Some("middle")
+            );
+            assert_eq!(
+                outcome.dispositions[1].1.blocked_by.as_deref(),
+                Some("first")
+            );
+        }
     }
 }
 
