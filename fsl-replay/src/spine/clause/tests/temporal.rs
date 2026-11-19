@@ -722,20 +722,12 @@ pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> 
             temporal_clock_selections(body.identity(), body.path(), body.text().as_bytes())
         }
     };
-    if request
+    let has_kernel_count = request
         .source
         .unit()
         .bytes
         .windows(b"function refusingCount".len())
-        .any(|part| part == b"function refusingCount")
-    {
-        let modes = BTreeMap::from([(
-            "refusingCount".to_owned(),
-            filament_semantic_value::checking::CheckMode::Kernel,
-        )]);
-        return super::super::run_clause_with_function_modes(request, &temporal_selections, &modes)
-            .expect("a well-formed request always reports");
-    }
+        .any(|part| part == b"function refusingCount");
     let has_kernel_mod = match &mut request.source {
         ClauseRunSource::Program { bytes, .. } => {
             let source = String::from_utf8(bytes.clone()).expect("test source is UTF-8");
@@ -762,11 +754,19 @@ pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> 
         #[cfg(feature = "quire-extraction")]
         ClauseRunSource::Extracted(_) => false,
     };
-    if has_kernel_mod {
-        let modes = BTreeMap::from([(
-            "temporal_mod_undefined".to_owned(),
-            filament_semantic_value::checking::CheckMode::Kernel,
-        )]);
+    if has_kernel_mod || has_kernel_count {
+        let mut modes = BTreeMap::new();
+        for (needed, name) in [
+            (has_kernel_mod, "temporal_mod_undefined"),
+            (has_kernel_count, "refusingCount"),
+        ] {
+            if needed {
+                modes.insert(
+                    name.to_owned(),
+                    filament_semantic_value::checking::CheckMode::Kernel,
+                );
+            }
+        }
         let temporal_selections = match &request.source {
             ClauseRunSource::Program {
                 identity,
