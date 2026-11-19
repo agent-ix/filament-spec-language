@@ -241,6 +241,43 @@ mod source_journeys {
             assert_eq!(document["disposition"]["category"], "refusal", "{document}");
         }
     }
+
+    #[test]
+    #[trace("FR-330", "FR-327")]
+    fn authored_event_clock_compiles_and_settles_the_closed_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/temporal");
+        let compiled = compile_file(&root.join("event-window.request.json"));
+        assert_eq!(compiled.status.code(), Some(0), "{compiled:?}");
+        for (trace, exit, expected) in [
+            (
+                json!({"finite":[sample(false),sample(false),sample(true)]}),
+                0,
+                "tested",
+            ),
+            (
+                json!({"finite":[sample(false),sample(false),sample(false)]}),
+                10,
+                "refuted",
+            ),
+            (json!({"finite":[sample(false)]}), 10, "refuted"),
+        ] {
+            let path = source_request(directory.path(), "EventWindow", trace.clone());
+            let mut request: Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            request["request"]["program"]["source"]["file"] =
+                json!(root.join("event-window.native"));
+            request["request"]["clocks"] =
+                json!({"events": {"kind": "event_position", "sequence_authority": "events"}});
+            std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+            let (actual_exit, document, _) = run(&path);
+            assert_eq!(actual_exit, exit, "{trace}: {document}");
+            assert_eq!(
+                document["items"][0]["result"], expected,
+                "{trace}: {document}"
+            );
+        }
+    }
 }
 
 /// A compiled unit with the emission its clock selections give.

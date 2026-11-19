@@ -1,0 +1,18 @@
+{
+  "format": "native-compile/1",
+  "request": {
+    "models": [],
+    "program": {
+      "source": {
+        "file": "event-window.native",
+        "authority": "agent-ix",
+        "identity": "test:temporal-corpus-events",
+        "document": "EventWindow",
+        "formal_revision": 1
+      }
+    },
+    "clocks": {
+      "events": {"kind": "event_position", "sequence_authority": "events"}
+    }
+  }
+}
