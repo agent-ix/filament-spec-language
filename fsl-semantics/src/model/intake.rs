@@ -4185,7 +4185,7 @@ fn read_decimal_bounds(
         let Some(value) = operand else {
             return Err(constraint_ctx.malformed_in(
                 "operands.value",
-                format!("{keyword}: invalid canonical Decimal bound"),
+                format!("INVALID_OPERAND: {keyword}: invalid canonical Decimal bound"),
             ));
         };
         match keyword {

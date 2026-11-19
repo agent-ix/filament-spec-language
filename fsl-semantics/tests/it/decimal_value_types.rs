@@ -489,7 +489,7 @@ fn decimal_policy_defects_refuse_once() {
             document,
             "malformed-declaration",
             "INVALID_OPERAND",
-            true,
+            false,
         ));
     }
     let mut document = golden();
