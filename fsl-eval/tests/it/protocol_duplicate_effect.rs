@@ -61,6 +61,7 @@ protocol Purchase using P over (view: M::Node) on origin {
 
 fn fixture(
     source: &str,
+    include_second: bool,
     related: bool,
 ) -> (
     CheckedPackage,
@@ -122,7 +123,7 @@ fn fixture(
             }]
         }]
     });
-    if related {
+    if include_second {
         document["populations"][0]["objects"]
             .as_array_mut()
             .expect("population objects")
@@ -131,6 +132,8 @@ fn fixture(
                 "type": tc1070::model::id("Node"),
                 "fields": {"total": {"integer": "6"}}
             }));
+    }
+    if related {
         document["relationships"] = json!([{
             "relationship": tc1070::model::id("relationship/owns"),
             "complete": true,
@@ -147,14 +150,22 @@ fn fixture(
 }
 
 fn reachable(source: &str) -> fsl_eval::simulation::protocol::Reachable<Sc> {
-    reachable_with_relation(source, false)
+    reachable_with_nodes(source, false, false)
 }
 
 fn reachable_with_relation(
     source: &str,
+    include_second: bool,
+) -> fsl_eval::simulation::protocol::Reachable<Sc> {
+    reachable_with_nodes(source, include_second, true)
+}
+
+fn reachable_with_nodes(
+    source: &str,
+    include_second: bool,
     related: bool,
 ) -> fsl_eval::simulation::protocol::Reachable<Sc> {
-    let (package, packages, snapshots, initial) = fixture(source, related);
+    let (package, packages, snapshots, initial) = fixture(source, include_second, related);
     let population = filament_checked::key::DeclarationKey {
         package: tc1070::model::PACKAGE.to_owned(),
         node: tc1070::model::id("nodes"),
@@ -168,7 +179,7 @@ fn reachable_with_relation(
         initial: vec![initial],
         universes: vec![PopulationUniverse {
             population: population.clone(),
-            keys: if related {
+            keys: if include_second {
                 vec!["node-1".to_owned(), "node-2".to_owned()]
             } else {
                 vec!["node-1".to_owned()]
@@ -309,6 +320,27 @@ protocol Purchase using P over (view: M::Node) on origin {
         })
         .collect();
     assert_eq!(paid, ["node-2".to_owned()].into_iter().collect());
+
+    let uncorrelated_source = source.replace(" related by Owns (paid, view)", "");
+    let graph = reachable_with_nodes(&uncorrelated_source, true, false);
+    let paid: std::collections::BTreeSet<_> = graph
+        .states
+        .iter()
+        .flat_map(|state| &state.steps)
+        .filter(|(transition, _)| transition.kind() == StepKind::Event)
+        .filter_map(|(transition, _)| match transition.binder_record() {
+            Some(filament_exact::Value::Reference(reference)) => {
+                Some(reference.object().as_str().to_owned())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        paid,
+        ["node-1".to_owned(), "node-2".to_owned()]
+            .into_iter()
+            .collect()
+    );
 }
 
 #[test]
