@@ -71,6 +71,17 @@ writes no target bytes of its own, so the two give byte-identical files.
   names `export.nodes`. Writing the text charges one `export.work_units`
   unit for each output region it writes, beside the `export.output_bytes`
   charge for its bytes.
+- An *output region* SHALL be one top-level definition the text writes:
+  each datatype, variable declaration, function or operator, axiom or
+  assumption, and assertion (an obligation's proposition or theorem) that
+  the export emits, which is each definition FSpec FR-814 precedes with one
+  `fsl:` comment line. The module header, the namespace lines, comments and
+  the lines inside one definition are not regions of their own. FSL SHALL
+  charge exactly one `export.work_units` unit for each such definition, in
+  the order the text writes them, before it writes that definition, so a
+  text of N definitions charges N units for writing and the charge that
+  exceeds the effective bound is the one for the definition that would
+  have been written next.
 - An assembled export SHALL write FSpec FR-817's `package` member: the
   source package reference, the target profile, the generator identity and
   version, and the effective value of each of the three export limits. The
@@ -187,6 +198,7 @@ writes no target bytes of its own, so the two give byte-identical files.
 | FR-1015-AC-11 | The counter export under `export.work_units` 1 writes `status` `incomplete`, `records` `[]` and `cause` `{"type": "limit-reached", "limit": "work_units", "value": 1, "setting": "export.work_units"}`, exit `22`; under `export.nodes` 1 its `cause` names `nodes`, value 1 and `export.nodes`, though `export.work_units` 1 is also set. | Test (TC-3020) |
 | FR-1015-AC-12 | Over the spine unit with invariants `Low` and `High` over `Config::ConfigVersion`, let `n(S)` be the least `export.nodes` under which the export of obligations `S` is not `incomplete`. Then `n(["Low", "High"])` is less than `n(["Low"]) + n(["High"])` and at least the greater of the two. | Test (TC-3020) |
 | FR-1015-AC-13 | Every `target-unrepresentable` cause of `SlowEnough` over `Braking` under `any` has a string `node` that reads back as a `CheckedNodeId` of the package and re-encodes to the same text, and a `locus` that is either `null` or a region with `start < end`; a cause's `node` equals the `node` of the `name_map` entry, if one exists, for the same node. | Test (TC-3020) |
+| FR-1015-AC-14 | Over the counter's `Bounded` export to TLA+ and to Lean, let N be the number of `fsl:` comment lines of its `target_text` (one per top-level definition) and C the least `export.nodes` under which the export is not `incomplete` (its classification charge). Under `export.work_units` C + N the export is `assembled`, exit `0`. Under `export.work_units` C + N - 1 it is `incomplete` with `records` `[]` and `cause` `{"type": "limit-reached", "limit": "work_units", "value": C + N - 1, "setting": "export.work_units"}`, exit `22`; the denied charge is the one for the Nth definition. An implementation that charges per byte, per line, per obligation or per node mapped while writing, rather than per definition, assembles or stops at a different bound and fails this criterion. | Test (TC-3020) |
 
 ## Dependencies
 

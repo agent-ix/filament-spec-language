@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify the structured refusal codes of malformed export members, the `unsupported` refusal of an observer the build cannot run, the `limit-reached` cause of a denied charge, the once-per-node charge of shared closure nodes, and the spelling of a cause's `node` and `locus`. Scope: FR-1015-AC-9 to AC-13.
+Verify the structured refusal codes of malformed export members, the `unsupported` refusal of an observer the build cannot run, the `limit-reached` cause of a denied charge, the once-per-node charge of shared closure nodes, and the spelling of a cause's `node` and `locus`. Scope: FR-1015-AC-9 to AC-14.
 
 ## Test Procedure
 
@@ -19,6 +19,7 @@ Verify the structured refusal codes of malformed export members, the `unsupporte
 3. Export the counter under `export.work_units` 1, then under `export.nodes` 1 and `export.work_units` 1.
 4. Over the spine unit with invariants `Low` and `High`, find the least `export.nodes` for `["Low"]`, `["High"]` and `["Low", "High"]`.
 5. Export `SlowEnough` over `Braking` under `any` and read each cause's `node` and `locus`.
+6. Export the counter's `Bounded` to TLA+ and to Lean; count the `fsl:` comment lines N and find the least `export.nodes` C; export again under `export.work_units` C + N and C + N - 1.
 
 ## Expected Results
 
@@ -27,3 +28,4 @@ Verify the structured refusal codes of malformed export members, the `unsupporte
 - Step 3: `incomplete`, `records` `[]`, `cause` `limit-reached` with `work_units`, 1 and `export.work_units`, exit 22; then `nodes`, 1 and `export.nodes`.
 - Step 4: the pair's value is less than the sum of the singles and at least their maximum.
 - Step 5: each `node` is a canonical node-id string of the package, equal to the matching `name_map` entry's; each `locus` is `null` or a region with `start < end`.
+- Step 6: `assembled`, exit 0, under C + N; `incomplete` with `limit-reached` `work_units`, value C + N - 1, `export.work_units`, exit 22, under C + N - 1.
