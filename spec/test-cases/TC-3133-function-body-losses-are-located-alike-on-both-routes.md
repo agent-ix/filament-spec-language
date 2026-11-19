@@ -15,7 +15,7 @@ at the checker's location of the operation's position on both routes, read on
 the package route from the package's `body_locations` rows, including where
 lowering reshaped the body.
 
-Scope: FR-531-AC-36.
+Scope: FR-531-AC-36, FR-531-AC-37.
 
 ## Test Procedure
 
@@ -28,10 +28,14 @@ Scope: FR-531-AC-36.
    bytes.
 4. Remove the second `sqrt`'s row from the bytes and admit them with the strict
    reader.
+5. For each FR-531-AC-37 case (`+`, `-`, `*`, `/`, `sqrt` and the float
+   conversions, over `Float32` and `Float64`), call `f` with body `r <= e` and
+   with body `e` on both routes.
 
 Test: `fsl-eval/tests/it/ieee_ordering_route_parity.rs`
-`an_ordering_over_square_roots_charges_the_same_on_both_routes` (steps 1 to 3)
-and `a_function_body_without_its_location_rows_is_refused` (step 4).
+`an_ordering_over_square_roots_charges_the_same_on_both_routes` (steps 1 to 3),
+`a_function_body_without_its_location_rows_is_refused` (step 4) and
+`every_flag_raising_ieee_operation_is_located_alike_on_both_routes` (step 5).
 
 ## Expected Results
 
@@ -42,3 +46,6 @@ and `a_function_body_without_its_location_rows_is_refused` (step 4).
   index `0`.
 - Step 4: the reader refuses `invalid_package`/`invalid-value` at
   `/checked_term_data/body_locations`; nothing is evaluated.
+- Step 5: per case, exactly one `IeeeFlags` loss with the named flags at
+  `Body { function: "f", index: 0 }` path `[1]` for `r <= e` and `[]` for `e`,
+  equal outcomes, losses and charge logs on both routes, and no fault.
