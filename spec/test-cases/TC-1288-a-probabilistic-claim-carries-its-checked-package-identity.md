@@ -15,7 +15,7 @@ Verify that the checked-package producer emits one local
 included `CheckedProbabilisticClaim`, writes one matching
 `probabilistic_claims` row, that the checked claim exposes the same
 producer-owned identity, and that the FR-421 causes carry it. Scope:
-FR-498-AC-1 to FR-498-AC-4.
+FR-498-AC-1 to FR-498-AC-7.
 
 ## Test Procedure
 
@@ -48,10 +48,17 @@ FR-498-AC-1 to FR-498-AC-4.
    over the `time dense` unit; read each `reward` and `delays` binding;
    rewrite `duration` on `Server::request` and the delay weight and compare
    every claim `node_id`; read each package with the strict reader.
+7. Emit FR-498-AC-7's `P95` and `A`; read each claim's `form`, `over`,
+   `activation` and `confidence` bindings; make each change of FR-498-AC-7
+   alone and compare both claims' `node_id`s and rows with the first
+   emission; make each spelling of FR-498-AC-7 and compare both claims'
+   `node_id`s and bodies; emit the second claim named `A` with `0.6` and with
+   `rational(2, 4)` and read each path and ordinal; read each package with the
+   strict reader.
 
 Tag the test `#[trace("FR-498-AC-1", "FR-498-AC-2", "FR-498-AC-3", "FR-498-AC-4", "TC-1288")]`
-and the step 5 and 6 tests `#[trace("TC-1288", "FR-498-AC-5")]` and
-`#[trace("TC-1288", "FR-498-AC-6")]`.
+and the step 5, 6 and 7 tests `#[trace("TC-1288", "FR-498-AC-5")]`,
+`#[trace("TC-1288", "FR-498-AC-6")]` and `#[trace("TC-1288", "FR-498-AC-7")]`.
 Vectors are referenced by FSpec case ID, never copied.
 
 ## Expected Results
@@ -69,3 +76,6 @@ Vectors are referenced by FSpec case ID, never copied.
   and no other claim's.
 - Step 4: the strict reader admits the package and every row joins its node
   and occurrence.
+- Steps 5 to 7: the bindings, paths, changed and unchanged `node_id`s and
+  ordinals FR-498-AC-5, FR-498-AC-6 and FR-498-AC-7 state; the strict reader
+  admits every package.

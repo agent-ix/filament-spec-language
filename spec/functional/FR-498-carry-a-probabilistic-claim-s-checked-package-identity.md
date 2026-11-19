@@ -50,7 +50,7 @@ checked-package identity from the producer to the carrier and to those causes.
 
 - For each emitted checked probabilistic claim, one local `claim` node with
   `semantic_form` `probabilistic_claim` whose body and path carry what the
-  claim reads, one declared `claim` occurrence,
+  claim reads and what it states, one declared `claim` occurrence,
   exactly one corresponding `checked_term_data.probabilistic_claims` row of
   FSpec FR-322, and a `CheckedProbabilisticClaim` that exposes that same
   producer-owned identity.
@@ -69,7 +69,9 @@ checked-package identity from the producer to the carrier and to those causes.
   for the claim's declared name `N` followed by the nodes the claim reads as
   operand segments (its subject's `model_root`, its workload or its fairness
   set, the reward nodes its form reads, and its subject model's
-  random-parameter and delay nodes), and `ordinal` ranks the claims of that package and path by their written
+  random-parameter and delay nodes), then the spellings of what the claim
+  states (its form, event or measure, thresholds, `over` parameter,
+  activation and confidence parameters, FSpec FR-640 bindings 6 to 9), and `ordinal` ranks the claims of that package and path by their written
   content, ascending, from 0. A claim's written content is the sequence of
   the exact spellings of its significant tokens, from its leading
   `probabilistic` keyword through its closing `}`, its declared name
@@ -88,6 +90,23 @@ checked-package identity from the producer to the carrier and to those causes.
   Claims that read none of the changed nodes keep their `node_id`. Two
   claims that differ only in what they read have different paths, so each
   takes ordinal 0.
+- The claim's identity SHALL cover what the claim states, every member FSpec
+  FR-407 "Obligation identity" names: changing its form, a predicate or
+  formula of its event or measure, an interval, horizon or window, its
+  weighting, a threshold or its direction, a quantile level, its `over`
+  parameter or activation, or a confidence parameter (stated, changed or
+  removed) changes the claim's path, so its `node_id` changes too. Changing
+  only the claim's whitespace or comments, the decimal or rational spelling
+  of a dimensionless value (`0.5`, `rational(1, 2)`, `rational(2, 4)`,
+  `decimal(50, 2)`), the unit a quantity is written in (`5 ms`, `0.005 s`)
+  or the order in which its confidence parameters are written leaves its
+  path, its body and, for a claim alone on its path, its `node_id`
+  unchanged; the evidence kind, the method and the budgets are request
+  settings and never reach the package. Two claims that differ only in what
+  they state have different paths, so each takes ordinal 0. Names stay
+  case-sensitive: the claim's name and its binders' names are spelled as
+  written, so renaming one changes the identity even where the obligation is
+  the same (FSpec FR-640).
 - Equal names or equal spans SHALL NOT merge two claim declarations: each
   checked claim has its own node, which the `ordinal` distinguishes. Two
   claims with equal names and equal written content are indistinguishable,
@@ -98,9 +117,10 @@ checked-package identity from the producer to the carrier and to those causes.
 - Moving a claim declaration within its source, reformatting or commenting
   it, or reordering the unit's declarations SHALL leave every claim's
   `{declaration, occurrence}` unchanged.
-- The node's body SHALL be FSpec FR-640's `probabilistic_claim` body, the five
-  bindings `subject`, `scheduler`, `reward`, `distributions` and `delays` in
-  that order, built from the checked claim (FR-186, FR-195) and the emitted
+- The node's body SHALL be FSpec FR-640's `probabilistic_claim` body, the nine
+  bindings `subject`, `scheduler`, `reward`, `distributions`, `delays`,
+  `form`, `over`, `activation` and `confidence` in that order, built from
+  the checked claim (FR-186, FR-195) and the emitted
   `probabilistic` nodes (FR-740). `subject` references the `model_root` of the
   claim's subject. `scheduler` references `W`'s `workload` node for `under W`;
   for `under every scheduler` it holds the claim's fairness set, one member
@@ -119,14 +139,35 @@ checked-package identity from the producer to the carrier and to those causes.
   reward.
 - `distributions` and `delays` SHALL hold every `random_parameter`, respectively
   `delay_distribution`, node of the subject's model, whatever the scheduler.
-- The producer SHALL emit the claim node after the `model_root` and every
-  `probabilistic` node it references. A read workload or reward with no
+- The producer SHALL emit the claim node after the `model_root`, every
+  `probabilistic` node it references and every predicate, `temporal`/`formula`,
+  `value`/`parameter` and literal type node its `form`, `over`, `activation`
+  and `confidence` reference. A read workload or reward with no
   emitted node is a `runtime_invariant` refusal naming the claim and the
   workload or reward. The producer holds what a claim reads only in the claim
   node's body and path, never in an emission-side table or a sidecar row.
-- The producer fabricates no formula or bound: the form, threshold,
-  activation, `over` binding and confidence parameters stay in the written
-  content that ranks the ordinal.
+- The producer SHALL write `form`, `over`, `activation` and `confidence`
+  from the checked claim (FR-186, FR-195), each value as S3 recorded it, so the
+  producer fabricates no formula or bound:
+
+  | Checked claim | FSpec FR-640 member |
+  | --- | --- |
+  | `ProbForm::Probability`, `Quantile`, `MeanOfFraction`, `LongRunFraction`, `Reach`, `ExpectedReward`, `MeanTime` | `form` `kind` `probability`, `quantile`, `mean_of_fraction`, `long_run_fraction`, `reach`, `expected_reward`, `expected_elapsed` |
+  | `Event::Formula` | `event` `kind` `formula`, referencing the `temporal`/`formula` node S4 lowers the `CheckedTemporalFormula` to (FSpec FR-370); the recorded horizon is not written, the formula's intervals hold it |
+  | `Event::Compare` | `event` `kind` `compare` with `measure` and `bound` |
+  | `BoundedMeasure::Accumulate`, `Steps`, `Elapsed`, `Fraction` | `measure` `kind` `accumulate`, `steps`, `elapsed`, `fraction`; `within` and `window` the recorded `u64`, or the recorded exact time in the model's time unit |
+  | `ReachTarget::Eventually`, `Always`, `Until` | `target` `kind` `eventually`, `always`, `until` |
+  | no weight, `Weighting::Reward(R)`, `Weighting::Delay` | `weighting` `kind` `none`, `reward`, `delay`; `R` is named by the `reward` binding's nodes |
+  | `Bound::AtLeast(c)`, `Bound::AtMost(c)` | `bound` `direction` `at_least`, `at_most`, `value` `c` in the canonical spelling of its exact value, in the reward's unit or the model's time unit for a quantity |
+  | a `CheckedPredicate` | a `reference` to the predicate node S4 lowers it to |
+  | `OverBinding` | `over`, a `reference` to its `value`/`parameter` node (`OverBinding::node`), or the empty aggregate |
+  | `ClaimActivation::Origin`, `ClaimActivation::Each` | `activation` `kind` `origin`, or `each` with `trigger` the binder's `value`/`parameter` node and `guard` the guard's predicate node, the `true` literal node when no guard is written |
+  | `Confidence` | `confidence` `alpha`, `beta`, `indifference`, or the empty aggregate for `None` |
+
+  A predicate, formula, parameter or guard of the claim that has no emitted
+  node is a `runtime_invariant` refusal naming the claim and the member, as
+  for an unresolved workload or reward; the producer never writes a claim
+  with a member missing.
 - For each such node, the producer SHALL emit exactly one
   `checked_term_data.probabilistic_claims` row `{declaration, occurrence}`.
   Its `declaration` SHALL be the node's structural `NodeRef`.
@@ -167,6 +208,7 @@ checked-package identity from the producer to the carrier and to those causes.
 | FR-498-AC-4 | An emitted package has a one-to-one correspondence among each included `CheckedProbabilisticClaim`, one local `claim`/`probabilistic_claim` node with one declared `claim` occurrence, and one matching sidecar row; it has no unmatched node, row or checked claim, every row names a node already in the emitted graph with that node's own occurrence, and the strict reader admits the package. | Test (TC-1288) |
 | FR-498-AC-5 | `Service` (FR-740-AC-1) with a second workload `Bursty on Service` and claims `A` (`under Steady`), `B` (`under Bursty`) and `C` (`under every scheduler`), each `probability >= 0.5 [always[0,2] holds(true)]`, emits three claim nodes whose `subject` references the `example/service` `model_root`, whose `scheduler` binding and path operand name `Steady`'s node, `Bursty`'s node, and an empty fairness set (path `"every"` with no member), whose `reward` is empty and whose `distributions` are the two `Server::attempt` nodes. Renaming `A` to `B` gives two claims named `B` with different paths, each at ordinal 0. Changing one weight of `Steady` changes `A`'s `node_id` and row and leaves `B`'s and `C`'s byte-identical; changing one support weight of `d` changes all three. Writing `Steady`'s weight lines, and the three claims, in another order changes no byte. The strict reader admits each package. | Test (TC-1288) |
 | FR-498-AC-6 | Over `Service` with `reward duration on Server::request = 1 ms;` added, a claim of each form emits the `reward` binding of "Behavior": the two `duration` nodes, in ascending node-id order, for `probability >= 0.5 [accumulate duration from holds(s.phase = Busy) until holds(s.phase = Done) within 10 <= 5 ms]`, ADR-024's `P95`, `probability >= 0.5 [fraction holds(s.phase = Busy) over [0, 10] weighted by duration >= rational(1, 2)]`, `mean of (fraction holds(s.phase = Busy) over [0, 10] weighted by duration) >= 0.5`, `long_run_fraction holds(s.phase = Busy) weighted by duration >= 0.5` and `expected accumulate duration until holds(s.phase = Done) <= 3 ms`; an empty `reward` for `probability >= 0.5 [steps from holds(s.phase = Busy) until holds(s.phase = Done) within 10 >= 3]`, the same fraction and long-run fraction without `weighted by duration`, `[always[0,2] holds(true)]` and, under the infinite-trace profile, `[eventually holds(s.phase = Done)]`. Rewriting `duration` on `Server::request` to `2 ms` changes exactly the first group's claim `node_id`s. Over FR-740-AC-3's `time dense` unit with `delay Call::reply ~ discrete { 1 ms: 90, 3 ms: 10 };`, `expected elapsed until holds(P) <= 3 ms`, `quantile 0.5 of (elapsed from holds(P) until holds(Q) within 5 ms) <= 3 ms` and `long_run_fraction holds(P) weighted by delay >= 0.5`, for state predicates `P` and `Q` of that unit, each emit an empty `reward` and `delays` holding the one `delay_distribution` node, and changing the delay's weight 10 to 20 changes all three `node_id`s. The strict reader admits each package. | Test (TC-1288) |
+| FR-498-AC-7 | Over `Service` (FR-740-AC-1), a unit with ADR-024 §7.2's `P95` (`quantile 0.95 of (accumulate duration from holds(s.phase = Busy) until holds(s.phase = Done) within 10) <= 5 ms` under `Steady`, `on origin`, `with alpha 0.01, beta 0.01, indifference 0.01`) and `A` (`probability >= 0.5 [always[0,2] holds(true)]` under `Steady`) emits `P95`'s node with `form` `kind` `quantile`, `level` the rational `19/20`, `measure` `accumulate` with `within` the integer `10` and `from`/`until` the predicate nodes of `s.phase = Busy` and `s.phase = Done`, `bound` `at_most` the quantity `5` typed at the unit node of `ms`, `over` empty, `activation` `origin` and `confidence` `alpha`, `beta`, `indifference` each `1/100`; and `A`'s with `form` `probability`, `event` `formula` referencing the `temporal`/`formula` node of `always[0,2] holds(true)`, `bound` `at_least` `1/2` and `confidence` empty. Each change below, made alone, changes that claim's `node_id` and `probabilistic_claims` row and leaves the other claim's byte-identical: `P95`'s `5 ms` to `6 ms`, its `<=` to `>=`, its `0.95` to `0.9`, its `alpha 0.01` to `alpha 0.02`, and its confidence parameters removed; `A`'s `0.5` to `0.6`, its `>=` to `<=`, its event to `always[0,3] holds(true)`, its form to `long_run_fraction holds(true) >= 0.5`, and `on origin` to `on each (m: Service::Server)`; and `A` renamed `a`. Each spelling below leaves both claims' `node_id`s and bodies unchanged: `P95`'s threshold written `0.005 s`, its level written `rational(19, 20)`, its confidence written `beta 0.01, indifference 0.01, alpha 0.01`, `A`'s `0.5` written `rational(1, 2)`, `rational(2, 4)` and `decimal(50, 2)`, and whitespace and a comment added to each. A second claim named `A` with `0.6` has another path and ordinal 0; one written `rational(2, 4)` shares `A`'s path and takes ordinal 1. The strict reader admits each package. | Test (TC-1288) |
 
 ## Dependencies
 
@@ -178,12 +220,7 @@ checked-package identity from the producer to the carrier and to those causes.
   content-ranked ordinal) and its one-to-one association with the checked
   claim and FR-322 sidecar row.
 - **Resolved by FSpec FR-640:** the `probabilistic_claim` body and path that
-  carry what the claim reads.
-- **Open:** FSpec FR-640 has not yet defined the form members of the
-  `probabilistic_claim` body (form, event or measure, threshold, `over`
-  binding, activation and confidence parameters), which FSpec FR-407
-  "Obligation identity" requires the identity to cover. Until it does, the
-  claim's `node_id` covers what the claim reads and its subject, scheduler and
-  name; a change to one of those members changes the written content, which
-  re-ranks the ordinal only among claims that share the path, and the
-  causes carry the `{node, occurrence}` locus alone.
+  carry what the claim reads and what it states (form, event or measure,
+  thresholds, `over` parameter, activation and confidence parameters), so
+  the claim's `node_id` covers every member of FSpec FR-407 "Obligation
+  identity", and a cause can name the member path of a form within the body.
