@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
 use filament_exact::Cancel;
+use filament_semantic_value::catalog::Category;
 use fsl_analyze::analyze::document::{Negotiate, RegistryEntry, SettledRun};
 use fsl_analyze::analyze::Engine;
 use fsl_analyze::monitor::{
@@ -29,9 +30,8 @@ use serde_json::{json, Value};
 
 use super::settle::Settle;
 use super::{
-    check_sources, intake_with_bytes, request, request_integer_division,
-    require_complete_edition, wire, FileCounts, NativeResult, Result, RunCause, RunError,
-    RunLimits, RunResult,
+    check_sources, intake_with_bytes, request, request_integer_division, require_complete_edition,
+    wire, FileCounts, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
 };
 
 /// The format of one event.
@@ -215,15 +215,9 @@ fn refusal_event(record: usize, position: Option<u64>, member: &str, reason: &st
     })
 }
 
-/// FR-285's code of the most severe category, in the order 30, 20, 10, 11,
-/// 21, 22, then 0.
+/// The code of the most severe category according to the shared catalog.
 fn severity_exit(codes: impl Iterator<Item = u8>) -> u8 {
-    const ORDER: [u8; 6] = [30, 20, 10, 11, 21, 22];
-    codes
-        .filter_map(|code| ORDER.iter().position(|ranked| *ranked == code))
-        .min()
-        .and_then(|rank| ORDER.get(rank).copied())
-        .unwrap_or(0)
+    Category::most_severe(codes).unwrap_or(0)
 }
 
 /// One record of the stream, read.
@@ -990,4 +984,19 @@ fn chained<T>(outer: &Cancel, work: impl FnOnce(&Cancel) -> T) -> T {
         let _ = done.send(());
         value
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::severity_exit;
+    use ix_trace_rs::trace;
+
+    #[trace("TC-769", "FR-285-AC-2")]
+    #[test]
+    fn monitor_exit_uses_the_catalog_severity_order() {
+        for (codes, expected) in [([10, 22], 22), ([20, 21], 20)] {
+            assert_eq!(severity_exit(codes.into_iter()), expected);
+            assert_eq!(severity_exit(codes.into_iter().rev()), expected);
+        }
+    }
 }
