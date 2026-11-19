@@ -3468,6 +3468,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     Value::Quantity(Quantity::new(magnitude, unit_id))
                 } else {
                     if matches!(target_type, ValueType::Integer)
+                        && source_type.admits(&value)
                         && matches!(&value, Value::Rational(value) if !value.is_integer())
                     {
                         // Integer has no finite domain to put in an
