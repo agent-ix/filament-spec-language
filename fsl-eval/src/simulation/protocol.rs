@@ -96,7 +96,8 @@ pub use memory::{
     MemoryStep, MemoryStepId, Read, ReadChoice, Sc, ScComponent, SharedCell, Written,
 };
 pub use package_program::{
-    PackageControl, PackageProgramRefusal, PackageProtocolProgram, PackageRole,
+    PackageAttemptContext, PackageControl, PackageProgramRefusal, PackageProtocolProgram,
+    PackageRole,
 };
 use program::{Program, Rest};
 pub use ra::{CarriedView, Ra, RaComponent};
