@@ -51,3 +51,70 @@ pub(super) fn analyse(subject: &ScheduleSubject, cancel: &Cancel) -> Analysed<Cl
         ClosedFormEvidence::FixedPoints(fixpoints),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use filament_exact::{Cancel, Integer, Rational};
+    use fsl_replay::{
+        Arrival, ClosedFormEvidence, ClosedFormOutcome, Criticality, Identifier, QualifiedName,
+        ScheduleClaim, ScheduleSubject, SchedulingPolicy, Task, TaskSet, Wcet,
+    };
+    use ix_trace_rs::trace;
+
+    use super::analyse;
+
+    fn integer(value: i64) -> Rational {
+        Rational::from_integer(Integer::from(value))
+    }
+
+    fn task(name: &str, execution: i64, period: i64, priority: u64) -> Task {
+        Task {
+            name: Identifier::new(name).expect("a task name"),
+            arrival: Arrival::Periodic {
+                period: integer(period),
+            },
+            deadline: integer(period),
+            wcet: Wcet::Single(integer(execution)),
+            priority: Some(priority),
+            criticality: Criticality::Lo,
+            jitter: integer(0),
+            blocking: integer(0),
+        }
+    }
+
+    /// Trace: TC-702, FR-247-AC-1.
+    #[trace("TC-702", "FR-247-AC-1")]
+    #[test]
+    fn buttazzo_response_time_oracle_matches_ctl_fixpoints() {
+        let set = TaskSet::new(
+            QualifiedName::new(vec![Identifier::new("Ctl").expect("a set name")])
+                .expect("one name segment"),
+            vec![task("a", 1, 4, 1), task("b", 2, 6, 2), task("c", 5, 12, 3)],
+        )
+        .expect("an admitted task set");
+        let subject = ScheduleSubject::new(
+            set,
+            ScheduleClaim::Schedulable(SchedulingPolicy::FixedPriority),
+        )
+        .expect("an admitted fixed-priority claim");
+        let outcome = match analyse(&subject, &Cancel::new()) {
+            Ok(outcome) => outcome,
+            Err(_) => panic!("the fixed-priority oracle completes"),
+        };
+        let ClosedFormOutcome::Schedulable(ClosedFormEvidence::FixedPoints(fixpoints)) = outcome
+        else {
+            panic!("the Ctl oracle is schedulable");
+        };
+        let responses: Vec<_> = fixpoints
+            .iter()
+            .map(|fixpoint| {
+                fixpoint.jobs[0]
+                    .last()
+                    .expect("a job has a response-time fixpoint")
+                    .clone()
+            })
+            .collect();
+
+        assert_eq!(responses, vec![integer(1), integer(3), integer(12)]);
+    }
+}
