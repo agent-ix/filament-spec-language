@@ -27,7 +27,7 @@ use ix_trace_rs::trace;
 
 use crate::refinement_aux::{
     halting_refinement, hidden_register_history, int, pair_refinement, probe_contracts,
-    probe_refinement, register_history_ensured, Unit, World as AuxWorld, NEVER,
+    probe_refinement, register_history_ensured, Shape as AuxShape, Unit, World as AuxWorld, NEVER,
     UNLIMITED as AUX_UNLIMITED,
 };
 use crate::refinement_fixture::{
@@ -687,27 +687,31 @@ fn a_proved_liveness_half_is_uncertified_and_a_replayed_lasso_refutes() {
     assert_eq!(settled.liveness, Some(TerminalValue::Refuted));
 }
 
-/// FR-144-AC-3 (TC-549 step 3): the hidden-field refinement with its
-/// `ensure` row settles `unsupported`, `unavailable`,
-/// `Unsupported(unsupported-requested-capability)`, with the safety half
-/// `Proved{Exhaustive, Certified}` on the record.
-#[trace("TC-549", "FR-144-AC-3")]
+/// FR-899-AC-1/AC-5 (TC-2536/TC-550): a hidden-field peek loop refutes with
+/// `HiddenUnfair`, and FR-145 reproduces it from the counterexample.
+#[trace("TC-2536", "FR-899-AC-1", "FR-899-AC-5")]
 #[test]
-fn liveness_through_a_hidden_field_settles_unsupported_beside_a_proved_safety_half() {
-    let unit = Unit::register();
-    let world = unit.world(&hidden_register_history());
+fn a_hidden_unfair_peek_lasso_replays_and_settles_refuted() {
+    let unit = Unit::registers(&["r"], &["r"], AuxShape::Peeker);
+    let refinement = hidden_register_history().replace(
+        "step Impl::Register::write",
+        "step Impl::Register::peek -> stutter;\nstep Impl::Register::write",
+    );
+    let world = unit.world(&refinement);
     let subject = aux(&world);
+    let payload = lasso(outcome(&subject));
+    assert!(matches!(
+        payload.refinement.as_ref(),
+        Some(RefinementFailure::HiddenUnfair { .. })
+    ));
+    let (failure, _) = reproduced(replay(&subject, &payload));
+    assert_eq!(Some(failure), payload.refinement);
     let settled = settle_item(&subject, &outcome(&subject));
-    let cause = TerminalValue::Unsupported(UnavailabilityCause::HiddenFieldLiveness);
-    assert_eq!(settled.record.value, cause);
-    assert_eq!(settled.record.label, ResultLabel::Unsupported);
-    assert_eq!(settled.record.basis, SettlementBasis::Unavailable);
+    assert_eq!(settled.record.value, TerminalValue::Refuted);
+    assert_eq!(settled.record.label, ResultLabel::Refuted);
+    assert_eq!(settled.record.basis, SettlementBasis::DecisiveCounterexample);
     assert_eq!(settled.safety, Some(proved(Certification::Certified)));
-    assert_eq!(settled.liveness, Some(cause));
-    let TerminalValue::Unsupported(cause) = &settled.record.value else {
-        panic!("unsupported");
-    };
-    assert_eq!(cause.as_str(), "unsupported-requested-capability");
+    assert_eq!(settled.liveness, Some(TerminalValue::Refuted));
 }
 
 /// The steps of `operations`, each the first successor of the state before
