@@ -423,7 +423,7 @@ fn an_abstract_time_invariant_refutes_at_its_crossing_delay() {
         &concrete,
         &format!(
             "{DENSE}time A dense unit ms;\n\
-             time invariant Wait when {{ true }} {{ self.y <= 3 ms }}\n\
+             time invariant AbstractInvariant when {{ true }} {{ self.y <= 3 ms }}\n\
              post ASend using v on A::Call::send {{ self.inflight }}\n\
              pre MSend using v on M::Call::send {{ self.x >= 0 ms }}\n\
              post MSent using v on M::Call::send {{ self.inflight }}\n{}",
