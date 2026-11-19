@@ -137,7 +137,7 @@ impl Lowering<'_> {
     ) -> Result<(BindingValue, NodeKey), CheckRefusal> {
         let claim_at = terminal_location(index, TerminalSite::Claim);
         let mut scope = Vec::new();
-        if predicate.body.reads_local(0) {
+        if !predicate.parameters.is_empty() && predicate.body.reads_local(0) {
             let self_type = self.type_node(&ValueType::Reference(object), &claim_at)?;
             let parameter = self.parameter("self", 0, self_type.clone(), &claim_at)?;
             self.record(self_type.clone(), OccurrenceRole::Type, claim_at.clone());

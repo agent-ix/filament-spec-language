@@ -590,8 +590,8 @@ pub enum AssemblyCause {
         /// The alias as written.
         alias: String,
     },
-    /// A `terminal when` declaration's model has no population, so its state
-    /// has no object for the predicate's `self` to range over (FR-124).
+    /// A `terminal when` declaration's populations cover no single object
+    /// type for the predicate's `self` to range over (FR-124).
     UnresolvedTerminalState {
         /// The model alias.
         model: String,
@@ -6629,29 +6629,39 @@ fn terminal_declarations(
             TerminalDeclarationKind::Any => TerminalClauseKind::Any,
             TerminalDeclarationKind::When(predicate) => {
                 let objects: Vec<EffectiveId> = model.population_objects().into_iter().collect();
-                let [context] = objects.as_slice() else {
-                    let cause = if objects.is_empty() {
-                        AssemblyCause::UnresolvedTerminalState {
-                            model: alias.to_owned(),
-                        }
-                    } else {
-                        AssemblyCause::AmbiguousTerminalState {
-                            model: alias.to_owned(),
-                        }
-                    };
-                    errors.push(error(cause, form.model.span));
-                    continue;
+                let self_span = predicate
+                    .expression
+                    .iter()
+                    .find_map(|node| match node.node() {
+                        ExprNode::Name(name) if name.name == "self" => Some(name.span),
+                        _ => None,
+                    });
+                let context = match (self_span, objects.as_slice()) {
+                    (Some(_), [_]) => objects.first().cloned(),
+                    (Some(span), _) => {
+                        errors.push(error(
+                            AssemblyCause::UnresolvedTerminalState {
+                                model: alias.to_owned(),
+                            },
+                            span,
+                        ));
+                        continue;
+                    }
+                    (None, _) => None,
                 };
-                let context = context.clone();
-                let population = match population_of(models, context.clone(), types) {
-                    Ok(domain) => domain,
+                let population = match context
+                    .as_ref()
+                    .map(|context| population_of(models, context.clone(), types))
+                    .transpose()
+                {
+                    Ok(domain) => domain.flatten(),
                     Err(populations) => {
                         errors.push(error(
                             AssemblyCause::AmbiguousPopulation {
                                 context: alias.to_owned(),
                                 populations,
                             },
-                            form.model.span,
+                            self_span.unwrap_or(form.model.span),
                         ));
                         continue;
                     }

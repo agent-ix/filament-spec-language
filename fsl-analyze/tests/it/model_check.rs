@@ -233,6 +233,177 @@ fn the_terminal_state_is_deadlocked_only_without_a_declaration_covering_it() {
     }
 }
 
+#[trace("TC-519", "FR-124-AC-5", "FR-124-AC-8")]
+#[test]
+fn terminal_when_self_ranges_over_every_object_and_is_vacuous_when_empty() {
+    for (objects, expected) in [
+        (vec![("c1", 3), ("c2", 3)], TerminalClass::Intended),
+        (vec![("c1", 3), ("c2", 2)], TerminalClass::Deadlocked),
+        (vec![], TerminalClass::Intended),
+    ] {
+        let world = world(WHEN, &[&objects]);
+        let keys: Vec<_> = objects.iter().map(|(key, _)| *key).collect();
+        let system = system(&world, &keys);
+        assert_eq!(
+            system
+                .terminal_class(&system.initial()[0], false)
+                .expect("classifies"),
+            expected
+        );
+    }
+}
+
+#[trace("TC-519", "FR-124-AC-8", "TC-1076", "FR-391-AC-9")]
+#[test]
+fn terminal_when_population_predicates_are_read_once_even_without_objects() {
+    for domain in ["M::counters", "allInstances<M::Counter>(M::counters)"] {
+        for (quantifier, empty) in [
+            ("exists", TerminalClass::Deadlocked),
+            ("forall", TerminalClass::Intended),
+        ] {
+            let terminal = format!("terminal Done using v on M when {{ {quantifier}(c in {domain} : c.value = 3) }};\n");
+            for (objects, expected) in [
+                (vec![("a", 3), ("b", 3)], TerminalClass::Intended),
+                (vec![("a", 2), ("b", 1)], TerminalClass::Deadlocked),
+                (vec![], empty),
+            ] {
+                let world = world(&terminal, &[&objects]);
+                let keys: Vec<_> = objects.iter().map(|(key, _)| *key).collect();
+                let system = system(&world, &keys);
+                assert_eq!(
+                    system
+                        .terminal_class(&system.initial()[0], false)
+                        .expect("classifies"),
+                    expected,
+                    "{terminal} {objects:?}"
+                );
+            }
+        }
+    }
+}
+
+#[trace("TC-519", "FR-124-AC-6")]
+#[test]
+fn terminal_when_quantifies_two_populations_at_the_reachable_terminal_state() {
+    use serde_json::json;
+    let mut model: serde_json::Value = serde_json::from_slice(&document(false)).expect("JSON");
+    let mut gate = model["types"][1].clone();
+    gate["identity"] = json!("ix://test/counter/Gate");
+    gate["displayName"] = gate["identity"].clone();
+    let mut open = gate["fields"][0].clone();
+    open["identity"] = json!("ix://test/counter/Gate/open");
+    open["name"] = json!("open");
+    open["typeRef"] = json!("ix://filament/native/Boolean");
+    gate["fields"] = json!([open]);
+    let mut release = gate["operations"][0].clone();
+    release["identity"] = json!("ix://test/counter/Gate/release");
+    release["name"] = json!("release");
+    release["frame"]["modifies"] = json!(["ix://test/counter/Gate/open"]);
+    gate["operations"] = json!([release]);
+    model["types"].as_array_mut().expect("types").push(gate);
+    let mut gates = model["populations"][0].clone();
+    gates["identity"] = json!("ix://test/counter/gates");
+    gates["displayName"] = gates["identity"].clone();
+    gates["members"] = json!(["ix://test/counter/Gate"]);
+    model["populations"]
+        .as_array_mut()
+        .expect("populations")
+        .push(gates);
+    let model = serde_json::to_vec(&model).expect("JSON");
+    let body = format!("{CONTRACT}\npre Closed using v on M::Gate::release {{ not self.open }}\npost Released using v on M::Gate::release {{ self.open }}\nterminal Done using v on M when {{ forall(c in M::counters : c.value = 3) and forall(g in M::gates : g.open) }};\n");
+    let (package, _) = package_with_clauses(&model, &body, &[]);
+    let mut documents = Documents::new(model);
+    let start = documents.start("start", &[("c1", 0)]);
+    let bytes = documents.snapshots.get_mut(&start).expect("snapshot");
+    let mut snapshot: serde_json::Value = serde_json::from_slice(bytes).expect("JSON");
+    snapshot["populations"].as_array_mut().expect("populations").push(json!({
+        "population": "ix://test/counter/gates", "complete": true,
+        "objects": [{"key": "g1", "type": "ix://test/counter/Gate", "fields": {"open": {"boolean": false}}}]
+    }));
+    *bytes = serde_json::to_vec(&snapshot).expect("JSON");
+    let mut request = subject(&package, &documents, vec![start], &["c1"], UNLIMITED).simulation;
+    request.universes.push(PopulationUniverse {
+        population: crate::counter::key("gates"),
+        keys: vec!["g1".to_owned()],
+    });
+    let system = ModelSystem::new(request).expect("two-population subject");
+    let mut queue: VecDeque<_> = system.initial().into_iter().collect();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut terminals = 0;
+    while let Some(state) = queue.pop_front() {
+        if !seen.insert(system.state_key(&state).expect("key").0) {
+            continue;
+        }
+        let expansion = system.successors(&state).expect("expands");
+        if expansion.successors.is_empty() {
+            terminals += 1;
+            assert_eq!(value(&state, "c1"), 3);
+            assert_eq!(
+                state.state().populations[&crate::counter::key("gates")]["g1"].fields
+                    [&crate::counter::key("Gate/open")],
+                filament_exact::Value::Boolean(true)
+            );
+            assert_eq!(
+                system.terminal_class(&state, false).expect("classifies"),
+                TerminalClass::Intended
+            );
+        }
+        queue.extend(expansion.successors.into_iter().map(|(_, state)| state));
+    }
+    assert_eq!(terminals, 1);
+    assert_eq!(seen.len(), 8);
+}
+
+#[trace("TC-519", "FR-124-AC-10")]
+#[test]
+fn terminal_when_false_outweighs_undefined_regardless_of_object_order() {
+    let mut document: serde_json::Value = serde_json::from_slice(&document(false)).expect("JSON");
+    document["types"][1]["operations"] = serde_json::json!([]);
+    let document = serde_json::to_vec(&document).expect("JSON");
+    let terminal = "terminal Done using v on M when { q(2 - self.value) = 1 or self.value = 3 };\nfunction q using v(x: Integer): Integer pure { 3 mod x }\n";
+    for (first, second, expected) in [(2, 1, 0), (1, 2, 0), (2, 3, 1), (0, 3, 2)] {
+        let world = world_in_mode(
+            document.clone(),
+            terminal,
+            &[&[("c1", first), ("c2", second)]],
+            CheckMode::Kernel,
+        );
+        let system = system(&world, &["c1", "c2"]);
+        let class = system
+            .terminal_class(&system.initial()[0], false)
+            .expect("classifies");
+        match expected {
+            0 => assert_eq!(class, TerminalClass::Deadlocked),
+            1 => {
+                assert!(
+                    matches!(class, TerminalClass::Undefined { .. }),
+                    "{class:?}"
+                );
+                let outcome = run(
+                    &world,
+                    &["c1", "c2"],
+                    ModelCheckItem::DeadlockFreedom,
+                    None,
+                    ModelCheckLimits::default(),
+                    UNLIMITED,
+                )
+                .expect("checked");
+                let counterexample = violated(&outcome);
+                let CounterexampleKind::UndefinedEvaluation(evaluation) = &counterexample.kind
+                else {
+                    panic!("undefined terminal: {counterexample:?}")
+                };
+                assert!(matches!(evaluation.site.locus, UndefinedLocus::Terminal(_)));
+                assert_eq!(
+                    evaluation.cause,
+                    UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
+                );
+            }
+            _ => assert_eq!(class, TerminalClass::Intended),
+        }
+    }
+}
+
 /// Verifies the deadlock half of FR-126-AC-3 (its terminal-stutter lasso is
 /// `liveness::a_behaviour_that_ends_is_the_lasso_whose_loop_is_the_terminal_stutter_step`):
 /// with no `terminal` declaration the

@@ -128,6 +128,55 @@ fn terminal_classes(
     classes
 }
 
+#[trace("TC-519", "FR-124-AC-5", "FR-124-AC-8", "TC-1076", "FR-391-AC-9")]
+#[test]
+fn terminal_when_population_and_self_classify_equally_on_both_routes() {
+    use fsl_eval::simulation::model::TerminalClass;
+    for (predicate, empty) in [
+        ("self.value = 3", TerminalClass::Intended),
+        (
+            "forall(c in M::counters : c.value = 3)",
+            TerminalClass::Intended,
+        ),
+        (
+            "exists(c in M::counters : c.value = 3)",
+            TerminalClass::Deadlocked,
+        ),
+    ] {
+        for (objects, expected) in [
+            (vec![("a", 3), ("b", 3)], TerminalClass::Intended),
+            (vec![("a", 1), ("b", 2)], TerminalClass::Deadlocked),
+            (vec![], empty),
+        ] {
+            let model = still_document();
+            let body = format!("terminal Done using v on M when {{ {predicate} }};\n");
+            let (package, _) = package_with_clauses(&model, &body, &[]);
+            let mut documents = Documents::new(model);
+            let start = documents.start("start", &objects);
+            let keys: Vec<_> = objects.iter().map(|(key, _)| *key).collect();
+            let source = subject(&package, &documents, vec![start], &keys, UNLIMITED);
+            let handoff = handoff(&package, &documents);
+            let bare = bare(&handoff);
+            let input = PackageModelInput::of(
+                &bare,
+                &documents.packages,
+                ModelNormalizationLimits::default(),
+            )
+            .expect("package input");
+            let mut request = source.simulation.clone();
+            request.input = input.input();
+            for system in [
+                ModelSystem::new(source.simulation).expect("source system"),
+                ModelSystem::new(request).expect("package system"),
+            ] {
+                let states = terminal_classes(&system);
+                assert_eq!(states.len(), 1);
+                assert_eq!(states[0].1, expected, "{predicate}, {objects:?}");
+            }
+        }
+    }
+}
+
 /// FR-411, FR-940, FR-124: a package holding a `terminal` declaration builds
 /// the package-route input, which reads the declaration from its admitted
 /// terminal row and classifies every reachable state as the source route does
