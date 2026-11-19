@@ -627,11 +627,6 @@ pub enum AssemblyCause {
     /// and no S3 check reads yet (FR-230): `unsupported_construct`/
     /// `not-yet-implemented`, never compiled unchecked.
     TimedNotChecked(super::refusal::TimedConstruct),
-    /// A synthesis form whose FR-754 lowering is not installed yet.
-    SynthesisNotChecked {
-        /// The synthesis declaration's authored name.
-        name: String,
-    },
     /// A verification plan form whose FR-753 lowering is not installed yet.
     VerificationPlanNotChecked {
         /// The verification plan's authored name.
@@ -716,7 +711,6 @@ impl AssemblyCause {
             Self::UnsupportedLayerForm { .. }
             | Self::UnselectedModelConstruct(_)
             | Self::TimedNotChecked(_)
-            | Self::SynthesisNotChecked { .. }
             | Self::VerificationPlanNotChecked { .. } => Code::UnsupportedConstruct,
         }
     }
@@ -830,9 +824,9 @@ impl AssemblyCause {
             Self::Handle(_) | Self::NominalAdmission(_) => "established-invariant-broken",
             Self::UnsupportedLayerForm { form, .. } => form.refusal_cause(),
             Self::UnselectedModelConstruct(refusal) => refusal.family.refusal_cause(),
-            Self::TimedNotChecked(_)
-            | Self::SynthesisNotChecked { .. }
-            | Self::VerificationPlanNotChecked { .. } => "not-yet-implemented",
+            Self::TimedNotChecked(_) | Self::VerificationPlanNotChecked { .. } => {
+                "not-yet-implemented"
+            }
         };
         CatalogCode::new(self.code().as_str(), cause)
     }
@@ -4514,11 +4508,6 @@ impl PackageDeclarations {
             .iter()
             .filter_map(|form| {
                 let cause = match form.form() {
-                    fsl_forms::DeclarationForm::Synthesis(synthesis) => {
-                        Some(AssemblyCause::SynthesisNotChecked {
-                            name: synthesis.name.name.clone(),
-                        })
-                    }
                     fsl_forms::DeclarationForm::VerificationPlan(plan) => {
                         Some(AssemblyCause::VerificationPlanNotChecked {
                             name: plan.name.name.clone(),
