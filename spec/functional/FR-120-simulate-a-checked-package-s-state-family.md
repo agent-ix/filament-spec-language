@@ -817,7 +817,12 @@ field, `[1, o, p, ...]` for a parameter and `[2, o, ...]` for a result; a
 population is named by its `relation`/`population` node (FSpec FR-201
 `PopulationId`). A root that `classify_extent` finds unbounded makes
 `explore_model` and `sample_model` return `NotSimulated::RequiresBound`
-naming it, before any state is expanded.
+naming it, before any state is expanded. A root that a model-based test request bounds,
+by the size-bounded domain of `max_value_bits` for a root with no finite
+bound or by the indexed declared domain for a declared-finite root this
+section does not enumerate (FR-752, FSpec FR-190 "Value domains"), is
+bounded for that request, and its candidates range over that domain; every
+other caller still receives `RequiresBound` for it.
 
 ### Effects as data
 

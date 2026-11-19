@@ -72,7 +72,7 @@ and before `monitor`, with one public entry:
 pub fn execute_plan(
     package: &fsl_package::CheckedPackage,
     plan: &fsl_package::verification_plan::VerificationPlan,
-    inputs: &PlanInputs<'_>,          // initial snapshot per consuming step, seed
+    inputs: &PlanInputs<'_>,          // initial snapshot per consuming step, seed, max_trace_length, max_value_bits
     engines: &Engines,
     negotiate: &dyn Negotiate,
     limits: &AnalyzeLimits,
@@ -95,6 +95,12 @@ pub fn execute_plan(
 - `fsl-command` serves the request member (FR-1038) and calls
   `execute_plan`, as it calls `fsl_analyze::analyze` for `native-analyze/1`
   (FR-621). That edge is the one ADR-011 §6.1 records for `fsl-command`.
+- `PlanInputs` holds the request's per-step inputs as FSpec FR-824 reads
+  them: the admitted `initial` snapshot per consuming step, the `seed`, and
+  `max_trace_length` and `max_value_bits`, each `Option<u64>` and `None` when
+  absent. The coordinator hands each member only to the steps FSpec FR-824
+  says consume it; that a consuming step has its member is checked by the
+  request reader (FR-1038) before `execute_plan` runs.
 - `PlanRefusal` is a whole-plan refusal before any step runs: the plan
   document's reader refusal, the package-identity mismatch, or an `initial`
   that no consuming step's model admits.
@@ -113,7 +119,7 @@ and on no other:
 | `probabilistic_statistical` | a negotiated `probabilistic-satisfaction` item with evidence `statistical` (EN-4), seeded by the request's `seed` | FR-189, FR-191, FR-192 |
 | `hybrid_solver` | a negotiated `temporal-satisfaction` item carrying the hybrid-dynamics requirement, run by the negotiated hybrid provider | FR-750, FR-1019 |
 | `schedulability` | a negotiated `schedulability` item through `analyze` | FR-246, FR-633 |
-| `model_based_test` | `fsl-eval`'s model-based test entry, with the step's clause, domain, bound as `max_cases` and the request's `seed`; its FR-190 record is the step's result | FR-752 |
+| `model_based_test` | `fsl-eval`'s model-based test entry, with the step's clause, domain, bound as `max_cases`, the request's `seed`, and the request's `max_trace_length` and `max_value_bits` where the step consumes them (FSpec FR-824); its FR-190 record, whose `result` and `cause` carry the step's FR-331 settlement, is the step's result | FR-752 |
 | `simulate` | a `simulation` item through `analyze`, not negotiated | FR-634, FR-120 |
 | `replay` | a negotiated `finite-replay` item, run through the layer-6 replay facade | FR-098 |
 
@@ -131,7 +137,7 @@ settles the same item outside a plan.
 | FR-753-AC-2 | S3 checks `Release` and refuses each of FSpec FR-192-AC-9's and AC-10's mutations with the cause and span stated, including the `a`/`b` cycle as `invalid_package`/`definition-cycle`. | Test (TC-2103) |
 | FR-753-AC-3 | The unit's checked package identity is equal with and without `Release`; S4 emits its plan document with three nodes and one `requires` edge. | Test (TC-2103) |
 | FR-753-AC-4 | Executing `Release` where `safe` settles `refuted` still runs the independent step `tested`, blocks `timely` with the disposition `blocked` naming `safe`, and records one disposition per node. | Test (TC-2103) |
-| FR-753-AC-5 | `fsl_analyze::plan::execute_plan` over `Release` with engines holding no `temporal-satisfaction` engine returns `safe` `unsupported` with `unsupported_projection`/`unsupported-requested-capability`, `tested` `tested` from `fsl-eval`'s model-based test entry with `max_cases` 500 and the given seed, and `timely` `blocked` by `safe`; a recording `Negotiate` is asked for `safe` only, never for the blocked `timely` and never for `tested`, whose method is not negotiated; a plan document whose `package` is another identity refuses before any step, naming both identities. | Test (TC-3028) |
+| FR-753-AC-5 | `fsl_analyze::plan::execute_plan` over `Release` with engines holding no `temporal-satisfaction` engine returns `safe` `unsupported` with `unsupported_projection`/`unsupported-requested-capability`, `tested` `tested` from `fsl-eval`'s model-based test entry with `max_cases` 500, the given seed and `max_trace_length` 8 from `PlanInputs`, and `timely` `blocked` by `safe`; a recording `Negotiate` is asked for `safe` only, never for the blocked `timely` and never for `tested`, whose method is not negotiated; a plan document whose `package` is another identity refuses before any step, naming both identities. | Test (TC-3028) |
 
 ## Dependencies
 

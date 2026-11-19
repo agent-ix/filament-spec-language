@@ -23,21 +23,65 @@ that native replay reproduces.
 ## Inputs
 
 A checked package, one clause identity, a generator profile, a seed,
-`max_cases`, `max_trace_length`, `max_value_bits` where a domain has no
-finite bound, and the run's limits and cancellation. A `verify` plan step
-with method `model_based_test` (FR-753) supplies the clause, domain and
-bound (`max_cases`).
+`max_cases`, `max_trace_length`, `max_value_bits` (1 to 64) when a
+generation root has no finite bound (FSpec FR-190 "Value domains"), and the
+run's limits and cancellation. A `verify` plan step with method
+`model_based_test` (FR-753) supplies the clause, domain and bound
+(`max_cases`), and the plan request supplies `seed`, `max_trace_length` and
+`max_value_bits` (FSpec FR-824).
 
 ## Outputs
 
-FSpec FR-190's result record: counts, partitions covered, provenance and at
-most one retained counterexample.
+FSpec FR-190's result record: its settlement, `cases`, `checks`, `partitions`,
+`partition_coverage`, operation coverage, provenance and at most one
+retained counterexample.
 
 ## Behavior
 
 - The generator SHALL be a deterministic function of the package, clause,
   profile, seed and limits; it SHALL first emit every boundary partition of
   FSpec FR-190 "Generation and shrinking contract", then seeded cases.
+- The generator SHALL classify each generation root as FSpec FR-190 "Value
+  domains" states. The generator SHALL draw a root with no finite bound from
+  the size-bounded domain of `max_value_bits` in size order, and every other
+  root from its declared domain unchanged, so `max_value_bits` never narrows
+  a declared finite domain. The provenance SHALL record `max_value_bits`,
+  one `size_bounded` entry per such root and `value_bound_cuts`.
+- For a state model the entry SHALL give FR-120's `ModelSystem` the
+  size-bounded domain of each root with no finite bound (an operation result
+  included), and the indexed declared domain of each declared-finite root
+  FR-120 does not enumerate, as that root's bound for the requires-bound
+  check (FR-120 "Bounds"). An enabled application whose postcondition has no
+  candidate post-state or result inside a size-bounded domain SHALL be
+  counted as a value-bound cut and yields no successor; it is never a
+  deadlock.
+- Partition cases SHALL be built as FSpec FR-190 "Partitions" states: in the
+  domain through the shortest enabled prefix the coverage exploration finds,
+  or as refusal cases through the native admission that guards the root.
+  For a parameter partition value that no explored state within the bounds
+  enables, the generator SHALL produce a generated case discarded
+  `precondition-false`, never a skipped one. For a field partition value
+  that no explored state holds, the generator SHALL record the partition
+  `uncovered` with its reachability reason.
+- Filtering disabled argument vectors out of a `ModelSystem` expansion SHALL
+  remain the construction of the enabled set: it produces no case and no
+  count.
+- The oracle SHALL evaluate the clause at the check points and under the
+  premises FSpec FR-190 "Case accounting" gives its kind. A skipped check
+  point is counted in `checks.skipped` and never passes a case.
+- The result record SHALL carry `cases` (with `discarded_by`), `checks`,
+  `partitions` and `partition_coverage`, and `max_cases` SHALL bound
+  `cases.generated`, discarded cases included.
+- A completed run with no failing and no passing case SHALL settle
+  `inconclusive` with cause `no-evaluated-case`, never `tested`. A refusal
+  case that native admission accepts SHALL settle the run `failed` with
+  `tool-failure{defect: oracle-disagreement}`, and a shrink step that leaves
+  the domain or changes the failing clause `failed` with
+  `tool-failure{defect: invalid-shrink}`.
+- With any size-bounded root or value-bound cut, operation and partition
+  coverage SHALL NOT report `unreachable`, and every
+  `unreachable-within-bound` entry SHALL carry `bounds` (FSpec FR-190
+  "Operation coverage").
 - Test traces SHALL be built by FR-120's `ModelSystem`: each invocation is
   chosen among those enabled at the current state, so no generated trace
   applies a disabled invocation, and every state is the system's successor.
@@ -68,8 +112,12 @@ most one retained counterexample.
 | --- | --- | --- |
 | FR-752-AC-1 | Over `test/counters` with `inc` on `Int[0, 5]` and `value <= 3`, every generated invocation is enabled, the first cases include `value` 0 and 5 and the just-outside refusals, and the retained counterexample is four `inc` from 0, 1-minimal and replay-reproduced. | Test (TC-2102) |
 | FR-752-AC-2 | For every seed in a fixed set, every shrink step the shrinker accepts is strictly smaller in the pinned order, domain-valid, enabled and fails the same clause; no single removal or one-step decrease of the retained case still fails. | Test (TC-2102) |
-| FR-752-AC-3 | A `verify` step `check t claim Bounded method model_based_test domain M::Counter bound 50;` runs at most 50 cases and its record names the step; a passing run settles no verdict and records `tested`. | Test (TC-2102) |
-| FR-752-AC-4 | Over a counter model with `inc` (enabled while `value < 5`, `value` in `Int[0, 5]`), `reset` (enabled at `value = 5`) and `jam` (enabled at `value > 5`), seed 7, `max_cases` 100 and `max_trace_length` 8, `operations` lists `inc` and `reset` `covered` with their first case and `jam` `uncovered`, reason `unreachable`, and `coverage` is `partial`; with `max_trace_length` 3, `reset` is `uncovered`, reason `unreachable-within-bound`. Two equal runs give equal `operations`, and the passing run stays `tested` with no verdict. | Test (TC-2956) |
+| FR-752-AC-3 | A `verify` step `check t claim Bounded method model_based_test domain M::Counter bound 50;` runs at most 50 cases (`cases.generated` at most 50, discarded cases included) and its record names the step; a passing run settles no verdict and records `tested`. | Test (TC-2102) |
+| FR-752-AC-4 | Over a counter model with `inc` (enabled while `value < 5`, `value` in `Int[0, 5]`), `reset` (enabled at `value = 5`) and `jam` (enabled at `value > 5`), seed 7, `max_cases` 100 and `max_trace_length` 8, `operations` lists `inc` and `reset` `covered` with their first case and `jam` `uncovered`, reason `unreachable`, and `coverage` is `partial`; with `max_trace_length` 3, `reset` is `uncovered`, reason `unreachable-within-bound` with `bounds` `["max_trace_length"]`. Two equal runs give equal `operations`, and the passing run stays `tested` with no verdict. | Test (TC-2956) |
+| FR-752-AC-5 | Over the predicate `Square` with parameter `x: Integer` and body `x * x >= 0`, seed 7, `max_cases` 20 and `max_value_bits` 8: the first five cases are `x` = 0, -1, 1, -255 and 255 (`size-least`, `size-unit` twice, `size-extreme-low`, `size-extreme-high`); no case has `x` outside `[-255, 255]` and no partition kind ends in `-refusal`; `provenance.max_value_bits` is 8 and `provenance.size_bounded` has one entry with `values` `"511"`; the run is `tested` with `cases.generated` 20. Over the body `x < 200` the retained counterexample is `x` = 200, which native replay fails. `max_value_bits` 0 and 65 each refuse `invalid_runtime_input`/`invalid-value`, and `max_value_bits` 8 over the predicate `value <= 3` with parameter `value: Int[0, 5]` refuses `invalid_runtime_input`/`unknown-member`; each refusal names `max_value_bits` and runs no case. | Test (TC-2102) |
+| FR-752-AC-6 | Over a counter with `value: Integer` (initial 0), `add(by: Int[1, 100])` (`value' = value + by`) and `big()` (enabled when `value >= 300`), seed 7, `max_cases` 100, `max_trace_length` 8 and `max_value_bits` 8: `big` is `uncovered` with reason `unreachable-within-bound` and `bounds` `["max_value_bits"]`, never `unreachable`; `provenance.value_bound_cuts.count` is at least 1; the run is `tested`. With `max_value_bits` 10, `big` is `covered`, or `not-generated` with an `enabled_at` prefix of `add` invocations whose arguments sum to at least 300. | Test (TC-2956) |
+| FR-752-AC-7 | Over a counter with `value` in `Int[0, 5]` (initial 0), `inc(by: Int[1, 6])` (enabled when `value + by <= 5`) and `jam()` (enabled when `value > 5`), the postcondition clause `Inc` of `inc`, seed 7, `max_cases` 100 and `max_trace_length` 8: cases 0 to 7 are the partitions of `value` (-1, 0, 5, 6) followed by those of `by` (0, 1, 6, 7); the cases for `value` -1 and 6 and `by` 0 and 7 are refusal cases discarded `domain-refusal` with their partitions `refused`; the `by` 6 case is discarded `precondition-false` and its partition is `uncovered` with reason `precondition-false` and `bounds` `[]`; `cases.generated` is 100 and equals `passed + failed + discarded`; the run is `tested`. The precondition clause of `inc` over the same model has `discarded_by.precondition-false.count` 0, because a false precondition is a defined, passing point. The postcondition clause of `jam` discards every case `no-check-point` or `domain-refusal`, has `cases.passed` 0, and settles `inconclusive` with cause `no-evaluated-case`, never `tested`; as step `j` of a plan whose step `k` has `depends [j]`, `k` is `blocked` by `j` and the exit is `22`. | Test (TC-2102) |
+| FR-752-AC-8 | Over AC-7's model with a test-double argument admission that accepts `by` 7, the run settles `failed` with `{"type": "tool-failure", "defect": "oracle-disagreement"}`, exit `30`, and writes no `tested` record. Two runs of AC-7 with equal inputs give byte-equal `cases`, `checks`, `partitions` and `partition_coverage`. | Test (TC-2102) |
 
 ## Dependencies
 

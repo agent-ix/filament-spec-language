@@ -17,9 +17,9 @@ FR-1038-AC-2.
 
 ## Test Procedure
 
-1. Execute `Release` with `initial` and `seed` 7; then emit it without
+1. Execute `Release` with `initial`, `seed` 7 and `max_trace_length` 8; then emit it without
    executing.
-2. Send `{}` with one plan and with two; name `Nope` and `Never`; send
+2. Send `{"max_trace_length": 8}` with one plan and with two; name `Nope` and `Never`; send
    `seed` `"7"`.
 
 ## Expected Results
