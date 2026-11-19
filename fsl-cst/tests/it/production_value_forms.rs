@@ -1149,3 +1149,56 @@ fn mixed_criticality_switch_keeps_taskset_and_trigger_operation_source() {
         .collect::<Vec<_>>();
     assert_eq!(words, ["Tasks", "Plant", "raise"]);
 }
+
+#[test]
+#[trace("FSpec-FR-339-AC-1")]
+fn verification_steps_keep_claim_method_domain_dependencies_and_bounds_separate() {
+    for options in [
+        "",
+        " depends [Initial]",
+        " bound 0",
+        " depends [Initial, Safety] bound 12",
+    ] {
+        let step = format!(
+            "check Follow claim Plant::Safe method Engine::Finite domain Inputs::Bounded{options};"
+        );
+        let declaration = format!("verify Plan using v {{ {step} }}");
+        let source = unit(&declaration);
+        let parsed = accepted(&source);
+        let plan = one(&source, &parsed, Production::VerificationPlan, &declaration);
+        assert_eq!(
+            children(&source, &parsed, plan, Production::VerificationStep),
+            [step.as_str()]
+        );
+        let step = one(&source, &parsed, Production::VerificationStep, &step);
+        assert_eq!(
+            children(&source, &parsed, step, Production::QualifiedName),
+            ["Plant::Safe", "Engine::Finite", "Inputs::Bounded"]
+        );
+    }
+    let first = "check Initial claim Plant::Start method Engine::Finite domain Inputs::Bounded;";
+    let second = "check Safety claim Plant::Safe method Engine::Finite domain Inputs::Bounded depends [Initial];";
+    let source = unit(&format!("verify Plan using v {{ {first} {second} }}"));
+    let parsed = accepted(&source);
+    let plan = parsed
+        .cst()
+        .nodes()
+        .iter()
+        .find(|node| node.production() == Production::VerificationPlan)
+        .expect("verification plan");
+    assert_eq!(
+        children(&source, &parsed, plan, Production::VerificationStep),
+        [first, second]
+    );
+}
+
+#[test]
+#[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-4")]
+fn incomplete_verification_plans_refuse_missing_steps_selectors_and_dependencies() {
+    for (declaration, marker, width) in [
+        ("verify Plan using v {}", "}", 1),
+        ("verify Plan using v { check One claim Plant::Safe method domain Inputs::Bounded; }", "domain Inputs", 6),
+        ("verify Plan using v { check One claim Plant::Safe method Engine::Finite domain Inputs::Bounded depends []; }", "];", 1),
+        ("verify Plan using v { check One claim Plant::Safe method Engine::Finite domain Inputs::Bounded bound ; }", "; }", 1),
+    ] { refused(&unit(declaration), marker, width); }
+}
