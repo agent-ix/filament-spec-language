@@ -124,10 +124,14 @@ fn emit_with(bindings: Option<&[AuthoredBinding]>) -> Emitted {
     }
     // The relation's occurrence is at the package root, which names no region
     // of the unit until a source declaration places it, so the unit places
-    // every occurrence.
-    let source = package.graph().source().clone();
-    let emission = emit_package(&package, move |_| {
-        Some(SourceRegion::new(source.clone(), 0, 1).expect("a nonempty region"))
+    // it; every other occurrence keeps its own region, which its
+    // declaration's `declaration_region` contains (FSpec FR-322).
+    let graph = package.graph();
+    let source = graph.source().clone();
+    let emission = emit_package(&package, |location| {
+        graph.region(location).or_else(|| {
+            Some(SourceRegion::new(source.clone(), 0, 1).expect("a nonempty region"))
+        })
     })
     .expect("the package emits");
     assert_eq!(emission.omitted, []);

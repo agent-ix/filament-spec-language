@@ -745,7 +745,30 @@ impl Pass<'_, '_> {
         }
         let mut refusals = Vec::new();
         match self.resolve_claim(index, form, cx, nodes, &mut refusals) {
-            Some(checked) => self.model.claims.push(checked),
+            Some(checked) => {
+                // FR-940-AC-9: a claim name names one declaration, so a
+                // second probabilistic claim with an earlier one's name is
+                // refused at the second, naming both.
+                if let Some(earlier) = self
+                    .model
+                    .claims
+                    .iter()
+                    .find(|earlier| earlier.name == checked.name)
+                {
+                    self.refusals.push(CheckRefusal {
+                        location: checked.declaration_location(),
+                        cause: CheckCause::AmbiguousName {
+                            name: checked.name.clone(),
+                            loci: vec![
+                                earlier.declaration_location(),
+                                checked.declaration_location(),
+                            ],
+                        },
+                    });
+                    return;
+                }
+                self.model.claims.push(checked);
+            }
             None => self.refusals.extend(refusals),
         }
     }

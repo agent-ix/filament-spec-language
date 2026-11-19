@@ -1124,7 +1124,6 @@ fn each_clause_pairs_with_its_own_clock_row_over_the_bytes_only_route() {
 #[trace("FSpec-TC-2015", "FSpec-FR-322-AC-460")]
 #[trace("FSpec-TC-2015", "FSpec-FR-322-AC-461")]
 #[test]
-#[ignore = "QSL-2425: the clause name rows' declaration_region and the package-route clause span are not implemented yet"]
 fn clause_name_rows_carry_the_whole_declaration_region() {
     for kind in KINDS {
         let source_path = handoff_request(kind, Corpus::None).emit.source;
@@ -1151,9 +1150,9 @@ fn clause_name_rows_carry_the_whole_declaration_region() {
             let row = &mut wire["temporal_clause_names"][0];
             row.as_object_mut().unwrap().remove("declaration_region");
         });
-        let refused = removed
-            .try_read(&removed.emission)
-            .expect_err("a row without declaration_region is refused");
+        let Err(refused) = removed.try_read(&removed.emission) else {
+            panic!("a row without declaration_region is refused");
+        };
         assert!(
             format!("{refused:?}").contains("declaration_region"),
             "{refused:?}"
@@ -1164,9 +1163,9 @@ fn clause_name_rows_carry_the_whole_declaration_region() {
             let start = region["start"].as_u64().unwrap();
             region["end"] = Value::from(start + 1);
         });
-        let refused = shrunk
-            .try_read(&shrunk.emission)
-            .expect_err("a region without the name token is refused");
+        let Err(refused) = shrunk.try_read(&shrunk.emission) else {
+            panic!("a region without the name token is refused");
+        };
         assert!(
             format!("{refused:?}").contains("/temporal_clause_names/0/declaration_region"),
             "{refused:?}"

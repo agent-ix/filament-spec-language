@@ -2207,6 +2207,7 @@ fn checked_invariant_and_call_fault_both_report_the_same_internal_failure_shape(
         location: None,
         losses: Vec::new(),
         frame_depth: 0,
+        peak_live_occurrences: 0,
     };
     let mapped = super::super::call::convert_outcome(
         checked_invariant_evaluation,
@@ -2298,6 +2299,7 @@ fn convert_outcome_drives_the_disposition_for_every_general_outcome_kind() {
         location: None,
         losses: Vec::new(),
         frame_depth: 0,
+        peak_live_occurrences: 0,
     };
 
     // Completed(true): success, exit 0.
