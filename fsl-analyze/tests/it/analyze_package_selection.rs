@@ -6,11 +6,11 @@
 //! `a_package_selection_analyzes_as_its_source`.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, below_three, bounded, clause, counter_request, label, package_selection,
-    request_members, Run, Workspace, HANDOFF,
+    HANDOFF, Run, Workspace, analyze, below_three, bounded, clause, counter_request, label,
+    package_selection, request_members,
 };
 
 fn at_most_two() -> String {
@@ -44,7 +44,6 @@ fn first_diagnostic(run: &Run) -> Value {
 /// route's counterexample and replay.
 #[trace("TC-2410", "FR-850-AC-2")]
 #[test]
-#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn a_package_refutation_equals_the_source_refutation() {
     let body = format!("{}{}{}", bounded(), below_three(), at_most_two());
     let items = json!([{"claim": "AtMostTwo"}]);
@@ -240,7 +239,6 @@ fn an_unknown_claim_over_a_package_settles_unknown_claim() {
 /// refused as not implemented and its items equal the source route's.
 #[trace("TC-2620", "FR-940-AC-1", "FR-940-AC-3")]
 #[test]
-#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn a_package_request_reads_the_source_route_facts_through_the_view() {
     let body = format!("{}{}{}", bounded(), below_three(), at_most_two());
     let items = json!([{"claim": "Bounded"}, {"claim": "BelowThree"}, {"claim": "AtMostTwo"}]);
@@ -290,7 +288,6 @@ fn source_analysis_decides_every_family_over_its_checked_graph() {
 /// evaluators through their package forms with the source route's records.
 #[trace("TC-2958", "FR-940-AC-5")]
 #[test]
-#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn the_package_route_reaches_the_source_checked_evaluators() {
     let body = format!("{}{}{}", bounded(), at_most_two(), not_above_three());
     let items = json!([{"claim": "NotAboveThree"}, {"claim": "AtMostTwo"}]);
@@ -323,7 +320,6 @@ fn the_package_route_reaches_the_source_checked_evaluators() {
 /// item and is never analyzed from source instead.
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
-#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn a_refused_package_never_falls_back_to_source() {
     let families = format!("{}{}{}", bounded(), at_most_two(), not_above_three());
     let all = json!([{"claim": "Bounded"}, {"claim": "AtMostTwo"}, {"claim": "NotAboveThree"}]);
@@ -370,11 +366,11 @@ fn a_refused_package_never_falls_back_to_source() {
 
 /// FR-850-AC-6 (the cases the admission tests above leave): an identity file
 /// with a foreign `format` refuses `invalid_package`/`unknown-format`, and a
-/// handoff with no `equality.json` is admitted with no equality rows.
+/// handoff with no `equality.json` of a package holding an equality
+/// application refuses `invalid_package`/`missing-file`.
 #[trace("TC-2966", "FR-850-AC-6")]
 #[test]
-#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
-fn a_foreign_identity_format_refuses_and_an_absent_equality_file_is_admitted() {
+fn a_foreign_identity_format_and_an_absent_equality_file_refuse_invalid_package() {
     let ws = Workspace::new("package-handoff-identities");
     let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
     let identities = ws.path(&handoff_file("identities.json"));
@@ -393,11 +389,16 @@ fn a_foreign_identity_format_refuses_and_an_absent_equality_file_is_admitted() {
     assert_eq!(run.document()["items"], json!([]));
     assert_eq!(run.exit, 20);
 
+    // The Counter package holds the `Inc` postcondition's equality
+    // application, so its equality rows are required (FR-850-AC-10).
     ws.write(&handoff_file("identities.json"), &rows);
     std::fs::remove_file(ws.path(&handoff_file("equality.json"))).expect("remove equality");
     let run = analyze_members(&ws, "analyze-no-equality.json", &members);
-    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
-    assert_eq!(run.exit, 0);
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["code"], "invalid_package", "{diagnostic}");
+    assert_eq!(diagnostic["cause"], "missing-file", "{diagnostic}");
+    assert_eq!(run.document()["items"], json!([]));
+    assert_eq!(run.exit, 20);
 }
 
 /// FSpec FR-520-AC-7: the `package` member is the closed `{directory}`
@@ -405,7 +406,6 @@ fn a_foreign_identity_format_refuses_and_an_absent_equality_file_is_admitted() {
 /// naming `file`.
 #[trace("FSpec-TC-2009", "FSpec-FR-520-AC-7")]
 #[test]
-#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn a_package_selection_names_a_directory_not_a_file() {
     let ws = Workspace::new("package-selection-directory");
     let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
@@ -425,6 +425,17 @@ fn reach_three() -> &'static str {
     "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n"
 }
 
+/// FR-940-AC-11: the four state-graph claims, one of each form, with an
+/// `always possible` claim written without `from`.
+fn state_graph_claims() -> &'static str {
+    concat!(
+        "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n",
+        "always possible Back using v over (c: M::Counter) { c.value = 0 }\n",
+        "always possible FromOne using v over (c: M::Counter) from (c.value = 1) { c.value = 0 }\n",
+        "unique path Straight using v over (c: M::Counter) from (c.value = 0) to (c.value = 1);\n",
+    )
+}
+
 /// FR-850-AC-7 and FR-940-AC-7: the package names its invariant and
 /// state-graph claims in FSpec FR-322's `claim_names`, the package route
 /// resolves them through it with the source route's records, an absent name
@@ -438,7 +449,6 @@ fn reach_three() -> &'static str {
     "FSpec-FR-322-AC-457"
 )]
 #[test]
-#[ignore = "QSL-2402: the checked package's claim_names table and package-route claim resolution through it not implemented yet"]
 fn package_claims_resolve_through_the_claim_name_table() {
     let body = format!("{}{}{}", bounded(), not_above_three(), reach_three());
     let items = json!([{"claim": "NotAboveThree"}, {"claim": "ReachThree"}, {"claim": "Missing"}]);
@@ -493,13 +503,49 @@ fn package_claims_resolve_through_the_claim_name_table() {
     assert_eq!(diagnostic["cause"], "ambiguous-name", "{diagnostic}");
 }
 
-/// FR-850, FR-940 (review round 1): an `invariant` state clause carries no
-/// name row in the package, so a request naming it over the package is never
-/// settled `unknown-claim` while the source route decides it; until the
-/// invariant family has a package form the request is refused whole, naming
-/// the item and the family.
+/// FR-940-AC-11: the four state-graph claims, one of each form, settle over
+/// a package with the source route's records, witnesses or counterexamples,
+/// replays and certificates, and no package-route record is `unsupported`.
+#[trace("TC-3034", "FR-940-AC-11")]
+#[test]
+fn a_package_state_graph_claim_settles_as_its_source_claim() {
+    let body = format!("{}{}", bounded(), state_graph_claims());
+    let names = ["ReachThree", "Back", "FromOne", "Straight"];
+    let items = json!(names.map(|name| json!({"claim": name})));
+    let ws = Workspace::new("package-state-graph");
+    let source = analyze(&counter_request(&ws, &body, items.clone()));
+    let (members, _) = package_request(&ws, &body, items);
+    let run = analyze_members(&ws, "analyze-state-graph.json", &members);
+    for (index, name) in names.iter().enumerate() {
+        assert_eq!(
+            run.item(index),
+            source.item(index),
+            "{name}: {}",
+            run.document()
+        );
+        assert!(
+            !run.item(index).to_string().contains("unsupported"),
+            "{name}: {}",
+            run.item(index)
+        );
+    }
+    for member in ["items", "aggregate", "last_stage", "category"] {
+        assert_eq!(
+            run.document()[member],
+            source.document()[member],
+            "{member}"
+        );
+    }
+    assert_eq!(run.exit, source.exit);
+}
+
+/// FR-850-AC-7, FR-940 (review round 1): an `invariant` state clause is
+/// named by its `claim_names` row, so a request naming it over the package
+/// is never settled `unknown-claim` while the source route decides it: it
+/// settles with the source route's document, member by member.
 #[trace("TC-2410", "FR-850-AC-5")]
 #[trace("TC-2958", "FR-940-AC-6")]
+#[trace("TC-2967", "FR-850-AC-7")]
 #[test]
 fn an_invariant_named_over_a_package_is_never_an_unknown_claim() {
     let items = json!([{"claim": "NotAboveThree"}]);
@@ -513,13 +559,15 @@ fn an_invariant_named_over_a_package_is_never_an_unknown_claim() {
         "{}",
         run.document()
     );
-    let diagnostic = first_diagnostic(&run);
-    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
-    let message = diagnostic["message"].as_str().unwrap_or_default();
-    assert!(
-        message.contains("items[0]") && message.contains("unnamed-claim"),
-        "{diagnostic}"
-    );
+    for member in ["items", "aggregate", "last_stage", "category", "registry"] {
+        assert_eq!(
+            run.document()[member],
+            source.document()[member],
+            "{member}: {}",
+            run.document()
+        );
+    }
+    assert_eq!(run.exit, source.exit);
 }
 
 /// FR-850 "Admission" (FSpec FR-520): an absent handoff directory, and a
@@ -548,33 +596,55 @@ fn an_absent_handoff_or_package_file_refuses_missing_file() {
     }
 }
 
-/// FR-940-AC-8 and FSpec FR-322-AC-459: claim names and temporal clause
-/// names are one namespace. A source unit declaring the temporal clause
-/// `Bounded` and the state-graph claim `Bounded` is refused
-/// `ambiguous_declaration`/`ambiguous-name` before any item is analyzed; a
-/// package whose `claim_names` row is renamed to a `temporal_clause_names`
-/// row's name is refused the same at that row before any engine runs; with
-/// distinct names both resolve.
+/// FR-940-AC-8, FR-940-AC-12 and FSpec FR-322-AC-459: claim names and every
+/// other declaration's name are one namespace, and the later declaration in
+/// source order is the one refused. A source unit declaring the temporal
+/// clause `Bounded` and the state-graph claim `Bounded`, in either order, is
+/// refused `ambiguous_declaration`/`ambiguous-name` at the later name before
+/// any item is analyzed (exit 20, category `refusal`, last stage `S3`).
 #[trace("TC-2970", "FR-940-AC-8", "FSpec-TC-2012", "FSpec-FR-322-AC-459")]
+#[trace("TC-3034", "FR-940-AC-12")]
 #[test]
-#[ignore = "QSL-2402: one claim namespace across claim_names and temporal_clause_names not implemented yet"]
-fn a_name_in_both_name_tables_is_refused() {
-    let items = json!([{"claim": "Bounded"}]);
-    let ws = Workspace::new("claim-name-namespace-source");
-    let colliding = format!(
-        "{}possible Bounded using v over (c: M::Counter) {{ c.value = 3 }}\n",
-        bounded()
-    );
-    let run = analyze(&counter_request(&ws, &colliding, items.clone()));
-    let diagnostic = first_diagnostic(&run);
-    assert_eq!(
-        diagnostic["code"],
-        "ambiguous_declaration",
-        "{}",
-        run.document()
-    );
-    assert_eq!(diagnostic["cause"], "ambiguous-name", "{}", run.document());
+fn a_name_in_both_name_tables_is_refused_at_the_source_route() {
+    let claim = "possible Bounded using v over (c: M::Counter) { c.value = 3 }\n";
+    let orders = [
+        ("temporal-first", format!("{}{claim}", bounded())),
+        ("claim-first", format!("{claim}{}", bounded())),
+    ];
+    for (name, body) in orders {
+        let ws = Workspace::new(&format!("claim-name-namespace-source-{name}"));
+        let run = analyze(&counter_request(&ws, &body, json!([{"claim": "Bounded"}])));
+        let document = run.document();
+        let diagnostic = first_diagnostic(&run);
+        assert_eq!(
+            diagnostic["code"], "ambiguous_declaration",
+            "{name}: {document}"
+        );
+        assert_eq!(diagnostic["cause"], "ambiguous-name", "{name}: {document}");
+        assert_eq!(run.exit, 20, "{name}: {document}");
+        assert_eq!(document["category"], "refusal", "{name}: {document}");
+        assert_eq!(document["last_stage"], "S3", "{name}: {document}");
+        assert_eq!(document["items"], json!([]), "{name}: {document}");
+        let text = std::fs::read_to_string(ws.path("program.fsl")).expect("the unit");
+        let later = text.rfind("Bounded").expect("the later name");
+        assert_eq!(
+            (
+                diagnostic["locus"]["start"].as_u64(),
+                diagnostic["locus"]["end"].as_u64()
+            ),
+            (Some(later as u64), Some((later + "Bounded".len()) as u64)),
+            "{name}: located at the later declaration's name: {document}"
+        );
+    }
+}
 
+/// FR-940-AC-12, package half: a package whose `claim_names` row is renamed
+/// to a `temporal_clause_names` row's name is refused the same at that row
+/// (`details.path` `/claim_names/{i}/name`) before any engine runs; with
+/// distinct names both resolve.
+#[trace("TC-3034", "FR-940-AC-12")]
+#[test]
+fn a_name_in_both_name_tables_is_refused_at_the_package_route() {
     let items = json!([{"claim": "Bounded"}, {"claim": "ReachThree"}]);
     let ws = Workspace::new("claim-name-namespace-package");
     let body = format!("{}{}", bounded(), reach_three());
@@ -605,6 +675,14 @@ fn a_name_in_both_name_tables_is_refused() {
     let diagnostic = first_diagnostic(&run);
     assert_eq!(diagnostic["code"], "ambiguous_declaration", "{diagnostic}");
     assert_eq!(diagnostic["cause"], "ambiguous-name", "{diagnostic}");
+    let path = diagnostic["details"]["path"].as_str().unwrap_or_default();
+    assert!(
+        path.starts_with("/claim_names/") && path.ends_with("/name"),
+        "{diagnostic}"
+    );
+    assert_eq!(run.exit, 20, "{diagnostic}");
+    assert_eq!(run.document()["category"], "refusal", "{diagnostic}");
+    assert_eq!(run.document()["last_stage"], Value::Null, "{diagnostic}");
     assert_eq!(run.document()["items"], json!([]));
 }
 
@@ -813,4 +891,136 @@ fn a_package_request_names_its_model_by_identity_and_settles_an_alias_model_alia
         package_bytes("package-model-n", &renamed),
         "units importing one model as M and as N write equal package bytes"
     );
+}
+
+/// The `claim` ordinal an item's request names.
+fn claim_ordinal(item: &Value) -> Value {
+    item["request"]["claim"]["occurrence"]["ordinal"].clone()
+}
+
+/// FR-850-AC-10 (QSL-2406): a package holding an equality application is
+/// read with its producer's equality rows, so a handoff without
+/// `equality.json` refuses the whole request `invalid_package`/
+/// `missing-file` at the request stage; a package holding none is admitted
+/// without the file and settles as the source route does.
+#[trace("TC-3025", "FR-850-AC-10")]
+#[test]
+fn an_absent_equality_file_refuses_a_package_that_holds_an_equality() {
+    let items = json!([{"claim": "Bounded"}]);
+    let ws = Workspace::new("package-equality-held");
+    let source = analyze(&counter_request(&ws, &bounded(), items.clone()));
+    let (members, package) = package_request(&ws, &bounded(), items.clone());
+    let package: Value = serde_json::from_slice(&package).expect("package JSON");
+    assert!(
+        package["checked_term_data"]["equality_decisions"]
+            .as_array()
+            .is_some_and(|decisions| !decisions.is_empty()),
+        "the Inc postcondition's `=` is an equality application"
+    );
+    let equality = ws.path(&handoff_file("equality.json"));
+    let rows = std::fs::read(&equality).expect("the handoff writes equality.json");
+    std::fs::remove_file(&equality).expect("remove equality");
+    let run = analyze_members(&ws, "analyze-equality-absent.json", &members);
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["code"], "invalid_package", "{diagnostic}");
+    assert_eq!(diagnostic["cause"], "missing-file", "{diagnostic}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("equality.json")),
+        "{diagnostic}"
+    );
+    assert_eq!(run.document()["items"], json!([]));
+    assert_eq!(run.exit, 20);
+
+    ws.write(&handoff_file("equality.json"), &rows);
+    let run = analyze_members(&ws, "analyze-equality-present.json", &members);
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
+    assert_eq!(run.item(0)["record"], source.item(0)["record"]);
+
+    let greater = format!(
+        "pre CanInc using v on M::Counter::inc {{ self.value < 3 }}\n\
+         post Inc using v on M::Counter::inc {{ self.value > pre(self.value) }}\n{}",
+        bounded()
+    );
+    let ws = Workspace::new("package-equality-none");
+    let path = crate::analyze_cli_support::request_over(
+        &ws,
+        &crate::counter::unit_text(&greater),
+        &crate::counter::document(false),
+        &[crate::analyze_cli_support::counter_snapshot(&[("a", 0)])],
+        json!({ "items": items }),
+    );
+    let source = analyze(&path);
+    let (members, package) = package_selection(&ws, &request_of(&path));
+    let package: Value = serde_json::from_slice(&package).expect("package JSON");
+    assert!(
+        package["checked_term_data"]["equality_decisions"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "no equality application"
+    );
+    std::fs::remove_file(ws.path(&handoff_file("equality.json"))).expect("remove equality");
+    let run = analyze_members(&ws, "analyze-no-equality-held.json", &members);
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
+    assert_eq!(run.item(0)["record"], source.item(0)["record"]);
+    assert_eq!(run.exit, 0);
+}
+
+/// FR-940-AC-10 (QSL-2402): `BelowThree` and `AtMostTwo` share one
+/// `temporal_clause` node, each its own `claim` occurrence numbered in
+/// source order. Both routes refute each item with a reproduced replay at
+/// its own declaration's occurrence, whether both are requested or only the
+/// later one, and swapping the declarations swaps the ordinals.
+#[trace("TC-3026", "FR-940-AC-10")]
+#[test]
+fn declarations_of_a_shared_clause_node_keep_their_own_occurrence() {
+    for (name, order, items) in [
+        (
+            "both",
+            [("BelowThree", 0), ("AtMostTwo", 1)],
+            json!([{"claim": "BelowThree"}, {"claim": "AtMostTwo"}]),
+        ),
+        (
+            "later",
+            [("BelowThree", 0), ("AtMostTwo", 1)],
+            json!([{"claim": "AtMostTwo"}]),
+        ),
+        (
+            "swapped",
+            [("AtMostTwo", 0), ("BelowThree", 1)],
+            json!([{"claim": "BelowThree"}, {"claim": "AtMostTwo"}]),
+        ),
+    ] {
+        let body = if name == "swapped" {
+            format!("{}{}{}", bounded(), at_most_two(), below_three())
+        } else {
+            format!("{}{}{}", bounded(), below_three(), at_most_two())
+        };
+        let ws = Workspace::new(&format!("shared-node-{name}"));
+        let source = analyze(&counter_request(&ws, &body, items.clone()));
+        let (members, _) = package_request(&ws, &body, items.clone());
+        let run = analyze_members(&ws, &format!("analyze-shared-{name}.json"), &members);
+        let requested = items.as_array().expect("items").len();
+        for index in 0..requested {
+            let claim = items[index]["claim"].as_str().expect("claim name");
+            let ordinal = order
+                .iter()
+                .find(|(declared, _)| *declared == claim)
+                .map(|(_, ordinal)| json!(ordinal))
+                .expect("a declared name");
+            for (route, result) in [("source", &source), ("package", &run)] {
+                let item = result.item(index);
+                assert_eq!(label(&item), "refuted", "{name} {route} {claim}: {item}");
+                assert_eq!(item["replay"]["reproduced"], true, "{name} {route} {claim}");
+                assert_eq!(claim_ordinal(&item), ordinal, "{name} {route} {claim}");
+            }
+        }
+        assert_eq!(
+            run.document()["items"],
+            source.document()["items"],
+            "{name}"
+        );
+        assert_eq!(run.exit, source.exit, "{name}");
+    }
 }

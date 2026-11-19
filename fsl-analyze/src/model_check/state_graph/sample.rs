@@ -22,7 +22,7 @@ use fsl_foundation::selection::DefinitionRef;
 use fsl_replay::{
     GraphWitness, ModelCheckLimit, ModelCheckLimits, ModelPath, ModelStep, WitnessSource,
 };
-use fsl_semantics::check::{CheckedPredicateBody, PredicateRole};
+use fsl_semantics::check::{CheckedStateGraphClaim, PredicateRole};
 
 use super::{
     budget_is_ceiling, cancelled, expansion_stop, fault, sampler, step_ceiling, stopped,
@@ -35,7 +35,11 @@ use crate::model_check::ModelCheckRefusal;
 type InstanceKey = (usize, usize);
 
 /// One instance's target as a walk reads it.
-type Target<'a> = (&'a CheckedPredicateBody, Option<&'a ObjectReference>);
+type Target<'a> = (
+    &'a CheckedStateGraphClaim,
+    PredicateRole,
+    Option<&'a ObjectReference>,
+);
 
 /// What phase 0 found: per `possible` instance, each initial state's sampled
 /// witness, and the count of its walks `max_walk_steps` stopped.
@@ -121,7 +125,7 @@ impl Phase<'_, '_> {
             else {
                 return Err(fault("possible-has-a-target"));
             };
-            targets.push((*target, view.over.as_ref()));
+            targets.push((*target, PredicateRole::Target, view.over.as_ref()));
             sampled
                 .witnesses
                 .insert((view.item, view.instance), vec![None; count]);
@@ -222,7 +226,7 @@ impl Phase<'_, '_> {
                     .filter(|index| found[*index].is_none())
                     .collect();
                 let asked: Vec<Target<'_>> = open.iter().map(|index| targets[*index]).collect();
-                let readings = match self.system.state_predicates(state, &asked) {
+                let readings = match self.system.state_graph_predicates(state, &asked) {
                     Ok(readings) => readings,
                     Err(stop) => {
                         halt = Some(expansion_stop(&stop, self.budgets));

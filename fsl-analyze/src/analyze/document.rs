@@ -1486,7 +1486,17 @@ fn resolve_one(
     });
     let named = selection.backend.as_deref().map(BackendId::new);
     let records = requirement_items(package, registry, named.as_ref());
-    let Some(claim) = claim_occurrence(package, &records, &node) else {
+    // FR-940 "Claim occurrence ordinals": an authored temporal clause is its
+    // own `claim` occurrence of a node structurally equal clauses share, so
+    // the name keys the whole occurrence, never the node's first.
+    let Some(claim) = package
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|clause| clause.clause().name() == name)
+        .map(|clause| OccurrenceKey::new(clause.identity(), clause.claim().clone()))
+        .or_else(|| claim_occurrence(package, &records, &node))
+    else {
         return unknown_claim(index, name);
     };
     // A record keys the declaration, or the value clause a `Boolean`

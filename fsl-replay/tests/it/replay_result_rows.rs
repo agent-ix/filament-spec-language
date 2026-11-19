@@ -341,6 +341,7 @@ fn a_state_graph_replay_writes_its_row() {
         evaluated_predicates: vec![(fsl_semantics::check::PredicateRole::From, true)],
         closure_nodes: Some(4),
         first_target: None,
+        unique_path: false,
     });
     let written = row(&reproduced);
     assert_closed_row(
@@ -366,6 +367,23 @@ fn a_state_graph_replay_writes_its_row() {
         "{written}"
     );
     assert_eq!(written["closure_nodes"], "4", "{written}");
+
+    let unique = ReplayResult::ModelGraph(GraphReplayResult {
+        settlement: GraphReplaySettlement::Reproduced,
+        evaluated_predicates: vec![
+            (fsl_semantics::check::PredicateRole::From, true),
+            (fsl_semantics::check::PredicateRole::Target, true),
+        ],
+        closure_nodes: None,
+        first_target: None,
+        unique_path: true,
+    });
+    let written = row(&unique);
+    assert_eq!(
+        written["evaluated_predicates"],
+        json!([{"role": "from", "value": true}, {"role": "to", "value": true}]),
+        "{written}"
+    );
     assert_eq!(written["first_target"], Value::Null, "{written}");
     assert!(written.get("charges").is_none(), "{written}");
 
@@ -377,6 +395,7 @@ fn a_state_graph_replay_writes_its_row() {
         evaluated_predicates: vec![],
         closure_nodes: None,
         first_target: None,
+        unique_path: false,
     });
     let written = row(&stopped);
     assert_closed_row(
@@ -404,6 +423,7 @@ fn a_state_graph_replay_writes_its_row() {
         evaluated_predicates: vec![],
         closure_nodes: None,
         first_target: Some(StateKey::from_canonical_bytes(vec![1, 2, 3])),
+        unique_path: false,
     });
     assert_eq!(
         row(&disagrees),

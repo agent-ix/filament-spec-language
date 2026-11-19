@@ -1271,6 +1271,11 @@ impl CheckedStateClause {
         self.identity.clone()
     }
 
+    /// The clause's node identity, by reference.
+    pub fn node(&self) -> &NodeKey {
+        &self.identity
+    }
+
     /// The clause's `claim` occurrence of its node (ADR-013 O-07).
     pub fn claim(&self) -> &Origin {
         &self.claim

@@ -422,7 +422,11 @@ impl Selection {
             }
         }
         let mut node_counts = BTreeMap::new();
-        node_counts.insert(text("temporal/temporal_clause"), clauses.len() as u64);
+        // Structurally equal clauses share one node (FSpec FR-322 "Temporal
+        // clause names"), so the package counts nodes, not declarations.
+        let clause_nodes: std::collections::BTreeSet<filament_exact::NodeKey> =
+            clauses.iter().map(|clause| clause.identity()).collect();
+        node_counts.insert(text("temporal/temporal_clause"), clause_nodes.len() as u64);
         let protocol_clauses = graph
             .protocols()
             .iter()

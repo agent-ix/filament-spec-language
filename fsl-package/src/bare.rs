@@ -460,6 +460,13 @@ impl<'p> BarePackage<'p> {
         self.package
     }
 
+    /// The structural node key of the package node `node` (FR-322
+    /// "Operand index segments"); `None` for a node the package does not
+    /// hold or whose key does not rebuild.
+    pub fn node_key(&self, node: &CheckedNodeId) -> Option<NodeKey> {
+        wire_graph(self.package).ok()?.key(node).ok()
+    }
+
     /// The supply, when one was given.
     pub fn supply(&self) -> Option<&BareSupply<'p>> {
         self.supply.as_ref()

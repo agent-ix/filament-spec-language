@@ -93,6 +93,7 @@ fn settle_with(
                 evaluated_predicates: Vec::new(),
                 closure_nodes: None,
                 first_target: None,
+                unique_path: false,
             })
         },
     )
@@ -190,6 +191,7 @@ fn the_state_graph_pipeline_runs_and_settles_each_instance() {
             evaluated_predicates: Vec::new(),
             closure_nodes: None,
             first_target: None,
+            unique_path: false,
         })
     })
     .expect("the state-graph engine and settlement map both complete");
@@ -430,6 +432,7 @@ fn engine_reduced_outcomes_settle_and_replay_their_evidence() {
             evaluated_predicates: vec![(fsl_semantics::check::PredicateRole::Target, true)],
             closure_nodes: None,
             first_target: None,
+            unique_path: false,
         })
     })
     .expect("POR engine, replay, and settlement complete");
@@ -1500,6 +1503,7 @@ fn a_claim_the_request_package_does_not_hold_settles_failed() {
                 evaluated_predicates: Vec::new(),
                 closure_nodes: None,
                 first_target: None,
+                unique_path: false,
             })
         },
     );

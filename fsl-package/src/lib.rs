@@ -21,13 +21,15 @@ extern crate alloc;
 #[cfg(feature = "std")]
 mod analysis_view;
 #[cfg(feature = "std")]
-pub use analysis_view::{AnalysisView, DependencyClosure};
+pub use analysis_view::{AnalysisView, ClaimOccurrence, DependencyClosure};
 #[cfg(feature = "std")]
 pub use model_input_form::UnreadModelForm;
 #[cfg(feature = "std")]
 mod bare;
 #[cfg(feature = "std")]
 mod bare_slot;
+#[cfg(feature = "std")]
+mod bare_state_graph;
 #[cfg(feature = "std")]
 mod bare_term;
 #[cfg(feature = "std")]
@@ -83,8 +85,12 @@ pub use bare::{
 #[cfg(feature = "std")]
 pub use bare_slot::{BareSelectionFailure, BareSlot, BareSource};
 #[cfg(feature = "std")]
+#[cfg(feature = "std")]
+pub use bare_state_graph::BareStatePredicate;
+#[cfg(feature = "std")]
 pub use bare_term::{
-    BareClauseRefusal, BareClauseTerm, BareFrameOperation, BareStateClause, ClauseBinder,
+    BareClauseRefusal, BareClauseTerm, BareFrameOperation, BareStateClause,
+    BareStateClauseDeclaration, ClauseBinder,
 };
 #[cfg(feature = "std")]
 pub use bare_world::BareWorld;

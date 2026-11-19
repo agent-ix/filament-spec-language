@@ -125,11 +125,15 @@ enum Fixture {
     Delay,
     /// TC-2062: a reward over the ConfigVersion domain package.
     Reward,
+    /// FR-093-AC-19: a function over a domain-package object type with
+    /// `Bytes` and `JsonObject` fields, the native scalars no FSL source type
+    /// spells ([`opaque_scalar_unit`]).
+    OpaqueScalars,
 }
 
 impl Fixture {
     /// Every fixture; each must back at least one row.
-    const ALL: [Self; 35] = [
+    const ALL: [Self; 36] = [
         Self::Tc416Functions,
         Self::RecursiveF,
         Self::Tree,
@@ -165,6 +169,7 @@ impl Fixture {
         Self::Workload,
         Self::Delay,
         Self::Reward,
+        Self::OpaqueScalars,
     ];
 }
 
@@ -489,6 +494,13 @@ impl Fixture {
             Self::CyclicEquality => text(CYCLIC_EQUALITY),
             Self::NativeScalars => text(NATIVE_SCALARS),
             Self::UnionNodes => text(UNION_NODES),
+            Self::OpaqueScalars => {
+                let (unit, document) = opaque_scalar_unit();
+                Emitted::placed_owned(
+                    modelled_with_documents(&unit, std::slice::from_ref(&document), Vec::new()),
+                    vec![document],
+                )
+            }
             Self::VariantType => {
                 let document = VARIANT_DOCUMENT.as_slice();
                 let unit = format!(
@@ -590,6 +602,53 @@ fn with_state_machine(base: &[u8], from: &str, package: &str) -> Vec<u8> {
     crate::emit::tests::wire_bytes(&document).expect("the state-machine model serializes")
 }
 
+/// FR-093-AC-19: no FSL source type spells `Bytes` or `JsonObject`, but a
+/// domain package's object type may declare fields of them. A model
+/// declaration node carries no field types, but an expression that reads such
+/// a field has its type, which lowering writes as its bare scalar node. The
+/// spine fixture's object package under `acme/opaque`, its first type given
+/// a `Bytes` and a `JsonObject` field, with a unit whose function binds both
+/// fields.
+fn opaque_scalar_unit() -> (String, Vec<u8>) {
+    let package = "acme/opaque";
+    let base = String::from_utf8(SPINE_MODEL_DOCUMENT.to_vec()).expect("fixture UTF-8");
+    let mut document: serde_json::Value =
+        serde_json::from_str(&base.replace("acme/orders", package))
+            .expect("the spine model document is JSON");
+    let owner = document["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|declared| {
+            declared["fields"]
+                .as_array()
+                .is_some_and(|fields| !fields.is_empty())
+        })
+        .expect("a type with a field");
+    let name = owner["displayName"]
+        .as_str()
+        .expect("a display name")
+        .to_owned();
+    let fields = owner["fields"].as_array_mut().expect("fields");
+    let template = fields[0].clone();
+    for (field, native) in [("payload", "Bytes"), ("metadata", "JsonObject")] {
+        let mut declared = template.clone();
+        let identity = format!("ix://{package}/{name}/{field}");
+        declared["identity"] = json!(identity);
+        declared["name"] = json!(field);
+        declared["typeRef"] = json!(format!("ix://filament/native/{native}"));
+        declared["origin"]["generated"]["inputIdentities"] = json!([identity]);
+        fields.push(declared);
+    }
+    let unit = format!(
+        "{COMPLETE_V1_HEADER}model M = {package:?};\n\
+         function opaque using v(o: M::{name}): Boolean pure {{ let p = deref(o).payload in let m = deref(o).metadata in true }}\n"
+    );
+    let document =
+        crate::emit::tests::wire_bytes(&document).expect("the opaque-scalar model serializes");
+    (unit, document)
+}
+
 /// `unit` assembled against `document`, with `functions` added, checked
 /// and linked.
 fn modelled(
@@ -669,6 +728,8 @@ fn rows() -> Vec<Row> {
         row(K::ScalarType(S::String), F::NativeScalars),
         row(K::ScalarType(S::Uuid), F::NativeScalars),
         row(K::ScalarType(S::Timestamp), F::NativeScalars),
+        row(K::ScalarType(S::Bytes), F::OpaqueScalars),
+        row(K::ScalarType(S::JsonObject), F::OpaqueScalars),
         row(K::ScalarType(S::Enum), F::OrderedEnum),
         row(K::ScalarType(S::Dimension), F::QuantityAndT),
         row(K::ScalarType(S::Unit), F::QuantityAndT),
@@ -828,14 +889,6 @@ const NOT_EMITTED_BY_QSL: &[(CheckedNodeKind, &str)] = {
         (
             K::Claim(ClaimForm::ProbabilisticClaim),
             "lowering builds no probabilistic claim node yet",
-        ),
-        (
-            K::ScalarType(ScalarTypeForm::Bytes),
-            "no FSL source type spells Bytes, and a model field of it lowers no scalar node",
-        ),
-        (
-            K::ScalarType(ScalarTypeForm::JsonObject),
-            "no FSL source type spells JsonObject, and a model field of it lowers no scalar node",
         ),
         (
             K::ScalarType(ScalarTypeForm::CarriedQuantity),

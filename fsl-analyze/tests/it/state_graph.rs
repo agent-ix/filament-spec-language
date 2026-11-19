@@ -163,11 +163,11 @@ fn partial_order_reduction_filters_claims_before_shared_exploration() {
     let job = job_world_with_claims(
         false,
         false,
-        "possible CanFinish using v over (j: M::Job) { j.done = 1 }\n",
+        "possible ReachesDone using v over (j: M::Job) { j.done = 1 }\n",
     );
     let mut request = job.request(
         &["j"],
-        vec![job.item("InOneWay"), job.item("CanFinish")],
+        vec![job.item("InOneWay"), job.item("ReachesDone")],
         no_samples(),
     );
     request.reductions.partial_order = true;

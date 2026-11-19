@@ -74,6 +74,33 @@ pub enum CheckedStatePredicate {
     ConstantTrue,
     /// A written predicate, checked as an invariant body is.
     Checked(CheckedPredicateBody),
+    /// A written predicate of a claim a checked package carries (FR-940
+    /// "Package form of a state-graph claim"): its node and slot count, and
+    /// no source-checked body (FR-087 R-10).
+    Package(PackagePredicate),
+}
+
+/// A written predicate of a package-route claim: the `expression` node that
+/// holds it and the number of evaluation slots its reader projection takes,
+/// the `over` parameter first. The package route evaluates it through the
+/// model-check evaluator port, keyed by the claim's occurrence and the
+/// predicate's role, never through a checked body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackagePredicate {
+    node: NodeKey,
+    slots: usize,
+}
+
+impl PackagePredicate {
+    /// The predicate's `expression` node.
+    pub fn node(&self) -> &NodeKey {
+        &self.node
+    }
+
+    /// The number of evaluation slots of the predicate's projection.
+    pub fn slots(&self) -> usize {
+        self.slots
+    }
 }
 
 /// A written predicate after the clause checker: its Boolean body over the
@@ -143,10 +170,17 @@ impl CheckedStatePredicate {
         matches!(self, Self::ConstantTrue)
     }
 
-    /// The checked body of a written predicate.
+    /// Whether the predicate is written: a checked body or a package node,
+    /// and not the constant `true`.
+    pub fn is_written(&self) -> bool {
+        !self.is_constant_true()
+    }
+
+    /// The checked body of a written predicate; `None` for the constant
+    /// `true` and for a package predicate, which holds no checked body.
     pub fn body(&self) -> Option<CheckedNode<'_>> {
         match self {
-            Self::ConstantTrue => None,
+            Self::ConstantTrue | Self::Package(_) => None,
             Self::Checked(checked) => Some(checked.body()),
         }
     }
@@ -156,18 +190,26 @@ impl CheckedStatePredicate {
         self.written()
     }
 
-    /// The written predicate's checked body with its slot names, or `None`
-    /// for the constant `true`.
-    pub(crate) fn written(&self) -> Option<&CheckedPredicateBody> {
+    /// The package node and slot count of a package-route predicate.
+    pub fn package(&self) -> Option<&PackagePredicate> {
         match self {
-            Self::ConstantTrue => None,
+            Self::Package(package) => Some(package),
+            Self::ConstantTrue | Self::Checked(_) => None,
+        }
+    }
+
+    /// The written predicate's checked body with its slot names, or `None`
+    /// for the constant `true` and a package predicate.
+    pub fn written(&self) -> Option<&CheckedPredicateBody> {
+        match self {
+            Self::ConstantTrue | Self::Package(_) => None,
             Self::Checked(checked) => Some(checked),
         }
     }
 
     fn written_mut(&mut self) -> Option<&mut CheckedPredicateBody> {
         match self {
-            Self::ConstantTrue => None,
+            Self::ConstantTrue | Self::Package(_) => None,
             Self::Checked(checked) => Some(checked),
         }
     }
@@ -294,9 +336,7 @@ impl CheckedStateGraphClaim {
 
     /// The predicates in the order `from`, `target`: the predicates the node
     /// references, each with the site it is located at.
-    pub(crate) fn node_predicates(
-        &self,
-    ) -> (Option<&CheckedStatePredicate>, &CheckedStatePredicate) {
+    pub fn node_predicates(&self) -> (Option<&CheckedStatePredicate>, &CheckedStatePredicate) {
         match &self.form {
             StateGraphForm::Possible { target } => (None, target),
             StateGraphForm::AlwaysPossible { from, target } => (Some(from), target),
@@ -358,7 +398,7 @@ impl PredicateRole {
     pub(crate) fn site(self) -> Site {
         match self {
             Self::From => Site::From,
-            Self::Target | Self::To => Site::Target,
+            Self::Target => Site::Target,
         }
     }
 }
@@ -409,7 +449,7 @@ pub(crate) fn predicates(
             .chain([(PredicateRole::Target, target)])
             .collect(),
         StateGraphClaimKind::UniquePath { from, to } => {
-            vec![(PredicateRole::From, from), (PredicateRole::To, to)]
+            vec![(PredicateRole::From, from), (PredicateRole::Target, to)]
         }
     }
 }
@@ -714,7 +754,7 @@ fn check_claim<'a>(
         },
         StateGraphClaimKind::UniquePath { from, to } => StateGraphForm::UniquePath {
             from: check(PredicateRole::From, from)?,
-            to: check(PredicateRole::To, to)?,
+            to: check(PredicateRole::Target, to)?,
         },
     };
     Ok(CheckedStateGraphClaim {
@@ -735,4 +775,140 @@ fn check_claim<'a>(
         occurrence: None,
         nodes_used,
     })
+}
+
+/// The form of a state-graph claim as a checked package spells it (FSpec
+/// FR-475 `kind`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PackageStateGraphKind {
+    /// `possible`.
+    Possible,
+    /// `always-possible`.
+    AlwaysPossible,
+    /// `unique-path`.
+    UniquePath,
+}
+
+/// One predicate of a package state-graph claim, under its FR-475 role.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PackageStatePredicate {
+    /// A written predicate: the `expression` node the role's binding
+    /// references and the slot count of its reader projection.
+    Written {
+        /// The FR-475 slot, `from` or `target`.
+        role: PredicateRole,
+        /// The `expression` node.
+        node: NodeKey,
+        /// The evaluation slots, the `over` parameter first.
+        slots: usize,
+    },
+    /// The Boolean `true` literal node: the constant predicate.
+    ConstantTrue {
+        /// The FR-475 slot.
+        role: PredicateRole,
+    },
+}
+
+impl PackageStatePredicate {
+    fn role(&self) -> PredicateRole {
+        match self {
+            Self::Written { role, .. } | Self::ConstantTrue { role } => *role,
+        }
+    }
+
+    fn checked(&self) -> CheckedStatePredicate {
+        match self {
+            Self::Written { node, slots, .. } => CheckedStatePredicate::Package(PackagePredicate {
+                node: node.clone(),
+                slots: *slots,
+            }),
+            Self::ConstantTrue { .. } => CheckedStatePredicate::ConstantTrue,
+        }
+    }
+}
+
+/// What a checked package carries of one state-graph claim (FR-940 "Package
+/// form of a state-graph claim"): the facts
+/// [`CheckedStateGraphClaim::of_package_form`] rebuilds the claim from.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackageStateGraphForm {
+    /// The declared name, from the claim's `claim_names` row.
+    pub name: String,
+    /// The whole declaration, from the row's `declaration_region`.
+    pub span: Span,
+    /// The claim's `claim` occurrence.
+    pub occurrence: OccurrenceKey,
+    /// The claim's form.
+    pub kind: PackageStateGraphKind,
+    /// The `over` parameter's name and object type.
+    pub over: Option<(String, EffectiveId)>,
+    /// The predicates in order `from` (when the form has one), `target`.
+    pub predicates: Vec<PackageStatePredicate>,
+}
+
+impl CheckedStateGraphClaim {
+    /// FR-940: the claim a checked package carries, rebuilt from `form` as
+    /// S3 builds it from source: the same name, span, `over`, form,
+    /// capability, requirements and occurrence. A written predicate holds
+    /// its package node and slot count, and no checked body. `types` is the
+    /// package's type environment and `position_limit` S3's domain limit,
+    /// within which the `over` type must classify.
+    ///
+    /// # Errors
+    ///
+    /// [`super::PackageClauseRefusal`] when the predicates do not fit the
+    /// form's roles or the `over` type does not classify.
+    pub fn of_package_form(
+        form: PackageStateGraphForm,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
+        position_limit: u64,
+    ) -> Result<Self, super::PackageClauseRefusal> {
+        use super::PackageClauseRefusal::{Domains, Shape};
+        if let Some((_, object)) = &form.over {
+            let over = ValueType::Reference(object.clone());
+            crate::family::requirements::classify_domains(&[&over], types, position_limit)
+                .map_err(|_| Domains)?;
+        }
+        let roles: Vec<PredicateRole> = form.predicates.iter().map(|p| p.role()).collect();
+        let mut predicates = form.predicates.iter().map(PackageStatePredicate::checked);
+        let mut next = || predicates.next().ok_or(Shape);
+        let checked_form = match (form.kind, roles.as_slice()) {
+            (PackageStateGraphKind::Possible, [PredicateRole::Target]) => {
+                StateGraphForm::Possible { target: next()? }
+            }
+            (
+                PackageStateGraphKind::AlwaysPossible,
+                [PredicateRole::From, PredicateRole::Target],
+            ) => StateGraphForm::AlwaysPossible {
+                from: next()?,
+                target: next()?,
+            },
+            (PackageStateGraphKind::UniquePath, [PredicateRole::From, PredicateRole::Target]) => {
+                StateGraphForm::UniquePath {
+                    from: next()?,
+                    to: next()?,
+                }
+            }
+            _ => return Err(Shape),
+        };
+        Ok(Self {
+            name: form.name,
+            span: form.span,
+            over: form
+                .over
+                .map(|(name, object)| OverParameter { name, object }),
+            form: checked_form,
+            claim: StateGraphClaim {
+                kind: Capability::TemporalSatisfaction,
+            },
+            occurrence: Some(form.occurrence),
+            nodes_used: 0,
+        })
+    }
+}
+
+/// The `TypeDeclaration` owner name the predicate of `role` of the
+/// state-graph claim at `index` is located under, on either route.
+pub fn state_graph_predicate_site(index: usize, role: PredicateRole) -> String {
+    state_graph_site(index, role.site())
 }

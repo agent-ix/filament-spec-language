@@ -1555,7 +1555,7 @@ impl<S: SubjectSystem> Check<'_, S> {
                 };
                 let value = self
                     .model
-                    .constraint_value(&self.system.atom_state(&state), clause.name())
+                    .constraint_value(&self.system.atom_state(&state), clause.name)
                     .map_err(|stop| self.expansion_stop(stop))?;
                 match value {
                     ConstraintValue::Holds => (translation.read(before, true), None),

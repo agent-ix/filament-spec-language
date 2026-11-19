@@ -1385,7 +1385,9 @@ fn an_invariant_proof_is_certified_under_the_invariant_root() {
     assert_eq!(reachable.len(), 4);
 
     let three = state_clause(&world, "AtMostThree");
-    let item = ModelCheckItem::Invariant { clause: three };
+    let item = ModelCheckItem::Invariant {
+        clause: fsl_replay::InvariantClause::of(three),
+    };
     let certificate = certificate(&world.run_in(&world.package, item));
     let translation = invariant_translation(three);
     let mut expected = closure(&reachable, &translation).states;
@@ -1415,7 +1417,12 @@ fn an_invariant_proof_is_certified_under_the_invariant_root() {
     let bad = invariant_translation(two);
     assert_eq!(
         check(
-            &world.request(ModelCheckItem::Invariant { clause: two }, UNLIMITED),
+            &world.request(
+                ModelCheckItem::Invariant {
+                    clause: fsl_replay::InvariantClause::of(two),
+                },
+                UNLIMITED
+            ),
             &closure(&reachable, &bad)
         ),
         rejected(
@@ -1429,7 +1436,12 @@ fn an_invariant_proof_is_certified_under_the_invariant_root() {
 
     let low = state_clause(&world, "Low");
     let refused = check_closure(
-        &world.request(ModelCheckItem::Invariant { clause: low }, UNLIMITED),
+        &world.request(
+            ModelCheckItem::Invariant {
+                clause: fsl_replay::InvariantClause::of(low),
+            },
+            UNLIMITED,
+        ),
         &certificate,
         &ModelCheckLimits::default(),
         &Cancel::new(),

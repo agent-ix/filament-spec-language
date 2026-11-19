@@ -5,6 +5,7 @@
 use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{Value, ValueType};
 use filament_semantic_value::location::ExpressionLocation as Location;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::{CheckedGraph, CheckedNode, NodeId};
 
 /// A handle to one checked node, from which its operands and the bodies of
@@ -48,6 +49,12 @@ pub(crate) trait NodeSource<'a>: Copy + 'a {
     /// Whether the node is a numeric-equality part of a float ordering's
     /// composition (FR-397).
     fn is_ordering_part(self) -> bool;
+
+    /// The occurrence key of the node's application where the source holds
+    /// it beside the node: a reader node's paired `protocol_locations`
+    /// row; `None` for a checked node, whose occurrence the checked graph
+    /// names by location.
+    fn occurrence(self) -> Option<OccurrenceKey>;
 
     /// Direct operands in evaluation order.
     fn children(self) -> Vec<Self>;
@@ -100,6 +107,10 @@ impl<'a> NodeSource<'a> for CheckedNode<'a> {
 
     fn is_ordering_part(self) -> bool {
         CheckedNode::is_ordering_part(self)
+    }
+
+    fn occurrence(self) -> Option<OccurrenceKey> {
+        None
     }
 
     fn children(self) -> Vec<Self> {

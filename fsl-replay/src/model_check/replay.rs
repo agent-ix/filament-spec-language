@@ -875,7 +875,7 @@ pub fn replay_model_trace_from_package(
     }
     let clause = input
         .temporal_clause(
-            envelope.clause_node(),
+            envelope.occurrence_key(),
             filament_semantic_value::checking::CheckingLimits::default().nodes(),
         )
         .map_err(|refusal| {
@@ -1457,7 +1457,20 @@ fn resolve_item<'p, T: SubjectTransition>(
         .graph()
         .temporal_clauses()
         .iter()
-        .find(|candidate| candidate.identity() == *envelope.clause_node());
+        .find(|candidate| {
+            candidate.identity() == *envelope.clause_node()
+                && candidate.claim() == envelope.occurrence_key().origin()
+        })
+        // Structurally equal clauses share a node: the whole key names the
+        // declaration, and a node whose occurrence is not declared still
+        // answers with the identity mismatch below.
+        .or_else(|| {
+            package
+                .graph()
+                .temporal_clauses()
+                .iter()
+                .find(|candidate| candidate.identity() == *envelope.clause_node())
+        });
     let Some(found) = found else {
         return Err(refused(ModelTraceRefusal::UnknownTemporalClause {
             clause_node: envelope.clause_node().clone(),

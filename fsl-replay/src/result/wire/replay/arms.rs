@@ -7,15 +7,15 @@ use fsl_eval::temporal::TemporalOutcome;
 use fsl_package::protocol_view::{Port, PortRef};
 use fsl_semantics::check::PredicateRole;
 use serde::Serialize;
-use serde_json::value::RawValue;
 use serde_json::Value;
+use serde_json::value::RawValue;
 
-use super::{limit_wire, Charges, LimitWire};
+use super::{Charges, LimitWire, limit_wire};
+use crate::ReachedLimit;
 use crate::model_check::graph_settle::{GraphReplayResult, GraphReplaySettlement};
 use crate::protocol_analysis::{ProtocolReplayResult, ProtocolReplaySettlement, WalkDisagreement};
 use crate::result::wire::{CauseCodecError, CauseWire};
 use crate::spine::{replay_locus_wire, replay_outcome_wire};
-use crate::ReachedLimit;
 use crate::{
     HybridReplayResult, HybridReplaySettlement, ObservedTemporalKind, ObservedTemporalResult,
     ObservedTemporalSettlement, ReplayResult,
@@ -271,9 +271,9 @@ pub(super) fn model_graph(
             .iter()
             .map(|(role, value)| PredicateWire {
                 role: match role {
+                    PredicateRole::Target if result.unique_path => "to",
                     PredicateRole::Target => "target",
                     PredicateRole::From => "from",
-                    PredicateRole::To => "to",
                 },
                 value: *value,
             })
