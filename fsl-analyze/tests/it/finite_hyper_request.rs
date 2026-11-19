@@ -23,7 +23,13 @@ fn run_items(
     ]);
     let path = counter_request_with(ws, &source, request);
     ws.write("population.json", traces.to_string().as_bytes());
-    analyze(&path)
+    let run = analyze(&path);
+    assert!(
+        run.item(0).is_object(),
+        "a finite hyper request returns an item: {}",
+        run.document()
+    );
+    run
 }
 
 fn request(ws: &Workspace, clause: &str, traces: Value) -> crate::analyze_cli_support::Run {
