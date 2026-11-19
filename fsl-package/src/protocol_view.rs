@@ -58,7 +58,7 @@ use filament_contract_model::{
 
 use crate::wire_form::{has_form, has_tag, WireForm, WireTag};
 
-pub use fsl_semantics::check::{EdgeKind, Port};
+pub use fsl_semantics::check::{EdgeKind, Port, ProtocolNodeId};
 
 type Node = CheckedSemanticNodeV2;
 
@@ -249,6 +249,8 @@ pub struct ProtocolView<'p> {
 /// references directly, without borrowing a source `CheckedProtocol`.
 #[derive(Clone, Debug)]
 pub struct ProtocolControlView<'p> {
+    /// The package-local control identity in `controls` tree order.
+    pub id: ProtocolNodeId,
     /// The checked package node for this control.
     pub node: &'p CheckedSemanticNodeV2,
     /// The closed operator carried by the node.
@@ -280,6 +282,8 @@ pub struct ProtocolRoleView<'p> {
 /// The package-native structural form of one protocol declaration.
 #[derive(Clone, Debug)]
 pub struct ProtocolExecutionView<'p> {
+    /// The declared protocol name.
+    pub name: String,
     /// The protocol's clause, role, channel and control topology.
     pub protocol: ProtocolView<'p>,
     /// The role bindings in the package's node order.
@@ -701,37 +705,53 @@ pub fn protocol_execution_view<'p>(
     let channels = node_list(view.channels(), "channels")?;
     let queues = node_list(view.queues(), "queues")?;
     drop(node_list);
+    let name = nodes
+        .get(&view.clause)
+        .and_then(|clause| clause.declaration.as_ref())
+        .and_then(|declaration| declaration.qualified_name.last())
+        .map(ToString::to_string)
+        .ok_or_else(|| missing(view.clause, "declaration.qualified_name"))?;
     let mut controls = Vec::with_capacity(view.controls.len());
-    for id in &view.controls {
+    for (index, id) in view.controls.iter().enumerate() {
         let node = nodes
             .get(id)
             .copied()
             .ok_or_else(|| missing(view.clause, "run"))?;
         controls.push(ProtocolControlView {
+            id: ProtocolNodeId(index),
             node,
             operation: control_operation(node)?,
-            path: node
-                .declaration
-                .as_ref()
-                .map(|declaration| {
-                    declaration
-                        .qualified_name
-                        .iter()
-                        .map(|part| part.to_string())
-                        .collect()
-                })
-                .unwrap_or_default(),
+            path: control_path(node, &name),
             memory: control_memory(node)?,
             body: control_body(node)?,
         });
     }
     Ok(ProtocolExecutionView {
+        name,
         protocol: view,
         roles,
         channels,
         queues,
         controls,
     })
+}
+
+fn control_path(node: &CheckedSemanticNodeV2, protocol: &str) -> Vec<String> {
+    let Some(declaration) = node.declaration.as_ref() else {
+        return Vec::new();
+    };
+    let mut path: Vec<String> = declaration
+        .qualified_name
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    if path.first().is_some_and(|part| part == protocol) {
+        path.remove(0);
+    }
+    if path.first().is_some_and(|part| part == "run") {
+        path.remove(0);
+    }
+    path
 }
 
 fn control_memory(

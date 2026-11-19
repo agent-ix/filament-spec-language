@@ -23,8 +23,6 @@ pub enum UnreadModelForm {
     State,
     /// A timed model, time source, clock place or timed clause.
     TimedModel,
-    /// A protocol declaration.
-    Protocol,
     /// A hybrid model.
     Hybrid,
     /// A variant or union type, which a value's canonical form names.
@@ -46,7 +44,6 @@ impl UnreadModelForm {
         match self {
             Self::State => "state",
             Self::TimedModel => "timed-model",
-            Self::Protocol => "protocol",
             Self::Hybrid => "hybrid",
             Self::Variant => "variant",
             Self::Enumeration => "enumeration",
@@ -65,7 +62,10 @@ fn unread(node: &CheckedSemanticNodeV2) -> Option<UnreadModelForm> {
         ) => None,
         CheckedNodeKind::State(_) => Some(UnreadModelForm::State),
         CheckedNodeKind::TimedModel(_) => Some(UnreadModelForm::TimedModel),
-        CheckedNodeKind::Protocol(_) => Some(UnreadModelForm::Protocol),
+        // FR-940: protocol declarations are read through
+        // `AnalysisView::protocol_execution_named` and the typed package
+        // control/role surfaces in `protocol_view`.
+        CheckedNodeKind::Protocol(_) => None,
         CheckedNodeKind::Hybrid(_) => Some(UnreadModelForm::Hybrid),
         CheckedNodeKind::CompositeType(CompositeTypeForm::Union)
         | CheckedNodeKind::Model(ModelForm::VariantType) => Some(UnreadModelForm::Variant),

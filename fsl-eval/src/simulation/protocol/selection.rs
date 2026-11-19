@@ -15,7 +15,10 @@ use std::collections::BTreeMap;
 
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::MemoryModelName;
+use fsl_package::protocol_view::{ControlOperation, ProtocolExecutionView};
 use fsl_semantics::check::{CheckedProtocol, ProtocolNodeId};
+
+use crate::simulation::model::ProtocolDefinition;
 
 /// One entry of a request's `memory` member (FSpec FR-331).
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -44,6 +47,18 @@ pub struct ResolvedMemory {
 }
 
 impl ResolvedMemory {
+    /// Resolve memory selections through the source or package protocol form
+    /// carried by the model-check input.
+    pub fn resolve_definition(
+        protocol: &ProtocolDefinition<'_>,
+        selection: &[MemorySelection],
+    ) -> Result<Self, MemorySelectionRefusal> {
+        match protocol {
+            ProtocolDefinition::Source(protocol) => Self::resolve(protocol, selection),
+            ProtocolDefinition::Package(protocol) => Self::resolve_package(protocol, selection),
+        }
+    }
+
     /// FR-219 "Request selection": resolve every outermost `parallel` of
     /// `protocol` to the model `selection` names for it, else its source
     /// default.
@@ -92,6 +107,76 @@ impl ResolvedMemory {
             .map(|(node, default)| ResolvedParallel {
                 parallel: tree.scoped(node).to_owned(),
                 model: chosen.get(&node).map_or(default, |(_, model)| *model),
+            })
+            .collect();
+        parallels.sort();
+        Ok(Self { parallels })
+    }
+
+    /// FR-219: resolve package protocol memory selections using only the
+    /// admitted control paths and their package-carried defaults.
+    pub fn resolve_package(
+        protocol: &ProtocolExecutionView<'_>,
+        selection: &[MemorySelection],
+    ) -> Result<Self, MemorySelectionRefusal> {
+        let parallel_controls: Vec<_> = protocol
+            .controls
+            .iter()
+            .filter(|control| control.operation == ControlOperation::Parallel)
+            .collect();
+        let scoped = |control: &fsl_package::protocol_view::ProtocolControlView<'_>| {
+            std::iter::once(protocol.name.as_str())
+                .chain(control.path.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join("::")
+        };
+        let mut chosen: BTreeMap<ProtocolNodeId, (usize, MemoryModelName)> = BTreeMap::new();
+        for (entry, selected) in selection.iter().enumerate() {
+            let Some(control) = parallel_controls
+                .iter()
+                .find(|control| scoped(control) == selected.parallel)
+            else {
+                return Err(MemorySelectionRefusal::NotAParallel {
+                    entry,
+                    parallel: selected.parallel.clone(),
+                });
+            };
+            let nested = parallel_controls.iter().any(|outer| {
+                outer.id != control.id
+                    && outer.path.len() < control.path.len()
+                    && control.path.starts_with(&outer.path)
+            });
+            if nested {
+                return Err(MemorySelectionRefusal::Nested {
+                    entry,
+                    parallel: selected.parallel.clone(),
+                });
+            }
+            if let Some((first, _)) = chosen.get(&control.id) {
+                return Err(MemorySelectionRefusal::Duplicate {
+                    first: *first,
+                    second: entry,
+                    parallel: selected.parallel.clone(),
+                });
+            }
+            chosen.insert(control.id, (entry, selected.model));
+        }
+
+        let mut parallels: Vec<_> = parallel_controls
+            .iter()
+            .filter(|control| {
+                !parallel_controls.iter().any(|outer| {
+                    outer.id != control.id
+                        && outer.path.len() < control.path.len()
+                        && control.path.starts_with(&outer.path)
+                })
+            })
+            .map(|control| ResolvedParallel {
+                parallel: scoped(control),
+                model: chosen.get(&control.id).map_or(
+                    control.memory.unwrap_or(MemoryModelName::Sc),
+                    |(_, model)| *model,
+                ),
             })
             .collect();
         parallels.sort();
@@ -147,6 +232,47 @@ impl ResolvedMemory {
                     parallel: path.to_owned(),
                 })?;
             governing.insert(*node, model);
+        }
+        Ok(governing)
+    }
+
+    /// The model governing every package control parallel: the resolved
+    /// model of its outermost parallel ancestor.
+    pub fn governing_package(
+        &self,
+        protocol: &ProtocolExecutionView<'_>,
+    ) -> Result<BTreeMap<ProtocolNodeId, MemoryModelName>, MemorySelectionRefusal> {
+        let parallels: Vec<_> = protocol
+            .controls
+            .iter()
+            .filter(|control| control.operation == ControlOperation::Parallel)
+            .collect();
+        let scoped = |control: &fsl_package::protocol_view::ProtocolControlView<'_>| {
+            std::iter::once(protocol.name.as_str())
+                .chain(control.path.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join("::")
+        };
+        let mut governing = BTreeMap::new();
+        for control in &parallels {
+            let outer = parallels
+                .iter()
+                .filter(|candidate| {
+                    candidate.id == control.id
+                        || (candidate.path.len() < control.path.len()
+                            && control.path.starts_with(&candidate.path))
+                })
+                .min_by_key(|candidate| candidate.path.len())
+                .ok_or_else(|| MemorySelectionRefusal::Unresolved {
+                    parallel: scoped(control),
+                })?;
+            let path = scoped(outer);
+            let model = self
+                .model_of(&path)
+                .ok_or_else(|| MemorySelectionRefusal::Unresolved {
+                    parallel: path.clone(),
+                })?;
+            governing.insert(control.id, model);
         }
         Ok(governing)
     }

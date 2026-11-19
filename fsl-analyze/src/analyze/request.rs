@@ -657,7 +657,6 @@ fn protocol_analysis_work<'a>(
     let model_input = &analysis.model;
     let over = super::protocol_item::over_instance(binding, over);
     let Ok(subject) = super::protocol_item::subject_of(
-        analysis.package,
         model_input,
         binding,
         limits,

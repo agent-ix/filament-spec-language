@@ -10,7 +10,7 @@ use fsl_eval::model_subject::{
 };
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, PopulationUniverse};
 use fsl_eval::simulation::protocol::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
-use fsl_package::{CheckedPackage, EmitLimits};
+use fsl_package::EmitLimits;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef, ObservationLimits};
@@ -19,8 +19,6 @@ use fsl_semantics::model::observation::{DocumentProvision, DocumentRef, Observat
 /// package input and FR-106's snapshot provision.
 #[derive(Clone)]
 pub struct SubjectPackage<'a> {
-    /// The in-process checked package.
-    pub package: &'a CheckedPackage,
     /// What the subject's model check reads of the package (FR-531, FR-940).
     pub input: fsl_eval::simulation::model::ModelCheckInput<'a>,
     /// The domain package documents by the identity each declares.
@@ -99,28 +97,49 @@ pub fn protocol_subject(
         meter,
         emit,
     } = bindings;
-    let checked = package
-        .package
-        .graph()
-        .protocol(&protocol)
-        .ok_or_else(|| SubjectRefusal::UnknownProtocol(protocol.clone()))?;
-    let memory = ResolvedMemory::resolve(checked, &memory)?;
-    Ok(ProtocolSubject {
-        model: ModelSubject {
-            simulation: ModelSimulationRequest {
-                input: package.input,
-                packages: package.packages,
-                normalization,
-                snapshots: package.snapshots,
-                initial,
-                universes,
-                observation,
-                expansion,
-                meter,
-                emit,
-            },
-            proof_bounds: Vec::new(),
+    let model = ModelSubject {
+        simulation: ModelSimulationRequest {
+            input: package.input,
+            packages: package.packages,
+            normalization,
+            snapshots: package.snapshots,
+            initial,
+            universes,
+            observation,
+            expansion,
+            meter,
+            emit,
         },
+        proof_bounds: Vec::new(),
+    };
+    protocol_subject_from_input(model, protocol, over, roles, capacities, memory)
+}
+
+/// Build a protocol subject from the route-neutral model input. On the source
+/// route it selects the existing `CheckedProtocol`; on the package route it
+/// selects the admitted protocol node view through `AnalysisView`.
+///
+/// # Errors
+///
+/// [`SubjectRefusal::UnknownProtocol`] for a protocol absent from the
+/// selected route, and [`SubjectRefusal::Memory`] when its memory selection
+/// does not resolve.
+pub fn protocol_subject_from_input<'a>(
+    model: ModelSubject<'a>,
+    protocol: String,
+    over: ModelInstance,
+    roles: Vec<RoleBinding>,
+    capacities: Vec<CapacityBinding>,
+    memory: Vec<MemorySelection>,
+) -> Result<ProtocolSubject<'a>, SubjectRefusal> {
+    let definition = model
+        .simulation
+        .input
+        .protocol_definition(&protocol)
+        .ok_or_else(|| SubjectRefusal::UnknownProtocol(protocol.clone()))?;
+    let memory = ResolvedMemory::resolve_definition(&definition, &memory)?;
+    Ok(ProtocolSubject {
+        model,
         protocol,
         over,
         roles,
