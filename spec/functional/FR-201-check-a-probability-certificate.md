@@ -53,11 +53,18 @@ rejected, and the item stays `inconclusive`.
 pub struct ProbabilityCertificate {
     pub identity: ObligationIdentity,           // ADR-013 O-09
     pub objective: Objective,                   // targets or decided states, reward, min/max/workload, fairness set
-    pub kind: CertificateKind,                  // Lower, Upper, Exact, LongRun
+    pub kind: CertificateKind,                  // Lower, Upper, Exact, LongRun, Conditional
     pub values: Vec<(ProductKey, Rational)>,
     pub ranking: Option<Vec<(ProductKey, u64)>>,  // Lower and Exact
     pub policy: Option<Vec<(ProductKey, WitnessEntry)>>, // closed FR-202 choices/distributions
     pub components: Option<Vec<ComponentCertificate>>, // LongRun: value and gain–bias per component
+    pub conditional: Option<ConditionalCertificate>,   // Conditional: see "Conditional certificates"
+}
+
+pub enum ConditionalCertificate {
+    Workload { numerator: Box<ProbabilityCertificate>, denominator: Box<ProbabilityCertificate> },
+    EveryScheduler { post: Box<ProbabilityCertificate>, reset: Box<ProbabilityCertificate> },
+    Vacuous,
 }
 
 pub fn check_probability_certificate(
@@ -87,7 +94,9 @@ product state form `{product_key}` and the second as `{member}`.
 | A non-target state with `x > 0` has no rank | `RankMissing` | `ProbabilisticProductState` of that state |
 | A ranked non-target state with `x > 0` has no successor of positive probability, `x > 0` and a smaller rank | `RankBroken` | `ProbabilisticProductState` of that state |
 | The conditions hold, but the initial state's value is not on the claim's side of the threshold | `ThresholdMissed` | `ProbabilisticProductState` of the initial state |
-| A `Lower` or `Exact` certificate without `ranking`, a lower bound on a maximum without `policy`, or a `LongRun` certificate without `components` | `Malformed` | `CertificateMember` naming `ranking`, `policy` or `components` |
+| A `Lower` or `Exact` certificate without `ranking`, a lower bound on a maximum without `policy`, or a `LongRun` certificate without `components`, or a `Conditional` certificate without `conditional`, without a part its mode requires, or with a part that is not `Exact` | `Malformed` | `CertificateMember` naming `ranking`, `policy`, `components`, `conditional`, `numerator`, `denominator`, `post` or `reset` |
+| A `Workload` denominator of 0 at an initial key from which a first activating state is reachable, or a `Vacuous` certificate where one is reachable | `InequalityFails` | `ProbabilisticProductState` of the initial state |
+| A part of a `Conditional` certificate fails its own conditions; parts are checked in the order `numerator`, `denominator` or `post`, `reset`, and the first failing part is reported | that part's rule | that part's locus |
 
 ## Behavior
 
@@ -99,7 +108,9 @@ product state form `{product_key}` and the second as `{member}`.
   certificate.
 - From an exact value it SHALL emit an `Exact` certificate; from a dyadic
   interval a `Lower` and an `Upper` certificate; from a long-run result a
-  `LongRun` certificate with the gain–bias pairs of FR-199.
+  `LongRun` certificate with the gain–bias pairs of FR-199; for a conditioned
+  reading other than a quantile over every scheduler, a `Conditional`
+  certificate (see "Conditional certificates").
 - EN-5 SHALL emit an accepted certificate for every exact proof of every
   class FSpec FR-641 requires: finite-horizon forms, unbounded reachability,
   until and always, expected rewards and long-run fractions, each under a
@@ -110,7 +121,8 @@ product state form `{product_key}` and the second as `{member}`.
   conditions below. No class settles `proved` labelled `uncertified`.
 - The independent checker binary `fsl-probability-check` SHALL accept, in a
   process that links no `fsl-analyze` code, every certificate EN-5 emits,
-  of each of the kinds `Exact`, `Lower`, `Upper` and `LongRun`, from the
+  of each of the kinds `Exact`, `Lower`, `Upper`, `LongRun` and
+  `Conditional`, from the
   certificate bytes, the byte provision and the subject binding.
 ### Closed reachability document profile
 
@@ -164,13 +176,12 @@ explicitly unsupported rather than be encoded as this profile.
   key octets, with no duplicate keys. Values and ranking SHALL cover
   exactly the checker-rebuilt reachable states, including terminal states;
   probabilities SHALL lie in [0,1].
-- Keys SHALL use FR-196's authoritative complete six-component basis,
-  including the actual `binding`, through the shared
+- Keys SHALL use FR-196's authoritative complete eight-member basis,
+  including the actual `binding`, `instance` and `activation`, through the shared
   `ProbabilityProductKey::for_model_state` helper for the unbounded subset.
   The bounded subset SHALL use the existing complete formula-monitor
-  representation, with null accumulator and pending components. The stale
-  five-component illustrative tuple in FSpec FR-412/schema documentation
-  SHALL NOT cause binding to be dropped. Actual absent monitor,
+  representation, with null accumulator and pending components. FSpec
+  FR-412, FR-331 and the provider schema state the same eight members. Actual absent monitor,
   accumulator and pending components remain null. The reader SHALL admit
   keys against the checked subject and compare complete canonical octets;
   a model-only key, foreign binding or altered component is not an alias.
@@ -567,6 +578,45 @@ ordinal, action-key transport, qualitative-set field or formula AST is added.
   reachable activated state in canonical order.
 - A checker run stopped by a budget SHALL return `Stopped` naming it.
 
+### Conditional certificates
+
+A proof of a conditioned reading (FR-196 "Conditioned readings": an `on each`
+instance, or a quantile under a workload) SHALL carry a `Conditional`
+certificate in the general form, written in FSpec FR-412's `conditional`
+spelling. A quantile over every scheduler keeps the `Upper` certificate of
+"General checking conditions". The checker SHALL rebuild the product with its
+`instance` and `activation` members, the first activating states, the
+states from which they are reachable and, under every scheduler, the reset
+process, by its own graph code, and read none of them from the certificate.
+
+- `Workload`: `numerator` and `denominator` are `Exact` certificates over
+  that one product and workload, for the form's value with every
+  never-activating path valued 0 and for the reachability of the first
+  activating states. The checker SHALL check each by this requirement's
+  conditions and compare, at each initial key, the numerator's value over
+  the denominator's with the threshold; at an initial key where the
+  denominator is 0 it SHALL confirm by its own reachability search that no
+  first activating state is reachable, and that instance holds vacuously.
+- `EveryScheduler`: `post` is an `Exact` certificate of the form's optimal
+  value from every first activating state, over the product read from
+  activation on, with the claim's optimization; `reset` is an `Exact`
+  reachability certificate over the reset process the checker rebuilt, with
+  each first activating state terminal at its `post` value, each step back
+  leading to its instance's own initial key, and the claim's optimization.
+  The checker SHALL check both, the ranking of `reset` showing that its
+  schedulers reach a terminal state with probability 1, and compare
+  `reset`'s value at each initial key from which a first activating state
+  is reachable with the threshold; every other initial key it SHALL confirm
+  vacuous by its own reachability search. With a fairness
+  set it SHALL use FR-200's fair end components in the reset process.
+- `Vacuous`, for a reading whose every instance is vacuous: the checker SHALL
+  accept it exactly when its own reachability search finds no first
+  activating state reachable from any initial key
+  (with a fairness set, none from which a fair continuation exists), with no
+  value read.
+- A `Conditional` certificate settles the bound on either side, as `Exact`
+  does; a `Vacuous` one settles it on the side of a proof.
+
 ### Verdict path
 
 - FSL's settlement map in `fsl-replay` SHALL run the checker on the
@@ -870,7 +920,7 @@ not from that set, values, component rows or a producer's graph.
   behavior outside that direct entry.
 - The document SHALL have exactly `identity`, `objective`, `kind`,
   `values` and `components`, with `kind` equal to `"long-run"`; `ranking`
-  and `policy` SHALL be absent. Identity, exact rationals, full six-part
+  and `policy` SHALL be absent. Identity, exact rationals, full eight-member
   binding-bearing model keys with null absent monitor/accumulator/pending,
   strict canonical JSON and unpadded base64url retain the existing owner
   contracts. `values` SHALL cover exactly the entire independently rebuilt
@@ -1104,9 +1154,10 @@ initial states/bindings and refutations remain outside this profile.
   root/profile/origin/binding constructor, initialization at position zero,
   observation transitions and terminal false-extension closure. The new
   certificate profile string SHALL NOT replace that context constructor.
-  Keys retain FR-196's six components `[domain,binding,model,monitor,
-  accumulator,pending]`, with null accumulator/pending here. Fairness is
-  checked claim identity and objective content, not a seventh key component.
+  Keys retain FR-196's eight members `[domain,binding,instance,activation,
+  model,monitor,accumulator,pending]`, with null accumulator/pending here.
+  Fairness is checked claim identity and objective content, not a key
+  member.
   Equal fair/unfair numerical values do not establish equality of complete
   keys or checked claim identities.
 - Under ADR-028 FS-2/FS-5 and FR-200's bounded rule, every finite scheduler
@@ -1188,9 +1239,11 @@ initial states/bindings and refutations remain outside this profile.
 
 | FR-201-AC-47 | The bounded fair profile admits the exact Every/minimum AtLeast and maximum AtMost slice with nonempty checked weak/strong whole/each operation fairness; horizon zero and transported 0/1 values work with interior source bounds. The fair and unfair bounded fixture both have minimum 24/25, while fair result/objective retain the exact checked set. Fairness-empty documents retain existing bytes. Unsupported shapes and zero instances emit no new-profile proof. | Test |
 | FR-201-AC-48 | Canonical fairness records reuse the closed shared operation target and independently match the resolved checked set, including inherited declaring identities and whole/each receiver semantics. Authored reorder/duplicate spellings normalize identically; missing, extra, changed-kind/granularity/model/name, duplicate or out-of-order records and malformed/foreign targets cannot establish the claim. Distinct weak/strong constraints are retained. | Test |
-| FR-201-AC-49 | Independent bounded reconstruction checks exact targets, optimization, complete six-part keys, actual monitor context and remaining-horizon ranks without producer linkage. Wrong identity/binding/receiver, goal, monitor, horizon, values/ranks, coverage or canonical transport cannot be accepted, with existing precise rule/locus. Numeric invariance introduces no fair-MEC, policy, seventh key part or new vacuity outcome. | Test |
+| FR-201-AC-49 | Independent bounded reconstruction checks exact targets, optimization, complete eight-member keys, actual monitor context and remaining-horizon ranks without producer linkage. Wrong identity/binding/receiver, goal, monitor, horizon, values/ranks, coverage or canonical transport cannot be accepted, with existing precise rule/locus. Numeric invariance introduces no fair-MEC, policy, key member or new vacuity outcome. | Test |
 | FR-201-AC-50 | Actual Requested/Deadline cancellation and byte/state/edge/work/storage/representation/arithmetic exhaustion during checked fairness/source declaration intake, structural identity traversal/encoding, canonical writing, raw/full-key admission and independent graph/arithmetic/rank checking retain typed causes without accepted truth. Earlier source refusals and unsupported/undefined evaluation remain distinct. External transition/private-reader and ordinary interpreter allocation boundaries are not claimed qualified. | Test |
 | FR-201-AC-51 | `fsl-probability-check`, run as a separate process with no `fsl-analyze` linkage, accepts an EN-5 `Exact` certificate for FR-201-AC-1, `Lower` and `Upper` certificates for a value-bounds proof of a cyclic DTMC eventual claim, a `LongRun` certificate for FR-201-AC-27, an unbounded fair eventual `Exact` certificate for `FairTerminates` over a cyclic MDP, a finite-horizon quantile certificate under every scheduler and a digital-clock certificate for FSpec FR-421-AC-1, each read from its bytes with the byte provision of an emitted package; each with one value altered is rejected with its FR-201 rule and locus. | Test (TC-2065) |
+| FR-201-AC-52 | Over FSpec FR-407-AC-18's model, written as an `on each (x: T) when (g)` claim, EN-5 emits for `probability >= rational(1, 2)` over every scheduler an `EveryScheduler` `Conditional` certificate (`post` 1 and `1/2` at the two first activating states, `reset` `1/2` at the initial state) that `fsl-probability-check` accepts with side `AtLeast`; with `reset`'s initial value `1/4` it is rejected `InequalityFails` at the initial state, and for `rational(3, 5)` `ThresholdMissed`. Under the workload choosing both actions with `1/2` each, the `Workload` certificate (numerator `3/8`, denominator `5/8`) is accepted at `rational(3, 5)`; with the denominator replaced by 1 it is rejected `InequalityFails`. | Test (TC-3061) |
+| FR-201-AC-53 | Over the variant where `g` is unreachable, a `Vacuous` certificate is accepted under both scheduler clauses, and over the model itself it is rejected `InequalityFails` at the initial state; a `Conditional` certificate without `conditional`, or a `Workload` one whose `numerator` is a `Lower` certificate, is rejected `Malformed` naming `conditional` or `numerator`. | Test (TC-3061) |
 
 ## Dependencies
 

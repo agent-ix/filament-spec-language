@@ -876,8 +876,8 @@ against the claim, the existing minimum/maximum/workload optimization and
 an explicitly empty fairness array. Extensional targets avoid inventing a
 second semantic expression language. The discriminator versions this closed
 member contract without adding a top-level certificate field. FR-196's
-complete binding-bearing key basis remains authoritative despite FSpec's
-older five-component illustration. Required exact ranks and Bellman
+complete binding- and instance-bearing key basis is authoritative, and FSpec
+FR-412 states the same eight members. Required exact ranks and Bellman
 equalities both remain CE-3 obligations. The codec admits untimed acyclic
 unbounded eventual reachability and origin-activated event-position
 `eventually[0,h] holds(P)`, each with one initial state and at most one

@@ -13,6 +13,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-741
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-196
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-201
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-407
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-331
@@ -73,9 +77,15 @@ message never activates and does not count against the claim.
   first position at which `g` holds for that instance's object, or position 0
   when the claim has no guard, and SHALL be conditioned on the run activating
   (FSpec FR-407 "Activation"). A run that never activates is not counted.
-- An instance whose activation has probability 0 under the claim's scheduler
-  SHALL hold vacuously: no activated run exists to violate it. Such an
-  instance never makes the item `refuted` and never makes it `inconclusive`.
+- An instance SHALL hold vacuously when no first activating state is
+  reachable (FR-196 "Conditioned readings"): under a workload its activation
+  has probability 0, and under every scheduler no scheduler activates. No
+  activated run exists to violate it. Such an instance never makes the item `refuted` and never makes it `inconclusive`.
+- An activated instance's value SHALL be the conditioned value of FR-196
+  "Conditioned readings": under a workload the exact ratio of `Pr(E and act)`
+  to `Pr(act)`, and under every scheduler the optimum over the schedulers
+  that activate, by the reset construction. Its proof carries FR-201's
+  `Conditional` certificate.
 
 ### Settling the item
 

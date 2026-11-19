@@ -73,7 +73,7 @@ pub enum BoundsMethod { BackwardInduction { precision_bits: u32 }, IntervalItera
 //   delay distribution only; FR-204). Zero-weight components (FR-199), strict
 //   constraints, form shapes, zero-delay cycles and time-locks (FR-204) settle
 //   verdicts.
-pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub value: ExactOrBounds, pub extremum: Option<Extremum> } // Extremum: Min or Max
+pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub instance: Option<Binding>, pub value: ExactOrBounds, pub extremum: Option<Extremum> } // Extremum: Min or Max
 ```
 
 ## Behavior
