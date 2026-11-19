@@ -344,6 +344,7 @@ fn unresolved_model_unit_type_names_the_operation_parameter_path() {
                         ordered: false,
                         unique: false,
                     },
+                    presence: filament_exact::Presence::Required,
                 }],
                 result: None,
                 effect: OperationEffect::default(),
@@ -1983,6 +1984,7 @@ fn option_type_projects_through_signature_alias_sequence_map_tuple_variant_unit_
                 key: parameter_key,
                 value_type: ValueTypeRef::Package(option_key.clone()),
                 multiplicity: mult(1, Some(1), false, true),
+                presence: filament_exact::Presence::Required,
             }],
             result: Some(OperationResult {
                 value_type: ValueTypeRef::Package(option_key.clone()),

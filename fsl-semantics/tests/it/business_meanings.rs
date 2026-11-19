@@ -664,6 +664,7 @@ fn operation_signature_type_meaning_matrix() {
                     key: parameter_key.clone(),
                     value_type: value_type.clone(),
                     multiplicity,
+                    presence: filament_exact::Presence::Required,
                 }],
                 result: Some(OperationResult {
                     value_type: value_type.clone(),

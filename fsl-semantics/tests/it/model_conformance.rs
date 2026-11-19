@@ -159,6 +159,7 @@ fn operation_redefining(
                 key: DeclarationKey::fixture(id),
                 value_type: ValueTypeRef::Package(DeclarationKey::fixture(ty)),
                 multiplicity: m,
+                presence: filament_exact::Presence::Required,
             })
             .collect(),
         result: result.map(|(ty, m)| OperationResult {

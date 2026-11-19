@@ -5109,6 +5109,7 @@ mod tests {
                         key: parameter_key.clone(),
                         value_type: value_type.clone(),
                         multiplicity,
+                        presence: Presence::Required,
                     }],
                     result: Some(OperationResult {
                         value_type: value_type.clone(),
