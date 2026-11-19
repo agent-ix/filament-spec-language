@@ -41,9 +41,9 @@ const DECLARATIONS: &str = "\
     unit ms : Time = rational(1, 1000) * s;\n\
     function convert_integer using v(t: Text[0, 64; unicode-scalars]): Integer pure { convert<Integer>(t) }\n\
     function convert_bounded using v(t: Text[0, 64; unicode-scalars]): Int[0, 99] pure { convert<Int[0, 99]>(t) }\n\
-    function convert_decimal_unbounded using v(t: Text[0, 64; unicode-scalars]): Decimal pure { convert<Decimal>(t) }\n\
+    function convert_decimal_wide using v(t: Text[0, 64; unicode-scalars]): Decimal[0, 1000; 0, 18; nearest-even] pure { convert<Decimal[0, 1000; 0, 18; nearest-even]>(t) }\n\
     function convert_rational using v(t: Text[0, 64; unicode-scalars]): Rational[-9, 9; 1, 9] pure { convert<Rational[-9, 9; 1, 9]>(t) }\n\
-    function convert_rational_unbounded using v(t: Text[0, 64; unicode-scalars]): Rational pure { convert<Rational>(t) }\n\
+    function convert_rational_wide using v(t: Text[0, 64; unicode-scalars]): Rational[-1000, 1000; 1, 1000] pure { convert<Rational[-1000, 1000; 1, 1000]>(t) }\n\
     function convert_decimal using v(t: Text[0, 64; unicode-scalars]): Decimal[0, 1000; 0, 2; nearest-even] pure { convert<Decimal[0, 1000; 0, 2; nearest-even]>(t) }\n\
     function convert_decimal_exact using v(t: Text[0, 64; unicode-scalars]): Decimal[0, 1000; 0, 2; exact] pure { convert<Decimal[0, 1000; 0, 2; exact]>(t) }\n\
     function convert_float using v(t: Text[0, 64; unicode-scalars]): Float64[nearest-even] pure { convert<Float64[nearest-even]>(t) }\n\
@@ -242,7 +242,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     for (text, coefficient, scale) in [("1.50", 150_i64, 2), ("-0.5", -5_i64, 1), ("3", 3_i64, 0)] {
         let decimal = call(
             &package,
-            "convert_decimal_unbounded",
+            "convert_decimal_wide",
             text_value(text, TextProfile::UnicodeScalars),
         );
         assert!(matches!(
@@ -264,7 +264,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     );
     let unbounded_rational = call(
         &package,
-        "convert_rational_unbounded",
+        "convert_rational_wide",
         text_value("6/4", TextProfile::UnicodeScalars),
     );
     assert_rational(
