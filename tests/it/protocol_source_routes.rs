@@ -574,3 +574,47 @@ fn public_source_projection_realizability_and_deadlock_agree_on_bounded_static_p
         assert_eq!(output.exit_code, 0, "{}", output.value);
     }
 }
+
+#[test]
+#[trace("FR-233", "FR-575", "FR-570")]
+fn original_compensation_has_an_accepting_template_and_zero_attempt_refusal() {
+    use fsl_replay::protocol_analysis::AnalysisOutcome;
+    let directory = tempfile::tempdir().unwrap();
+    let file = corpus("original/compensation.native");
+    compile(directory.path(), &file);
+    let source = std::fs::read_to_string(&file).unwrap();
+    let zero = directory.path().join("zero-attempts.native");
+    std::fs::write(
+        &zero,
+        source.replace("attempts 1 of Boolean", "attempts 0 of Boolean"),
+    )
+    .unwrap();
+    refusal(directory.path(), &zero, "ill_typed", "type-mismatch");
+    let package = handoff(directory.path(), &file);
+    let result = project(&package, "Worker");
+    let AnalysisOutcome::Unsupported(cause) = result.outcome else {
+        panic!("bounded-static excludes compensation: {result:?}");
+    };
+    assert_eq!(cause.slug.as_str(), "compensation");
+}
+
+#[test]
+#[trace("FR-575", "FR-785")]
+fn original_symbolic_capacity_is_admitted_and_projection_names_the_capacity() {
+    use fsl_replay::protocol_analysis::AnalysisOutcome;
+    let directory = tempfile::tempdir().unwrap();
+    let source = std::fs::read_to_string(corpus("original/exchange.native")).unwrap();
+    let file = directory.path().join("symbolic.native");
+    std::fs::write(
+        &file,
+        source.replace("capacity 1", "capacity symbolic(QueueSlots)"),
+    )
+    .unwrap();
+    let package = handoff(directory.path(), &file);
+    let result = project(&package, "Receiver");
+    let AnalysisOutcome::Unsupported(cause) = result.outcome else {
+        panic!("bounded-static needs a literal capacity: {result:?}");
+    };
+    assert_eq!(cause.slug.as_str(), "symbolic-queue-capacity");
+    assert_eq!(cause.detail.as_deref(), Some("QueueSlots"));
+}
