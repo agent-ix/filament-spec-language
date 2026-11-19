@@ -239,15 +239,18 @@ depends on no CG crate for it (FR-280).
   plugin's (origin `Process`), as FSpec FR-331 and FR-354 give each; no core
   checker covers either proof. An `unknown` verdict settles the item
   `inconclusive` with cause `solver-inconclusive`. A `refuted` verdict is a candidate
-  violation, not a result: FSL replays the counterexample through the native
-  evaluator at the assignment's own integers, never narrowed to any `Int[..]`
+  violation, not a result. For a `value-validity` item, FSL replays the
+  counterexample through the native evaluator at the assignment's own integers, never narrowed to any `Int[..]`
   (the replay of "A counterexample counts only after S6a replay reproduces
   it"). The item settles `refuted` with the counterexample as its `ItemCounterexample` only when
   the replay reproduces the violation; a counterexample that is not an
   assignment of the claim's parameters, or that the replay does not reproduce,
   settles the item `inconclusive` with cause `replay_parity`, and a
   counterexample that exhausts the case budget in replay settles `incomplete`
-  with the case-budget limit cause. Cancellation ends a provider item as it
+  with the case-budget limit cause. A `refuted` verdict on an item of any other kind replays and settles by
+  FR-968 "Verdicts": a `contract-counterexample` on an `operation-contract`
+  item settles `refuted` when FSpec FR-485 "Replay" reproduces it, and the
+  assignment rule above does not apply to it. Cancellation ends a provider item as it
   ends any engine's: a cancelled run settles the item `incomplete` with the
   cancellation cause, and a cancellation that fires during the provider's
   check or the replay stops the replay the same way. A provider that panics is

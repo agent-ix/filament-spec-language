@@ -190,20 +190,20 @@ fn the_ordering_part_rule_reads_the_shape_on_both_routes() {
     let (ordering, ordering_package) = both_routes("p < q", &args);
     assert_eq!(ordering, ordering_package);
     let by_hand = format!(
-        "{ieee}numericEqual(p, p) && {ieee}numericEqual(q, q) && \
-         ({ieee}totalOrder(p, q) && !{ieee}numericEqual(p, q))"
+        "{ieee}numericEqual(p, p) and {ieee}numericEqual(q, q) and \
+         ({ieee}totalOrder(p, q) and not {ieee}numericEqual(p, q))"
     );
     let (source, packaged) = both_routes(&by_hand, &args);
     assert_eq!(source.charges, ordering.charges, "{by_hand}");
     assert_eq!(packaged.charges, ordering.charges, "{by_hand}");
     for near_miss in [
         format!(
-            "{ieee}numericEqual(p, p) && {ieee}numericEqual(q, q) && \
-             ({ieee}totalOrder(p, q) && !{ieee}numericEqual(q, p))"
+            "{ieee}numericEqual(p, p) and {ieee}numericEqual(q, q) and \
+             ({ieee}totalOrder(p, q) and not {ieee}numericEqual(q, p))"
         ),
         format!(
-            "{ieee}numericEqual(p, p) && {ieee}numericEqual(r, r) && \
-             ({ieee}totalOrder(p, q) && !{ieee}numericEqual(p, q))"
+            "{ieee}numericEqual(p, p) and {ieee}numericEqual(r, r) and \
+             ({ieee}totalOrder(p, q) and not {ieee}numericEqual(p, q))"
         ),
     ] {
         let (source, packaged) = both_routes(&near_miss, &args);
@@ -211,7 +211,7 @@ fn the_ordering_part_rule_reads_the_shape_on_both_routes() {
         // Three numeric_equal nodes and one total_order, each charged.
         assert_eq!(operands(&source.charges), 4, "{near_miss}");
     }
-    let beside = format!("p < q && {ieee}numericEqual(p, p)");
+    let beside = format!("p < q and {ieee}numericEqual(p, p)");
     let (source, packaged) = both_routes(&beside, &args);
     assert_eq!(source, packaged, "{beside}");
     assert_eq!(

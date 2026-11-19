@@ -270,25 +270,35 @@ fn a_provider_registers_for_the_kinds_it_advertises() {
     if let Ok(descriptor) = empty {
         let refusal = build(descriptor).expect_err("an empty advertisement is refused");
         assert_eq!(refusal.backend.as_str(), "fsl.test-nothing");
-        assert!(
-            refusal.to_string().contains("no-advertised-pair"),
-            "{refusal}"
-        );
+        assert!(refusal.to_string().contains("absent-kind"), "{refusal}");
     }
 }
 
 /// The Counter `post` clause the operation `setTo` keeps.
 const KEEPS: &str = "post Keeps using v on M::Counter::setTo { self.value = n }\n";
 
-/// A Counter `post` clause `setTo` violates at every case.
-const WRONG: &str = "post Wrong using v on M::Counter::setTo { self.value = n + 1 }\n";
+/// A Counter invariant `inc` breaks from the pre-state `value = 1`: a
+/// preservation violation (FSpec FR-485).
+const WRONG: &str = "invariant Wrong using v on M::Counter at current { self.value <= 1 }\n";
+
+/// A request over the Counter model whose operation `setTo(n: Level)` the
+/// `post` clause `body` names, from counter `a` at 0, with `items`.
+fn set_to_request(ws: &Workspace, body: &str, items: Value) -> std::path::PathBuf {
+    crate::analyze_cli_support::request_over(
+        ws,
+        &crate::counter::unit_text(&format!("{}{body}", crate::counter::CONTRACT)),
+        &crate::counter::document_with_ranged_parameter(),
+        &[crate::analyze_cli_support::counter_snapshot(&[("a", 0)])],
+        json!({"items": items}),
+    )
+}
 
 /// A provider `fsl.test-contract` advertising (`operation-contract`,
 /// `unbounded`) that answers every item with `verdict` and records the
 /// FSpec FR-331 request it is sent.
 #[derive(Debug)]
 struct Answering {
-    verdict: fn() -> fsl_analyze::provider::ProviderVerdict,
+    verdict: fsl_analyze::provider::ProviderVerdict,
     sent: std::sync::Arc<Mutex<Vec<Value>>>,
 }
 
@@ -300,12 +310,16 @@ impl fsl_analyze::provider::ExternalProvider for Answering {
     ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
         let wire = serde_json::to_value(request).expect("the request serializes");
         self.sent.lock().expect("the record lock").push(wire);
-        request.items().iter().map(|_| (self.verdict)()).collect()
+        request
+            .items()
+            .iter()
+            .map(|_| self.verdict.clone())
+            .collect()
     }
 }
 
 fn contract_provider(
-    verdict: fn() -> fsl_analyze::provider::ProviderVerdict,
+    verdict: fsl_analyze::provider::ProviderVerdict,
 ) -> (
     fsl_analyze::analyze::Engine,
     std::sync::Arc<Mutex<Vec<Value>>>,
@@ -333,12 +347,12 @@ fn contract_provider(
 /// `operation-contract` request item.
 #[trace("TC-2725", "FR-968-AC-2")]
 #[test]
-#[ignore = "QSL-2564: Engine::external refuses an operation-contract provider and sends no operation-contract item to a provider"]
+#[ignore = "QSL-2564: Engine::external refuses an operation-contract provider and sends no operation-contract item to a provider; analyze also settles a named `post` clause unknown-claim"]
 fn a_post_item_with_a_provider_matches_contract_checker_and_the_provider() {
     use fsl_analyze::provider::ProviderVerdict;
     let ws = Workspace::new("post-item-with-provider");
-    let (provider, sent) = contract_provider(|| ProviderVerdict::Unknown);
-    let request = counter_request(&ws, KEEPS, json!([{"claim": "Keeps"}]));
+    let (provider, sent) = contract_provider(ProviderVerdict::Unknown);
+    let request = set_to_request(&ws, KEEPS, json!([{"claim": "Keeps"}]));
     let (document, seen) = analyze_recording(&request, vec![provider]);
     assert_eq!(
         seen,
@@ -357,8 +371,8 @@ fn a_post_item_with_a_provider_matches_contract_checker_and_the_provider() {
     assert!(sent.lock().expect("the record lock").is_empty());
 
     let ws = Workspace::new("post-item-named-provider");
-    let (provider, sent) = contract_provider(|| ProviderVerdict::Unknown);
-    let request = counter_request(
+    let (provider, sent) = contract_provider(ProviderVerdict::Unknown);
+    let request = set_to_request(
         &ws,
         KEEPS,
         json!([{"claim": "Keeps", "backend": "fsl.test-contract"}]),
@@ -370,19 +384,45 @@ fn a_post_item_with_a_provider_matches_contract_checker_and_the_provider() {
     assert_eq!(items.len(), 1, "{document}");
     assert_eq!(items[0]["kind"], "operation-contract", "{}", sent[0]);
 }
+/// The FR-968-AC-3 contract counterexamples of `Wrong`.
+#[derive(Clone, Copy, Debug)]
+enum ContractRow {
+    /// Obligation `preservation`, `violated` `Wrong`'s claim occurrence,
+    /// `bound` `false`, one execution of `inc` from the pre-state
+    /// `value = 1` to the post-state `value = 2`: FSpec FR-485 "Replay"
+    /// reproduces it.
+    Reproduces,
+    /// `Reproduces` with `violated` naming occurrence ordinal 7, which
+    /// `Wrong` does not have: the replay does not reproduce it.
+    OtherOccurrence,
+    /// `Reproduces` with `bound` `true`: a reader with no implementation
+    /// engine cannot re-execute it.
+    Bound,
+}
+
+/// The verdict a provider returns to refute `Wrong` with `row`'s FSpec
+/// FR-485 `contract-counterexample` (FR-968 "Verdicts").
+/// `ProviderVerdict` has no variant that carries one yet: QSL-2564 adds it
+/// and builds `row`'s counterexample here. Until then the verdict carries no
+/// counterexample, so every row that expects a replay fails.
+fn contract_verdict(row: ContractRow) -> fsl_analyze::provider::ProviderVerdict {
+    let _ = row;
+    fsl_analyze::provider::ProviderVerdict::Unknown
+}
 
 /// FR-968-AC-3: a provider's verdict on an `operation-contract` item settles
-/// by FR-281's provider-arm rules: `proved` `trusted`, `unknown` as
-/// `solver-inconclusive`, and an `assignments` counterexample, which is not
-/// an `operation-contract` counterexample, as `replay-parity` with no
-/// counterexample. The `Contract` counterexample rows of FR-968-AC-3 join
-/// this test with the verdict variant that carries one.
+/// by FR-281's provider-arm rules and FR-968 "Verdicts": `proved` `trusted`,
+/// `unknown` as `solver-inconclusive`, a `contract-counterexample` the
+/// FSpec FR-485 replay reproduces as `refuted` with that counterexample, one
+/// it does not reproduce as `replay-parity`, a `bound` one as
+/// `replay-refused`, and an `assignments` counterexample as `replay-parity`,
+/// none of the last three recording a counterexample.
 #[trace("TC-2725", "FR-968-AC-3")]
 #[test]
-#[ignore = "QSL-2564: no operation-contract item reaches a provider and its verdict is not settled by FR-968"]
+#[ignore = "QSL-2564: no operation-contract item reaches a provider, ProviderVerdict carries no contract counterexample (contract_verdict), and the verdict is not settled by FR-968"]
 fn a_provider_contract_verdict_settles_after_replay() {
     use fsl_analyze::provider::ProviderVerdict;
-    let settle = |name: &str, verdict: fn() -> ProviderVerdict| {
+    let settle = |name: &str, verdict: ProviderVerdict| {
         let ws = Workspace::new(name);
         let (provider, _) = contract_provider(verdict);
         let request = counter_request(
@@ -390,38 +430,65 @@ fn a_provider_contract_verdict_settles_after_replay() {
             WRONG,
             json!([{"claim": "Wrong", "backend": "fsl.test-contract"}]),
         );
-        let (document, _) = analyze_recording(&request, vec![provider]);
-        document
+        analyze_recording(&request, vec![provider]).0
     };
-    let proved = settle("contract-provider-proved", || ProviderVerdict::Proved);
+    let inconclusive = |document: &Value, cause: &str| {
+        let item = &document["items"][0];
+        assert_eq!(label(item), "inconclusive", "{item}");
+        assert!(item["record"].to_string().contains(cause), "{item}");
+        assert!(
+            document["counterexamples"]
+                .as_array()
+                .is_none_or(Vec::is_empty),
+            "{document}"
+        );
+    };
+
+    let proved = settle("contract-provider-proved", ProviderVerdict::Proved);
     let item = &proved["items"][0];
     assert_eq!(label(item), "proved", "{item}");
     assert_eq!(item["record"]["backend"], "fsl.test-contract", "{item}");
     assert_eq!(item["record"]["certification"], "trusted", "{item}");
 
-    let unknown = settle("contract-provider-unknown", || ProviderVerdict::Unknown);
-    let item = &unknown["items"][0];
-    assert_eq!(label(item), "inconclusive", "{item}");
-    assert!(
-        item["record"].to_string().contains("solver-inconclusive"),
-        "{item}"
-    );
+    let unknown = settle("contract-provider-unknown", ProviderVerdict::Unknown);
+    inconclusive(&unknown, "solver-inconclusive");
 
-    let assignments = settle("contract-provider-assignments", || {
+    let refuted = settle(
+        "contract-provider-refuted",
+        contract_verdict(ContractRow::Reproduces),
+    );
+    let item = &refuted["items"][0];
+    assert_eq!(label(item), "refuted", "{item}");
+    assert_eq!(item["record"]["backend"], "fsl.test-contract", "{item}");
+    let counterexamples = refuted["counterexamples"]
+        .as_array()
+        .expect("a refuted item's counterexample");
+    assert_eq!(counterexamples.len(), 1, "{refuted}");
+    let counterexample = &counterexamples[0]["counterexample"];
+    assert_eq!(
+        counterexample["type"], "contract-counterexample",
+        "{refuted}"
+    );
+    assert_eq!(counterexample["obligation"], "preservation", "{refuted}");
+    assert_eq!(counterexample["bound"], false, "{refuted}");
+
+    let parity = settle(
+        "contract-provider-parity",
+        contract_verdict(ContractRow::OtherOccurrence),
+    );
+    inconclusive(&parity, "replay-parity");
+
+    let bound = settle(
+        "contract-provider-bound",
+        contract_verdict(ContractRow::Bound),
+    );
+    inconclusive(&bound, "replay-refused");
+
+    let assignments = settle(
+        "contract-provider-assignments",
         ProviderVerdict::Refuted {
             counterexample: vec![filament_exact::Value::Integer(0_i64.into())],
-        }
-    });
-    let item = &assignments["items"][0];
-    assert_eq!(label(item), "inconclusive", "{item}");
-    assert!(
-        item["record"].to_string().contains("replay-parity"),
-        "{item}"
+        },
     );
-    assert!(
-        assignments["counterexamples"]
-            .as_array()
-            .is_none_or(Vec::is_empty),
-        "{assignments}"
-    );
+    inconclusive(&assignments, "replay-parity");
 }

@@ -19,6 +19,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-331
     type: references
+  - target: ix://agent-ix/filament-specification/FR-272
+    type: references
   - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
 ---
@@ -55,12 +57,16 @@ A registered engine, or a registration refusal naming the `BackendId`.
 
 - Registration SHALL refuse, naming the `BackendId`, a descriptor that
   advertises no (kind, mode) pair, and a descriptor that advertises
-  `value-validity` in some mode but not in `unbounded`. The refusal also names
-  which of the two rules the descriptor breaks (`no-advertised-pair` or
-  `value-validity-not-unbounded`). A refused provider is never called and the
-  registry never lists it. These are the only registration refusals: a
-  descriptor's kinds, origin and mode set are otherwise never a reason to
-  refuse it.
+  `value-validity` in some mode but not in `unbounded`. The refusal is an
+  FSpec FR-272 `invalid_capability` diagnostic keyed by the `BackendId`, with
+  the cause naming the rule the descriptor breaks: `absent-kind` for a
+  descriptor that advertises no pair, and `value-validity-not-unbounded` for
+  the second rule, whose payload also carries the modes the descriptor
+  advertises for `value-validity`, in manifest order. A refused provider is
+  never called and the registry never lists it. FR-968 adds no other
+  refusal; FR-075's registration refusals (such as `duplicate-backend` and
+  `unknown-evidence-kind`) and FR-288's manifest refusals still apply, before
+  or beside these two.
 - Every other descriptor SHALL register, whatever kinds it advertises, and
   negotiation (FSpec FR-290) routes to it only items whose (kind, mode) it
   advertises; an item handed `Supported` on it for another pair settles
@@ -113,8 +119,8 @@ A registered engine, or a registration refusal naming the `BackendId`.
 |----|----------|--------------|
 | FR-968-AC-1 | Building an engine from a provider whose descriptor advertises only (`operation-contract`, `unbounded`) succeeds and the registry beside `Engines::fsl()` lists it; one advertising (`operation-contract`, `bounded`) and (`value-validity`, `unbounded`) succeeds; one advertising (`operation-contract`, `unbounded`) and (`value-validity`, `bounded`) only is refused naming its `BackendId`; one advertising no pair is refused naming its `BackendId`; neither refused provider is called. | Test (TC-2725) |
 | FR-968-AC-2 | With AC-1's first provider registered beside `Engines::fsl()`, an unnamed `operation-contract` item for the `post` clause `Keeps` (`self.value = n` on `M::Counter::setTo`) reaches the negotiator with candidates exactly `[contract-checker, <provider>]` (FR-962 excludes `en-1` for a `post` contract) and settles `invalid-request` `invalid_capability`/`ambiguous-backend` naming both; the unnamed `invariant` state clause `self.value <= 3` in a request naming a model subject reaches it with `[contract-checker, en-1, <provider>]` and settles `ambiguous-backend` naming all three (FR-962-AC-3); the `Keeps` item naming the provider is sent to it as one request item of kind `operation-contract` whose target is `Keeps`'s FSpec FR-485 `post` target; and a `value-validity` item handed `Supported` on it settles `invalid-request` `invalid_capability`/`inconsistent-candidates` naming it, and the provider is not called for it. | Test (TC-2725) |
-| FR-968-AC-3 | With AC-1's first provider registered and the Counter unit holding the `post` clause `Wrong` (`self.value = n + 1` on `M::Counter::setTo`), the `Wrong` item naming the provider settles by the verdict the provider returns: `Proved` gives `proved` naming the provider, certification `trusted`; `Unknown` gives `inconclusive` `solver-inconclusive`; a `Contract` counterexample with `bound` `false`, obligation `postcondition`, `violated` `Wrong`'s occurrence and one execution from pre-state `value = 0` with argument `n = 0` and post-state `value = 0` gives `refuted` naming the provider with exactly that counterexample in `counterexamples`; the same counterexample with post-state `value = 1`, which satisfies the clause, gives `inconclusive` `replay-parity` with no counterexample; the first with `bound` `true` gives `inconclusive` `replay-refused` with no counterexample; and an `Assignments` counterexample gives `inconclusive` `replay-parity` with no counterexample. No result is `refuted` without its replay. | Test (TC-2725) |
-| FR-968-AC-4 | Negative: a manifest advertising no pair never registers: the manifest reader refuses it (FR-288-AC-3), or, where it builds a descriptor, `Engine::external` refuses that descriptor with reason `no-advertised-pair`; `Engine::external` over one advertising (`value-validity`, `bounded`) only with reason `value-validity-not-unbounded`, each naming its `BackendId`; a descriptor advertising only (`temporal-satisfaction`, `bounded`), and one advertising only (`schedulability`, `unbounded`), each register. | Test (TC-2725) |
+| FR-968-AC-3 | With AC-1's first provider registered and the Counter unit holding the `invariant` state clause `Wrong` (`self.value <= 1`), the `Wrong` item naming the provider settles by the verdict the provider returns: `Proved` gives `proved` naming the provider, certification `trusted`; `Unknown` gives `inconclusive` `solver-inconclusive`; a `Contract` counterexample with obligation `preservation`, `violated` `Wrong`'s claim occurrence, `bound` `false` and one execution of `inc` from the pre-state `value = 1` to the post-state `value = 2`, which FSpec FR-485 "Replay" reproduces, gives `refuted` naming the provider with exactly that counterexample in `counterexamples`; the same counterexample with `violated` naming an occurrence ordinal the clause does not have, which FSpec FR-485 "Replay" does not reproduce, gives `inconclusive` `replay-parity` with no counterexample; the same with `bound` `true` gives `inconclusive` `replay-refused` with no counterexample; and an `Assignments` counterexample gives `inconclusive` `replay-parity` with no counterexample. No result is `refuted` without its replay. | Test (TC-2725) |
+| FR-968-AC-4 | Negative: a manifest advertising no pair never registers: the manifest reader refuses it (FR-288-AC-3), so `Engine::external`'s `invalid_capability`/`absent-kind` refusal keyed by the `BackendId` is reached only through a descriptor built by hand with no pair; `Engine::external` over a descriptor advertising (`value-validity`, `bounded`) only is refused `invalid_capability`/`value-validity-not-unbounded` keyed by its `BackendId` with modes `["bounded"]`; a descriptor advertising only (`temporal-satisfaction`, `bounded`), and one advertising only (`schedulability`, `unbounded`), each register. | Test (TC-2725) |
 
 ## Dependencies
 

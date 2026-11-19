@@ -19,7 +19,7 @@ Scope: FR-397-AC-30, FR-397-AC-31, FR-940-AC-15.
 ## Test Procedure
 
 1. Check `f(p, q, r: Float64[nearest-even]): Boolean` with each FR-397-AC-30 ordering body, emit it, read the bytes back, and call `f` on the source package and on the `BarePackage` of the read, with `p` `1.0` and with `p` a quiet NaN.
-2. Do the same for FR-397-AC-31's hand-written composition, its two near-miss bodies and `p < q && numericEqual(p, p)`.
+2. Do the same, with `p`, `q`, `r` at `1.0`, `2.0`, `3.0`, for FR-397-AC-31's hand-written composition, its two near-miss bodies and `p < q and numericEqual(p, p)`.
 
 Test: `fsl-eval/tests/it/ieee_ordering_route_parity.rs` `an_ordering_charges_the_same_on_the_source_and_package_routes` (step 1), `the_ordering_part_rule_reads_the_shape_on_both_routes` (step 2).
 
