@@ -26,7 +26,8 @@ mod footprints;
 mod frames;
 mod input;
 pub use input::{
-    ModelCheckInput, ModelEvaluator, PackageModelInput, PendingClauseForm, PendingPackageForm,
+    ModelCheckInput, ModelEvaluator, ModelTerminal, ModelTerminalDeclaration, PackageModelInput,
+    TerminalWhen, PendingClauseForm, PendingPackageForm,
     StateClauseEntry,
 };
 mod operation_coverage;
@@ -622,7 +623,7 @@ impl<'a> ModelSystem<'a> {
     }
 
     /// The package's `terminal` declarations (FR-411).
-    pub(crate) fn terminals(&self) -> &[fsl_package::PackageTerminal<'a>] {
+    pub(crate) fn terminals(&self) -> &[input::ModelTerminal<'a>] {
         self.input.terminals.as_deref().unwrap_or_default()
     }
 

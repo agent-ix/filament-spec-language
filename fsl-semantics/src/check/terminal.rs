@@ -376,3 +376,11 @@ impl CheckedGraph {
             .collect()
     }
 }
+
+/// The `TypeDeclaration` owner name the `when` predicate of the `terminal`
+/// declaration at `index` is located under, on either route: `index` is the
+/// declaration's index among the unit's `terminal` declarations, in source
+/// order (FR-411, FR-940).
+pub fn terminal_predicate_site(index: usize) -> String {
+    super::lowering::terminal_site(index, super::lowering::TerminalSite::Predicate)
+}

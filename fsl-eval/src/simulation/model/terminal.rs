@@ -11,9 +11,8 @@
 //! conforms to `P`'s `self`. The state graph alone decides; no fairness
 //! constraint is read.
 
-use filament_exact::{Meter, ValueType};
-use fsl_package::PackageTerminalDeclaration;
-use fsl_semantics::check::CheckedTerminalPredicate;
+use super::input::{ModelTerminalDeclaration, TerminalWhen};
+use filament_exact::Meter;
 
 use super::contracts::{verdict, Verdict};
 use super::walk::{exhausted, stop, walk_of};
@@ -78,19 +77,19 @@ impl ModelSystem<'_> {
         }
         for terminal in self.terminals() {
             match terminal.declaration {
-                PackageTerminalDeclaration::Any => return Ok(TerminalClass::Intended),
-                PackageTerminalDeclaration::When(predicate) => match self.read(state, predicate)? {
+                ModelTerminalDeclaration::Any => return Ok(TerminalClass::Intended),
+                ModelTerminalDeclaration::When(predicate) => match self.read(state, predicate)? {
                     Reading::True => return Ok(TerminalClass::Intended),
                     Reading::False => {}
                     Reading::Undefined(cause) => {
                         return Ok(TerminalClass::Undefined {
-                            model: terminal.model.to_owned(),
+                            model: terminal.model.clone(),
                             cause,
                         })
                     }
                     Reading::Refused => {
                         return Ok(TerminalClass::Undecided {
-                            model: terminal.model.to_owned(),
+                            model: terminal.model.clone(),
                         })
                     }
                 },
@@ -105,9 +104,9 @@ impl ModelSystem<'_> {
     fn read(
         &self,
         state: &ModelSimState,
-        predicate: &CheckedTerminalPredicate,
+        predicate: TerminalWhen<'_>,
     ) -> Result<Reading, ExpansionStop> {
-        let Some((_, ValueType::Reference(context))) = predicate.parameters().first() else {
+        let Some(context) = predicate.context() else {
             return Err(stop(BROKEN));
         };
         let walk = walk_of(self, state, None)?;

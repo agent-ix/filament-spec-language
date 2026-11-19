@@ -3,9 +3,7 @@
 //! source route from the source package and on the package route once from
 //! a `BarePackage`'s admitted nodes and handoff supply.
 
-use fsl_eval::simulation::model::{
-    ModelCheckInput, ModelSystem, PackageModelInput, PendingPackageForm,
-};
+use fsl_eval::simulation::model::{ModelCheckInput, ModelSystem, PackageModelInput};
 use fsl_eval::simulation::TransitionSystem;
 use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits, V2ReadLimits};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -106,37 +104,82 @@ fn the_package_route_input_builds_the_source_route_model_system() {
     assert!(over_bytes.source_package().is_none());
 }
 
-/// FR-940: a package with a `terminal` declaration, a form the package route
-/// does not read yet, refuses the package-route input at that node, naming
-/// the form; no input that leaves the declaration out is built. Its state
-/// clauses and operation frames are read. QSL-2521 reads the `terminal` rows
-/// and lifts this refusal.
+/// The class of each state `system` reaches from its initial states, in
+/// breadth-first order.
+fn terminal_classes(
+    system: &ModelSystem<'_>,
+) -> Vec<(Vec<u8>, fsl_eval::simulation::model::TerminalClass)> {
+    let mut queue: std::collections::VecDeque<_> = system.initial().into_iter().collect();
+    let mut seen: Vec<Vec<u8>> = Vec::new();
+    let mut classes = Vec::new();
+    while let Some(state) = queue.pop_front() {
+        let key = system.state_key(&state).expect("a state key").0;
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key.clone());
+        let expansion = system.successors(&state).expect("expands");
+        let class = system
+            .terminal_class(&state, !expansion.successors.is_empty())
+            .expect("the class reads");
+        classes.push((key, class));
+        queue.extend(expansion.successors.into_iter().map(|(_, next)| next));
+    }
+    classes
+}
+
+/// FR-411, FR-940, FR-124: a package holding a `terminal` declaration builds
+/// the package-route input, which reads the declaration from its admitted
+/// terminal row and classifies every reachable state as the source route does
+/// for `terminal any`, `terminal when` over `self`, and no declaration.
 #[trace("TC-2958", "FR-940-AC-6")]
+#[trace("TC-487", "FR-060-AC-6")]
 #[test]
-fn a_package_route_input_refuses_a_form_it_does_not_read() {
-    let model = document(false);
-    let body = format!("{CONTRACT}terminal Done using v on M when {{ self.value = 3 }};\n");
-    let (package, _) = package_with_clauses(&model, &body, &[]);
-    let documents = Documents::new(model);
-    let handoff = handoff(&package, &documents);
-    let bare = bare(&handoff);
-    let Err(PendingPackageForm::Form { form, node }) = PackageModelInput::of(
-        &bare,
-        &documents.packages,
-        ModelNormalizationLimits::default(),
-    ) else {
-        panic!("a terminal declaration is not read on the package route");
-    };
-    assert_eq!(form, fsl_package::UnreadModelForm::Terminal);
-    assert!(
-        handoff
-            .admitted
-            .resolved_graph()
-            .nodes
-            .iter()
-            .any(|admitted| admitted.node_id == node && admitted.node_tag.as_ref() == "temporal"),
-        "{node:?}"
-    );
+fn a_package_route_input_reads_a_terminal_declaration_as_the_source_does() {
+    use fsl_eval::simulation::model::TerminalClass;
+    for (declaration, expect_intended) in [
+        ("", false),
+        ("terminal Halt using v on M any;\n", true),
+        (
+            "terminal Done using v on M when { self.value = 3 };\n",
+            true,
+        ),
+        (
+            "terminal Done using v on M when { self.value = 2 };\n",
+            false,
+        ),
+    ] {
+        let model = document(false);
+        let body = format!("{CONTRACT}{declaration}");
+        let (package, _) = package_with_clauses(&model, &body, &[]);
+        let mut documents = Documents::new(model);
+        let start = documents.start("start", &[("a", 0)]);
+        let source = subject(&package, &documents, vec![start], &["a"], UNLIMITED);
+        let handoff = handoff(&package, &documents);
+        let bare = bare(&handoff);
+        let input = PackageModelInput::of(
+            &bare,
+            &documents.packages,
+            ModelNormalizationLimits::default(),
+        )
+        .expect("the package route reads the terminal declaration");
+        let mut request = source.simulation.clone();
+        request.input = input.input();
+        let over_bytes = ModelSystem::new(request).expect("the package route admits");
+        let over_source = ModelSystem::new(source.simulation).expect("the source admits");
+        let (from_bytes, from_source) = (
+            terminal_classes(&over_bytes),
+            terminal_classes(&over_source),
+        );
+        assert_eq!(from_bytes, from_source, "{declaration}");
+        assert_eq!(
+            from_source
+                .iter()
+                .any(|(_, class)| *class == TerminalClass::Intended),
+            expect_intended,
+            "{declaration}"
+        );
+    }
 }
 
 /// The canonical keys of every state `system` reaches from its initial

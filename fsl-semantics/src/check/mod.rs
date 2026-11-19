@@ -237,7 +237,7 @@ pub use refinement::{
 pub use terminal::{
     CheckedTerminal, CheckedTerminalPredicate, TerminalClauseDeclaration, TerminalClauseKind,
     TerminalDeclaration, TerminalKeys, TerminalMismatch, TerminalMode, TerminalNode,
-    TerminalRefusal,
+    TerminalRefusal, terminal_predicate_site,
 };
 mod type_form;
 mod type_invariant;

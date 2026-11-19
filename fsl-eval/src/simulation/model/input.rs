@@ -21,7 +21,7 @@ use filament_exact::{
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::TypeEnvironment;
 use fsl_package::{
-    BarePackage, CheckedNodeId, CheckedPackage, PackageTerminal, TerminalResolveRefusal,
+    BarePackage, CheckedNodeId, CheckedPackage, PackageTerminalDeclaration, TerminalResolveRefusal,
     UnreadModelForm,
 };
 use fsl_semantics::check::footprint::{
@@ -69,6 +69,57 @@ pub struct StateClauseEntry {
     pub invariant: bool,
 }
 
+/// One `terminal` declaration as a model check reads it (FR-411, FR-940).
+/// The model is named by its source alias on the source route and by the
+/// package identity of its selection on the package route.
+#[derive(Clone, Debug)]
+pub struct ModelTerminal<'a> {
+    /// The model's name.
+    pub model: String,
+    /// The declaration.
+    pub declaration: ModelTerminalDeclaration<'a>,
+}
+
+/// A [`ModelTerminal`]'s declaration.
+#[derive(Clone, Copy, Debug)]
+pub enum ModelTerminalDeclaration<'a> {
+    /// Every terminal state is intended.
+    Any,
+    /// A terminal state is intended when the predicate holds at it.
+    When(TerminalWhen<'a>),
+}
+
+/// A `terminal when` predicate in the form its route reads.
+#[derive(Clone, Copy)]
+pub enum TerminalWhen<'a> {
+    /// The source route's checked body.
+    Source(&'a CheckedTerminalPredicate),
+    /// The package route's projected condition.
+    Package(&'a fsl_package::BareTerminalPredicate),
+}
+
+impl std::fmt::Debug for TerminalWhen<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Source(_) => f.write_str("TerminalWhen::Source"),
+            Self::Package(_) => f.write_str("TerminalWhen::Package"),
+        }
+    }
+}
+
+impl TerminalWhen<'_> {
+    /// The object type `self` ranges over, when the predicate names one.
+    pub fn context(&self) -> Option<&EffectiveId> {
+        match self {
+            Self::Source(predicate) => match predicate.parameters().first() {
+                Some((_, ValueType::Reference(context))) => Some(context),
+                _ => None,
+            },
+            Self::Package(predicate) => Some(predicate.context()),
+        }
+    }
+}
+
 /// What a model check reads of a checked package (FR-531, FR-940): the
 /// declaration tables and the evaluator of its checked forms.
 #[derive(Clone)]
@@ -97,7 +148,7 @@ pub struct ModelCheckInput<'a> {
     pub state_clauses: Vec<StateClauseEntry>,
     /// The `terminal` declarations (FR-411), or the refusal of their
     /// resolution, which the model system reports when it is built.
-    pub terminals: Result<Vec<PackageTerminal<'a>>, TerminalResolveRefusal>,
+    pub terminals: Result<Vec<ModelTerminal<'a>>, TerminalResolveRefusal>,
     /// The evaluator of the package's checked forms.
     pub evaluator: &'a dyn ModelEvaluator,
     /// The source package the tables were read from; `None` on the package
@@ -142,7 +193,20 @@ impl<'a> ModelCheckInput<'a> {
                     invariant: clause.kind() == fsl_forms::StateClauseKind::Invariant,
                 })
                 .collect(),
-            terminals: fsl_package::resolve_terminals(package),
+            terminals: fsl_package::resolve_terminals(package).map(|terminals| {
+                terminals
+                    .into_iter()
+                    .map(|terminal| ModelTerminal {
+                        model: terminal.model.to_owned(),
+                        declaration: match terminal.declaration {
+                            PackageTerminalDeclaration::Any => ModelTerminalDeclaration::Any,
+                            PackageTerminalDeclaration::When(predicate) => {
+                                ModelTerminalDeclaration::When(TerminalWhen::Source(predicate))
+                            }
+                        },
+                    })
+                    .collect()
+            }),
             evaluator: package,
             source: Some(package),
             admitted: None,
@@ -245,6 +309,7 @@ pub struct PackageModelInput<'p> {
     model_selections: Vec<DomainPackageRef>,
     operations: OperationTable,
     probabilistic: CheckedProbabilisticModel,
+    terminals: Vec<fsl_package::BareTerminal>,
     state_clauses: Vec<StateClauseEntry>,
 }
 
@@ -320,6 +385,10 @@ impl<'p> PackageModelInput<'p> {
                 invariant: declaration.invariant,
             })
             .collect();
+        // FR-411, FR-940: the `terminal` declarations by their admitted rows.
+        let terminals = package
+            .terminal_declarations()
+            .map_err(PendingPackageForm::World)?;
         Ok(Self {
             package,
             world,
@@ -328,6 +397,7 @@ impl<'p> PackageModelInput<'p> {
             operations,
             probabilistic,
             state_clauses,
+            terminals,
         })
     }
 
@@ -489,7 +559,19 @@ impl<'p> PackageModelInput<'p> {
             time_sources: &[],
             probabilistic: &self.probabilistic,
             state_clauses: self.state_clauses.clone(),
-            terminals: Ok(Vec::new()),
+            terminals: Ok(self
+                .terminals
+                .iter()
+                .map(|terminal| ModelTerminal {
+                    model: terminal.model.clone(),
+                    declaration: match &terminal.declaration {
+                        fsl_package::BareTerminalDeclaration::Any => ModelTerminalDeclaration::Any,
+                        fsl_package::BareTerminalDeclaration::When(predicate) => {
+                            ModelTerminalDeclaration::When(TerminalWhen::Package(predicate))
+                        }
+                    },
+                })
+                .collect()),
             evaluator: self.package,
             source: None,
             admitted: Some(self.package.package()),
@@ -507,6 +589,10 @@ mod sealed {
 /// The fault a source checked form handed to the package route's evaluator
 /// raises: a package-route input holds no source form, so none reaches it.
 const SOURCE_FORM: InternalFault = InternalFault::new("FR-940", "source-form-on-package-route");
+
+/// The fault a package-route form handed to the source package's evaluator
+/// raises: a source-route input holds no package form, so none reaches it.
+const PACKAGE_FORM: InternalFault = InternalFault::new("FR-940", "package-form-on-source-route");
 
 /// The evaluator of a package's checked forms a model check reads through
 /// its [`ModelCheckInput`] (FR-531, FR-940).
@@ -762,7 +848,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     /// An internal fault, as the evaluator reports it.
     fn evaluate_terminal_predicate(
         &self,
-        predicate: &CheckedTerminalPredicate,
+        predicate: TerminalWhen<'_>,
         current: &ObjectEnvironment,
         self_object: ObjectReference,
         meter: &mut Meter,
@@ -1071,10 +1157,16 @@ impl ModelEvaluator for CheckedPackage {
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         role: fsl_semantics::check::PredicateRole,
     ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-        let body = source_predicate(self, claim, role).map_err(|_| FootprintRefusal::Unresolved {
-            what: "state-graph predicate",
-        })?;
-        derive_atom_reads(self.graph(), model, &(String::new(), ValueType::Boolean), body.body())
+        let body =
+            source_predicate(self, claim, role).map_err(|_| FootprintRefusal::Unresolved {
+                what: "state-graph predicate",
+            })?;
+        derive_atom_reads(
+            self.graph(),
+            model,
+            &(String::new(), ValueType::Boolean),
+            body.body(),
+        )
     }
 
     fn evaluate_state_graph_predicate(
@@ -1141,12 +1233,21 @@ impl ModelEvaluator for CheckedPackage {
 
     fn evaluate_terminal_predicate(
         &self,
-        predicate: &CheckedTerminalPredicate,
+        predicate: TerminalWhen<'_>,
         current: &ObjectEnvironment,
         self_object: ObjectReference,
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault> {
-        crate::value::evaluate_terminal_predicate(self, predicate, current, self_object, meter)
+        match predicate {
+            TerminalWhen::Source(predicate) => crate::value::evaluate_terminal_predicate(
+                self,
+                predicate,
+                current,
+                self_object,
+                meter,
+            ),
+            TerminalWhen::Package(_) => Err(PACKAGE_FORM),
+        }
     }
 
     fn evaluate_refinement_row(
@@ -1522,12 +1623,21 @@ impl ModelEvaluator for BarePackage<'_> {
 
     fn evaluate_terminal_predicate(
         &self,
-        _predicate: &CheckedTerminalPredicate,
-        _current: &ObjectEnvironment,
-        _self_object: ObjectReference,
-        _meter: &mut Meter,
+        predicate: TerminalWhen<'_>,
+        current: &ObjectEnvironment,
+        self_object: ObjectReference,
+        meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault> {
-        Err(SOURCE_FORM)
+        match predicate {
+            TerminalWhen::Package(predicate) => crate::value::evaluate_bare_terminal_predicate(
+                self,
+                predicate,
+                current,
+                self_object,
+                meter,
+            ),
+            TerminalWhen::Source(_) => Err(SOURCE_FORM),
+        }
     }
 
     fn evaluate_refinement_row(
