@@ -235,6 +235,10 @@ pub enum ModelBasedTestEvidence {
     Inconclusive,
     /// A resource limit stopped generation before completion.
     Incomplete,
+    /// The generator or shrinker disagreed with native admission or replay.
+    Failed,
+    /// The clause has no reading under the selected native contract route.
+    Unsupported,
 }
 
 impl ModelBasedTestEvidence {
@@ -246,6 +250,8 @@ impl ModelBasedTestEvidence {
             Self::Refuted => Category::Violation.exit_code(),
             Self::Inconclusive => Category::Inconclusive.exit_code(),
             Self::Incomplete => Category::Incomplete.exit_code(),
+            Self::Failed => Category::InternalFailure.exit_code(),
+            Self::Unsupported => Category::Unsupported.exit_code(),
         }
     }
 }
@@ -264,6 +270,22 @@ pub enum ModelBasedTestCause {
         /// Setting that raises the reached limit.
         setting: String,
     },
+    /// A generator or shrinker defect invalidated the run.
+    ToolFailure {
+        /// The failed native-oracle consistency check.
+        defect: ModelBasedTestDefect,
+    },
+    /// A frame clause needs an implementation binding to have a contract reading.
+    NoContractLevelReading,
+}
+
+/// Closed native-oracle failures named by the model-based testing contract.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ModelBasedTestDefect {
+    /// Native admission accepted a value the generator classified as a refusal.
+    OracleDisagreement,
+    /// A retained shrink left its domain or changed the failing clause.
+    InvalidShrink,
 }
 
 /// The operation-coverage summary in an FR-190 run record.
