@@ -1953,13 +1953,12 @@ fn model_object_types(
             // entry, but their owners/members are part of the source model
             // that this assembly arm must accept.
             DomainPackageRecord::Clause(_) | DomainPackageRecord::Namespace(_) => {}
-            // FR-103 still requires a typed refusal for systems parts, ports
-            // and allocations until the kernel represents those declarations.
-            DomainPackageRecord::Component(part) => errors.push(unsupported(&part.key.node)),
-            DomainPackageRecord::Endpoint(port) => errors.push(unsupported(&port.key.node)),
-            DomainPackageRecord::Allocation(allocation) => {
-                errors.push(unsupported(&allocation.key.node))
-            }
+            // These declarations are retained by the selected model view for
+            // typed model-reference binding, but are not value types and do
+            // not contribute a TypeEnvironment declaration.
+            DomainPackageRecord::Component(_)
+            | DomainPackageRecord::Endpoint(_)
+            | DomainPackageRecord::Allocation(_) => {}
             // Record and event declarations are emitted as composites below;
             // their effective fields are collected from the normalized view.
             // A variant type and its cases are collected from the normalized

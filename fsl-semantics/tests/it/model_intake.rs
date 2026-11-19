@@ -3252,30 +3252,6 @@ fn unbounded_multiplicity_with_nonzero_lower_bound_is_unsupported_feature() {
     ));
 }
 
-/// FR-056 and FR-103: a model containing systems part and port records is
-/// retained by package intake, then refused by assembly as an unsupported
-/// model feature until the kernel represents those declarations.
-#[trace("FR-056-AC-10")]
-#[test]
-fn systems_part_and_port_records_are_unsupported_features() {
-    let package = "test/systems-records";
-    let document: Value = serde_json::from_slice(&port_document(package)).expect("JSON");
-    let refusal = assemble_model_document(package, &document, "systems-records")
-        .expect_err("systems part and port records are not kernel model declarations");
-    assert!(
-        refusal.errors.iter().any(|error| {
-            error.cause.catalog_code().to_string()
-                == "unknown_required_feature/unsupported-feature"
-                && matches!(
-                    error.cause,
-                    fsl_semantics::check::AssemblyCause::UnsupportedModelMember { .. }
-                )
-        }),
-        "typed unsupported-feature refusal: {:?}",
-        refusal.errors
-    );
-}
-
 /// FR-056-AC-43: bare native Text, Rational and Decimal members remain in an
 /// admitted model package even though they have no checked value type. The
 /// assembler records them as untyped members rather than rejecting the model.
