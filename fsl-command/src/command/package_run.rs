@@ -29,11 +29,28 @@ pub struct PreparedPackageRun {
     identities: Option<fsl_package::ReadIdentityRows>,
     equality: Option<fsl_package::ReadEqualityRows>,
     budget: filament_contract_model::NativeJoinBudget,
+    packages: fsl_semantics::model::intake::PackageInput,
+    model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
     call: fsl_replay::spine::Call,
     /// The request's `package` selection, echoed by the result.
     selection: serde_json::Value,
     /// The domain package sources the request supplied.
     models: Vec<fsl_foundation::Source>,
+}
+
+/// The package bytes and handoff rows admitted for a selected package. The
+/// export route shares this reader so package execution and mapping apply the
+/// same strict V2 admission and file/directory handoff rules.
+pub(super) struct AdmittedPackage {
+    pub(super) package: filament_contract_model::CheckedPackageV2,
+    pub(super) identities: Option<fsl_package::ReadIdentityRows>,
+    pub(super) equality: Option<fsl_package::ReadEqualityRows>,
+    pub(super) budget: filament_contract_model::NativeJoinBudget,
+    pub(super) packages: fsl_semantics::model::intake::PackageInput,
+    pub(super) model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+    pub(super) snapshot: Option<Vec<u8>>,
+    pub(super) selection: serde_json::Value,
+    pub(super) models: Vec<fsl_foundation::Source>,
 }
 
 impl PreparedPackageRun {
@@ -109,6 +126,68 @@ pub(super) fn prepare(
     package: &wire::RunPackageSelection,
     dependent_bytes: usize,
 ) -> Result<PreparedPackageRun> {
+    validate_request(request)?;
+    if package.source_package.is_some() {
+        return Err(invalid(
+            "package.source_package",
+            "source_package is only selected with package export",
+        ));
+    }
+    for (present, member) in [
+        (request.clause.is_some(), "clause"),
+        (request.items.is_some(), "items"),
+        (request.tl_lowering.is_some(), "tl_lowering"),
+    ] {
+        if present {
+            return Err(invalid(
+                member,
+                "running this member over a selected checked package is not implemented yet",
+            ));
+        }
+    }
+    let Some(call) = &request.call else {
+        return Err(invalid("call", "a package run names its call"));
+    };
+    if call.requirements.is_some() {
+        return Err(invalid(
+            "call.requirements",
+            "settling requirement items over a selected checked package is not implemented yet",
+        ));
+    }
+    let spine_call = super::read_call(call, request)?;
+    let admitted = admit(
+        directory,
+        request,
+        package,
+        dependent_bytes,
+        call.snapshot.as_deref(),
+    )?;
+    if let Some(bytes) = &admitted.snapshot {
+        let limits = fsl_replay::spine::ObservationLimitsWire::resolve(None)
+            .map_err(|error| invalid(&error.member, error.reason))?;
+        let observation =
+            fsl_replay::spine::SuppliedObservation::from_document("snapshot", bytes.clone())
+                .map_err(|error| invalid(&error.member, error.reason))?;
+        spine_call.snapshot = Some(fsl_replay::spine::CallSnapshot {
+            observation,
+            limits,
+        });
+    }
+    Ok(PreparedPackageRun {
+        package: admitted.package,
+        identities: admitted.identities,
+        equality: admitted.equality,
+        budget: admitted.budget,
+        packages: admitted.packages,
+        model_limits: admitted.model_limits,
+        call: spine_call,
+        selection: admitted.selection,
+        models: admitted.models,
+    })
+}
+
+/// Package routes cannot restate choices already held by the package.
+pub(super) fn validate_request(request: &wire::Request) -> Result<()> {
     // FR-767: a package carries its recorded law, so a request-selected law
     // beside it refuses first, naming `integer_division`.
     if request.integer_division.is_some() {
@@ -139,6 +218,18 @@ pub(super) fn prepare(
     if !request.clocks.is_empty() {
         return Err(invalid("clocks", "a package already records its clocks"));
     }
+    Ok(())
+}
+
+/// Admit the selected V2 package and the source documents for its selected
+/// domain packages, preserving file/directory handoff behavior.
+pub(super) fn admit(
+    directory: &Path,
+    request: &wire::Request,
+    package: &wire::RunPackageSelection,
+    dependent_bytes: usize,
+    snapshot: Option<&str>,
+) -> Result<AdmittedPackage> {
     let (selection, handoff) = match (&package.file, &package.directory) {
         (Some(file), None) => (
             serde_json::json!({ "file": file }),
@@ -155,34 +246,6 @@ pub(super) fn prepare(
             ));
         }
     };
-    for (present, member) in [
-        (request.clause.is_some(), "clause"),
-        (request.items.is_some(), "items"),
-        (request.tl_lowering.is_some(), "tl_lowering"),
-    ] {
-        if present {
-            return Err(invalid(
-                member,
-                "running this member over a selected checked package is not implemented yet",
-            ));
-        }
-    }
-    let Some(call) = &request.call else {
-        return Err(invalid("call", "a package run names its call"));
-    };
-    if call.snapshot.is_some() {
-        return Err(invalid(
-            "call.snapshot",
-            "a call snapshot over a selected checked package is not implemented yet",
-        ));
-    }
-    if call.requirements.is_some() {
-        return Err(invalid(
-            "call.requirements",
-            "settling requirement items over a selected checked package is not implemented yet",
-        ));
-    }
-    let spine_call = super::read_call(call, request)?;
     if request
         .models
         .iter()
@@ -200,7 +263,7 @@ pub(super) fn prepare(
                 Selected::Directory(_) => 3,
             },
             models: request.models.len(),
-            observations: 0,
+            observations: usize::from(snapshot.is_some()),
             extensions: 0,
         },
         dependent_bytes,
@@ -252,12 +315,17 @@ pub(super) fn prepare(
             read_witness(directory, &mut intake, handoff, &admitted, &mut budget)?
         }
     };
-    Ok(PreparedPackageRun {
+    let snapshot = snapshot
+        .map(|file| intake.file(file, intake.remaining))
+        .transpose()?;
+    Ok(AdmittedPackage {
         package: admitted,
         identities,
         equality,
         budget,
-        call: spine_call,
+        packages: supplied,
+        model_limits: request.limits.normalization.resolve(),
+        snapshot,
         selection,
         models: documents
             .iter()
@@ -350,6 +418,8 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
         identities,
         equality,
         mut budget,
+        packages,
+        model_limits,
         call,
         selection,
         models,
@@ -385,7 +455,35 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
                 message: format!("stage_limit_exceeded: {setting}: {failure:?}"),
             }
         })?;
-    let objects = fsl_semantics::model::object_environment::ObjectEnvironment::default();
+    let objects = if let Some(snapshot) = &call.snapshot {
+        let provision = std::collections::BTreeMap::from([(
+            snapshot.observation.reference.clone(),
+            snapshot.observation.bytes.clone(),
+        )]);
+        bare.admit_call_snapshot(
+            &packages,
+            model_limits,
+            &provision,
+            &snapshot.observation.reference,
+            snapshot.limits,
+        )
+        .map(|(objects, _)| objects)
+        .map_err(|failure| {
+            use fsl_semantics::model::observation::AdmissionFailure;
+            match failure {
+                AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record) => {
+                    RunCause::SpineRun(Box::new(fsl_replay::spine::RunRefusal::ObjectEnvironment(
+                        record,
+                    )))
+                }
+                AdmissionFailure::Fault(fault) => {
+                    RunCause::SpineRun(Box::new(fsl_replay::spine::RunRefusal::Fault(fault)))
+                }
+            }
+        })?
+    } else {
+        fsl_semantics::model::object_environment::ObjectEnvironment::default()
+    };
     let outcome =
         fsl_replay::spine::run_package(&bare, &call, &objects, &filament_exact::Cancel::new())
             .map_err(|refusal| RunCause::SpineRun(Box::new(*refusal)))?;

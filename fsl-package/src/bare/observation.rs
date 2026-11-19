@@ -10,7 +10,7 @@ use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::domain_package::DomainPackageRef;
 use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{
-    admit_current_snapshot, AdmissionFailure, DocumentRef, Observation, ObservationLimits,
+    AdmissionFailure, DocumentRef, Observation, ObservationLimits, admit_current_snapshot,
 };
 
 use super::BarePackage;
@@ -26,6 +26,54 @@ fn refused(catalog: CatalogCode, fields: BTreeMap<&'static str, String>) -> Admi
 }
 
 impl BarePackage<'_> {
+    /// Admit the current snapshot a package function call resolves its
+    /// Reference and Population arguments against (FR-650). The model
+    /// selections, checked types and witness rows come from this admitted
+    /// V2 package and its supplied package rows.
+    pub fn admit_call_snapshot(
+        &self,
+        packages: &PackageInput,
+        model_limits: ModelNormalizationLimits,
+        snapshots: &BTreeMap<DocumentRef, Vec<u8>>,
+        selected: &DocumentRef,
+        limits: ObservationLimits,
+    ) -> Result<
+        (
+            fsl_semantics::model::object_environment::ObjectEnvironment,
+            fsl_semantics::model::observation::AdmissionUsage,
+        ),
+        AdmissionFailure,
+    > {
+        let unsupported = |reason: &str| {
+            AdmissionFailure::Refused(refused(
+                CatalogCode::new("unknown_required_feature", "unsupported-feature"),
+                BTreeMap::from([
+                    ("package", self.package().name().to_owned()),
+                    ("reason", reason.to_owned()),
+                ]),
+            ))
+        };
+        if let Err(failure) = self.witness() {
+            return Err(unsupported(
+                &crate::reader_protocol_projection::UnsupportedReason::from(failure).name(),
+            ));
+        }
+        let world = self
+            .world()
+            .map_err(|_| unsupported("missing-type-representation"))?;
+        self.object_declarations()
+            .map_err(|_| unsupported("missing-type-representation"))?;
+        fsl_semantics::model::observation::admit_current_snapshot(
+            self.model_selections(),
+            world.types(),
+            packages,
+            model_limits,
+            snapshots,
+            selected,
+            limits,
+        )
+    }
+
     /// Admit one current snapshot for a model this package selects, over the
     /// package's own reads, its supply and the caller's domain package
     /// documents (FR-533 "Observation admission"). The returned authority

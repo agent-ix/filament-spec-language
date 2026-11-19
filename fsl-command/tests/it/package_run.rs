@@ -170,6 +170,99 @@ fn package_synthesis_refusal_names_qsl_2235_before_reading_the_package() {
     assert!(!value.to_string().contains("absent.json"), "{value}");
 }
 
+/// FR-1015: export over a checked package uses the request's exact source
+/// identity/version pair and does not need the source file to remain present.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-1")]
+fn package_export_uses_its_explicit_source_package_without_source_reads() {
+    let directory = tempfile::tempdir().unwrap();
+    compile(directory.path(), FLOOR_HALF);
+    let source_package = json!({"identity": "recorded:package-run-unit", "version": "7"});
+    let (exit, value) = run(
+        directory.path(),
+        json!({"models": [],
+            "package": {"file": "package.json", "source_package": source_package},
+            "export": {"profile": "filament.output.tla2/v1",
+                "obligations": ["not-a-claim"], "minimum_fidelity": "any"}}),
+    );
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(
+        value["export"]["package"]["source_package"], source_package,
+        "{value}"
+    );
+    assert!(value.get("source").is_none(), "{value}");
+}
+
+/// FR-1015: package export requires explicit source metadata before the
+/// package path is read; checked-package/v2 does not retain formal_revision.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-1")]
+fn package_export_without_source_package_refuses_before_package_read() {
+    let directory = tempfile::tempdir().unwrap();
+    let (exit, value) = run(
+        directory.path(),
+        json!({"models": [], "package": {"file": "absent.json"},
+            "export": {"profile": "filament.output.tla2/v1",
+                "obligations": ["not-a-claim"]}}),
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    names(&value, "missing-member");
+    names(&value, "/request/package/source_package");
+    assert!(!value.to_string().contains("absent.json"), "{value}");
+}
+
+/// FR-1015: package export reports a malformed source identity/version pair
+/// as a typed request refusal before the checked-package path is read.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-1")]
+fn package_export_with_malformed_source_package_refuses_before_package_read() {
+    let directory = tempfile::tempdir().unwrap();
+    let (exit, value) = run(
+        directory.path(),
+        json!({"models": [],
+            "package": {"file": "absent.json", "source_package": "not-an-object"},
+            "export": {"profile": "filament.output.tla2/v1",
+                "obligations": ["not-a-claim"]}}),
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    names(&value, "wrong-value-kind");
+    names(&value, "/request/package/source_package");
+    assert!(!value.to_string().contains("absent.json"), "{value}");
+}
+
+/// FR-650: the package owner admits a call snapshot and runs without looking
+/// for the source that produced the checked artifact.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-1")]
+fn package_call_snapshot_is_admitted_by_the_v2_package_owner() {
+    let directory = tempfile::tempdir().unwrap();
+    compile(directory.path(), FLOOR_HALF);
+    std::fs::write(
+        directory.path().join("snapshot.json"),
+        json!({"format": "filament.state.snapshot/v1",
+            "identity": {"authority": "test", "identity": "package-call-snapshot"},
+            "observation": "current",
+            "anchor": {"kind": "initialization", "name": "start"},
+            "populations": []})
+        .to_string(),
+    )
+    .unwrap();
+    let (exit, value) = run(
+        directory.path(),
+        json!({"models": [], "package": {"file": "package.json"},
+            "call": {"function": "half", "arguments": [], "snapshot": "snapshot.json"}}),
+    );
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(
+        value["outcome"]["value"],
+        json!({"integer": "-4"}),
+        "{value}"
+    );
+    assert!(value.get("source").is_none(), "{value}");
+}
+
 /// FR-100 "Request-file preparation for the driver": preparing a package
 /// request performs no call, and the prepared package call runs to the same
 /// value as `run`.

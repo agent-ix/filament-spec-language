@@ -617,6 +617,17 @@ pub(super) struct RunPackageSelection {
     pub file: Option<String>,
     #[serde(default)]
     pub directory: Option<String>,
+    /// The exact source reference required when this package is exported.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub source_package: Option<PackageSource>,
+}
+
+/// Source identity supplied alongside a checked package for export metadata.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PackageSource {
+    pub identity: String,
+    pub version: String,
 }
 
 /// A supplied document and its optional FR-821 provision identity.
