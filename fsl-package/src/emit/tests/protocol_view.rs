@@ -21,6 +21,7 @@ use crate::protocol_view::{
     delivery, dependency, fifo_key, locus, operation_identity, owner_model, protocol_view,
     protocol_execution_view, queue_capacity, queue_channel, queue_overflow, relation_over,
     selection, source, temporal_binding, AwaitAnchor, AwaitAnchorKind, ChannelOrdering, ChoiceVisibility,
+    ControlBody,
     ControlOperation, Delivery, FifoKey, LossSelector, Overflow, QueueCapacity, Scheduling,
     ViewRefusal,
 };
