@@ -194,16 +194,21 @@ fn a_protocol_refinement_checks_hidden_fairness_state_liveness() {
         &Cancel::new(),
     )
     .expect("the abstract protocol subject is admitted");
-    assert!(matches!(
-        outcome.safety,
-        SafetyOutcome::HoldsUncertified { .. }
-    ));
-    assert!(matches!(
-        outcome.liveness,
-        Some(fsl_replay::LivenessHalf::Checked(
-            fsl_replay::ModelCheckOutcome::HoldsReduced { .. }
-        ))
-    ));
+    assert!(
+        matches!(outcome.safety, SafetyOutcome::HoldsUncertified { .. }),
+        "safety outcome: {:?}",
+        outcome.safety
+    );
+    assert!(
+        matches!(
+            outcome.liveness,
+            Some(fsl_replay::LivenessHalf::Checked(
+                fsl_replay::ModelCheckOutcome::HoldsReduced { .. }
+            ))
+        ),
+        "liveness outcome: {:?}",
+        outcome.liveness
+    );
 }
 
 /// FR-899-AC-10 (TC-552): `CasTwice`'s two concrete commits take the weak
@@ -240,16 +245,21 @@ fn cas_twice_without_peek_holds_weak_abstract_inc_fairness() {
         &Cancel::new(),
     )
     .expect("the abstract protocol subject is admitted");
-    assert!(matches!(
-        outcome.safety,
-        SafetyOutcome::HoldsUncertified { .. }
-    ));
-    assert!(matches!(
-        outcome.liveness,
-        Some(fsl_replay::LivenessHalf::Checked(
-            fsl_replay::ModelCheckOutcome::HoldsReduced { .. }
-        ))
-    ));
+    assert!(
+        matches!(outcome.safety, SafetyOutcome::HoldsUncertified { .. }),
+        "safety outcome: {:?}",
+        outcome.safety
+    );
+    assert!(
+        matches!(
+            outcome.liveness,
+            Some(fsl_replay::LivenessHalf::Checked(
+                fsl_replay::ModelCheckOutcome::HoldsReduced { .. }
+            ))
+        ),
+        "liveness outcome: {:?}",
+        outcome.liveness
+    );
 }
 
 /// FR-148-AC-13 (TC-553): a uniquely admitted required clause with no
