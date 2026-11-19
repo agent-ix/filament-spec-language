@@ -1090,6 +1090,13 @@ fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::No
             .iter()
             .map(|clause| (clause.clause().name().to_owned(), clause.identity())),
     );
+    // FR-750: a checked hybrid claim is a claim by its declared name.
+    names.extend(
+        graph
+            .hybrid_claim_sites()
+            .iter()
+            .map(|site| (site.name.clone(), site.identity.clone())),
+    );
     // FR-625: an `invariant` state clause is a claim by its declared name.
     names.extend(
         graph
@@ -1169,6 +1176,13 @@ fn claim_occurrence(
             clause.identity(),
             clause.claim().clone(),
         ));
+    }
+    if let Some(site) = graph
+        .hybrid_claim_sites()
+        .iter()
+        .find(|site| &site.identity == node)
+    {
+        return Some(OccurrenceKey::new(site.identity.clone(), site.claim.clone()));
     }
     if let Some(clause) = graph
         .state_clauses()
@@ -1729,15 +1743,36 @@ fn resolve_one(
     }
     let protocol_bound =
         protocol.is_some() || (kind == Capability::GlobalConformance && protocol_claim);
-    let form = (kind == Capability::TemporalSatisfaction
-        || kind == Capability::GlobalConformance
-        || protocol_analysis_kind)
-        .then(|| {
-            let mut form = temporal_item(package, &claim, &temporal);
-            form.pending_reductions.clone_from(&selection.reductions);
-            form.protocol = protocol.clone();
-            ItemForm::Temporal(form)
-        });
+    let hybrid_claim = kind == Capability::TemporalSatisfaction
+        && package
+            .graph()
+            .hybrid_claim_sites()
+            .iter()
+            .any(|site| &site.identity == claim.node() && &site.claim == claim.origin());
+    let hybrid_limits = match selection.hybrid.as_ref().filter(|_| hybrid_claim) {
+        Some(member) => match fsl_replay::SolverBudget::read_hybrid(member) {
+            Ok(limits) => limits,
+            Err(_) => return invalid_member_cause(index, name, "hybrid", "invalid-value"),
+        },
+        None => fsl_replay::SolverBudget::default(),
+    };
+    let form = if hybrid_claim {
+        Some(ItemForm::Hybrid(super::HybridItem {
+            proof_bounds: Vec::new(),
+            limits: hybrid_limits,
+            options: backend_options.clone(),
+        }))
+    } else {
+        (kind == Capability::TemporalSatisfaction
+            || kind == Capability::GlobalConformance
+            || protocol_analysis_kind)
+            .then(|| {
+                let mut form = temporal_item(package, &claim, &temporal);
+                form.pending_reductions.clone_from(&selection.reductions);
+                form.protocol = protocol.clone();
+                ItemForm::Temporal(form)
+            })
+    };
     let item = ClaimItem {
         request_index: index,
         claim,
@@ -1777,6 +1812,13 @@ fn resolve_one(
         candidates,
         unrouted: if state_graph.is_some() {
             selection.unrouted_beyond_sampling()
+        } else if hybrid_claim {
+            // The `hybrid` member is read by the hybrid item itself.
+            ItemSelection {
+                hybrid: None,
+                ..selection.clone()
+            }
+            .unrouted_routing_options(true)
         } else {
             selection.unrouted_routing_options(kind == Capability::TemporalSatisfaction)
         } || (selection.reductions.is_some() && kind != Capability::TemporalSatisfaction)
@@ -3334,7 +3376,8 @@ fn replay_target(found: &super::ItemCounterexample, name: &str) -> Option<Value>
         | super::Counterexample::Probabilistic(_)
         | super::Counterexample::Contract(_)
         | super::Counterexample::StateGraph(_)
-        | super::Counterexample::GlobalConformance(_) => json!({"state_clause": qualified}),
+        | super::Counterexample::GlobalConformance(_)
+        | super::Counterexample::Hybrid(_) => json!({"state_clause": qualified}),
         super::Counterexample::ScheduleMiss(_) => return None,
     })
 }

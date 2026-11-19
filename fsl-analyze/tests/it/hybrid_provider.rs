@@ -11,30 +11,38 @@ use fsl_analyze::analyze::{
     analyze, AnalyzeLimits, AnalyzeRequest, ClaimItem, Engines, HybridItem, ItemForm, ItemOptions,
     NegotiatedItem, SourceProvision, SubjectBinding,
 };
-use fsl_analyze::provider;
+use fsl_analyze::provider::{self, HybridAnswer, HybridVerdict, UnsupportedConstruct};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex, SourceIdentity};
 use fsl_package::CheckedPackage;
-use fsl_replay::{TerminalRecord, TerminalValue, UnavailabilityCause};
+use fsl_replay::{
+    DisagreementCause, ExpressionSite, HybridTraceDisagreement, InconclusiveCause, TermLocus,
+    TerminalRecord, TerminalValue, UnavailabilityCause,
+};
 use fsl_route::{request::ExtentClassification, routing::Disposition, Candidate};
-use fsl_semantics::check::{Capability, PackageDeclarations};
+use fsl_semantics::check::{Capability, ModeIndex, PackageDeclarations, VariableIndex};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input, PackageInput};
 use fsl_semantics::model::observation::DocumentProvision;
 use ix_trace_rs::trace;
+use serde_json::json;
 
-/// FR-447's `Braking` and `SlowEnough`.
+use crate::hybrid_requests::{answering, entry_answer, point_trace, refuted_entry};
+
+/// FR-447's `Braking`, `SlowEnough` (claim 0) and `Positive` (claim 1).
 const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile p = \"filament.temporal.infinite-trace/v1\";\n\
      hybrid Braking using p {\n\
        mode Moving invariant { v >= 0 and v <= 20 and a >= 1 and a <= 2 }\n\
-         flow { v' = -a; a' = 0; t' = 1; }\n\
+         flow { v' = -a; a' = 0; }\n\
          transition to Stopped when { v = 0 } reset { v = 0 };\n\
        mode Stopped invariant { v = 0 }\n\
-         flow { v' = 0; a' = 0; t' = 1; }\n\
+         flow { v' = 0; a' = 0; }\n\
      }\n\
      temporal SlowEnough using p over (h: Braking) clock \"model-time\" \
-     on origin { always [0, 10] holds(h.v < 30) }\n";
+     on origin { always [0, 10] holds(h.v < 30) }\n\
+     temporal Positive using p over (h: Braking) clock \"model-time\" \
+     on origin { always [0, 12] holds(h.v > 0) }\n";
 
 /// The checked hybrid package, its empty model input and snapshots, and the
 /// provision of its one source.
@@ -92,9 +100,18 @@ impl World {
 
     /// `SlowEnough`'s hybrid item with `candidates` and `disposition`.
     fn item(&self, candidates: Vec<Candidate>, disposition: Disposition) -> NegotiatedItem {
-        let [site] = self.package.graph().hybrid_claim_sites() else {
-            panic!("one hybrid claim, SlowEnough");
-        };
+        self.item_at(0, candidates, disposition)
+    }
+
+    /// The hybrid item of the claim at `position` (0 `SlowEnough`, 1
+    /// `Positive`).
+    fn item_at(
+        &self,
+        position: usize,
+        candidates: Vec<Candidate>,
+        disposition: Disposition,
+    ) -> NegotiatedItem {
+        let site = &self.package.graph().hybrid_claim_sites()[position];
         NegotiatedItem {
             item: ClaimItem {
                 request_index: RequestIndex::new(0),
@@ -117,6 +134,16 @@ impl World {
     /// The item's record through `analyze` and through `provider::run`.
     fn settle(&self, item: NegotiatedItem) -> [TerminalRecord; 2] {
         let engines = Engines::fsl().expect("the layer-A manifests register");
+        self.settle_with(item, &engines, &AnalyzeLimits::unbounded())
+    }
+
+    /// [`Self::settle`] on `engines` under `limits`.
+    fn settle_with(
+        &self,
+        item: NegotiatedItem,
+        engines: &Engines,
+        limits: &AnalyzeLimits,
+    ) -> [TerminalRecord; 2] {
         let through_analyze = analyze(
             &self.package,
             &AnalyzeRequest {
@@ -124,8 +151,8 @@ impl World {
                 provision: self.provision.clone(),
                 items: vec![item.clone()],
             },
-            &engines,
-            &AnalyzeLimits::unbounded(),
+            engines,
+            limits,
             &Cancel::new(),
         )
         .expect("the binding is admitted")
@@ -137,8 +164,8 @@ impl World {
             &self.binding(),
             &self.provision,
             &[item],
-            &engines,
-            &AnalyzeLimits::unbounded(),
+            engines,
+            limits,
             &Cancel::new(),
         )
         .records
@@ -154,7 +181,6 @@ impl World {
 #[trace("TC-2100", "FR-750-AC-3")]
 #[trace("FSpec-TC-373", "FSpec-FR-193-AC-7")]
 #[test]
-#[ignore = "QSL-2234: analyze settles a provider-less hybrid item HybridProviderAbsent not implemented yet"]
 fn a_hybrid_item_with_no_provider_settles_hybrid_provider_absent() {
     let world = world();
     for record in world.settle(world.item(Vec::new(), Disposition::Unsupported)) {
@@ -170,6 +196,9 @@ fn a_hybrid_item_with_no_provider_settles_hybrid_provider_absent() {
                 "unsupported-requested-capability"
             ))
         );
+        let detail = record.diagnostic_detail().expect("a diagnostic detail");
+        assert_eq!(detail["kind"], "temporal-satisfaction", "{record:?}");
+        assert_eq!(detail["requirement"], "hybrid-dynamics", "{record:?}");
     }
 }
 
@@ -178,7 +207,6 @@ fn a_hybrid_item_with_no_provider_settles_hybrid_provider_absent() {
 /// `unsupported_projection`/`tool-unavailable`, naming that backend.
 #[trace("TC-2100", "FR-750-AC-4")]
 #[test]
-#[ignore = "QSL-2234: analyze dispatch of a hybrid item to its negotiated provider not implemented yet"]
 fn a_hybrid_item_routed_to_an_unserved_backend_settles_tool_unavailable() {
     let world = world();
     let fixture = Candidate::new(BackendId::new("hybrid-fixture"));
@@ -201,6 +229,198 @@ fn a_hybrid_item_routed_to_an_unserved_backend_settles_tool_unavailable() {
         assert_eq!(
             record.backend().map(BackendId::as_str),
             Some("hybrid-fixture")
+        );
+    }
+}
+
+/// The fixture engine `hybrid-fixture` answering by `answer`, registered
+/// beside the layer-A engines, and the candidate that names it.
+fn fixture(
+    answer: impl Fn(&fsl_analyze::provider::HybridSolveRequest<'_>) -> HybridAnswer
+        + Send
+        + Sync
+        + 'static,
+) -> (
+    Engines,
+    Candidate,
+    std::sync::Arc<crate::hybrid_requests::Seen>,
+) {
+    let (engine, seen) = answering("hybrid-fixture", answer);
+    let mut engines = Engines::fsl().expect("the layer-A manifests register");
+    engines.with(engine).expect("the fixture id is new");
+    (
+        engines,
+        Candidate::new(BackendId::new("hybrid-fixture")),
+        seen,
+    )
+}
+
+/// Settle the claim at `position` on the fixture `answer`.
+fn settle_on(
+    world: &World,
+    position: usize,
+    answer: impl Fn(&fsl_analyze::provider::HybridSolveRequest<'_>) -> HybridAnswer
+        + Send
+        + Sync
+        + 'static,
+) -> [TerminalRecord; 2] {
+    let (engines, candidate, _) = fixture(answer);
+    let item = world.item_at(
+        position,
+        vec![candidate.clone()],
+        Disposition::Supported(candidate),
+    );
+    world.settle_with(item, &engines, &AnalyzeLimits::unbounded())
+}
+
+/// FR-750-AC-7 (in process), FSpec FR-272-AC-31: a provider's `Unsupported`
+/// verdict settles `unsupported`, `unsupported_construct`/`expression-form`
+/// with the construct's declaration, mode, variable and located `locus`, the
+/// backend in place of the profile and no counterexample; a mode the model
+/// does not have settles `failed`.
+#[trace("TC-3035", "FR-750-AC-7")]
+#[trace("FSpec-TC-2049", "FSpec-FR-272-AC-31")]
+#[test]
+fn an_unsupported_verdict_settles_a_located_expression_form() {
+    let world = world();
+    let unsupported = |mode: usize| {
+        move |_: &fsl_analyze::provider::HybridSolveRequest<'_>| HybridAnswer {
+            verdict: HybridVerdict::Unsupported(UnsupportedConstruct {
+                form: "division".to_owned(),
+                site: ExpressionSite::Rate { mode, variable: 0 },
+                term: TermLocus::default(),
+                mode: ModeIndex::new(mode),
+                variable: Some(VariableIndex::new(0)),
+            }),
+            certificate: None,
+        }
+    };
+    for record in settle_on(&world, 0, unsupported(0)) {
+        assert!(
+            matches!(record.value(), TerminalValue::Unsupported(_)),
+            "{record:?}"
+        );
+        assert_eq!(
+            record.diagnostic(),
+            Some(CatalogCode::new("unsupported_construct", "expression-form")),
+            "{record:?}"
+        );
+        assert_eq!(
+            record.backend().map(BackendId::as_str),
+            Some("hybrid-fixture")
+        );
+        let detail = record.diagnostic_detail().expect("a diagnostic detail");
+        assert_eq!(detail["form"], "division", "{detail:?}");
+        assert_eq!(detail["declaration"], "Braking", "{detail:?}");
+        assert_eq!(detail["mode"], "Moving", "{detail:?}");
+        assert_eq!(detail["variable"], "v", "{detail:?}");
+        assert_eq!(detail["backend"], "hybrid-fixture", "{detail:?}");
+        let locus = &detail["locus"];
+        assert!(locus["node"].is_object(), "{detail:?}");
+        assert_eq!(locus["occurrence"]["role"], "expression", "{detail:?}");
+    }
+    for record in settle_on(&world, 0, unsupported(7)) {
+        assert!(
+            matches!(record.value(), TerminalValue::Failed),
+            "{record:?}"
+        );
+        assert_eq!(
+            record.diagnostic(),
+            Some(CatalogCode::new(
+                "runtime_invariant",
+                "established-invariant-broken"
+            )),
+            "{record:?}"
+        );
+    }
+}
+
+/// FR-750-AC-8 (in process): a refuted entry whose trace replays settles
+/// `refuted`; the same trace that does not reproduce settles `inconclusive`,
+/// `replay-parity` carrying the claim's trace, never `solver-inconclusive`;
+/// a solver `unknown` with a trace that does not replay keeps its
+/// `solver-inconclusive` cause.
+#[trace("TC-3035", "FR-750-AC-8")]
+#[test]
+fn a_refuted_trace_that_does_not_reproduce_settles_replay_parity() {
+    let world = world();
+    for record in settle_on(&world, 1, entry_answer(refuted_entry(point_trace("0")))) {
+        assert_eq!(record.value(), &TerminalValue::Refuted, "{record:?}");
+    }
+    for record in settle_on(&world, 1, entry_answer(refuted_entry(point_trace("1")))) {
+        assert!(
+            matches!(
+                record.value(),
+                TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(
+                    DisagreementCause::HybridTrace(HybridTraceDisagreement::NotReproduced { .. })
+                ))
+            ),
+            "{record:?}"
+        );
+    }
+    let unknown = json!({"result": "inconclusive",
+        "cause": {"type": "solver-inconclusive", "trace": point_trace("1")}});
+    for record in settle_on(&world, 1, entry_answer(unknown)) {
+        assert!(
+            matches!(
+                record.value(),
+                TerminalValue::Inconclusive(InconclusiveCause::SolverInconclusive { .. })
+            ),
+            "{record:?}"
+        );
+    }
+}
+
+/// FR-750: the request's deadline reaches the provider as the caller's
+/// `AnalyzeLimits.deadline`, and an unbounded deadline reaches it as none.
+/// (No FR-750 criterion states this; it is the request context FR-750 gives
+/// a provider, so the test carries no criterion tag.)
+#[test]
+fn the_providers_deadline_is_the_requests_deadline() {
+    use fsl_analyze::analyze::DeadlineSupply;
+    let world = world();
+    let entry = json!({"request_index": 0, "result": "incomplete",
+        "cause": {"type": "timed-out"}});
+    for (supply, expected) in [
+        (DeadlineSupply::Milliseconds(250), Some(250)),
+        (DeadlineSupply::Unbounded, None),
+    ] {
+        let (engines, candidate, seen) = fixture(entry_answer(entry.clone()));
+        let item = world.item(vec![candidate.clone()], Disposition::Supported(candidate));
+        let mut limits = AnalyzeLimits::unbounded();
+        limits.deadline = supply;
+        world.settle_with(item, &engines, &limits);
+        let requests = seen.requests();
+        assert!(!requests.is_empty());
+        assert!(requests.iter().all(|(_, deadline)| *deadline == expected));
+    }
+}
+
+/// FR-750: a provider trace the model cannot hold (a mode it does not
+/// have) is the provider's fault and settles `failed`, `invalid_result`,
+/// `invalid-value`.
+#[trace("TC-3035", "FR-750-AC-8")]
+#[test]
+fn a_trace_outside_the_model_settles_invalid_result() {
+    let world = world();
+    let entry = refuted_entry(point_trace("0"));
+    let read = entry_answer(entry);
+    let answer = move |request: &fsl_analyze::provider::HybridSolveRequest<'_>| {
+        let mut answer = read(request);
+        if let HybridVerdict::Refuted(found) = &mut answer.verdict {
+            found.trace.start.mode = ModeIndex::new(9);
+        }
+        answer
+    };
+    for record in settle_on(&world, 1, answer) {
+        assert!(
+            matches!(record.value(), TerminalValue::Failed),
+            "{record:?}"
+        );
+        assert_eq!(
+            record.diagnostic(),
+            Some(CatalogCode::new("invalid_result", "invalid-value")),
+            "{record:?}"
         );
     }
 }

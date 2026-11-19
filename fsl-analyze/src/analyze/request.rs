@@ -231,8 +231,16 @@ pub enum ItemForm {
 /// Hybrid item settings kept distinct from temporal and probabilistic forms.
 #[derive(Clone, Debug, Default)]
 pub struct HybridItem {
-    /// The subject's explicit proof-bound substitution.
+    /// The item's proof bounds (FR-750). A hybrid claim's request item names
+    /// no subject to substitute them into (FR-447 writes `domains` for an
+    /// unbounded claim only), so document resolution leaves this empty and
+    /// the provider request does not carry it.
     pub proof_bounds: Vec<fsl_foundation::bound::ProofBound>,
+    /// The item's `hybrid.limits` (FR-750): a member left unset takes the
+    /// serving descriptor's published bound.
+    pub limits: fsl_replay::SolverBudget,
+    /// The item's FSpec FR-331 `options`.
+    pub options: std::collections::BTreeMap<String, String>,
 }
 
 /// Temporal request settings, with no separately supplied model subject.
@@ -541,22 +549,6 @@ fn checked_v2_package(
     )
     .ok()?;
     Some(Box::new(admitted.admitted().clone()))
-}
-
-fn checked_node_named(
-    package: &filament_contract_model::CheckedPackageV2,
-    name: &str,
-) -> Option<filament_contract_model::CheckedNodeId> {
-    package
-        .resolved_graph()
-        .nodes
-        .iter()
-        .find(|node| {
-            node.declaration.as_ref().is_some_and(|declaration| {
-                declaration.qualified_name.last().map(|segment| &**segment) == Some(name)
-            })
-        })
-        .map(|node| node.node_id.clone())
 }
 
 /// The role of `protocol` named `name`. Only a role of that protocol
@@ -971,6 +963,21 @@ fn work<'a>(
                 Err(_) => absent(),
             }
         }
+        Some(ItemForm::Hybrid(form)) if item.kind == Capability::TemporalSatisfaction => {
+            super::hybrid_item::hybrid_item(
+                package,
+                item.request_index,
+                &item.claim,
+                form,
+                limits.accounting.work_units,
+                limits.deadline,
+                super::hybrid_item::Spelling {
+                    packages: binding.packages,
+                    emit: limits.emit,
+                },
+            )
+            .unwrap_or_else(absent)
+        }
         Some(ItemForm::Probabilistic(form))
             if item.kind == Capability::ProbabilisticSatisfaction =>
         {
@@ -1214,6 +1221,9 @@ fn work<'a>(
         ExtentClassification::Bounded => fsl_route::Mode::Bounded,
         ExtentClassification::Unbounded { .. } => fsl_route::Mode::Unbounded,
     };
+    if matches!(&item.form, Some(ItemForm::Hybrid(_))) {
+        built = built.hybrid();
+    }
     built.required(item.options.required).disposed(
         negotiated.disposition.clone(),
         negotiated.diagnostic.clone(),

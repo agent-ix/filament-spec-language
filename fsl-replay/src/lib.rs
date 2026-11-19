@@ -198,11 +198,12 @@ pub use execute::{
     ValueParityPreimage, ValueParityReport, ValueParityResult,
 };
 pub use hybrid::{
-    settle_hybrid_candidates, AdmittedHybridProcessItem, AdmittedHybridProcessRequest,
+    hybrid_locus_site, hybrid_locus_wire, settle_hybrid_candidates, AdmittedHybridProcessItem, AdmittedHybridProcessRequest,
     BoundDimension, BudgetRefusal, ClaimHorizon, HybridProcessDependencyPackage, HybridProcessItem,
     HybridProcessPackageContext, HybridProcessRequest, HybridProcessRequestRefusal,
-    HybridSettlement, NegativeHorizon, SolverBudget, SolverCoverage, SolverHorizon, SolverMethod,
-    SolverOutcome, SolverResult, SolverStop,
+    HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSettlement, HybridSolveRequest,
+    HybridVerdict, NegativeHorizon, SolverBudget, SolverCoverage, SolverHorizon, SolverMethod,
+    SolverOutcome, SolverResult, SolverStop, UnsupportedConstruct,
 };
 pub use hybrid_replay::{
     admit as admit_hybrid_trace, exact_replay, static_replay, ExactCheck, ExactGap, ExactInterval,

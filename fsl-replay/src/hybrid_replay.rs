@@ -168,6 +168,49 @@ pub struct HybridCounterexample {
 }
 
 impl HybridCounterexample {
+    /// The counterexample in FSpec FR-331's `hybrid-counterexample` wire form
+    /// over `model`, of either kind (FR-750): kind `formula` writes
+    /// `"formula"`; kind `undefined-evaluation` writes FSpec FR-364's
+    /// envelope `{"type", "where": {"position", "time", "locus"}, "cause"}`.
+    /// `time` is a point interval when the instant is rational and otherwise
+    /// the isolating interval of the instant's root. `locate` spells the
+    /// FSpec FR-331 `Locus` of the term node an [`ExpressionLocus`] names in
+    /// the checked package; it is called for an `undefined-evaluation`
+    /// counterexample only, and the caller that cannot locate the term does
+    /// not write the counterexample.
+    pub fn to_wire(
+        &self,
+        model: &CheckedHybridModel,
+        locate: &dyn Fn(&ExpressionLocus) -> serde_json::Value,
+    ) -> serde_json::Value {
+        let kind = match &self.kind {
+            HybridCounterexampleKind::Formula => serde_json::json!("formula"),
+            HybridCounterexampleKind::UndefinedEvaluation { at, cause } => {
+                let (lower, upper) = match &at.time {
+                    ExactReal::Rational(point) => (point, point),
+                    ExactReal::Root(root) => (root.lower(), root.upper()),
+                };
+                serde_json::json!({
+                    "type": "undefined-evaluation",
+                    "where": {
+                        "position": at.state,
+                        "time": {
+                            "lower": trace::rational_wire(lower),
+                            "upper": trace::rational_wire(upper),
+                        },
+                        "locus": locate(&at.locus),
+                    },
+                    "cause": cause.spelling(),
+                })
+            }
+        };
+        serde_json::json!({
+            "type": "hybrid-counterexample",
+            "kind": kind,
+            "trace": self.trace.to_wire(model),
+        })
+    }
+
     pub(crate) fn measured_bytes(&self) -> usize {
         fn rational(value: &filament_exact::Rational) -> usize {
             value.numerator().to_string().len() + value.denominator().to_string().len()
@@ -309,6 +352,20 @@ pub enum UndefinedCause {
     },
 }
 
+impl UndefinedCause {
+    /// The FSpec FR-193 catalogued hybrid undefined reason, one-to-one over
+    /// the variants: `division-by-zero`, `outside-parameter-range`,
+    /// `outside-result-range` and `outside-capture-range`.
+    pub const fn spelling(&self) -> &'static str {
+        match self {
+            Self::DivisionByZero => "division-by-zero",
+            Self::OutsideParameterRange { .. } => "outside-parameter-range",
+            Self::OutsideResultRange { .. } => "outside-result-range",
+            Self::OutsideCaptureRange { .. } => "outside-capture-range",
+        }
+    }
+}
+
 /// A claim form exact replay does not decide.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ExactGap {
@@ -350,9 +407,6 @@ pub enum HybridReplayRefusal {
     /// Exact replay does not decide this claim form.
     #[error(transparent)]
     Exact(#[from] ExactGap),
-    /// The provider counterexample kind is outside the currently admitted wire arm.
-    #[error("the provider's hybrid counterexample kind is not admitted")]
-    UnsupportedCounterexampleKind,
     /// The caller's accounting work limit denied the next replay step.
     #[error("hybrid replay exhausted the caller's accounting counter {counter:?}")]
     ResourceExhausted {
@@ -433,5 +487,22 @@ pub fn exact_replay(
     let model = model_of(graph, claim)?;
     admit(model, trace)?;
     let mut expander = expand::Expander::new(graph);
-    exact::replay(model, claim, &mut expander, trace, meter)
+    match exact::replay(model, claim, &mut expander, trace, meter) {
+        // FR-750 "Replay refusals": a recursive call is not a refusal. Exact
+        // replay returns `NotExact` for it, as for a trace that is not a
+        // point trace or that dwells in a mode without a polynomial flow.
+        //
+        // TEMPORARY (QSL-2529): `ActivationState` and
+        // `NondeterministicReset` are gaps FR-750 deletes, because exact
+        // replay decides those claims (tau as a second real variable,
+        // quantifier elimination for reset enabledness). Until that replay
+        // exists they also settle `NotExact`, the only honest answer short of
+        // a verdict; the ignored QSL-2529 test names the case.
+        Err(HybridReplayRefusal::Exact(
+            ExactGap::RecursiveCall
+            | ExactGap::ActivationState
+            | ExactGap::NondeterministicReset { .. },
+        )) => Ok(ExactReplay::NotExact),
+        other => other,
+    }
 }

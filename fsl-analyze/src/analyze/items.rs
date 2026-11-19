@@ -1203,10 +1203,12 @@ mod tests {
             Refusal::Declined(_, _, code)
             | Refusal::DeclinedWithDetail(_, _, code, _)
             | Refusal::Unsupported(code)
+            | Refusal::FailedWithDetail(code, _)
             | Refusal::Failed(code) => Some(code.to_string()),
             Refusal::RequiresBound
             | Refusal::NotStatistical
             | Refusal::NotEmitted
+            | Refusal::UnsupportedConstruct(_)
             | Refusal::Incomplete(_) => None,
         }
     }
