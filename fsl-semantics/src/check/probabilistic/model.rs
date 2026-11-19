@@ -213,8 +213,14 @@ pub struct Reward {
     /// has written it; `None` for a reward on an object type a package has
     /// no `model` node for.
     function: Option<NodeKey>,
-    /// The mode the function is checked under: the requested mode, as for
-    /// an operation `body` clause function (FR-952).
+    /// The operand that names the expression in the reward node's identity
+    /// (FSpec FR-640-AC-3): the key of the expression node the function body
+    /// names, which is keyed by the expression's content, or the text of a
+    /// literal body, which has no node. Set with [`Self::function`].
+    expression_operand: Option<filament_exact::PathSegment>,
+    /// The mode the function is checked under. A declared clause function
+    /// that is not an operation `body` is checked `Linked` (FR-952), which
+    /// the reader's owner join requires of a `precondition` function.
     function_mode: Option<filament_semantic_value::checking::CheckMode>,
 }
 
@@ -236,30 +242,23 @@ impl Reward {
         self.function.as_ref()
     }
 
-    /// The canonical spelling of the checked expression: each node's kind,
-    /// result type and operands in pre-order. It names no source position, so
-    /// it is the same however the declarations are ordered or spaced.
-    pub fn expression_spelling(&self) -> String {
-        fn spell(node: CheckedNode<'_>, out: &mut String) {
-            out.push_str(&format!("({:?}:{:?}", node.kind(), node.value_type()));
-            for child in node.children() {
-                spell(child, out);
-            }
-            out.push(')');
-        }
-        let mut out = String::new();
-        spell(self.expression(), &mut out);
-        out
+    /// The operand that carries the expression's content in the reward's
+    /// identity, once lowered: it is the key of an already content-keyed
+    /// node (or a literal's text), so its size does not depend on how deep
+    /// the expression nests and no source position enters it.
+    pub fn expression_operand(&self) -> Option<&filament_exact::PathSegment> {
+        self.expression_operand.as_ref()
     }
 
-    /// Record the node the expression lowered to.
-    pub(crate) fn set_function(
-        &mut self,
-        function: Option<NodeKey>,
-        mode: filament_semantic_value::checking::CheckMode,
-    ) {
+    /// Record the function node the expression lowered to and the operand
+    /// that names its content.
+    pub(crate) fn set_function(&mut self, lowered: Option<(NodeKey, filament_exact::PathSegment)>) {
+        let (function, operand) = lowered.unzip();
+        self.function_mode = function
+            .as_ref()
+            .map(|_| filament_semantic_value::checking::CheckMode::Linked);
         self.function = function;
-        self.function_mode = Some(mode);
+        self.expression_operand = operand;
     }
 
     /// The name each evaluation slot was bound under.
@@ -1240,6 +1239,7 @@ impl Pass<'_, '_> {
                     slots,
                     slot_names,
                     function: None,
+                    expression_operand: None,
                     function_mode: None,
                 });
             }

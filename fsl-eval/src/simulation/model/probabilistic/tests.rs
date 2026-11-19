@@ -731,8 +731,38 @@ fn service_reward_is_emitted_beside_its_random_parameter_and_workload() {
     let [reward] = &rewards[..] else {
         panic!("one reward node: {rewards:?}");
     };
-    let name = reward["body"]["members"][2]["value"]["value"].clone();
-    assert_eq!(name, "duration");
+    let member = |term: &serde_json::Value, name: &str| -> serde_json::Value {
+        term["members"]
+            .as_array()
+            .and_then(|members| members.iter().find(|member| member["name"] == name))
+            .map(|member| member["value"].clone())
+            .unwrap_or_else(|| panic!("binding `{name}` in {term}"))
+    };
+    assert_eq!(member(&reward["body"], "name")["value"], "duration");
+    let node_of = |id: &serde_json::Value| -> serde_json::Value {
+        wire["semantic_graph"]["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|node| &node["node_id"] == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("a node with id {id}"))
+    };
+    let function = node_of(&member(&reward["body"], "expression")["target"]);
+    let returned = node_of(&member(&function["body"], "body")["target"]);
+    assert_eq!(
+        member(&returned["body"], "name")["value"],
+        "d",
+        "the function returns its parameter `d`"
+    );
+    fsl_package::read_evaluation_package(
+        &world.package,
+        fsl_semantics::library::LibraryName::new("fixture").expect("a library name"),
+        world.packages(),
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+    )
+    .expect("the reader admits the package with its reward");
 }
 
 /// FR-740-AC-1 (TC-2062): `Service` without its reward and its Boolean
@@ -849,6 +879,60 @@ fn the_package_route_rebuilds_the_probabilistic_model_of_the_emitted_package() {
             .expect("the operation is weighted");
         assert_eq!(found_weight, expected_weight);
     }
+}
+
+/// FSL FR-740: no engine reads the reward a package carries yet, so the
+/// package route refuses a package with a `reward` node at that node, naming
+/// the form, instead of building an input whose model has no reward.
+#[test]
+fn the_package_route_refuses_a_package_with_a_reward_node() {
+    let mut model = world::service("");
+    model.body = "random Server::attempt(d) ~ { 1: 90, 3: 7, 12: 3 };\n\
+                  workload Steady on M { weight Server::request = 1; \
+                  weight Server::attempt = 1; weight Server::reset = 1; }\n\
+                  reward duration on Server::attempt = d;\n"
+        .to_owned();
+    let world = World::new(&model);
+    let read = fsl_package::read_evaluation_package(
+        &world.package,
+        fsl_semantics::library::LibraryName::new("fixture").expect("a library name"),
+        world.packages(),
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+    )
+    .expect("the package emits and its bytes are admitted");
+    let admitted = read.admitted();
+    let mut rows_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let rows = read
+        .emission()
+        .identity_rows(admitted, &mut rows_budget)
+        .expect("the identity rows join the package");
+    let mut join_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let bare = fsl_package::BarePackage::new(admitted)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &rows,
+                equality: None,
+            },
+            &mut join_budget,
+        )
+        .expect("the bytes view admits its supply");
+    let Err(crate::simulation::model::PendingPackageForm::Form { form, node }) =
+        crate::simulation::model::PackageModelInput::of(
+            &bare,
+            world.packages(),
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        )
+    else {
+        panic!("the package route refuses the reward node");
+    };
+    assert_eq!(form, fsl_package::UnreadModelForm::Reward);
+    assert!(
+        admitted.resolved_graph().nodes.iter().any(|candidate| {
+            candidate.node_id == node && candidate.semantic_form.as_ref() == "reward"
+        }),
+        "the refusal names the reward node {node:?}"
+    );
 }
 
 /// FSpec FR-406-AC-6 (TC-351): under a workload that gives `send_b` weight

@@ -573,10 +573,14 @@ fn reward_node(
         PathSegment::Node(declaring_key),
         PathSegment::Text(operation.name().into()),
         PathSegment::Text(reward.name().into()),
-        // The function's key ranks equal paths by lowering order and holds
-        // no content, so the expression's canonical spelling carries it:
+        // The function's key ranks equal paths by lowering order and holds no
+        // content, so the key of the expression node it computes (keyed by
+        // that expression's content), or a literal body's text, carries it:
         // changing the expression changes the identity (FSpec FR-640-AC-3).
-        PathSegment::Text(reward.expression_spelling()),
+        reward
+            .expression_operand()
+            .cloned()
+            .ok_or_else(unwritable)?,
     ];
     Ok(Pending {
         node: node(graph, ids, "reward", operand, body)?,

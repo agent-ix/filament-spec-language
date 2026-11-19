@@ -831,7 +831,6 @@ fn a_workload_over_unrelated_types_refuses_with_its_locus_qsl_2444() {
 /// TC-2062 (FR-740-AC-3, FSpec FR-640-AC-3): writing `Steady`'s weight
 /// lines in another order emits byte-identical output, and a workload with a
 /// weight of 0 is emitted with that weight.
-#[trace("TC-2062", "FR-740-AC-3")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
 #[test]
 fn workload_weight_order_changes_no_bytes_and_weight_zero_is_emitted() {
@@ -1384,7 +1383,8 @@ fn node_by_id<'w>(wire: &'w Value, id: &Value) -> &'w Value {
 /// bindings are `declaring`, `operation`, `name`, `value_type` and
 /// `expression`, in that order, and whose `expression` is a clause function
 /// owned by the operation member with the operation's parameter `n`, the
-/// random one included, and the `body` clause kind.
+/// random one included, and the clause kind `precondition`, which stands in
+/// for a kind of its own until QSL-2535 adds `reward`.
 #[trace("TC-2062", "FR-740-AC-1")]
 #[trace("TC-2062", "FR-185-AC-7")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-1")]
@@ -1516,12 +1516,21 @@ fn a_reward_reads_back_as_the_s3_record() {
     );
     assert_eq!(found.parameters, expected.parameters());
     assert_eq!(Some(&found.function), expected.function());
+    let function = package
+        .graph()
+        .semantic_graph()
+        .node(found.function.clone())
+        .expect("the function node is in the graph");
+    assert_eq!(
+        function.semantic_type().as_ref(),
+        Some(&found.value_type),
+        "the value type is the function's type node"
+    );
 }
 
 /// FSpec FR-640 Reader rule 4, FSL FR-740: a package whose rewards repeat a
 /// name on one operation, or name an operation the object type does not
 /// declare, is refused on read-back.
-#[trace("TC-2062", "FR-740-AC-4")]
 #[test]
 fn a_package_reward_that_breaks_the_reader_rules_is_refused_on_read_back() {
     use fsl_semantics::check::PackageProbabilisticRefusal as Refusal;
@@ -1549,7 +1558,8 @@ fn a_package_reward_that_breaks_the_reader_rules_is_refused_on_read_back() {
 
 /// FSpec FR-640-AC-3: writing the rewards in another order emits the same
 /// nodes in the same order, and changing the expression changes the reward's
-/// identity and its function's.
+/// identity. The function's own key holds no content (it ranks equal paths by
+/// lowering order), so the function's id is not asserted to change.
 #[trace("TC-2062", "FR-740-AC-3")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
 #[test]
@@ -1565,6 +1575,10 @@ fn reward_order_changes_no_node_and_the_expression_changes_the_identity() {
                     || (node["node_tag"] == "function" && node["owner"]["kind"] == "model")
             })
             .cloned()
+            .map(|mut node| {
+                node["resolved_id"] = resolved_id(&wire, &node["node_id"], 8);
+                node
+            })
             .collect::<Vec<Value>>()
     };
     let first = "reward cost on ConfigVersion::attemptUpdate = n + 1;";
@@ -1605,7 +1619,7 @@ fn reward_order_changes_no_node_and_the_expression_changes_the_identity() {
         else {
             panic!("one reward");
         };
-        reward["node_id"].clone()
+        reward["resolved_id"].clone()
     };
     let base = identity(first);
     assert_ne!(
@@ -1617,6 +1631,120 @@ fn reward_order_changes_no_node_and_the_expression_changes_the_identity() {
         base,
         identity(first),
         "an unchanged declaration keeps its identity"
+    );
+}
+
+/// `id` with each index segment `{"node": i}` of its path replaced by the
+/// resolved id of the node at position `i` of `wire`'s graph, `depth` levels
+/// deep: an index names a position, so two ids are the same identity only when
+/// their resolved forms are (FSpec FR-322 "Operand index segments").
+fn resolved_id(wire: &Value, id: &Value, depth: usize) -> Value {
+    let mut id = id.clone();
+    if depth == 0 {
+        return id;
+    }
+    let nodes = super::nodes(wire);
+    if let Some(path) = id["path"].as_array_mut() {
+        for segment in path {
+            if let Some(at) = segment["node"].as_u64() {
+                let target = &nodes[usize::try_from(at).expect("a small index")]["node_id"];
+                *segment = resolved_id(wire, target, depth - 1);
+            }
+        }
+    }
+    id
+}
+
+/// The emitted `probabilistic` nodes and model-owned functions of the
+/// ConfigVersion unit with `declarations` (claims use the profile `ev`), as
+/// wire JSON with occurrences removed.
+fn probabilistic_nodes_of(declarations: &[&str]) -> Vec<Value> {
+    let package = claims_package(declarations);
+    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
+    let (wire, read) = emit_and_read(&package, document);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    super::nodes(&wire)
+        .iter()
+        .filter(|node| {
+            node["node_tag"] == "probabilistic"
+                || node["node_tag"] == "claim"
+                || (node["node_tag"] == "function" && node["owner"]["kind"] == "model")
+        })
+        .cloned()
+        .map(|mut node| {
+            node["occurrences"] = Value::Null;
+            node["resolved_id"] = resolved_id(&wire, &node["node_id"], 8);
+            node
+        })
+        .collect()
+}
+
+/// FSL FR-740 Behavior, FSpec FR-640-AC-3: writing the rewards in any order
+/// relative to a workload and a claim, as well as to each other, emits the
+/// same nodes, ids and bodies in the same order; changing one reward's
+/// expression changes that reward's identity and no other node's.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+fn rewards_keep_their_nodes_whatever_unrelated_declarations_surround_them() {
+    let cost = "reward cost on ConfigVersion::attemptUpdate = 1;";
+    let load = "reward load on ConfigVersion::attemptUpdate = 7;";
+    let workload = "workload Steady on Config { weight ConfigVersion::attemptUpdate = 1; }";
+    let stable = claim("Stable", "0.5");
+    let base = probabilistic_nodes_of(&[cost, load, workload, &stable]);
+    assert_eq!(
+        base.iter()
+            .filter(|node| node["node_tag"] == "probabilistic")
+            .count(),
+        3,
+        "two rewards and a workload"
+    );
+    for order in [
+        [&stable[..], workload, load, cost],
+        [load, &stable, cost, workload],
+        [workload, load, &stable, cost],
+    ] {
+        assert_eq!(
+            probabilistic_nodes_of(&order),
+            base,
+            "the declaration order {order:?} changes no node"
+        );
+    }
+    let changed = probabilistic_nodes_of(&[
+        "reward cost on ConfigVersion::attemptUpdate = 2;",
+        load,
+        workload,
+        &stable,
+    ]);
+    let mut differing: Vec<&str> = base
+        .iter()
+        .filter(|node| !changed.contains(node))
+        .map(|node| node["semantic_form"].as_str().unwrap_or_default())
+        .collect();
+    differing.sort_unstable();
+    assert_eq!(base.len(), changed.len());
+    assert_eq!(
+        differing,
+        ["pure_function", "reward"],
+        "only the changed reward and the function that computes it differ"
+    );
+}
+
+/// FSpec FR-640-AC-3: changing a reward's expression changes the identity of
+/// every claim that reads it.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+#[ignore = "QSL-2441: a claim names no reward it reads yet; its node has an empty body"]
+fn a_claim_that_reads_a_reward_changes_identity_with_the_reward_expression() {
+    let claim_id = |reward: &str| {
+        probabilistic_nodes_of(&[reward, &claim("Stable", "0.5")])
+            .into_iter()
+            .find(|node| node["node_tag"] == "claim")
+            .map(|node| node["node_id"].clone())
+            .expect("the claim node")
+    };
+    assert_ne!(
+        claim_id("reward cost on ConfigVersion::attemptUpdate = 1;"),
+        claim_id("reward cost on ConfigVersion::attemptUpdate = 2;"),
     );
 }
 

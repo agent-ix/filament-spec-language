@@ -18,9 +18,12 @@ use filament_exact::{NodeKey, PathSegment};
 use fsl_forms::DeclaredClauseKind;
 
 use super::temporal::stage_fault;
-use super::{FunctionInput, Lowering, ModelClause, NodeContent, NodeRef, SemanticNode};
+use super::{
+    literal_operand_text, FunctionInput, Lowering, ModelClause, NodeContent, NodeRef, SemanticNode,
+    FUNCTION_BODY,
+};
 use crate::check::family::OccurrenceRole;
-use crate::check::node_key::{BodyTerm, NodeTag};
+use crate::check::node_key::{Binding, BindingValue, BodyTerm, LeafTerm, MemberTerm, NodeTag};
 use crate::check::probabilistic::{CheckedProbabilisticClaim, CheckedProbabilisticModel, Reward};
 use crate::check::refusal::CheckRefusal;
 
@@ -36,7 +39,7 @@ impl Lowering<'_> {
     pub(crate) fn probabilistic_declarations(
         &mut self,
         model: &CheckedProbabilisticModel,
-    ) -> Result<Vec<Option<NodeKey>>, CheckRefusal> {
+    ) -> Result<Vec<Option<(NodeKey, PathSegment)>>, CheckRefusal> {
         for random in model.random_parameters() {
             let at = random.declaration_location();
             self.charge(1, &at)?;
@@ -69,7 +72,7 @@ impl Lowering<'_> {
             (rewards[left].operation().key(), rewards[left].name())
                 .cmp(&(rewards[right].operation().key(), rewards[right].name()))
         });
-        let mut keys = vec![None; rewards.len()];
+        let mut keys: Vec<Option<(NodeKey, PathSegment)>> = vec![None; rewards.len()];
         for at in order {
             keys[at] = self.reward_function(&rewards[at])?;
         }
@@ -189,14 +192,21 @@ impl Lowering<'_> {
     /// has no `model` node (a source-declared object type) lowers to
     /// nothing, and emission refuses it with its locus.
     ///
-    /// FSpec FR-640 states no `clause` binding for this function. The
-    /// reader joins a `ModelOwner` on an operation member only for a
-    /// `precondition` or a `body` clause, and a `body` clause function makes
-    /// the operation's `operation_bodies` row a function row (FR-576), which
-    /// a reward must not do to an operation with no body; so the function
-    /// carries `precondition`, the one kind the join admits for every
-    /// operation. Whether that is the intended kind is a spec question.
-    fn reward_function(&mut self, reward: &Reward) -> Result<Option<NodeKey>, CheckRefusal> {
+    /// TEMPORARY (QSL-2535): FSpec FR-640 states no `clause` binding for this
+    /// function, and the reader joins a `ModelOwner` on an operation member
+    /// only for a `precondition` or a `body` clause. A `body` clause function
+    /// makes the operation's `operation_bodies` row a function row (FR-576),
+    /// which a reward must not do to an operation with no body, so until
+    /// QSL-2535 adds the clause kind `reward` (spec W75 and the contract-ir
+    /// reader) the function carries `precondition`, the one kind the join
+    /// admits for every operation. Every consumer that joins functions by
+    /// owner and clause kind therefore sees a rewarded operation as having an
+    /// integer-typed `precondition` until then; replace the kind, not the
+    /// shape, when QSL-2535 lands.
+    fn reward_function(
+        &mut self,
+        reward: &Reward,
+    ) -> Result<Option<(NodeKey, PathSegment)>, CheckRefusal> {
         let at = reward.declaration_location();
         self.charge(1, &at)?;
         let operation = reward.operation();
@@ -228,9 +238,40 @@ impl Lowering<'_> {
         };
         // No function-table slot belongs to a reward.
         let index = self.functions.len();
-        match self.function(index, &input)? {
-            NodeRef::Admitted(key) => Ok(Some(key)),
-            NodeRef::Pending(_) => Err(stage_fault(&at, "reward-function-is-keyed")),
-        }
+        let NodeRef::Admitted(function) = self.function(index, &input)? else {
+            return Err(stage_fault(&at, "reward-function-is-keyed"));
+        };
+        let operand = self
+            .function_body_operand(&function)
+            .ok_or_else(|| stage_fault(&at, "reward-function-has-a-body"))?;
+        Ok(Some((function, operand)))
+    }
+
+    /// The operand that names what the function node `function` computes:
+    /// the key of the node its `body` binding references, which is keyed by
+    /// that expression's content, or a literal body's text. The expression
+    /// was lowered once, under the lowering's own charge, so this reads one
+    /// binding and walks nothing.
+    fn function_body_operand(&self, function: &NodeKey) -> Option<PathSegment> {
+        let BodyTerm::Aggregate(aggregate) = self.graph.nodes.get(function)?.body() else {
+            return None;
+        };
+        aggregate.members.iter().find_map(|member| {
+            let MemberTerm::Binding(Binding { name, value }) = member else {
+                return None;
+            };
+            if name != FUNCTION_BODY {
+                return None;
+            }
+            match value {
+                BindingValue::Leaf(LeafTerm::Reference {
+                    target: NodeRef::Admitted(key),
+                }) => Some(PathSegment::Node(key.clone())),
+                BindingValue::Leaf(LeafTerm::Literal { value, .. }) => {
+                    Some(PathSegment::Text(literal_operand_text(value)))
+                }
+                _ => None,
+            }
+        })
     }
 }

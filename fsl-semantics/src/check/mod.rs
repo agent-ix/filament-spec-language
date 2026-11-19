@@ -7019,7 +7019,7 @@ impl PackageDeclarations {
             .iter_mut()
             .zip(lowered_rewards)
         {
-            reward.set_function(function, CheckMode::Linked);
+            reward.set_function(function);
         }
         for (claim, (key, over_node)) in probabilistic_model
             .claims_mut()
