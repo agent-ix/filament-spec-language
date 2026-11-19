@@ -430,6 +430,6 @@ fn public_analyze_proves_fair_each_service_and_refutes_unfair_service() {
     assert_eq!(limited.exit_code, 22, "{}", limited.value);
     let item = &limited.value.as_value()["items"][0];
     assert_eq!(item["record"]["result"], "incomplete", "{item}");
-    assert_eq!(item["exploration"]["states"], 1, "{item}");
+    assert_eq!(item["exploration"]["states"], "1", "{item}");
     assert!(item.get("counterexample").is_none(), "{item}");
 }
