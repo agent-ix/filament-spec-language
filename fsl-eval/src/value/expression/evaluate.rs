@@ -1175,10 +1175,15 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         let Some(location) = node.location() else {
             return;
         };
-        let Some(graph) = self.world.graph() else {
-            return;
-        };
-        let Some(comparison) = occurrence_at(graph, location, Some(Operator::Binary)) else {
+        // A source node's occurrence is the one its checked graph records at
+        // the location; a package node carries its `protocol_locations`
+        // row's occurrence.
+        let Some(comparison) = self
+            .world
+            .graph()
+            .and_then(|graph| occurrence_at(graph, location, Some(Operator::Binary)))
+            .or_else(|| node.occurrence())
+        else {
             return;
         };
         if let Some(trail) = self.trail.as_mut() {

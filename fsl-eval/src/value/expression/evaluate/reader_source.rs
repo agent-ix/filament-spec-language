@@ -5,6 +5,8 @@ use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{Value, ValueType};
 use filament_semantic_value::location::ExpressionLocation as Location;
 
+use fsl_foundation::source::provenance::OccurrenceKey;
+
 use super::node_source::{Callee, NodeSource};
 
 /// One node handle in the package-owned admitted projection.
@@ -56,6 +58,10 @@ impl<'arena> NodeSource<'arena> for ReaderNode<'arena> {
 
     fn is_ordering_part(self) -> bool {
         false
+    }
+
+    fn occurrence(self) -> Option<OccurrenceKey> {
+        self.projection.occurrence(self.index).cloned()
     }
 
     fn children(self) -> Vec<Self> {

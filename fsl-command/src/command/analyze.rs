@@ -795,6 +795,17 @@ fn admit_package<'d>(
                 witness_refusal(EQUALITY_FILE, "refused-file", &refusal.to_string())
             })?;
         (Some(rows), Some(equality_bytes))
+    } else if admitted
+        .checked_term_data()
+        .is_some_and(|data| !data.equality_decisions.is_empty())
+    {
+        // FR-850 "Admission": a package holding equality applications is
+        // read with the producer's equality rows, so their file is required.
+        return Err(witness_refusal(
+            EQUALITY_FILE,
+            "missing-file",
+            "the handoff directory holds no equality file for the package's equality applications",
+        ));
     } else {
         (None, None)
     };
