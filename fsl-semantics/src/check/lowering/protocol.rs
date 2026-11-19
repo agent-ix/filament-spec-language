@@ -233,7 +233,6 @@ impl ProtocolInput<'_> {
     /// once, in a fixed order. Empty when the whole graph is written.
     fn unemitted(&self) -> Vec<ProtocolConstruct> {
         let form = self.form;
-        let slots = &self.checked.slots;
         let mut unemitted = Vec::new();
         let mut kinds: Vec<ProtocolNodeKind> = Vec::new();
         for control in &self.checked.controls.controls {
@@ -259,16 +258,6 @@ impl ProtocolInput<'_> {
             .any(|root| !root.protocol_references().is_empty())
         {
             unemitted.push(ProtocolConstruct::ProtocolReferenceInBody);
-        }
-        if slots.repeats.iter().any(|repeat| repeat.post_test) {
-            unemitted.push(ProtocolConstruct::PostTestRepeat);
-        }
-        if slots
-            .repeats
-            .iter()
-            .any(|repeat| repeat.decisions_read_body && !repeat.post_test)
-        {
-            unemitted.push(ProtocolConstruct::RepeatDecisionReadsBody);
         }
         if self.repeat_steps_through_repeat() {
             unemitted.push(ProtocolConstruct::RepeatStepsThroughRepeat);
@@ -613,7 +602,8 @@ impl Lowering<'_> {
         };
         if protocol.has_attempt() {
             if placeholder.is_none() {
-                self.set_protocol_key(index, ProtocolKey::AfterClauses);
+                let placeholder = self.placeholder();
+                self.set_protocol_key(index, ProtocolKey::Keyed(placeholder));
             }
             return Ok(Vec::new());
         }
@@ -697,11 +687,7 @@ impl Lowering<'_> {
                 Some(ProtocolKey::Keyed(NodeRef::Pending(handle))) => Some(*handle),
                 _ => None,
             };
-            if !matches!(
-                self.protocol_keys.get(source_index),
-                Some(ProtocolKey::AfterClauses)
-            ) && placeholder.is_none()
-            {
+            if placeholder.is_none() {
                 continue;
             }
             let location = protocol.location();
@@ -2239,10 +2225,6 @@ impl Lowering<'_> {
                     loci: vec![location.clone()],
                 },
             )),
-            Some(ProtocolKey::AfterClauses) => Err(not_emitted(
-                ProtocolConstruct::ReferenceToAttemptProtocol,
-                location,
-            )),
             Some(ProtocolKey::Unselected) | None => Err(refuse(
                 location,
                 CheckCause::MissingSelection {
@@ -2491,7 +2473,6 @@ pub(super) enum ProtocolKey {
     Unkeyed,
     /// The protocol holds an `attempt`: its node is written once the state
     /// clauses it lists are ([`Lowering::protocol_nodes_with_attempts`]).
-    AfterClauses,
     /// The profile is selected and the protocol names this construct, the
     /// first of those whose node is not written yet.
     NotEmitted(ProtocolConstruct),

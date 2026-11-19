@@ -1970,7 +1970,6 @@ fn an_unstable_fifo_key_refuses_at_the_key() {
 /// admitted.
 #[test]
 #[trace("TC-2502", "FR-880-AC-7", "FSpec-FR-727-AC-1")]
-#[ignore = "Blocked by QSL-2220: the strict reader still rejects ownerless protocol clauses as MalformedWire."]
 fn a_non_object_over_is_written() {
     for over in [
         "Int[0, 3]",

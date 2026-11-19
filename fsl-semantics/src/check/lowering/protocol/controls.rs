@@ -718,7 +718,6 @@ impl Lowering<'_> {
             .repeats
             .iter()
             .find(|repeat| repeat.node == control.node)
-            .filter(|repeat| !repeat.post_test)
             .ok_or_else(unchecked)?;
         let within = |span: fsl_foundation::Span| {
             control
@@ -744,7 +743,9 @@ impl Lowering<'_> {
             Some(span) => BindingValue::Group(GroupTerm::references_nodes([within(span)?])),
         };
         let owner = controls.role(&form.owner.name).ok_or_else(unchecked)?;
-        let visible = self.visible_entries(controls, &checked.visible, entry, location)?;
+        let decision_readable = &checked.decision_readable;
+        let visible =
+            self.visible_entries(controls, &checked.visible, decision_readable, location)?;
         let maximum = match checked.max {
             None => empty_group(),
             Some(max) => BindingValue::Group(GroupTerm::new(vec![GroupMember::Leaf(
@@ -756,16 +757,21 @@ impl Lowering<'_> {
             Some(proof) => vec![
                 member(
                     "invariant",
-                    self.scoped_body(controls, &proof.invariant, entry, location)?,
+                    self.scoped_body(controls, &proof.invariant, decision_readable, location)?,
                 ),
                 member(
                     "variant",
-                    self.scoped_body(controls, &proof.variant, entry, location)?,
+                    self.scoped_body(controls, &proof.variant, decision_readable, location)?,
                 ),
             ],
         };
-        let guard = self.scoped_body(controls, &checked.guard, entry, location)?;
-        Ok(vec![
+        let guard_readable = if checked.post_test {
+            decision_readable
+        } else {
+            entry
+        };
+        let guard = self.scoped_body(controls, &checked.guard, guard_readable, location)?;
+        let mut arguments = vec![
             MemberTerm::bound("owner", LeafTerm::reference(owner)),
             MemberTerm::binding("visible", visible),
             MemberTerm::binding("maximum", maximum),
@@ -773,7 +779,14 @@ impl Lowering<'_> {
             MemberTerm::bound("guard", guard),
             MemberTerm::bound("body", LeafTerm::reference_node(body)),
             MemberTerm::binding("exhausted", exhausted),
-        ])
+        ];
+        if checked.post_test {
+            arguments.push(MemberTerm::bound(
+                "test",
+                self.text_literal("post", location)?,
+            ));
+        }
+        Ok(arguments)
     }
 
     /// A `choice`'s or `repeat`'s `visible` entries as the set of their
