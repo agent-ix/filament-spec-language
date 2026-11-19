@@ -14,13 +14,13 @@ protocol Recovery using p over (job: Factory::Job) on origin {
     attempts 1 of Completion;
     retry (older: Completion, newer: Completion) { true };
     commit Main::Done;
-    recover (recovery: Boolean) { recovery };
+    recover (recovery: Completion) { recovery.ok };
   }
   run sequence Main {
     attempt Reserved by Worker on Factory::MachiningStation::reserve contracts []
       as (reserved: Boolean) { reserved };
     effect Prepared of Reserved as (prepared: Completion) { prepared.ok };
-    event Aborted by Worker for Undo as (trigger: Trigger) { trigger.fire };
+    event Aborted by Worker for Undo as (abort: Trigger) { abort.fire };
     commit Done by Worker as (done: Boolean) { done };
   }
   finish Over as (closing: Boolean) { closing };
