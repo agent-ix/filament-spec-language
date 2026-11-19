@@ -1919,7 +1919,7 @@ fn an_unstable_fifo_key_refuses_at_the_key() {
                     end: key_start + 1,
                 }
             );
-            assert_eq!(&text[span.start..span.end], "m");
+            assert_eq!(&checked_unit[span.start..span.end], "m");
         }
     }
 }
