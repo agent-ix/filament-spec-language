@@ -409,7 +409,8 @@ pub fn explore_timed_state_graph(
         })
         .collect();
     let mut edges = Vec::new();
-    for edge in &run.edges {
+    let graph_edges = run.edges.clone();
+    for edge in &graph_edges {
         let Some((step_index, _part_index)) = edge.step else {
             continue;
         };
@@ -642,6 +643,9 @@ pub fn check_timed_model<S: Clone>(
             Err(Halt::Refusal(refusal)) => return Err(refusal),
         };
         match searched {
+            Searched::Graph { .. } => {
+                return Err(ZoneCheckRefusal::Fault("unexpected-state-graph"));
+            }
             Searched::Holds { proof, stats } => {
                 total = total.plus(stats);
                 proved = Some(proof);
