@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile m = "filament.model.complete/v1";
+model M = "example/config-version";
+invariant Q using m on M::ConfigVersion at current { size(seq(i in 0 .. 1: i)) = 2 }

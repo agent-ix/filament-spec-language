@@ -1,0 +1,3 @@
+# Pending collection context case
+
+[QSL-2596](https://linear.app/agent-ix/issue/QSL-2596/evaluate-reaches-with-an-optional-reference-projection-target) owns evaluation of an optional-reference projection used as the target of `reaches`. The desired-true ConfigVersion child-to-root case is excluded from the active group and does not count as passing coverage. On tested FSL base `5fae529b7`, its original focused receipt reports exit 21, `unsupported_projection`, S6a. The reversed traversal remains active, and a self-loop independently asserts the positive one-or-more-edge behavior. No completion priority or latest-main regression claim is implied.
