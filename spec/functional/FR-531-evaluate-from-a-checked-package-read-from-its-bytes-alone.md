@@ -215,44 +215,58 @@ dropped. The package route reads the records from these rows and nodes, and
 the source route reads the same rows of its own emission, so both routes
 hold one value per record.
 
-**Function body locations in the bytes.** S6a records a value loss and
-locates a stop at the
-position in a function body where the operation ran, as the
-`ExpressionLocation` `{ origin: Body { function, index }, path }` the checker
-assigned that position (FR-090). The losses this covers are every loss an
-operation of a function body records: the raised flags (inexact,
-divide-by-zero, overflow, underflow, invalid) of each IEEE operation of
-FR-397 that raises one, namely `+`, `-`, `*`, `/`, `sqrt` and a conversion
-into a float (from a float of the other width or from an exact value), over
-`Float32` and `Float64` alike, and a decimal rounding loss. The rule is one
-rule for every term of the body and names no operation, so an operation
-added later is located by it without change. This holds for a loss in a function the
-caller called directly and for one in a function reached through a nested
-call: the loss is never moved to a call site, because the source route
-records it inside the callee's body and a call made from the request has no
-call site in any body. The bare route cannot recompute these locations from
-the admitted body: the checker locates a node that lowering introduces (an
-IEEE ordering's `#ieee_operand` `let` and its composition parts under FR-397,
-an implicit coercion) at the source position it stands for, so the child-index
-path of a position in the lowered body differs from the checker's location
-wherever lowering reshaped the tree. S4 SHALL therefore write, for every term
-of every function body it emits, one FSpec FR-322 `checked_term_data`
-`body_locations` row carrying the checker's location of that term, its
-origin `{kind: "function_body", function, name, index}` holding the function
-node and the `Body` owner's `function` and `index`, keyed and walked as
-FR-383 "Protocol term locations" keys and walks a protocol slot's rows, with
-the function body's root in place of the slot's root. A term S4 cannot key to
-a `source_map` occurrence is `EmitRefusal::UnlocatedOccurrence` with no
-bytes, never an omitted row. The bare route SHALL locate each term of a
-function body it evaluates from its row, and the in-process route, which
-reads its own emission's rows for every other fact of this table, gives the
-same locations from the checked body, so the two routes return equal
-`Evaluation.location` and equal `Evaluation.losses`, record for record. The
-rows add no graph node and change no node id, so the package identity
-`name` and every structural `NodeRef` are unchanged by them; the package
-bytes do change, and a package written without them is refused by the strict
-reader (FR-322-AC-490), never evaluated with locations derived from the
-lowered tree or read from source.
+**Function body locations in the bytes.** S6a records every value loss, and
+locates every stop, raised at a term of a function body at the position where
+the operation ran, as the `ExpressionLocation` `{ origin: Body { function,
+index }, path }` the checker assigned that position (FR-090). The rule is one
+rule for every term of every body and names no operation, so every loss
+record the evaluator makes there is covered, among them the IEEE flags
+(inexact, divide-by-zero, overflow, underflow, invalid) that FR-397's
+arithmetic, `sqrt` and conversions into a float raise over `Float32` and
+`Float64` (FR-531-AC-37), and every stop, such as a denied meter charge
+(FR-531-AC-38). A function body here is the body of every function the
+checker locates under a `Body` owner: a declared pure function or predicate,
+and a clause function (FR-094: a model operation's `body` or `precondition`,
+an invariant, a reward) whose package node carries a `body` binding, because
+the checker locates a clause function's expression under `Body` exactly as a
+declared function's (FR-531-AC-39). A function's `decreases` measure is not a
+body. This holds for a loss in a function the caller called directly and for
+one in a function reached through a nested call: the loss is never moved to
+a call site, because the source route records it inside the callee's body
+and a call made from the request has no call site in any body. The bare route
+cannot recompute these locations from the admitted body: the checker locates
+a node that lowering introduces (an IEEE ordering's `#ieee_operand` `let` and
+its composition parts under FR-397, an implicit coercion) at the source
+position it stands for, so the child-index path of a position in the lowered
+body differs from the checker's location wherever lowering reshaped the tree.
+
+S4 SHALL therefore write, for every term of every such body it emits, one
+FSpec FR-322 `checked_term_data` `body_locations` row carrying the checker's
+location of that term, its origin `{kind: "function_body", function, name,
+index}` holding the function node and the `Body` owner's `function` and
+`index`, keyed as FR-383 "Protocol term locations" keys a protocol slot's
+rows, over the walk FSpec FR-322 defines on the wire (FR-383's slot walk,
+with the body's root in place of the slot's root, is the same walk over the
+checked tree). A term S4 cannot key to a `source_map` occurrence is
+`EmitRefusal::UnlocatedOccurrence` with no bytes, never an omitted row. Every
+S4 path that writes a package writes the carrier: `emit_checked` writes the
+rows from the checked graph, and `emit_timed_models`, which re-encodes a base
+package with typed timed models, SHALL carry the base package's
+`checked_term_data` with every `NodeRef` it holds rewritten by the same
+identity map the re-encoding applies to graph nodes, never `None`. A package
+from which a producer, test or tool drops `checked_term_data` while any of its
+function bodies has a term is no longer admitted: the strict reader refuses
+it at `/checked_term_data/body_locations` (FSpec FR-322-AC-490).
+
+The bare route SHALL locate each term of a function body it evaluates from
+its row, and the in-process route, which reads its own emission's rows for
+every other fact of this table, gives the same locations from the checked
+body, so the two routes return equal `Evaluation.location` and equal
+`Evaluation.losses`, record for record. The rows add no graph node and change
+no node id, so the package identity `name` and every structural `NodeRef` are
+unchanged by them; the package bytes do change, and a package written
+without them is refused by the strict reader, never evaluated with locations
+derived from the lowered tree or read from source.
 
 Every row of the in-process column that names the source is replaced on the
 bare route by the bytes column, and FR-532 and FR-533 state that the in-process
@@ -1008,7 +1022,9 @@ outcome map. Each carries a "Consumer entry" section that points here.
 | FR-531-AC-34 | Over the unit `record W { c: Clock; n: Integer; }`, `tuple P (Clock, Integer);`, `union U { armed(Clock), idle }`, `object O { w: W; d: Clock; q: Sequence<Clock>[0, 3]; p: P; u: U; operation arm(x: Clock, k: Integer) modifies self.d; }` and `time O dense unit ms;`, `identities.json` has `format` `/5`; `O`'s `source_objects` row has the data entries `w`, `p`, `u` and the clock entries `d` (`member_type` `ix://filament/native/Clock`, `collections` `[]`) and `q` (`Sequence<ix://filament/native/Clock>`, `[{"kind": "sequence", "minimum": "0", "maximum": "3"}]`) in field order, and the operation `{"identity": "O::arm", "query": false, "clock_parameters": ["x"]}`; `W`'s `source_records` row has the clock entry `c` and the data entry `n`; `P`'s `source_tuples` row has the clock position `0` and the data position `1`; `U`'s `armed` member has empty `payload_nodes` and one `clock_payload` entry; the file reads back equal. A `/4` document, an absent `source_tuples`, an entry with both `type_node` and `member_type`, one with neither, a clock entry named `w`, and an operation entry without `clock_parameters` each refuse `Malformed` with no partial read. | Test (TC-1331) |
 | FR-531-AC-35 | The unit of FR-062's RR-12 (`g` and `f`) and RR-16 (`g`, `h` and `f`, renamed `g2`, `h2` and `f2`), with RR-5's `sq` added, is emitted with one `requirement_items` row per record of `CheckedGraph::requirements()` in its iteration order (eight rows: three for `f`, two for `f2`, three for `sq`), each row's `claim`, `kind` and `extent` equal to its record's key, capability and extent and each `value-validity` row's record node equal to its record's owner, bound, conversion, guards, roots and objects; the package read with `read_checked_package` gives a `BarePackage` whose `call_requirements("f")`, `("f2")` and `("sq")` equal, member for member and request index for request index, FR-395's `call_requirements_for` over the compiled unit, and `call_requirements("g")` is empty. The same package with `f2`'s second row removed is refused by the strict reader (FSpec FR-825 rule 14), so no `BarePackage` gives a shorter member list. | Test (TC-1331) |
 | FR-531-AC-36 | Over `function f using v(p: Float64[nearest-even], q: Float64[nearest-even], r: Float64[nearest-even]): Boolean pure { sqrt(p) <= sqrt(q) }` and `function g using v(p: Float64[nearest-even], q: Float64[nearest-even], r: Float64[nearest-even]): Boolean pure { f(p, q, r) }`, each called with `p`, `q` and `r` at `2.0` on the source route and on the `BarePackage` of the same unit's written bytes with the same remaining budget: for each of `f` and `g` both routes return `Completed(true)` and equal charge logs, and both return exactly two losses, each `IeeeFlags` with the inexact flag, located at `Body { function: "f", index: 0 }` paths `[0]` and `[1]` in that order (for `g` too, since the loss is in `f`'s body, never at `g`'s call site); the package's `body_locations` rows of `f` give those two paths for the two `sqrt` terms. A bare route that locates `f`'s body from the child-index paths of the lowered body places the second loss at `[1, 0]` and fails the equality; one that has no location faults `value-loss-site-is-located` and fails; the same bytes with the second `sqrt`'s row removed are refused by the strict reader (FSpec FR-322-AC-490) and evaluate nothing. | Test (TC-3133) |
-| FR-531-AC-37 | For `T` each of `Float32[nearest-even]` and `Float64[nearest-even]`, and `f using v(p: T, q: T, r: T): Boolean pure { r <= e }` with `e` each of `p + q` and `p - q` at `p` `1.0`, `q` `2^-60` (inexact), `p * q` at `p` and `q` the largest finite value of `T` (overflow and inexact), `p / q` at `p` `1.0`, `q` `3.0` (inexact) and at `q` `0.0` (divide-by-zero), `sqrt(p)` at `p` `2.0` (inexact), and the FR-397 conversion into `T` of an exact `Rational` parameter holding `1/10` (inexact) and, for `Float32`, of a `Float64` parameter holding `0.1` (inexact), with `r` `0.0`: the source route and the `BarePackage` of the written bytes each record exactly one `IeeeFlags` loss holding the flags named, located at `Body { function: "f", index: 0 }` path `[1]` (the right operand of the ordering, which lowering binds by an `#ieee_operand` `let` at path `[0]` of the lowered body), and return equal outcomes, equal losses and equal charge logs; the body `e` alone gives the same loss at path `[]`. No case faults `value-loss-site-is-located`. A bare route that derives locations from the lowered body, or that locates any flag-raising operation other than `sqrt` without a `body_locations` row, fails at least one case. | Test (TC-3133) |
+| FR-531-AC-37 | For `T` each of `Float32[nearest-even]` and `Float64[nearest-even]`, each row below is a unit holding `function f using v(...): Boolean pure { r <= e }` and `function g using v(...): T pure { e }` with the same parameters (`r` absent from `g`), called with `r` `0.0` on the source route and on the `BarePackage` of the unit's written bytes with the same remaining budget: `e` is `p + q` and `p - q` over `p: T, q: T` at `1.0` and `2^-60` (inexact); `p * q` at both the largest finite value of `T` (overflow, inexact); `p * q` at the smallest positive subnormal of `T` and `0.5` (underflow, inexact); `p / q` at `1.0` and `3.0` (inexact) and at `1.0` and `0.0` (divide-by-zero); `filament::value::ieee::sqrt(p)` over `p: T` at `2.0` (inexact) and at `-1.0` (invalid); `convert<T>(a)` over `a: Rational[-10, 10; 1, 10]` at `1/10` (inexact); and, for `T` `Float32[nearest-even]` only, `convert<Float32[nearest-even]>(b)` over `b: Float64[nearest-even]` at `0.1` (inexact) and at the largest finite `Float64` (overflow, inexact). Each call on each route records exactly one `IeeeFlags` loss holding exactly the flags named, located for `f` at `Body { function: "f", index: 0 }` path `[1]` (the right operand of the ordering, which lowering binds by an `#ieee_operand` `let` at path `[0]` of the lowered body) and for `g` at `Body { function: "g", index: 1 }` path `[]`, and the two routes return equal outcomes, equal losses and equal charge logs; no call faults `value-loss-site-is-located`. A bare route that derives `f`'s locations from the lowered body records `[0]` and fails every `f` case; one without the rows faults. | Test (TC-3133) |
+| FR-531-AC-38 | For FR-531-AC-36's `f` at `2.0`, `2.0` and `2.0`, with `U` the `work_units` the source route's completed call spends, each call with a `work_units` limit from `0` to `U - 1` returns `Incomplete` naming `work_units` on both routes, with equal `Evaluation.location` and equal charge logs on the two routes at every limit; the locations over the sweep include `Body { function: "f", index: 0 }` path `[1]`, the denied charge of the second `sqrt`, which a bare route that derives locations from the lowered body reports as `[1, 0]`. | Test (TC-3133) |
+| FR-531-AC-39 | Over the `Config` domain fixture of `tests/it/dispatch_emission.rs`, the unit holding its three `size` bodies and `pre sqrtPre using v on Config::ConfigVersion::probe { filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) <= filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) }` emits, for the precondition's clause function (a `function` node with a `clause` binding `precondition` and a `body` binding), one `body_locations` row per term of its body walk, every row's origin carrying the checker's `Body` owner `function` and `index` of that clause function, and the two `sqrt` rows the paths `[0]` and `[1]` that the checked graph's locations of those two nodes hold (the lowered body holds them at `[0]` and `[1, 0]`); each `size` body, a literal with no term, has no row. The strict reader admits the package, and refuses it at `/checked_term_data/body_locations` once the second `sqrt`'s row is removed. | Test (TC-3133) |
 
 ## Dependencies
 
