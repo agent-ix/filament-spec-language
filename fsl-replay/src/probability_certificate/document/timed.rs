@@ -572,7 +572,8 @@ fn region_key(
             .model()
             .clock(place.clock())
             .ok_or(ProbabilityDocumentError::Unsupported)?;
-        let owner = field.owner().original();
+        let owner = field.owner();
+        let owner = owner.original();
         let declaring = fsl_semantics::model::key::model_node_key(
             owner.package(),
             "model",
