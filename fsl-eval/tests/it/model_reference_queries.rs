@@ -4061,6 +4061,7 @@ fn a_kernel_refusal_builds_a_record_only_where_the_catalog_has_a_code() {
         location: None,
         losses: Vec::new(),
         frame_depth: 0,
+        peak_live_occurrences: 0,
     };
     let cardinality = evaluation(Refusal::CardinalityOutOfBound {
         violation: BoundViolation::AboveMaximum,
@@ -4115,6 +4116,7 @@ fn a_kernel_foreign_reference_builds_a_record_with_both_universes() {
         location: None,
         losses: Vec::new(),
         frame_depth: 0,
+        peak_live_occurrences: 0,
     };
     let record =
         fsl_eval::value::refusal_record(&evaluation, |location| package.graph().region(location))

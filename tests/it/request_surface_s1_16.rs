@@ -1024,11 +1024,6 @@ fn a_malformed_tl_lowering_member_is_refused() {
                 "max_steps": 0}}),
             "max_steps",
         ),
-        (
-            json!({"clause": "Low", "cross_evaluate": {"trace": {"lasso": {"prefix": [],
-                "loop": ["spine-snapshot.json"]}}}}),
-            "tl_lowering.cross_evaluate.trace",
-        ),
     ] {
         let (code, value) = lower(member.clone());
         assert_eq!(code, 20, "{member}: {value}");
@@ -1166,7 +1161,7 @@ fn snapshot_of(directory: &Path, keys: &[&str], complete: bool) -> Value {
         .map(|key| {
             let mut object = template.clone();
             object["key"] = json!(key);
-            object["fields"]["versionNumber"] = json!({"type": "integer", "value": "0"});
+            object["fields"]["versionNumber"] = json!({"integer": "0"});
             object["fields"]["parent"] = json!({"absent": {}});
             object
         })
@@ -1355,4 +1350,52 @@ fn tl_cross_evaluation_refuses_an_incomplete_universe_and_counts_an_empty_one() 
     assert_eq!(cross["traces"], 0, "{value}");
     assert_eq!(cross["positions"], 0, "{value}");
     assert_eq!(cross["agree"], true, "{value}");
+}
+
+/// FR-931-AC-10, fairness half (TC-3023 step 4): the infinite-trace clause
+/// `C` with a weak fairness constraint over an observed lasso settles
+/// `MissingFairnessPremise` as FR-329 settles it, exit 21, and its record
+/// carries no `cross_evaluation`, because the native side has no verdict to
+/// compare; the same clause without the constraint cross-evaluates.
+#[test]
+#[trace("TC-3023", "FR-931-AC-10")]
+fn a_fairness_constraint_over_a_lasso_settles_missing_fairness_premise() {
+    let unit = |constraint: &str| {
+        format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             profile m = \"filament.model.complete/v1\";\n\
+             profile t = \"filament.temporal.infinite-trace/v1\";\n\
+             model Config = \"example/config-version\";\n\
+             record Counter {{ level: Int[0, 9]; }}\n\
+             temporal C using t over (c: Counter) clock \"steps\" on each (q: Counter) \
+             {{ {constraint}once[1,1] not holds(c.level = 0) }}\n"
+        )
+    };
+    let lasso = json!({"lasso": {"prefix": [],
+        "loop": [{"sample": {"level": {"integer": "0"}}}]}});
+    let lower = |unit: String| {
+        run(
+            &unit,
+            true,
+            (
+                "tl_lowering",
+                json!({"clause": "C", "cross_evaluate": {"trace": lasso}}),
+            ),
+        )
+    };
+    let (code, value) = lower(unit(""));
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["tl_lowering"]["cross_evaluation"]["agree"], true);
+
+    let (code, value) = lower(unit(
+        "fair weak each Config::ConfigVersion::attemptUpdate; ",
+    ));
+    assert_eq!(code, 21, "{value}");
+    assert!(
+        value.to_string().contains("MissingFairnessPremise")
+            || value.to_string().contains("missing-fairness-premise"),
+        "{value}"
+    );
+    assert!(value.get("tl_lowering").is_none(), "{value}");
 }

@@ -33,12 +33,12 @@ as FR-1010 and FR-1021 state.
   no second member for value synthesis; `fsl-command`'s strict
   reader SHALL refuse, before any stage runs, a member named in no column of
   FSpec FR-823's member table, `invalid_runtime_input`/`unknown-member` at
-  `/synthesis/<member>`.
+  `/request/synthesis/<member>`.
 - When S3 has checked the unit, FSL SHALL resolve `declaration` through the package reader's
   `claim_names` lookup only, never from source text or a node path, and
-  refuse as FSpec FR-823 "Selection" states at `/synthesis/declaration`.
+  refuse as FSpec FR-823 "Selection" states at `/request/synthesis/declaration`.
 - With a value synthesis selected, FSL SHALL refuse `initial`, `policy` and
-  `dwell_grid` `unknown-member` at their `/synthesis` pointers, read
+  `dwell_grid` `unknown-member` at their `/request/synthesis` pointers, read
   `limits` as the closed `{max_candidates, max_work}` object of the
   `synthesis.*` settings, and read `accounting` and `deadline_ms` as FR-1010
   reads them.
@@ -52,7 +52,7 @@ as FR-1010 and FR-1021 state.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-1037-AC-1 | A `synthesis` member `{"declaration": "Pick"}` over FR-754-AC-3's `Pick` writes `synthesis.format` `filament.synthesis-outcome/v1`, `status` `candidate`, `check` `validated`, `candidate` `{"type": "integer", "value": "7"}` and `explored.visited` 8 with every FSpec FR-823 member present, exit `0`; `= 50` writes `no-candidate`, `explored.visited` 10, exit `10`; `minimize Pick` with `Pick >= 3` writes candidate 3 with `optimal` `true`; `{"declaration": "Pick", "limits": {"max_candidates": 3}}` over `= 50` writes `incomplete` naming `synthesis.max_candidates`, exit `22`. | Test (TC-3017) |
-| FR-1037-AC-2 | A unit holding only `Pick` runs it for the member `{}`; a unit holding `Pick` and `Other` refuses `{}` `invalid_runtime_input`/`missing-member` at `/synthesis/declaration`; `declaration` `Nope` and `declaration` naming the predicate `Positive` each refuse `missing_declaration`/`missing-name` at `/synthesis/declaration`; `Pick` with `initial` refuses `unknown-member` at `/synthesis/initial`; `limits` `{"work": 1}` refuses `unknown-member` at `/synthesis/limits/work`; each refusal exits `20` with no `synthesis` outcome. | Test (TC-3017) |
+| FR-1037-AC-2 | A unit holding only `Pick` runs it for the member `{}`; a unit holding `Pick` and `Other` refuses `{}` `invalid_runtime_input`/`missing-member` at `/request/synthesis/declaration`; `declaration` `Nope` and `declaration` naming the predicate `Positive` each refuse `missing_declaration`/`missing-name` at `/request/synthesis/declaration`; `Pick` with `initial` refuses `unknown-member` at `/request/synthesis/initial`; `limits` `{"work": 1}` refuses `unknown-member` at `/request/synthesis/limits/work`; each refusal exits `20` with no `synthesis` outcome. | Test (TC-3017) |
 
 ## Dependencies
 

@@ -632,7 +632,7 @@ fn classify_outcome(outcome: &CallOutcome) -> Classification {
             Classification::new(Refused, causes)
         }
         // An undefined evaluation settles refuted.
-        CallOutcome::Undefined { reason } => Classification::new(
+        CallOutcome::Undefined { reason, .. } => Classification::new(
             Refused,
             vec![RefusalCause::new(Code::UndefinedExpression, Some(reason))],
         ),

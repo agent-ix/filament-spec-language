@@ -164,28 +164,35 @@ fn slots(wire: &Value) -> BTreeMap<String, &Value> {
 /// FR-488-AC-1, AC-2, AC-3, AC-6: `NonInterference` emits one
 /// `claim`/`hyperproperty` node whose body binds the seven FR-402 members in
 /// order, with the `quantifiers` Tuple of Groups.
-/// FR-322-AC-344, FR-322-AC-346: a hyper clause's name row is keyed by its
-/// body wrapper node, at the ordinal of the clause's assembled `claim`
-/// occurrence, and carries the declared name.
-#[trace("TC-233", "FR-322-AC-344", "FR-322-AC-346")]
+/// FR-322-AC-466: a hyper clause's body wrapper has no
+/// `temporal_clause_names` row; the clause has one `claim_names` row, on its
+/// `hyperproperty` node, at the clause's assembled `claim` occurrence and
+/// carrying the declared name.
+#[trace("TC-233", "FR-322-AC-466")]
 #[test]
-fn a_hyper_clause_has_one_name_row_on_its_wrapper() {
+fn a_hyper_clause_has_one_name_row_on_its_hyperproperty_node() {
     let compiled = compile(&unit(INFINITE, &non_interference()));
     let [clause] = compiled.graph_clauses.as_slice() else {
         panic!("one hyper clause");
     };
     let occurrence = clause.assembled_occurrence().expect("assembled");
-    let wrapper = target(binding(&hyper_node(&compiled.wire)["body"], "body")).clone();
-    assert_ne!(wrapper, hyper_node(&compiled.wire)["node_id"]);
-    let names = compiled.wire["temporal_clause_names"]
+    let hyper = hyper_node(&compiled.wire);
+    let wrapper = target(binding(&hyper["body"], "body")).clone();
+    assert_ne!(wrapper, hyper["node_id"]);
+    let wrapper_rows: Vec<&Value> = compiled.wire["temporal_clause_names"]
         .as_array()
-        .expect("names");
+        .into_iter()
+        .flatten()
+        .filter(|row| row["declaration"] == wrapper)
+        .collect();
+    assert!(wrapper_rows.is_empty(), "{wrapper_rows:?}");
+    let names = compiled.wire["claim_names"].as_array().expect("names");
     let [row] = names.as_slice() else {
         panic!("one name row: {names:?}");
     };
-    assert_eq!(row["declaration"], wrapper);
+    assert_eq!(row["declaration"], hyper["node_id"]);
     assert_eq!(
-        row["occurrence"].as_u64(),
+        row["occurrence"]["ordinal"].as_u64(),
         Some(occurrence.origin().ordinal())
     );
     assert_eq!(row["name"], clause.name());

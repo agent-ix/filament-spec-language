@@ -644,7 +644,8 @@ impl<'p> BarePackage<'p> {
             || BareSelectionFailure::from(SlotSelectionFailure::MalformedNode(clause.clone()));
         let node = self.temporal_clause_semantic_node(clause)?;
         let view = temporal_subject(package, &node.node_id).map_err(|_| malformed())?;
-        let name = view.name().ok_or_else(malformed)?.to_owned();
+        let row = view.name_row().ok_or_else(malformed)?;
+        let name = row.name.as_ref().to_owned();
         let CheckedTerm::Application { arguments, .. } = &node.body else {
             return Err(malformed().into());
         };
@@ -662,12 +663,8 @@ impl<'p> BarePackage<'p> {
             });
         }
         let clock = text(clock).ok_or_else(malformed)?.to_owned();
-        let span = view
-            .source_span()
-            .regions
-            .first()
-            .map(region_span)
-            .ok_or_else(malformed)?;
+        // FSpec FR-322 "Clause declaration regions": the whole declaration.
+        let span = region_span(&row.declaration_region);
         let binder =
             |id: &CheckedNodeId| -> Result<(String, filament_exact::ValueType), BareClauseRefusal> {
                 let parameter = nodes.get(id).ok_or_else(malformed)?;

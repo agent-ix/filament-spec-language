@@ -463,6 +463,7 @@ pub(super) fn refused_evaluation(refusal: Refusal) -> Evaluation {
         location: None,
         losses: Vec::new(),
         frame_depth: 0,
+        peak_live_occurrences: 0,
     }
 }
 
@@ -1422,6 +1423,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         location: reported_location.cloned(),
                         losses: Vec::new(),
                         frame_depth: self.frame_depth(),
+                        peak_live_occurrences: 0,
                     }),
                     Halt::Stop(stop) => self.stopped(stop, reported_location),
                     // An imported call site still locates at that call.
@@ -1458,6 +1460,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     location: root.location().cloned(),
                     losses: Vec::new(),
                     frame_depth: self.frame_depth(),
+                    peak_live_occurrences: 0,
                 });
             }
             Err(Halt::Stop(stop)) => return self.stopped(stop, root.location()),
@@ -1473,6 +1476,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             location: None,
             losses: std::mem::take(&mut self.losses),
             frame_depth: 0,
+            peak_live_occurrences: 0,
         })
     }
 
@@ -1595,6 +1599,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             location: location.cloned(),
             losses: Vec::new(),
             frame_depth,
+            peak_live_occurrences: 0,
         })
     }
 

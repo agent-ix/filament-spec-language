@@ -768,7 +768,9 @@ Each amended cell carries an "Amended by ADR-018" note.
   filament-spec-language#568), QSL-369 (EF and AG EF), QSL-370
   (hyperproperties).
 - TL-256: the tl-mltl infinite-trace acceptance criteria. FSpec FR-251 gives
-  infinite-trace requests no TL target, so TL is not an engine here; its
+  closed-past infinite-trace requests the `mltl.infinite-trace/v1` TL target and
+  every other infinite-trace request no TL target, so TL is not an engine for
+  unbounded properties here; its
   conformance lassos are candidates for QS-10 (a).
 - FSpec V1-TEMP-021 to V1-TEMP-026: infinite-trace capability inventory rows.
   V1-TEMP-026's `unsupported` settlement holds until EN-1's provider

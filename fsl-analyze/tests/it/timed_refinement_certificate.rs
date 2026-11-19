@@ -138,7 +138,7 @@ fn the_treq_certificate_is_a_refinement_form_the_checker_accepts() {
             "{taken:?}"
         );
     }
-    assert_eq!(certificate.admitted.start, certificate.initials[0]);
+    assert_eq!(certificate.admitted.as_ref().unwrap().start, certificate.initials[0]);
     assert_eq!(
         verdict(&world, &certificate),
         ZoneCertificateVerdict::Accepted
@@ -436,13 +436,13 @@ fn a_locked_first_initial_state_does_not_decide_admitted() {
         panic!("three initial nodes: {:?}", certificate.initials);
     };
     assert!(certificate.nodes[locked].locked);
-    assert_eq!(certificate.admitted.start, second);
+    assert_eq!(certificate.admitted.as_ref().unwrap().start, second);
     assert_eq!(
         verdict(&world, &certificate),
         ZoneCertificateVerdict::Accepted
     );
     let mut moved = certificate.clone();
-    moved.admitted.start = locked;
+    moved.admitted.as_mut().unwrap().start = locked;
     assert_eq!(
         verdict(&world, &moved),
         rejected(CertificateRule::WitnessFails, node(locked))

@@ -97,7 +97,10 @@ and `exploration`.
   item's `certificate` member carries that certificate as its `document`, and
   certification is `certified` once FR-245's core checker
   accepts the certificate, and `uncertified` otherwise. The proof basis is
-  `zone-certified` (FR-632).
+  `zone-certified` (FR-632). The certificate certifies the reachable timed
+  graph and carries no time-divergent witness (FR-244 "State-graph form"), so
+  a subject whose every infinite path is Zeno still yields a certified
+  state-graph verdict.
 - **Budgets.** Reaching a `temporal.limits` limit settles the item
   `incomplete` with `LimitReached{limit}` naming it; `exploration` reports
   the zone states and transitions explored.

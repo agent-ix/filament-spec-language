@@ -177,7 +177,7 @@ pub(super) fn run_model_item(
                             let system = ModelSystem::new(simulation).ok()?;
                             bound_over(&system, clause, instance)
                         });
-                    EngineReport::Clause(model, over)
+                    EngineReport::Clause(model, over, None)
                 }
                 other => other,
             }
@@ -999,6 +999,7 @@ pub(super) fn zone_refusal(refusal: &ZoneCheckRefusal) -> Refusal {
         ZoneCheckRefusal::Extent(_)
         | ZoneCheckRefusal::Atom(_)
         | ZoneCheckRefusal::Automaton(_)
+        | ZoneCheckRefusal::Stopped(_)
         | ZoneCheckRefusal::Fault(_) => Refusal::Failed(BROKEN),
     }
 }

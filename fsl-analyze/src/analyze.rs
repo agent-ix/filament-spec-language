@@ -628,6 +628,8 @@ pub struct ItemDetail {
     pub checker: Option<fsl_replay::CertificateChecker>,
     /// The steps of the supplied trace a `finite-replay` proof replayed.
     pub replayed_steps: Option<u64>,
+    /// FR-235's liveness premise, when established by EN-1 or EN-6.
+    pub non_zeno: Option<fsl_replay::NonZeno>,
     /// The memory bound a weak-memory protocol run used and whether it was
     /// reached (FSpec FR-439, FR-225); `None` under `sc` and for a model
     /// subject.
@@ -662,8 +664,12 @@ impl ItemDetail {
                 .or_else(|| record.state_graph.as_ref().map(|graph| graph.exploration)),
             checker: model
                 .and_then(|model| model.checker)
+                .or_else(|| record.state_graph.as_ref().and_then(|graph| graph.checker))
                 .or_else(|| protocol.and_then(|protocol| protocol.checker)),
             replayed_steps: record.replayed_steps,
+            non_zeno: record
+                .non_zeno
+                .or_else(|| record.zone_check.as_deref().and_then(|zone| zone.non_zeno)),
             memory_bound: protocol.and_then(|protocol| protocol.memory_bound),
             finite_replay: record.finite_replay.clone(),
         }
@@ -766,6 +772,10 @@ pub struct GraphReport {
     /// A proved record's witnesses in FSpec FR-393's spelling, with the
     /// sampled ones.
     pub evidence: Option<serde_json::Value>,
+    /// The accepted timed state-graph certificate's FR-712 document.
+    pub certificate_document: Option<serde_json::Value>,
+    /// The checker that accepted a timed state-graph proof.
+    pub checker: Option<fsl_replay::CertificateChecker>,
 }
 
 /// A reproduced counterexample with its FR-286 spelling, written where the
@@ -1018,7 +1028,8 @@ pub fn analyze_item(
     if let Some(Counterexample::StateGraph(graph)) = found.map(|found| &found.counterexample) {
         return Ok(
             OutcomeItem::from_state_graph(record.request_index(), &graph.record)
-                .with_graph_evidence(graph.counterexample.clone(), graph.evidence.clone()),
+                .with_graph_evidence(graph.counterexample.clone(), graph.evidence.clone())
+                .with_graph_certificate_document(graph.certificate_document.clone()),
         );
     }
     let wire = found.map(|found| found.wire.clone()).transpose()?;
@@ -1278,7 +1289,11 @@ pub(crate) enum EngineReport {
     Model(Box<ModelCheckRecord>),
     /// EN-1's record over an authored clause, with the object the clause's
     /// `over` parameter is bound to in its counterexample.
-    Clause(Box<ModelCheckRecord>, Option<ObjectReference>),
+    Clause(
+        Box<ModelCheckRecord>,
+        Option<ObjectReference>,
+        Option<fsl_replay::NonZeno>,
+    ),
     /// EN-1's record over a refinement (FR-630), with the counterexample's
     /// per-position abstract images and FR-146 step records.
     Refinement(Box<ModelCheckRecord>, Option<serde_json::Value>),
@@ -1604,6 +1619,9 @@ pub struct AnalyzeRecord {
     pub claim: Option<OccurrenceKey>,
     /// The item's settlement.
     pub settlement: Settlement,
+    /// FR-235's digital-clock non-Zeno premise, when EN-1's SCC phase
+    /// established one.
+    pub non_zeno: Option<fsl_replay::NonZeno>,
     /// EN-1's full record, carrying the counterexample of a `refuted` item.
     pub model_check: Option<Box<ModelCheckRecord>>,
     /// EN-1's full record over a protocol subject, carrying the
@@ -1673,6 +1691,7 @@ impl AnalyzeRecord {
             request_index,
             claim: None,
             settlement,
+            non_zeno: None,
             model_check: None,
             protocol_check: None,
             zone_check: None,
@@ -2355,9 +2374,10 @@ fn settle(
             ),
             Some(model),
         ),
-        EngineReport::Clause(model, over) => {
+        EngineReport::Clause(model, over, non_zeno) => {
             let mut settled = settle(index, kind, engine, EngineReport::Model(model));
             settled.over_reference = over;
+            settled.non_zeno = non_zeno;
             settled
         }
         EngineReport::Refinement(model, steps) => {

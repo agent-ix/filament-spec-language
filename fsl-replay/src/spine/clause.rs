@@ -483,7 +483,8 @@ pub struct TemporalValuation {
     /// The checked clause.
     pub clause: fsl_semantics::check::CheckedTemporalClause,
     /// The valuation over the supplied trace; `None` when the trace is an
-    /// empty finite trace, which asks for the clause alone.
+    /// empty finite trace, which asks for the clause alone, or a lasso beside a
+    /// profile that does not read one.
     pub positions: Option<crate::spine_eval_api::SpineEvalObservedValuation>,
     /// FR-931 `cross_evaluate.initial`: the valuation of every (instance,
     /// behaviour) closed trace of the model subject a snapshot builds;
@@ -1385,9 +1386,10 @@ pub(crate) fn run_clause_with_function_modes(
 /// does and, for a `Temporal` or `SampledTemporal` selection, report
 /// [`ClauseDisposition::TemporalValuation`] in place of the verdict: the
 /// checked clause and, over a non-empty closed finite trace, the native
-/// valuation of its atoms and activations. An empty finite trace asks for
-/// the clause alone. Every refusal before evaluation is the one the clause
-/// run gives.
+/// valuation of its atoms and activations; a lasso is valued under the
+/// infinite-trace profile only (a bounded profile reports the clause alone).
+/// An empty finite trace asks for the clause alone. Every refusal before
+/// evaluation is the one the clause run gives.
 pub fn run_temporal_valuation(
     request: ClauseRunRequest,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {

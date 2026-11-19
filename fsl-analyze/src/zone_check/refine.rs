@@ -330,7 +330,10 @@ pub fn check_timed_refinement<S>(
                 cause: TimedRefinementUndecided::Zone(cause),
                 stats,
             },
-            Searched::Holds { .. } | Searched::HoldsReduced { .. } | Searched::Violated { .. } => {
+            Searched::Graph { .. }
+            | Searched::Holds { .. }
+            | Searched::HoldsReduced { .. }
+            | Searched::Violated { .. } => {
                 return Err(ZoneCheckRefusal::Fault("refinement-halt").into())
             }
         },
@@ -411,7 +414,10 @@ fn liveness(
                 cause: TimedRefinementUndecided::Zone(cause),
                 stats,
             },
-            Searched::Holds { .. } | Searched::HoldsReduced { .. } | Searched::Violated { .. } => {
+            Searched::Graph { .. }
+            | Searched::Holds { .. }
+            | Searched::HoldsReduced { .. }
+            | Searched::Violated { .. } => {
                 return Err(ZoneCheckRefusal::Fault("liveness-halt").into())
             }
         },

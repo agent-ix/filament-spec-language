@@ -375,6 +375,7 @@ fn a_non_local_time_lock_reproduces_by_fresh_exploration() {
         &ZoneCheckOutcome::Violated {
             counterexample: Box::new(half.clone()),
             stats: ZoneStats::default(),
+            non_zeno: None,
         },
         ZoneCertificateVerdict::Accepted,
         Ok(settlement),
@@ -417,6 +418,7 @@ fn a_non_local_time_lock_reproduces_by_fresh_exploration() {
         &ZoneCheckOutcome::Violated {
             counterexample: Box::new(half),
             stats: ZoneStats::default(),
+            non_zeno: None,
         },
         ZoneCertificateVerdict::Accepted,
         Ok(settlement),
@@ -713,6 +715,7 @@ fn a_timed_refutation_settles_through_its_replay() {
     let ZoneCheckOutcome::Violated {
         counterexample,
         stats,
+        ..
     } = &refuted
     else {
         panic!("a violation");
@@ -722,6 +725,7 @@ fn a_timed_refutation_settles_through_its_replay() {
     let tampered = ZoneCheckOutcome::Violated {
         counterexample: Box::new(early),
         stats: *stats,
+        non_zeno: None,
     };
     let record = settle_with(&tampered);
     assert_eq!(
@@ -1230,6 +1234,7 @@ fn the_remaining_timed_rows_settle_as_stated() {
         let outcome: Outcome = ZoneCheckOutcome::Undecided {
             cause,
             stats: ZoneStats::default(),
+            non_zeno: None,
         };
         let record = settle(&outcome, ZoneCertificateVerdict::Accepted, Err(fault()));
         assert_eq!(
@@ -1285,6 +1290,7 @@ fn the_remaining_timed_rows_settle_as_stated() {
     let ZoneCheckOutcome::Violated {
         counterexample,
         stats,
+        ..
     } = &refuted
     else {
         panic!("a violation");
@@ -1296,6 +1302,7 @@ fn the_remaining_timed_rows_settle_as_stated() {
             ..counterexample.as_ref().clone()
         }),
         stats: *stats,
+        non_zeno: None,
     };
     let record = settle(
         &deadlock,

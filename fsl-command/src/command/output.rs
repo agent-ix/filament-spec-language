@@ -5,8 +5,8 @@ mod types;
 
 use super::{LimitKind, RunCause, RunError, RunResult};
 use crate::formal_source::FormalSource;
-use fsl_foundation::Diagnostic;
 use fsl_foundation::source::SourceReadCause;
+use fsl_foundation::Diagnostic;
 use serde_json::Value;
 
 /// Immutable JSON produced from the typed native result schema.
@@ -23,6 +23,11 @@ impl NativeResult {
 
     /// The in-process `check` command's native check outcome document.
     pub(super) fn check_document(document: Value) -> Self {
+        Self(document)
+    }
+
+    /// The `export` run result: FSpec FR-817's outcome as the `export` member.
+    pub(super) fn export_document(document: Value) -> Self {
         Self(document)
     }
 
@@ -197,6 +202,17 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 },
             },
         ),
+        RunCause::ExportMapper { .. } | RunCause::ExportOutput { .. } => (
+            types::Stage::Spine(fsl_replay::spine::SpineStage::Emit),
+            types::Details::None,
+        ),
+        RunCause::ExportRequest { path, .. } => (
+            types::Stage::Request,
+            types::Details::Object(serde_json::Map::from_iter([(
+                "path".to_owned(),
+                Value::String(path.clone()),
+            )])),
+        ),
         RunCause::ClauseRequest { .. }
         | RunCause::ClocksGivenTwice
         | RunCause::OutputGivenTwice
@@ -366,6 +382,8 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 }
                 _ => None,
             },
+            RunCause::ExportRequest { cause, .. } => Some(*cause),
+            RunCause::ExportOutput { .. } => Some("output-failure"),
             RunCause::TemporalCorrection(_) => Some("invalid-value"),
             RunCause::TlCorrespondence { .. } | RunCause::IntegerDivisionLaw { .. } => {
                 Some("unsupported-selection")
@@ -608,10 +626,10 @@ fn spine_origin(origin: &filament_semantic_value::location::ExpressionOwner) -> 
 
 #[cfg(all(test, feature = "quire-extraction"))]
 mod extraction_tests {
-    use super::{RunCause, extraction_regions_for_locus};
+    use super::{extraction_regions_for_locus, RunCause};
     use crate::command::ExtractionFailureStage;
     use fsl_foundation::{Source, SourceIdentity};
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     fn verified_map() -> fsl_foundation::source_map::SourceMap {
         let markdown = "# Doc\n\n## Invariants\n\n### valid_clause\n```ix:native\nopaque\n```\n";
@@ -734,6 +752,42 @@ pub(super) fn spine_run_result_for_source(
     outcome: fsl_replay::spine::CallOutcome,
     settled: Option<fsl_analyze::analyze::document::SettledRun>,
 ) -> super::Result<RunResult> {
+    let mut result = spine_run_document(
+        RunEcho::Source(types::RunSource {
+            identity: source.identity(),
+            path: source.path(),
+        }),
+        function,
+        outcome,
+        settled,
+    )?;
+    result.sources = crate::Sources::from_sources([source.clone()]);
+    Ok(result)
+}
+
+/// FR-1039 "Outputs": the run result of a call over a selected checked
+/// package, equal to the source route's with the request's `package`
+/// selection echoed where a source run names its program.
+pub(super) fn spine_run_result_for_package(
+    package: &serde_json::Value,
+    function: &str,
+    outcome: fsl_replay::spine::CallOutcome,
+) -> super::Result<RunResult> {
+    spine_run_document(RunEcho::Package(package), function, outcome, None)
+}
+
+/// What a run result names its run's selection by.
+enum RunEcho<'a> {
+    Source(types::RunSource<'a>),
+    Package(&'a serde_json::Value),
+}
+
+fn spine_run_document(
+    echo: RunEcho<'_>,
+    function: &str,
+    outcome: fsl_replay::spine::CallOutcome,
+    settled: Option<fsl_analyze::analyze::document::SettledRun>,
+) -> super::Result<RunResult> {
     use fsl_replay::spine::{CallOutcome, CallRefusal};
     let call_category = outcome.category();
     let lifecycle = fsl_replay::OutcomeDocument::from_call(&outcome);
@@ -808,17 +862,19 @@ pub(super) fn spine_run_result_for_source(
                 location: location.as_ref().map(spine_location),
             }
         }
-        CallOutcome::Undefined { reason } => types::SpineOutcome::Undefined { reason },
+        CallOutcome::Undefined { reason, .. } => types::SpineOutcome::Undefined { reason },
         CallOutcome::Incomplete(incomplete) => types::SpineOutcome::Incomplete {
             limit: incomplete.limits_field(),
         },
     };
+    let (source, package) = match echo {
+        RunEcho::Source(source) => (Some(source), None),
+        RunEcho::Package(package) => (None, Some(package)),
+    };
     let document = types::SpineRunReport {
         format: types::Format::SpineRunResult,
-        source: types::RunSource {
-            identity: source.identity(),
-            path: source.path(),
-        },
+        source,
+        package,
         function,
         outcome,
         requirements,
@@ -829,7 +885,7 @@ pub(super) fn spine_run_result_for_source(
         value: NativeResult(serde_json::to_value(document).map_err(RunCause::Output)?),
         outcome: Some(lifecycle),
         requirements: results,
-        sources: crate::Sources::from_sources([source.clone()]),
+        sources: crate::Sources::default(),
     })
 }
 
@@ -886,8 +942,16 @@ mod tests {
     /// tests cover that distinction.
     fn assert_undefined_renders(reason: &'static str) {
         let source = formal_source();
-        let result =
-            spine_run_result(&source, "seven", CallOutcome::Undefined { reason }, None).unwrap();
+        let result = spine_run_result(
+            &source,
+            "seven",
+            CallOutcome::Undefined {
+                reason,
+                location: None,
+            },
+            None,
+        )
+        .unwrap();
         assert_eq!(result.exit_code, 10, "{reason}");
         assert_eq!(
             result.value.as_value(),

@@ -1096,7 +1096,7 @@ fn authenticate_trace(
         TraceInput::Progressed { binding, .. } => Some(binding),
         TraceInput::Timestamped { window, .. } => window.binding.as_ref(),
         TraceInput::Finite(_) | TraceInput::Lasso { .. } | TraceInput::Model { .. } => {
-            return Ok(None)
+            return Ok(None);
         }
     };
     // A caller that holds no emission asserts none (FR-820: the decided reading
@@ -1425,8 +1425,14 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
     };
     let clause = node.clause();
     // FR-931: a valuation run with an empty finite trace asks for the
-    // checked clause alone.
-    if valuation && matches!(trace, TraceInput::Finite(positions) if positions.is_empty()) {
+    // checked clause alone, and so does a lasso beside a profile that does
+    // not read one: the lowering classifies the clause and refuses the trace
+    // form after it (FR-931 "Cross-evaluation").
+    if valuation
+        && (matches!(trace, TraceInput::Finite(positions) if positions.is_empty())
+            || (matches!(trace, TraceInput::Lasso { .. })
+                && !super::trace_refusal::profile_reads(clause.profile()).contains(&trace.kind())))
+    {
         return early(ClauseDisposition::TemporalValuation(Box::new(
             super::TemporalValuation {
                 clause: clause.clone(),
@@ -1629,7 +1635,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
                     ));
                 }
                 Err(refusal) => {
-                    return early(ClauseDisposition::TemporalRefusal(trace_refusal(refusal)))
+                    return early(ClauseDisposition::TemporalRefusal(trace_refusal(refusal)));
                 }
             }
         }
@@ -1746,7 +1752,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
                         ..ClauseRunUsage::default()
                     },
                     authenticated_temporal_selection.clone(),
-                )
+                );
             }
         }
     }
@@ -1805,9 +1811,14 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
     let snapshot = tape.and_then(|tape| tape.snapshot);
 
     // FR-757 "Cross-evaluation": a valuation run reads every atom and
-    // activation of the admitted closed finite trace through the one clause
-    // evaluator, in place of the verdict.
-    if valuation {
+    // activation of the admitted closed finite trace or lasso through the one
+    // clause evaluator, in place of the verdict. A lasso under a fairness set
+    // has no verdict to compare with (FR-329 settles `MissingFairnessPremise`
+    // on a supplied trace), so it takes the verdict route below.
+    let fair_lasso = matches!(shape, TemporalTrace::Lasso { .. })
+        && clause.profile() == TemporalProfile::InfiniteTrace
+        && !clause.fairness().is_empty();
+    if valuation && !fair_lasso {
         return match fsl_eval::temporal::observed_valuation(
             run.package,
             node,
@@ -1822,10 +1833,6 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
                     behaviours: None,
                 },
             ))),
-            Err(fsl_eval::temporal::ValuationStop::NotFinite) => early(refused(
-                "invalid-value",
-                BTreeMap::from([("member", "trace".to_owned())]),
-            )),
             Err(_) => late(ClauseDisposition::EvaluateFault(
                 filament_semantic_value::catalog::InternalFault::new(
                     "temporal",
@@ -2658,10 +2665,10 @@ pub(crate) fn with_decisive_by(
         Some(Err(DecisiveStop::Incomplete(incomplete))) => {
             return stopped(ClauseDisposition::Temporal(TemporalVerdict::Incomplete(
                 incomplete,
-            )))
+            )));
         }
         Some(Err(DecisiveStop::Fault(fault))) => {
-            return stopped(ClauseDisposition::EvaluateFault(fault))
+            return stopped(ClauseDisposition::EvaluateFault(fault));
         }
     };
     match record(atom, meter) {
@@ -2773,10 +2780,10 @@ pub(super) fn decisive_over(
         FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)) => {
             return Err(Box::new(ClauseDisposition::Temporal(
                 TemporalVerdict::Incomplete(incomplete.clone()),
-            )))
+            )));
         }
         FamilyOutcome::Evaluated(_) | FamilyOutcome::FamilyEvaluated(_) => {
-            return Err(fault("decisive-atom-reads-false-again"))
+            return Err(fault("decisive-atom-reads-false-again"));
         }
     }
     let (condition, _) = node

@@ -42,7 +42,7 @@ use fsl_eval::simulation::{NotSimulated, Permutation, RequiresBound, SymmetryGro
 use fsl_eval::temporal::AtomReading;
 use fsl_foundation::ReductionKind;
 use fsl_replay::{
-    AppliedReduction, CounterexampleKind, Lasso, ReductionCause, SymmetryBrokenCause,
+    AppliedReduction, CounterexampleKind, Lasso, NonZeno, ReductionCause, SymmetryBrokenCause,
     SymmetryRefusal, TemporalCounterexample, TimedPoint, UndefinedEvaluation, UndefinedLocus,
     UndefinedSite,
 };
@@ -108,6 +108,51 @@ pub enum ZoneCheckItem<'a> {
     /// FR-232's time-lock-freedom item, decided by FR-240's time-lock
     /// search.
     TimeLockFreedom,
+}
+
+/// A node in a closed timed state graph. The model state is paired with the
+/// reachable clock zone; state-graph predicates read only `state`.
+#[derive(Clone, Debug)]
+pub struct TimedStateGraphNode {
+    /// The discrete model state.
+    pub state: ModelSimState,
+    /// The reachable valuations of the model's clocks at this state.
+    pub zone: Dbm,
+}
+
+/// A discrete-step edge in a timed state graph. Delay choices are represented
+/// by zones and do not create distinct state-graph paths.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimedStateGraphEdge {
+    /// The source node index.
+    pub from: usize,
+    /// The target node index.
+    pub to: usize,
+    /// The transition identity of the discrete step.
+    pub transition: filament_semantic_value::model_transition::ModelTransition,
+    /// The step's index among the source's guarded steps.
+    pub step_index: usize,
+    /// The convex guard part selected for this edge.
+    pub part_index: usize,
+}
+
+/// The finite symbolic graph explored for one timed state-graph item.
+#[derive(Clone, Debug)]
+pub struct TimedStateGraph {
+    /// Nodes in discovery order.
+    pub nodes: Vec<TimedStateGraphNode>,
+    /// Discrete-step edges in discovery and transition order.
+    pub edges: Vec<TimedStateGraphEdge>,
+    /// Each initial state's graph node, in the subject's initial order.
+    pub initials: Vec<usize>,
+    /// Counts for the exploration.
+    pub stats: ZoneStats,
+    /// The scale factor shared by the node zones.
+    pub(super) scale: BigInt,
+    /// The LU simulation bounds used to explore and certify the graph.
+    pub(super) lower: Vec<Option<BigInt>>,
+    /// The upper LU simulation bounds used to explore and certify the graph.
+    pub(super) upper: Vec<Option<BigInt>>,
 }
 
 /// A request to EN-6.
@@ -319,6 +364,9 @@ pub enum ZoneCheckOutcome<S> {
     Violated {
         /// The counterexample.
         counterexample: Box<TemporalCounterexample>,
+        /// FR-235's liveness-product premise; absent for finite-prefix
+        /// counterexamples and non-liveness items.
+        non_zeno: Option<NonZeno>,
         /// The run's counts.
         stats: ZoneStats,
     },
@@ -326,6 +374,8 @@ pub enum ZoneCheckOutcome<S> {
     Undecided {
         /// Why.
         cause: ZoneUndecided,
+        /// `Refuted` when a liveness-product item has no admitted behavior.
+        non_zeno: Option<NonZeno>,
         /// The run's counts.
         stats: ZoneStats,
     },
@@ -338,9 +388,166 @@ pub enum ZoneCheckOutcome<S> {
     },
 }
 
+/// Explore the timed state graph, without applying a temporal-property
+/// judgement. The completed graph is the input to the state-graph forms.
+///
+/// # Errors
+///
+/// [`ZoneCheckRefusal`] if the timed subject cannot be explored or the
+/// caller cancels the run.
+pub fn explore_timed_state_graph(
+    subject: &TimedSystem<'_, '_>,
+    limits: ZoneCheckLimits,
+    cancel: &Cancel,
+) -> Result<TimedStateGraph, ZoneCheckRefusal> {
+    let mut run = Run::new(subject, Judged::StateGraph, None, &[], limits, cancel);
+    let (initials, stats) = match run.search() {
+        Ok(Searched::Graph { initials, stats }) => (initials, stats),
+        Ok(Searched::Stopped { cause, .. }) => return Err(ZoneCheckRefusal::Stopped(cause)),
+        Ok(Searched::Undecided { .. }) => {
+            return Err(ZoneCheckRefusal::Fault("state-graph-stopped"));
+        }
+        Ok(_) => return Err(ZoneCheckRefusal::Fault("state-graph-outcome")),
+        Err(Halt::Refusal(refusal)) => return Err(refusal),
+        Err(Halt::Outcome(outcome)) => match *outcome {
+            Searched::Stopped { cause, .. } => {
+                return Err(ZoneCheckRefusal::Stopped(cause));
+            }
+            Searched::Undecided { .. } => {
+                return Err(ZoneCheckRefusal::Fault("state-graph-stopped"));
+            }
+            _ => return Err(ZoneCheckRefusal::Fault("state-graph-halt")),
+        },
+    };
+    let nodes = run
+        .nodes
+        .iter()
+        .map(|node| TimedStateGraphNode {
+            state: node.state.clone(),
+            zone: node.zone.clone(),
+        })
+        .collect();
+    let mut edges = Vec::new();
+    let graph_edges = run.edges.clone();
+    for edge in &graph_edges {
+        let Some((step_index, part_index)) = edge.step else {
+            continue;
+        };
+        let steps = run
+            .steps_of(edge.from)
+            .map_err(|_| ZoneCheckRefusal::Fault("state-graph-step"))?;
+        let step = steps
+            .get(step_index)
+            .ok_or(ZoneCheckRefusal::Fault("state-graph-step-index"))?;
+        edges.push(TimedStateGraphEdge {
+            from: edge.from,
+            to: edge.to,
+            transition: step.transition().clone(),
+            step_index,
+            part_index,
+        });
+    }
+    edges.dedup_by(|right, left| {
+        right.from == left.from
+            && right.to == left.to
+            && right.transition == left.transition
+    });
+    Ok(TimedStateGraph {
+        nodes,
+        edges,
+        initials,
+        stats,
+        scale: run.scale,
+        lower: run.lower,
+        upper: run.upper,
+    })
+}
+
+/// Concretise a path in `graph` to one exact rational delay before each
+/// discrete step. `edges` contains indices into the graph's edge list, in
+/// path order.
+///
+/// # Errors
+///
+/// [`ZoneCheckRefusal`] if the edge sequence is not contiguous or no exact
+/// timed path satisfies its recorded zones and guards.
+pub fn concretise_timed_state_graph_path(
+    subject: &TimedSystem<'_, '_>,
+    graph: &TimedStateGraph,
+    edges: &[usize],
+) -> Result<Vec<fsl_replay::ModelStep>, ZoneCheckRefusal> {
+    if edges.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut stages = Vec::with_capacity(edges.len());
+    let mut last = None;
+    for &edge_index in edges {
+        let edge = graph
+            .edges
+            .get(edge_index)
+            .ok_or(ZoneCheckRefusal::Fault("state-graph-edge-index"))?;
+        if last.is_some_and(|node| node != edge.from) {
+            return Err(ZoneCheckRefusal::Fault("state-graph-path-contiguity"));
+        }
+        let source = graph
+            .nodes
+            .get(edge.from)
+            .ok_or(ZoneCheckRefusal::Fault("state-graph-source-index"))?;
+        let target = graph
+            .nodes
+            .get(edge.to)
+            .ok_or(ZoneCheckRefusal::Fault("state-graph-target-index"))?;
+        let steps = subject
+            .guarded_steps(&source.state)
+            .map_err(|_| ZoneCheckRefusal::Fault("state-graph-guarded-steps"))?;
+        let step = steps
+            .get(edge.step_index)
+            .ok_or(ZoneCheckRefusal::Fault("state-graph-step-index"))?;
+        if step.transition() != &edge.transition {
+            return Err(ZoneCheckRefusal::Fault("state-graph-transition"));
+        }
+        stages.push(super::concretise::Stage {
+            invariants: subject
+                .invariants(&source.state)
+                .map_err(|_| ZoneCheckRefusal::Fault("state-graph-invariants"))?,
+            elapses: subject.tick_period().is_none()
+                && !subject
+                    .is_urgent(&source.state)
+                    .map_err(|_| ZoneCheckRefusal::Fault("state-graph-elapses"))?,
+            target: subject
+                .invariants(step.post())
+                .map_err(|_| ZoneCheckRefusal::Fault("state-graph-target-invariants"))?,
+            step: Some((step.clone(), edge.part_index)),
+            position: Vec::new(),
+            position_resets: Vec::new(),
+            before: Some(source.zone.clone()),
+            piece: Some(target.zone.clone()),
+            silent: false,
+            fixed: None,
+        });
+        last = Some(edge.to);
+    }
+    let target = graph
+        .nodes
+        .get(last.ok_or(ZoneCheckRefusal::Fault("state-graph-path-end"))?)
+        .ok_or(ZoneCheckRefusal::Fault("state-graph-path-end"))?;
+    super::concretise::concretise(
+        subject,
+        subject.places().len(),
+        &stages,
+        &super::concretise::Target::Within(target.zone.clone()),
+        &graph.scale,
+    )
+    .map(|concrete| concrete.prefix)
+    .map_err(|_| ZoneCheckRefusal::Fault("state-graph-path-concretisation"))
+}
+
 /// Why EN-6 does not take the request.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ZoneCheckRefusal {
+    /// A state-graph-only exploration stopped before its graph was complete.
+    #[error("the zone graph exploration stopped: {0:?}")]
+    Stopped(ZoneStop),
     /// The clause is of no profile EN-6 reads, a TT-2 window's negation
     /// starts a punctual interval at many positions, which no timed
     /// automaton reads (FR-242; Alur and Dill, 1994), or its claim
@@ -539,12 +746,16 @@ pub fn check_timed_model<S: Clone>(
         run.live = live;
         run.group = plan.group.clone();
         run.reduced = symmetric;
+        let liveness_product = matches!(&run.judged, Judged::Liveness(_));
         let searched = match run.search() {
             Ok(searched) => searched,
             Err(Halt::Outcome(searched)) => *searched,
             Err(Halt::Refusal(refusal)) => return Err(refusal),
         };
         match searched {
+            Searched::Graph { .. } => {
+                return Err(ZoneCheckRefusal::Fault("unexpected-state-graph"));
+            }
             Searched::Holds { proof, stats } => {
                 total = total.plus(stats);
                 proved = Some(proof);
@@ -561,16 +772,25 @@ pub fn check_timed_model<S: Clone>(
                 counterexample,
                 stats,
             } => {
+                let non_zeno = (liveness_product
+                    && matches!(&counterexample.kind, CounterexampleKind::Formula)
+                    && counterexample.lasso.is_some())
+                .then_some(NonZeno::Checked);
                 return Ok(ZoneCheckOutcome::Violated {
                     counterexample,
+                    non_zeno,
                     stats: total.plus(stats),
-                })
+                });
             }
             Searched::Undecided { cause, stats } => {
+                let non_zeno = (liveness_product
+                    && matches!(&cause, ZoneUndecided::NoAdmittedBehaviour))
+                .then_some(NonZeno::Refuted);
                 return Ok(ZoneCheckOutcome::Undecided {
                     cause,
+                    non_zeno,
                     stats: total.plus(stats),
-                })
+                });
             }
             Searched::Stopped { cause, stats } => {
                 return Ok(ZoneCheckOutcome::Stopped {
@@ -753,6 +973,10 @@ fn renamed_zone(
 
 /// A run's outcome before its certificate names the item's obligation.
 pub(super) enum Searched {
+    Graph {
+        initials: Vec<usize>,
+        stats: ZoneStats,
+    },
     Holds {
         proof: Box<Proof>,
         stats: ZoneStats,
@@ -778,6 +1002,8 @@ pub(super) enum Searched {
 
 /// What a run judges its nodes by.
 pub(super) enum Judged<'r> {
+    /// A graph-only run; the caller evaluates its state-graph predicates.
+    StateGraph,
     /// An authored clause.
     Claim(Claim<'r>),
     /// The deadlock-freedom item: a node holding deadlocked valuations.
@@ -906,7 +1132,10 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     pub(super) fn claim(&self) -> Option<&Claim<'r>> {
         match &self.judged {
             Judged::Claim(claim) | Judged::Liveness(claim) => Some(claim),
-            Judged::DeadlockFreedom | Judged::TimeLockFreedom | Judged::Refinement => None,
+            Judged::StateGraph
+            | Judged::DeadlockFreedom
+            | Judged::TimeLockFreedom
+            | Judged::Refinement => None,
         }
     }
 
@@ -1072,6 +1301,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         let dim = self.dim();
         let mut queue = VecDeque::new();
         let mut roots = Vec::new();
+        let mut graph_initials = Vec::new();
         let mut delayed_deadlock = false;
         for (index, state) in initial.iter().enumerate() {
             let discrete = state.discrete().clone();
@@ -1087,7 +1317,16 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             if zone.is_empty() {
                 continue;
             }
-            if let Some(node) = self.insert(discrete, q, zone, Some(index), None)? {
+            if matches!(self.judged, Judged::StateGraph) {
+                match self.insert_at(discrete, q, zone, Some(index), None)? {
+                    Inserted::New(node) => {
+                        roots.push(node);
+                        graph_initials.push(node);
+                        queue.push_back(node);
+                    }
+                    Inserted::Covered(node) => graph_initials.push(node),
+                }
+            } else if let Some(node) = self.insert(discrete, q, zone, Some(index), None)? {
                 roots.push(node);
                 queue.push_back(node);
                 delayed_deadlock |= self.judge(node)?;
@@ -1102,6 +1341,12 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                 queue.push_back(created);
                 delayed_deadlock |= self.judge(created)?;
             }
+        }
+        if matches!(self.judged, Judged::StateGraph) {
+            return Ok(Searched::Graph {
+                initials: graph_initials,
+                stats: self.stats(),
+            });
         }
         // FR-240: the time-lock-freedom item's search runs on the completed
         // graph, before vacuity, which bars a proof only.
@@ -1634,6 +1879,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     fn badness(&mut self, node: usize) -> Result<Option<Result<Badness, ()>>, Halt> {
         let claim = match &self.judged {
             Judged::Claim(claim) => claim,
+            Judged::StateGraph => return Ok(None),
             Judged::DeadlockFreedom => return self.deadlock(node),
             Judged::TimeLockFreedom | Judged::Liveness(_) | Judged::Refinement => return Ok(None),
         };

@@ -18,13 +18,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_exact::Integer;
 use fsl_replay::{
     CertEdge, CertNode, CertificateItem, Components, DivergenceWitness, DivergentTarget, LuBounds,
-    Zone, ZoneCertificate,
+    NonZeno, StateGraphCertificateForm, StateGraphPart, Zone, ZoneCertificate,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use num_bigint::BigInt;
 
 use super::divergence::{EscapeTarget, EscapeWitness, Move};
-use super::search::{Halt, Run, SymbolicEdge};
+use super::search::{Halt, Run, SymbolicEdge, TimedStateGraph};
 use super::{Bound, Dbm, ZoneCheckRefusal};
 
 /// The item `obligation` names, as FR-245's checker compares it with the
@@ -32,6 +32,9 @@ use super::{Bound, Dbm, ZoneCheckRefusal};
 pub fn certificate_item<S>(obligation: &ItemObligation<S>) -> CertificateItem<'_> {
     match &obligation.kind {
         ObligationKind::Authored(occurrence) => CertificateItem::Clause(occurrence),
+        ObligationKind::StateGraphAuthored(occurrence) => {
+            CertificateItem::StateGraph(occurrence)
+        }
         ObligationKind::DeadlockFreedom => CertificateItem::DeadlockFreedom,
         ObligationKind::TimeLockFreedom => CertificateItem::TimeLockFreedom,
         ObligationKind::Refinement {
@@ -57,8 +60,10 @@ pub(super) struct Proof {
     pub(super) edges: Vec<CertEdge>,
     pub(super) initials: Vec<usize>,
     pub(super) components: Option<Components>,
+    pub(super) non_zeno: Option<NonZeno>,
     pub(super) divergence: Option<Vec<DivergenceWitness>>,
     pub(super) admitted: DivergenceWitness,
+    pub(super) state_graph: Option<fsl_replay::StateGraphPart>,
 }
 
 impl Proof {
@@ -75,11 +80,86 @@ impl Proof {
             edges: self.edges,
             initials: self.initials,
             components: self.components,
+            non_zeno: self.non_zeno,
             divergence: self.divergence,
-            admitted: self.admitted,
+            admitted: Some(self.admitted),
+            state_graph: self.state_graph,
             refinement: None,
         }
     }
+}
+
+/// Build FR-418's reachable-zone certificate for an FR-712 state-graph
+/// proof. A state-graph certificate has no time-divergence admission witness.
+pub(crate) fn state_graph_certificate<S>(
+    subject: &fsl_eval::simulation::model::TimedSystem<'_, '_>,
+    graph: &TimedStateGraph,
+    obligation: ItemObligation<S>,
+    form: StateGraphCertificateForm,
+    ef_nodes: &[usize],
+) -> Result<ZoneCertificate<ItemObligation<S>>, ZoneCheckRefusal> {
+    let nodes = graph
+        .nodes
+        .iter()
+        .map(|node| {
+            let (bytes, _) = subject
+                .system()
+                .state_key(&node.state)
+                .map_err(|_| ZoneCheckRefusal::Fault("state-graph-certificate-key"))?;
+            Ok(CertNode {
+                state_key: fsl_eval::simulation::StateKey::from_canonical_bytes(bytes),
+                automaton_state: 0,
+                zone: core_zone(&node.zone)
+                    .map_err(|_| ZoneCheckRefusal::Fault("state-graph-certificate-zone"))?,
+                locked: false,
+                product: None,
+            })
+        })
+        .collect::<Result<Vec<_>, ZoneCheckRefusal>>()?;
+    let edges = graph
+        .edges
+        .iter()
+        .map(|edge| {
+            let horizon = None;
+            CertEdge {
+                from: edge.from,
+                transition: Some(edge.transition.clone()),
+                part: Some(edge.part_index),
+                horizon,
+                to: edge.to,
+                silent: None,
+            }
+        })
+        .collect();
+    let integer_bounds = |bounds: &[Option<BigInt>]| {
+        bounds
+            .iter()
+            .map(|bound| bound.clone().map(Integer::from_big))
+            .collect()
+    };
+    let state_graph = (form == StateGraphCertificateForm::AlwaysPossible).then(|| {
+        StateGraphPart {
+            form,
+            ef_nodes: ef_nodes.to_vec(),
+        }
+    });
+    Ok(ZoneCertificate {
+        obligation,
+        scale: Integer::from_big(graph.scale.clone()),
+        lu_bounds: LuBounds {
+            lower: integer_bounds(&graph.lower),
+            upper: integer_bounds(&graph.upper),
+        },
+        nodes,
+        edges,
+        initials: graph.initials.clone(),
+        components: None,
+        non_zeno: None,
+        divergence: None,
+        admitted: None,
+        state_graph,
+        refinement: None,
+    })
 }
 
 impl Run<'_, '_, '_> {
@@ -196,8 +276,10 @@ impl Run<'_, '_, '_> {
             edges,
             initials: roots.to_vec(),
             components: None,
+            non_zeno: None,
             divergence,
             admitted: witnessed,
+            state_graph: None,
         })
     }
 }

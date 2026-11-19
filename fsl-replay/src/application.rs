@@ -906,7 +906,13 @@ impl ApplicationRegistry {
             return Err(ApplicationBeginRefusal::WrongAcquisition);
         }
         self.inner
-            .begin_call(selection.key.clone(), arguments, &environment.0, meter)
+            .begin_call(
+                selection.key.clone(),
+                arguments,
+                filament_eval::SessionLimits::default(),
+                &environment.0,
+                meter,
+            )
             .map(|inner| CheckedApplicationSession { inner })
             .map_err(ApplicationBeginRefusal::Call)
     }
@@ -1046,6 +1052,7 @@ mod tests {
                         location: None,
                         losses: vec![],
                         frame_depth: 0,
+                        peak_live_occurrences: 0,
                     }),
                 },
                 Resume::Child(result) => Transition::Done(*result),
@@ -1651,6 +1658,7 @@ mod tests {
                             location: None,
                             losses: vec![],
                             frame_depth: 0,
+                            peak_live_occurrences: 0,
                         }))
                     }
                     Resume::Child(_) => unreachable!("this body never requests a child"),
@@ -1945,6 +1953,7 @@ mod tests {
                     location: None,
                     losses: vec![],
                     frame_depth: 0,
+                    peak_live_occurrences: 0,
                 }),
                 (Resume::Child(result), _) => Transition::Done(*result),
                 (Resume::Again, _) => Transition::Continue,

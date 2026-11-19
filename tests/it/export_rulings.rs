@@ -4,7 +4,7 @@
 //! unrepresentable cause, obligation names, the stop order, the generator,
 //! the `fsl:` comment spelling, population bounds and `Init`.
 
-use crate::plan_export_surface::counter_export;
+use crate::plan_export_surface::{braking_request, counter_export, outcome_json};
 use crate::support::config_version_spine::{spine, Case};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -71,30 +71,48 @@ fn text(value: &Value) -> &str {
 #[test]
 #[trace("TC-3002", "FR-1015-AC-5")]
 #[trace("FSpec-TC-2029", "FSpec-FR-811-AC-6")]
-#[ignore = "QSL-1979: lowering of every representable construct and the located target-unrepresentable cause are not implemented yet"]
+#[ignore = "QSL-1979: the FR-812 lowering of the counter's invariant (a preserved record) is not implemented yet"]
 fn only_what_the_target_cannot_state_is_unrepresented() {
     let (exit, value) = counter_export(tla(json!(["Bounded"])));
     assert_eq!(exit, 0, "{value}");
     let record = &value["export"]["records"][0];
     assert_eq!(record["disposition"], "preserved", "{value}");
     assert_eq!(record["causes"], json!([]), "{value}");
-    let mut member = tla(json!(["SlowEnough"]));
-    member["minimum_fidelity"] = json!("any");
-    let (exit, value) = export(BRAKING, false, member);
-    assert_eq!(exit, 0, "{value}");
-    let record = &value["export"]["records"][0];
-    assert_eq!(record["disposition"], "unrepresented", "{value}");
-    let causes = record["causes"].as_array().expect("causes");
-    assert!(!causes.is_empty(), "{value}");
-    for cause in causes {
-        assert_eq!(cause["kind"], "target-unrepresentable", "{value}");
-        assert_eq!(cause["target"], "tla", "{value}");
-        assert!(
-            cause["construct"].as_str().is_some_and(|c| c.contains('/')),
-            "{value}"
-        );
-        assert_ne!(cause["node"], "SlowEnough", "{value}");
-        assert_eq!(cause["locus"]["kind"], "region", "{value}");
+}
+
+/// FR-1015-AC-5 and FSpec FR-811-AC-6: `SlowEnough` over the hybrid `Braking`
+/// is `unrepresented` with one `target-unrepresentable` cause per distinct
+/// flow-equation node, each naming the family, the node's
+/// `node_tag/semantic_form`, its node id and its source region.
+#[test]
+#[trace("TC-3002", "FR-1015-AC-5")]
+#[trace("FSpec-TC-2029", "FSpec-FR-811-AC-6")]
+fn a_hybrid_claim_is_unrepresented_by_its_flow_nodes() {
+    for (profile, family) in [
+        ("filament.output.tla2/v1", "tla"),
+        ("filament.output.lean4/v1", "lean"),
+    ] {
+        let member = json!({"profile": profile, "obligations": ["SlowEnough"],
+            "minimum_fidelity": "any"});
+        let (exit, value) = export(BRAKING, false, member);
+        assert_eq!(exit, 0, "{value}");
+        let record = &value["export"]["records"][0];
+        assert_eq!(record["disposition"], "unrepresented", "{value}");
+        assert_eq!(record["regions"], json!([]), "{value}");
+        let causes = record["causes"].as_array().expect("causes");
+        let mut constructs: Vec<&str> = causes
+            .iter()
+            .map(|cause| cause["construct"].as_str().expect("a construct"))
+            .collect();
+        constructs.sort_unstable();
+        assert_eq!(constructs, ["expression/unary", "value/literal"], "{value}");
+        for cause in causes {
+            assert_eq!(cause["kind"], "target-unrepresentable", "{value}");
+            assert_eq!(cause["target"], family, "{value}");
+            assert_ne!(cause["node"], "SlowEnough", "{value}");
+            names(&cause["node"], "test:w53:unit.native");
+            assert_eq!(cause["locus"]["kind"], "region", "{value}");
+        }
     }
 }
 
@@ -102,7 +120,6 @@ fn only_what_the_target_cannot_state_is_unrepresented() {
 #[trace("TC-3002", "FR-1015-AC-6")]
 #[trace("FSpec-TC-2032", "FSpec-FR-817-AC-8")]
 #[trace("FSpec-TC-2032", "FSpec-FR-817-AC-9")]
-#[ignore = "QSL-1979: the nonempty obligation set and not-an-obligation records are not implemented yet"]
 fn obligations_are_nonempty_declared_names() {
     let (exit, value) = counter_export(tla(json!([])));
     assert_eq!(exit, 20, "{value}");
@@ -118,6 +135,25 @@ fn obligations_are_nonempty_declared_names() {
         value["export"]["records"][0]["obligation"], "SlowEnough",
         "{value}"
     );
+    let (exit, value) = counter_export(tla(json!(["CanInc", "Nope"])));
+    let records = value["export"]["records"].as_array().expect("records");
+    let dispositions: Vec<_> = records.iter().map(|r| r["disposition"].clone()).collect();
+    assert_eq!(
+        dispositions,
+        [json!("refused"), json!("refused")],
+        "{value}"
+    );
+    names(&records[0], "not-an-obligation");
+    names(&records[1], "not-an-obligation");
+    assert_eq!(exit, 21, "{value}");
+}
+
+/// FR-1015-AC-6 with an invariant among the names: `Bounded` is an
+/// obligation, the precondition and the unknown name are refused records.
+#[test]
+#[trace("TC-3002", "FR-1015-AC-6")]
+#[ignore = "QSL-1979: the FR-812 lowering of the counter's invariant (a preserved record) is not implemented yet"]
+fn an_invariant_among_refused_names_is_preserved() {
     let (exit, value) = counter_export(tla(json!(["CanInc", "Bounded", "Nope"])));
     let records = value["export"]["records"].as_array().expect("records");
     let dispositions: Vec<_> = records.iter().map(|r| r["disposition"].clone()).collect();
@@ -126,26 +162,18 @@ fn obligations_are_nonempty_declared_names() {
         [json!("refused"), json!("preserved"), json!("refused")],
         "{value}"
     );
-    names(&records[0], "not-an-obligation");
-    names(&records[2], "not-an-obligation");
     assert_eq!(exit, 21, "{value}");
 }
 
 #[test]
 #[trace("TC-3002", "FR-1015-AC-7")]
 #[trace("FSpec-TC-2032", "FSpec-FR-817-AC-10")]
-#[ignore = "QSL-1979: the floor-before-size stop order is not implemented yet"]
 fn the_floor_is_decided_before_the_text_is_charged() {
     let mut member = tla(json!(["SlowEnough"]));
     member["limits"] = json!({"export.output_bytes": 1});
     let (exit, value) = export(BRAKING, false, member);
     assert_eq!(exit, 21, "{value}");
     names(&value["export"], "below-fidelity-floor");
-    let mut member = tla(json!(["Bounded"]));
-    member["limits"] = json!({"export.output_bytes": 1});
-    let (exit, value) = counter_export(member);
-    assert_eq!(exit, 22, "{value}");
-    names(&value["export"], "export.output_bytes");
     let mut member = tla(json!(["SlowEnough"]));
     member["limits"] = json!({"export.nodes": 1});
     let (exit, value) = export(BRAKING, false, member);
@@ -153,11 +181,24 @@ fn the_floor_is_decided_before_the_text_is_charged() {
     names(&value["export"], "export.nodes");
 }
 
+/// FR-1015-AC-7: a lowered export over `export.output_bytes` is `incomplete`.
+#[test]
+#[trace("TC-3002", "FR-1015-AC-7")]
+#[ignore = "QSL-1979: the FR-812 lowering of the counter's invariant is not implemented yet"]
+fn a_lowered_text_over_the_byte_limit_is_incomplete() {
+    let mut member = tla(json!(["Bounded"]));
+    member["limits"] = json!({"export.output_bytes": 1});
+    let (exit, value) = counter_export(member);
+    assert_eq!(exit, 22, "{value}");
+    names(&value["export"], "export.output_bytes");
+}
+
 #[test]
 #[trace("TC-3002", "FR-1015-AC-8")]
-#[ignore = "QSL-1979: the application generator identity is not implemented yet"]
 fn the_generator_is_the_application() {
-    let (_, value) = counter_export(tla(json!(["Bounded"])));
+    let mut member = tla(json!(["SlowEnough"]));
+    member["minimum_fidelity"] = json!("any");
+    let (_, value) = export(BRAKING, false, member);
     assert_eq!(
         value["export"]["package"]["generator"],
         json!({"identity": "filament-spec-language", "version": filament_spec_language::VERSION}),
@@ -426,14 +467,17 @@ fn a_float_model_field_exports_its_exact_bits() {
 
 #[test]
 #[trace("TC-3020", "FR-1015-AC-9")]
-#[ignore = "QSL-1979: malformed export members refused with invalid_runtime_input and their FR-805 cause members are not implemented yet"]
 fn a_malformed_export_member_refuses_with_its_code_and_cause() {
     let mut absent = tla(json!([]));
     absent.as_object_mut().unwrap().remove("obligations");
     let mut kind = tla(json!(["Bounded"]));
     kind["minimum_fidelity"] = json!(7);
     for (member, cause, path) in [
-        (tla(json!([])), "invalid-value", "/request/export/obligations"),
+        (
+            tla(json!([])),
+            "invalid-value",
+            "/request/export/obligations",
+        ),
         (absent, "missing-member", "/request/export/obligations"),
         (kind, "wrong-value-kind", "/request/export/minimum_fidelity"),
     ] {
@@ -448,7 +492,6 @@ fn a_malformed_export_member_refuses_with_its_code_and_cause() {
 #[test]
 #[trace("TC-3020", "FR-1015-AC-10")]
 #[trace("FSpec-TC-2040", "FSpec-FR-817-AC-13")]
-#[ignore = "QSL-1979: an observer the build cannot run refused unsupported_projection/unsupported-requested-capability, exit 21, is not implemented yet"]
 fn an_observer_the_build_cannot_run_is_unsupported() {
     let mut member = tla(json!(["SlowEnough"]));
     member["minimum_fidelity"] = json!("any");
@@ -456,19 +499,49 @@ fn an_observer_the_build_cannot_run_is_unsupported() {
     assert_eq!(exit, 0, "{value}");
     member["observer"] = json!("tlc");
     member["output"] = json!({"file": "m.tla"});
-    let (exit, value) = export(BRAKING, false, member);
-    assert_eq!(exit, 21, "{value}");
+    let directory = tempfile::tempdir().unwrap();
+    let path = braking_request(directory.path(), member);
+    let result = fsl_command::command::run(&path, &crate::negotiation::Fr290).expect("a result");
+    assert_eq!(result.exit_code, 21);
+    let value: Value = serde_json::from_str(&result.value.to_string()).unwrap();
     names(&value, "unsupported_projection");
     names(&value, "unsupported-requested-capability");
     names(&value, "tlc");
     assert!(!value.to_string().contains("invalid-request"), "{value}");
     assert!(value["export"].get("target_text").is_none(), "{value}");
     assert!(value["export"].get("package").is_none(), "{value}");
+    assert!(!directory.path().join("m.tla").exists());
+    let refusal = &value["export"]["refusal"];
+    let reason = refusal["reason"].as_str().expect("a string reason");
+    assert!(!reason.is_empty(), "{refusal}");
+    assert_eq!(
+        refusal,
+        &json!({"code": "unsupported_projection", "cause": "unsupported-requested-capability",
+            "capability": "observer", "observer": "tlc", "reason": reason,
+            "details": {"path": "/request/export/observer"}}),
+        "{refusal}"
+    );
+    let document = outcome_json(&result.outcome.expect("an outcome"));
+    assert_eq!(document["last_stage"], Value::Null, "{document}");
+    assert_eq!(
+        document["diagnostics"][0]["details"]["path"], "/request/export/observer",
+        "{document}"
+    );
     let mut limited = member_with_observer();
     limited["limits"] = json!({"export.nodes": 1});
     let (exit, value) = export(BRAKING, false, limited);
     assert_eq!(exit, 21, "{value}");
     names(&value, "unsupported-requested-capability");
+    let mut unknown = member_with_observer();
+    unknown["observer"] = json!("coq");
+    let (exit, value) = export(BRAKING, false, unknown);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_runtime_input", "{value}");
+    assert_eq!(value["cause"], "invalid-value", "{value}");
+    assert_eq!(
+        value["details"]["path"], "/request/export/observer",
+        "{value}"
+    );
 }
 
 fn member_with_observer() -> Value {
@@ -481,7 +554,6 @@ fn member_with_observer() -> Value {
 #[test]
 #[trace("TC-3020", "FR-1015-AC-11")]
 #[trace("FSpec-TC-2040", "FSpec-FR-817-AC-11")]
-#[ignore = "QSL-1979: the limit-reached cause of an incomplete export is not implemented yet"]
 fn an_incomplete_export_names_its_limit_reached() {
     let mut member = tla(json!(["Bounded"]));
     member["limits"] = json!({"export.work_units": 1});
@@ -509,7 +581,6 @@ fn an_incomplete_export_names_its_limit_reached() {
 #[test]
 #[trace("TC-3020", "FR-1015-AC-12")]
 #[trace("FSpec-TC-2040", "FSpec-FR-817-AC-12")]
-#[ignore = "QSL-1979: export.nodes charged once per distinct node of the closures' union is not implemented yet"]
 fn a_shared_closure_node_is_charged_once() {
     let unit = format!(
         "{SPINE_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n\
@@ -521,7 +592,8 @@ fn a_shared_closure_node_is_charged_once() {
                 let mut member = tla(obligations.clone());
                 member["limits"] = json!({"export.nodes": nodes});
                 let (exit, value) = export(&unit, true, member);
-                exit == 0 && value["export"]["status"] == "assembled"
+                assert!(exit == 22 || exit == 30, "{exit}: {value}");
+                exit != 22
             })
             .expect("the export assembles under some export.nodes")
     };
@@ -535,7 +607,6 @@ fn a_shared_closure_node_is_charged_once() {
 #[test]
 #[trace("TC-3020", "FR-1015-AC-13")]
 #[trace("FSpec-TC-2040", "FSpec-FR-811-AC-8")]
-#[ignore = "QSL-1979: the canonical node text and the null locus of an unrepresentable cause are not implemented yet"]
 fn a_cause_names_its_node_by_canonical_text() {
     let mut member = tla(json!(["SlowEnough"]));
     member["minimum_fidelity"] = json!("any");
@@ -551,8 +622,7 @@ fn a_cause_names_its_node_by_canonical_text() {
         let locus = &cause["locus"];
         assert!(
             locus.is_null()
-                || (locus["kind"] == "region"
-                    && locus["start"].as_u64() < locus["end"].as_u64()),
+                || (locus["kind"] == "region" && locus["start"].as_u64() < locus["end"].as_u64()),
             "{cause}"
         );
         for entry in value["export"]["name_map"].as_array().into_iter().flatten() {
@@ -575,7 +645,11 @@ fn an_unrepresented_claim_still_exports_its_model() {
     member["minimum_fidelity"] = json!("any");
     let (exit, value) = export(BRAKING, false, member);
     assert_eq!(exit, 0, "{value}");
-    assert_eq!(value["export"]["records"][0]["regions"], json!([]), "{value}");
+    assert_eq!(
+        value["export"]["records"][0]["regions"],
+        json!([]),
+        "{value}"
+    );
     let module = text(&value);
     let init = module
         .split("\n\n")

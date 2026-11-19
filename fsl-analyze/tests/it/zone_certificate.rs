@@ -33,6 +33,22 @@ fn no_late_reply() -> (crate::timed_world::World, Certificate) {
     (world, certificate)
 }
 
+/// FR-245 rejects the liveness-only `non_zeno` member on a safety
+/// certificate at that member.
+#[trace("TC-3021", "FR-245-AC-10")]
+#[test]
+fn a_safety_certificate_rejects_an_unexpected_non_zeno_member() {
+    let (world, mut certificate) = no_late_reply();
+    certificate.non_zeno = Some(fsl_replay::NonZeno::Assumed);
+    assert_eq!(
+        verdict(&world, &certificate),
+        rejected(
+            CertificateRule::NonZenoMismatch,
+            CertificateLocus::NonZenoMember,
+        )
+    );
+}
+
 fn verdict(world: &crate::timed_world::World, certificate: &Certificate) -> ZoneCertificateVerdict {
     check(world, certificate, CertificateCheckLimits::default()).expect("the check runs")
 }
@@ -86,14 +102,15 @@ fn without_node(certificate: &Certificate, removed: usize) -> Certificate {
         components.numbering.remove(removed);
     }
     tampered.initials = certificate.initials.iter().map(|&n| renumber(n)).collect();
-    tampered.admitted.start = renumber(certificate.admitted.start);
-    tampered.admitted.path = certificate
-        .admitted
+    tampered.admitted.as_mut().unwrap().start =
+        renumber(certificate.admitted.as_ref().unwrap().start);
+    tampered.admitted.as_mut().unwrap().path = certificate
+        .admitted.as_ref().unwrap()
         .path
         .iter()
         .map(|&e| edge_of(e))
         .collect();
-    tampered.admitted.target = match &certificate.admitted.target {
+    tampered.admitted.as_mut().unwrap().target = match &certificate.admitted.as_ref().unwrap().target {
         DivergentTarget::Quiescent(n) => DivergentTarget::Quiescent(renumber(*n)),
         DivergentTarget::Terminal(n) => DivergentTarget::Terminal(renumber(*n)),
         DivergentTarget::Cycle(cycle) => {
@@ -138,7 +155,7 @@ fn each_tampering_is_rejected_at_its_rule_and_locus() {
     let (world, certificate) = no_late_reply();
     let last = certificate.nodes.len() - 1;
     assert!(!certificate.initials.contains(&last));
-    assert_eq!(certificate.admitted.target, DivergentTarget::Quiescent(0));
+    assert_eq!(certificate.admitted.as_ref().unwrap().target, DivergentTarget::Quiescent(0));
     let removed = without_node(&certificate, last);
     assert_eq!(
         verdict(&world, &removed),
@@ -184,8 +201,8 @@ fn each_tampering_is_rejected_at_its_rule_and_locus() {
         .position(|edge| edge.from == 0 && edge.to != 0)
         .expect("an edge out of the initial node");
     let target = cut.edges[edge].to;
-    cut.admitted.path = vec![edge];
-    cut.admitted.target = DivergentTarget::Quiescent(target);
+    cut.admitted.as_mut().unwrap().path = vec![edge];
+    cut.admitted.as_mut().unwrap().target = DivergentTarget::Quiescent(target);
     assert_eq!(
         verdict(&world, &cut),
         rejected(CertificateRule::WitnessFails, node(target))
@@ -290,6 +307,13 @@ fn a_locked_node_is_checked_for_divergence() {
     assert_eq!(
         verdict(&world, &certificate),
         ZoneCertificateVerdict::Accepted
+    );
+    let mut no_admitted = certificate.clone();
+    no_admitted.admitted = None;
+    assert_ne!(
+        verdict(&world, &no_admitted),
+        ZoneCertificateVerdict::Accepted,
+        "a non-state-graph certificate still requires its divergence witness"
     );
     let locked = certificate
         .nodes
@@ -619,9 +643,9 @@ fn an_admitted_path_is_one_some_behaviour_takes() {
         .position(|edge| edge.from == 0 && edge.to != 0)
         .expect("go");
     let target = certificate.edges[go].to;
-    certificate.admitted.start = 0;
-    certificate.admitted.path = vec![go];
-    certificate.admitted.target = DivergentTarget::Quiescent(target);
+    certificate.admitted.as_mut().unwrap().start = 0;
+    certificate.admitted.as_mut().unwrap().path = vec![go];
+    certificate.admitted.as_mut().unwrap().target = DivergentTarget::Quiescent(target);
     assert_eq!(
         verdict(&locked, &certificate),
         rejected(CertificateRule::WitnessFails, node(0))
@@ -818,7 +842,7 @@ fn a_cycle_that_leaves_a_clock_unreset_is_accepted() {
         proved(deadlock(&world)),
     ];
     for certificate in &certificates {
-        let DivergentTarget::Cycle(cycle) = &certificate.admitted.target else {
+        let DivergentTarget::Cycle(cycle) = &certificate.admitted.as_ref().unwrap().target else {
             panic!("a cycle witness, got {:?}", certificate.admitted);
         };
         assert!(!cycle.is_empty());

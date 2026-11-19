@@ -7,7 +7,7 @@ use filament_contract_model::{
     CheckedBindingNameKind, CheckedLiteralValue, CheckedNodeId, CheckedNodeKind,
     CheckedOccurrenceRole, CheckedOperationInterval, CheckedOperationMember, CheckedPackageV2,
     CheckedSelection, CheckedSelectionRole, CheckedSemanticNodeV2, CheckedSourceMapEntry,
-    CheckedTerm, LawRole, TemporalBinding, TemporalForm, ValueForm,
+    CheckedTerm, LawRole, TemporalBinding, TemporalClauseName, TemporalForm, ValueForm,
 };
 use filament_exact::{Origin, Role};
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -319,19 +319,31 @@ impl<'p> TemporalSubjectView<'p> {
     /// in the lookup; an occurrence from another node or an absent ordinal
     /// has no name.
     pub fn name_of(&self, occurrence: &ClauseOccurrence) -> Option<&str> {
+        self.name_row_of(occurrence).map(|row| row.name.as_ref())
+    }
+
+    /// The `temporal_clause_names` row of a uniquely named occurrence: its
+    /// name and whole-declaration region (FSpec FR-322 "Clause declaration
+    /// regions").
+    pub fn name_row(&self) -> Option<&'p TemporalClauseName> {
+        let [occurrence] = self.occurrences.as_slice() else {
+            return None;
+        };
+        self.name_row_of(occurrence)
+    }
+
+    /// The `temporal_clause_names` row of this exact occurrence, looked up
+    /// as [`Self::name_of`] looks up its name.
+    pub fn name_row_of(&self, occurrence: &ClauseOccurrence) -> Option<&'p TemporalClauseName> {
         if occurrence.node != *self.declaration
             || occurrence.role != CheckedOccurrenceRole::Claim
             || !self.occurrences.contains(occurrence)
         {
             return None;
         }
-        self.package
-            .temporal_clause_names()?
-            .iter()
-            .find(|row| {
-                row.declaration == *self.declaration && row.occurrence == occurrence.ordinal
-            })
-            .map(|row| row.name.as_ref())
+        self.package.temporal_clause_names()?.iter().find(|row| {
+            row.declaration == *self.declaration && row.occurrence == occurrence.ordinal
+        })
     }
 
     /// The arena handle of `occurrence`, the one handle the view's

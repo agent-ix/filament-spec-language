@@ -550,6 +550,7 @@ fn drive(
         clocks: std::mem::take(&mut request.clocks),
         output: None,
         handoff: None,
+        integer_division: None,
         check_mode: filament_semantic_value::checking::CheckMode::Linked,
     };
     let program_source = program.source().clone();

@@ -2526,11 +2526,8 @@ pub enum PackageFormulaNode {
 pub struct PackageClauseForm {
     /// The clause's declared name, from its `temporal_clause_names` row.
     pub name: String,
-    /// The clause's source span: the region of its `claim` source-map entry,
-    /// its declared name. The package carries no region of the whole
-    /// declaration (FR-531 "What the bytes do not carry"), so this is the one
-    /// field of the package form that differs from the source form's, which
-    /// spans the declaration; it lies within it and orders clauses alike.
+    /// The clause's source span: the whole declaration, from its name
+    /// row's `declaration_region` (FSpec FR-322 "Clause declaration regions").
     pub span: Span,
     /// The clause's temporal profile, from its profile law.
     pub profile: TemporalProfile,
@@ -2572,15 +2569,6 @@ pub enum PackageClauseRefusal {
 }
 
 impl CheckedTemporalClause {
-    /// The clause with `span` as its source span: the source form of a clause
-    /// read with the span its package form carries ([`PackageClauseForm::span`]),
-    /// so the two forms compare field for field.
-    #[must_use]
-    pub fn with_span(mut self, span: Span) -> Self {
-        self.span = span;
-        self
-    }
-
     /// FR-940: the model-check form of a temporal clause a checked package
     /// carries, rebuilt from `form` as S3 builds it from source: the same
     /// operators, formula, claim, property form and clock binding, so the

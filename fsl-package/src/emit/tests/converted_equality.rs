@@ -58,7 +58,7 @@ fn witnesses_for_occurrence<'a>(
 /// FSpec-TC-233's EQ-01..05 positive rows: each typed equality retains its
 /// selected schedule, explicit conversion target, resolved units and enum
 /// sub-index before the IR-owned wire writer is connected.
-#[ix_trace_rs::trace("FSpec-TC-233", "QSL-1390")]
+#[ix_trace_rs::trace("FSpec-TC-233", "FSpec-TC-194", "FSpec-FR-149-AC-25", "QSL-1390")]
 #[test]
 fn fspec_positive_equality_vectors_match_typed_producer_facts() {
     use filament_semantic_value::declaration::{EqualityOperator, EqualitySchedule};
@@ -74,10 +74,12 @@ fn fspec_positive_equality_vectors_match_typed_producer_facts() {
         function enumeration using v(a: Color, b: Color): Boolean pure { a != b }\n\
         function quantity using v(a: Quantity<ms>, b: Quantity<s>): Boolean pure { convert<Quantity<s>>(a) = b }\n\
         function plan using v(a: Point, b: Point): Boolean pure { a = b }\n\
+        function float using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure { a = b }\n\
+        function float_not_equal using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure { a != b }\n\
         function compound using v(a: Quantity<m>, b: Quantity<m>): Boolean pure { a * b = a * b }\n";
     let graph = checked_graph(declarations);
     let facts: Vec<_> = graph.equality_producer_data().values().collect();
-    assert_eq!(facts.len(), 5, "each equality application is retained once");
+    assert_eq!(facts.len(), 7, "each equality application is retained once");
 
     let text = facts
         .iter()
@@ -114,6 +116,18 @@ fn fspec_positive_equality_vectors_match_typed_producer_facts() {
     assert_eq!(plan.operator(), EqualityOperator::Equal);
     assert!(plan.units().ids().next().is_none());
 
+    let float_comparisons = facts
+        .iter()
+        .filter(|fact| fact.schedule() == EqualitySchedule::Float)
+        .collect::<Vec<_>>();
+    assert_eq!(float_comparisons.len(), 2);
+    assert!(float_comparisons.iter().any(|fact| {
+        fact.operator() == EqualityOperator::Equal && fact.units().ids().next().is_none()
+    }));
+    assert!(float_comparisons.iter().any(|fact| {
+        fact.operator() == EqualityOperator::NotEqual && fact.units().ids().next().is_none()
+    }));
+
     let compound = facts
         .iter()
         .find(|fact| {
@@ -148,19 +162,59 @@ fn nested_equalities_each_retain_producer_facts() {
     }));
 }
 
-/// QSL-2173: checked-package/v2 lacks FR-148's `numericEqual` schedule, so
-/// float equality fails closed with a typed unsupported-construct refusal.
-#[ix_trace_rs::trace("QSL-2173")]
+/// FSpec FR-149-AC-25: the emitted equality decision retains its IEEE schedule.
+#[ix_trace_rs::trace("FSpec-TC-194", "FSpec-FR-149-AC-25", "FSpec-FR-322-AC-288", "QSL-2173")]
 #[test]
-fn float_equality_schedule_is_a_typed_unsupported_construct() {
-    let graph = checked_graph(
-        "function float_equal using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure { a = b }",
+fn float_equality_schedule_roundtrips_as_float() {
+    let emission = emitted(
+        "function float_equal using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure { a = b }\n\
+         function float_not_equal using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure { a != b }",
     );
-    let refusal = emit_checked(&CheckedPackage::link(graph))
-        .expect_err("float equality is not representable yet");
-    assert_eq!(refusal.code(), fsl_foundation::Code::UnsupportedConstruct);
-    assert_eq!(refusal.cause(), Some("not-yet-implemented"));
-    assert!(refusal.to_string().contains("QSL-2173"));
+    let read = read_back(&emission);
+    let crate::checked_v2::Read::Verified { admitted, .. } = &read else {
+        panic!("the emitted Float equality package is admitted by the reader");
+    };
+    let mut admitted_wire = wire(&emission);
+    admitted_wire["semantic_graph"] =
+        serde_json::to_value(admitted.resolved_graph()).expect("the admitted graph serializes");
+    let not_equal_function = nodes(&admitted_wire)
+        .iter()
+        .find(|node| {
+            node["node_tag"] == "function"
+                && node["declaration"]["qualified_name"][0] == "float_not_equal"
+        })
+        .expect("the reader retains float_not_equal");
+    let body_member = not_equal_function["body"]["members"]
+        .as_array()
+        .expect("the function has body members")
+        .iter()
+        .find(|member| member["name"] == "body")
+        .expect("the function has a body member");
+    let body = referenced(&admitted_wire, &body_member["value"]);
+    assert_eq!(
+        body["body"]["operation"]["identity"],
+        "filament.op.boolean.not",
+        "the source float != keeps its outer Boolean negation after readback"
+    );
+    super::assert_equality_reader_outcomes(&emission, read);
+    let emitted_wire = wire(&emission);
+    let decisions = emitted_wire["checked_term_data"]["equality_decisions"]
+        .as_array()
+        .expect("Float equality rows are emitted");
+    assert_eq!(decisions.len(), 2);
+    let mut operators = decisions
+        .iter()
+        .map(|decision| decision["operator"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    operators.sort_unstable();
+    assert_eq!(operators, ["equal", "equal"]);
+    for decision in decisions {
+        assert_eq!(decision["schedule"], "float");
+        assert!(decision["left"]["conversion_target"].is_null());
+        assert!(decision["right"]["conversion_target"].is_null());
+        assert_eq!(decision["units"], json!([]));
+        assert_eq!(decision["enum_members"], json!([]));
+    }
 }
 
 /// FSpec FR-290: the equality expression's producer identity remains keyed by

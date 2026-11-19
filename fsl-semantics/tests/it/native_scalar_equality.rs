@@ -218,7 +218,7 @@ fn unlike_operand_types_refuse_type_mismatch_at_the_comparison() {
     }
 }
 
-/// FSpec FR-149-AC-22: unlike `String` and `Text` operands are operator-ineligible.
+/// FSpec FR-149-AC-22: unlike `String` and `Text` operands are different types.
 #[trace("FSpec-TC-194", "FSpec-FR-149-AC-22")]
 #[test]
 fn string_equals_text_refuses_with_the_specified_cause() {
@@ -229,7 +229,7 @@ fn string_equals_text_refuses_with_the_specified_cause() {
         refused_at_comparison(
             &format!("function bad using v({parameters}): Boolean pure {{ {body} }}"),
             "bad",
-            IllTypedCause::OperatorIneligible,
+            IllTypedCause::TypeMismatch,
         );
     }
 }

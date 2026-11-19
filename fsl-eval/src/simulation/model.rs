@@ -29,6 +29,13 @@ pub use input::{
     ModelCheckInput, ModelEvaluator, PackageModelInput, PendingClauseForm, PendingPackageForm,
     StateClauseEntry,
 };
+mod operation_coverage;
+pub use operation_coverage::{
+    model_operation_coverage, ModelOperation, ModelOperationCase, ModelOperationCoverage,
+    ModelOperationCoverageEntry, ModelOperationCoverageLimits, ModelOperationCoverageLimit,
+    ModelOperationCoverageReason, ModelOperationCoverageReasonKind,
+    ModelOperationCoverageStatus, ModelOperationCoverageSummaryStatus,
+};
 mod key_budget;
 mod letters;
 pub use behaviours::{model_behaviours, BehaviourState, BehavioursEnd};

@@ -1225,8 +1225,9 @@ fn a_row_empty_refinement_identity_excludes_its_source_region() {
     assert_eq!(first_node["semantic_type"], concrete_root);
     assert_eq!(first_node["body"]["abstract"], abstract_root);
     assert_eq!(first_node["dependencies"], json!([abstract_root]));
-    // FSpec FR-375-AC-20: the typed body writes exactly the nine closed
-    // members, every row array present and empty, and no optional member.
+    // FSpec FR-375-AC-20 and FR-322-AC-200: the typed body writes exactly the
+    // ten closed members (the declared `name` among them), every row array
+    // present and empty, and no optional member.
     let mut members: Vec<&str> = first_node["body"]
         .as_object()
         .expect("an object body")
@@ -1241,6 +1242,7 @@ fn a_row_empty_refinement_identity_excludes_its_source_region() {
             "assume",
             "ensure",
             "histories",
+            "name",
             "objects",
             "populations",
             "profile",

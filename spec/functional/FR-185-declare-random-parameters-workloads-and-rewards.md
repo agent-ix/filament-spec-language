@@ -223,6 +223,38 @@ name.
   the denied charge would reach and the setting `s3.work_units`, and SHALL
   NOT report `negative-reward` for that reward.
 
+#### The reward evaluator port
+
+S3 is in `fsl-semantics` (ADR-011 §6.1 layer 3) and FSL's one expression
+evaluator, S6a, is in `fsl-eval` (layer 5), which depends on layer 3. S3
+therefore evaluates a reward through a port, never through an evaluator of
+its own:
+
+- Layer 3's `check` core SHALL define the trait `RewardEvaluator`, whose one
+  operation evaluates a checked reward body at one argument vector of kernel
+  values against the checked graph's scope view, charging the kernel meter it
+  is given, and returns the value, the `Undefined` result or the kernel
+  refusal S6a gives that body at those arguments.
+- `fsl-eval` SHALL implement `RewardEvaluator` with its S6a
+  `value::expression` evaluator, the same evaluator model admission (FR-187)
+  and every engine re-check call, so a reward's value is computed by one
+  interpreter at S3, at admission and in an engine. `fsl-semantics` SHALL
+  hold no expression evaluator for rewards and SHALL NOT depend on
+  `fsl-eval` or on any layer above 3, in its normal or its development
+  dependencies.
+- Every S3 entry that checks a unit SHALL take a `RewardEvaluator` as a
+  required argument, with no default and no optional form, so no S3 call can
+  produce a checked unit holding a reward the sign check did not run on. The
+  spine (layer 6 `replay`) supplies `fsl-eval`'s implementation, and every
+  caller above layer 5 (`fsl-command`, `fsl-analyze`, the root crate)
+  reaches S3 with that implementation.
+- The check runs after the unit's checked graph is assembled and before S3
+  returns its result, so the port sees every constant the reward reads; its
+  refusal is an S3 `CheckRefusal` at the reward's span, and S4 does not run.
+- A reward value that the evaluator reports `Undefined`, or a kernel refusal
+  of its evaluation, refuses the reward with that record at the reward's
+  span; it is never treated as zero or as non-negative.
+
 ### Quantity-typed parameters
 
 A quantity-typed operation parameter, such as ADR-024 §7.2's duration `d`, has
@@ -274,6 +306,7 @@ source reference is written into the message text instead of the locus.
 | FR-185-AC-10 | `Steady` with `Server::reset: 0` and weight 1 on the other two operations checks and records weight 0 for `Server::reset`, with no diagnostic; `Steady` with weight 0 on all three operations checks; `Steady` with `Server::reset` omitted is still refused `incomplete-workload`. | Test (TC-2060) |
 | FR-185-AC-11 | `reward refund on Server::request = n - 3` on an operation with parameter `n: Int[0, 5]` is refused at S3 `invalid_probabilistic_model`/`negative-reward` naming `Server::request`, `refund` and `n = 0`, so S4 never runs; `reward refund on Server::request = n` checks; a reward over a random parameter is evaluated over its support only; with `s3.work_units` set below the number of argument vectors, S3 stops `stage_limit_exceeded`/`work-budget-exceeded` naming `s3.work_units` at the reward and reports no `negative-reward`. | Test (TC-2061) |
 | FR-185-AC-12 | An S4 refusal concerning a random parameter, a workload, a reward or a delay carries that declaration's source reference and label span in its locus member (never `null`), and its message names the declaration in words and holds no debug rendering of a span or source reference. | Test (TC-2062) |
+| FR-185-AC-13 | Through the spine, `reward refund on Server::attempt = d - 3` over a random `d` with support `{1, 3, 12}` is refused at S3 `invalid_probabilistic_model`/`negative-reward` naming `Server::attempt`, `refund` and `d = 1`, computed by `fsl-eval`'s `RewardEvaluator`; `d - 1` checks. A recording `RewardEvaluator` passed to S3 is called once per argument vector, in canonical order, until the first negative value; one that reports `Undefined` at a vector refuses the reward with that record, never `negative-reward` and never a checked unit. | Test (TC-3027) |
 
 ## Dependencies
 
