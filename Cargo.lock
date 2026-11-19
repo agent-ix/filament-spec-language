@@ -798,6 +798,7 @@ dependencies = [
  "fsl-eval",
  "fsl-forms",
  "fsl-foundation",
+ "fsl-hybrid-reference",
  "fsl-package",
  "fsl-replay",
  "fsl-route",
@@ -953,6 +954,15 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "fsl-hybrid-reference"
+version = "0.1.0"
+dependencies = [
+ "filament-exact",
+ "fsl-replay",
+ "fsl-semantics",
 ]
 
 [[package]]

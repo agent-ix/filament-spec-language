@@ -168,6 +168,19 @@ pub struct HybridCounterexample {
 }
 
 impl HybridCounterexample {
+    /// The counterexample in FSpec FR-331's `hybrid-counterexample` wire form
+    /// over `model`; `None` for an `undefined-evaluation` counterexample,
+    /// whose wire form the writer does not yet spell.
+    pub fn to_wire(&self, model: &CheckedHybridModel) -> Option<serde_json::Value> {
+        matches!(self.kind, HybridCounterexampleKind::Formula).then(|| {
+            serde_json::json!({
+                "type": "hybrid-counterexample",
+                "kind": "formula",
+                "trace": self.trace.to_wire(model),
+            })
+        })
+    }
+
     pub(crate) fn measured_bytes(&self) -> usize {
         fn rational(value: &filament_exact::Rational) -> usize {
             value.numerator().to_string().len() + value.denominator().to_string().len()

@@ -233,6 +233,11 @@ pub enum ItemForm {
 pub struct HybridItem {
     /// The subject's explicit proof-bound substitution.
     pub proof_bounds: Vec<fsl_foundation::bound::ProofBound>,
+    /// The item's `hybrid.limits` (FR-750): a member left unset takes the
+    /// serving descriptor's published bound.
+    pub limits: fsl_replay::SolverBudget,
+    /// The item's FSpec FR-331 `options`.
+    pub options: std::collections::BTreeMap<String, String>,
 }
 
 /// Temporal request settings, with no separately supplied model subject.
@@ -946,6 +951,16 @@ fn work<'a>(
                 Err(_) => absent(),
             }
         }
+        Some(ItemForm::Hybrid(form)) if item.kind == Capability::TemporalSatisfaction => {
+            super::hybrid_item::hybrid_item(
+                package,
+                item.request_index,
+                &item.claim,
+                form,
+                limits.accounting.work_units,
+            )
+            .unwrap_or_else(absent)
+        }
         Some(ItemForm::Probabilistic(form))
             if item.kind == Capability::ProbabilisticSatisfaction =>
         {
@@ -1185,6 +1200,9 @@ fn work<'a>(
         ExtentClassification::Bounded => fsl_route::Mode::Bounded,
         ExtentClassification::Unbounded { .. } => fsl_route::Mode::Unbounded,
     };
+    if matches!(&item.form, Some(ItemForm::Hybrid(_))) {
+        built = built.hybrid();
+    }
     built.required(item.options.required).disposed(
         negotiated.disposition.clone(),
         negotiated.diagnostic.clone(),

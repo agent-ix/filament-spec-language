@@ -20,10 +20,9 @@ use crate::hybrid_requests::{braking, braking_pair, claim, find, first_item, hyb
 const REFERENCE: &str = "fsl-hybrid-reference";
 
 /// The reference provider as the command entries take it: `vec![Engine::hybrid_reference()]`
-/// (FR-1019). Until that constructor exists this registers none, so every
-/// assertion that needs the reference provider fails as it should.
+/// (FR-1019).
 fn reference_providers() -> Vec<Engine> {
-    Vec::new()
+    vec![Engine::hybrid_reference().expect("the reference descriptor registers")]
 }
 
 /// [`reference_providers`] with `fixture` registered beside them.
@@ -127,7 +126,6 @@ fn a_non_polynomial_flow_is_a_located_unsupported() {
 /// a named fixture hybrid provider beside it routes to the fixture.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-4")]
-#[ignore = "QSL-2234: hybrid dispatch beside the reference provider is not implemented yet"]
 fn the_provider_path_stays_beside_the_reference_provider() {
     let engines = Engines::fsl().expect("the layer-A engines register");
     assert!(
@@ -138,7 +136,8 @@ fn the_provider_path_stays_beside_the_reference_provider() {
     );
     let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
         "basis": {"type": "bounded-solver", "method": "delta-complete",
-            "horizon": "10", "jumps": 1, "exhaustive": ["time"]}});
+            "horizon": {"numerator": "10", "denominator": "1"}, "jumps": 1,
+            "exhaustive": ["time"]}});
     let (_, item) = first_item(
         "ref-4",
         &braking_pair(),
@@ -155,7 +154,6 @@ fn the_provider_path_stays_beside_the_reference_provider() {
 /// and naming neither settles `ambiguous-backend` naming both.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-5")]
-#[ignore = "QSL-2234: the reference provider's registration is not implemented yet"]
 fn the_reference_provider_negotiates_by_dynamics() {
     let item = reference("ref-5a", &braking_pair(), one("SlowEnough"));
     assert_eq!(
@@ -180,7 +178,8 @@ fn the_reference_provider_negotiates_by_dynamics() {
     assert_ne!(backends[0], REFERENCE, "{discrete}");
     let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
         "basis": {"type": "bounded-solver", "method": "delta-complete",
-            "horizon": "10", "jumps": 1, "exhaustive": ["time"]}});
+            "horizon": {"numerator": "10", "denominator": "1"}, "jumps": 1,
+            "exhaustive": ["time"]}});
     let (_, named) = first_item(
         "ref-5c",
         &braking_pair(),
@@ -433,7 +432,6 @@ fn workspace_root() -> PathBuf {
 /// core crate does.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-12")]
-#[ignore = "QSL-2234: the `fsl-hybrid-reference` crate does not exist yet"]
 fn the_reference_crate_sits_in_layer_h() {
     let root = workspace_root();
     let allowed = [

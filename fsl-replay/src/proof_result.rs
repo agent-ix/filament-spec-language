@@ -1984,6 +1984,71 @@ impl TerminalRecord {
         Ok(Self::with_backend(request_index, backend, value))
     }
 
+    /// The record of a hybrid item settled by FR-250 and FR-450: `value`
+    /// produced by `backend`, a `refuted` value only with the replayed
+    /// `counterexample` it carries.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalRecordRefusal::RefutedWithoutCounterexample`] for a
+    /// `refuted` value without a counterexample.
+    pub fn of_hybrid(
+        request_index: RequestIndex,
+        backend: BackendId,
+        value: TerminalValue,
+        counterexample: Option<&crate::HybridCounterexample>,
+    ) -> Result<Self, TerminalRecordRefusal> {
+        if matches!(value, TerminalValue::Refuted) && counterexample.is_none() {
+            return Err(TerminalRecordRefusal::RefutedWithoutCounterexample);
+        }
+        Ok(Self::with_backend(request_index, backend, value))
+    }
+
+    /// FR-750: the record of a hybrid item whose candidate set is empty,
+    /// `unsupported` with `HybridProviderAbsent`; its diagnostic names
+    /// `temporal-satisfaction` and `hybrid-dynamics`.
+    pub fn hybrid_provider_absent(request_index: RequestIndex) -> Self {
+        let mut detail = serde_json::Map::new();
+        detail.insert("kind".to_owned(), "temporal-satisfaction".into());
+        detail.insert("requirement".to_owned(), "hybrid-dynamics".into());
+        Self {
+            request_index,
+            backend: None,
+            value: TerminalValue::Unsupported(UnavailabilityCause::HybridProviderAbsent),
+            replay: None,
+            diagnostic: Some(NegotiationOutcome::UnsupportedRequestedCapability.code()),
+            exact_certificate: None,
+            exact_certificate_document: None,
+            disposition_detail: None,
+            diagnostic_detail: Some(detail),
+            disposed: false,
+        }
+    }
+
+    /// FR-750: the record of a hybrid item routed to `backend`, which no
+    /// registered engine or process provider serves: `unsupported`,
+    /// `unsupported_projection`/`tool-unavailable`, naming the backend.
+    pub fn hybrid_tool_unavailable(request_index: RequestIndex, backend: BackendId) -> Self {
+        let mut detail = serde_json::Map::new();
+        detail.insert("kind".to_owned(), "temporal-satisfaction".into());
+        detail.insert("backend".to_owned(), backend.as_str().into());
+        Self {
+            request_index,
+            backend: Some(backend),
+            value: TerminalValue::Unsupported(UnavailabilityCause::Disposition),
+            replay: None,
+            diagnostic: Some(CatalogCode::new(
+                "unsupported_projection",
+                "tool-unavailable",
+            )),
+            exact_certificate: None,
+            exact_certificate_document: None,
+            disposition_detail: Some(detail),
+            diagnostic_detail: None,
+            disposed: true,
+        }
+    }
+
     pub(crate) fn with_backend(
         request_index: RequestIndex,
         backend: BackendId,

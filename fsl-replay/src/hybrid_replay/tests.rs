@@ -1027,6 +1027,24 @@ mod settlement {
         );
     }
 
+    /// FR-750: a reproduced counterexample's wire form is the form the
+    /// provider reader takes back.
+    #[trace("TC-2100", "FR-750-AC-5")]
+    #[test]
+    fn a_counterexample_wire_reads_back_to_itself() {
+        let unit = braking_unit(FLOW, "v = 0");
+        let model = &unit.graph.hybrid_models()[0];
+        let input = HybridCounterexample {
+            kind: HybridCounterexampleKind::Formula,
+            trace: braking_trace(10, 0),
+        };
+        let wire = input.to_wire(model).expect("a formula counterexample is spelled");
+        assert_eq!(
+            read_plugin_hybrid_counterexample(&json!({"counterexample": wire}), Some(model)),
+            Ok(input)
+        );
+    }
+
     /// FR-290-AC-19: provider formula counterexamples are strictly read
     /// against the routed model before exact replay settles them.
     #[trace("TC-1221", "FR-290-AC-19")]

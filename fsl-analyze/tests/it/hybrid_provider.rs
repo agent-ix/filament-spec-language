@@ -154,7 +154,6 @@ impl World {
 #[trace("TC-2100", "FR-750-AC-3")]
 #[trace("FSpec-TC-373", "FSpec-FR-193-AC-7")]
 #[test]
-#[ignore = "QSL-2234: analyze settles a provider-less hybrid item HybridProviderAbsent not implemented yet"]
 fn a_hybrid_item_with_no_provider_settles_hybrid_provider_absent() {
     let world = world();
     for record in world.settle(world.item(Vec::new(), Disposition::Unsupported)) {
@@ -178,7 +177,6 @@ fn a_hybrid_item_with_no_provider_settles_hybrid_provider_absent() {
 /// `unsupported_projection`/`tool-unavailable`, naming that backend.
 #[trace("TC-2100", "FR-750-AC-4")]
 #[test]
-#[ignore = "QSL-2234: analyze dispatch of a hybrid item to its negotiated provider not implemented yet"]
 fn a_hybrid_item_routed_to_an_unserved_backend_settles_tool_unavailable() {
     let world = world();
     let fixture = Candidate::new(BackendId::new("hybrid-fixture"));

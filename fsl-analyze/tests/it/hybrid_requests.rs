@@ -8,15 +8,16 @@
 //! `certification`, `backend`), its `counterexample` and `replay`, and its
 //! `certificate` (`accepted`, `rule`, `at`, `form`).
 //!
-//! The fixture providers are made by `Engine::hybrid` and
-//! `Engine::hybrid_process` (FR-750), which do not exist yet. Until they do,
-//! [`hybrid_fixture`], [`process_fixture`] and [`hybrid_engine`] build a probe
-//! engine in their place: it advertises no hybrid dynamics, so it is never a
-//! candidate for a hybrid item, and every assertion below fails for real.
+//! The in-process fixture providers are made by `Engine::hybrid` (FR-750).
+//! `Engine::hybrid_process` does not exist yet, so [`process_fixture`] builds
+//! a probe engine in its place: it advertises no hybrid dynamics, so it is
+//! never a candidate for a hybrid item, and the assertions that use it fail
+//! for real.
 
 use std::path::PathBuf;
 
 use fsl_analyze::analyze::Engine;
+use fsl_analyze::provider::{HybridAnswer, HybridProvider, HybridSolveRequest};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -96,14 +97,77 @@ pub(crate) fn find<'v>(value: &'v Value, key: &str) -> Option<&'v Value> {
     }
 }
 
+/// A hybrid provider that answers every request with the FSpec FR-331 result
+/// entry it holds, read by `HybridAnswer::read_entry`.
+#[derive(Debug)]
+struct EntryProvider(Value);
+
+impl HybridProvider for EntryProvider {
+    fn solve(
+        &self,
+        request: &HybridSolveRequest<'_>,
+        _cancel: &filament_exact::Cancel,
+    ) -> HybridAnswer {
+        HybridAnswer::read_entry(&self.0, request.model)
+            .unwrap_or_else(|refusal| panic!("the fixture entry is read: {refusal}"))
+    }
+}
+
 /// The in-process hybrid fixture `id` whose provider answers every item with
 /// the FSpec FR-331 result entry `entry`: `Engine::hybrid` over a descriptor
-/// with `dynamics` `["hybrid"]` and a provider built by
-/// `HybridAnswer::read_entry(&entry)` (FR-750). The probe stands in until
-/// those exist.
+/// with `dynamics` `["hybrid"]`.
 pub(crate) fn hybrid_fixture(id: &str, entry: &Value) -> Engine {
-    let _answer = entry;
-    Engine::probe(id)
+    build_hybrid(id, entry).unwrap_or_else(|error| panic!("the fixture engine is made: {error}"))
+}
+
+fn build_hybrid(id: &str, entry: &Value) -> Result<Engine, String> {
+    let descriptor = descriptor_of(&json!({"backend": id, "dynamics": ["hybrid"],
+        "advertises": [{"kind": "temporal-satisfaction", "mode": "bounded"},
+            {"kind": "temporal-satisfaction", "mode": "unbounded"}],
+        "bounds": {"max_solver_steps": 1000, "max_solver_time": 1}}))?;
+    Engine::hybrid(descriptor, Box::new(EntryProvider(entry.clone())))
+        .map_err(|error| error.to_string())
+}
+
+/// The routed descriptor of the FSpec FR-331 descriptor `descriptor`.
+fn descriptor_of(descriptor: &Value) -> Result<fsl_route::BackendDescriptor, String> {
+    let id = descriptor["backend"].as_str().unwrap_or("hybrid-fixture");
+    let pairs: Vec<(String, String)> = descriptor["advertises"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|pair| {
+            (
+                pair["kind"].as_str().unwrap_or_default().to_owned(),
+                pair["mode"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    let labels: Vec<&str> = descriptor["dynamics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    let bound = |name: &str| descriptor["bounds"][name].as_u64();
+    fsl_route::descriptor_from_manifest_with_dynamics(
+        fsl_route::Candidate::new(fsl_foundation::BackendId::new(id)),
+        fsl_route::ProviderOrigin::Linked,
+        pairs
+            .iter()
+            .map(|(kind, mode)| (Some(kind.as_str()), Some(mode.as_str()))),
+        fsl_route::ManifestMembers {
+            domains: Some(&["integer"]),
+            fairness_kinds: Some(fsl_route::FairnessKindsMember::List(&[])),
+            ..fsl_route::ManifestMembers::default()
+        },
+        Some(fsl_route::DynamicsMember::List(&labels)),
+        Some(fsl_route::SolverBounds {
+            max_solver_steps: bound("max_solver_steps"),
+            max_solver_time: bound("max_solver_time"),
+        }),
+    )
+    .map_err(|refusal| format!("{refusal:?}"))
 }
 
 /// The process hybrid fixture `id` whose exchange returns `entry` as its
@@ -114,10 +178,13 @@ pub(crate) fn process_fixture(id: &str, entry: &Value) -> Engine {
 }
 
 /// `Engine::hybrid` over the FSpec FR-331 descriptor `descriptor`, its error
-/// rendered as text (FR-750). The probe stands in and never refuses.
+/// rendered as text (FR-750).
 pub(crate) fn hybrid_engine(descriptor: &Value) -> Result<Engine, String> {
-    let id = descriptor["backend"].as_str().unwrap_or("hybrid-fixture");
-    Ok(Engine::probe(id))
+    Engine::hybrid(
+        descriptor_of(descriptor)?,
+        Box::new(EntryProvider(Value::Null)),
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn interval(lower: &str, upper: &str) -> Value {
@@ -140,11 +207,11 @@ fn named(claim: &str, backend: &str) -> Value {
 /// `proved`, `bounded-solver`, `uncertified`, naming the fixture.
 #[test]
 #[trace("TC-2100", "FR-750-AC-1")]
-#[ignore = "QSL-2234: analyze dispatch of a hybrid item to its provider not implemented yet"]
 fn a_covering_delta_complete_proof_settles_proved_bounded_solver() {
     let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
         "basis": {"type": "bounded-solver", "method": "delta-complete",
-            "horizon": "10", "jumps": 1, "exhaustive": ["time"]}});
+            "horizon": {"numerator": "10", "denominator": "1"}, "jumps": 1,
+            "exhaustive": ["time"]}});
     let (_, item) = first_item(
         "hybrid-750-1",
         &braking_pair(),
@@ -163,7 +230,6 @@ fn a_covering_delta_complete_proof_settles_proved_bounded_solver() {
 /// `hybrid`, naming the backend and `invalid-dynamics`.
 #[test]
 #[trace("TC-2100", "FR-750-AC-2")]
-#[ignore = "QSL-2234: hybrid provider registration (`Engine::hybrid`) not implemented yet"]
 fn a_hybrid_provider_without_hybrid_dynamics_is_refused() {
     let refused = hybrid_engine(
         &json!({"backend": "discrete-only", "dynamics": ["discrete"],

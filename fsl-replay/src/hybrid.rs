@@ -27,6 +27,8 @@ use filament_exact::LimitKind;
 use fsl_semantics::check::{CheckedGraph, CheckedHybridClaim, HybridClock, HybridHorizon};
 
 mod process_request;
+mod provider;
+pub use provider::{HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSolveRequest};
 pub use process_request::{
     AdmittedHybridProcessItem, AdmittedHybridProcessRequest, HybridProcessDependencyPackage,
     HybridProcessItem, HybridProcessPackageContext, HybridProcessRequest,
@@ -573,6 +575,11 @@ impl SolverBudget {
             .ok_or(BudgetRefusal::OutOfDomain(TIME_MEMBER))
     }
 
+    /// The step budget the request sets.
+    pub fn steps(&self) -> Option<u64> {
+        self.steps
+    }
+
     /// The whole-second time budget the request sets.
     pub fn time_seconds(&self) -> Option<u64> {
         self.time_seconds
@@ -585,6 +592,16 @@ impl SolverBudget {
             self.time_seconds.unwrap_or(published_seconds),
             self.steps.unwrap_or(published_steps),
         )
+    }
+
+    /// The budget with each unset member set to the bound the provider's
+    /// descriptor publishes: what a solver runs under.
+    pub fn resolved_budget(&self, published_seconds: u64, published_steps: u64) -> Self {
+        let (seconds, steps) = self.resolved(published_seconds, published_steps);
+        Self {
+            time_seconds: Some(seconds),
+            steps: Some(steps),
+        }
     }
 
     /// The request's `hybrid` member, or `None` when the request sets no
