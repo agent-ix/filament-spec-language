@@ -346,6 +346,22 @@ fn digital_clocks_settle_mitl_claims_as_zones_do() {
     );
     assert_eq!(label(&items[0]), "proved", "{}", items[0]);
     assert_eq!(items[0]["record"]["backend"], "en-1", "{}", items[0]);
+    let exploration = &items[0]["exploration"];
+    assert_eq!(exploration["automaton_states"], "3", "{}", items[0]);
+    assert!(
+        exploration["states"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+            > exploration["automaton_states"]
+                .as_str()
+                .unwrap()
+                .parse::<u64>()
+                .unwrap(),
+        "automaton states count distinct claim states, not product states: {}",
+        items[0]
+    );
     assert_eq!(
         items[0]["record"]["basis"]["type"], "exhaustive",
         "{}",
@@ -407,7 +423,6 @@ fn a_digital_clock_state_budget_is_incomplete() {
 /// FR-416 `non_zeno` member for FR-632-AC-2's MITL claims.
 #[trace("TC-3021", "FR-235-AC-8")]
 #[test]
-#[ignore = "QSL-2450: the non_zeno result-entry member on both timed routes is not implemented yet"]
 fn both_timed_routes_state_the_non_zeno_premise() {
     let unit = rpc_unit(
         4,

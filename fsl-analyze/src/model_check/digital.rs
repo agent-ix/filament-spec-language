@@ -55,7 +55,7 @@ use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_foundation::source::Span;
 use fsl_replay::{
     CounterexampleKind, IncompleteCause, Lasso, ModelCheckLimit, ModelCheckOutcome, ModelStep,
-    ReachedLimit, RunStats, TemporalCounterexample, TimedPoint, UndefinedEvaluation,
+    NonZeno, ReachedLimit, RunStats, TemporalCounterexample, TimedPoint, UndefinedEvaluation,
     UndefinedLocus, UndefinedSite,
 };
 use fsl_semantics::check::{
@@ -87,6 +87,16 @@ pub struct DigitalRequest<'r, 's, 'a, L> {
     pub letters: &'r L,
     /// The run's budgets.
     pub limits: DigitalLimits,
+}
+
+/// EN-1's digital-clock outcome and its non-Zeno premise, if the result was
+/// decided by the liveness SCC phase (FR-235).
+#[derive(Clone, Debug)]
+pub struct DigitalCheckOutcome {
+    /// The ordinary EN-1 result.
+    pub outcome: ModelCheckOutcome,
+    /// The liveness premise accompanying a settled result.
+    pub non_zeno: Option<NonZeno>,
 }
 
 /// What a strict element the closed condition refuses is.
@@ -136,7 +146,7 @@ impl From<DigitalRefusal> for Halt {
 pub fn check_digital<L: ModelLetters>(
     request: &DigitalRequest<'_, '_, '_, L>,
     cancel: &Cancel,
-) -> Result<ModelCheckOutcome, DigitalRefusal> {
+) -> Result<DigitalCheckOutcome, DigitalRefusal> {
     if let Some(strict) = strict_element(request.subject, request.clause) {
         return Err(DigitalRefusal::Strict(strict));
     }
@@ -146,11 +156,34 @@ pub fn check_digital<L: ModelLetters>(
             _ => DigitalRefusal::UnsupportedForm,
         })?;
     let mut run = Digital::new(request, &automaton, cancel)?;
-    match run.decide(&mut automaton) {
-        Ok(outcome) => Ok(outcome),
-        Err(Halt::Outcome(outcome)) => Ok(*outcome),
-        Err(Halt::Refusal(refusal)) => Err(refusal),
-    }
+    let outcome = match run.decide(&mut automaton) {
+        Ok(outcome) => outcome,
+        Err(Halt::Outcome(outcome)) => *outcome,
+        Err(Halt::Refusal(refusal)) => return Err(refusal),
+    };
+    let non_zeno = match &outcome {
+        ModelCheckOutcome::HoldsReduced { .. } => run.non_zeno,
+        ModelCheckOutcome::Violated { counterexample, .. }
+            if counterexample.lasso.is_some()
+                && matches!(&counterexample.kind, CounterexampleKind::Formula) =>
+        {
+            Some(NonZeno::Checked)
+        }
+        ModelCheckOutcome::Undecided {
+            cause: fsl_replay::UndecidedCause::NoAdmittedBehaviour,
+            ..
+        } => Some(NonZeno::Refuted),
+        ModelCheckOutcome::Undecided { .. }
+        | ModelCheckOutcome::Violated { .. }
+        | ModelCheckOutcome::Holds { .. }
+        | ModelCheckOutcome::Reduction { .. }
+        | ModelCheckOutcome::Memory { .. }
+        | ModelCheckOutcome::RecoveryView { .. }
+        | ModelCheckOutcome::RefutedIgnoringConstraints { .. }
+        | ModelCheckOutcome::BoundReached { .. }
+        | ModelCheckOutcome::Stopped { .. } => None,
+    };
+    Ok(DigitalCheckOutcome { outcome, non_zeno })
 }
 
 /// TA-2: the first strict clock constraint of the subject, in declaration
@@ -280,6 +313,7 @@ struct Digital<'q, 'r, 's, 'a, L> {
     /// a loop never resets passes at its entry.
     ceiling: Rational,
     stats: RunStats,
+    non_zeno: Option<NonZeno>,
     steps: BTreeMap<Vec<u8>, Vec<(GuardedStep, TimedState)>>,
 }
 
@@ -321,6 +355,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             automaton_cap,
             ceiling,
             stats: RunStats::default(),
+            non_zeno: None,
             steps: BTreeMap::new(),
         })
     }
@@ -664,13 +699,17 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             self.poll()?;
             let vertex = product.vertices[at].clone();
             if !vertex.tail && self.quiescent(&vertex.state)? {
-                queue.extend(self.stutter(product, automaton, universal, instance, at)?);
+                match self.stutter(product, automaton, universal, instance, at)? {
+                    Ok(created) => queue.extend(created),
+                    Err(undefined) => return Ok(Some(undefined)),
+                }
             }
         }
         while let Some(at) = queue.pop_front() {
             self.poll()?;
-            if let Ok(created) = self.expand(product, automaton, universal, instance, at)? {
-                queue.extend(created);
+            match self.expand(product, automaton, universal, instance, at)? {
+                Ok(created) => queue.extend(created),
+                Err(undefined) => return Ok(Some(undefined)),
             }
         }
         Ok(None)
@@ -689,7 +728,10 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         let vertex = product.vertices[at].clone();
         let mut created = Vec::new();
         if vertex.tail {
-            created.extend(self.stutter(product, automaton, universal, instance, at)?);
+            match self.stutter(product, automaton, universal, instance, at)? {
+                Ok(next) => created.extend(next),
+                Err(undefined) => return Ok(Err(undefined)),
+            }
         } else {
             for (index, (_, post)) in self.steps_of(&vertex.state)?.into_iter().enumerate() {
                 self.poll()?;
@@ -760,17 +802,31 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         universal: bool,
         instance: &ModelInstance,
         at: usize,
-    ) -> Result<Vec<usize>, Halt> {
+    ) -> Result<Result<Vec<usize>, UndefinedAt>, Halt> {
         let vertex = product.vertices[at].clone();
-        let Reading::Defined(letter) = self.reading(
+        let letter = match self.reading(
             instance,
             automaton,
             universal,
             vertex.state.discrete(),
             false,
-        )?
-        else {
-            return Err(DigitalRefusal::Fault("idle-letter").into());
+        )? {
+            Reading::Defined(letter) => letter,
+            Reading::Undefined(locus, cause) => {
+                let mut path = Self::path_to(product, at);
+                let initial = root(product, &path, at)?;
+                let edge = product.edges.len();
+                self.add_edge(product, at, at, Via::Stutter)?;
+                path.push(edge);
+                return Ok(Err(UndefinedAt {
+                    path,
+                    initial,
+                    state: vertex.state,
+                    locus,
+                    cause,
+                    instance: instance.clone(),
+                }));
+            }
         };
         let mut created = Vec::new();
         for (q, clocks) in self.reads(automaton, universal, vertex.q, letter, &vertex.clocks)? {
@@ -785,7 +841,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             };
             created.extend(self.add_vertex(product, next, Some((at, Via::Stutter)))?);
         }
-        Ok(created)
+        Ok(Ok(created))
     }
 
     /// The product as the fairness kernels read it.
@@ -794,6 +850,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         product: &Product,
         automaton: &PositionAutomaton,
         universal: bool,
+        include_divergence: bool,
     ) -> Result<FairModel, Halt> {
         let mut transitions: Vec<ModelTransition> = Vec::new();
         let mut graph = Graph::new();
@@ -838,18 +895,22 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
                 .collect();
             graph.add_acceptance_set(members).map_err(fault)?;
         }
-        for keep in [
-            (|vertex: &DVertex| vertex.divergent || vertex.tail) as fn(&DVertex) -> bool,
-            |vertex: &DVertex| vertex.positioned,
-        ] {
+        if include_divergence {
             let members: Vec<Vertex> = handles
                 .iter()
                 .zip(&product.vertices)
-                .filter(|(_, vertex)| keep(vertex))
+                .filter(|(_, vertex)| vertex.divergent || vertex.tail)
                 .map(|(handle, _)| *handle)
                 .collect();
             graph.add_acceptance_set(members).map_err(fault)?;
         }
+        let positioned: Vec<Vertex> = handles
+            .iter()
+            .zip(&product.vertices)
+            .filter(|(_, vertex)| vertex.positioned)
+            .map(|(handle, _)| *handle)
+            .collect();
+        graph.add_acceptance_set(positioned).map_err(fault)?;
         let constraints = fairness_constraints(
             self.timed().system(),
             self.request.clause.fairness(),
@@ -921,22 +982,30 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         let instances = system
             .instances(&self.request.clause.over().1)
             .map_err(|_| DigitalRefusal::Fault("instances"))?;
+        let mut automaton_states = BTreeSet::new();
         for instance in &instances {
             let mut product = Product::default();
-            if let Some(undefined) = self.build(&mut product, automaton, false, instance)? {
+            let built = self.build(&mut product, automaton, false, instance)?;
+            automaton_states.extend(product.vertices.iter().map(|vertex| vertex.q.index()));
+            self.stats.automaton_states = self
+                .stats
+                .automaton_states
+                .max(u64::try_from(automaton_states.len()).unwrap_or(u64::MAX));
+            if let Some(undefined) = built {
                 if let Some(found) = self.undefined(&product, undefined)? {
                     return Ok(self.violated(found));
                 }
                 continue;
             }
-            self.stats.automaton_states = self
-                .stats
-                .automaton_states
-                .max(u64::try_from(product.vertices.len()).unwrap_or(u64::MAX));
-            let model = self.fair_model(&product, automaton, false)?;
+            let model = self.fair_model(&product, automaton, false, true)?;
             if let Some((entry, cycle)) = self.fair_cycle(&product, &model)? {
                 let found = self.lasso(&product, instance, entry, &cycle)?;
+                self.non_zeno = Some(NonZeno::Checked);
                 return Ok(self.violated(found));
+            }
+            let without_divergence = self.fair_model(&product, automaton, false, false)?;
+            if self.fair_cycle(&product, &without_divergence)?.is_some() {
+                self.non_zeno = Some(NonZeno::Assumed);
             }
         }
         // FR-240 "Vacuity": a proof under fairness needs a fair
@@ -947,13 +1016,17 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             let mut product = Product::default();
             self.build(&mut product, automaton, true, instance)?;
             let tail = product.vertices.iter().any(|vertex| vertex.tail);
-            let model = self.fair_model(&product, automaton, true)?;
+            let model = self.fair_model(&product, automaton, true, true)?;
             if !tail && self.fair_cycle(&product, &model)?.is_none() {
+                self.non_zeno = Some(NonZeno::Refuted);
                 return Ok(ModelCheckOutcome::Undecided {
                     cause: fsl_replay::UndecidedCause::NoAdmittedBehaviour,
                     stats: self.stats,
                 });
             }
+        }
+        if self.non_zeno.is_none() {
+            self.non_zeno = Some(NonZeno::NotRequired);
         }
         Ok(ModelCheckOutcome::HoldsReduced {
             reductions: Vec::new(),

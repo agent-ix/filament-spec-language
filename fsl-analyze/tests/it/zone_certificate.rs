@@ -33,6 +33,22 @@ fn no_late_reply() -> (crate::timed_world::World, Certificate) {
     (world, certificate)
 }
 
+/// FR-245 rejects the liveness-only `non_zeno` member on a safety
+/// certificate at that member.
+#[trace("TC-3021", "FR-245-AC-10")]
+#[test]
+fn a_safety_certificate_rejects_an_unexpected_non_zeno_member() {
+    let (world, mut certificate) = no_late_reply();
+    certificate.non_zeno = Some(fsl_replay::NonZeno::Assumed);
+    assert_eq!(
+        verdict(&world, &certificate),
+        rejected(
+            CertificateRule::NonZenoMismatch,
+            CertificateLocus::NonZenoMember,
+        )
+    );
+}
+
 fn verdict(world: &crate::timed_world::World, certificate: &Certificate) -> ZoneCertificateVerdict {
     check(world, certificate, CertificateCheckLimits::default()).expect("the check runs")
 }

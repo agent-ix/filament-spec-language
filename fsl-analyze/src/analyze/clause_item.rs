@@ -243,7 +243,7 @@ impl<'a> ClauseSubject<'a> {
                             .as_ref()
                             .and_then(|found| found.over_binding.as_ref())
                             .and_then(|instance| letters.instance_reference(instance));
-                        EngineReport::Clause(model, over)
+                        EngineReport::Clause(model, over, None)
                     }
                     other => other,
                 }
@@ -822,7 +822,7 @@ impl<'a> PackageClauseSubject<'a> {
                             .as_ref()
                             .and_then(|found| found.over_binding.as_ref())
                             .and_then(|instance| letters.instance_reference(instance));
-                        EngineReport::Clause(model, over)
+                        EngineReport::Clause(model, over, None)
                     }
                     other => other,
                 }

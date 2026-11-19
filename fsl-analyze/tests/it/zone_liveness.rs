@@ -5,7 +5,10 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::zone_check::{ZoneCheckLimits, ZoneCheckOutcome, ZoneUndecided};
-use fsl_replay::{CounterexampleKind, TemporalCounterexample};
+use fsl_replay::{
+    CertificateLocus, CertificateRejection, CertificateRule, CounterexampleKind,
+    TemporalCounterexample,
+};
 use ix_trace_rs::trace;
 
 use crate::timed_world::{document, world, World, DENSE};
@@ -497,7 +500,6 @@ fn settled_non_zeno(world: &World) -> String {
 #[trace("TC-3021", "FR-235-AC-7")]
 #[trace("FSpec-TC-2041", "FSpec-FR-416-AC-10")]
 #[test]
-#[ignore = "QSL-2450: ZoneCheckRecord::non_zeno (FSpec FR-416 non_zeno member) is not implemented yet"]
 fn a_liveness_record_states_its_non_zeno_premise() {
     let cases = [
         (response(4, ""), "non_zeno: Some(NotRequired)"),
@@ -529,17 +531,27 @@ fn a_liveness_record_states_its_non_zeno_premise() {
 #[trace("TC-3021", "FR-245-AC-10")]
 #[trace("FSpec-TC-2041", "FSpec-FR-418-AC-15")]
 #[test]
-#[ignore = "QSL-2450: ZoneCertificate::non_zeno and the checker's NonZenoMismatch rule are not implemented yet"]
 fn a_liveness_certificate_states_its_non_zeno() {
-    for (world, expected) in [
-        (response(4, ""), "non_zeno: Some(NotRequired)"),
-        (rpc_reply_loop(), "non_zeno: Some(Assumed)"),
+    for (world, expected, wrong) in [
+        (
+            response(4, ""),
+            fsl_replay::NonZeno::NotRequired,
+            fsl_replay::NonZeno::Assumed,
+        ),
+        (
+            rpc_reply_loop(),
+            fsl_replay::NonZeno::Assumed,
+            fsl_replay::NonZeno::NotRequired,
+        ),
     ] {
         let ZoneCheckOutcome::Holds { certificate, .. } = decide(&world) else {
             panic!("a proof");
         };
         let stated = format!("{certificate:?}");
-        assert!(stated.contains(expected), "{expected}: {stated}");
+        assert!(
+            stated.contains(&format!("non_zeno: Some({expected:?})")),
+            "{stated}"
+        );
         let verdict = crate::zone_search::check(
             &world,
             &certificate,
@@ -551,5 +563,21 @@ fn a_liveness_certificate_states_its_non_zeno() {
             fsl_replay::ZoneCertificateVerdict::Accepted,
             "{verdict:?}"
         );
+        for non_zeno in [None, Some(wrong)] {
+            let mut tampered = certificate.clone();
+            tampered.non_zeno = non_zeno;
+            assert_eq!(
+                crate::zone_search::check(
+                    &world,
+                    &tampered,
+                    fsl_replay::CertificateCheckLimits::default(),
+                )
+                .expect("the check runs"),
+                fsl_replay::ZoneCertificateVerdict::Rejected(CertificateRejection {
+                    rule: CertificateRule::NonZenoMismatch,
+                    at: CertificateLocus::NonZenoMember,
+                }),
+            );
+        }
     }
 }

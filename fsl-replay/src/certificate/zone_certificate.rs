@@ -145,6 +145,9 @@ pub struct ZoneCertificate<O> {
     /// liveness product, each node's component and each component's
     /// reason; `None` for a reachability proof.
     pub components: Option<Components>,
+    /// FR-235's non-Zeno premise for a liveness-product proof, `None` for
+    /// every other item.
+    pub non_zeno: Option<NonZeno>,
     /// FR-244's divergence part: for the time-lock-freedom item, each
     /// node's path to a divergent target, by node; `None` otherwise.
     pub divergence: Option<Vec<DivergenceWitness>>,
@@ -154,6 +157,31 @@ pub struct ZoneCertificate<O> {
     /// FR-244's refinement part, for the safety half of a timed
     /// refinement (FSpec FR-430); `None` otherwise.
     pub refinement: Option<RefinementPart>,
+}
+
+/// The non-Zeno premise stated by a timed liveness result (FR-235).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NonZeno {
+    /// The product has no accepting cycle even without time divergence.
+    NotRequired,
+    /// The proof excludes accepting cycles that do not diverge in time.
+    Assumed,
+    /// The refuted lasso's loop diverges in time.
+    Checked,
+    /// No admitted time-divergent behavior exists.
+    Refuted,
+}
+
+impl NonZeno {
+    /// FSpec FR-416's result-entry spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotRequired => "not-required",
+            Self::Assumed => "assumed",
+            Self::Checked => "checked",
+            Self::Refuted => "refuted",
+        }
+    }
 }
 
 /// FR-244's refinement part: the reachability part is read over the
@@ -1129,6 +1157,11 @@ impl<O> Checker<'_, '_, O> {
         }
         if self.live.is_some() {
             self.components()?;
+        } else if self.certificate.non_zeno.is_some() {
+            return reject(
+                CertificateRule::NonZenoMismatch,
+                CertificateLocus::NonZenoMember,
+            );
         }
         if self.time_lock {
             self.divergence_part()?;

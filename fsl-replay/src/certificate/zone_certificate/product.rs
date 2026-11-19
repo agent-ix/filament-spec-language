@@ -42,9 +42,9 @@ use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_semantics::check::CaptureSite;
 
 use super::{
-    at_node, fault, reject, undecided, AcceptanceSet, CertificateLocus, CertificateRule, Checker,
-    CheckerFault, ComponentReason, Components, FairnessMember, ProductMark, SilentMove, Step,
-    Successor,
+    at_node, fault, reject, undecided, AcceptanceSet, CertNode, CertificateLocus, CertificateRule,
+    Checker, CheckerFault, ComponentReason, Components, FairnessMember, ProductMark, SilentMove,
+    Step, Successor,
 };
 use crate::certificate::zone::Zone;
 
@@ -663,7 +663,46 @@ impl<O> Checker<'_, '_, O> {
                 }
             }
         }
-        self.reasons(components)
+        self.reasons(components)?;
+        self.non_zeno(components)
+    }
+
+    /// FR-235/FR-245: recompute whether an accepting cycle exists when the
+    /// divergence set is omitted, using the independently checked component
+    /// reasons and their positioned nodes.
+    fn non_zeno(&self, components: &Components) -> Step<(), O> {
+        fn assumes(components: &Components, nodes: &[CertNode]) -> bool {
+            components
+                .reasons
+                .iter()
+                .enumerate()
+                .any(|(component, reason)| match reason {
+                    ComponentReason::Lacks(AcceptanceSet::Divergence) => {
+                        nodes.iter().enumerate().any(|(node, listed)| {
+                            components.numbering.get(node) == Some(&Some(component))
+                                && listed.product.is_some_and(|mark| mark.positioned)
+                        })
+                    }
+                    ComponentReason::Strong { nested, .. } => assumes(nested, nodes),
+                    ComponentReason::Acyclic
+                    | ComponentReason::Lacks(_)
+                    | ComponentReason::Weak(_) => false,
+                })
+        }
+
+        let expected = if assumes(components, &self.certificate.nodes) {
+            Some(crate::certificate::zone_certificate::NonZeno::Assumed)
+        } else {
+            Some(crate::certificate::zone_certificate::NonZeno::NotRequired)
+        };
+        if self.certificate.non_zeno == expected {
+            Ok(())
+        } else {
+            reject(
+                CertificateRule::NonZenoMismatch,
+                CertificateLocus::NonZenoMember,
+            )
+        }
     }
 
     /// Each reason of `components` holds, a strong reason's nested
