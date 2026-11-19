@@ -1562,11 +1562,26 @@ impl<'a> ModelSystem<'a> {
     /// which the root sits (FSpec FR-331): empty for a population, `[0, f]`
     /// for a field, `[1, o, p]` for a parameter, `[2, o]` for a result.
     pub fn rooted_domains(&self) -> Vec<(NodeKey, Vec<u32>, ValueType)> {
+        self.member_domains(false)
+    }
+
+    /// FR-190 bounded roots, retaining each declared value type rather than
+    /// reducing non-enumerable domains to the requires-bound marker type.
+    /// Includes operation results, which are computed rather than generated.
+    pub fn generation_domains(&self) -> Vec<(NodeKey, Vec<u32>, ValueType)> {
+        self.member_domains(true)
+    }
+
+    fn member_domains(&self, preserve_types: bool) -> Vec<(NodeKey, Vec<u32>, ValueType)> {
         let mut roots = Vec::new();
         let mut root = |node: Option<NodeKey>, base: Vec<u32>, value_type: &ValueType| {
             let Some(node) = node else {
                 return;
             };
+            if preserve_types {
+                roots.push((node, base, value_type.clone()));
+                return;
+            }
             let value_type = root_classification_type(value_type);
             let size_bits = self
                 .max_value_bits
@@ -1745,7 +1760,12 @@ impl<'a> ModelSystem<'a> {
         // grants it: with no declared maximum it is then unbounded. An
         // ungranted one ranges its initial count up to `max_clocks` (FR-230
         // "Initial element count").
-        for key in &granted {
+        let root_fields: Vec<_> = if preserve_types {
+            field_types.keys().copied().collect()
+        } else {
+            granted.iter().collect()
+        };
+        for key in root_fields {
             if let (Some(value_type), Some((owner, ordinal))) =
                 (field_types.get(key), field_homes.get(key))
             {

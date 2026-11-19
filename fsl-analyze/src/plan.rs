@@ -66,11 +66,48 @@ pub enum PlanRefusal {
 }
 
 impl CatalogCoded for PlanRefusal {
+    fn catalog_fields(&self) -> Option<BTreeMap<&'static str, String>> {
+        match self {
+            Self::MissingMember { member, step } => Some(BTreeMap::from([
+                ("member", (*member).to_owned()),
+                ("step", step.clone()),
+            ])),
+            Self::Reader(VerificationPlanRefusal::PackageIdentityMismatch { expected, actual }) => {
+                Some(BTreeMap::from([
+                    ("expected", expected.clone()),
+                    ("actual", actual.clone()),
+                ]))
+            }
+            Self::Reader(VerificationPlanRefusal::InvalidDocument { .. }) => None,
+            Self::Initial(failure) => match failure {
+                fsl_semantics::model::observation::AdmissionFailure::Refused(record)
+                | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) => {
+                    Some(record.fields.clone())
+                }
+                fsl_semantics::model::observation::AdmissionFailure::Fault(fault) => {
+                    Some(BTreeMap::from([
+                        ("stage", fault.stage().to_owned()),
+                        ("invariant", fault.invariant().to_owned()),
+                    ]))
+                }
+            },
+        }
+    }
     fn catalog_code(&self) -> CatalogCode {
         match self {
-            Self::MissingMember { .. } => CatalogCode::new("invalid_runtime_input", "missing-member"),
+            Self::MissingMember { .. } => {
+                CatalogCode::new("invalid_runtime_input", "missing-member")
+            }
             Self::Reader(_) => CatalogCode::new("invalid_runtime_input", "invalid-value"),
-            Self::Initial(failure) => failure.catalog_code(),
+            Self::Initial(failure) => match failure {
+                fsl_semantics::model::observation::AdmissionFailure::Refused(record)
+                | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) => {
+                    record.catalog
+                }
+                fsl_semantics::model::observation::AdmissionFailure::Fault(fault) => {
+                    fault.catalog_code()
+                }
+            },
         }
     }
 }
@@ -100,7 +137,16 @@ pub enum PlanStatus {
     Blocked,
 }
 
-/// One node's disposition. The step name is held by `PlanOutcome`.
+/// A step's native result, without converting simulation runs into a proof.
+#[derive(Debug)]
+pub enum PlanResult {
+    /// The negotiated item's FR-331 terminal record.
+    Analysis(Box<TerminalRecord>),
+    /// The simulation item's FR-181 runs.
+    Simulation(serde_json::Value),
+}
+
+/// One node's five-member disposition. The step name is held by `PlanOutcome`.
 #[derive(Debug)]
 pub struct PlanDisposition {
     /// Closed FR-331 status or `blocked`.
@@ -111,10 +157,8 @@ pub struct PlanDisposition {
     pub evidence: Option<String>,
     /// First unsatisfied prerequisite in source order.
     pub blocked_by: Option<String>,
-    /// The settled analysis record, absent only on a blocked or simulation step.
-    pub result: Option<TerminalRecord>,
-    /// FR-181 simulation runs, kept separately from proof records.
-    pub simulation: Option<serde_json::Value>,
+    /// The step's native result; absent on a blocked step.
+    pub result: Option<PlanResult>,
 }
 
 impl PlanDisposition {
@@ -122,9 +166,11 @@ impl PlanDisposition {
         match self.status {
             PlanStatus::Proved | PlanStatus::Tested => true,
             PlanStatus::Measured => matches!(
-                self.result.as_ref().map(TerminalRecord::value),
-                Some(TerminalValue::Measured(verdict))
+                self.result.as_ref(),
+                Some(PlanResult::Analysis(record))
+                    if matches!(record.value(), TerminalValue::Measured(verdict)
                     if matches!(verdict.decision, fsl_replay::statistical::Decision::Accepted)
+                    )
             ),
             _ => false,
         }
@@ -167,8 +213,15 @@ pub fn execute_plan(
     let mut initial_failure = None;
     let mut value_consumer = None;
     for node in &plan.nodes {
+        if node.method.name == "model_based_test"
+            && !consumes_initial(package, node)
+            && value_consumer.is_none()
+            && value_clause_consumes_bits(package, node)?
+        {
+            value_consumer = Some(node.name.clone());
+        }
         if let Some(binding) = inputs.bindings.get(&node.name) {
-            if consumes_initial(node) {
+            if consumes_initial(package, node) {
                 match fsl_eval::simulation::model::ModelSystem::new(
                     crate::analyze::request::simulation(&input, binding, limits),
                 ) {
@@ -176,12 +229,7 @@ pub fn execute_plan(
                         admitted_initial |= !binding.initial.is_empty();
                         if node.method.name == "model_based_test"
                             && value_consumer.is_none()
-                            && matches!(
-                                fsl_eval::simulation::model::check_model_bounds(
-                                    &system, fsl_eval::simulation::BOUND_POSITIONS,
-                                ),
-                                Err(fsl_eval::simulation::NotSimulated::RequiresBound { .. })
-                            )
+                            && consumes_value_bits(&system)?
                         {
                             value_consumer = Some(node.name.clone());
                         }
@@ -200,62 +248,111 @@ pub fn execute_plan(
         }
     }
     if inputs.max_trace_length.is_none() {
-        if let Some(node) = plan.nodes.iter().find(|node| {
-            node.method.name == "model_based_test" && consumes_initial(node)
-        }) {
+        if let Some(node) = plan
+            .nodes
+            .iter()
+            .find(|node| node.method.name == "model_based_test" && consumes_initial(package, node))
+        {
             return Err(StageFailure::Refused(PlanRefusal::MissingMember {
-                member: "max_trace_length", step: node.name.clone(),
+                member: "max_trace_length",
+                step: node.name.clone(),
             }));
         }
     }
     if inputs.max_value_bits.is_none() {
         if let Some(step) = value_consumer {
             return Err(StageFailure::Refused(PlanRefusal::MissingMember {
-                member: "max_value_bits", step,
+                member: "max_value_bits",
+                step,
             }));
         }
     }
     let mut registry = Registry::new();
     for descriptor in engines.registrations() {
-        registry.register(descriptor.clone()).map_err(|_| fault("engine-registration"))?;
+        registry
+            .register(descriptor.clone())
+            .map_err(|_| fault("engine-registration"))?;
     }
+    let execution = Execution {
+        package,
+        inputs,
+        engines,
+        registry: &registry,
+        negotiate,
+        limits,
+        cancel,
+    };
     let mut settled: BTreeMap<usize, PlanDisposition> = BTreeMap::new();
     for index in order {
         let node = &plan.nodes[index];
         let blocked = plan.nodes.iter().enumerate().find(|(at, prerequisite)| {
-            plan.edges.iter().any(|edge| edge.from == node.name && edge.to == prerequisite.name)
-                && settled.get(at).is_some_and(|step| !step.satisfies_requires())
+            plan.edges
+                .iter()
+                .any(|edge| edge.from == node.name && edge.to == prerequisite.name)
+                && settled
+                    .get(at)
+                    .is_some_and(|step| !step.satisfies_requires())
         });
         let disposition = if let Some((_, prerequisite)) = blocked {
             PlanDisposition {
-                status: PlanStatus::Blocked, method: node.method.name.clone(), evidence: None,
-                blocked_by: Some(prerequisite.name.clone()), result: None, simulation: None,
+                status: PlanStatus::Blocked,
+                method: node.method.name.clone(),
+                evidence: None,
+                blocked_by: Some(prerequisite.name.clone()),
+                result: None,
             }
         } else {
-            run_step(package, node, index, inputs, engines, &registry, negotiate, limits, cancel)?
+            execution.run_step(node, index)?
         };
         settled.insert(index, disposition);
     }
-    let dispositions = settled.into_iter().map(|(index, disposition)| {
-        (plan.nodes[index].name.clone(), disposition)
-    }).collect();
+    let dispositions = settled
+        .into_iter()
+        .map(|(index, disposition)| (plan.nodes[index].name.clone(), disposition))
+        .collect();
     Ok(Staged::new(PlanOutcome { dispositions }))
 }
 
-fn consumes_initial(node: &VerificationPlanNode) -> bool {
-    matches!(node.method.name.as_str(), "model_check" | "model_based_test" | "simulate" | "contract_check")
+fn consumes_initial(package: &CheckedPackage, node: &VerificationPlanNode) -> bool {
+    let state_subject = claim(package, node)
+        .and_then(|claim| {
+            crate::claim_family::claim_family(
+                package,
+                fsl_route::request::ItemKind::Formula,
+                &claim,
+            )
+        })
+        .is_some_and(|family| {
+            matches!(
+                family,
+                fsl_semantics::check::DeclarationFamily::StateModel
+                    | fsl_semantics::check::DeclarationFamily::TemporalTrace
+                    | fsl_semantics::check::DeclarationFamily::RelationClaim
+            )
+        });
+    state_subject
+        && matches!(
+            node.method.name.as_str(),
+            "model_check" | "model_based_test" | "simulate" | "contract_check"
+        )
 }
 
 fn execution_order(plan: &VerificationPlan) -> Result<Vec<usize>, StageFailure<PlanRefusal>> {
     let mut order = Vec::new();
     while order.len() < plan.nodes.len() {
         let next = plan.nodes.iter().enumerate().find(|(index, node)| {
-            !order.contains(index) && plan.edges.iter().filter(|edge| edge.from == node.name)
-                .all(|edge| order.iter().any(|at| plan.nodes[*at].name == edge.to))
+            !order.contains(index)
+                && plan
+                    .edges
+                    .iter()
+                    .filter(|edge| edge.from == node.name)
+                    .all(|edge| order.iter().any(|at| plan.nodes[*at].name == edge.to))
         });
         let Some((index, _)) = next else {
             return Err(StageFailure::Refused(PlanRefusal::Reader(
-                VerificationPlanRefusal::InvalidDocument { reason: "requires cycle".into() },
+                VerificationPlanRefusal::InvalidDocument {
+                    reason: "requires cycle".into(),
+                },
             )));
         };
         order.push(index);
@@ -265,9 +362,11 @@ fn execution_order(plan: &VerificationPlan) -> Result<Vec<usize>, StageFailure<P
 
 fn claim(package: &CheckedPackage, node: &VerificationPlanNode) -> Option<OccurrenceKey> {
     package.graph().occurrences().find_map(|(key, origin, _)| {
-        let structural = serde_json::to_value(fsl_semantics::check::wire_id::structural_id(&key)).ok()?;
+        let structural =
+            serde_json::to_value(fsl_semantics::check::wire_id::structural_id(&key)).ok()?;
         let requested = serde_json::to_value(&node.claim.node).ok()?;
-        (structural == requested && origin.role().as_str() == "claim"
+        (structural == requested
+            && origin.role().as_str() == "claim"
             && origin.ordinal() == node.claim.occurrence.ordinal)
             .then(|| OccurrenceKey::new(key, origin))
     })
@@ -275,6 +374,10 @@ fn claim(package: &CheckedPackage, node: &VerificationPlanNode) -> Option<Occurr
 
 fn status(record: &TerminalRecord) -> PlanStatus {
     match record.value() {
+        TerminalValue::Proved {
+            basis: fsl_replay::ProofBasis::Checks { success_checks: 0 },
+            ..
+        } => PlanStatus::Inconclusive,
         TerminalValue::Proved { .. } => PlanStatus::Proved,
         TerminalValue::Refuted => PlanStatus::Refuted,
         TerminalValue::Tested => PlanStatus::Tested,
@@ -301,114 +404,359 @@ fn model_based_test(
     Err(fault("model-based-test-entry-unavailable-QSL-2237"))
 }
 
-fn run_step(
-    package: &CheckedPackage,
-    node: &VerificationPlanNode,
-    index: usize,
-    inputs: &PlanInputs<'_>,
-    engines: &Engines,
-    registry: &Registry,
-    negotiate: &dyn Negotiate,
-    limits: &AnalyzeLimits,
-    cancel: &Cancel,
-) -> Result<PlanDisposition, StageFailure<PlanRefusal>> {
-    if node.method.name == "model_based_test" {
-        return model_based_test(package, node, inputs, limits, cancel);
-    }
-    let binding = inputs.bindings.get(&node.name).ok_or_else(|| fault("missing-step-binding"))?;
-    let bound = node.bound.as_deref().map(str::parse::<u64>).transpose()
-        .map_err(|_| fault("invalid-method-bound"))?;
-    if node.method.name == "simulate" {
-        return simulate(package, node, index, binding, bound, limits, cancel);
-    }
-    let (kind, form, evidence) = match node.method.name.as_str() {
-        "model_check" => (Capability::TemporalSatisfaction,
-            Some(ItemForm::Temporal(TemporalItem {
-                max_depth: bound.map(usize::try_from).transpose().map_err(|_| fault("method-bound-overflow"))?,
-                ..TemporalItem::default()
-            })), None),
-        "contract_check" => (Capability::OperationContract, None, None),
-        "value_check" => (Capability::ValueValidity, None, None),
-        "probabilistic_exact" => (Capability::ProbabilisticSatisfaction,
-            Some(ItemForm::Probabilistic(probabilistic(false, inputs.seed)?)), Some(EvidenceKind::Exact)),
-        "probabilistic_statistical" => (Capability::ProbabilisticSatisfaction,
-            Some(ItemForm::Probabilistic(probabilistic(true, inputs.seed)?)), Some(EvidenceKind::Statistical)),
-        "hybrid_solver" => (Capability::TemporalSatisfaction,
-            Some(ItemForm::Hybrid(HybridItem::default())), None),
-        "schedulability" => (Capability::Schedulability, None, None),
-        "replay" => (Capability::FiniteReplay, None, None),
-        _ => return Err(fault("unknown-plan-method")),
-    };
-    let key = claim(package, node).ok_or_else(|| fault("unknown-plan-claim"))?;
-    let mut item = ClaimItem::new(package, RequestIndex::new(index), key, kind,
-        if bound.is_some() { ExtentClassification::Bounded } else {
-            ExtentClassification::Unbounded { finite_bound_available: false }
-        }).map_err(|_| fault("inapplicable-plan-claim"))?;
-    item.form = form;
-    item.options.max_cases = bound.and_then(NonZeroU64::new);
-    item.options.required = true;
-    let candidates = if let Some(evidence) = evidence {
-        registry.candidates_for_evidence(kind, &ItemEvidence::Kind(evidence), None)
-    } else {
-        registry.candidates_for_dynamics(kind, None, node.method.name == "hybrid_solver")
-    };
-    if let CandidateOutcome::Candidates(set) = &candidates {
-        item.candidates = set.candidates().to_vec();
-    }
-    let (disposition, diagnostic) = negotiate.negotiate(&item, &candidates);
-    let request = AnalyzeRequest {
-        binding: binding.clone(), provision: inputs.provision.clone(),
-        items: vec![NegotiatedItem { item, disposition, diagnostic }],
-    };
-    let outcome = analyze(package, &request, engines, limits, cancel)
-        .map_err(|_| fault("analyze-adapter"))?.into_value();
-    let record = outcome.records.into_iter().next().ok_or_else(|| fault("missing-step-record"))?;
-    let status = status(&record);
-    let evidence = match status {
-        PlanStatus::Proved => Some(if node.method.name == "replay" { "replay-disposition" } else { "proof" }),
-        PlanStatus::Refuted => Some("refutation"),
-        PlanStatus::Measured => Some("statistical"),
-        _ => None,
-    }.map(str::to_owned);
-    Ok(PlanDisposition { status, method: node.method.name.clone(), evidence,
-        blocked_by: None, result: Some(record), simulation: None })
+struct Execution<'a> {
+    package: &'a CheckedPackage,
+    inputs: &'a PlanInputs<'a>,
+    engines: &'a Engines,
+    registry: &'a Registry,
+    negotiate: &'a dyn Negotiate,
+    limits: &'a AnalyzeLimits,
+    cancel: &'a Cancel,
 }
 
-fn probabilistic(statistical: bool, seed: Option<u64>) -> Result<ProbabilisticItem, StageFailure<PlanRefusal>> {
+impl Execution<'_> {
+    fn run_step(
+        &self,
+        node: &VerificationPlanNode,
+        index: usize,
+    ) -> Result<PlanDisposition, StageFailure<PlanRefusal>> {
+        let (package, inputs, engines, registry, negotiate, limits, cancel) = (
+            self.package,
+            self.inputs,
+            self.engines,
+            self.registry,
+            self.negotiate,
+            self.limits,
+            self.cancel,
+        );
+        if node.method.name == "model_based_test" {
+            return model_based_test(package, node, inputs, limits, cancel);
+        }
+        let binding = inputs
+            .bindings
+            .get(&node.name)
+            .ok_or_else(|| fault("missing-step-binding"))?;
+        let bound = node
+            .bound
+            .as_deref()
+            .map(str::parse::<u64>)
+            .transpose()
+            .map_err(|_| fault("invalid-method-bound"))?;
+        if node.method.name == "simulate" {
+            return simulate(package, node, index, binding, bound, limits, cancel);
+        }
+        let (kind, mut form, evidence) = match node.method.name.as_str() {
+            "model_check" => (
+                Capability::TemporalSatisfaction,
+                Some(ItemForm::Temporal(TemporalItem {
+                    max_depth: bound
+                        .map(usize::try_from)
+                        .transpose()
+                        .map_err(|_| fault("method-bound-overflow"))?,
+                    ..TemporalItem::default()
+                })),
+                None,
+            ),
+            "contract_check" => (Capability::OperationContract, None, None),
+            "value_check" => (Capability::ValueValidity, None, None),
+            "probabilistic_exact" => (
+                Capability::ProbabilisticSatisfaction,
+                Some(ItemForm::Probabilistic(probabilistic(false, inputs.seed)?)),
+                Some(EvidenceKind::Exact),
+            ),
+            "probabilistic_statistical" => (
+                Capability::ProbabilisticSatisfaction,
+                Some(ItemForm::Probabilistic(probabilistic(true, inputs.seed)?)),
+                Some(EvidenceKind::Statistical),
+            ),
+            "hybrid_solver" => (
+                Capability::TemporalSatisfaction,
+                Some(ItemForm::Hybrid(HybridItem::default())),
+                None,
+            ),
+            "schedulability" => (Capability::Schedulability, None, None),
+            "replay" => (Capability::FiniteReplay, None, None),
+            _ => return Err(fault("unknown-plan-method")),
+        };
+        let key = claim(package, node).ok_or_else(|| fault("unknown-plan-claim"))?;
+        let fairness = package
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .find(|clause| clause.identity() == *key.node() && clause.claim() == key.origin())
+            .map(|clause| clause.clause().fairness().to_vec())
+            .unwrap_or_default();
+        if let Some(ItemForm::Temporal(temporal)) = &mut form {
+            temporal.fairness = fairness.clone();
+        }
+        let mut item = ClaimItem::new(
+            package,
+            RequestIndex::new(index),
+            key,
+            kind,
+            if bound.is_some() {
+                ExtentClassification::Bounded
+            } else {
+                ExtentClassification::Unbounded {
+                    finite_bound_available: false,
+                }
+            },
+        )
+        .map_err(|_| fault("inapplicable-plan-claim"))?;
+        item.form = form;
+        item.options.max_cases = bound.and_then(NonZeroU64::new);
+        item.options.required = true;
+        let candidates = if let Some(evidence) = evidence {
+            registry.candidates_for_evidence(kind, &ItemEvidence::Kind(evidence), None)
+        } else {
+            registry.candidates_for_temporal_dynamics(
+                kind,
+                None,
+                &fairness
+                    .iter()
+                    .map(|constraint| constraint.kind())
+                    .collect(),
+                &Default::default(),
+                node.method.name == "hybrid_solver",
+            )
+        };
+        if let CandidateOutcome::Candidates(set) = &candidates {
+            item.candidates = set.candidates().to_vec();
+        }
+        let (disposition, diagnostic) = negotiate.negotiate(&item, &candidates);
+        let request = AnalyzeRequest {
+            binding: binding.clone(),
+            provision: inputs.provision.clone(),
+            items: vec![NegotiatedItem {
+                item,
+                disposition,
+                diagnostic,
+            }],
+        };
+        let outcome = analyze(package, &request, engines, limits, cancel)
+            .map_err(|_| fault("analyze-adapter"))?
+            .into_value();
+        let record = outcome
+            .records
+            .into_iter()
+            .next()
+            .ok_or_else(|| fault("missing-step-record"))?;
+        let status = status(&record);
+        let evidence = match status {
+            PlanStatus::Proved | PlanStatus::Refuted | PlanStatus::Measured
+                if node.method.name == "probabilistic_exact" =>
+            {
+                Some("exact")
+            }
+            PlanStatus::Proved | PlanStatus::Refuted if node.method.name == "hybrid_solver" => {
+                Some("solver-result")
+            }
+            PlanStatus::Proved | PlanStatus::Refuted if node.method.name == "replay" => {
+                Some("replay-disposition")
+            }
+            PlanStatus::Proved => Some(if node.method.name == "replay" {
+                "replay-disposition"
+            } else {
+                "proof"
+            }),
+            PlanStatus::Refuted => Some("refutation"),
+            PlanStatus::Measured => Some("statistical"),
+            _ => None,
+        }
+        .map(str::to_owned);
+        Ok(PlanDisposition {
+            status,
+            method: node.method.name.clone(),
+            evidence,
+            blocked_by: None,
+            result: Some(PlanResult::Analysis(Box::new(record))),
+        })
+    }
+}
+
+fn probabilistic(
+    statistical: bool,
+    seed: Option<u64>,
+) -> Result<ProbabilisticItem, StageFailure<PlanRefusal>> {
     Ok(ProbabilisticItem {
-        evidence: if statistical { EvidenceKind::Statistical } else { EvidenceKind::Exact },
+        evidence: if statistical {
+            EvidenceKind::Statistical
+        } else {
+            EvidenceKind::Exact
+        },
         limits: if statistical {
             ProbabilisticLimits::Statistical(fsl_replay::statistical::StatisticalLimits::default())
-        } else { ProbabilisticLimits::Exact(crate::exact_probabilistic::ExactProbLimits::default()) },
+        } else {
+            ProbabilisticLimits::Exact(crate::exact_probabilistic::ExactProbLimits::default())
+        },
         method: statistical.then_some(fsl_replay::statistical::StatisticalMethod::Okamoto),
         seed: statistical.then_some(seed.unwrap_or(0)),
         sampler: if statistical {
-            Some(fsl_foundation::selection::DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1")
-                .map_err(|_| fault("sampler-identity"))?)
-        } else { None },
-        max_witnesses: None, symmetry: Vec::new(), timed_sampling: None,
+            Some(
+                fsl_foundation::selection::DefinitionRef::new(
+                    "agent-ix",
+                    "filament.simulation.sampler/v1",
+                )
+                .map_err(|_| fault("sampler-identity"))?,
+            )
+        } else {
+            None
+        },
+        max_witnesses: None,
+        symmetry: Vec::new(),
+        timed_sampling: None,
     })
 }
 
 fn simulate(
-    package: &CheckedPackage, node: &VerificationPlanNode, index: usize,
-    binding: &SubjectBinding<'_>, bound: Option<u64>, limits: &AnalyzeLimits, cancel: &Cancel,
+    package: &CheckedPackage,
+    node: &VerificationPlanNode,
+    index: usize,
+    binding: &SubjectBinding<'_>,
+    bound: Option<u64>,
+    limits: &AnalyzeLimits,
+    cancel: &Cancel,
 ) -> Result<PlanDisposition, StageFailure<PlanRefusal>> {
     let item = crate::analyze::SimulationItem {
-        index: RequestIndex::new(index), subject: None,
+        index: RequestIndex::new(index),
+        subject: None,
         settings: crate::analyze::SimulationSelection {
             mode: crate::analyze::SimulationMode::Enumerate,
-            seed: None, samples: None, max_steps: bound.and_then(NonZeroU64::new),
-            max_states: None, max_state_key_bytes: None,
+            seed: None,
+            samples: None,
+            max_steps: bound.and_then(NonZeroU64::new),
+            max_states: None,
+            max_state_key_bytes: None,
         },
     };
-    let (runs, category) = crate::analyze::simulation_item::simulate(package, binding, limits, &item, cancel)
-        .map_err(|_| fault("simulation-adapter"))?;
+    let (runs, category) =
+        crate::analyze::simulation_item::simulate(package, binding, limits, &item, cancel)
+            .map_err(|_| fault("simulation-adapter"))?;
     Ok(PlanDisposition {
         status: if category == filament_semantic_value::catalog::Category::Success {
             PlanStatus::Tested
-        } else { PlanStatus::Incomplete },
-        method: node.method.name.clone(), evidence: Some("simulation-runs".into()),
-        blocked_by: None, result: None, simulation: Some(runs),
+        } else {
+            PlanStatus::Incomplete
+        },
+        method: node.method.name.clone(),
+        evidence: Some("simulation-runs".into()),
+        blocked_by: None,
+        result: Some(PlanResult::Simulation(runs)),
     })
+}
+
+// FR-190's class S is distinct from requires-bound: a population without
+// a maximum consumes an admitted universe, and declared finite scalar
+// domains never consume max_value_bits. This classifies inputs only; it
+// does not generate cases or implement the FR-752 tester.
+fn consumes_value_bits(
+    system: &fsl_eval::simulation::model::ModelSystem<'_>,
+) -> Result<bool, StageFailure<PlanRefusal>> {
+    types_consume_value_bits(
+        system
+            .generation_domains()
+            .into_iter()
+            .map(|(_, _, ty)| ty)
+            .collect(),
+        system.input().types,
+    )
+}
+
+fn value_clause_consumes_bits(
+    package: &CheckedPackage,
+    node: &VerificationPlanNode,
+) -> Result<bool, StageFailure<PlanRefusal>> {
+    let Some(claim) = claim(package, node) else {
+        return Err(fault("unknown-plan-claim"));
+    };
+    let graph = package.graph();
+    for declared in graph
+        .semantic_graph()
+        .nodes()
+        .filter_map(|node| node.declaration())
+        .filter_map(|name| name.last())
+    {
+        let name = declared.as_str();
+        if fsl_replay::value_check::ValueTarget::select(package, name, &claim).is_ok() {
+            let callable = graph
+                .callable(name)
+                .ok_or_else(|| fault("value-clause-callable"))?;
+            return types_consume_value_bits(
+                callable
+                    .parameters
+                    .iter()
+                    .map(|(_, ty)| ty.clone())
+                    .collect(),
+                graph.scope().types(),
+            );
+        }
+    }
+    Ok(false)
+}
+
+fn types_consume_value_bits(
+    roots: Vec<filament_exact::ValueType>,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+) -> Result<bool, StageFailure<PlanRefusal>> {
+    use filament_exact::ValueType;
+    use filament_semantic_value::declaration::CompositeShape;
+    let mut pending: Vec<_> = roots.into_iter().map(|ty| (ty, Vec::new())).collect();
+    while let Some((ty, mut path)) = pending.pop() {
+        match &ty {
+            ValueType::Integer
+            | ValueType::Quantity(_)
+            | ValueType::String
+            | ValueType::Bytes
+            | ValueType::JsonObject => return Ok(true),
+            ValueType::Option(payload) => pending.push(((**payload).clone(), path)),
+            ValueType::Collection(collection) => {
+                if collection.bound().is_none() {
+                    return Ok(true);
+                }
+                pending.push((collection.element().clone(), path));
+            }
+            ValueType::Map(map) => {
+                if map.bound().is_none() {
+                    return Ok(true);
+                }
+                pending.push((map.key().clone(), path.clone()));
+                pending.push((map.values().clone(), path));
+            }
+            ValueType::Composite(key) => {
+                if path.contains(key) {
+                    return Ok(true);
+                }
+                path.push(key.clone());
+                let declaration = types
+                    .composite(key.clone())
+                    .ok_or_else(|| fault("generation-composite-missing"))?;
+                let members: Vec<_> = match declaration.shape() {
+                    CompositeShape::Record(fields) => fields
+                        .iter()
+                        .map(|field| field.value_type().clone())
+                        .collect(),
+                    CompositeShape::Tuple(positions) => positions.clone(),
+                    CompositeShape::Union(members) => members
+                        .iter()
+                        .flat_map(|member| member.positions().iter().cloned())
+                        .collect(),
+                };
+                pending.extend(members.into_iter().map(|ty| (ty, path.clone())));
+            }
+            ValueType::Boolean
+            | ValueType::Int(_)
+            | ValueType::Rational(_)
+            | ValueType::Decimal(_)
+            | ValueType::Float(_)
+            | ValueType::Text(_)
+            | ValueType::CarriedQuantity(_)
+            | ValueType::BoundedQuantity(_)
+            | ValueType::Uuid
+            | ValueType::Timestamp
+            | ValueType::Enum(_)
+            | ValueType::Reference(_)
+            | ValueType::Population(_) => {}
+        }
+    }
+    Ok(false)
 }
