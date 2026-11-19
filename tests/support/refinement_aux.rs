@@ -132,6 +132,8 @@ const PAIR_SPEC: &str = "example/pair-spec";
 const PAIR_IMPL: &str = "example/pair-impl";
 const COIN_SPEC: &str = "example/coin-spec";
 const COIN_IMPL: &str = "example/coin-impl";
+const HIDDEN_FAIRNESS_SPEC: &str = "example/hidden-fairness-spec";
+const HIDDEN_FAIRNESS_IMPL: &str = "example/hidden-fairness-impl";
 
 fn integer_field(value: i64) -> Json {
     json!({"integer": value.to_string()})
@@ -277,6 +279,85 @@ impl Unit {
             concrete_initials: vec![json!({"value": integer_field(0)})],
             abstract_extra: Vec::new(),
         }
+    }
+
+    /// A concrete `tick` that stutters visibly and an abstract `M` with a
+    /// bounded hidden `h` field and the named abstract operations. The
+    /// operation clauses are supplied by hidden-field liveness fixtures.
+    pub fn hidden_fairness_model(
+        hidden_max: u32,
+        hidden_initial: i64,
+        abstract_operations: &[&str],
+        contracts: &str,
+    ) -> Self {
+        let model = |package: &'static str, abstract_side: bool| {
+            let level = node(package, "Level");
+            let operations = if abstract_side {
+                abstract_operations
+                    .iter()
+                    .map(|name| operation(package, "M", name, &[], None, &["v", "h"]))
+                    .collect()
+            } else {
+                vec![operation(package, "M", "tick", &[], None, &[])]
+            };
+            let object = if abstract_side {
+                object_type(
+                    package,
+                    "M",
+                    vec![
+                        single(package, "M", "v", &level),
+                        single(package, "M", "h", &level),
+                    ],
+                    operations,
+                )
+            } else {
+                object_type(
+                    package,
+                    "M",
+                    vec![single(package, "M", "v", &level)],
+                    operations,
+                )
+            };
+            document(
+                package,
+                vec![bounded(package, "Level", hidden_max), object],
+                vec![population(package, "ms", "M")],
+            )
+        };
+        Self {
+            kernel: false,
+            keys: vec!["m"],
+            present: vec!["m"],
+            abstract_package: HIDDEN_FAIRNESS_SPEC,
+            concrete_package: HIDDEN_FAIRNESS_IMPL,
+            object: "M",
+            population: "ms",
+            documents: (
+                model(HIDDEN_FAIRNESS_SPEC, true),
+                model(HIDDEN_FAIRNESS_IMPL, false),
+            ),
+            contracts: contracts.to_owned(),
+            abstract_fields: json!({
+                "v": integer_field(0),
+                "h": integer_field(hidden_initial),
+            }),
+            concrete_initials: vec![json!({"v": integer_field(0)})],
+            abstract_extra: Vec::new(),
+        }
+    }
+
+    /// Add further abstract snapshots that differ only in hidden `h`.
+    pub fn with_hidden_initials(mut self, hidden_values: &[i64]) -> Self {
+        self.abstract_extra = hidden_values
+            .iter()
+            .map(|hidden| {
+                json!({
+                    "v": integer_field(0),
+                    "h": integer_field(*hidden),
+                })
+            })
+            .collect();
+        self
     }
 
     /// FR-143-AC-3's `Pair`: abstract and concrete `Pair` with `a` and `b` in
