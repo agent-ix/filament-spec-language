@@ -423,3 +423,166 @@ fn a_float_model_field_exports_its_exact_bits() {
         "no rational stands for the float field: {target}"
     );
 }
+
+#[test]
+#[trace("TC-3020", "FR-1015-AC-9")]
+#[ignore = "QSL-1979: malformed export members refused with invalid_runtime_input and their FR-805 cause members are not implemented yet"]
+fn a_malformed_export_member_refuses_with_its_code_and_cause() {
+    let mut absent = tla(json!([]));
+    absent.as_object_mut().unwrap().remove("obligations");
+    let mut kind = tla(json!(["Bounded"]));
+    kind["minimum_fidelity"] = json!(7);
+    for (member, cause, path) in [
+        (tla(json!([])), "invalid-value", "/request/export/obligations"),
+        (absent, "missing-member", "/request/export/obligations"),
+        (kind, "wrong-value-kind", "/request/export/minimum_fidelity"),
+    ] {
+        let (exit, value) = counter_export(member);
+        assert_eq!(exit, 20, "{value}");
+        assert_eq!(value["code"], "invalid_runtime_input", "{value}");
+        assert_eq!(value["cause"], cause, "{value}");
+        assert_eq!(value["details"]["path"], path, "{value}");
+    }
+}
+
+#[test]
+#[trace("TC-3020", "FR-1015-AC-10")]
+#[trace("FSpec-TC-2040", "FSpec-FR-817-AC-13")]
+#[ignore = "QSL-1979: an observer the build cannot run refused unsupported_projection/unsupported-requested-capability, exit 21, is not implemented yet"]
+fn an_observer_the_build_cannot_run_is_unsupported() {
+    let mut member = tla(json!(["SlowEnough"]));
+    member["minimum_fidelity"] = json!("any");
+    let (exit, value) = export(BRAKING, false, member.clone());
+    assert_eq!(exit, 0, "{value}");
+    member["observer"] = json!("tlc");
+    member["output"] = json!({"file": "m.tla"});
+    let (exit, value) = export(BRAKING, false, member);
+    assert_eq!(exit, 21, "{value}");
+    names(&value, "unsupported_projection");
+    names(&value, "unsupported-requested-capability");
+    names(&value, "tlc");
+    assert!(!value.to_string().contains("invalid-request"), "{value}");
+    assert!(value["export"].get("target_text").is_none(), "{value}");
+    assert!(value["export"].get("package").is_none(), "{value}");
+    let mut limited = member_with_observer();
+    limited["limits"] = json!({"export.nodes": 1});
+    let (exit, value) = export(BRAKING, false, limited);
+    assert_eq!(exit, 21, "{value}");
+    names(&value, "unsupported-requested-capability");
+}
+
+fn member_with_observer() -> Value {
+    let mut member = tla(json!(["SlowEnough"]));
+    member["minimum_fidelity"] = json!("any");
+    member["observer"] = json!("tlc");
+    member
+}
+
+#[test]
+#[trace("TC-3020", "FR-1015-AC-11")]
+#[trace("FSpec-TC-2040", "FSpec-FR-817-AC-11")]
+#[ignore = "QSL-1979: the limit-reached cause of an incomplete export is not implemented yet"]
+fn an_incomplete_export_names_its_limit_reached() {
+    let mut member = tla(json!(["Bounded"]));
+    member["limits"] = json!({"export.work_units": 1});
+    let (exit, value) = counter_export(member.clone());
+    assert_eq!(exit, 22, "{value}");
+    assert_eq!(value["export"]["status"], "incomplete", "{value}");
+    assert_eq!(value["export"]["records"], json!([]), "{value}");
+    assert_eq!(
+        value["export"]["cause"],
+        json!({"type": "limit-reached", "limit": "work_units", "value": 1,
+            "setting": "export.work_units"}),
+        "{value}"
+    );
+    member["limits"] = json!({"export.nodes": 1, "export.work_units": 1});
+    let (exit, value) = counter_export(member);
+    assert_eq!(exit, 22, "{value}");
+    assert_eq!(
+        value["export"]["cause"],
+        json!({"type": "limit-reached", "limit": "nodes", "value": 1,
+            "setting": "export.nodes"}),
+        "{value}"
+    );
+}
+
+#[test]
+#[trace("TC-3020", "FR-1015-AC-12")]
+#[trace("FSpec-TC-2040", "FSpec-FR-817-AC-12")]
+#[ignore = "QSL-1979: export.nodes charged once per distinct node of the closures' union is not implemented yet"]
+fn a_shared_closure_node_is_charged_once() {
+    let unit = format!(
+        "{SPINE_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n\
+         invariant High using v on Config::ConfigVersion at current {{ self.versionNumber <= 100 }}\n"
+    );
+    let least = |obligations: Value| -> u64 {
+        (1..=4096)
+            .find(|nodes| {
+                let mut member = tla(obligations.clone());
+                member["limits"] = json!({"export.nodes": nodes});
+                let (exit, value) = export(&unit, true, member);
+                exit == 0 && value["export"]["status"] == "assembled"
+            })
+            .expect("the export assembles under some export.nodes")
+    };
+    let low = least(json!(["Low"]));
+    let high = least(json!(["High"]));
+    let both = least(json!(["Low", "High"]));
+    assert!(both < low + high, "{both} < {low} + {high}");
+    assert!(both >= low.max(high), "{both} >= max({low}, {high})");
+}
+
+#[test]
+#[trace("TC-3020", "FR-1015-AC-13")]
+#[trace("FSpec-TC-2040", "FSpec-FR-811-AC-8")]
+#[ignore = "QSL-1979: the canonical node text and the null locus of an unrepresentable cause are not implemented yet"]
+fn a_cause_names_its_node_by_canonical_text() {
+    let mut member = tla(json!(["SlowEnough"]));
+    member["minimum_fidelity"] = json!("any");
+    let (exit, value) = export(BRAKING, false, member);
+    assert_eq!(exit, 0, "{value}");
+    let causes = value["export"]["records"][0]["causes"]
+        .as_array()
+        .expect("causes");
+    assert!(!causes.is_empty(), "{value}");
+    for cause in causes {
+        let node = cause["node"].as_str().expect("a string node");
+        fsl_replay::protocol_analysis::read_node_text(node).expect("canonical node text");
+        let locus = &cause["locus"];
+        assert!(
+            locus.is_null()
+                || (locus["kind"] == "region"
+                    && locus["start"].as_u64() < locus["end"].as_u64()),
+            "{cause}"
+        );
+        for entry in value["export"]["name_map"].as_array().into_iter().flatten() {
+            if let Some(text) = entry["node"].as_str() {
+                if fsl_replay::protocol_analysis::read_node_text(text).ok()
+                    == fsl_replay::protocol_analysis::read_node_text(node).ok()
+                {
+                    assert_eq!(text, node, "{entry}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[trace("FSpec-TC-2040", "FSpec-FR-811-AC-7")]
+#[ignore = "QSL-1979: the mode and jump skeleton of an unrepresented hybrid claim is not lowered yet"]
+fn an_unrepresented_claim_still_exports_its_model() {
+    let mut member = tla(json!(["SlowEnough"]));
+    member["minimum_fidelity"] = json!("any");
+    let (exit, value) = export(BRAKING, false, member);
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(value["export"]["records"][0]["regions"], json!([]), "{value}");
+    let module = text(&value);
+    let init = module
+        .split("\n\n")
+        .find(|definition| definition.contains("Init =="))
+        .expect("an Init definition");
+    assert!(init.contains("Moving"), "{init}");
+    assert!(module.contains("Stopped"), "{module}");
+    let entries = value["export"]["name_map"].as_array().expect("a name map");
+    assert!(entries.len() >= 2, "{value}");
+}
