@@ -128,8 +128,31 @@ struct SnapshotObject {
     key: String,
 }
 
-fn route_error(error: impl std::fmt::Display) -> RunCause {
-    invalid("clause", error.to_string())
+fn route_error(error: impl std::fmt::Debug) -> RunCause {
+    invalid("clause", format!("{error:?}"))
+}
+
+fn model_test_error(error: fsl_eval::simulation::model::ModelBasedTestError) -> RunCause {
+    use fsl_eval::simulation::model::ModelBasedTestError;
+
+    match error {
+        ModelBasedTestError::EmptyCaseBound => {
+            invalid("max_cases", "must be a positive integer")
+        }
+        ModelBasedTestError::EmptyTraceBound => {
+            invalid("max_trace_length", "must be a positive integer")
+        }
+        ModelBasedTestError::InvalidValueBits => {
+            invalid("max_value_bits", "must be between 1 and 64")
+        }
+        ModelBasedTestError::MissingValueBits => {
+            invalid("max_value_bits", "required for an unbounded integer parameter")
+        }
+        ModelBasedTestError::EmptyValueRoots => {
+            invalid("clause", "value-clause request has no parameter roots")
+        }
+        other => route_error(other),
+    }
 }
 
 pub(super) fn prepare(
@@ -202,12 +225,89 @@ pub(super) fn prepare(
     .map_err(route_error)?
     .into_value();
     let input = fsl_eval::simulation::model::ModelCheckInput::source(checked.package());
-    if !input
+    let is_state_clause = input
         .state_clauses
         .iter()
-        .any(|clause| clause.name == selection.clause)
-    {
-        return Err(invalid(&selection.clause, "unknown clause"));
+        .any(|clause| clause.name == selection.clause);
+    if !is_state_clause {
+        let callable = checked
+            .package()
+            .graph()
+            .callable(&selection.clause)
+            .ok_or_else(|| invalid(&selection.clause, "unknown clause"))?;
+        if callable.result != &filament_exact::ValueType::Boolean {
+            return Err(invalid(
+                &selection.clause,
+                "value clause must return Boolean",
+            ));
+        }
+        if callable
+            .parameters
+            .iter()
+            .any(|(_, value_type)| value_type != &filament_exact::ValueType::Integer)
+        {
+            return Err(invalid(
+                &selection.clause,
+                "value-clause parameters must have Integer type",
+            ));
+        }
+        let parameters = callable
+            .parameters
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
+        let package = checked.package();
+        let function =
+            fsl_eval::value::QualifiedName::unqualified(&selection.clause).map_err(route_error)?;
+        let record = fsl_eval::simulation::model::run_value_model_based_test(
+            &selection.clause,
+            &package_name(source.source().identity()),
+            &parameters,
+            selection.max_cases,
+            selection.seed,
+            selection.max_value_bits,
+            |arguments| {
+                use fsl_eval::value::CheckedPackageEvaluation;
+
+                let values = arguments.to_vec();
+                let mut meter = filament_exact::Meter::new(
+                    fsl_replay::spine::default_accounting(10_000),
+                );
+                match package.call(
+                    &function,
+                    values,
+                    &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
+                    &mut meter,
+                ) {
+                    Ok(evaluation) => match evaluation.outcome {
+                        filament_eval::FamilyOutcome::Evaluated(
+                            filament_exact::Outcome::Completed(filament_exact::Value::Boolean(
+                                true,
+                            )),
+                        ) => fsl_eval::simulation::model::ModelBasedTestOutcome::Passed,
+                        filament_eval::FamilyOutcome::Evaluated(
+                            filament_exact::Outcome::Completed(filament_exact::Value::Boolean(
+                                false,
+                            )),
+                        ) => fsl_eval::simulation::model::ModelBasedTestOutcome::Failed {
+                            disposition: "predicate-false".to_owned(),
+                        },
+                        _ => fsl_eval::simulation::model::ModelBasedTestOutcome::Discarded {
+                            reason: "native-evaluation-incomplete".to_owned(),
+                        },
+                    },
+                    Err(_) => fsl_eval::simulation::model::ModelBasedTestOutcome::Discarded {
+                        reason: "native-evaluation-refused".to_owned(),
+                    },
+                }
+            },
+        )
+        .map_err(model_test_error)?;
+        let sources = crate::Sources::from_sources(intake.sources.iter().cloned());
+        return Ok(PreparedRun::ModelBasedTest(PreparedModelBasedTestRun {
+            record,
+            sources,
+        }));
     }
     let initial_file = selection
         .initial
@@ -250,7 +350,7 @@ pub(super) fn prepare(
             expansion: fsl_eval::simulation::model::ExpansionLimits {
                 max_candidates: 1_000_000,
             },
-            meter: filament_exact::ScalarLimits::default(),
+            meter: fsl_replay::spine::default_accounting(10_000),
             emit: fsl_replay::spine::SpineLimits::default().package.emit(),
         },
     )
@@ -293,7 +393,7 @@ pub(super) fn prepare(
             }
         },
     )
-    .map_err(route_error)?;
+    .map_err(model_test_error)?;
     let sources = crate::Sources::from_sources(intake.sources.iter().cloned());
     Ok(PreparedRun::ModelBasedTest(PreparedModelBasedTestRun {
         record,

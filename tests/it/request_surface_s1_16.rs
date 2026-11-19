@@ -897,6 +897,41 @@ fn model_based_test_request_rules() {
     refusal_names(&mbt(unknown), "Nothing");
 }
 
+/// FSpec FR-190-AC-8 and FR-752-AC-5: a direct value-clause request evaluates
+/// generated Integer assignments with the checked package's native oracle and
+/// retains a reproduced, minimized failing assignment.
+#[test]
+#[trace("TC-2102", "FR-752-AC-5")]
+#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-8")]
+fn model_based_test_value_clause_runs_and_shrinks_natively() {
+    let unit = format!(
+        "{VALUE_HEADER}predicate BelowTwoHundred using v (x: Integer): Boolean {{ x < 200 }}\n"
+    );
+    let (_, value) = run(
+        &unit,
+        false,
+        (
+            "model_based_test",
+            json!({
+                "clause": "BelowTwoHundred",
+                "seed": 7,
+                "max_cases": 20,
+                "max_value_bits": 8,
+            }),
+        ),
+    );
+    let record = &value["model_based_test"];
+    assert_eq!(record["status"], "refuted", "{value}");
+    assert_eq!(record["cases"]["generated"], 5, "{value}");
+    assert_eq!(record["counterexample"]["minimality"], "1-minimal", "{value}");
+    assert_eq!(record["counterexample"]["replay"], "reproduced", "{value}");
+    assert_eq!(
+        record["counterexample"]["assignment"][0]["value"],
+        json!({"type": "integer", "value": "200"}),
+        "{value}"
+    );
+}
+
 // ---- FR-931: the `tl_lowering` request member ---------------------------
 
 /// FR-757-AC-1's `Low` under `profile`, with the body `body`.
