@@ -465,3 +465,57 @@ fn a_drifting_violation_has_no_periodic_counterexample() {
         "{outcome:?}"
     );
 }
+
+/// FR-235-AC-7's settled record of `world`'s claim, through the core
+/// checker and FR-237's replay, in its `Debug` spelling.
+fn settled_non_zeno(world: &World) -> String {
+    let outcome = decide(world);
+    let record = fsl_analyze::zone_check::settle_zone_check(
+        fsl_analyze::zone_check::ZoneItem::Outcome(&outcome),
+        &Cancel::new(),
+        |certificate| {
+            crate::zone_search::check(
+                world,
+                certificate,
+                fsl_replay::CertificateCheckLimits::default(),
+            )
+        },
+        |payload| {
+            replay(world, payload).map(|settlement| fsl_replay::ModelTraceReplayResult {
+                settlement,
+                hints: Vec::new(),
+                terminals: Default::default(),
+            })
+        },
+    );
+    format!("{record:?}")
+}
+
+/// FR-235-AC-7: every record EN-6 settles on its liveness product states
+/// what the verdict owes to the non-Zeno premise, and a TT-1 record does
+/// not.
+#[trace("TC-3021", "FR-235-AC-7")]
+#[trace("FSpec-TC-2041", "FSpec-FR-416-AC-10")]
+#[test]
+#[ignore = "QSL-2450: ZoneCheckRecord::non_zeno (FSpec FR-416 non_zeno member) is not implemented yet"]
+fn a_liveness_record_states_its_non_zeno_premise() {
+    let cases = [
+        (response(4, ""), "non_zeno: Some(NotRequired)"),
+        (rpc_reply_loop(), "non_zeno: Some(Assumed)"),
+        (rpc_echo(), "non_zeno: Some(Checked)"),
+        (
+            windowed(
+                &["x"],
+                &[("ping", &[])],
+                "time invariant Stall when { true } { self.x <= 1 ms }\n",
+                "always eventually holds(true)",
+            ),
+            "non_zeno: Some(Refuted)",
+        ),
+        (crate::zone_search::rpc(4), "non_zeno: None"),
+    ];
+    for (world, expected) in cases {
+        let record = settled_non_zeno(&world);
+        assert!(record.contains(expected), "{expected}: {record}");
+    }
+}

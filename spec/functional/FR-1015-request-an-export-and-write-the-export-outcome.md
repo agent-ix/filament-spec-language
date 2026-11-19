@@ -58,7 +58,19 @@ writes no target bytes of its own, so the two give byte-identical files.
 - A request below its floor SHALL write `status` `refused` with
   `below-fidelity-floor`, no `target_text`, exit `21`.
 - A denied export charge SHALL write `status` `incomplete` naming
-  `export.<counter>`, exit `22`.
+  `export.<counter>`, exit `22`. The outcome carries FSpec FR-817's `cause`
+  `limit-reached{limit, value, setting}`: `limit` the counter
+  (`output_bytes`, `nodes` or `work_units`), `value` its effective bound
+  and `setting` its FR-255 name, with `records` `[]`.
+- FSL SHALL charge FSpec FR-817's counters as that requirement counts
+  them. Classification charges one `export.nodes` unit and one
+  `export.work_units` unit for each distinct node of the union of the
+  requested obligations' dependency closures, so a node that two closures
+  share is read, and charged, once. A node's `export.nodes` charge is made
+  before its `export.work_units` charge, so a node that would exceed both
+  names `export.nodes`. Writing the text charges one `export.work_units`
+  unit for each output region it writes, beside the `export.output_bytes`
+  charge for its bytes.
 - An assembled export SHALL write FSpec FR-817's `package` member: the
   source package reference, the target profile, the generator identity and
   version, and the effective value of each of the three export limits.
@@ -76,7 +88,15 @@ writes no target bytes of its own, so the two give byte-identical files.
   family (`tla` or `lean`, not the profile), `construct` as the node's
   `node_tag`/`semantic_form`, `node` as its node id and `locus` as its
   region in FR-286's `{"kind": "region", "source", "start", "end"}` locus
-  form. FSL has no record, cause or exit for a construct it has not lowered.
+  form. `node` SHALL be a JSON string holding the canonical text of the
+  node's `CheckedNodeId` (ADR-036 PA-24: the RFC 8785 text of its V2 wire
+  object), the same text the outcome's `name_map` entries and the FSpec
+  FR-814 `fsl:` comments use, so a reader matches a cause to a name-map
+  entry or a comment by string equality. `locus` SHALL be the first region
+  the package's source map gives that node, and `null` when the source map
+  gives it none, as FR-286 writes an unlocated source refusal; FSL never
+  writes another node's region or an offset-zero region in its place (FSpec
+  FR-203 "Absence"). FSL has no record, cause or exit for a construct it has not lowered.
   Meeting one is a mapper failure, `internal-failure` with exit `30` and no
   package or file, so the floor refuses (exit `21`) only for constructs the
   target cannot state.
@@ -88,6 +108,35 @@ writes no target bytes of its own, so the two give byte-identical files.
   `constraint` clause, or a name that the program does not declare, gives a
   `refused` record with `not-an-obligation{name}` in request order, not a
   whole-request refusal.
+- A malformed `export` member SHALL refuse with code
+  `invalid_runtime_input` and one of FSpec FR-805's causes
+  (`missing-member`, `unknown-member`, `duplicate-member`,
+  `wrong-value-kind`, `invalid-value`) as the diagnostic's own `code` and
+  `cause` members, `details` `{"path": P}` with `P` the member's pointer
+  under `/request/export`, exit `20`. These are the FR-286 and FSpec
+  FR-301 code and cause pairs every other run-request member refuses with,
+  so a caller tells an absent obligation set from an empty one by the
+  `cause` member, not by reading the message. `invalid-request` remains the
+  code of a request whose members are each well formed but that contradicts
+  itself or the file system: a setting given in both `export.limits` and
+  `RequestOverrides::limits`, `export.output` beside
+  `RequestOverrides::output`, an existing output path and an unknown
+  `limits` setting name.
+- The `observer` member names one of FSpec FR-817's structural observers
+  (`sany`, `tlc`, `apalache`, `lean`). A request naming an observer this
+  build has no backend for SHALL refuse `unsupported_projection`/
+  `unsupported-requested-capability`, naming the observer, with `details`
+  `{"path": "/request/export/observer"}`, category unsupported, exit `21`,
+  `last_stage` null, no package and no file. A request naming an observer
+  the build runs but whose tool the host does not provide SHALL refuse
+  `unsupported_projection`/`tool-unavailable` naming the observer and the
+  tool, exit `21`, likewise. Neither is `invalid-request`: the request is
+  well formed and the build or host lacks the capability, which is FSpec
+  FR-272's `unsupported_projection` case and FR-290's negotiation refusal,
+  as FR-286 settles an unbuilt engine `unsupported` rather than refusing
+  the request. The refusal comes after admission and before
+  classification, so a caller who asked for an observer gets its run or a
+  refusal naming it, never a package without it.
 - FSL SHALL stop in FSpec FR-817's order: admission, then classification
   (`export.nodes` and per-node `export.work_units`), then the floor, then
   the text (`export.output_bytes` and per-region `export.work_units`). A
@@ -112,6 +161,11 @@ writes no target bytes of its own, so the two give byte-identical files.
 | FR-1015-AC-6 | `obligations` `[]` refuses `invalid-value` at `/request/export/obligations`, exit `20`. `["CanInc", "Bounded", "Nope"]` gives three records in that order, with `CanInc` and `Nope` `refused` with `not-an-obligation`, and exit `21`. | Test (TC-3002) |
 | FR-1015-AC-7 | `SlowEnough` under the default floor with `limits` `{"export.output_bytes": 1}` refuses `below-fidelity-floor`, exit `21`. | Test (TC-3002) |
 | FR-1015-AC-8 | The counter export's `generator` is `{"identity": "filament-spec-language", "version": V}` with `V` equal to `filament_spec_language::VERSION`. | Test (TC-3002) |
+| FR-1015-AC-9 | The counter request with `obligations` `[]` refuses with `code` `invalid_runtime_input`, `cause` `invalid-value` and `details.path` `/request/export/obligations`, exit `20`; without the member, `cause` `missing-member` at the same path; with `minimum_fidelity` `7`, `cause` `wrong-value-kind` at `/request/export/minimum_fidelity`. None of the three has `code` `invalid-request`. | Test (TC-3020) |
+| FR-1015-AC-10 | `SlowEnough` over `Braking` under `minimum_fidelity` `any` with `observer` `tlc`, in a build with no TLC backend, refuses `unsupported_projection`/`unsupported-requested-capability` naming `tlc`, exit `21`, with no `target_text`, no `package` and no file at its `output` path; the same request without `observer` assembles, exit `0`. | Test (TC-3020) |
+| FR-1015-AC-11 | The counter export under `export.work_units` 1 writes `status` `incomplete`, `records` `[]` and `cause` `{"type": "limit-reached", "limit": "work_units", "value": 1, "setting": "export.work_units"}`, exit `22`; under `export.nodes` 1 its `cause` names `nodes`, value 1 and `export.nodes`, though `export.work_units` 1 is also set. | Test (TC-3020) |
+| FR-1015-AC-12 | Over the spine unit with invariants `Low` and `High` over `Config::ConfigVersion`, let `n(S)` be the least `export.nodes` under which the export of obligations `S` is not `incomplete`. Then `n(["Low", "High"])` is less than `n(["Low"]) + n(["High"])` and at least the greater of the two. | Test (TC-3020) |
+| FR-1015-AC-13 | Every `target-unrepresentable` cause of `SlowEnough` over `Braking` under `any` has a string `node` that reads back as a `CheckedNodeId` of the package and re-encodes to the same text, and a `locus` that is either `null` or a region with `start < end`; a cause's `node` equals the `node` of the `name_map` entry, if one exists, for the same node. | Test (TC-3020) |
 
 ## Dependencies
 
