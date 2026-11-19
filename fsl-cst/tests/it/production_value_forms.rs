@@ -888,7 +888,7 @@ fn clock_types_and_unannotated_let_bindings_keep_their_declared_contexts() {
 #[test]
 #[trace("FSpec-FR-339-AC-1")]
 fn graph_boolean_and_unbounded_unary_forms_keep_their_precedence() {
-    let predicate = "a or b and not c implies d";
+    let predicate = "eventually a or b and not c implies d";
     let declaration = format!("always possible Reach using v {{ {predicate} }}");
     let source = unit(&declaration);
     let parsed = accepted(&source);
@@ -907,7 +907,7 @@ fn graph_boolean_and_unbounded_unary_forms_keep_their_precedence() {
             implication,
             Production::StateGraphDisjunction
         ),
-        ["a or b and not c"]
+        ["eventually a or b and not c"]
     );
     assert_eq!(
         children(
@@ -922,7 +922,7 @@ fn graph_boolean_and_unbounded_unary_forms_keep_their_precedence() {
         &source,
         &parsed,
         Production::StateGraphDisjunction,
-        "a or b and not c",
+        "eventually a or b and not c",
     );
     assert_eq!(
         children(
@@ -931,7 +931,7 @@ fn graph_boolean_and_unbounded_unary_forms_keep_their_precedence() {
             disjunction,
             Production::StateGraphConjunction
         ),
-        ["a", "b and not c"]
+        ["eventually a", "b and not c"]
     );
     for operator in ["eventually", "always", "once", "historically"] {
         let predicate = format!("{operator} (s.ready or s.done)");
