@@ -168,16 +168,15 @@ fn collect_time_unit_scales(
         let scale = bare
             .and_then(|bare| bare.time_unit_scale(unit))
             .or_else(|| {
-                source
-                    .and_then(|source| {
-                        source
-                            .read
-                            .source()
-                            .graph()
-                            .time_unit_scale(unit)
-                            .ok()
-                            .cloned()
-                    })
+                source.and_then(|source| {
+                    source
+                        .read
+                        .source()
+                        .graph()
+                        .time_unit_scale(unit)
+                        .ok()
+                        .cloned()
+                })
             });
         if let Some(scale) = scale {
             scales.insert(unit.into(), scale);

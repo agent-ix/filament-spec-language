@@ -72,7 +72,13 @@ pub(super) fn admit_trace(
         signal: subject.signal,
         occurrence,
     };
-    admit_defined(&definition, &request.positions, request.cover, binding, trace)
+    admit_defined(
+        &definition,
+        &request.positions,
+        request.cover,
+        binding,
+        trace,
+    )
 }
 
 fn admit_defined(
@@ -98,12 +104,45 @@ fn admit_defined(
         ));
     }
     let bytes = subject.canonical_package_bytes;
-    let producer =
-        super::producer::admitted().map_err(|_| fault("observation-producer-bundle-admits"))?;
     let package_digest: [u8; 32] = Sha256::digest(bytes).into();
     let package_digest = Digest::new(package_digest);
     let clock = &binding.clock;
     let time_factor = nanos_per_tick(binding, subject.time_unit_scale)?;
+    // A caller limit or an unrepresentable timestamp must be reported
+    // before deriving any owner identity, even at a later position.
+    for position in positions {
+        let value = canonical_position_value(position)?;
+        if value.len() > owner_limits.max_string_bytes {
+            return Err(refusal(
+                "stage-limit-exceeded",
+                "positions",
+                &[
+                    ("bound", owner_limits.max_string_bytes.to_string()),
+                    ("actual", value.len().to_string()),
+                    (
+                        "setting",
+                        "filament_observation::authority::Limits.max_string_bytes".to_owned(),
+                    ),
+                    ("position", position.observation.identity.clone()),
+                ],
+            ));
+        }
+        let nanos = scaled_nanos(position.position, &time_factor, position)?;
+        anchor_of(clock, position.position, nanos, &time_factor, position)?;
+        if let Some(arrival) = position.arrival {
+            scaled_nanos(arrival, &time_factor, position)?;
+        }
+        let uncertainty = match cover {
+            ClockCover::Exact => 0,
+            ClockCover::Counter { uncertainty } | ClockCover::Bounded { uncertainty } => {
+                uncertainty
+            }
+        };
+        u64::try_from(scaled_nanos(uncertainty, &time_factor, position)?)
+            .map_err(|_| unrepresentable(position, "clock_uncertainty_nanos"))?;
+    }
+    let producer =
+        super::producer::admitted().map_err(|cause| owner_fault("producer-bundle", cause))?;
     let clock_identity = Identity::new(binding.clock_name.to_string());
     let clock_revision = Identity::new(binding.profile.identity.to_string());
     let unit = format!("{}/4", clock_unit(clock));
@@ -154,13 +193,12 @@ fn admit_defined(
             .get(source_index)
             .ok_or_else(|| fault("supplied-index-names-a-request-position"))?;
         let event_time_nanos = scaled_nanos(observed.stamp, &time_factor, position)?;
-        // An absent arrival uses FR-944's interim placeholder. No ingestion
-        // ordering or report may treat that placeholder as an arrival.
+        // The owner now admits an unrecorded ingestion instant. Absence is
+        // never promoted to an asserted arrival or an ordering premise.
         let ingestion_time_nanos = position
             .arrival
             .map(|arrival| scaled_nanos(arrival, &time_factor, position))
-            .transpose()?
-            .unwrap_or(event_time_nanos);
+            .transpose()?;
         let anchor = anchor_of(
             clock,
             observed.stamp,
@@ -176,21 +214,6 @@ fn admit_defined(
             }
         };
         let value = canonical_position_value(position)?;
-        if value.len() > owner_limits.max_string_bytes {
-            return Err(refusal(
-                "stage-limit-exceeded",
-                "positions",
-                &[
-                    ("bound", owner_limits.max_string_bytes.to_string()),
-                    ("actual", value.len().to_string()),
-                    (
-                        "setting",
-                        "filament_observation::authority::Limits.max_string_bytes".to_owned(),
-                    ),
-                    ("position", position.observation.identity.clone()),
-                ],
-            ));
-        }
         let mut record = AdmittedRecord {
             identity: Identity::new("pending"),
             binding_identity: Identity::new(binding_identity.clone()),
@@ -234,7 +257,12 @@ fn admit_defined(
             .or_default()
             .push(position.observation.identity.clone());
         anchors.push(anchor);
-        position_records.push((record_identity, observed.stamp, ingestion_time_nanos, position));
+        position_records.push((
+            record_identity,
+            observed.stamp,
+            ingestion_time_nanos,
+            position,
+        ));
     }
 
     for identities in side_map.values_mut() {
@@ -358,19 +386,29 @@ impl OwnerObservation {
         if matches!(supplied, Valuation::Undefined(_)) {
             return Ok(supplied.clone());
         }
-        let fact = self.partial_facts.iter().find(|fact| {
-            fact.atom == atom
-                && fact.instance.as_ref() == instance
-                && self.side_map.get(&fact.record_identity).is_some_and(|labels| {
-                    labels.iter().any(|label| label == observation)
-                })
-        }).ok_or_else(|| InternalFault::new("temporal.evidence", "supplied-boolean-has-owner-fact"))?;
+        let fact = self
+            .partial_facts
+            .iter()
+            .find(|fact| {
+                fact.atom == atom
+                    && fact.instance.as_ref() == instance
+                    && self
+                        .side_map
+                        .get(&fact.record_identity)
+                        .is_some_and(|labels| labels.iter().any(|label| label == observation))
+            })
+            .ok_or_else(|| {
+                InternalFault::new("temporal.evidence", "supplied-boolean-has-owner-fact")
+            })?;
         let view = fact.view.payload();
         match (view.can_be_false(), view.can_be_true()) {
             (false, true) => Ok(Valuation::True),
             (true, false) => Ok(Valuation::False),
             (true, true) => Ok(Valuation::Missing),
-            (false, false) => Err(InternalFault::new("temporal.evidence", "owner-possibility-set-is-nonempty")),
+            (false, false) => Err(InternalFault::new(
+                "temporal.evidence",
+                "owner-possibility-set-is-nonempty",
+            )),
         }
     }
 
@@ -407,13 +445,16 @@ fn derive_partial_facts(
     qualified: &filament_observation::QualifiedObservation,
     package_digest: &Digest,
     cover: ClockCover,
-    positions: &[(Identity, u64, i128, &EvidencePosition)],
+    positions: &[(Identity, u64, Option<i128>, &EvidencePosition)],
 ) -> Result<Vec<PartialFact>, CallFailure> {
     let ScopeKind::Snapshot { snapshot_identity } = &qualified.scope().kind else {
         return Err(fault("observation-scope-is-a-snapshot"));
     };
     let authority = AuthoritySelection {
-        definition_identity: Identity::new(format!("{}#{}", subject.package_identity, subject.occurrence)),
+        definition_identity: Identity::new(format!(
+            "{}#{}",
+            subject.package_identity, subject.occurrence
+        )),
         definition_revision: Identity::new(PACKAGE_REVISION),
         definition_digest: *package_digest,
     };
@@ -991,16 +1032,21 @@ mod tests {
         use crate::temporal::{ProgressClosure, ProgressCompleteness};
         let declaration: CheckedNodeId = serde_json::from_value(json!({
             "package": "recipe", "path": ["Due"], "ordinal": 0
-        })).expect("checked node");
+        }))
+        .expect("checked node");
         let profile = if event_positions {
             "filament.temporal.event-position.false-extension/v1"
         } else {
             "filament.temporal.timestamped-event.finite-window/v1"
         };
         let clock = if event_positions {
-            ClockConfiguration::EventPosition { sequence_authority: "events".into() }
+            ClockConfiguration::EventPosition {
+                sequence_authority: "events".into(),
+            }
         } else {
-            ClockConfiguration::TimestampedEvent { timestamp_unit: "ms".into() }
+            ClockConfiguration::TimestampedEvent {
+                timestamp_unit: "ms".into(),
+            }
         };
         let binding = AuthenticatedBinding {
             package: "recipe".into(),
@@ -1021,12 +1067,25 @@ mod tests {
         };
         let trace = TimestampedTrace::admit_uncertain(
             "Due",
-            WindowClock { name: "clock".into(), profile: profile.into(), unit: if event_positions { "position" } else { "ms" }.into(), cover },
-            positions.iter().map(|position| (TimestampedObservation {
-                stamp: position.position,
-                observation: position.observation.identity.clone(),
-                order_key: position.order_key.clone(),
-            }, position.interval)).collect(),
+            WindowClock {
+                name: "clock".into(),
+                profile: profile.into(),
+                unit: if event_positions { "position" } else { "ms" }.into(),
+                cover,
+            },
+            positions
+                .iter()
+                .map(|position| {
+                    (
+                        TimestampedObservation {
+                            stamp: position.position,
+                            observation: position.observation.identity.clone(),
+                            order_key: position.order_key.clone(),
+                        },
+                        position.interval,
+                    )
+                })
+                .collect(),
             WindowProgress {
                 watermark: Watermark::Inclusive(100),
                 completeness: ProgressCompleteness::Complete { through: 100 },
@@ -1034,7 +1093,8 @@ mod tests {
                 execution: ProgressClosure::Closed,
                 lower_boundary: LowerBoundary::AuthoritativeOrigin,
             },
-        ).expect("admitted trace");
+        )
+        .expect("admitted trace");
         admit_defined(&definition, positions, cover, &binding, &trace)
     }
 
@@ -1051,20 +1111,47 @@ mod tests {
     #[ix_trace_rs::trace("TC-3036", "FR-944-AC-8", "FR-944-AC-13", "FR-944-AC-2")]
     fn owner_admission_uses_derived_membership_and_quarter_tick_units() {
         for event_positions in [false, true] {
-            let owner = admitted(&[position("obs3", 3, Valuation::True)], ClockCover::Counter { uncertainty: 1 }, event_positions)
-                .expect("owner admission and strict partial read");
+            let owner = admitted(
+                &[position("obs3", 3, Valuation::True)],
+                ClockCover::Counter { uncertainty: 1 },
+                event_positions,
+            )
+            .expect("owner admission and strict partial read");
             let qualified = &owner.qualified;
-            let unit = if event_positions { "position/4" } else { "ms/4" };
+            let unit = if event_positions {
+                "position/4"
+            } else {
+                "ms/4"
+            };
             assert_eq!(qualified.binding().unit.as_str(), unit);
             assert_eq!(qualified.records()[0].unit.as_str(), unit);
-            assert_eq!(qualified.records()[0].event_time_nanos, if event_positions { 3 } else { 3_000_000 });
-            let ScopeKind::Snapshot { snapshot_identity } = &qualified.scope().kind else { panic!("snapshot scope"); };
-            assert_eq!(snapshot_identity, &qualified.scope().membership_rule_identity);
-            assert_eq!(owner.side_map.values().collect::<Vec<_>>(), vec![&vec!["obs3".to_owned()]]);
+            assert_eq!(
+                qualified.records()[0].event_time_nanos,
+                if event_positions { 3 } else { 3_000_000 }
+            );
+            let ScopeKind::Snapshot { snapshot_identity } = &qualified.scope().kind else {
+                panic!("snapshot scope");
+            };
+            assert_eq!(
+                snapshot_identity,
+                &qualified.scope().membership_rule_identity
+            );
+            assert_eq!(
+                owner.side_map.values().collect::<Vec<_>>(),
+                vec![&vec!["obs3".to_owned()]]
+            );
             assert_eq!(owner.partial_facts.len(), 1);
             assert!(!owner.partial_facts[0].view.payload().can_be_false());
             assert!(owner.partial_facts[0].view.payload().can_be_true());
-            assert_eq!(owner.partial_facts[0].view.payload().reason(), partial::ValueReason::Known);
+            assert_eq!(
+                owner.partial_facts[0].view.payload().reason(),
+                partial::ValueReason::Known
+            );
+            let interval = owner.partial_facts[0].view.payload().interval();
+            assert_eq!(
+                (interval.earliest, interval.latest, interval.unit),
+                ("8", "19", unit)
+            );
         }
     }
 
@@ -1078,14 +1165,48 @@ mod tests {
             position("obs1", 1, Valuation::True),
             position("obs2", 2, Valuation::Undefined(undefined)),
         ];
-        let owner = admitted(&positions, ClockCover::Counter { uncertainty: 0 }, false).expect("undefined is admissible record content");
+        let owner = admitted(&positions, ClockCover::Counter { uncertainty: 0 }, false)
+            .expect("undefined is admissible record content");
         assert_eq!(owner.partial_facts.len(), 2);
-        let undefined_record = owner.side_map.iter().find(|(_, labels)| labels == &&vec!["obs2".to_owned()]).expect("undefined record mapping").0;
-        assert!(owner.partial_facts.iter().all(|fact| &fact.record_identity != undefined_record));
-        let record = owner.qualified.records().iter().find(|record| &record.identity == undefined_record).expect("undefined record");
-        let ValueState::Present { canonical_value, .. } = &record.value else { panic!("present record"); };
+        let undefined_record = owner
+            .side_map
+            .iter()
+            .find(|(_, labels)| labels == &&vec!["obs2".to_owned()])
+            .expect("undefined record mapping")
+            .0;
+        assert!(owner
+            .partial_facts
+            .iter()
+            .all(|fact| &fact.record_identity != undefined_record));
+        let record = owner
+            .qualified
+            .records()
+            .iter()
+            .find(|record| &record.identity == undefined_record)
+            .expect("undefined record");
+        let ValueState::Present {
+            canonical_value, ..
+        } = &record.value
+        else {
+            panic!("present record");
+        };
         let value: Value = serde_json::from_str(canonical_value).expect("record value");
-        assert_eq!(value["valuations"]["0"], json!({"undefined": {"cause": "kernel", "reason": "division-by-zero"}}));
+        assert_eq!(
+            value["valuations"]["0"],
+            json!({"undefined": {"cause": "kernel", "reason": "division-by-zero"}})
+        );
+        assert_eq!(
+            owner
+                .valuation("obs2", 0, None, &positions[2].valuations[&0])
+                .expect("undefined bypasses owner possibilities"),
+            positions[2].valuations[&0]
+        );
+        assert!(
+            owner
+                .valuation("obs2", 0, None, &Valuation::Missing)
+                .is_err(),
+            "undefined was never admitted as missing"
+        );
     }
 
     #[test]
@@ -1093,25 +1214,107 @@ mod tests {
     fn relabelled_equal_facts_share_one_owner_record_but_keep_both_labels() {
         let first = position("first", 3, Valuation::True);
         let second = position("second", 3, Valuation::True);
-        let owner = admitted(&[first.clone(), second], ClockCover::Exact, false).expect("equal facts coalesce");
+        let owner = admitted(&[first.clone(), second], ClockCover::Exact, false)
+            .expect("equal facts coalesce");
         assert_eq!(owner.qualified.records().len(), 1);
         assert_eq!(owner.qualified.scope().members.len(), 1);
-        assert_eq!(owner.side_map.values().next(), Some(&vec!["first".to_owned(), "second".to_owned()]));
+        assert_eq!(
+            owner.side_map.values().next(),
+            Some(&vec!["first".to_owned(), "second".to_owned()])
+        );
         let mut changed = first.clone();
         changed.valuations.insert(0, Valuation::False);
         let successor = admitted(&[changed], ClockCover::Exact, false).expect("changed fact");
-        assert_ne!(owner.qualified.records()[0].identity, successor.qualified.records()[0].identity);
+        assert_ne!(
+            owner.qualified.records()[0].identity,
+            successor.qualified.records()[0].identity
+        );
     }
 
     #[test]
     #[ix_trace_rs::trace("TC-3036", "FR-944-AC-8")]
-    fn recorded_arrivals_are_scaled_and_absence_keeps_only_the_placeholder() {
+    fn recorded_arrivals_are_scaled_and_absence_is_not_an_asserted_instant() {
         let mut observed = position("arrival", 3, Valuation::True);
         observed.arrival = Some(8);
         let owner = admitted(&[observed], ClockCover::Exact, false).expect("recorded arrival");
-        assert_eq!(owner.qualified.records()[0].ingestion_time_nanos, 8_000_000);
-        let owner = admitted(&[position("absent", 3, Valuation::True)], ClockCover::Exact, false).expect("placeholder arrival");
-        assert_eq!(owner.qualified.records()[0].ingestion_time_nanos, 3_000_000);
+        assert_eq!(
+            owner.qualified.records()[0].ingestion_time_nanos,
+            Some(8_000_000)
+        );
+        let owner = admitted(
+            &[position("absent", 3, Valuation::True)],
+            ClockCover::Exact,
+            false,
+        )
+        .expect("placeholder arrival");
+        assert_eq!(owner.qualified.records()[0].ingestion_time_nanos, None);
+    }
+
+    #[test]
+    #[ix_trace_rs::trace("TC-3036", "FR-944-AC-11", "FR-944-AC-12")]
+    fn record_value_preserves_unbounded_rationals_instances_and_all_undefined_causes() {
+        use crate::temporal::letters::UndefinedCause;
+        use crate::temporal::window::InsufficientData;
+        use filament_semantic_value::catalog::{UndefinedReason, UndefinedRecord};
+        let instance = SemanticTriggerIdentity::new(&[0, 255]).expect("opaque trigger");
+        let family = UndefinedCause::Family(UndefinedRecord {
+            reason: UndefinedReason::AbsentKey,
+            fields: BTreeMap::from([("key", "missing".to_owned())]),
+        });
+        let insufficient = UndefinedCause::InsufficientData(InsufficientData {
+            count: 1,
+            min_count: 2,
+        });
+        let mut observed = position("all-facts", 3, Valuation::Undefined(family));
+        observed.aggregate_samples = BTreeMap::from([
+            (
+                1,
+                AggregateSample::Value(
+                    filament_exact::Rational::new(
+                        "18446744073709551616".parse().expect("unbounded integer"),
+                        3.into(),
+                    )
+                    .expect("unbounded rational"),
+                ),
+            ),
+            (2, AggregateSample::Undefined(insufficient.clone())),
+        ]);
+        observed
+            .instance_valuations
+            .insert(instance.clone(), BTreeMap::from([(3, Valuation::False)]));
+        observed.instance_aggregate_samples.insert(
+            instance.clone(),
+            BTreeMap::from([(4, AggregateSample::Undefined(insufficient))]),
+        );
+        let owner =
+            admitted(&[observed.clone()], ClockCover::Exact, false).expect("all content admits");
+        assert_eq!(
+            owner.partial_facts.len(),
+            1,
+            "only the defined instance Boolean yields a partial fact"
+        );
+        assert_eq!(owner.partial_facts[0].atom, 3);
+        assert_eq!(owner.partial_facts[0].instance.as_ref(), Some(&instance));
+        let value: Value =
+            serde_json::from_str(&canonical_position_value(&observed).expect("record value"))
+                .expect("JSON");
+        assert_eq!(
+            value["aggregate_samples"]["1"],
+            json!({"value": {"kind": "rational", "numerator": "18446744073709551616", "denominator": "3"}})
+        );
+        assert_eq!(
+            value["valuations"]["0"],
+            json!({"undefined": {"cause": "family", "reason": "absent-key", "fields": {"key": "missing"}}})
+        );
+        assert_eq!(
+            value["aggregate_samples"]["2"],
+            json!({"undefined": {"cause": "insufficient-data", "count": "1", "min_count": "2"}})
+        );
+        assert_eq!(value["instance_valuations"]["00ff"]["3"], "false");
+        assert_eq!(
+            value["instance_aggregate_samples"]["00ff"]["4"],
+            value["aggregate_samples"]["2"]
+        );
     }
 
     #[test]
