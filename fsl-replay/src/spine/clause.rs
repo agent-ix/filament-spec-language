@@ -672,12 +672,16 @@ fn canonical_condition_declarations(
                     declarations.insert(callee.clone(), identity);
                 }
             }
+            if let NodeKind::Record { declaration, .. } = node.kind() {
+                if let Some(identity) = source_function_identity(declaration) {
+                    declarations.insert(declaration.clone(), identity);
+                }
+            }
             let key = match node.kind() {
                 NodeKind::Literal(CheckedLiteral(filament_exact::Value::Enum(member))) => {
                     Some(member.variant().owner().clone())
                 }
                 NodeKind::Field { field, .. } => Some(field.declaration()),
-                NodeKind::Record { declaration, .. } => Some(declaration.clone()),
                 _ => None,
             };
             if let Some(key) = key {
