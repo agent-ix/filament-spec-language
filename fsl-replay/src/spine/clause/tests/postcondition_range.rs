@@ -638,16 +638,10 @@ fn an_arithmetic_operand_yields_no_bound() {
     );
 }
 
-#[trace("TC-1416", "FR-577-AC-18")]
-#[test]
-fn a_bound_does_not_refine_a_sum() {
-    let unit = unit(&[
-        &clause(
-            "pre",
-            "CanAfford",
-            "Account",
-            "self.balance + amount <= 100",
-        ),
+fn with_sum_bound(bound: &str) -> String {
+    let can_afford = format!("self.balance + amount <= {bound}");
+    unit(&[
+        &clause("pre", "CanAfford", "Account", &can_afford),
         &clause(
             "post",
             "Credited",
@@ -655,8 +649,20 @@ fn a_bound_does_not_refine_a_sum() {
             "self.balance = pre(self.balance) + amount",
         ),
         NON_NEGATIVE,
-    ]);
-    refuses_at(PLAIN, &unit, "pre(self.balance) + amount");
+    ])
+}
+
+#[trace("TC-1416", "FR-577-AC-18")]
+#[test]
+#[ignore = "QSL-2040: a transferred two-path sum bound (FSpec FR-146 item 8) is not implemented yet"]
+fn a_transferred_sum_bound_refines_the_same_sum() {
+    checks(PLAIN, &with_sum_bound("100"));
+}
+
+#[trace("TC-1416", "FR-577-AC-18")]
+#[test]
+fn a_too_weak_sum_bound_leaves_the_sum_refused() {
+    refuses_at(PLAIN, &with_sum_bound("101"), "pre(self.balance) + amount");
 }
 
 #[trace("TC-1416", "FR-577-AC-19")]
