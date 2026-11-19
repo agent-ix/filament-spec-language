@@ -332,7 +332,6 @@ fn timed_document_has_no_component_member() {
 #[trace("TC-2490", "FR-921-AC-1")]
 #[trace("FSpec-TC-1768", "FSpec-FR-751-AC-1")]
 #[test]
-#[ignore = "QSL-2156: the timed-product certificate checker not implemented yet"]
 fn altered_timed_value_is_rejected() {
     let world = retx(GUARD, true, "", &every_deadlines());
     let doc = document(&settle(&world, "Deadline"));
@@ -351,7 +350,6 @@ fn altered_timed_value_is_rejected() {
 #[trace("TC-2490", "FR-921-AC-2")]
 #[trace("FSpec-TC-1768", "FSpec-FR-751-AC-2")]
 #[test]
-#[ignore = "QSL-2156: the timed-product certificate checker not implemented yet"]
 fn stated_route_and_scale_are_compared() {
     let world = retx(GUARD, true, "", &every_deadlines());
     let doc = document(&settle(&world, "Deadline"));
@@ -372,7 +370,6 @@ fn stated_route_and_scale_are_compared() {
 #[trace("TC-2490", "FR-921-AC-3")]
 #[trace("FSpec-TC-1768", "FSpec-FR-751-AC-3")]
 #[test]
-#[ignore = "QSL-2156: the timed-product certificate checker not implemented yet"]
 fn timed_rows_cover_exactly_the_rebuilt_product() {
     let world = retx(GUARD, true, "", &every_deadlines());
     let doc = document(&settle(&world, "Deadline"));
@@ -720,7 +717,6 @@ fn elapsed_quantile_tight_search_refutes() {
 /// FR-921-AC-2: a key whose cap of `x` is changed is malformed.
 #[trace("TC-2490", "FR-921-AC-2")]
 #[test]
-#[ignore = "QSL-2156: the timed-product certificate checker not implemented yet"]
 fn a_wrong_clock_cap_is_malformed() {
     let world = retx(GUARD, true, "", &every_deadlines());
     let doc = document(&settle(&world, "Deadline"));
