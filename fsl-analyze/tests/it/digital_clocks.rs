@@ -1224,12 +1224,10 @@ fn untimed_delay_names_missing_binding_and_duration_stays_a_reward() {
                 }
             )
     ));
-    let rendered = fsl_replay::spine::FrontEndFailure::Refused(Box::new(
-        fsl_replay::spine::CompileRefusal::Check {
-            refusals,
-            region: None,
-        },
-    ))
+    let rendered = fsl_replay::spine::CompileRefusal::Check {
+        refusals,
+        region: None,
+    }
     .to_string();
     assert!(
         rendered.contains("the subject's model declares no time binding"),
