@@ -160,7 +160,7 @@ impl CheckedExpression {
                         format!(
                             "{}.{}",
                             child(*reference)?,
-                            field_uri(&owner.package, &owner.node, &field.name)
+                            field_uri(owner.package(), owner.node(), &field.name)
                         ),
                         9,
                     )
