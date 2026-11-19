@@ -50,7 +50,7 @@ use fsl_replay::{
 use fsl_semantics::check::{
     Bound as CheckedBound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim,
     CheckedTemporalFormula, Event, FractionMeasure, ProbForm, ProbScheduler, TemporalProfile,
-    Workload,
+    Weighting, Workload,
 };
 
 use super::claim::{reduce_quantile, Bound, Comparison, MeasureEvent, QuantileComparison};
@@ -133,6 +133,17 @@ pub fn check_statistical(
     let (statistical, reading) = reduce(claim)?;
     let scalar_limits = subject.simulation.meter;
     let form = statistical.form();
+    if matches!(
+        &reading,
+        Reading::Fraction { fraction, .. }
+            if matches!(fraction.weight.as_ref(), Some(Weighting::Delay))
+    ) || matches!(
+        &reading,
+        Reading::LongRun { weight, .. }
+            if matches!(weight, Some(Weighting::Delay))
+    ) {
+        return Err(StatisticalRefusal::NotStatistical { method, form });
+    }
     if !form.admits(method) {
         return Err(StatisticalRefusal::NotStatistical { method, form });
     }
@@ -401,7 +412,7 @@ enum Reading<'c> {
     /// A long-run fraction's predicate and weight (FR-190).
     LongRun {
         predicate: &'c CheckedPredicate,
-        weight: Option<&'c Identifier>,
+        weight: Option<&'c Weighting>,
     },
 }
 
@@ -1343,10 +1354,11 @@ impl<'c> Shared<'_, '_, 'c> {
             let weight = match &fraction.weight {
                 None => Rational::from_integer(Integer::one()),
                 // The step that leaves the position weighs it.
-                Some(name) => {
+                Some(Weighting::Reward(name)) => {
                     self.advance(cursor)?;
                     magnitude(cursor.steps.last().ok_or_else(broken)?, name)?
                 }
+                Some(Weighting::Delay) => return Err(Ended::Halt(broken())),
             };
             if holds {
                 held = held.add(&weight);
@@ -1465,7 +1477,8 @@ impl ModelWalk<'_, '_, '_> {
         let (position, step) = shared.generator.step(&walk.position, at)?;
         let weight = match weight {
             None => Rational::from_integer(Integer::one()),
-            Some(name) => magnitude(&step, name)?,
+            Some(Weighting::Reward(name)) => magnitude(&step, name)?,
+            Some(Weighting::Delay) => return Err(Ended::Halt(broken())),
         };
         let returned = position.key().as_bytes() == walk.initial.as_slice();
         self.walk = Some(Walking {

@@ -211,8 +211,17 @@ pub struct FractionMeasure {
     pub window: u64,
     /// Time upper bound for a timed subject's quantity-valued window.
     pub timed_window: Option<Rational>,
-    /// The reward each position is weighted by, when written.
-    pub weight: Option<Identifier>,
+    /// The reward or elapsed time each position is weighted by, when written.
+    pub weight: Option<Weighting>,
+}
+
+/// What weights positions in a probabilistic fraction (FR-186).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Weighting {
+    /// The subject model's elapsed time between positions.
+    Delay,
+    /// A reward declared by the subject model.
+    Reward(Identifier),
 }
 
 /// A bounded measure (ADR-024 PF-3, PF-4).
@@ -296,14 +305,14 @@ pub enum ProbForm {
         /// The fraction.
         fraction: FractionMeasure,
     },
-    /// `long_run_fraction holds(P) [weighted by R] op θ`.
+    /// `long_run_fraction holds(P) [weighted by R or delay] op θ`.
     LongRunFraction {
         /// The bound `θ`.
         bound: Bound,
         /// `P`.
         predicate: CheckedPredicate,
-        /// The reward positions are weighted by, when written.
-        weight: Option<Identifier>,
+        /// The reward or elapsed time positions are weighted by, when written.
+        weight: Option<Weighting>,
     },
     /// `probability op θ [eventually | until | always]` over the
     /// infinite-trace profile, which only exact evidence decides.
@@ -1832,16 +1841,31 @@ impl Pass<'_, '_> {
         }
     }
 
-    /// The reward a `weighted by R` names, when one is written.
+    /// Resolve a `weighted by R` or `weighted by delay` clause.
+    ///
+    /// `delay` is a time weighting only for a subject with a model-time
+    /// binding; resolve it before looking for a reward with that name.
     fn weight(
         &self,
         claim: &ClaimCx<'_>,
         weighting: Option<&WeightingForm>,
-    ) -> Result<Option<Identifier>, CheckRefusal> {
+    ) -> Result<Option<Weighting>, CheckRefusal> {
         weighting
             .map(|weighting| {
-                self.reward_named(claim, &weighting.name.name, weighting.name.span)
-                    .map(|(name, _)| name)
+                if weighting.name.name == "delay" {
+                    self.input
+                        .time_source(&claim.subject.alias, &claim.subject.package.identity)
+                        .ok_or_else(|| {
+                            refusal(ProbabilisticCause::TimeTypeMismatch {
+                                claim: claim.claim().to_owned(),
+                                span: weighting.name.span,
+                            })
+                        })?;
+                    Ok(Weighting::Delay)
+                } else {
+                    self.reward_named(claim, &weighting.name.name, weighting.name.span)
+                        .map(|(name, _)| Weighting::Reward(name))
+                }
             })
             .transpose()
     }
@@ -2305,11 +2329,12 @@ impl Pass<'_, '_> {
         )
     }
 
-    fn weight_bytes(&self, subject: &str, weight: Option<&Identifier>) -> Vec<u8> {
-        weight.map_or_else(
-            || node_bytes(b"unweighted", &[]),
-            |name| self.reward_bytes(subject, name),
-        )
+    fn weight_bytes(&self, subject: &str, weight: Option<&Weighting>) -> Vec<u8> {
+        match weight {
+            None => node_bytes(b"unweighted", &[]),
+            Some(Weighting::Delay) => node_bytes(b"delay", &[]),
+            Some(Weighting::Reward(name)) => self.reward_bytes(subject, name),
+        }
     }
 
     fn fraction_bytes(&self, subject: &str, fraction: &FractionMeasure) -> Vec<u8> {
