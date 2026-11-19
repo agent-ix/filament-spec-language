@@ -1374,7 +1374,8 @@ impl Emission {
     }
 
     /// The `workload` node each claim `under W` resolves to, ascending by
-    /// claim node (FSL FR-740).
+    /// claim node (FSL FR-740). TEMPORARY (QSL-2441, QSL-2546, spec W77): in
+    /// memory only, like [`ClaimWorkload`]; the claim body carries it later.
     pub fn claim_workloads(&self) -> &[ClaimWorkload] {
         &self.claim_workloads
     }

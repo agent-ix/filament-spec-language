@@ -56,3 +56,19 @@ Examined:
 The partial framing is honest. The PR body, test names, tags and ignore reasons match what
 was delivered. No stubs, tautologies or `#[allow]`. The two tagged ACs are partly covered,
 and the remaining scope needs tracking before the ticket closes (FND-002).
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | low | FR-185-AC-12's "source reference" half is still not asserted. The package test checks the label span by slicing the unit text, but not `region`'s source reference. The fsl-command twin still checks only that `locus` is an object and that the message contains `reward` (the feature word), not `cost` or the locus's source/span members | fsl-package/src/emit/tests/probabilistic.rs:2075-2087; fsl-command/tests/it/probabilistic_package_locus.rs:51-59 |
+
+## Dispositions
+
+Round 1, head 9588a1a78f391de7c609d8e5b0cca221398b30b9.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `probabilistic_refusals_have_locus` now covers all four features. It asserts that the declaration name is in the message and that the region is the label span (the unit-text slice contains the name). The remaining source-reference gap is FND-004 |
+| FND-002 | fixed | The remaining scope is tracked: QSL-2546 (claim body, identity, wire resolution; the ignore cites it) and QSL-2547 (vendored examples and probabilistic_examples.rs) |
+| FND-003 | deferred | QSL-2547. A random parameter in the AC-4 test needs a fixture that combines a parameterised operation, a workload and a claim. None exists, and the abstraction fixture hits QSL-2444. Random-parameter emission and reader admission are covered by other TC-2062 tests, and QSL-2547's staged-vote-probability examples combine all four, so deferring is acceptable. The coordinator should add the AC-4 random-parameter case to QSL-2547's scope |

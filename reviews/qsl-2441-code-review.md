@@ -74,3 +74,24 @@ fixture `EmptyPackage` check refusal at tests.rs:234. It fails the same way at m
 601096bee, so the PR did not cause it, but it means the new `UnresolvedClaimWorkload` arm in
 that test is never reached today. Clippy (`-p fsl-package -p fsl-command --all-targets --
 --cap-lints warn`): no findings in diff lines.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-008 | low | The combined `UnkeyedProbabilisticClaim \| UnresolvedClaimWorkload` arm in `emit_checked_never_returns_incomplete_across_the_fixture_set` now panics with `"lowering keys every probabilistic claim"`. That message is wrong for `UnresolvedClaimWorkload`, which is an emission invariant (no emitted workload node named `W`), not a lowering one | fsl-package/src/emit/tests.rs:2025-2030 |
+| FND-009 | low | The public accessor `Emission::claim_workloads()` (re-exported with `ClaimWorkload` from the crate root) is not marked TEMPORARY. Only the struct and the private `probabilistic::claim_workloads` say that QSL-2546 removes it, so a caller reading the accessor's doc sees a stable API | fsl-package/src/emit.rs:1376-1378 |
+
+## Dispositions
+
+Round 1, head 9588a1a78f391de7c609d8e5b0cca221398b30b9. Focused runs, each with `--test-threads=1` and the two house skips, all pass: `a_claim_under_a_workload_is_emitted_with_its_workload_node`, `each_claim_resolves_to_the_workload_it_is_stated_under`, `probabilistic_refusals_have_locus`, and fsl-command `a_package_stage_refusal_of_a_reward_carries_its_locus`. The FR-640-AC-3 test is ignored, citing QSL-2546. Clippy (`-p fsl-package -p fsl-command --all-targets -- --cap-lints warn`) reports nothing in the diff files.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The test now collects (claim, workload) pairs and asserts `(claim_node("A"), workload_named("Steady"))` and `(claim_node("B"), workload_named("Bursty"))` |
+| FND-002 | deferred | QSL-2546 (arch ruling on QSL-2441: the claim body and path carry the scheduler after spec W77). `ClaimWorkload` and `probabilistic::claim_workloads` are marked TEMPORARY, and QSL-2546 records that they are to be removed |
+| FND-003 | fixed | The ignore reason now cites QSL-2546, an open ticket |
+| FND-004 | fixed | `workload_nodes_by_name` builds a name map once, keyed on the `name` binding rather than on position |
+| FND-005 | fixed | The doc now matches four cases: reward, delay, random parameter and workload. Each asserts the `declaration`, that the region slice of the unit text contains the name, and that the message contains the name |
+| FND-006 | still-open | `fsl-package/src/lib.rs` is still not rustfmt-clean. rustfmt sorts `ClaimWorkload` before `ClockSelectionCause` and repacks `SelectedSourceCollectionRow, ...` onto full lines (`rustfmt --check` on the file with its `mod` lines stubbed). Fix: run rustfmt on that block |
+| FND-007 | fixed | The float-arm reflow is reverted. `git diff origin/main...HEAD -- fsl-package/src/emit/tests.rs` touches only the fixture-set refusal arm |

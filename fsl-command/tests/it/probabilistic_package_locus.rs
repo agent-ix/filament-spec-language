@@ -57,4 +57,19 @@ fn a_package_stage_refusal_of_a_reward_carries_its_locus() {
     assert!(!message.contains("Span {"), "{message}");
     assert!(!message.contains("RawSourceRef"), "{message}");
     assert!(message.contains("reward"), "{message}");
+    assert!(message.contains("cost"), "names the declaration: {message}");
+    let locus = &diagnostic["locus"];
+    assert_eq!(
+        locus["source"],
+        json!({"authority": "offered issuer", "identity": "offered:unit"}),
+        "the source reference: {locus}"
+    );
+    let (start, end) = (
+        locus["start"].as_u64().unwrap() as usize,
+        locus["end"].as_u64().unwrap() as usize,
+    );
+    assert!(
+        UNIT[start..end].contains("cost"),
+        "the span is the declaration's: {locus}"
+    );
 }

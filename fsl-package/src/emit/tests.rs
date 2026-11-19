@@ -2022,11 +2022,11 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             Err(EmitRefusal::UnknownOccurrenceRole { .. }) => Seen::UnknownOccurrenceRole,
             Err(EmitRefusal::Encoding { .. }) => Seen::Encoding,
             Err(EmitRefusal::TimedModelNodeSetMismatch) => Seen::TimedModelNodeSetMismatch,
-            Err(
-                EmitRefusal::UnkeyedProbabilisticClaim { .. }
-                | EmitRefusal::UnresolvedClaimWorkload { .. },
-            ) => {
+            Err(EmitRefusal::UnkeyedProbabilisticClaim { .. }) => {
                 panic!("lowering keys every probabilistic claim")
+            }
+            Err(EmitRefusal::UnresolvedClaimWorkload { .. }) => {
+                panic!("emission emits every recorded workload a claim is stated under")
             }
             Err(EmitRefusal::TimedModelWriterInvariant(_)) => Seen::TimedModelWriterInvariant,
             Err(EmitRefusal::MonitorPlanInvariant(_)) => Seen::MonitorPlanInvariant,

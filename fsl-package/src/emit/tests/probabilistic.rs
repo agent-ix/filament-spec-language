@@ -1995,7 +1995,10 @@ fn a_reward_on_a_source_object_is_emitted() {
 }
 
 /// The S4 refusal of the unit `source` over the domain `documents`.
-fn refusal_of(source: &str, documents: &[&[u8]]) -> EmitRefusal {
+fn refusal_of(
+    source: &str,
+    documents: &[&[u8]],
+) -> (EmitRefusal, fsl_foundation::source::provenance::RawSourceRef) {
     let packages = fsl_semantics::model::intake::package_input(documents.iter().copied())
         .expect("the package input is valid");
     let graph = assemble_with_models(source.as_bytes(), &packages)
@@ -2006,7 +2009,11 @@ fn refusal_of(source: &str, documents: &[&[u8]]) -> EmitRefusal {
             &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("S3 accepts the unit: {refusals:?}"));
-    emit_checked(&CheckedPackage::link(graph)).expect_err("emission refuses")
+    let unit = graph.source().clone();
+    (
+        emit_checked(&CheckedPackage::link(graph)).expect_err("emission refuses"),
+        unit,
+    )
 }
 
 /// TC-2062 (FR-185-AC-12): the S4 refusal of a reward, a delay, a random
@@ -2066,7 +2073,7 @@ fn probabilistic_refusals_have_locus() {
         } else {
             vec![document.as_slice()]
         };
-        let refusal = refusal_of(&source, &documents);
+        let (refusal, unit) = refusal_of(&source, &documents);
         let EmitRefusal::ProbabilisticModelNotEmitted {
             declaration,
             feature,
@@ -2077,6 +2084,7 @@ fn probabilistic_refusals_have_locus() {
             panic!("{name}: {refusal:?}");
         };
         assert_eq!((*feature, declaration.as_str()), (expected, name));
+        assert_eq!(region.source(), &unit, "{name}: the region is in the unit's source");
         let label = source
             .get(region.start() as usize..region.end() as usize)
             .unwrap_or_else(|| panic!("{name}: the region lies in the unit: {refusal:?}"));
