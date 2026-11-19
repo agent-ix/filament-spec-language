@@ -1187,7 +1187,7 @@ fn a_model_based_postcondition_is_checked_on_its_applied_step() {
 
 /// FR-752's deterministic contract prefix emits field partitions before
 /// parameter partitions, counts refusals, and preserves disabled arguments.
-#[trace("FSpec-TC-2102", "FR-752-AC-7")]
+#[trace("TC-2102", "FR-752-AC-7")]
 #[test]
 fn contract_cases_start_with_ordered_domain_partitions() {
     let clauses = "pre CanInc using v on M::Counter::inc { self.value + delta <= 5 }\n\
