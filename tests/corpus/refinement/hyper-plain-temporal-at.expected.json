@@ -1,8 +1,9 @@
 {
   "verb": "compile",
-  "exit_code": 20,
-  "category": "refusal",
+  "exit_code": 21,
+  "category": "unsupported",
   "last_stage": "S2",
-  "code": "invalid_syntax",
-  "flips_with": "none"
+  "code": "unsupported_construct",
+  "flips_with": "none",
+  "cause": "expression-form"
 }
