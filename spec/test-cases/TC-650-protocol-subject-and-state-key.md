@@ -12,7 +12,7 @@ relationships:
 
 Verify the protocol subject's construction and refusals, the thread paths and ordinals, binder removal and the canonical state key.
 
-Scope: FR-205-AC-1 to FR-205-AC-14 (FR-205-AC-12 planned under QSL-2568).
+Scope: FR-205-AC-1 to FR-205-AC-15 (FR-205-AC-12 planned under QSL-2568).
 
 ## Test Procedure
 
@@ -64,7 +64,8 @@ Use ADR-027 §7's `Fill` unit (universe `{c}`, `c.v = 0`).
 12. Planned under QSL-2568 (FR-205-AC-12): repeat step 10's key reads and
     EN-1 run for an item whose obligation reads the delivery index of
     `Rcv`'s receive steps, and for an item that reads the message identity
-    of `Rcv`'s receive steps and no delivery index.
+    of `Rcv`'s receive steps and no delivery index, and that item over
+    FR-205-AC-15's `Loop` for 0, 1 and 2 iterations.
 13. Re-concretise from `Echo`'s initial state the cycle-key path with
     prefix `send`, `duplicate`, `lose` of the older copy and loop
     `duplicate`, `lose` of the older copy; replay it through FR-217 for
@@ -78,12 +79,16 @@ Use ADR-027 §7's `Fill` unit (universe `{c}`, `c.v = 0`).
     `count` 3 step, `receive`, then the continuation step. In `parallel P {
     branch a sequence { send Snd via ch; attempt A }; branch b receive Rcv
     via ch of Snd } join all`, take `fork`, `send`, `receive`, `attempt(A)`,
-    and on a second path `fork`, `send`, `attempt(A)`, `receive`. Read
-    `queues` and `bounds` after each step.
-15. Reused branch path: on a channel of capacity 2, run `repeat maximum 2 {
-    parallel P { branch a send Snd via ch; branch b attempt B } join all }`,
-    then `receive R1 via ch of Snd; receive R2 via ch of Snd`; read each
-    `send`'s message identity and the queue before the receives.
+    the join and `finish`. Read `queues` and `bounds` after each step.
+15. Reused branch path: run `repeat maximum 2 { parallel P { branch a send
+    Snd via ch; branch b receive Rcv via ch of Snd } join all }` through
+    both iterations; read each `send`'s message identity and each
+    `receive`'s delivery identity.
+16. Build FR-205-AC-15's `Loop` subject. Read the `ProtocolKey` and cycle
+    key of the state with the root at `Snd` after 0, 1 and 2 iterations,
+    and of the post-`send` states of iterations 1 and 2. Run EN-1 on
+    `always holds(c.v = 0)`; replay the lasso with an empty prefix and loop
+    `send(Snd)`, `receive(Rcv)` through FR-217.
 
 Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
 
@@ -132,7 +137,8 @@ Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
   1 with bound 2.
 - Step 12 (planned, QSL-2568): for the delivery-reading item, three
   different cycle keys and `inconclusive` `BoundReached{depth: 8}`, never
-  `proved`; for the message-identity item, one cycle key and `Holds`.
+  `proved`; for the message-identity item, one cycle key and `Holds` over
+  `Echo`, and over `Loop` three cycle keys and `BoundReached{depth: 8}`.
 - Step 13: `duplicate` identities carry deliveries 1 then 2, `lose`
   identities 0 then 1, post-state keys are concrete (`next-delivery` 2,
   then 3), and no index repeats; the replay settles
@@ -145,14 +151,17 @@ Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
   deliveries 0 and 1, leaves count 1 pending, `next-delivery` 2 and no
   `message-ordinal` for `Snd`; the continuation appends delivery 2 of the
   same message (ordinal 0), then `next-delivery` 3 and `message-ordinal` 1.
-  `message-ordinal` 1 for `Snd` on `a`'s path while `a` rests at `A`; on
-  the first path absent after `attempt(A)`, no copy being queued; on the
-  second path present after `attempt(A)` while the copy is queued and
-  absent after `receive`. The step fails if the continuation takes ordinal
-  1, reuses an index, or the ordinal outlives both `a` and its queued
-  copies.
+  `message-ordinal` 1 for `Snd` on `a`'s path in every state from the
+  `send` until the instance is removed, including after `a` has completed
+  with no copy queued. The step fails if the continuation takes ordinal 1,
+  an index is reused, or the ordinal is dropped before the instance is
+  removed.
 - Step 15: both iterations' `a` has path `(0, P, a, 0)`; the first message
-  (ordinal 0) is still queued at the second `send`, which takes ordinal 1;
-  the queue holds two entries of two different messages. The step fails if
-  the ordinal is dropped when `a` completes, giving both messages ordinal
-  0.
+  (ordinal 0) has been received when the second `send` runs, which takes
+  ordinal 1; the two `receive` steps bind deliveries of two different
+  messages. The step fails if both messages have ordinal 0.
+- Step 16: three different `ProtocolKey`s (`message-ordinal` 0 absent, 1, 2)
+  and one cycle key, the initial state's; the two post-`send` states have
+  one cycle key naming ordinal 0; EN-1 settles `Holds` (`proved`); the
+  replay closes the loop on cycle keys. The step fails if the cycle key
+  keeps the ordinal or a received message's `next-delivery`.

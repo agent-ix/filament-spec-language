@@ -117,11 +117,13 @@ pub fn check_protocol_closure(
 
 For `check_protocol_closure`, a `ProductStateRef`'s `model_state` SHALL be
 the protocol state's cycle key for the request's item (FR-205, "Cycle key"):
-the `ProtocolKey` of its delivery-label canonical form, which equals the
-`ProtocolKey` on every channel whose delivery index the item reads. The
+the `ProtocolKey` of its canonical form over the message ordinals and
+delivery indices the item does not read, which keeps every identity the
+item reads. The
 checker SHALL canonicalise each recomputed initial state and successor before
 matching it against the certificate, so a closure over a `duplicate` and
-`lose` loop on an unread channel is finite, and a certificate that holds an
+`lose` loop, or a `repeat` around `send` and `receive`, on an unread channel
+is finite, and a certificate that holds an
 uncanonicalised key for such a state is rejected `SuccessorMissing` at the
 predecessor that reaches it. An item that reads a channel's delivery index
 has no finite closure while a `duplicate` on that channel stays enabled, and
