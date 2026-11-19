@@ -233,7 +233,7 @@ fn terminal_self_refuses_two_covering_populations_but_quantification_checks() {
     assert_eq!(
         populations
             .iter()
-            .map(|key| key.node.as_str())
+            .map(|key| key.node.rsplit('/').next().expect("population name"))
             .collect::<Vec<_>>(),
         ["archive", "config_history"]
     );
@@ -272,6 +272,21 @@ fn terminal_population_quantifier_checks_with_several_covered_types() {
     check_population_terminal(&crate::model_operations::with_unrelated_population(
         document(),
     ));
+}
+
+#[trace("TC-519", "FR-124-AC-7")]
+#[test]
+fn terminal_self_refuses_several_member_types_in_one_population() {
+    let document = crate::model_operations::tc465_document_with_tag_type_sharing_a_field_name();
+    let refusal = admit_and_assemble_with_body(&document, WHEN)
+        .expect_err("one population covers ConfigVersion and Tag");
+    let [error] = refusal.errors.as_slice() else {
+        panic!("one missing self binding: {refusal:?}");
+    };
+    assert_eq!(error.cause.code(), Code::MissingDeclaration);
+    assert_eq!(error.cause.catalog_code().cause(), "missing-name");
+    let (text, _) = config_unit_with_body(&document, WHEN);
+    assert_eq!(error.span, span_of(&text, "self"));
 }
 
 /// STD-492: `terminal any` on a model that declares no object type names no

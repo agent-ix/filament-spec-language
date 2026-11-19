@@ -1202,6 +1202,87 @@ fn a_deadlock_is_a_terminal_state_no_declaration_intends() {
     assert!(sat_at(&at_two, 4));
 }
 
+#[trace("TC-519", "FR-124-AC-8", "TC-1076", "FR-391-AC-9")]
+#[test]
+fn terminal_when_smt_reads_constants_once_and_refuses_population_outside_its_fragment() {
+    for (predicate, deadlocked) in [("true", false), ("false", true)] {
+        let world = counter_with(
+            &format!("{COUNTER_CONTRACT}terminal Done using v on M when {{ {predicate} }};\n"),
+            INFINITE,
+            &[],
+        );
+        let script = world
+            .deadlock(SmtQueryKind::Unrolling { depth: 3 })
+            .expect("self-free terminal encodes");
+        assert_eq!(satisfiable(&script), deadlocked, "{predicate}");
+    }
+    let world = counter_with(
+        &format!("{COUNTER_CONTRACT}terminal Done using v on M when {{ exists(c in M::objects : c.value = 3) }};\n"),
+        INFINITE,
+        &[],
+    );
+    assert!(
+        matches!(
+            world.deadlock(SmtQueryKind::Unrolling { depth: 0 }),
+            Err(SmtEncodingRefusal::Refused(Refusal::OutOfFragment { .. }))
+        ),
+        "population expressions must get a typed fragment refusal"
+    );
+}
+
+#[trace("TC-519", "FR-124-AC-10")]
+#[test]
+fn terminal_when_smt_false_object_suppresses_another_objects_undefined_failure() {
+    let document = document(
+        "Counter",
+        vec![field("Counter", "value", &ident("Level"), "required")],
+        vec![],
+    );
+    // The expected Level operand coerces the sum into [0, 3], so value 3
+    // is undefined and every smaller value makes this equality false.
+    let world = world(
+        ("Counter", "c"),
+        &document,
+        "terminal Done using v on M when { self.value = self.value + 1 };\n",
+        INFINITE,
+        &[],
+        &[
+            ("a", json!({"value": {"integer": "3"}})),
+            ("b", json!({"value": {"integer": "1"}})),
+        ],
+    );
+    let script = world
+        .deadlock(SmtQueryKind::Unrolling { depth: 0 })
+        .expect("partial terminal encodes");
+    let property = assertions(&script).pop().expect("negated property");
+    let Sexp::List(terms) = property else {
+        panic!("violation and undefined failure")
+    };
+    assert!(
+        matches!(terms.first(), Some(Sexp::Atom(head)) if head == "or"),
+        "{terms:?}"
+    );
+    assert_eq!(
+        terms.len(),
+        3,
+        "violation, then undefined failure: {terms:?}"
+    );
+    let names = BTreeMap::from([("s0.a.value".to_owned(), 0), ("s0.b.value".to_owned(), 1)]);
+    for values in [[Val::Int(3), Val::Int(1)], [Val::Int(1), Val::Int(3)]] {
+        assert_eq!(
+            eval(&terms[1], &names, &values),
+            Val::Bool(true),
+            "false object refutes intendedness"
+        );
+        assert_eq!(
+            eval(&terms[2], &names, &values),
+            Val::Bool(false),
+            "false object suppresses undefined failure"
+        );
+    }
+    assert!(satisfiable(&script));
+}
+
 // ---------------------------------------------------------------------------
 // The `Tally` subject of FR-315-AC-4 and the scripts read as text.
 // ---------------------------------------------------------------------------

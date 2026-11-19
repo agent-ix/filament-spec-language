@@ -6628,7 +6628,11 @@ fn terminal_declarations(
         let kind = match &form.kind {
             TerminalDeclarationKind::Any => TerminalClauseKind::Any,
             TerminalDeclarationKind::When(predicate) => {
-                let objects: Vec<EffectiveId> = model.population_objects().into_iter().collect();
+                let objects: BTreeSet<EffectiveId> = model
+                    .named_populations()
+                    .flat_map(|population| population.members)
+                    .collect();
+                let objects: Vec<_> = objects.into_iter().collect();
                 let self_span = predicate
                     .expression
                     .iter()

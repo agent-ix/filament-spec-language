@@ -755,22 +755,26 @@ impl Query<'_, '_> {
             let (holds, defined) = match terminal.declaration {
                 PackageTerminalDeclaration::Any => (Term::truth(true), Term::truth(true)),
                 PackageTerminalDeclaration::When(predicate) => {
-                    let Some((_, filament_exact::ValueType::Reference(context))) =
-                        predicate.parameters().first()
-                    else {
-                        return Err(fault("a terminal predicate with no state object"));
+                    let bindings = match predicate.parameters() {
+                        [] => vec![Vec::new()],
+                        [(_, filament_exact::ValueType::Reference(context))] => self
+                            .subject
+                            .objects
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, object)| {
+                                self.subject
+                                    .types
+                                    .conforms(object.type_id.clone(), context.clone())
+                            })
+                            .map(|(index, _)| vec![Some(Sym::Object(index))])
+                            .collect(),
+                        _ => return Err(fault("a terminal predicate with invalid parameters")),
                     };
-                    let context = context.clone();
                     let mut holds = Vec::new();
                     let mut defined = Vec::new();
-                    for (index, object) in self.subject.objects.iter().enumerate() {
-                        if !self
-                            .subject
-                            .types
-                            .conforms(object.type_id.clone(), context.clone())
-                        {
-                            continue;
-                        }
+                    let mut false_objects = Vec::new();
+                    for binding in bindings {
                         let (value, definition) = Reader::new(
                             layout,
                             self.subject,
@@ -778,13 +782,20 @@ impl Query<'_, '_> {
                             Observation::Current,
                             Vec::new(),
                             &views,
-                            vec![Some(Sym::Object(index))],
+                            binding,
                         )
                         .boolean(predicate.body())?;
+                        false_objects.push(Term::all([definition.clone(), value.clone().not()]));
                         holds.push(value);
                         defined.push(definition);
                     }
-                    (Term::all(holds), Term::all(defined))
+                    let false_object = Term::any(false_objects);
+                    // A known false object settles the conjunction even if
+                    // another object's reading is undefined (FR-124).
+                    (
+                        Term::all(holds),
+                        Term::any([false_object, Term::all(defined)]),
+                    )
                 }
             };
             // An undefined `P` fails only where no earlier declaration
