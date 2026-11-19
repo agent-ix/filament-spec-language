@@ -10,11 +10,12 @@ use ix_trace_rs::trace;
 
 const SOURCE_WITH_PLAN: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile p = \"filament.temporal.infinite-trace/v1\";\n\
-    temporal Reaches using p over (c: Int) clock \"model-steps\" on origin { eventually holds(c > 0) }\n\
+    model Config = \"acme/orders\";\n\
+    temporal Reaches using p over (c: Config::Widget) clock \"model-steps\" on origin { eventually holds(c.code > 0) }\n\
     verify Release using p {\n\
-      check safe claim Reaches method model_check domain Int bound 20;\n\
-      check tested claim Reaches method model_based_test domain Int bound 500;\n\
-      check timely claim Reaches method model_check domain Int depends [safe];\n\
+      check safe claim Reaches method model_check domain Config::Widget bound 20;\n\
+      check tested claim Reaches method model_based_test domain Config::Widget bound 500;\n\
+      check timely claim Reaches method model_check domain Config::Widget depends [safe];\n\
     }\n";
 
 fn checked(source_text: &str) -> CheckedPackage {
@@ -27,11 +28,22 @@ fn checked(source_text: &str) -> CheckedPackage {
     .expect("S1 reads the source");
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
     let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the source");
+    let model_packages = fsl_semantics::model::intake::package_input([include_bytes!(
+        "fixtures/verification-plan-model.semantic-ir.json"
+    )
+    .as_slice()])
+    .expect("the selected model package is admitted");
+    let models = fsl_semantics::model::intake::admit_unit(
+        &unit.selections().models,
+        &model_packages,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .expect("the unit's model selection resolves");
     let declarations = PackageDeclarations::assemble(
         parsed.source().reference().clone(),
         "test/package".to_owned(),
         unit,
-        Vec::new(),
+        models,
         Vec::new(),
     )
     .expect("the unit assembles");
