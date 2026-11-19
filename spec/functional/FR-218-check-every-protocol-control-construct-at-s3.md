@@ -425,6 +425,15 @@ that relationship with those two typed ends (FSpec FR-051).
 - S3 SHALL bind each checked relationship to its model relationship's
   declaration key and the types of its two ends, in the order the model
   declares them, never to the written name.
+- S3 SHALL type each end by what the model declares it as. An end that is an
+  object type is `Reference<T>` to that object type. An end that is an
+  endpoint (FR-085) is `Reference<I>`, `I` the object type of the endpoint's
+  declared interface type, whether or not the relationship is an admitted
+  Connection; the relationship records its connection (ports, direction and
+  interfaces) only when it is an admitted Connection (FR-086). FR-085 and
+  FR-086 admission leave no end of any other kind, so an end that resolves to
+  neither is an internal fault of the checker, never a refusal of the
+  protocol.
 - S3 SHALL resolve a `related by` clause's relationship name among the
   protocol's relationship declarations. A name that is no declared relationship
   SHALL refuse with `missing_declaration`/`missing-name` at the name, retaining

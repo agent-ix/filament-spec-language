@@ -340,7 +340,14 @@ pub struct AnalyzeLimits {
     pub accounting: ScalarLimits,
     pub observation: ObservationLimits,
     pub normalization: ModelNormalizationLimits,
+    pub simulation: SimulationLimits,
     pub deadline: DeadlineSupply,
+}
+
+pub struct SimulationLimits {
+    pub max_states: u64,       // `explore.states`, default 10000000
+    pub max_transitions: u64,  // `explore.transitions`, default 100000000
+    pub max_steps: u64,        // `simulation.max_steps`, default 16777216
 }
 
 pub enum DeadlineSupply {
@@ -405,7 +412,8 @@ pub enum DeadlineSupply {
 - `Engines`: the engines "Negotiated items" describes.
 - `AnalyzeLimits`: the accounting limits, the observation and
   model-normalization limits the binding is admitted under, each with its
-  published default (FR-277), and the request's deadline `deadline`.
+  published default (FR-277), the simulation limits `simulation`, and the
+  request's deadline `deadline`.
   `DeadlineSupply` has no `Default`, so `AnalyzeLimits` has none and the
   caller supplies `deadline` explicitly, as FR-277 has callers supply
   `ScalarLimits` and `supplied`: `Unbounded`, or `Milliseconds(n)`, the
@@ -416,6 +424,13 @@ pub enum DeadlineSupply {
   expiry only through that handle. `analyze` passes `deadline` to no engine:
   it is part of the request so that the request states its deadline and the
   timer is armed from that one value.
+- `SimulationLimits`: the exploration limits `explore.states` and
+  `explore.transitions` (FR-255) and the trace position limit
+  `simulation.max_steps`, each with the published default shown, so a
+  caller that sets none gets the defaults a `simulation` item uses. They
+  bound the state exploration and trace generation of a `model_based_test`
+  plan step (FR-752 "Entry"); an `analyze` item that carries its own
+  `simulation` member (FR-634) keeps its own settings.
 - `&Cancel`.
 
 ## Outputs
