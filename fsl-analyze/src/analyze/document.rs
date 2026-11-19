@@ -28,7 +28,7 @@ use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::request::ProtocolAnalysisSelection;
 use super::{
@@ -1091,7 +1091,10 @@ fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::No
     let graph = package.graph();
     let mut names: BTreeMap<String, filament_exact::NodeKey> = declared_nodes(package).collect();
     names.extend(graph.hyper_clauses().iter().filter_map(|clause| {
-        Some((clause.name().to_owned(), clause.assembled_occurrence()?.node().clone()))
+        Some((
+            clause.name().to_owned(),
+            clause.assembled_occurrence()?.node().clone(),
+        ))
     }));
     names.extend(
         graph
@@ -1371,7 +1374,7 @@ pub fn resolve_items(
 mod package_run;
 
 pub use package_run::{
-    settle_package_run, PackageRun, PackageRunError, PendingFamily, PendingPackageFamily,
+    PackageRun, PackageRunError, PendingFamily, PendingPackageFamily, settle_package_run,
 };
 
 /// One requirement item of a run call (FR-395 "Item of the call") with the
@@ -1577,7 +1580,15 @@ fn resolve_one(
             }
             match kinds.as_slice() {
                 [kind] => *kind,
-                [] if state_graph.is_some() => Capability::TemporalSatisfaction,
+                [] if state_graph.is_some()
+                    || package
+                        .graph()
+                        .hyper_clauses()
+                        .iter()
+                        .any(|clause| clause.assembled_occurrence() == Some(&claim)) =>
+                {
+                    Capability::TemporalSatisfaction
+                }
                 _ => return invalid_kind(index, Some(name), "absent-kind"),
             }
         }

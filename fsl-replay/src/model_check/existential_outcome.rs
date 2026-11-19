@@ -63,6 +63,8 @@ pub enum ExistentialOutcome {
 /// One instance of an HP-5 item with its decision.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExistentialInstanceOutcome {
+    /// The complete positive product of a fully explored witnessed outcome.
+    pub certificate: Option<crate::ProductClosureCertificate>,
     /// The instance: each object parameter of the clause and the key it is
     /// bound to, in parameter order.
     pub instance: Vec<(String, String)>,

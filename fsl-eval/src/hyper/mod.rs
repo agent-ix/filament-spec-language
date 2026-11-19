@@ -33,7 +33,9 @@ mod witness;
 
 pub use crate::simulation::model::CheckedHyperLetters;
 pub use checked::CheckedStepMatch;
-pub use copy_swap::{copy_population, copy_symmetry, CopySwapInputs};
+pub use copy_swap::{
+    CopySwapInputs, copy_population, copy_symmetry, fairness_preserving_copy_group,
+};
 pub use finite::{
     evaluate_finite_hyper, replays_finite_refutation, FiniteFalseTuple, FiniteHyperOutcome,
     FinitePopulationError, FiniteQuantifier, FiniteTrace, FiniteTraceClosure,

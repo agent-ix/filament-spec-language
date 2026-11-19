@@ -48,36 +48,37 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Cancel, Meter, ScalarLimits};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{
-    analyze, check_loop, Analysis, EdgeLabel, FairnessError, Graph, Identity, LassoFairness,
-    LoopStep, Vertex,
+    Analysis, EdgeLabel, FairnessError, Graph, Identity, LassoFairness, LoopStep, Vertex, analyze,
+    check_loop,
 };
 use fsl_eval::hyper::{
     BodySense, ComponentStep, HyperFinding, HyperInputs, HyperLetters, HyperProduct, HyperState,
     HyperTransition, ParameterBinding, Property,
 };
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::{check_model_bounds, ModelSimState, ModelSystem, WalkMemo};
+use fsl_eval::simulation::model::{ModelSimState, ModelSystem, WalkMemo, check_model_bounds};
 use fsl_eval::simulation::{Limit, Outcome, SampleProvenance, StopReason, TransitionSystem};
-use fsl_eval::temporal::{evaluate_tuple, ComponentTrace, TemporalOutcome};
+use fsl_eval::temporal::{ComponentTrace, TemporalOutcome, evaluate_tuple};
 use fsl_foundation::IdentityLimits;
 use fsl_replay::{
-    ExistentialInstanceOutcome, ExistentialOutcome, IncompleteCause, LassoWitness, ModelCheckLimit,
-    ModelCheckLimits, ModelLasso, ModelPath, ModelStep, OpenCause, ReachedLimit, RunEnd, RunStats,
-    UndefinedEvaluation, UndefinedLocus, UndefinedSite, WitnessSource, DEFAULT_WITNESS_SEED,
+    DEFAULT_WITNESS_SEED, ExistentialInstanceOutcome, ExistentialOutcome, IncompleteCause,
+    LassoWitness, ModelCheckLimit, ModelCheckLimits, ModelLasso, ModelPath, ModelStep, OpenCause,
+    ReachedLimit, RunEnd, RunStats, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
+    WitnessSource,
 };
 use fsl_semantics::check::{CheckedHyperClause, HyperForm};
 
 use super::{
-    fault, instances, retain, tree_path, widen, FairModel, HyperGraph, HyperRefusal, Positions,
-    ProductStateId, RetainedEdge, Totals, BOUND_POSITIONS,
+    BOUND_POSITIONS, FairModel, HyperGraph, HyperRefusal, Positions, ProductStateId, RetainedEdge,
+    Totals, fault, instances, retain, tree_path, widen,
 };
+use crate::model_check::ModelCheckRefusal;
 use crate::model_check::check::not_simulated;
 use crate::model_check::fair_walk::fairness_constraints;
 use crate::model_check::state_graph::{
-    budget_is_ceiling, cancelled, expansion_stop, sampler, step_ceiling, stopped, trace_index,
-    trace_indices_fit, Budgets, Halt,
+    Budgets, Halt, budget_is_ceiling, cancelled, expansion_stop, sampler, step_ceiling, stopped,
+    trace_index, trace_indices_fit,
 };
-use crate::model_check::ModelCheckRefusal;
 
 /// One EN-1 run over an HP-5 item (FR-181 Inputs).
 pub struct SingleExistentialRequest<'a> {
@@ -143,6 +144,7 @@ pub fn check_single_existential(
             instances: bindings
                 .iter()
                 .map(|binding| ExistentialInstanceOutcome {
+                    certificate: None,
                     instance: named(binding),
                     outcome: ExistentialOutcome::NoInitialState,
                     sampled: Vec::new(),
@@ -262,6 +264,7 @@ impl<'a> Run<'_, 'a> {
                     instances: bindings
                         .iter()
                         .map(|binding| ExistentialInstanceOutcome {
+                            certificate: None,
                             instance: named(binding),
                             outcome: ExistentialOutcome::NoDecision {
                                 end: halt.end(),
@@ -307,7 +310,51 @@ impl<'a> Run<'_, 'a> {
                     .decide(&sampled.witnesses)?
                 }
             };
+            let certificate = if matches!(outcome, ExistentialOutcome::Witnessed { .. }) {
+                let Explored::Product(product, _) = &explored else {
+                    return Err(fault("a-witnessed-instance-has-a-product"));
+                };
+                let members = product
+                    .graph
+                    .states()
+                    .iter()
+                    .map(|member| {
+                        let key =
+                            fsl_replay::product_state_key(&product.product.key(&member.state))
+                                .map_err(|_| fault("HP-5-certificate-key"))?;
+                        Ok((key, member.state.clone(), member.findings.clone()))
+                    })
+                    .collect::<Result<Vec<_>, ModelCheckRefusal>>()?;
+                let edges = product
+                    .graph
+                    .edges()
+                    .iter()
+                    .map(|edge| {
+                        (
+                            edge.source.index(),
+                            edge.target.index(),
+                            edge.transition.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                Some(
+                    fsl_replay::product_certificate(fsl_replay::ProductEvidence {
+                        clause: self.request.clause,
+                        systems: &[&self.system],
+                        instance: binding,
+                        members: &members,
+                        edges: &edges,
+                        automaton: &product.product.automaton(),
+                        reduction: None,
+                        cancel: self.cancel,
+                    })
+                    .map_err(|_| fault("HP-5-certificate"))?,
+                )
+            } else {
+                None
+            };
             instances.push(ExistentialInstanceOutcome {
+                certificate,
                 instance: named(binding),
                 outcome,
                 sampled: sampled.witnesses,
@@ -532,7 +579,7 @@ impl<'a> Run<'_, 'a> {
         match outcome {
             TemporalOutcome::Holds => {}
             TemporalOutcome::Violated { .. } | TemporalOutcome::Undefined(_) => {
-                return Ok(Ok(None))
+                return Ok(Ok(None));
             }
             TemporalOutcome::Incomplete(incomplete) => {
                 return Ok(Err(cancelled(self.cancel).unwrap_or_else(|| {
@@ -654,7 +701,7 @@ impl<'a> Run<'_, 'a> {
             Err(fsl_eval::automaton::AutomatonError::StateLimit { limit }) => {
                 return Ok(Explored::Halted(
                     stopped(ModelCheckLimit::MaxAutomatonStates, limit).end(),
-                ))
+                ));
             }
             Err(other) => return Err(HyperRefusal::Automaton(other).into()),
         };
@@ -817,7 +864,7 @@ impl<'a> Decision<'_, '_, 'a> {
                     return Ok(ExistentialOutcome::NoDecision {
                         end,
                         open: self.open_causes(),
-                    })
+                    });
                 }
             }
         } else {
@@ -842,7 +889,7 @@ impl<'a> Decision<'_, '_, 'a> {
                     return Ok(ExistentialOutcome::NoDecision {
                         end,
                         open: self.open_causes(),
-                    })
+                    });
                 }
             }
         }

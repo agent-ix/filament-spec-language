@@ -7,15 +7,15 @@ use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{
     CheckedHyperLetters, ExpansionLimits, ModelSimulationRequest, ModelSystem,
 };
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
-use fsl_replay::{replay_hyper_trace_tuple, settle_hyper_check, HyperReplay};
+use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_replay::{HyperReplay, replay_hyper_trace_tuple, settle_hyper_check};
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, DeclarationFamily};
 
-use super::items::{admission, model_refusal, BROKEN, NOT_YET};
+use super::items::{BROKEN, admission, model_refusal};
 use super::{AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SubjectBinding, TemporalItem};
-use crate::model_check::{check_hyper, manifest, HyperCheckRequest};
+use crate::model_check::{HyperCheckRequest, check_hyper, manifest};
 
 /// Build an item only when the occurrence identifies a checked hyper clause.
 pub(super) fn hyper_item<'a>(
@@ -68,6 +68,12 @@ pub(super) fn hyper_item<'a>(
                     Err(_) => return EngineReport::Refused(Refusal::Failed(BROKEN)),
                 };
                 let matcher = CheckedStepMatch::new(package, clause);
+                if matches!(
+                    clause.form(),
+                    Some(fsl_semantics::check::HyperForm::SingleExistential)
+                ) {
+                    return single(package, clause, simulation, &letters, &form, limits, cancel);
+                }
                 let outcome = match check_hyper(
                     HyperCheckRequest {
                         clause,
@@ -91,60 +97,183 @@ pub(super) fn hyper_item<'a>(
                     Ok(outcome) => outcome,
                     Err(refusal) => return EngineReport::Refused(model_refusal(&refusal)),
                 };
-                let settled = settle_hyper_check(&outcome, &form.limits, &[], |payload| {
-                    let mut instance = Vec::with_capacity(clause.parameters().len());
-                    for parameter in clause.parameters() {
-                        let key = payload
-                            .instance
-                            .iter()
-                            .find(|(name, _)| name == &parameter.name)
-                            .map(|(_, key)| key);
-                        let admitted = system
-                            .instances(&ValueType::Reference(parameter.population.object()))
-                            .map_err(|_| {
-                                fsl_replay::ReplayRefusal::Fault(
-                                    filament_semantic_value::catalog::InternalFault::new(
-                                        "hyper-item",
-                                        "parameter-universe",
-                                    ),
-                                )
-                            })?;
-                        let binding = admitted
-                            .into_iter()
-                            .find(|instance| Some(&instance.key) == key)
-                            .ok_or_else(|| {
-                                fsl_replay::ReplayRefusal::Fault(
-                                    filament_semantic_value::catalog::InternalFault::new(
-                                        "hyper-item",
-                                        "counterexample-instance",
-                                    ),
-                                )
-                            })?;
-                        instance.push(ParameterBinding {
-                            parameter: parameter.name.clone(),
-                            instance: binding,
-                        });
-                    }
-                    replay_hyper_trace_tuple(
-                        &HyperReplay {
-                            clause,
-                            systems,
-                            instance: &instance,
-                            letters: &letters,
-                            matcher: &matcher,
-                            meter: limits.accounting,
-                            max_witness_set: form.limits.max_witness_set,
-                            cancel,
-                        },
-                        payload,
-                    )
-                });
+                let subjects = clause
+                    .aliases()
+                    .iter()
+                    .map(|_| ModelSubject {
+                        simulation: simulation.clone(),
+                        proof_bounds: form.proof_bounds.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                let certificate = fsl_replay::ProductClosureRequest {
+                    package,
+                    clause,
+                    subjects: &subjects,
+                    meter: limits.accounting,
+                };
+                let settled = settle_hyper_check(
+                    &outcome,
+                    &form.limits,
+                    &[],
+                    Some(&certificate),
+                    cancel,
+                    |payload| {
+                        let mut instance = Vec::with_capacity(clause.parameters().len());
+                        for parameter in clause.parameters() {
+                            let key = payload
+                                .instance
+                                .iter()
+                                .find(|(name, _)| name == &parameter.name)
+                                .map(|(_, key)| key);
+                            let admitted = system
+                                .instances(&ValueType::Reference(parameter.population.object()))
+                                .map_err(|_| {
+                                    fsl_replay::ReplayRefusal::Fault(
+                                        filament_semantic_value::catalog::InternalFault::new(
+                                            "hyper-item",
+                                            "parameter-universe",
+                                        ),
+                                    )
+                                })?;
+                            let binding = admitted
+                                .into_iter()
+                                .find(|instance| Some(&instance.key) == key)
+                                .ok_or_else(|| {
+                                    fsl_replay::ReplayRefusal::Fault(
+                                        filament_semantic_value::catalog::InternalFault::new(
+                                            "hyper-item",
+                                            "counterexample-instance",
+                                        ),
+                                    )
+                                })?;
+                            instance.push(ParameterBinding {
+                                parameter: parameter.name.clone(),
+                                instance: binding,
+                            });
+                        }
+                        replay_hyper_trace_tuple(
+                            &HyperReplay {
+                                clause,
+                                systems,
+                                instance: &instance,
+                                letters: &letters,
+                                matcher: &matcher,
+                                meter: limits.accounting,
+                                max_witness_set: form.limits.max_witness_set,
+                                cancel,
+                            },
+                            payload,
+                        )
+                    },
+                );
                 match settled {
                     Ok(record) => EngineReport::Hyper(Box::new(record)),
-                    Err(_) => EngineReport::Refused(Refusal::Unsupported(NOT_YET)),
+                    Err(_) => EngineReport::Refused(Refusal::Failed(BROKEN)),
                 }
             },
         )
         .claimed(key.clone()),
     )
+}
+
+fn single(
+    package: &fsl_package::CheckedPackage,
+    clause: &fsl_semantics::check::CheckedHyperClause,
+    simulation: ModelSimulationRequest<'_>,
+    letters: &CheckedHyperLetters<'_, '_>,
+    form: &TemporalItem,
+    limits: AnalyzeLimits,
+    cancel: &Cancel,
+) -> EngineReport {
+    use fsl_replay::{GraphEvidence, StateGraphMethod, StateGraphPropertyForm, TerminalValue};
+    let mut budgets = form.limits;
+    if let Some(samples) = form.witness_samples {
+        budgets.witness_samples = samples;
+    }
+    let subject = ModelSubject {
+        simulation: simulation.clone(),
+        proof_bounds: form.proof_bounds.clone(),
+    };
+    let run = match crate::model_check::check_single_existential(
+        crate::model_check::SingleExistentialRequest {
+            clause,
+            subject,
+            letters,
+            limits: budgets,
+            max_depth: form.max_depth,
+            seed: form.seed,
+            meter: limits.accounting,
+        },
+        cancel,
+    ) {
+        Ok(run) => run,
+        Err(refusal) => return EngineReport::Refused(model_refusal(&refusal)),
+    };
+    let subjects = [ModelSubject {
+        simulation,
+        proof_bounds: form.proof_bounds.clone(),
+    }];
+    let request = fsl_replay::ProductClosureRequest {
+        package,
+        clause,
+        subjects: &subjects,
+        meter: limits.accounting,
+    };
+    let max_depth = match form.max_depth.map(u64::try_from).transpose() {
+        Ok(depth) => depth,
+        Err(_) => return EngineReport::Refused(Refusal::Failed(BROKEN)),
+    };
+    let method = StateGraphMethod {
+        limits: budgets,
+        max_depth,
+        seed: run.seed,
+    };
+    let mut chosen = None;
+    for instance in &run.instances {
+        let settled = match fsl_replay::settle_existential(&request, instance, &method, cancel) {
+            Ok(settled) => settled,
+            Err(_) => return EngineReport::Refused(Refusal::Failed(BROKEN)),
+        };
+        let mut wire = None;
+        if let Some(evidence) = settled.evidence.as_ref() {
+            let over = match evidence {
+                GraphEvidence::Witness { over, .. }
+                | GraphEvidence::Trap { over, .. }
+                | GraphEvidence::PathPair { over, .. }
+                | GraphEvidence::Undefined { over, .. } => over.as_ref(),
+            };
+            wire = match fsl_replay::graph_evidence_wire(
+                evidence,
+                StateGraphPropertyForm::Possible,
+                clause
+                    .parameters()
+                    .first()
+                    .map(|parameter| parameter.name.as_str()),
+                over,
+                &[],
+                clause.assembled_occurrence(),
+            ) {
+                Ok(wire) => Some(wire),
+                Err(_) => return EngineReport::Refused(Refusal::Failed(BROKEN)),
+            };
+        }
+        let refuted = matches!(settled.record.value, TerminalValue::Refuted);
+        let proved = matches!(settled.record.value, TerminalValue::Proved { .. });
+        let report = super::GraphReport {
+            record: settled.record,
+            exploration: instance.stats,
+            counterexample: if refuted { wire.clone() } else { None },
+            evidence: if !refuted { wire } else { None },
+            certificate_document: None,
+            checker: proved.then_some(fsl_replay::CertificateChecker::ProductClosure),
+        };
+        if !proved {
+            return EngineReport::StateGraph(Box::new(report));
+        }
+        chosen = Some(report);
+    }
+    match chosen {
+        Some(report) => EngineReport::StateGraph(Box::new(report)),
+        None => EngineReport::Refused(Refusal::Failed(BROKEN)),
+    }
 }

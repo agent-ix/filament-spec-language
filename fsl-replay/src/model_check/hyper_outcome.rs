@@ -61,6 +61,8 @@ pub enum HyperOutcome {
     /// cycle (HP-2) or fair cycle with an empty witness set (HP-3) exists
     /// (V-1), whatever certificate FR-163 will require.
     Holds {
+        /// Each object binding's independently checkable closed product.
+        certificates: Vec<crate::ProductClosureCertificate>,
         /// The run's counts.
         stats: RunStats,
     },
@@ -68,6 +70,8 @@ pub enum HyperOutcome {
     /// examined and no violation exists (V-1 under ADR-023 CS-5). It carries
     /// no certificate, as [`Self::Holds`] does not.
     HoldsReduced {
+        /// Each object binding's independently checkable reduced product.
+        certificates: Vec<crate::ProductClosureCertificate>,
         /// The applied reductions: the copy group's swap.
         reductions: Vec<AppliedReduction>,
         /// The run's counts.
@@ -125,7 +129,7 @@ impl HyperOutcome {
     /// The run's counts.
     pub fn stats(&self) -> RunStats {
         match self {
-            Self::Holds { stats }
+            Self::Holds { stats, .. }
             | Self::HoldsReduced { stats, .. }
             | Self::Reduction { stats, .. }
             | Self::Violated { stats, .. }

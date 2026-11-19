@@ -7,16 +7,16 @@ use filament_exact::{ObjectReference, Rational, Value};
 use filament_semantic_value::fairness::FairnessConstraint;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::protocol::{
-    blocked_json, fairness_json, location_json, send_record_json, transition_json,
-    ProtocolFairness, ProtocolTransition,
-};
 use fsl_eval::simulation::SubjectTransition;
+use fsl_eval::simulation::protocol::{
+    ProtocolFairness, ProtocolTransition, blocked_json, fairness_json, location_json,
+    send_record_json, transition_json,
+};
 use fsl_foundation::node_wire::node_key_to_json;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
-use super::{undefined_reason, TimedStateWire, TimedTransitionWire};
+use super::{TimedStateWire, TimedTransitionWire, undefined_reason};
 use crate::model_check::counterexample::{
     CounterexampleKind, ModelStep, Race, TemporalCounterexample, UndefinedEvaluation,
     UndefinedLocus,
@@ -319,7 +319,7 @@ fn temporal<T: Spelling>(
         (None, _) => Json::Null,
         (Some(_), Some(found)) => reference(found)?,
         (Some(ModelInstance { .. }), None) => {
-            return Err(CounterexampleWireError::Unspelled("over binding"))
+            return Err(CounterexampleWireError::Unspelled("over binding"));
         }
     };
     let fairness = counterexample
@@ -675,14 +675,21 @@ fn graph_witness(
     path: &crate::model_check::state_graph::WitnessPath,
     source: &crate::model_check::state_graph::WitnessSource,
 ) -> Result<Json, CounterexampleWireError> {
-    let crate::model_check::state_graph::WitnessPath::Path(path) = path else {
-        return Err(CounterexampleWireError::Unspelled("lasso witness"));
+    let (path, loop_entry) = match path {
+        crate::model_check::state_graph::WitnessPath::Path(path) => (model_path(path)?, None),
+        crate::model_check::state_graph::WitnessPath::Lasso(lasso) => {
+            (model_path(&lasso.path)?, Some(lasso.loop_entry))
+        }
     };
-    Ok(json!({
-        "path": model_path(path)?,
+    let mut wire = json!({
+        "path": path,
         "source": serde_json::to_value(source)
             .map_err(|_| CounterexampleWireError::Unspelled("witness source"))?,
-    }))
+    });
+    if let Some(entry) = loop_entry {
+        wire["loop_entry"] = json!(entry.to_string());
+    }
+    Ok(wire)
 }
 
 /// FSpec FR-393's spelling of the state-graph `evidence` of the instance

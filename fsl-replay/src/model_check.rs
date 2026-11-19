@@ -15,6 +15,7 @@
 pub mod counterexample;
 pub mod existential_outcome;
 pub mod finite_hyper_replay;
+pub mod existential_settle;
 mod graph_hyper;
 pub mod graph_replay;
 pub mod digital_state_graph;

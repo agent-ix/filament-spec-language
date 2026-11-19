@@ -166,6 +166,10 @@ pub use certificate::closure::{
     check_protocol_closure, check_protocol_components,
 };
 pub use certificate::scc::{Component, ComponentCertificate, ComponentWitness, ProofCertificate};
+pub use certificate::product::{
+    HyperProductMember, ProductClosureCertificate, ProductClosureRefusal, ProductClosureRequest,
+    ProductEvidence, ProductStateKey, check_product_closure, product_certificate, product_state_key,
+};
 pub use certificate::simulation::{
     CertifiedEdge, CertifiedPosition, EvaluationOutcome, FailedStep, IncompleteLimit,
     SimulationCertificate, SimulationCertificateRequest, SimulationRefusal, UndeterminedStep,
@@ -264,6 +268,7 @@ pub use model_check::finite_hyper_replay::{
     ReproducedFiniteHyperRefutation, replay_finite_hyper_refutation,
     reproduce_finite_hyper_refutation,
 };
+pub use model_check::existential_settle::{ExistentialRecord, settle_existential};
 pub use model_check::graph_replay::{
     replay_model_graph, replay_model_graph_from_package, replay_model_graph_with_cancel,
     replay_model_graph_with_cancel_and_temporal_selections,
