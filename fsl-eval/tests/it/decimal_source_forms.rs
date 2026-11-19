@@ -86,7 +86,11 @@ fn compile_limited(
     .expect("the unit assembles");
     declarations.decimal_literal_limits = limits;
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .map(CheckedPackage::link)
 }
 
@@ -1035,7 +1039,11 @@ fn a_float_converts_to_no_decimal() {
         )
         .expect("the pinned IEEE profile admits"),
     );
-    let Err(refusals) = declarations.check(CheckMode::Linked, CheckingLimits::default()) else {
+    let Err(refusals) = declarations.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    ) else {
         panic!("a float to decimal conversion is refused");
     };
     let [refusal] = refusals.as_slice() else {
@@ -1112,7 +1120,11 @@ fn an_ambiguous_comparison_is_refused_at_its_first_literal() {
     .expect("the unit assembles");
     let regions = declarations.regions();
     let refusals = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect_err("the comparison is refused");
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal, got {refusals:?}");

@@ -45,7 +45,11 @@ fn package() -> CheckedPackage {
         Vec::new(),
     )
     .expect("the declarations assemble")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .expect("Some(3) is checked against the expected option payload");
     CheckedPackage::link(checked)
 }
