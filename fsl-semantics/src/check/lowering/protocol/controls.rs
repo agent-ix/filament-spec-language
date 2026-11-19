@@ -433,9 +433,10 @@ impl Lowering<'_> {
                 )
             }
             ProtocolNodeKind::Event
-                if form.attempts.iter().any(|attempt| {
-                    attempt.declaration == node.0 && attempt.recommendation
-                }) =>
+                if form
+                    .attempts
+                    .iter()
+                    .any(|attempt| attempt.declaration == node.0 && attempt.recommendation) =>
             {
                 let form = form
                     .attempts
@@ -453,13 +454,10 @@ impl Lowering<'_> {
                     "recommend",
                     vec![
                         role(Some(&form.role.name))?,
-                        MemberTerm::bound(
-                            "operation",
-                            LeafTerm::reference(nodes.anchor.clone()),
-                        ),
+                        MemberTerm::bound("operation", LeafTerm::reference(nodes.anchor.clone())),
                         MemberTerm::binding(
                             "contracts",
-                            BindingValue::Group(GroupTerm::references(sorted(
+                            BindingValue::Group(GroupTerm::references_nodes(sorted_node_refs(
                                 nodes.contracts.iter().cloned(),
                             ))),
                         ),

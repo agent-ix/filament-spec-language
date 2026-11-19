@@ -1386,6 +1386,11 @@ fn check_message_one(first: &CheckRefusal) -> String {
         // name so a protocol refusal reads like a state clause's.
         CheckCause::ProtocolAnchor(cause) => {
             message = match cause.as_ref() {
+                ProtocolAnchorCause::ObserveOnlyAction {
+                    action, boundary, ..
+                } => format!(
+                    "{message}: `{action}` changes state behind the observe-only boundary `{boundary}`"
+                ),
                 ProtocolAnchorCause::Missing { segment, .. } => {
                     format!("{message}: `{segment}`")
                 }
