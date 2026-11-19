@@ -3270,7 +3270,12 @@ fn a_cancelled_check_ends_cancelled() {
     assert!(handle.set(tripping.clone()).is_ok());
     for (when, cancel) in [("before", before), ("at the first charge", tripping)] {
         let refusals = assemble(&refused)
-            .check_with_cancel(CheckMode::Linked, CheckingLimits::default(), &cancel)
+            .check_with_cancel(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &ZeroRewardEvaluator,
+                &cancel,
+            )
             .expect_err("a cancelled check refuses");
         assert_eq!(
             cancel.tripped(),
