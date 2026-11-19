@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! S3 finite-domain analysis for FR-754 synthesis declarations.
 
-use filament_exact::ValueType;
 use filament_checked::node::NodeKind;
+use filament_exact::ValueType;
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use filament_semantic_value::location::ExpressionLocation as Location;
 
@@ -110,9 +110,21 @@ impl CheckedSynthesis {
     /// Objective expression's source spelling, when authored.
     pub fn objective_source(&self) -> Option<&str> {
         let objective = self.form.objective.as_ref()?;
-        let start = objective.span.start.checked_sub(self.form.span.start)?;
-        let end = objective.span.end.checked_sub(self.form.span.start)?;
+        let expression_span = objective
+            .expression
+            .spans
+            .span(objective.expression.spans.root())?;
+        let start = expression_span.start.checked_sub(self.form.span.start)?;
+        let end = expression_span.end.checked_sub(self.form.span.start)?;
         self.form.source.get(start..end)
+    }
+
+    /// Objective direction, when the declaration has an objective.
+    pub fn objective_direction(&self) -> Option<&'static str> {
+        Some(match self.form.objective.as_ref()?.direction {
+            fsl_forms::SynthesisDirectionForm::Minimize => "minimize",
+            fsl_forms::SynthesisDirectionForm::Maximize => "maximize",
+        })
     }
 }
 

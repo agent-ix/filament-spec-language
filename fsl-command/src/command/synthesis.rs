@@ -1,15 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-754: bounded candidate enumeration for value synthesis.
 
-use filament_exact::{Integer, IntegerInterval, ValueType};
-use fsl_foundation::source::SourceLabel;
-use fsl_semantics::check::SCALAR_LIMITS_UNLIMITED;
+use filament_exact::{Integer, IntegerInterval, ScalarLimits, ValueType};
 use serde::Serialize;
 use serde_json::Value;
 use std::path::Path;
 
 const DEFAULT_MAX_CANDIDATES: u64 = 10_000_000;
 const DEFAULT_MAX_WORK: u64 = 100_000_000;
+const SYNTHESIS_SCALAR_LIMITS: ScalarLimits = ScalarLimits {
+    integer_bits: u64::MAX,
+    decimal_digits: u64::MAX,
+    scale_expansion: u64::MAX,
+    text_input_bytes: u64::MAX,
+    text_scalars: u64::MAX,
+    normalized_scalars: u64::MAX,
+    unit_edges: u64::MAX,
+    value_occurrences: u64::MAX,
+    work_units: u64::MAX,
+    result_units: u64::MAX,
+};
 
 /// The two independent limits applied while enumerating a bounded integer
 /// domain. Each candidate consumes one unit from each counter.
@@ -423,7 +433,7 @@ pub(super) fn run_bytes(
     let admitted = fsl_package::admit_checked_package(
         compiled.emitted.package().bytes(),
         &model_documents,
-        fsl_package::V2ReadLimits::default(),
+        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT),
     )
     .map_err(|failure| {
         refused(
@@ -438,8 +448,9 @@ pub(super) fn run_bytes(
         .iter()
         .find(|synthesis| {
             synthesis.name() == claim.name.as_ref()
-                && synthesis.span().start == claim.declaration_region.start
-                && synthesis.span().end == claim.declaration_region.end
+                && u64::try_from(synthesis.span().start).ok()
+                    == Some(claim.declaration_region.start)
+                && u64::try_from(synthesis.span().end).ok() == Some(claim.declaration_region.end)
         })
         .ok_or_else(|| refused("/request/synthesis/declaration", "missing-name"))?;
     let ValueType::Int(domain) = checked.domain() else {
@@ -464,7 +475,7 @@ pub(super) fn run_bytes(
         domain,
         selection.limits,
         |candidate| match evaluate_integer_body(checked_package, checked.satisfies(), candidate) {
-            Ok(Value::Boolean(value)) => value,
+            Ok(filament_exact::Value::Boolean(value)) => value,
             Ok(value) => {
                 evaluation_error = Some(format!("satisfies expression returned {value:?}"));
                 false
@@ -502,9 +513,16 @@ pub(super) fn run_bytes(
             let value = evaluate_integer_body(checked_package, objective, &candidate)
                 .map_err(|error| refused("/request/synthesis", error))?;
             outcome.optimal = Some(checked.objective_is_candidate());
+            let filament_exact::Value::Integer(value) = value else {
+                return Err(refused(
+                    "/request/synthesis/objective",
+                    "integer synthesis objective returned a non-integer",
+                ));
+            };
             outcome = outcome.with_objective(serde_json::json!({
+                "direction": checked.objective_direction(),
                 "expression": checked.objective_source().unwrap_or(""),
-                "value": value,
+                "value": integer_value(&value),
             }));
         }
     }
@@ -557,8 +575,12 @@ fn read_selection(member: Value) -> super::Result<Selection> {
                 "unknown-member",
             ));
         }
-        limits.max_candidates = read_limit(object, "max_candidates")?;
-        limits.max_work = read_limit(object, "max_work")?;
+        limits.max_candidates = Some(
+            read_limit(object, "max_candidates", DEFAULT_MAX_CANDIDATES)?
+                .unwrap_or(DEFAULT_MAX_CANDIDATES),
+        );
+        limits.max_work =
+            Some(read_limit(object, "max_work", DEFAULT_MAX_WORK)?.unwrap_or(DEFAULT_MAX_WORK));
     }
     Ok(Selection {
         declaration,
@@ -566,15 +588,23 @@ fn read_selection(member: Value) -> super::Result<Selection> {
     })
 }
 
-fn read_limit(object: &serde_json::Map<String, Value>, name: &str) -> super::Result<Option<u64>> {
+fn read_limit(
+    object: &serde_json::Map<String, Value>,
+    name: &str,
+    default: u64,
+) -> super::Result<Option<u64>> {
     match object.get(name) {
-        None => Ok(None),
-        Some(value) => value.as_u64().map(Some).ok_or_else(|| {
-            refused(
-                &format!("/request/synthesis/limits/{name}"),
-                "expected a non-negative integer",
-            )
-        }),
+        None => Ok(Some(default)),
+        Some(value) => value
+            .as_u64()
+            .filter(|value| *value > 0)
+            .map(Some)
+            .ok_or_else(|| {
+                refused(
+                    &format!("/request/synthesis/limits/{name}"),
+                    "expected a positive integer",
+                )
+            }),
     }
 }
 
@@ -634,8 +664,8 @@ fn evaluate_integer_body(
     body: &fsl_semantics::check::CheckedBody,
     candidate: &Integer,
 ) -> Result<filament_exact::Value, String> {
-    let mut meter = filament_exact::Meter::new(SCALAR_LIMITS_UNLIMITED);
-    let evaluation = fsl_eval::value::expression::evaluate_protocol_slot(
+    let mut meter = filament_exact::Meter::new(SYNTHESIS_SCALAR_LIMITS);
+    let evaluation = fsl_eval::value::evaluate_protocol_slot(
         package,
         body,
         vec![Some(filament_exact::Value::Integer(candidate.clone()))],
