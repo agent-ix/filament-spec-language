@@ -166,7 +166,7 @@ pub(super) fn clocked_unit(body: &str) -> String {
 pub(super) fn member<'v>(node: &'v Value, name: &str) -> &'v Value {
     &node["members"]
         .as_array()
-        .expect("an aggregate")
+        .unwrap_or_else(|| panic!("not an aggregate: {node}"))
         .iter()
         .find(|member| member["name"] == name)
         .unwrap_or_else(|| panic!("member {name}"))["value"]
