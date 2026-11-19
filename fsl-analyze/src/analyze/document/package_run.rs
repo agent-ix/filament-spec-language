@@ -21,6 +21,7 @@ use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::simulation::model::{PackageModelInput, PendingPackageForm};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
+use fsl_eval::model_subject::{CapacityBinding, ModelInstance, RoleBinding};
 use fsl_package::{AnalysisView, BarePackage, CheckedNodeId, UnreadModelForm};
 use fsl_replay::TerminalRecord;
 use fsl_route::request::{ExtentClassification, ItemKind};
@@ -33,6 +34,7 @@ use super::super::{
     ItemOptions, NegotiatedItem, PackageClauseSubject, PackageDeadlockSubject,
     PackageInvariantSubject, PackageItemInputs, PackageStateGraphSubject, SubjectBinding,
 };
+use super::super::request::ProtocolBinding;
 use super::{
     candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
     unknown_claim, unknown_option, write_run, AnalyzeDocumentError, ItemReads, ItemSelection,
@@ -100,8 +102,6 @@ pub enum PendingFamily {
     /// name it does not carry ([`fsl_package::AnalysisView::unnamed_claims`]):
     /// the name may be that claim's, so it is not settled `unknown-claim`.
     UnnamedClaim,
-    /// An item decided over a protocol subject (FSL FR-1033).
-    ProtocolSubject,
     /// A temporal clause fact its package form does not read yet.
     ClauseFact(&'static str),
     /// A form of the package its model-check input does not read yet.
@@ -118,7 +118,6 @@ impl PendingFamily {
             Self::Derived => "derived",
             Self::Declaration => "declaration",
             Self::UnnamedClaim => "unnamed-claim",
-            Self::ProtocolSubject => "protocol-subject",
             Self::ClauseFact(fact) => fact,
             Self::ModelForm(_) => "model-form",
         }
@@ -171,6 +170,12 @@ enum Named<'s> {
         name: &'s str,
         selection: &'s ItemSelection,
     },
+    ProtocolFreedom {
+        index: RequestIndex,
+        name: &'s str,
+        protocol: String,
+        selection: &'s ItemSelection,
+    },
     Invariant {
         index: RequestIndex,
         name: &'s str,
@@ -189,7 +194,11 @@ enum Named<'s> {
 
 /// How a resolved package-route claim item runs.
 enum Route<'a> {
-    Clause(Box<PackageClauseSubject<'a>>),
+    Clause {
+        subject: Box<PackageClauseSubject<'a>>,
+        protocol: Option<ProtocolBinding>,
+    },
+    ProtocolFreedom(ProtocolBinding),
     Deadlock,
     Invariant,
     StateGraph(Box<PackageStateGraphSubject<'a>>),
@@ -276,14 +285,14 @@ pub fn settle_package_run(
                 selection,
             } => match reads.clause(index, name, &claim, selection)? {
                 Resolution::Settled(settled) => resolved.push(settled),
-                Resolution::Claim(claim, subject) => {
+                Resolution::Claim(claim, (subject, protocol)) => {
                     let occurrence = subject.occurrence().clone();
                     owners.insert(
                         occurrence.clone(),
                         owner_of_clause(package, subject.clause()),
                     );
                     clause_claims.push(occurrence);
-                    routes.insert(index, Route::Clause(subject));
+                    routes.insert(index, Route::Clause { subject, protocol });
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
@@ -295,6 +304,18 @@ pub fn settle_package_run(
                 Resolution::Settled(settled) => resolved.push(settled),
                 Resolution::Claim(claim, ()) => {
                     routes.insert(index, Route::Deadlock);
+                    resolved.push(ResolvedItem::Claim(claim));
+                }
+            },
+            Named::ProtocolFreedom {
+                index,
+                name,
+                protocol,
+                selection,
+            } => match reads.protocol_freedom(index, name, &protocol, selection)? {
+                Resolution::Settled(settled) => resolved.push(settled),
+                Resolution::Claim(claim, protocol) => {
+                    routes.insert(index, Route::ProtocolFreedom(protocol));
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
@@ -510,6 +531,16 @@ fn resolve_names<'s>(
                 .and_then(|temporal| temporal.item_kind)
                 .map(super::ItemKindSelection::kind);
             let derived = item_kind.is_some_and(|kind| kind != ItemKind::Formula);
+            if item_kind == Some(ItemKind::RaceFreedom) {
+                if let Some(protocol) = protocol_parallel_name(view, name) {
+                    return Ok(Named::ProtocolFreedom {
+                        index,
+                        name,
+                        protocol,
+                        selection,
+                    });
+                }
+            }
             if let Some(row) = clauses.iter().find(|row| row.name.as_ref() == name) {
                 if derived {
                     return Err(pending(PendingFamily::Derived));
@@ -582,6 +613,81 @@ fn resolve_names<'s>(
         .collect()
 }
 
+/// The protocol name of `name` when it names one of the package protocol's
+/// memory-governed parallel controls (`Protocol::path`).
+fn protocol_parallel_name(view: &dyn AnalysisView, name: &str) -> Option<String> {
+    let (protocol, path) = name.split_once("::")?;
+    let form = view.protocol_execution_named(protocol).ok().flatten()?;
+    form.controls
+        .iter()
+        .any(|control| {
+            control.operation == fsl_package::protocol_view::ControlOperation::Parallel
+                && control.path.join("::") == path
+        })
+        .then(|| protocol.to_owned())
+}
+
+/// The checked protocol binding carried by an item subject, if it is a
+/// protocol subject. `None` distinguishes a model subject; malformed
+/// capacities or role bindings name the member for the request's ordinary
+/// invalid-value disposition.
+fn protocol_binding(
+    subject: &SubjectSelection,
+    input: &PackageModelInput<'_>,
+) -> Result<Option<ProtocolBinding>, &'static str> {
+    let Some(selection) = subject.protocol.as_ref() else {
+        return Ok(None);
+    };
+    let capacities = selection
+        .capacities
+        .iter()
+        .map(|(name, value)| {
+            value.parse().ok().map(|value| CapacityBinding {
+                name: name.clone(),
+                value,
+            })
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or("capacities")?;
+    let effective = input
+        .package()
+        .protocol_execution_named(&selection.protocol)
+        .ok()
+        .flatten()
+        .and_then(|form| {
+            fsl_eval::simulation::protocol::ResolvedMemory::resolve_package(&form, &subject.memory)
+                .ok()
+        })
+        .map(|resolved| {
+            resolved
+                .parallels()
+                .iter()
+                .map(|parallel| (parallel.parallel.clone(), parallel.model))
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(Some(ProtocolBinding {
+        protocol: selection.protocol.clone(),
+        over: selection.over.as_ref().map(|over| {
+            (
+                over.reference.population.clone(),
+                over.reference.key.clone(),
+            )
+        }),
+        roles: selection
+            .roles
+            .iter()
+            .map(|(role, binding)| RoleBinding {
+                role: role.clone(),
+                model: binding.selection.clone(),
+            })
+            .collect(),
+        capacities,
+        memory: subject.memory.clone(),
+        effective,
+    }))
+}
+
 /// Whether the package node `node` is an `invariant` state clause (FR-625):
 /// a `state`/`state_clause` node of the `invariant` kind.
 fn is_invariant(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
@@ -636,8 +742,8 @@ struct ClaimReads<'r, 'a> {
 }
 
 impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
-    /// The item's own subject over the request's, refusing a protocol
-    /// subject, which the package route does not bind yet.
+    /// The item's own subject over the request's, including a protocol
+    /// subject selected by this item.
     fn own_subject(
         &self,
         index: RequestIndex,
@@ -651,13 +757,6 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 || self.subject.clone(),
                 |own| own.completed_by(self.subject),
             );
-        if own.protocol.is_some() {
-            return Err(PackageRunError::Pending(PendingPackageFamily {
-                request_index: Some(index),
-                family: PendingFamily::ProtocolSubject,
-                node: None,
-            }));
-        }
         Ok(own)
     }
 
@@ -671,12 +770,32 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         name: &str,
         claim: &OccurrenceKey,
         selection: &ItemSelection,
-    ) -> Result<Resolution<Box<PackageClauseSubject<'r>>>, PackageRunError> {
+    ) -> Result<Resolution<(Box<PackageClauseSubject<'r>>, Option<ProtocolBinding>)>, PackageRunError>
+    {
         let input = self
             .input
             .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
         let own_subject = self.own_subject(index, selection)?;
         let temporal = selection.temporal.clone().unwrap_or_default();
+        let protocol = match protocol_binding(&own_subject, input) {
+            Ok(protocol) => protocol,
+            Err(member) => {
+                return Ok(Resolution::Settled(super::invalid_value(
+                    index, name, member,
+                )));
+            }
+        };
+        if temporal
+            .item_kind
+            .is_some_and(|kind| kind.kind() != ItemKind::Formula)
+            && protocol.is_none()
+        {
+            return Err(PackageRunError::Pending(PendingPackageFamily {
+                request_index: Some(index),
+                family: PendingFamily::Derived,
+                node: None,
+            }));
+        }
         let mut form = temporal_settings(&temporal);
         let clause_subject = PackageClauseSubject::new(
             input,
@@ -786,7 +905,105 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 subject: own_subject,
                 unrouted,
             }),
-            Box::new(clause_subject),
+            (Box::new(clause_subject), protocol),
+        ))
+    }
+
+    /// The derived race-freedom item of one package protocol `parallel`,
+    /// anchored at that protocol's declaration occurrence.
+    fn protocol_freedom(
+        &self,
+        index: RequestIndex,
+        name: &str,
+        protocol_name: &str,
+        selection: &ItemSelection,
+    ) -> Result<Resolution<ProtocolBinding>, PackageRunError> {
+        let input = self
+            .input
+            .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
+        let own_subject = self.own_subject(index, selection)?;
+        let Some(selected) = own_subject.protocol.as_ref() else {
+            let mut detail = Map::new();
+            detail.insert("member".to_owned(), json!("temporal.subject.protocol"));
+            return Ok(Resolution::Settled(ResolvedItem::Settled {
+                claim_name: Some(name.to_owned()),
+                record: Box::new(
+                    TerminalRecord::disposition_declined(
+                        index,
+                        fsl_replay::ProofRefusalCause::InvalidInput,
+                        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                        CatalogCode::new("invalid_runtime_input", "missing-member"),
+                    )
+                    .with_diagnostic_detail(detail),
+                ),
+            }));
+        };
+        if selected.protocol != protocol_name {
+            return Ok(Resolution::Settled(unknown_claim(index, name)));
+        }
+        let protocol = match protocol_binding(&own_subject, input) {
+            Ok(Some(protocol)) => protocol,
+            Ok(None) => return Ok(Resolution::Settled(unknown_claim(index, name))),
+            Err(member) => {
+                return Ok(Resolution::Settled(super::invalid_value(
+                    index, name, member,
+                )));
+            }
+        };
+        let Some(form) = input
+            .package()
+            .protocol_execution_named(protocol_name)
+            .ok()
+            .flatten()
+        else {
+            return Ok(Resolution::Settled(unknown_claim(index, name)));
+        };
+        let key = input
+            .package()
+            .node_key(form.protocol.clause())
+            .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
+        let claim = OccurrenceKey::declaration(key);
+        let temporal = selection.temporal.clone().unwrap_or_default();
+        let form = temporal_settings(&temporal);
+        let named = selection.backend.as_deref().map(BackendId::new);
+        let backend_options = selection.options.clone().unwrap_or_default();
+        if let Some(refused) = unknown_option(
+            index,
+            Some(name),
+            self.registry,
+            named.as_ref(),
+            &backend_options,
+        ) {
+            return Ok(Resolution::Settled(refused));
+        }
+        let candidates = self.registry.restrict_to_timing(
+            self.registry
+                .candidates(Capability::TemporalSatisfaction, named.as_ref()),
+            false,
+        );
+        let mut temporal_form = form;
+        temporal_form.protocol = Some(protocol.clone());
+        let item = ClaimItem {
+            request_index: index,
+            claim: claim.clone(),
+            kind: Capability::TemporalSatisfaction,
+            extent: ExtentClassification::Unbounded {
+                finite_bound_available: false,
+            },
+            backend: named,
+            candidates: candidate_list(&candidates),
+            options: options(selection, backend_options),
+            form: Some(ItemForm::Temporal(temporal_form)),
+        };
+        Ok(Resolution::Claim(
+            Box::new(ResolvedClaim {
+                item,
+                claim_name: name.to_owned(),
+                candidates,
+                subject: own_subject.clone(),
+                unrouted: selection.unrouted() || !own_subject.same_model(self.subject),
+            }),
+            protocol,
         ))
     }
 
@@ -1243,10 +1460,38 @@ impl<'a> WorkInputs<'_, 'a> {
         };
         let family = (self.family)(temporal_kind, &item.claim);
         let mut built = match (&item.form, route) {
-            (Some(ItemForm::Temporal(form)), Some(Route::Clause(subject)))
+            (
+                Some(ItemForm::Temporal(form)),
+                Some(Route::Clause {
+                    subject,
+                    protocol: Some(protocol),
+                }),
+            ) if item.kind == Capability::TemporalSatisfaction => subject
+                .configured(form.clone())
+                .protocol_item(item.request_index, protocol),
+            (
+                Some(ItemForm::Temporal(form)),
+                Some(Route::Clause {
+                    subject,
+                    protocol: None,
+                }),
+            ) if item.kind == Capability::TemporalSatisfaction => {
+                subject.configured(form.clone()).item(item.request_index)
+            }
+            (Some(ItemForm::Temporal(form)), Some(Route::ProtocolFreedom(protocol)))
                 if item.kind == Capability::TemporalSatisfaction =>
             {
-                subject.configured(form.clone()).item(item.request_index)
+                super::super::clause_item::package_protocol_freedom_item(
+                    self.input,
+                    self.package_bytes,
+                    self.supply,
+                    self.binding.clone(),
+                    self.limits,
+                    &item.claim,
+                    form,
+                    protocol,
+                    item.request_index,
+                )
             }
             (Some(ItemForm::Temporal(form)), Some(Route::Deadlock))
                 if item.kind == Capability::TemporalSatisfaction

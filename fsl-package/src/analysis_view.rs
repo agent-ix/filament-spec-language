@@ -122,7 +122,7 @@ pub trait AnalysisView: sealed::Sealed {
             .resolved_graph()
             .nodes
             .iter()
-            .filter(|node| node.semantic_form == "protocol_clause")
+            .filter(|node| node.semantic_form.as_ref() == "protocol_clause")
             .filter(|node| {
                 node.declaration.as_ref().is_some_and(|declaration| {
                     let parts: Vec<&str> = declaration
