@@ -1432,6 +1432,30 @@ impl Pass<'_, '_> {
         refusals: &mut Vec<CheckRefusal>,
     ) -> Option<(CheckedTemporalFormula, u64, Option<Rational>)> {
         let mut causes: Vec<TemporalCause> = Vec::new();
+        if timed_reader.is_some() {
+            for (_, node) in formula.iter() {
+                let fsl_forms::TemporalNodeForm::Operator(operator) = node else {
+                    continue;
+                };
+                match &operator.interval {
+                    None => causes.push(TemporalCause::MissingInterval {
+                        span: operator.operator_span,
+                    }),
+                    Some(fsl_forms::OperatorInterval::Timed(interval))
+                        if matches!(&interval.upper, fsl_forms::TimedUpper::Open) =>
+                    {
+                        causes.push(TemporalCause::OpenInterval {
+                            span: interval.span,
+                        })
+                    }
+                    _ => {}
+                }
+            }
+            if !causes.is_empty() {
+                refusals.extend(causes.into_iter().map(temporal_refusal));
+                return None;
+            }
+        }
         let reading = match timed_reader {
             Some(reader) => IntervalReading::Timed(reader),
             None => IntervalReading::Steps { bounded: true },

@@ -3722,6 +3722,40 @@ fn probabilistic_claim_timed_profile_checks() {
     );
 }
 
+/// QSL-2252 (FR-186-AC-7): the timed profile admits bounded windows and
+/// refuses interval-less or open-window operators at operator admission.
+#[trace("TC-2063", "FR-186-AC-7")]
+#[test]
+fn a_timed_profile_refuses_unbounded_event_operators() {
+    let holds = format!("holds({IDLE})");
+    let source = |formula: &str| {
+        format!(
+            "time Service dense unit ms;\n{STEADY}\n\
+             probabilistic C using tm on Service {OVER} under Steady on origin \
+             {{ probability >= 0.9 [ {formula} ] }}"
+        )
+    };
+    let expression_form = |at: &str| {
+        (
+            Code::UnsupportedConstruct,
+            Some("expression-form"),
+            at.to_owned(),
+        )
+    };
+    for (formula, at) in [
+        (format!("eventually {holds}"), "eventually"),
+        (format!("eventually[0 ms,*] {holds}"), "[0 ms,*]"),
+    ] {
+        assert_eq!(
+            located_over(&timed_service_document(), &source(&formula)),
+            [expression_form(at)],
+            "{formula}"
+        );
+    }
+    // The bounded timed-window case remains admitted.
+    checked_timed_service(&source(&format!("eventually[0 ms,4 ms] {holds}")));
+}
+
 /// FR-186-AC-14 (TC-2171): every quantity position of a claim is read: the
 /// position's dimension checks, a length is a unit mismatch, and a
 /// dimensionless position refuses a quantity as a type mismatch.
