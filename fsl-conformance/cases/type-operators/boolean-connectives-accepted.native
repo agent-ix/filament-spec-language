@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function both using v(a: Boolean,b: Boolean): Boolean pure { a and b }
+function either using v(a: Boolean,b: Boolean): Boolean pure { a or b }
+function entails using v(a: Boolean,b: Boolean): Boolean pure { a implies b }
+function opposite using v(a: Boolean): Boolean pure { not a }

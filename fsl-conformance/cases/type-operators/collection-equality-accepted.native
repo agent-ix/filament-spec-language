@@ -1,0 +1,10 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type F = Float64[nearest-even];
+function equal0 using v(a: Sequence<Integer>[0,3],b: Sequence<Integer>[0,3]): Boolean pure { a=b }
+function equal1 using v(a: OrderedSet<Integer>[0,3],b: OrderedSet<Integer>[0,3]): Boolean pure { a=b }
+function equal2 using v(a: Set<Integer>[0,3],b: Set<Integer>[0,3]): Boolean pure { a=b }
+function equal3 using v(a: Bag<Integer>[0,3],b: Bag<Integer>[0,3]): Boolean pure { a=b }
+function floatEqual0 using v(a: Set<F>[0,3],b: Set<F>[0,3]): Boolean pure { a=b }
+function floatEqual1 using v(a: Bag<F>[0,3],b: Bag<F>[0,3]): Boolean pure { a=b }
+function floatEqual2 using v(a: OrderedSet<F>[0,3],b: OrderedSet<F>[0,3]): Boolean pure { a=b }

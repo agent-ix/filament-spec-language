@@ -1,0 +1,9 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+dimension Length;
+dimension Time;
+unit m : Length = rational(1,1);
+unit s : Time = rational(1,1);
+function add using v(a: Quantity<m>,b: Quantity<m>): Quantity<m> pure { a+b }
+function subtract using v(a: Quantity<m>,b: Quantity<m>): Quantity<m> pure { a-b }
+function multiply using v(a: Quantity<m>,b: Quantity<s>): Quantity<m*s> pure { a*b }

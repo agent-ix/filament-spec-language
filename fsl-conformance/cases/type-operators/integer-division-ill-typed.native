@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+profile law = "filament.value.integer-division.euclidean/v1";
+function bad using v(a: Int[-7,7],b: Int[0,3]): Integer pure { a div b }

@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function size0 using v(a: Sequence<Integer>[0,3]): Integer pure { size(a) }
+function size1 using v(a: OrderedSet<Integer>[0,3]): Integer pure { size(a) }
+function size2 using v(a: Set<Integer>[0,3]): Integer pure { size(a) }
+function size3 using v(a: Bag<Integer>[0,3]): Integer pure { size(a) }

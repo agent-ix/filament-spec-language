@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function add using v(a: Int[0,4],b: Int[0,4]): Int[0,8] pure { a+b }
+function subtract using v(a: Int[0,4],b: Int[0,4]): Int[-4,4] pure { a-b }
+function multiply using v(a: Int[0,4],b: Int[0,4]): Int[0,16] pure { a*b }

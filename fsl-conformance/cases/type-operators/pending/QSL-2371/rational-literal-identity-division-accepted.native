@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+profile law = "filament.value.integer-division.euclidean/v1";
+type R = Rational[1,9;1,9];
+function divide using v(a: R): R pure { a/rational(1,1) }

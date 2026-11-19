@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type R = Rational[1,9;1,9];
+function add using v(a: R,b: R): Rational[1,162;1,81] pure { a+b }
+function subtract using v(a: R,b: R): Rational[-80,80;1,81] pure { a-b }
+function multiply using v(a: R,b: R): Rational[1,81;1,81] pure { a*b }
