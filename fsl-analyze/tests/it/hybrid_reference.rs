@@ -120,7 +120,6 @@ fn the_reference_provider_refutes_too_slow_deterministically() {
 /// `unsupported` with a located `expression-form` cause.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-3")]
-#[ignore = "QSL-2534: the reference hybrid provider's class check is not implemented yet"]
 fn a_non_polynomial_flow_is_a_located_unsupported() {
     let unit = braking_pair().replace(
         "flow { v' = -a; a' = 0; }",
@@ -138,6 +137,31 @@ fn a_non_polynomial_flow_is_a_located_unsupported() {
     ] {
         assert!(text.contains(member), "{member}: {item}");
     }
+}
+
+/// FR-1019-AC-3: the class is every flow, guard, reset, invariant and initial
+/// condition built from `+`, `-`, `*` over exact constants: a cyclic flow is in
+/// it, and a division in a guard is outside it, located at the guard.
+#[test]
+#[trace("TC-2869", "FR-1019-AC-3")]
+fn the_class_admits_cyclic_flows_and_refuses_a_guard_division() {
+    let cyclic = braking_pair().replace(
+        "flow { v' = -a; a' = 0; }",
+        "flow { v' = v * a - a; a' = 0; }",
+    );
+    let inside = reference("ref-3b", &cyclic, one("SlowEnough"));
+    assert!(!inside.to_string().contains("expression-form"), "{inside}");
+    let guarded = braking_pair().replace("when { v = 0 }", "when { v / 2 = 0 }");
+    let item = reference("ref-3c", &guarded, one("SlowEnough"));
+    assert_eq!(item["record"]["result"], "unsupported", "{item}");
+    let text = item.to_string();
+    for member in ["expression-form", "Moving", "division"] {
+        assert!(text.contains(member), "{member}: {item}");
+    }
+    assert!(
+        !text.contains("\"variable\""),
+        "a guard names no variable: {item}"
+    );
 }
 
 /// FR-1019-AC-4: `Engines::fsl()` does not hold the reference provider, and
@@ -232,30 +256,61 @@ fn the_reference_provider_negotiates_by_dynamics() {
     assert!(neither["record"].get("result").is_none(), "{neither}");
 }
 
-/// FR-1019-AC-6: the published descriptor, and a step budget of 1 stopping
-/// the solver `limit-reached` naming `hybrid.max_solver_steps`.
+/// FR-1019-AC-6: `Engines::fsl_with_reference_hybrid()` holds every engine of
+/// `Engines::fsl()` and the reference provider, whose descriptor publishes
+/// `dynamics`, `bounds` and the three option names with their defaults.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-6")]
-#[ignore = "QSL-2534: the reference descriptor's bounds and `dynamics` exist; its `options` defaults and the solver step budget do not"]
-fn the_reference_provider_publishes_its_defaults_and_stops_at_its_budget() {
-    let ws = Workspace::new("ref-6a");
-    let run = analyze_with_providers(
-        &crate::hybrid_requests::request(&ws, &braking_pair(), one("SlowEnough"), json!({})),
-        reference_providers(),
-    );
-    let document = run.document();
-    let published = descriptor(&document, REFERENCE).expect("the registry holds it");
-    assert_eq!(published["dynamics"], json!(["hybrid"]), "{published}");
+fn the_reference_provider_publishes_its_descriptor() {
+    let plain = Engines::fsl().expect("the layer-A engines register");
+    let full = Engines::fsl_with_reference_hybrid().expect("the engines register");
+    let held: Vec<String> = full
+        .registrations()
+        .map(|descriptor| descriptor.candidate().id().as_str().to_owned())
+        .collect();
+    for descriptor in plain.registrations() {
+        assert!(
+            held.contains(&descriptor.candidate().id().as_str().to_owned()),
+            "{held:?}"
+        );
+    }
+    assert_eq!(held.len(), plain.registrations().count() + 1, "{held:?}");
+    let reference = full
+        .registrations()
+        .find(|descriptor| descriptor.candidate().id().as_str() == REFERENCE)
+        .expect("the reference provider is registered");
     assert_eq!(
-        published["bounds"]["max_solver_steps"], 1_000_000,
-        "{published}"
+        reference.dynamics().map(|kinds| kinds.len()),
+        Some(1),
+        "hybrid only"
     );
-    assert_eq!(published["bounds"]["max_solver_time"], 60, "{published}");
+    let bounds = reference.solver_bounds().expect("published bounds");
+    assert_eq!(bounds.max_solver_steps, Some(1_000_000));
+    assert_eq!(bounds.max_solver_time, Some(60));
     assert_eq!(
-        published["options"],
-        json!({"precision_bits": "64", "step": "1/16", "refine_depth": "32"}),
-        "{published}"
+        reference
+            .options()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["precision_bits", "refine_depth", "step"]
     );
+    assert_eq!(
+        fsl_hybrid_reference::OPTION_DEFAULTS,
+        [
+            ("precision_bits", "64"),
+            ("refine_depth", "32"),
+            ("step", "1/16")
+        ]
+    );
+}
+
+/// FR-1019-AC-6: a step budget of 1 stops the solver `limit-reached` naming
+/// `hybrid.max_solver_steps`.
+#[test]
+#[trace("TC-2869", "FR-1019-AC-6")]
+#[ignore = "QSL-2534 remaining: the flowpipe solver's Picard step budget is not implemented yet"]
+fn the_reference_provider_stops_at_its_step_budget() {
     let item = reference(
         "ref-6b",
         &braking_pair(),
@@ -272,12 +327,11 @@ fn the_reference_provider_publishes_its_defaults_and_stops_at_its_budget() {
     }
 }
 
-/// FR-1019-AC-7: coarse options still prove and change the request; an
-/// out-of-domain or unknown option settles `invalid-request` naming it.
+/// FR-1019-AC-7: coarse options still prove and change the request.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-7")]
-#[ignore = "QSL-2534: the reference provider's method options are not implemented yet"]
-fn the_reference_provider_reads_its_method_options() {
+#[ignore = "QSL-2534 remaining: coarse options prove only once the flowpipe solver and QSL-2531 certification land"]
+fn coarse_options_still_prove_and_change_the_request() {
     let default = reference("ref-7a", &braking_pair(), one("SlowEnough"));
     let coarse = reference(
         "ref-7b",
@@ -287,6 +341,13 @@ fn the_reference_provider_reads_its_method_options() {
     assert_eq!(coarse["record"]["result"], "proved", "{coarse}");
     assert_eq!(coarse["record"]["certification"], "certified", "{coarse}");
     assert_ne!(coarse["request"], default["request"]);
+}
+
+/// FR-1019-AC-7: an out-of-domain or unknown option settles
+/// `invalid-request` naming it, before any solver step.
+#[test]
+#[trace("TC-2869", "FR-1019-AC-7")]
+fn an_out_of_domain_or_unknown_option_settles_invalid_request() {
     // A published option with a value outside its domain: the provider's
     // `check_options` refuses it before any solver step.
     let bad_value = reference(
@@ -296,9 +357,13 @@ fn the_reference_provider_reads_its_method_options() {
             "options": {"step": "0"}}]),
     );
     assert!(bad_value["record"].get("result").is_none(), "{bad_value}");
+    assert_eq!(
+        bad_value["record"]["settled_by"], "disposition",
+        "{bad_value}"
+    );
+    assert_eq!(bad_value["category"], "refusal", "{bad_value}");
     let text = bad_value.to_string();
     for member in [
-        "invalid-request",
         "invalid_capability",
         "invalid-option-value",
         "fsl-hybrid-reference",
@@ -307,6 +372,21 @@ fn the_reference_provider_reads_its_method_options() {
     ] {
         assert!(text.contains(member), "{member}: {bad_value}");
     }
+    // The refusal comes before the solver reads the model: over a model the
+    // class check would settle `unsupported`, the bad value settles first.
+    let outside = braking_pair().replace(
+        "flow { v' = -a; a' = 0; }",
+        "flow { v' = -a / (1 + v); a' = 0; }",
+    );
+    let before_solve = reference(
+        "ref-7e",
+        &outside,
+        json!([{"claim": "SlowEnough", "backend": "fsl-hybrid-reference",
+            "options": {"step": "0"}}]),
+    );
+    let text = before_solve.to_string();
+    assert!(text.contains("invalid-option-value"), "{before_solve}");
+    assert!(!text.contains("expression-form"), "{before_solve}");
     // A name the descriptor does not publish: FR-967's `unknown-option`.
     let unknown = reference(
         "ref-7d",
@@ -315,8 +395,10 @@ fn the_reference_provider_reads_its_method_options() {
             "options": {"colour": "blue"}}]),
     );
     assert!(unknown["record"].get("result").is_none(), "{unknown}");
+    assert_eq!(unknown["record"]["settled_by"], "disposition", "{unknown}");
+    assert_eq!(unknown["category"], "refusal", "{unknown}");
     let text = unknown.to_string();
-    for member in ["invalid-request", "unknown-option", "\"option\":\"colour\""] {
+    for member in ["unknown-option", "\"option\":\"colour\""] {
         assert!(text.contains(member), "{member}: {unknown}");
     }
     assert!(!text.contains("invalid-option-value"), "{unknown}");

@@ -433,7 +433,7 @@ pub struct NotHybrid {
 }
 
 fn hybrid_reference_descriptor() -> Result<BackendDescriptor, RegistrationRefusal> {
-    use fsl_hybrid_reference::{BACKEND, MAX_SOLVER_STEPS, MAX_SOLVER_TIME};
+    use fsl_hybrid_reference::{BACKEND, MAX_SOLVER_STEPS, MAX_SOLVER_TIME, OPTION_DEFAULTS};
     fsl_route::descriptor_from_manifest_with_dynamics(
         Candidate::new(BackendId::new(BACKEND)),
         ProviderOrigin::Linked,
@@ -458,6 +458,9 @@ fn hybrid_reference_descriptor() -> Result<BackendDescriptor, RegistrationRefusa
             max_solver_time: Some(MAX_SOLVER_TIME),
         }),
     )
+    .map(|descriptor| {
+        descriptor.with_options(OPTION_DEFAULTS.iter().map(|(name, _)| (*name).to_owned()))
+    })
 }
 
 /// `Engines::with` was given an engine whose `BackendId` the set holds
@@ -1182,6 +1185,18 @@ pub enum Payload {
         /// The claim's declaration family, absent for an unknown claim node.
         family: Option<DeclarationFamily>,
     },
+    /// A published option whose value the provider refused (FSpec FR-779-AC-2):
+    /// the item, the backend, the option and the value as the item wrote it.
+    OptionValue {
+        /// The request item's index.
+        request_index: RequestIndex,
+        /// The provider that refused the value.
+        backend: BackendId,
+        /// The option's name.
+        option: String,
+        /// The refused value.
+        value: String,
+    },
     /// A provider item whose checked package could not be emitted, so no
     /// request was sent (FSpec FR-331-AC-33): the kind and the backend.
     NotEmitted {
@@ -1217,6 +1232,17 @@ impl Payload {
                     "modes",
                     Value::Array(modes.iter().map(|mode| json!(mode.to_wire())).collect()),
                 ),
+            ],
+            Self::OptionValue {
+                request_index,
+                backend,
+                option,
+                value,
+            } => vec![
+                ("request_index", json!(request_index.get())),
+                ("backend", json!(backend.as_str())),
+                ("option", json!(option)),
+                ("value", json!(value)),
             ],
             Self::NotEmitted { kind, backend } => vec![
                 ("kind", json!(kind.to_wire())),
@@ -1369,6 +1395,15 @@ pub(crate) enum Refusal {
     RequiresBound,
     /// EN-4 `NotStatistical`: `invalid-request` with `not-statistical`.
     NotStatistical,
+    /// A published option's value outside its domain (FSpec FR-779-AC-2):
+    /// `invalid-request` with `invalid-option-value`, naming the option and
+    /// the value.
+    InvalidOptionValue {
+        /// The option's name.
+        option: String,
+        /// The refused value.
+        value: String,
+    },
     /// `incomplete`: the request's subject exhausted a resource bound before
     /// the engine ran.
     Incomplete(fsl_replay::IncompleteCause),
@@ -2674,6 +2709,19 @@ fn settle(
             };
             disposed(DispositionKind::Unsupported, diagnostic, backend)
         }
+        EngineReport::Refused(Refusal::InvalidOptionValue { option, value }) => disposed(
+            DispositionKind::InvalidRequest,
+            Diagnostic {
+                code: CatalogCode::new("invalid_capability", "invalid-option-value"),
+                payload: Payload::OptionValue {
+                    request_index: index,
+                    backend: backend.clone(),
+                    option,
+                    value,
+                },
+            },
+            backend,
+        ),
         EngineReport::Refused(Refusal::NotStatistical) => disposed(
             DispositionKind::InvalidRequest,
             Diagnostic::new(CatalogCode::new("invalid_capability", "not-statistical")),

@@ -7,7 +7,7 @@ use crate::analyze::{
 };
 use filament_exact::Cancel;
 pub use fsl_replay::{
-    HybridAnswer, HybridProvider, HybridSolveRequest, HybridVerdict, UnsupportedConstruct,
+    HybridAnswer, HybridProvider, HybridSolveRequest, HybridVerdict, OptionRefusal, UnsupportedConstruct,
 };
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_foundation::diagnostic::{Code, StageFailure};
