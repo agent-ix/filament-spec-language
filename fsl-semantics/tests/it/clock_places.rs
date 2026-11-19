@@ -6,8 +6,8 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::declaration::CompositeShape;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    BodyTerm, ClockOp, CollectionShape, LeafTerm, LiteralValue, NodeRef, NodeTag, PlaceStep,
-    SlotRef,
+    BodyTerm, ClockOp, CollectionShape, LeafTerm, LiteralValue, MemberTerm, NodeRef, NodeTag,
+    PlaceStep, SlotRef,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
