@@ -23,7 +23,10 @@ impl Lowering<'_> {
     ) -> Result<NodeKey, CheckRefusal> {
         let form = &checked.form;
         let claim_at = synthesis_location(index, &form.name.name);
-        let grammar = self.type_node(&checked.grammar, &claim_at)?;
+        let grammar = match &checked.grammar {
+            ValueType::Reference(target) => self.object_node(target.clone(), &claim_at)?,
+            other => self.type_node(other, &claim_at)?,
+        };
         let domain = self.type_node(&checked.domain, &claim_at)?;
         let candidate_type = if matches!(checked.grammar, ValueType::Reference(_)) {
             &checked.grammar
