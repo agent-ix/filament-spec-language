@@ -167,6 +167,16 @@ impl<'a> PackageProtocolProgram<'a> {
             });
         };
         let memory = ResolvedMemory::resolve_package(&form, selection)?;
+        Self::with_memory(input, form, memory)
+    }
+
+    /// Build the package-native execution form from an already resolved
+    /// subject memory binding.
+    pub fn with_memory(
+        input: &ModelCheckInput<'a>,
+        form: ProtocolExecutionView<'a>,
+        memory: ResolvedMemory,
+    ) -> Result<Self, PackageProgramRefusal> {
         Self::from_form(input, form, memory)
     }
 
