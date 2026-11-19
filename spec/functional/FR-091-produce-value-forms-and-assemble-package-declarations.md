@@ -381,8 +381,8 @@ A construct that no family's variant represents refuses the whole unit with
 cause `UnrepresentedConstruct`, naming the construct's CST production and
 span, and carrying the construct payload and message of
 [FR-763](FR-763-name-the-construct-in-every-forms-stage-refusal.md). These constructs are indexing `e[i]`
-outside a clock place expression and `reaches(..)` over a
-qualified edge. `null` outside a record field value is not unrepresented: S2 builds it as the `Null` expression form, and check refuses it `ill_typed`/`type-mismatch` at `null` wherever it stands, because `null` is the explicit-null state of a `?` field and never a value of any type, `Option<T>` included (FSpec FR-143; FR-986). `size<N>(e)` is not unrepresented: S2 builds it as `Size` carrying `N`, and check types it (FR-981). `none` and `result` are not unrepresented: S2 builds `none`
+outside a clock place expression. A qualified `reaches(..)` edge builds with
+its full name and span (FR-102). `null` outside a record field value is not unrepresented: S2 builds it as the `Null` expression form, and check refuses it `ill_typed`/`type-mismatch` at `null` wherever it stands, because `null` is the explicit-null state of a `?` field and never a value of any type, `Option<T>` included (FSpec FR-143; FR-986). `size<N>(e)` is not unrepresented: S2 builds it as `Size` carrying `N`, and check types it (FR-981). `none` and `result` are not unrepresented: S2 builds `none`
 as the same `Absent` form as `absent`, and `result` as `Result`, wherever
 they are written, and check decides whether the position admits them. An
 `Absent` takes the `Option` type its position expects; a position that

@@ -310,6 +310,13 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
   SHALL refuse `ill_typed`/`operator-ineligible` at the `reaches`. When `edge` names a
   relationship end instead of a field, [FR-365](FR-365-reach-an-object-over-a-relationship-end-in-a-state-clause.md)
   checks, lowers and evaluates the form.
+- For a qualified edge `M::T::member`, S3 SHALL resolve `M::T` through the
+  source unit's existing object-type namespace and look up `member` in that
+  type's effective view. The first operand SHALL conform to that qualifier;
+  otherwise it refuses `ill_typed`/`operator-ineligible`. An unknown qualifier
+  or member SHALL refuse `missing_declaration`/`missing-name`, retaining the
+  full authored edge name. It SHALL NOT fall back to an unqualified member
+  lookup. An unqualified edge continues to use the first operand's type.
 
 ### Definedness facts
 
@@ -424,6 +431,7 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
 | FR-104-AC-14 | A protocol repeat's `visible` and guard slots type an eligible body-produced attempt binder in the scope FR-218 supplies, using its most recently completed iteration value and retaining the producing role. | Test (TC-1268) |
 | FR-104-AC-15 | `spine::check_with_execution_points` accepts `StateClauseExecutionPoints`; the native `CheckBindings.clauses` vector is projected only after its existing complete/no-extra validation, without weakening that contract. A supplied exact authored clause name retains its accepted point unchanged; an absent entry has no point, and none is inferred. An unknown or non-clause key refuses `missing_declaration`/`missing-name` at the check unit's source-start region before lowering or identity minting; duplicate `CheckBindings` names/identities refuse at the native check source-start region. Existing clause/function ambiguity takes precedence. An `invariant` or `constraint` accepts only initialization/handler; a `pre` accepts only pre and a `post` only post. For a pre/post clause, the accepted point's operation name equals the resolved operation member from its authored `on M::T::op`. Every inapplicable variant or mismatched operation name refuses `invalid_model_binding`/`malformed-declaration` at the clause-name span with no checked clause or node identity. A point-bearing pre/post clause is excluded from derived state-transition eligibility; an unbound clause retains FR-105-AC-16's eligibility rule. | Test (TC-475) |
 | FR-104-AC-16 | The six FSpec TC-185 D25 expressions are FSL source (QSL-1394), each built by S2 as `DecimalValue` operands wherever an operand may stand (FR-091-AC-57). With `type P = Decimal[0, 1000; 2, 2; exact];`, `type R = Decimal[0, 1000; 1, 1; exact];` and parameters `p: P`, `r: R`: `function e1 using v(): P pure { let v = decimal(15, 1) + decimal(225, 2) in v }` refuses `ill_typed`/`ambiguous-literal` at the sum, because a `let` binding supplies no expected type; `function e2 using v(): Boolean pure { decimal(15, 1) = decimal(150, 2) }` refuses `ill_typed`/`ambiguous-literal` at its first literal `decimal(15, 1)`, because neither operand fixes a type; both refuse before any charge. `function e3 using v(p: P): P pure { p + decimal(15, 1) }` checks with the literal typed `P` (target scale 2); `function e4 using v(p: P, r: R): P pure { p + r }` refuses `ill_typed`/`type-mismatch` at the sum; `function e5 using v(p: P, r: R): P pure { p + convert<P>(r) }` checks; `function e6 using v(): P pure { decimal(15, 1) + decimal(225, 2) }` checks with both literals typed `P` by the declared result. | Test (TC-1084) |
+| FR-104-AC-17 | A qualified field edge `M::Order::trail` resolves to the declared `trail` field and `M::Order::next` to the declared relationship end, including a subtype receiver. An unknown qualifier or member refuses `missing_declaration`/`missing-name` retaining the full edge name. A qualifier to which the source does not conform refuses `ill_typed`/`operator-ineligible`, without selecting a same-spelled member of the source. Unqualified edges retain their existing resolution. | Test |
 
 ## Dependencies
 

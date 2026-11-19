@@ -104,15 +104,13 @@ fn size_of_type_and_index_selection_name_their_construct() {
 
 #[trace("TC-2158", "FR-763-AC-4")]
 #[test]
-fn a_qualified_reaches_edge_names_the_edge() {
+fn a_qualified_reaches_edge_builds_without_a_forms_refusal() {
     let edge = "Config::ConfigVersion::parent";
-    let (text, diagnostic) = construct_diagnostic(&format!(
+    let (_, document, exit) = parsed(&format!(
         "invariant I using v on M::Order at current {{ reaches(self, self, {edge}) }}"
     ));
-    assert_eq!(diagnostic["construct"], "qualified-reaches-edge");
-    assert_eq!(diagnostic["text"], edge);
-    let at = text.find(edge).expect("in the unit");
-    assert_eq!(locus_start(&diagnostic), Some(at as u64));
+    assert_eq!(exit, 0, "{document}");
+    assert_eq!(document["diagnostics"], serde_json::json!([]));
 }
 
 #[trace("TC-2159", "FR-763-AC-5")]
@@ -130,11 +128,6 @@ fn every_construct_message_begins_with_the_construct() {
         (
             function("size<Integer>(xs)"),
             "`size<Integer>` is not supported in expressions yet".to_owned(),
-        ),
-        (
-            "invariant I using v on M::Order at current { reaches(self, self, M::Order::next) }"
-                .to_owned(),
-            "`reaches` over the qualified edge `M::Order::next` is not supported yet".to_owned(),
         ),
         (
             "temporal T using v over (x: M::Order) clock \"steps\" on origin { always holds(x @ a = x @ b) }"

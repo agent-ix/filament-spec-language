@@ -50,8 +50,7 @@ a field edge is unchanged.
 
 - The form `reaches(a, b, name)` in a state clause (an `invariant`, `pre` or
   `post` clause, FR-104), where `a` and `b` have static type `Reference<S>` and
-  `name` is one segment (a qualified `name` stays refused at the form's build,
-  FR-102).
+  `name` is unqualified or qualified by an object type as FR-104 defines.
 - The unit's admitted model effective view and `TypeEnvironment`, including
   each relationship's direction and both ends' type, role and multiplicity
   ([FR-085](FR-085-resolve-relationship-end-references.md)).

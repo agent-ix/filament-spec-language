@@ -16,10 +16,11 @@ Scope: FR-763-AC-4.
 
 ## Test Procedure
 
-Run the `parse` operation over a state clause `reaches(self, self, Config::ConfigVersion::parent)`. Test: `tests/it/forms_refusal_cause.rs` `a_qualified_reaches_edge_names_the_edge`.
+Run the `parse` operation over a state clause `reaches(self, self, Config::ConfigVersion::parent)`. Test: `tests/it/forms_refusal_cause.rs` `a_qualified_reaches_edge_builds_without_a_forms_refusal`.
 
 Tag the tests `#[trace("TC-2158", "FR-763-AC-4")]`.
 
 ## Expected Results
 
-- `construct` `qualified-reaches-edge`, `text` `Config::ConfigVersion::parent`, locus the edge's span.
+- Successful parse (exit 0), no diagnostic. The form retains
+  `Config::ConfigVersion::parent` and its complete span (FR-102-AC-3).

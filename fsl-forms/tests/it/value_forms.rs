@@ -674,11 +674,6 @@ fn s2_refuses_inadmissible_input_and_undispatched_declarations() {
 fn a_construct_no_variant_represents_refuses_the_unit() {
     let cases = [
         ("xs[0]", Production::Postfix, "xs[0]"),
-        // FR-102: a single-segment `reaches` edge now builds
-        // (`each_expression_construct_maps_to_its_variant`); a
-        // multi-segment edge still refuses, but at the qualified edge
-        // itself, not the whole construct (FR-102-AC-3).
-        ("reaches(a, b, M::R)", Production::QualifiedName, "M::R"),
         (
             "size<Int[0, 1]>(c)",
             Production::Primary,
@@ -745,26 +740,6 @@ fn ieee_bit_literals_build_with_exact_bits() {
         function.body.root_node(),
         ExprNode::Float64(0x7ff8_0000_0000_0001)
     ));
-}
-
-/// TC-1046 C14 (FR-365 Inputs): a qualified third argument stays refused at
-/// the form's build, at the qualified name itself, in a state clause.
-#[trace("TC-1046", "FR-102-AC-3")]
-#[test]
-fn a_qualified_reachability_end_is_refused_at_the_form_build() {
-    let edge = "M::Order::next";
-    let (text, cause, span) = refusal(&format!(
-        "invariant I using v on M::Order at current {{ reaches(self, self, {edge}) }}"
-    ));
-    assert!(matches!(
-        &cause,
-        FormsCause::UnrepresentedConstruct {
-            production: Production::QualifiedName,
-            ..
-        }
-    ));
-    assert_eq!(cause.catalog_code(), Code::UnsupportedConstruct);
-    assert_eq!(span, Some(span_of(&text, edge)));
 }
 
 #[trace("FR-091-AC-8", "TC-396")]

@@ -2009,21 +2009,8 @@ impl<'c> Mapping<'c> {
                     return Err(unexpected(node));
                 }
                 let edge_node = only(items, Production::QualifiedName, node)?;
-                let edge_items = self::items(self.cst, edge_node);
-                let segments = tokens_of(&edge_items, TokenKind::Identifier);
-                let [edge_token] = segments.as_slice() else {
-                    // S1 parses the edge as a `QualifiedName`; a
-                    // multi-segment spelling names a member of the
-                    // operands' own type, which S3 resolves (FR-102-AC-3).
-                    return Err(unrepresented(
-                        self.cst,
-                        Production::QualifiedName,
-                        edge_node.span(),
-                        ConstructKind::QualifiedReachesEdge,
-                    ));
-                };
-                let edge = text(edge_token, node)?;
-                let edge_span = edge_token.span();
+                let edge = spelled(self.cst, edge_node)?;
+                let edge_span = edge_node.span();
                 self.with_children(Shape::Reaches(edge, edge_span), &task, operands)
             }
             b"convert" | b"allInstances" => {
