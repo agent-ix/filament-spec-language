@@ -10,7 +10,10 @@ use fsl_analyze::analyze::{
     Engines, ProtocolItem, analyze_items, derived_protocol_item, split_records,
 };
 use fsl_analyze::model_check::ProtocolCheckRequest;
-use fsl_replay::{ModelCheckItem, ModelCheckLimits, ProtocolCertificateRequest, TerminalValue};
+use fsl_replay::{
+    IncompleteCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ProtocolCertificateRequest,
+    TerminalValue,
+};
 use fsl_route::deadlock::{ObligationKind, ProtocolTemporalItem};
 use fsl_route::request::DerivedLimits;
 use fsl_route::request::ItemKind;
@@ -254,7 +257,13 @@ fn a_state_limit_leaves_both_loop_items_incomplete_naming_it() {
     let limits = DerivedLimits::from_settings([("max_states", 1)]).expect("a member");
     for (kind, value, replayed) in analyze_loop(&body, 0, &limits) {
         assert!(
-            matches!(value, TerminalValue::Incomplete(_)),
+            matches!(
+                value,
+                TerminalValue::Incomplete(IncompleteCause::LimitReached {
+                    limit: ModelCheckLimit::MaxStates,
+                    value: 1,
+                })
+            ),
             "{kind:?}: {value:?}"
         );
         assert!(!replayed, "{kind:?}: unexpected counterexample");

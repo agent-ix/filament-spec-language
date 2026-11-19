@@ -22,10 +22,11 @@ use fsl_eval::automaton::{
     Window,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_semantics::check::ProtocolNodeId;
 use ix_trace_rs::trace;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::temporal_trace::{fixture, EVENT, INFINITE};
+use crate::temporal_trace::{EVENT, INFINITE, fixture};
 
 /// FR-338's full-key oracle for the deadlock-freedom item's carried root.
 const DEADLOCK_CARRIED: &str = r#"["filament.automaton-state-key/v1",[["deadlock-freedom"],"filament.temporal.infinite-trace/v1","infinite",[]],["safety",[[[[[],"positive"]],[],[],[]]]]]"#;
@@ -78,6 +79,35 @@ fn equal_facts_give_equal_keys_in_any_reading_order() {
     assert_ne!(
         first.key(SafetyState::Carried).expect("encodes"),
         second.key(SafetyState::Carried).expect("encodes")
+    );
+}
+
+/// FR-730: loop-proof safety states are keyed by both obligation kind and
+/// checked repeat, so certificates cannot be reused across loop items.
+#[trace("TC-2022", "FR-730-AC-4")]
+#[test]
+fn loop_proof_safety_keys_name_the_obligation_and_repeat() {
+    let repeat = ProtocolNodeId(7);
+    let invariant = SafetyTranslation::loop_invariant(repeat).expect("the invariant context");
+    let termination = SafetyTranslation::loop_termination(repeat).expect("the termination context");
+    let carried = SafetyState::Carried;
+    let invariant_key = invariant.key(carried).expect("the invariant key");
+    let termination_key = termination.key(carried).expect("the termination key");
+    assert_ne!(invariant_key, termination_key);
+    assert_eq!(
+        invariant.admit(invariant_key.as_bytes()),
+        Ok((invariant_key.clone(), carried))
+    );
+    assert_eq!(
+        invariant.admit(termination_key.as_bytes()),
+        Err(KeyRefusal::ForeignContext)
+    );
+
+    let another_repeat =
+        SafetyTranslation::loop_invariant(ProtocolNodeId(8)).expect("the other repeat context");
+    assert_eq!(
+        another_repeat.admit(invariant_key.as_bytes()),
+        Err(KeyRefusal::ForeignContext)
     );
 }
 
@@ -807,9 +837,11 @@ fn non_normal_branches_and_acceptance_are_refused() {
         })
     };
     let carried_root = vec![Obligation::Current(root.clone())];
-    assert!(response
-        .key(&elementary(Vec::new(), vec![root.clone()]))
-        .is_ok());
+    assert!(
+        response
+            .key(&elementary(Vec::new(), vec![root.clone()]))
+            .is_ok()
+    );
     assert_eq!(
         response.key(&elementary(Vec::new(), Vec::new())),
         Err(KeyRefusal::NonNormal),
@@ -1152,9 +1184,11 @@ fn property_automaton_keys_are_independent_of_state_numbering() {
         INFINITE,
         true,
     );
-    assert!(forward
-        .iter()
-        .any(|(key, first)| { reverse.get(key).is_some_and(|second| second != first) }));
+    assert!(
+        forward
+            .iter()
+            .any(|(key, first)| { reverse.get(key).is_some_and(|second| second != first) })
+    );
 
     let bounded = reached_keys("eventually[0,2] holds(c.level = 1)", EVENT, false);
     let safety = reached_keys("always holds(c.level = 1)", INFINITE, false);
@@ -1384,9 +1418,11 @@ fn a_guarded_tp4_key_carries_its_phase() {
         acceptance: vec![at(&[], Polarity::Negative)],
         ..Configuration::default()
     };
-    assert!(response
-        .key(&BuchiState::Guarded(BuchiPhase::Waiting, member))
-        .is_ok());
+    assert!(
+        response
+            .key(&BuchiState::Guarded(BuchiPhase::Waiting, member))
+            .is_ok()
+    );
     assert_eq!(
         response.key(&BuchiState::Guarded(
             BuchiPhase::Waiting,
@@ -1915,13 +1951,15 @@ fn a_protocol_past_window_is_distance_history() {
 
     // The flag and age forms are the subject's own on both.
     let age = protocol("always (holds(c.level = 1) implies once[0,2] holds(c.level = 2))");
-    assert!(age
-        .admit(state(r#"[["0","1"],"last-true","3"]"#).as_bytes())
-        .is_ok());
+    assert!(
+        age.admit(state(r#"[["0","1"],"last-true","3"]"#).as_bytes())
+            .is_ok()
+    );
     let flag = protocol("always (holds(c.level = 1) implies once holds(c.level = 2))");
-    assert!(flag
-        .admit(state(r#"[["0","1"],"once",true]"#).as_bytes())
-        .is_ok());
+    assert!(
+        flag.admit(state(r#"[["0","1"],"once",true]"#).as_bytes())
+            .is_ok()
+    );
 }
 
 /// FR-338: on a protocol subject a finite `F`/`U` (and a signed dual, and a
@@ -2052,21 +2090,25 @@ fn an_open_upper_eventuality_is_accepted_once_its_shift_completes() {
         let context = StateContext::clause(&fixture.clause, occurrence(0), Vec::new());
         let states = BuchiStates::clause(&fixture.clause, &context, subject).expect("translates");
         // Pending: carried as the shift, so not a member.
-        assert!(states
-            .key(&carry(
-                vec![root_carry.clone()],
-                vec![shift.clone()],
-                Vec::new()
-            ))
-            .is_ok());
+        assert!(
+            states
+                .key(&carry(
+                    vec![root_carry.clone()],
+                    vec![shift.clone()],
+                    Vec::new()
+                ))
+                .is_ok()
+        );
         // Completed and carried as the unbounded obligation: not a member.
-        assert!(states
-            .key(&carry(
-                vec![root_carry.clone(), unbounded.clone()],
-                Vec::new(),
-                Vec::new()
-            ))
-            .is_ok());
+        assert!(
+            states
+                .key(&carry(
+                    vec![root_carry.clone(), unbounded.clone()],
+                    Vec::new(),
+                    Vec::new()
+                ))
+                .is_ok()
+        );
         // Completed and discharged: a member.
         let member = states.key(&carry(
             vec![root_carry.clone()],
@@ -2178,9 +2220,11 @@ fn an_unguarded_on_each_tp4_clause_is_keyed_each_buchi() {
     // `eventually[1,*]` root is well formed in the active phase.
     let shifting = each("eventually[1,*] holds(c.level = 1)");
     let window = r#"[[],[],[[[],"negative","shift","1"]],[]]"#;
-    assert!(shifting
-        .admit(key("each-buchi", &format!(r#""active",{window}"#)).as_bytes())
-        .is_ok());
+    assert!(
+        shifting
+            .admit(key("each-buchi", &format!(r#""active",{window}"#)).as_bytes())
+            .is_ok()
+    );
     assert_eq!(
         shifting
             .admit(key("each-buchi", &format!(r#""waiting",{window}"#)).as_bytes())

@@ -67,29 +67,29 @@ use fsl_eval::automaton::{
     SafetyState, SafetyTranslation, StateId, SubjectKind,
 };
 use fsl_eval::model_subject::{
-    refused_invariant, AtomStop, ModelLetters, ModelSubject, ProtocolSubject,
-};
-use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, TerminalClass};
-use fsl_eval::simulation::protocol::{
-    activates_on_each, check_protocol_bounds, live_instance_bound, Capacities,
-    ProtocolFairnessError, ProtocolLoopProofKind, ProtocolLoopProofTarget, ProtocolRefusal,
-    ProtocolSystem, Sc, SubjectMemory,
+    AtomStop, ModelLetters, ModelSubject, ProtocolSubject, refused_invariant,
 };
 use fsl_eval::simulation::StateKey;
+use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, TerminalClass};
+use fsl_eval::simulation::protocol::{
+    Capacities, ProtocolFairnessError, ProtocolLoopProofKind, ProtocolLoopProofTarget,
+    ProtocolRefusal, ProtocolSystem, Sc, SubjectMemory, activates_on_each, check_protocol_bounds,
+    live_instance_bound,
+};
 use fsl_eval::simulation::{
-    ConstraintError, ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionStop, NotSimulated,
-    SubjectSystem, SubjectTransition, TransitionSystem, ZeroProgress, ZeroProgressError,
-    BOUND_POSITIONS,
+    BOUND_POSITIONS, ConstraintError, ConstraintValue, Cut, EncodingRefusal, Expansion,
+    ExpansionStop, NotSimulated, SubjectSystem, SubjectTransition, TransitionSystem, ZeroProgress,
+    ZeroProgressError,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_semantics::model::observation::AdmissionFailure;
-use serde::{ser::SerializeStruct, Serialize, Serializer};
+use serde::{Serialize, Serializer, ser::SerializeStruct};
 
 use crate::certificate::check::{
-    admit, expansion_halt, finish, poll, stopped, widen, Budgets, Checker, Halt, Step,
+    Budgets, Checker, Halt, Step, admit, expansion_halt, finish, poll, stopped, widen,
 };
 use crate::certificate::recording::Recording;
-use crate::certificate::scc::{check_partition, Component, ComponentCertificate};
+use crate::certificate::scc::{Component, ComponentCertificate, check_partition};
 use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::model_check::identity::ClauseRootRefusal;
 use crate::model_check::item::{
@@ -237,7 +237,9 @@ pub enum ClosureRefusal {
     /// A refinement whose abstract side is a protocol clause: no abstract
     /// protocol step is decided yet (FR-148)
     /// (`unsupported_construct/not-yet-implemented`).
-    #[error("unsupported_construct/not-yet-implemented: a refinement over an abstract protocol subject is not decided yet")]
+    #[error(
+        "unsupported_construct/not-yet-implemented: a refinement over an abstract protocol subject is not decided yet"
+    )]
     ProtocolAbstractSide,
     /// An invariant of the subject broke.
     #[error("the closure check broke invariant {0:?}")]
@@ -580,7 +582,7 @@ fn check_system<S: SubjectSystem>(
             ));
         }
         Err(ItemRefusal::Unbounded(refusal)) => {
-            return Err(ClosureRefusal::NotSimulated(Box::new(refusal)))
+            return Err(ClosureRefusal::NotSimulated(Box::new(refusal)));
         }
         Err(refusal) => return Err(refusal.into()),
     };
@@ -1100,13 +1102,13 @@ impl<S: SubjectSystem> Check<'_, S> {
                             counter: incomplete.limit_kind,
                         },
                         crate::meter_bound(&self.meter, incomplete.limit_kind),
-                    ))
+                    ));
                 }
                 Err(AtomStop::Fault(internal)) => {
-                    return Err(ClosureRefusal::Fault(internal).into())
+                    return Err(ClosureRefusal::Fault(internal).into());
                 }
                 Err(AtomStop::Refused(outcome)) => {
-                    return Err(fault(refused_invariant(&outcome)).into())
+                    return Err(fault(refused_invariant(&outcome)).into());
                 }
                 Err(AtomStop::Unobservable(stop)) => return Err(self.expansion_stop(stop)),
             }
@@ -1129,13 +1131,13 @@ impl<S: SubjectSystem> Check<'_, S> {
                             counter: incomplete.limit_kind,
                         },
                         crate::meter_bound(&self.meter, incomplete.limit_kind),
-                    ))
+                    ));
                 }
                 Err(AtomStop::Fault(internal)) => {
-                    return Err(ClosureRefusal::Fault(internal).into())
+                    return Err(ClosureRefusal::Fault(internal).into());
                 }
                 Err(AtomStop::Refused(outcome)) => {
-                    return Err(fault(refused_invariant(&outcome)).into())
+                    return Err(fault(refused_invariant(&outcome)).into());
                 }
                 Err(AtomStop::Unobservable(stop)) => return Err(self.expansion_stop(stop)),
             }
@@ -1219,7 +1221,7 @@ impl<S: SubjectSystem> Check<'_, S> {
         {
             Ok(buchi) => buchi,
             Err(fsl_eval::automaton::AutomatonError::KeyEncodingLimit { .. }) => {
-                return Err(ClosureRefusal::Encoding.into())
+                return Err(ClosureRefusal::Encoding.into());
             }
             Err(_) => return Err(fault("tp4-state-key-bridge").into()),
         };
@@ -1375,10 +1377,10 @@ impl<S: SubjectSystem> Check<'_, S> {
             }
             Err(ZeroProgressError::Encoding(refusal)) => return Err(refusal.into()),
             Err(ZeroProgressError::Fairness(error)) => {
-                return Err(ClosureRefusal::Fairness(error).into())
+                return Err(ClosureRefusal::Fairness(error).into());
             }
             Err(ZeroProgressError::Graph) => {
-                return Err(fault("the-zero-progress-graph-is-built-from-states").into())
+                return Err(fault("the-zero-progress-graph-is-built-from-states").into());
             }
         };
         let Some(found) = found else {
@@ -1794,4 +1796,30 @@ impl<S: SubjectSystem> Check<'_, S> {
 
 fn fault(invariant: &'static str) -> ClosureRefusal {
     Checker::Closure.fault(invariant)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ProtocolLoopProofKind, ProtocolLoopProofTarget, loop_proof_target};
+    use crate::ModelCheckItem;
+    use fsl_semantics::check::ProtocolNodeId;
+
+    #[test]
+    fn closure_requests_retain_the_repeat_and_obligation_kind() {
+        let repeat = ProtocolNodeId(7);
+        assert_eq!(
+            loop_proof_target(ModelCheckItem::LoopInvariant { repeat }),
+            Some(ProtocolLoopProofTarget {
+                repeat,
+                kind: ProtocolLoopProofKind::Invariant,
+            })
+        );
+        assert_eq!(
+            loop_proof_target(ModelCheckItem::LoopTermination { repeat }),
+            Some(ProtocolLoopProofTarget {
+                repeat,
+                kind: ProtocolLoopProofKind::Termination,
+            })
+        );
+    }
 }
