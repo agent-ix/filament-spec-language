@@ -552,10 +552,8 @@ fn a_multi_model_snapshot_keys_each_population_universe_by_its_package() {
     documents.insert(reference, bytes);
 
     let selection = SubjectSelection::default_over(&documents);
-    let binding = selection.binding(
-        &fsl_semantics::model::intake::PackageInput::default(),
-        &documents,
-    );
+    let package_input = fsl_semantics::model::intake::PackageInput::default();
+    let binding = selection.binding(&package_input, &documents);
     let packages: Vec<_> = binding
         .universes
         .iter()
