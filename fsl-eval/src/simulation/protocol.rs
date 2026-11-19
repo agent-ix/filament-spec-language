@@ -1050,6 +1050,41 @@ pub fn load_buffering_shapes(
     )
 }
 
+/// FR-220, FR-940: classify weak-memory accesses from an admitted package
+/// protocol program, without a source `CheckedProtocol`.
+pub fn classify_package_accesses(
+    model: &ModelSystem<'_>,
+    program: &PackageProtocolProgram<'_>,
+    over: &Value,
+    potential: bool,
+) -> Result<WeakAccesses, ProtocolRefusal> {
+    let governing = program
+        .governing_models()
+        .map_err(ProtocolRefusal::Memory)?;
+    let runtime = Program::new_package(model, program)?;
+    let orderings = program
+        .controls
+        .values()
+        .filter(|control| {
+            control.operation == fsl_package::protocol_view::ControlOperation::Attempt
+        })
+        .map(|control| (control.id, control.ordering))
+        .collect();
+    access::classify_package(
+        model,
+        &runtime,
+        &governing,
+        model.initial().first(),
+        over,
+        if potential {
+            access::ClassificationMode::Potential
+        } else {
+            access::ClassificationMode::Enabled
+        },
+        &orderings,
+    )
+}
+
 /// One bounded protocol expansion together with its terminal classification.
 pub type ProtocolSuccessorsAndTerminal<M> = (
     Expansion<ProtocolTransition, ProtocolState<M>, ModelFinding>,

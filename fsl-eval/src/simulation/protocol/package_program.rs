@@ -584,6 +584,14 @@ impl<'a> PackageProtocolProgram<'a> {
         self.memory.model_of(&path)
     }
 
+    /// The resolved model of every `parallel`, including nested controls
+    /// governed by their outermost ancestor.
+    pub fn governing_models(
+        &self,
+    ) -> Result<BTreeMap<ProtocolNodeId, MemoryModelName>, MemorySelectionRefusal> {
+        self.memory.governing_package(&self.form)
+    }
+
     /// The attempts nested in weak memory-governed branches, in package
     /// control order. This is the package-native input to EN-1 access and
     /// race prechecks.
