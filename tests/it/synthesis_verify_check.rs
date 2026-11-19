@@ -84,6 +84,17 @@ fn an_unbounded_synthesis_domain_refuses_unbounded_extent() {
         ))],
         "{refusals:?}"
     );
+    let [CheckRefusal {
+        cause: fsl_semantics::check::CheckCause::DefinitionCycle { edges },
+        ..
+    }] = refusals.as_slice()
+    else {
+        panic!("the cycle refusal retains its edges: {refusals:?}");
+    };
+    assert_eq!(
+        edges,
+        &[("a".to_owned(), "b".to_owned()), ("b".to_owned(), "a".to_owned())]
+    );
 }
 
 /// FR-754-AC-2 (positive half): the same declaration over a bounded domain
@@ -143,7 +154,6 @@ fn an_acyclic_plan_checks() {
 #[trace("TC-2103", "FR-753-AC-2")]
 #[trace("FSpec-TC-1601", "FSpec-FR-192-AC-9")]
 #[test]
-#[ignore = "QSL-2236: S3 `verify` plan check not implemented yet"]
 fn plan_step_name_and_method_refusals() {
     let duplicate = check(
         "verify Twice using p {\n\

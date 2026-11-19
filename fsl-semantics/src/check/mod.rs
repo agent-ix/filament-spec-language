@@ -1869,6 +1869,56 @@ fn verification_plan_cycle(
     None
 }
 
+/// The first S3 refusal in one plan's source order. These checks resolve
+/// references that do not require the completed clause graph; the graph
+/// itself is checked separately before clause assembly (FR-753/FSpec FR-192).
+fn verification_plan_refusal(
+    plan: &fsl_forms::VerificationPlanForm,
+) -> Option<CheckCause> {
+    let mut names = BTreeMap::new();
+    for step in &plan.steps {
+        if let Some(first) = names.insert(step.name.name.as_str(), step.name.span) {
+            return Some(CheckCause::DuplicateVerificationStep {
+                name: step.name.name.clone(),
+                first,
+                second: step.name.span,
+            });
+        }
+    }
+    for step in &plan.steps {
+        if !matches!(
+            step.method.name.as_str(),
+            "model_check"
+                | "contract_check"
+                | "value_check"
+                | "probabilistic_exact"
+                | "probabilistic_statistical"
+                | "hybrid_solver"
+                | "schedulability"
+                | "model_based_test"
+                | "simulate"
+                | "replay"
+        ) {
+            return Some(CheckCause::MissingQualifiedName(step.method.clone()));
+        }
+        if step.bound.as_deref() == Some("0") {
+            return Some(CheckCause::VerificationPlanBoundZero {
+                span: step.bound_span.unwrap_or(step.span),
+            });
+        }
+        for dependency in &step.depends {
+            if !names.contains_key(dependency.name.as_str()) {
+                return Some(CheckCause::MissingQualifiedName(fsl_forms::NameForm {
+                    name: dependency.name.clone(),
+                    segments: vec![dependency.name.clone()].into(),
+                    span: dependency.span,
+                }));
+            }
+        }
+    }
+    None
+}
+
 /// Internal declared-span key for a timed source. Timed declarations have a
 /// source span but no distinct `Origin` variant; the spaced name cannot
 /// collide with an FSL declaration name.
@@ -2194,6 +2244,12 @@ impl PackageDeclarations {
         protocol_check_refusals: &mut Vec<ProtocolCheckRefusal>,
     ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
         for plan in &self.verification_plans {
+            if let Some(cause) = verification_plan_refusal(plan) {
+                return Err(vec![CheckRefusal {
+                    location: root(Origin::Expression),
+                    cause,
+                }]);
+            }
             if let Some(edges) = verification_plan_cycle(plan) {
                 return Err(vec![CheckRefusal {
                     location: root(Origin::Expression),

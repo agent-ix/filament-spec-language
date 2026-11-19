@@ -3174,6 +3174,20 @@ pub enum CheckCause {
         /// callee source-declaration order (FR-151's own listing order).
         edges: Vec<(String, String)>,
     },
+    /// A verification plan repeats a step name (FSL FR-753, FSpec FR-192).
+    DuplicateVerificationStep {
+        /// The repeated step name.
+        name: String,
+        /// The first step's name span.
+        first: Span,
+        /// The repeated step's name span.
+        second: Span,
+    },
+    /// A verification method's explicitly written bound is zero.
+    VerificationPlanBoundZero {
+        /// The zero literal's span.
+        span: Span,
+    },
     /// `invalid_package` / `invalid-value`: a supplied [`super::DispatchTable`]
     /// or [`super::DispatchOperation`] is malformed — an out-of-range table
     /// or function index, or a candidate whose signature does not match its
@@ -3733,6 +3747,8 @@ impl CheckCause {
             | Self::InvalidDispatchDeclaration(_)
             | Self::NodePreimage(_)
             | Self::EmptyReferenceLiteralKey { .. } => Code::InvalidPackage,
+            Self::DuplicateVerificationStep { .. } => Code::ConflictingDeclaration,
+            Self::VerificationPlanBoundZero { .. } => Code::InvalidModelBinding,
             Self::UnrepresentableBound => Code::UnrepresentableConstraint,
             Self::MissingSelection { .. } => Code::MissingDeclaration,
             Self::UnsupportedFeature { .. } => Code::UnknownRequiredFeature,
@@ -3825,6 +3841,8 @@ impl CheckCause {
             Self::SumCase(cause) => Some(cause.tag()),
             Self::ResourceExhausted(cause) => Some(cause.kind.setting().kind().catalog_cause()),
             Self::DefinitionCycle { .. } => Some("definition-cycle"),
+            Self::DuplicateVerificationStep { .. } => Some("duplicate-declaration"),
+            Self::VerificationPlanBoundZero { .. } => Some("malformed-declaration"),
             Self::InvalidDispatchDeclaration(_) => Some("invalid-value"),
             Self::EmptyReferenceLiteralKey { .. } => Some("invalid-value"),
             Self::MissingSelection { .. } => Some("missing-selection"),
