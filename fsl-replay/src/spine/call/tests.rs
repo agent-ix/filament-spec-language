@@ -1788,7 +1788,7 @@ fn tc_452_step_4_outcome_mapping_covers_every_category() {
         (Undefined::SumOutOfDomain, "sum-out-of-domain"),
     ] {
         match convert(FamilyOutcome::Evaluated(Outcome::Undefined(reason))).unwrap() {
-            CallOutcome::Undefined { reason } => assert_eq!(reason, spelling),
+            CallOutcome::Undefined { reason, .. } => assert_eq!(reason, spelling),
             other => panic!("{other:?}"),
         }
     }
@@ -1957,7 +1957,9 @@ fn tc_452_step_4_outcome_mapping_covers_every_category() {
     ] {
         let undefined = FamilyResult::Undefined(Box::new(StubUndefined(reason)));
         match convert(FamilyOutcome::FamilyEvaluated(undefined)).unwrap() {
-            CallOutcome::Undefined { reason: rendered } => {
+            CallOutcome::Undefined {
+                reason: rendered, ..
+            } => {
                 assert_eq!(rendered, reason.as_str());
             }
             other => panic!("{other:?}"),
@@ -2086,7 +2088,7 @@ fn tc_786_sum_over_pos_is_sum_out_of_domain_exit_10_or_completes_exit_0() {
         let outcome = convert_outcome(evaluation, package.graph(), &[]).unwrap();
         assert_eq!(outcome.category().exit_code(), 10, "{elements:?}");
         match outcome {
-            CallOutcome::Undefined { reason } => assert_eq!(reason, "sum-out-of-domain"),
+            CallOutcome::Undefined { reason, .. } => assert_eq!(reason, "sum-out-of-domain"),
             other => panic!("{elements:?}: {other:?}"),
         }
     }

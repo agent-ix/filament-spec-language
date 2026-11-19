@@ -5,8 +5,8 @@ mod types;
 
 use super::{LimitKind, RunCause, RunError, RunResult};
 use crate::formal_source::FormalSource;
-use fsl_foundation::Diagnostic;
 use fsl_foundation::source::SourceReadCause;
+use fsl_foundation::Diagnostic;
 use serde_json::Value;
 
 /// Immutable JSON produced from the typed native result schema.
@@ -608,10 +608,10 @@ fn spine_origin(origin: &filament_semantic_value::location::ExpressionOwner) -> 
 
 #[cfg(all(test, feature = "quire-extraction"))]
 mod extraction_tests {
-    use super::{RunCause, extraction_regions_for_locus};
+    use super::{extraction_regions_for_locus, RunCause};
     use crate::command::ExtractionFailureStage;
     use fsl_foundation::{Source, SourceIdentity};
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     fn verified_map() -> fsl_foundation::source_map::SourceMap {
         let markdown = "# Doc\n\n## Invariants\n\n### valid_clause\n```ix:native\nopaque\n```\n";
@@ -808,7 +808,7 @@ pub(super) fn spine_run_result_for_source(
                 location: location.as_ref().map(spine_location),
             }
         }
-        CallOutcome::Undefined { reason } => types::SpineOutcome::Undefined { reason },
+        CallOutcome::Undefined { reason, .. } => types::SpineOutcome::Undefined { reason },
         CallOutcome::Incomplete(incomplete) => types::SpineOutcome::Incomplete {
             limit: incomplete.limits_field(),
         },
@@ -886,8 +886,16 @@ mod tests {
     /// tests cover that distinction.
     fn assert_undefined_renders(reason: &'static str) {
         let source = formal_source();
-        let result =
-            spine_run_result(&source, "seven", CallOutcome::Undefined { reason }, None).unwrap();
+        let result = spine_run_result(
+            &source,
+            "seven",
+            CallOutcome::Undefined {
+                reason,
+                location: None,
+            },
+            None,
+        )
+        .unwrap();
         assert_eq!(result.exit_code, 10, "{reason}");
         assert_eq!(
             result.value.as_value(),

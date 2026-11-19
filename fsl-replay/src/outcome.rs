@@ -32,6 +32,7 @@ pub use counterexample::{
 use crate::hybrid::{BoundDimension, SolverHorizon};
 use filament_exact::{CancelCause, Integer, NodeKey};
 use filament_semantic_value::catalog::Category;
+use filament_semantic_value::location::{ExpressionLocation, ExpressionOwner, OperationClauseKind};
 use fsl_cst::format::FormatRefusal;
 use fsl_foundation::diagnostic::{Code, Locus, StageFailure, Staged, Stopped};
 use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef};
@@ -372,6 +373,105 @@ enum CauseLimit {
     Bytes(u64),
 }
 
+/// The FR-867 `where` member: a legacy textual position or a checked
+/// expression location with its declaration and child path.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+enum ItemWhere {
+    Text(String),
+    Expression(ExpressionLocationWire),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct ExpressionLocationWire {
+    declaration: ExpressionDeclarationWire,
+    path: Vec<usize>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum ExpressionDeclarationWire {
+    Body {
+        function: String,
+        index: usize,
+    },
+    Measure {
+        function: String,
+        index: usize,
+    },
+    Expression,
+    TypeDeclaration {
+        name: String,
+    },
+    StateClause {
+        clause: String,
+        index: usize,
+    },
+    ProtocolAttempt {
+        protocol: usize,
+        attempt: usize,
+    },
+    ModelOperationClause {
+        operation: String,
+        clause: OperationClauseWire,
+        position: usize,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum OperationClauseWire {
+    Requires,
+    Ensures,
+}
+
+impl ExpressionLocationWire {
+    fn of(location: &ExpressionLocation) -> Self {
+        let declaration = match &location.origin {
+            ExpressionOwner::Body { function, index } => ExpressionDeclarationWire::Body {
+                function: function.clone(),
+                index: *index,
+            },
+            ExpressionOwner::Measure { function, index } => ExpressionDeclarationWire::Measure {
+                function: function.clone(),
+                index: *index,
+            },
+            ExpressionOwner::Expression => ExpressionDeclarationWire::Expression,
+            ExpressionOwner::TypeDeclaration { name } => {
+                ExpressionDeclarationWire::TypeDeclaration { name: name.clone() }
+            }
+            ExpressionOwner::StateClause { clause, index } => {
+                ExpressionDeclarationWire::StateClause {
+                    clause: clause.clone(),
+                    index: *index,
+                }
+            }
+            ExpressionOwner::ProtocolAttempt { protocol, attempt } => {
+                ExpressionDeclarationWire::ProtocolAttempt {
+                    protocol: *protocol,
+                    attempt: *attempt,
+                }
+            }
+            ExpressionOwner::ModelOperationClause {
+                operation,
+                kind,
+                position,
+            } => ExpressionDeclarationWire::ModelOperationClause {
+                operation: operation.clone(),
+                clause: match kind {
+                    OperationClauseKind::Requires => OperationClauseWire::Requires,
+                    OperationClauseKind::Ensures => OperationClauseWire::Ensures,
+                },
+                position: *position,
+            },
+        };
+        Self {
+            declaration,
+            path: location.path(),
+        }
+    }
+}
+
 /// The diagnostic a disposition-settled item carries: its catalog code and
 /// cause, and its `detail` keyed by FR-272 payload names (FSpec FR-331).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -388,13 +488,15 @@ pub struct ItemCause {
     #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<&'static str>,
     #[serde(rename = "where", skip_serializing_if = "Option::is_none")]
-    at: Option<String>,
+    at: Option<ItemWhere>,
     /// A `timed-form-shape` cause's claim: its checked-package
     /// `{declaration, occurrence}` (FR-498).
     #[serde(skip_serializing_if = "Option::is_none")]
     locus: Option<ItemLocus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cause: Option<String>,
     /// A refusal's action-oriented explanation, when the source provides one.
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
@@ -658,6 +760,7 @@ impl ItemCause {
             at: None,
             locus: None,
             code: None,
+            cause: None,
             message: None,
             parity: None,
             depth: None,
@@ -706,8 +809,16 @@ impl ItemCause {
     /// is refuted, category violation (FR-281, FR-283).
     pub fn undefined_evaluation(at: impl Into<String>, cause: impl Into<String>) -> Self {
         Self {
-            at: Some(at.into()),
-            code: Some(cause.into()),
+            at: Some(ItemWhere::Text(at.into())),
+            cause: Some(cause.into()),
+            ..Self::kind("undefined-evaluation")
+        }
+    }
+
+    fn undefined_evaluation_at(location: &ExpressionLocation, cause: impl Into<String>) -> Self {
+        Self {
+            at: Some(ItemWhere::Expression(ExpressionLocationWire::of(location))),
+            cause: Some(cause.into()),
             ..Self::kind("undefined-evaluation")
         }
     }
@@ -1146,7 +1257,7 @@ impl OutcomeItem {
                         item.predicate = Some(predicate.clone());
                     }
                     UnavailabilityCause::StrictClockConstraint { span } => {
-                        item.at = Some(format!("{}..{}", span.start, span.end));
+                        item.at = Some(ItemWhere::Text(format!("{}..{}", span.start, span.end)));
                     }
                     UnavailabilityCause::DelayDistribution { operation } => {
                         item.operation = Some(operation.clone());
@@ -1156,7 +1267,9 @@ impl OutcomeItem {
                     }
                     UnavailabilityCause::TimedFormShape { span, claim } => match claim {
                         Some(claim) => item.locus = Some(ItemLocus::Claim(WireLocus::of(claim))),
-                        None => item.at = Some(format!("{}..{}", span.start, span.end)),
+                        None => {
+                            item.at = Some(ItemWhere::Text(format!("{}..{}", span.start, span.end)))
+                        }
                     },
                     UnavailabilityCause::ValueCheck { reason, .. } => {
                         item.refusal = Some(reason.as_str());
@@ -1460,9 +1573,9 @@ impl OutcomeItem {
             request_index: request_index.get(),
             result: Some(result),
             label: result,
-            diagnostic: None,
+            diagnostic: clause_run_diagnostic(report),
             cause: ItemCauseMember::Present {
-                cause: clause_run_cause(report).map(Box::new),
+                cause: clause_run_cause(report, clause).map(Box::new),
             },
             position: record.position,
             counterexample: record.counterexample,
@@ -1513,7 +1626,29 @@ impl OutcomeItem {
 /// column of FR-286 "Monitor documents from clause runs". A success, a
 /// violated clause, a pending run and a clause with insufficient data
 /// (`insufficient-data`) carry the spelling the table gives them.
-fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
+fn clause_run_diagnostic(report: &ClauseRunReport) -> Option<ItemDiagnostic> {
+    let mut detail = serde_json::Map::new();
+    let (code, cause) = match &report.disposition {
+        ClauseDisposition::NotAPredicate { name, actual, .. } => {
+            detail.insert("function".to_owned(), serde_json::json!(name));
+            detail.insert("expected".to_owned(), serde_json::json!("Boolean"));
+            detail.insert("actual".to_owned(), serde_json::json!(actual));
+            ("ill_typed", "type-mismatch")
+        }
+        ClauseDisposition::MissingName { name } => {
+            detail.insert("name".to_owned(), serde_json::json!(name));
+            ("missing_declaration", "missing-name")
+        }
+        _ => return None,
+    };
+    Some(ItemDiagnostic {
+        code,
+        cause,
+        detail,
+    })
+}
+
+fn clause_run_cause(report: &ClauseRunReport, clause: &str) -> Option<ItemCause> {
     let catalog = |code: &'static str, cause: &'static str| ItemCause {
         code: Some(code.to_owned()),
         ..ItemCause::kind(cause)
@@ -1540,7 +1675,7 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 cause.reason(),
             )),
             TemporalVerdict::Indeterminate { at, reason } => Some(ItemCause {
-                at: Some(format!("position {at}")),
+                at: Some(ItemWhere::Text(format!("position {at}"))),
                 kind: None,
                 reason: Some(ReasonWire::from(reason)),
                 ..ItemCause::kind("")
@@ -1557,7 +1692,7 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 ..ItemCause::kind("cancelled")
             }),
             TemporalVerdict::ActivationIncomplete { at, .. } => Some(ItemCause {
-                at: Some(format!("position {at}")),
+                at: Some(ItemWhere::Text(format!("position {at}"))),
                 ..ItemCause::kind("activation-incomplete")
             }),
             TemporalVerdict::WindowLimitReached {
@@ -1642,10 +1777,12 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 .map(ItemLocus::Outcome),
             ..ItemCause::kind("")
         }),
-        ClauseDisposition::Evaluate(CallOutcome::Undefined { reason }) => Some(ItemCause {
-            code: Some((*reason).to_owned()),
-            ..ItemCause::kind("undefined-evaluation")
-        }),
+        ClauseDisposition::Evaluate(CallOutcome::Undefined { reason, location }) => {
+            Some(location.as_ref().map_or_else(
+                || ItemCause::undefined_evaluation(clause, *reason),
+                |location| ItemCause::undefined_evaluation_at(location, *reason),
+            ))
+        }
         ClauseDisposition::Compile(refusal) if has_timed_trace_subject_refusal(refusal) => {
             classify_clause_run(report)
                 .classification
@@ -2647,7 +2784,7 @@ impl OutcomeDocument {
                     value: ResultValue(value.form()),
                 }));
             }
-            CallOutcome::Undefined { reason } => {
+            CallOutcome::Undefined { reason, .. } => {
                 document.result = Some(OutcomeResult::Execute(ExecuteResult::Undefined { reason }));
             }
             CallOutcome::Incomplete(incomplete) => {
@@ -2806,17 +2943,14 @@ fn replay_row_output_failure(
     row_position: usize,
     error: &crate::result::CauseCodecError,
 ) -> OutcomeDocument {
-    OutcomeDocument::new(
-        Operation::Replay,
-        None,
-        Category::InternalFailure,
-    )
-    .with_diagnostics(vec![OutcomeDiagnostic::new(
-        Some("output-failure"),
-        Code::OutputFailure.as_str(),
-        None,
-        format!("replay result row at position {row_position} did not serialize: {error}"),
-    )])
+    OutcomeDocument::new(Operation::Replay, None, Category::InternalFailure).with_diagnostics(vec![
+        OutcomeDiagnostic::new(
+            Some("output-failure"),
+            Code::OutputFailure.as_str(),
+            None,
+            format!("replay result row at position {row_position} did not serialize: {error}"),
+        ),
+    ])
 }
 
 fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
@@ -3094,6 +3228,108 @@ mod tests {
 
     fn text_of(document: &OutcomeDocument) -> String {
         String::from_utf8(document.to_bytes().expect("encodes")).expect("is UTF-8")
+    }
+
+    fn clause_item(disposition: ClauseDisposition) -> Value {
+        let report = ClauseRunReport {
+            disposition,
+            usage: Default::default(),
+            basis: crate::proof_result::SettlementBasis::Unavailable,
+            witness: None,
+            state_clause_counterexample: None,
+            frame_field_values: None,
+            consequent_source_events: Default::default(),
+            ledger: None,
+            finite_window: None,
+            counterexample: None,
+            decisive: None,
+            authenticated_temporal_selection: None,
+            refused_at: None,
+        };
+        let item = OutcomeItem::from_clause_run(RequestIndex::new(0), "claim", &report)
+            .expect("refusal and undefined dispositions settle as items");
+        serde_json::to_value(item).expect("item serializes")
+    }
+
+    /// FR-867-AC-3: an undefined function claim carries its retained
+    /// expression location in `where` and its evaluator reason in `cause`.
+    #[trace("TC-2951", "FR-867-AC-3")]
+    #[test]
+    fn undefined_claim_item_serializes_location_and_cause() {
+        use filament_semantic_value::location::{ExpressionLocation, ExpressionOwner};
+
+        let location = ExpressionLocation::root(ExpressionOwner::Body {
+            function: "claim".to_owned(),
+            index: 0,
+        });
+        let item = clause_item(ClauseDisposition::Evaluate(CallOutcome::Undefined {
+            reason: "division-by-zero",
+            location: Some(location),
+        }));
+        assert_eq!(
+            item["cause"],
+            json!({
+                "kind": "undefined-evaluation",
+                "where": {
+                    "declaration": {"kind": "body", "function": "claim", "index": 0},
+                    "path": [],
+                },
+                "cause": "division-by-zero",
+            })
+        );
+    }
+
+    /// FR-867-AC-4: an integer function claim emits its type-mismatch detail.
+    #[trace("TC-2951", "FR-867-AC-4")]
+    #[test]
+    fn integer_claim_item_serializes_diagnostic_detail() {
+        let item = clause_item(ClauseDisposition::NotAPredicate {
+            name: "integerClaim".to_owned(),
+            actual: "Integer".to_owned(),
+            result_type_locus: None,
+        });
+        assert_eq!(
+            item["diagnostic"],
+            json!({
+                "code": "ill_typed",
+                "cause": "type-mismatch",
+                "detail": {
+                    "function": "integerClaim",
+                    "expected": "Boolean",
+                    "actual": "Integer",
+                },
+            })
+        );
+    }
+
+    /// FR-867-AC-4: a bounded integer function claim preserves its declared
+    /// result type in its detail.
+    #[trace("TC-2951", "FR-867-AC-4")]
+    #[test]
+    fn bounded_claim_item_serializes_diagnostic_detail() {
+        let item = clause_item(ClauseDisposition::NotAPredicate {
+            name: "boundedClaim".to_owned(),
+            actual: "Int[0, 3]".to_owned(),
+            result_type_locus: None,
+        });
+        assert_eq!(item["diagnostic"]["detail"]["actual"], "Int[0, 3]");
+    }
+
+    /// FR-867-AC-4: an unknown function claim emits missing-name detail.
+    #[trace("TC-2951", "FR-867-AC-4")]
+    #[test]
+    fn unknown_claim_item_serializes_diagnostic_detail() {
+        let item = clause_item(ClauseDisposition::MissingName {
+            name: "missingClaim".to_owned(),
+        });
+        assert_eq!(
+            item["diagnostic"],
+            json!({
+                "code": "missing_declaration",
+                "cause": "missing-name",
+                "detail": {"name": "missingClaim"},
+            })
+        );
     }
 
     fn record(index: usize, value: TerminalValue) -> OutcomeItem {
@@ -3943,7 +4179,7 @@ mod tests {
                         "cause": {
                             "kind": "undefined-evaluation",
                             "where": "position 1",
-                            "code": "division-by-zero",
+                            "cause": "division-by-zero",
                         },
                         "category": "violation",
                     }],
@@ -3955,6 +4191,7 @@ mod tests {
         }
         let execute = OutcomeDocument::from_call(&CallOutcome::Undefined {
             reason: "sum-out-of-domain",
+            location: None,
         });
         assert_eq!(
             json_of(&execute),
@@ -4403,6 +4640,7 @@ mod tests {
         // Undefined: the call's undefined result.
         let undefined = Ok(CallOutcome::Undefined {
             reason: "division-by-zero",
+            location: None,
         });
         let document = json_of(&OutcomeDocument::from_run(&undefined));
         assert_eq!(document["category"], "undefined");
