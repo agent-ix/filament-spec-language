@@ -252,7 +252,6 @@ fn two_different_law_headers_refuse_conflicting_definition() {
                     .check(
                         CheckMode::Linked,
                         CheckingLimits::default(),
-                        &crate::reward_evaluator::ZeroRewardEvaluator,
                         &crate::reward_evaluator::ZeroRewardEvaluator
                     )
                     .expect_err("two laws are refused")
