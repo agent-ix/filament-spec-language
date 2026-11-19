@@ -1123,6 +1123,23 @@ impl Engines {
     pub(crate) fn get(&self, backend: &BackendId) -> Option<&Engine> {
         self.engines.iter().find(|engine| engine.id() == backend)
     }
+
+    /// Whether any registered engine is a candidate for a hybrid item
+    /// (FR-075): it advertises `temporal-satisfaction` and its `dynamics`
+    /// holds `hybrid`. FR-750 reserves `HybridProviderAbsent` for the case
+    /// where none is.
+    fn has_hybrid_candidate(&self) -> bool {
+        self.engines.iter().any(|engine| {
+            engine
+                .descriptor()
+                .dynamics()
+                .is_some_and(|kinds| kinds.contains(&fsl_route::DynamicsKind::Hybrid))
+                && engine
+                    .descriptor()
+                    .advertises()
+                    .any(|(kind, _)| kind == Capability::TemporalSatisfaction)
+        })
+    }
 }
 
 /// What a diagnostic's FR-272 payload names.
@@ -1357,6 +1374,10 @@ pub(crate) enum Refusal {
     Unsupported(CatalogCode),
     /// `failed` with the refusal's diagnostic.
     Failed(CatalogCode),
+    /// FR-750: `unsupported`, `unsupported_construct`/`expression-form`, the
+    /// detail of a hybrid provider's construct outside its class, which the
+    /// record completes with the backend.
+    UnsupportedConstruct(serde_json::Map<String, serde_json::Value>),
     /// `unsupported` `unsupported-requested-capability`: the package of a
     /// provider item could not be emitted, so no request was sent (FSpec
     /// FR-331-AC-33).
@@ -1668,6 +1689,10 @@ pub struct AnalyzeRecord {
     /// The replayed hybrid counterexample of a `refuted` hybrid item
     /// (FR-750), with its FR-286 spelling.
     pub hybrid_counterexample: Option<Spelled<fsl_replay::HybridCounterexample>>,
+    /// The certificate a hybrid provider returned, as its entry wrote it.
+    /// FR-751's checker is a later slice, so it is kept unchecked and the
+    /// item settles `uncertified`.
+    pub hybrid_certificate: Option<serde_json::Value>,
     /// The number of steps of a supplied trace a `finite-replay` item
     /// replayed to its proof (FR-941).
     pub replayed_steps: Option<u64>,
@@ -1710,6 +1735,7 @@ impl AnalyzeRecord {
             closed_form: None,
             schedule_miss: None,
             hybrid_counterexample: None,
+            hybrid_certificate: None,
             state_graph: None,
         }
     }
@@ -2189,7 +2215,7 @@ fn run(
     }
     if hybrid {
         match &disposition {
-            Disposition::Unsupported => {
+            Disposition::Unsupported if !engines.has_hybrid_candidate() => {
                 return record(terminal(TerminalRecord::hybrid_provider_absent(index)));
             }
             Disposition::Supported(candidate)
@@ -2553,6 +2579,7 @@ fn settle(
                 value,
                 counterexample,
                 wire,
+                certificate,
             } = *report;
             // A refuted value without its replayed counterexample is an
             // engine fault, never a verdict.
@@ -2562,6 +2589,7 @@ fn settle(
             );
             AnalyzeRecord {
                 hybrid_counterexample: counterexample.map(|found| Spelled { found, wire }),
+                hybrid_certificate: certificate,
                 ..AnalyzeRecord::of(index, settlement)
             }
         }
@@ -2617,6 +2645,17 @@ fn settle(
             terminal(TerminalRecord::failed_with(index, backend, code)),
             None,
         ),
+        EngineReport::Refused(Refusal::UnsupportedConstruct(mut detail)) => {
+            // FSpec FR-272: the provider whose class excludes the construct
+            // stands where the profile would.
+            detail.insert("backend".to_owned(), backend.as_str().into());
+            record(
+                terminal(TerminalRecord::hybrid_unsupported_construct(
+                    index, backend, detail,
+                )),
+                None,
+            )
+        }
         EngineReport::Refused(Refusal::Unsupported(code)) => {
             disposed(DispositionKind::Unsupported, Diagnostic::new(code), backend)
         }

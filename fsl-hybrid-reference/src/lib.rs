@@ -2,13 +2,18 @@
 //! The first-party reference hybrid provider `fsl-hybrid-reference` (FR-1019,
 //! ADR-011 layer H). It implements [`fsl_replay::HybridProvider`], which
 //! `fsl-replay` defines so this crate sits below `fsl-analyze` with no
-//! dependency cycle. A proof it returns is `certified` only after the
-//! layer-6 checker accepts its certificate (FR-751), so no claim rests on
+//! dependency cycle.
+//!
+//! Nothing here is certified yet. FR-751's certificate checker is a later
+//! slice, so a certificate-bearing answer settles `proved`/`uncertified` and
+//! its certificate is kept unchecked; the record becomes `certified` only
+//! once the checker accepts the certificate. Until then a proof rests on
 //! this crate's correctness.
 //!
 //! The flowpipe method of FR-1019 "Method" is not implemented: every request
 //! is answered `solver-inconclusive` with no trace, a result FR-250 settles
-//! as `inconclusive` and which never proves or refutes.
+//! as `inconclusive` and which never proves or refutes. The answer names no
+//! method, since none ran.
 
 use filament_exact::Cancel;
 use fsl_replay::{
@@ -31,13 +36,10 @@ pub struct ReferenceProvider;
 
 impl HybridProvider for ReferenceProvider {
     fn solve(&self, _request: &HybridSolveRequest<'_>, _cancel: &Cancel) -> HybridAnswer {
-        HybridAnswer {
-            result: SolverResult {
-                method: SolverMethod::FlowpipeOutwardRounded,
-                outcome: SolverOutcome::Unknown(None),
-                coverage: SolverCoverage::Inductive,
-            },
-            certificate: None,
-        }
+        HybridAnswer::solved(SolverResult {
+            method: SolverMethod::Unclassified,
+            outcome: SolverOutcome::Unknown(None),
+            coverage: SolverCoverage::Inductive,
+        })
     }
 }

@@ -1027,9 +1027,9 @@ mod settlement {
         );
     }
 
-    /// FR-750: a reproduced counterexample's wire form is the form the
-    /// provider reader takes back.
-    #[trace("TC-2100", "FR-750-AC-5")]
+    /// FR-750-AC-9 (the formula kind of the writer): a reproduced
+    /// counterexample's wire form is the form the provider reader takes back.
+    #[trace("TC-3035", "FR-750-AC-9")]
     #[test]
     fn a_counterexample_wire_reads_back_to_itself() {
         let unit = braking_unit(FLOW, "v = 0");
@@ -1038,7 +1038,7 @@ mod settlement {
             kind: HybridCounterexampleKind::Formula,
             trace: braking_trace(10, 0),
         };
-        let wire = input.to_wire(model).expect("a formula counterexample is spelled");
+        let wire = input.to_wire(model, &|_| serde_json::Value::Null);
         assert_eq!(
             read_plugin_hybrid_counterexample(&json!({"counterexample": wire}), Some(model)),
             Ok(input)
@@ -1389,5 +1389,192 @@ mod settlement {
             read_first_party_solver_basis(&json!({"type": "exhaustive"})),
             Err(PluginResultRefusal::Unsupported { .. })
         ));
+    }
+
+    fn solved_horizon(answer: &crate::hybrid::HybridAnswer) -> Option<SolverHorizon> {
+        match &answer.verdict {
+            crate::hybrid::HybridVerdict::Solved(SolverResult {
+                coverage: SolverCoverage::Bounded { horizon, .. },
+                ..
+            }) => Some(horizon.clone()),
+            _ => None,
+        }
+    }
+
+    /// FR-750-AC-6: `read_entry` reads an exact number only as the FSpec
+    /// FR-331 `Rational` object; a string or a JSON number refuses
+    /// `wrong-value-kind` at the member, as does a trace interval end that
+    /// is a string.
+    #[trace("TC-3035", "FR-750-AC-6")]
+    #[test]
+    fn read_entry_reads_exact_numbers_only_as_rational_objects() {
+        use crate::hybrid::{HybridAnswer, HybridEntryRefusal};
+        let unit = braking_unit(FLOW, "v = 0");
+        let model = &unit.graph.hybrid_models()[0];
+        let proved = |horizon: Value| {
+            json!({"result": "proved", "certification": "uncertified",
+                "basis": {"type": "bounded-solver", "method": "delta-complete",
+                    "horizon": horizon, "jumps": 1, "exhaustive": ["time"]}})
+        };
+        let read = |entry: &Value| HybridAnswer::read_entry(entry, &[], model);
+        let answer = read(&proved(rational_json(10))).expect("the object form is read");
+        assert_eq!(
+            solved_horizon(&answer),
+            Some(SolverHorizon::new(n(10)).expect("non-negative"))
+        );
+        for plain in [json!("10"), json!(10)] {
+            assert_eq!(
+                read(&proved(plain)),
+                Err(HybridEntryRefusal::Entry(PluginResultRefusal::Malformed {
+                    pointer: "/basis/horizon".to_owned(),
+                    cause: ValueFault::WrongValueKind,
+                }))
+            );
+        }
+        let mut trace = trace_json();
+        trace["start"]["time"]["lower"] = json!("0");
+        assert_eq!(
+            read(&json!({"result": "inconclusive", "cause": cause_json(trace)})),
+            Err(HybridEntryRefusal::Entry(PluginResultRefusal::Malformed {
+                pointer: "/cause/trace/start/time/lower".to_owned(),
+                cause: ValueFault::WrongValueKind,
+            }))
+        );
+    }
+
+    /// FR-750-AC-11: `read_entry(entry, counterexamples, model)` reads a
+    /// `refuted` entry's position in `counterexamples` into `Refuted`; a
+    /// position outside the array, and a trace naming a mode the model lacks,
+    /// refuse `invalid-value` at their pointers; an entry that is not a
+    /// solver answer is `NotRead`.
+    #[trace("TC-3035", "FR-750-AC-11")]
+    #[test]
+    fn read_entry_reads_refuted_entries_against_the_frames_counterexamples() {
+        use crate::hybrid::{HybridAnswer, HybridEntryRefusal, HybridVerdict};
+        let unit = braking_unit(FLOW, "v = 0");
+        let model = &unit.graph.hybrid_models()[0];
+        let counterexamples = vec![json!({"type": "hybrid-counterexample",
+            "kind": "formula", "trace": trace_json()})];
+        let refuted = |position: u64| json!({"result": "refuted", "counterexample": position});
+        assert_eq!(
+            HybridAnswer::read_entry(&refuted(0), &counterexamples, model),
+            Ok(HybridAnswer {
+                verdict: HybridVerdict::Refuted(HybridCounterexample {
+                    kind: HybridCounterexampleKind::Formula,
+                    trace: braking_trace(10, 0),
+                }),
+                certificate: None,
+            })
+        );
+        assert_eq!(
+            HybridAnswer::read_entry(&refuted(1), &counterexamples, model),
+            Err(HybridEntryRefusal::Entry(PluginResultRefusal::Malformed {
+                pointer: "/counterexample".to_owned(),
+                cause: ValueFault::InvalidValue,
+            }))
+        );
+        let mut halted = trace_json();
+        halted["start"]["mode"] = json!("Halted");
+        assert_eq!(
+            HybridAnswer::read_entry(
+                &json!({"result": "inconclusive", "cause": cause_json(halted)}),
+                &[],
+                model
+            ),
+            Err(HybridEntryRefusal::Entry(PluginResultRefusal::Malformed {
+                pointer: "/cause/trace/start/mode".to_owned(),
+                cause: ValueFault::InvalidValue,
+            }))
+        );
+        for entry in [
+            json!({"result": "failed", "cause": {"type": "tool-failure"}}),
+            json!({"result": "unsupported"}),
+        ] {
+            let name = entry["result"].as_str().expect("a result").to_owned();
+            assert_eq!(
+                HybridAnswer::read_entry(&entry, &counterexamples, model),
+                Err(HybridEntryRefusal::NotRead(name))
+            );
+        }
+    }
+
+    /// FR-750-AC-9: an undefined-evaluation counterexample is written, with
+    /// the instant as a point interval and the locus of the term node that
+    /// has no value; the locus names a term node of the emitted package, and
+    /// a site or term the package does not have has none.
+    #[trace("TC-3035", "FR-750-AC-9")]
+    #[test]
+    fn an_undefined_evaluation_counterexample_is_written_with_its_term_locus() {
+        use crate::hybrid::hybrid_locus_wire;
+        let unit = braking_unit(FLOW, "v = 0");
+        let text = format!("{HEADER}{FUNCTIONS}{}{CLAIMS}", braking(FLOW, "v = 0"));
+        let package = crate::compile_package(
+            crate::CompileUnit {
+                source: SourceIdentity::new("test", "hybrid-locus"),
+                package_name: "fixture".into(),
+                path: "unit.native",
+                bytes: text.as_bytes(),
+            },
+            std::iter::empty::<&[u8]>(),
+            &crate::spine::DependencyInput::default(),
+            crate::StageLimits::default(),
+            crate::ReplayLimits::default(),
+        )
+        .expect("the unit compiles");
+        let wire = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(package.bytes())
+            .expect("the emitted graph");
+        let defined = unit
+            .claims
+            .iter()
+            .position(|name| name == "Defined")
+            .expect("the claim");
+        let Ok(ExactReplay::Reproduced(found)) =
+            exact_replay(&unit, claim(&unit, "Defined"), &braking_trace(10, 0))
+        else {
+            panic!("the trace reproduces the undefined evaluation");
+        };
+        let HybridCounterexampleKind::UndefinedEvaluation { at, .. } = &found.kind else {
+            panic!("the kind is undefined-evaluation");
+        };
+        let locus = hybrid_locus_wire(&unit, &wire, defined, &at.locus)
+            .expect("the division is a term node of the package");
+        assert_eq!(locus["occurrence"]["role"], "expression", "{locus}");
+        let written = found.to_wire(&unit.hybrid_models()[0], &|_| locus.clone());
+        let kind = &written["kind"];
+        assert_eq!(kind["type"], "undefined-evaluation", "{written}");
+        assert_eq!(kind["cause"], "division-by-zero", "{written}");
+        assert_eq!(kind["where"]["position"], 0, "{written}");
+        let half_way = json!({"numerator": "15", "denominator": "2"});
+        assert_eq!(
+            kind["where"]["time"],
+            json!({"lower": half_way, "upper": half_way}),
+            "{written}"
+        );
+        assert_eq!(kind["where"]["locus"], locus, "{written}");
+        assert_eq!(written["trace"], found.trace.to_wire(&unit.hybrid_models()[0]));
+
+        // The flow `v' = -a` of `Moving` is a term node too; a mode the model
+        // lacks and a term path past a leaf are not.
+        let flow = ExpressionLocus {
+            site: ExpressionSite::Rate {
+                mode: 0,
+                variable: 0,
+            },
+            term: TermLocus::default(),
+        };
+        assert!(hybrid_locus_wire(&unit, &wire, defined, &flow).is_some());
+        let no_mode = ExpressionLocus {
+            site: ExpressionSite::Invariant { mode: 9 },
+            term: TermLocus::default(),
+        };
+        assert_eq!(hybrid_locus_wire(&unit, &wire, defined, &no_mode), None);
+        let past_a_leaf = ExpressionLocus {
+            site: flow.site,
+            term: TermLocus {
+                term: vec![0, 0, 0],
+                body: Vec::new(),
+            },
+        };
+        assert_eq!(hybrid_locus_wire(&unit, &wire, defined, &past_a_leaf), None);
     }
 }

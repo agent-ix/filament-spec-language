@@ -2025,6 +2025,35 @@ impl TerminalRecord {
         }
     }
 
+    /// FR-750: the record of a hybrid item whose provider named a construct
+    /// outside the class its method decides: `unsupported`,
+    /// `unsupported_construct`/`expression-form`, no cause, its `detail`
+    /// naming `form`, `declaration`, `mode`, `variable` for a flow, `backend`
+    /// (in the place of the profile, FSpec FR-272) and `locus`. The backend
+    /// produced the record, no disposition settled it, and no engine verdict
+    /// is written.
+    pub fn hybrid_unsupported_construct(
+        request_index: RequestIndex,
+        backend: BackendId,
+        detail: serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
+        Self {
+            request_index,
+            backend: Some(backend),
+            value: TerminalValue::Unsupported(UnavailabilityCause::Disposition),
+            replay: None,
+            diagnostic: Some(CatalogCode::new(
+                "unsupported_construct",
+                "expression-form",
+            )),
+            exact_certificate: None,
+            exact_certificate_document: None,
+            disposition_detail: None,
+            diagnostic_detail: Some(detail),
+            disposed: false,
+        }
+    }
+
     /// FR-750: the record of a hybrid item routed to `backend`, which no
     /// registered engine or process provider serves: `unsupported`,
     /// `unsupported_projection`/`tool-unavailable`, naming the backend.

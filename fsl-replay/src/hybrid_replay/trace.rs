@@ -268,7 +268,7 @@ pub fn admit(model: &CheckedHybridModel, trace: &HybridTrace) -> Result<(), Trac
     Ok(())
 }
 
-fn rational_wire(value: &Rational) -> serde_json::Value {
+pub(super) fn rational_wire(value: &Rational) -> serde_json::Value {
     serde_json::json!({
         "numerator": value.numerator().to_string(),
         "denominator": value.denominator().to_string(),

@@ -27,8 +27,13 @@ use filament_exact::LimitKind;
 use fsl_semantics::check::{CheckedGraph, CheckedHybridClaim, HybridClock, HybridHorizon};
 
 mod process_request;
+mod locus;
 mod provider;
-pub use provider::{HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSolveRequest};
+pub use locus::hybrid_locus_wire;
+pub use provider::{
+    HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSolveRequest, HybridVerdict,
+    UnsupportedConstruct,
+};
 pub use process_request::{
     AdmittedHybridProcessItem, AdmittedHybridProcessRequest, HybridProcessDependencyPackage,
     HybridProcessItem, HybridProcessPackageContext, HybridProcessRequest,

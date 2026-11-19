@@ -231,7 +231,10 @@ pub enum ItemForm {
 /// Hybrid item settings kept distinct from temporal and probabilistic forms.
 #[derive(Clone, Debug, Default)]
 pub struct HybridItem {
-    /// The subject's explicit proof-bound substitution.
+    /// The item's proof bounds (FR-750). A hybrid claim's request item names
+    /// no subject to substitute them into (FR-447 writes `domains` for an
+    /// unbounded claim only), so document resolution leaves this empty and
+    /// the provider request does not carry it.
     pub proof_bounds: Vec<fsl_foundation::bound::ProofBound>,
     /// The item's `hybrid.limits` (FR-750): a member left unset takes the
     /// serving descriptor's published bound.
@@ -983,6 +986,11 @@ fn work<'a>(
                 &item.claim,
                 form,
                 limits.accounting.work_units,
+                limits.deadline,
+                super::hybrid_item::Spelling {
+                    packages: binding.packages,
+                    emit: limits.emit,
+                },
             )
             .unwrap_or_else(absent)
         }

@@ -14,7 +14,10 @@
 //! never a candidate for a hybrid item, and the assertions that use it fail
 //! for real.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use fsl_analyze::analyze::Engine;
 use fsl_analyze::provider::{HybridAnswer, HybridProvider, HybridSolveRequest};
@@ -97,19 +100,55 @@ pub(crate) fn find<'v>(value: &'v Value, key: &str) -> Option<&'v Value> {
     }
 }
 
-/// A hybrid provider that answers every request with the FSpec FR-331 result
-/// entry it holds, read by `HybridAnswer::read_entry`.
-#[derive(Debug)]
-struct EntryProvider(Value);
+/// What an [`answering`] provider was asked: how often, and the options and
+/// deadline of each request.
+#[derive(Debug, Default)]
+pub(crate) struct Seen {
+    pub(crate) calls: AtomicUsize,
+    pub(crate) requests: Mutex<Vec<(BTreeMap<String, String>, Option<u64>)>>,
+}
 
-impl HybridProvider for EntryProvider {
+impl Seen {
+    pub(crate) fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+
+    /// The options and deadline of every request, in order.
+    pub(crate) fn requests(&self) -> Vec<(BTreeMap<String, String>, Option<u64>)> {
+        self.requests
+            .lock()
+            .expect("the log is not poisoned")
+            .clone()
+    }
+}
+
+type Answer = Box<dyn Fn(&HybridSolveRequest<'_>) -> HybridAnswer + Send + Sync>;
+
+/// A hybrid provider that answers by `answer` and records what it was asked.
+struct AnsweringProvider {
+    seen: Arc<Seen>,
+    answer: Answer,
+}
+
+impl std::fmt::Debug for AnsweringProvider {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AnsweringProvider")
+    }
+}
+
+impl HybridProvider for AnsweringProvider {
     fn solve(
         &self,
         request: &HybridSolveRequest<'_>,
         _cancel: &filament_exact::Cancel,
     ) -> HybridAnswer {
-        HybridAnswer::read_entry(&self.0, request.model)
-            .unwrap_or_else(|refusal| panic!("the fixture entry is read: {refusal}"))
+        self.seen.calls.fetch_add(1, Ordering::SeqCst);
+        self.seen
+            .requests
+            .lock()
+            .expect("the log is not poisoned")
+            .push((request.options.clone(), request.deadline_ms));
+        (self.answer)(request)
     }
 }
 
@@ -117,20 +156,49 @@ impl HybridProvider for EntryProvider {
 /// the FSpec FR-331 result entry `entry`: `Engine::hybrid` over a descriptor
 /// with `dynamics` `["hybrid"]`.
 pub(crate) fn hybrid_fixture(id: &str, entry: &Value) -> Engine {
-    build_hybrid(id, entry).unwrap_or_else(|error| panic!("the fixture engine is made: {error}"))
+    answering(id, entry_answer(entry.clone())).0
 }
 
-fn build_hybrid(id: &str, entry: &Value) -> Result<Engine, String> {
+/// The answer that reads `entry` against its own `counterexamples`.
+pub(crate) fn entry_answer(entry: Value) -> impl Fn(&HybridSolveRequest<'_>) -> HybridAnswer {
+    move |request| {
+        let counterexamples = entry["counterexamples"]
+            .as_array()
+            .map_or(&[][..], Vec::as_slice);
+        HybridAnswer::read_entry(&entry, counterexamples, request.model)
+            .unwrap_or_else(|refusal| panic!("the fixture entry is read: {refusal}"))
+    }
+}
+
+/// The in-process hybrid fixture `id` answering by `answer`, with the log of
+/// what it was asked.
+pub(crate) fn answering(
+    id: &str,
+    answer: impl Fn(&HybridSolveRequest<'_>) -> HybridAnswer + Send + Sync + 'static,
+) -> (Engine, Arc<Seen>) {
+    let seen = Arc::new(Seen::default());
+    let engine = build_hybrid(
+        id,
+        Box::new(AnsweringProvider {
+            seen: Arc::clone(&seen),
+            answer: Box::new(answer),
+        }),
+    )
+    .unwrap_or_else(|error| panic!("the fixture engine is made: {error}"));
+    (engine, seen)
+}
+
+fn build_hybrid(id: &str, provider: Box<dyn HybridProvider>) -> Result<Engine, String> {
     let descriptor = descriptor_of(&json!({"backend": id, "dynamics": ["hybrid"],
         "advertises": [{"kind": "temporal-satisfaction", "mode": "bounded"},
             {"kind": "temporal-satisfaction", "mode": "unbounded"}],
+        "options": ["step"],
         "bounds": {"max_solver_steps": 1000, "max_solver_time": 1}}))?;
-    Engine::hybrid(descriptor, Box::new(EntryProvider(entry.clone())))
-        .map_err(|error| error.to_string())
+    Engine::hybrid(descriptor, provider).map_err(|error| error.to_string())
 }
 
 /// The routed descriptor of the FSpec FR-331 descriptor `descriptor`.
-fn descriptor_of(descriptor: &Value) -> Result<fsl_route::BackendDescriptor, String> {
+pub(crate) fn descriptor_of(descriptor: &Value) -> Result<fsl_route::BackendDescriptor, String> {
     let id = descriptor["backend"].as_str().unwrap_or("hybrid-fixture");
     let pairs: Vec<(String, String)> = descriptor["advertises"]
         .as_array()
@@ -167,6 +235,15 @@ fn descriptor_of(descriptor: &Value) -> Result<fsl_route::BackendDescriptor, Str
             max_solver_time: bound("max_solver_time"),
         }),
     )
+    .map(|routed| {
+        routed.with_options(
+            descriptor["options"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|name| name.as_str().map(str::to_owned)),
+        )
+    })
     .map_err(|refusal| format!("{refusal:?}"))
 }
 
@@ -182,13 +259,23 @@ pub(crate) fn process_fixture(id: &str, entry: &Value) -> Engine {
 pub(crate) fn hybrid_engine(descriptor: &Value) -> Result<Engine, String> {
     Engine::hybrid(
         descriptor_of(descriptor)?,
-        Box::new(EntryProvider(Value::Null)),
+        Box::new(AnsweringProvider {
+            seen: Arc::default(),
+            answer: Box::new(|_| panic!("the engine is only built, never asked")),
+        }),
     )
     .map_err(|error| error.to_string())
 }
 
-fn interval(lower: &str, upper: &str) -> Value {
-    json!({"lower": lower, "upper": upper})
+/// The exact rational `text` (`n` or `n/d`) as FSpec FR-193's
+/// `{numerator, denominator}` object.
+pub(crate) fn rational(text: &str) -> Value {
+    let (numerator, denominator) = text.split_once('/').unwrap_or((text, "1"));
+    json!({"numerator": numerator, "denominator": denominator})
+}
+
+pub(crate) fn interval(lower: &str, upper: &str) -> Value {
+    json!({"lower": rational(lower), "upper": rational(upper)})
 }
 
 fn inductive_entry(moving_v_upper: &str) -> Value {
@@ -212,18 +299,47 @@ fn a_covering_delta_complete_proof_settles_proved_bounded_solver() {
         "basis": {"type": "bounded-solver", "method": "delta-complete",
             "horizon": {"numerator": "10", "denominator": "1"}, "jumps": 1,
             "exhaustive": ["time"]}});
+    let (engine, seen) = answering("hybrid-fixture", entry_answer(entry));
     let (_, item) = first_item(
         "hybrid-750-1",
         &braking_pair(),
         named("SlowEnough", "hybrid-fixture"),
         json!({}),
-        vec![hybrid_fixture("hybrid-fixture", &entry)],
+        vec![engine],
     );
     let record = &item["record"];
     assert_eq!(record["result"], "proved", "{item}");
     assert_eq!(record["basis"]["type"], "bounded-solver", "{item}");
     assert_eq!(record["certification"], "uncertified", "{item}");
     assert_eq!(record["backend"], "hybrid-fixture", "{item}");
+    assert_eq!(seen.calls(), 1, "the provider is dispatched once");
+}
+
+/// FR-750-AC-6: an item's `options` reach the provider as the strings the
+/// request wrote, and its exact numbers are read only as FSpec FR-193
+/// `{numerator, denominator}` objects.
+#[test]
+#[trace("TC-2100", "FR-750-AC-6")]
+fn item_options_reach_the_provider_as_strings() {
+    let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
+        "basis": {"type": "bounded-solver", "method": "delta-complete",
+            "horizon": rational("10"), "jumps": 1, "exhaustive": ["time"]}});
+    let (engine, seen) = answering("hybrid-fixture", entry_answer(entry));
+    let (_, item) = first_item(
+        "hybrid-750-6",
+        &braking_pair(),
+        json!([{"claim": "SlowEnough", "backend": "hybrid-fixture",
+            "options": {"step": "1/16"}}]),
+        json!({}),
+        vec![engine],
+    );
+    assert_eq!(item["record"]["result"], "proved", "{item}");
+    let requests = seen.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].0,
+        BTreeMap::from([("step".to_owned(), "1/16".to_owned())])
+    );
 }
 
 /// FR-750-AC-2: `Engine::hybrid` refuses a descriptor whose `dynamics` lacks
@@ -241,7 +357,7 @@ fn a_hybrid_provider_without_hybrid_dynamics_is_refused() {
     assert!(error.contains("invalid-dynamics"), "{error}");
 }
 
-fn point_trace(before_v: &str) -> Value {
+pub(crate) fn point_trace(before_v: &str) -> Value {
     let state = |mode: &str, time: &str, v: &str| {
         json!({"mode": mode, "time": interval(time, time),
             "enclosure": {"v": interval(v, v), "a": interval("2", "2")}})
@@ -252,7 +368,7 @@ fn point_trace(before_v: &str) -> Value {
         "state": state("Stopped", "10", "0")}]})
 }
 
-fn refuted_entry(trace: Value) -> Value {
+pub(crate) fn refuted_entry(trace: Value) -> Value {
     json!({"request_index": 0, "result": "refuted", "counterexample": 0,
         "counterexamples": [{"type": "hybrid-counterexample", "kind": "formula",
             "trace": trace}]})
@@ -350,9 +466,9 @@ fn an_inductive_enclosure_certificate_is_checked_in_the_core() {
 fn a_flowpipe_step_violating_picard_is_rejected() {
     let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
         "basis": {"type": "bounded-solver", "method": "flowpipe-outward-rounded",
-            "horizon": "10", "jumps": 1, "exhaustive": ["time"]},
+            "horizon": rational("10"), "jumps": 1, "exhaustive": ["time"]},
         "certificate": {"type": "flowpipe", "steps": [{"mode": "Moving",
-            "time": interval("0", "10"), "step": "10",
+            "time": interval("0", "10"), "step": rational("10"),
             "box": {"v": interval("0", "20"), "a": interval("1", "2")},
             "apriori": {"v": interval("19", "20"), "a": interval("1", "2")}}]}});
     let (_, item) = first_item(
@@ -425,7 +541,7 @@ fn a_validated_witness_refutes_through_a_non_polynomial_flow() {
     let trace = json!({"start": {"mode": "Up", "time": interval("0", "0"),
         "enclosure": {"v": interval("1", "1")}}, "jumps": []});
     let witness = json!({"type": "validated-witness", "dwells": [[{"mode": "Up",
-        "time": interval("0", "40"), "step": "40",
+        "time": interval("0", "40"), "step": rational("40"),
         "box": {"v": interval("1", "1")}, "apriori": {"v": interval("1", "41")}}]]});
     let entry = |certificate: Option<&Value>| {
         let mut entry = json!({"request_index": 0, "result": "inconclusive",
@@ -462,19 +578,19 @@ fn braking_flowpipe(jump_time: (&str, &str)) -> Value {
         let end = format!("{}/16", k + 1);
         let upper = format!("{}/16", 320 - k);
         steps.push(
-            json!({"mode": "Moving", "time": interval(&start, &end), "step": "1/16",
+            json!({"mode": "Moving", "time": interval(&start, &end), "step": rational("1/16"),
             "box": {"v": interval("0", &upper), "a": interval("1", "2")},
             "apriori": {"v": interval("0", &upper), "a": interval("1", "2")}}),
         );
     }
     steps.push(
         json!({"mode": "Stopped", "time": interval(jump_time.0, jump_time.1),
-        "step": "10", "box": {"v": interval("0", "0"), "a": interval("1", "2")},
+        "step": rational("10"), "box": {"v": interval("0", "0"), "a": interval("1", "2")},
         "apriori": {"v": interval("0", "0"), "a": interval("1", "2")}}),
     );
     json!({"request_index": 0, "result": "proved", "certification": "uncertified",
         "basis": {"type": "bounded-solver", "method": "flowpipe-outward-rounded",
-            "horizon": "10", "jumps": 1, "exhaustive": ["time"]},
+            "horizon": rational("10"), "jumps": 1, "exhaustive": ["time"]},
         "certificate": {"type": "flowpipe", "steps": steps}})
 }
 
@@ -572,4 +688,55 @@ fn a_trace_cut_by_end_replays_to_its_bad_prefix() {
     let text = refused.to_string();
     assert!(text.contains("invalid_result"), "{refused}");
     assert!(text.contains("/end"), "{refused}");
+}
+
+/// FR-750-AC-7 (process half): a process fixture whose entry is
+/// `unsupported` with `unsupported_construct`/`expression-form` settles the
+/// same located `unsupported` as the in-process fixture.
+#[test]
+#[trace("TC-3035", "FR-750-AC-7")]
+#[ignore = "QSL-2234: `Engine::hybrid_process` and the reader turning an entry's `locus` back into a site do not exist yet"]
+fn a_process_unsupported_entry_settles_a_located_expression_form() {
+    todo!("QSL-2234: process half of FR-750-AC-7");
+}
+
+/// FR-750-AC-9 (reader and irrational instant): the plugin reader reads a
+/// written undefined-evaluation counterexample back to a `Refuted` answer
+/// FR-450 reproduces, and an irrational instant is written as a rational
+/// interval that contains it.
+#[test]
+#[trace("TC-3035", "FR-750-AC-9")]
+#[ignore = "QSL-2234: the reader's read-back of `where`/`locus` and the irrational-instant solver are not implemented yet"]
+fn an_undefined_evaluation_counterexample_reads_back() {
+    todo!("QSL-2234: AC-9 read-back and irrational instant");
+}
+
+/// FR-750-AC-10: the refuted `TooSlow` item's `replay` resolves to the
+/// hybrid claim and FR-098 writes the FSpec FR-323 `hybrid` row
+/// `reproduced-with-evaluated-witness`; a non-reproducing trace writes
+/// `inconclusive` with the `hybrid-trace` disagreement.
+#[test]
+#[trace("TC-3035", "FR-750-AC-10")]
+#[ignore = "QSL-2234: FR-098's hybrid replay row is not implemented yet"]
+fn a_refuted_hybrid_item_replays_through_fr_098() {
+    todo!("QSL-2234: FR-098 hybrid row");
+}
+
+/// FR-750-AC-11 (process half): a process `failed` `tool-failure` entry is
+/// `NotRead` and the item settles `failed` by FR-290.
+#[test]
+#[trace("TC-3035", "FR-750-AC-11")]
+#[ignore = "QSL-2234: process providers (`Engine::hybrid_process`) do not exist yet"]
+fn a_process_failed_entry_settles_failed_by_fr_290() {
+    todo!("QSL-2234: process half of FR-750-AC-11");
+}
+
+/// FR-1021-AC-3: the plan's `Fill`/`Drain` validation item reaches the
+/// reference provider with its dwell and horizon as `Rational` objects, and a
+/// trace bound written as `"8"` refuses `invalid_result`/`wrong-value-kind`.
+#[test]
+#[trace("TC-3035", "FR-1021-AC-3")]
+#[ignore = "QSL-2234: the plan's validation items over the reference provider land with the reference solver"]
+fn a_plan_validation_item_carries_rational_objects() {
+    todo!("QSL-2234: FR-1021-AC-3");
 }

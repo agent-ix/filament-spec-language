@@ -15,7 +15,9 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{analyze_with_providers, Workspace};
-use crate::hybrid_requests::{braking, braking_pair, claim, find, first_item, hybrid_fixture};
+use crate::hybrid_requests::{
+    braking, braking_pair, claim, find, first_item, hybrid_fixture, interval, rational,
+};
 
 const REFERENCE: &str = "fsl-hybrid-reference";
 
@@ -90,10 +92,26 @@ fn the_reference_provider_refutes_too_slow_deterministically() {
     let trace = find(&first["counterexample"], "trace").expect("a hybrid trace");
     assert_eq!(trace["jumps"], json!([]), "{first}");
     assert_eq!(trace["start"]["mode"], "Moving", "{first}");
-    assert_eq!(trace["start"]["enclosure"]["v"]["lower"], "0", "{first}");
-    assert_eq!(trace["start"]["enclosure"]["v"]["upper"], "0", "{first}");
-    assert_eq!(trace["start"]["enclosure"]["a"]["lower"], "1", "{first}");
-    assert_eq!(trace["start"]["enclosure"]["a"]["upper"], "1", "{first}");
+    assert_eq!(
+        trace["start"]["enclosure"]["v"]["lower"],
+        rational("0"),
+        "{first}"
+    );
+    assert_eq!(
+        trace["start"]["enclosure"]["v"]["upper"],
+        rational("0"),
+        "{first}"
+    );
+    assert_eq!(
+        trace["start"]["enclosure"]["a"]["lower"],
+        rational("1"),
+        "{first}"
+    );
+    assert_eq!(
+        trace["start"]["enclosure"]["a"]["upper"],
+        rational("1"),
+        "{first}"
+    );
     let second = reference("ref-2b", &braking_pair(), one("TooSlow"));
     assert_eq!(first["counterexample"], second["counterexample"]);
 }
@@ -134,6 +152,18 @@ fn the_provider_path_stays_beside_the_reference_provider() {
             .all(|descriptor| descriptor.candidate().id().as_str() != REFERENCE),
         "Engines::fsl() leaves the reference provider out"
     );
+    let (_, alone) = first_item(
+        "ref-4-alone",
+        &braking_pair(),
+        one("SlowEnough"),
+        json!({}),
+        Vec::new(),
+    );
+    let text = alone.to_string();
+    assert_eq!(alone["record"]["result"], "unsupported", "{alone}");
+    for member in ["temporal-satisfaction", "hybrid-dynamics"] {
+        assert!(text.contains(member), "{member}: {alone}");
+    }
     let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
         "basis": {"type": "bounded-solver", "method": "delta-complete",
             "horizon": {"numerator": "10", "denominator": "1"}, "jumps": 1,
@@ -206,7 +236,7 @@ fn the_reference_provider_negotiates_by_dynamics() {
 /// the solver `limit-reached` naming `hybrid.max_solver_steps`.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-6")]
-#[ignore = "QSL-2234: the reference provider's descriptor and budgets are not implemented yet"]
+#[ignore = "QSL-2234: the reference descriptor's bounds and `dynamics` exist; its `options` defaults and the solver step budget do not"]
 fn the_reference_provider_publishes_its_defaults_and_stops_at_its_budget() {
     let ws = Workspace::new("ref-6a");
     let run = analyze_with_providers(
@@ -294,25 +324,15 @@ fn the_flowpipe_stops_at_the_guard_and_jumps_once() {
         .filter(|step| step["mode"] == "Stopped")
         .collect();
     assert_eq!(stopped.len(), 1, "{item}");
-    assert_eq!(
-        stopped[0]["box"]["v"],
-        json!({"lower": "0", "upper": "0"}),
-        "{item}"
-    );
-    assert_eq!(
-        stopped[0]["box"]["a"],
-        json!({"lower": "1", "upper": "2"}),
-        "{item}"
-    );
-    assert_eq!(
-        stopped[0]["time"],
-        json!({"lower": "0", "upper": "10"}),
-        "{item}"
-    );
+    assert_eq!(stopped[0]["box"]["v"], interval("0", "0"), "{item}");
+    assert_eq!(stopped[0]["box"]["a"], interval("1", "2"), "{item}");
+    assert_eq!(stopped[0]["time"], interval("0", "10"), "{item}");
     for step in steps.iter().filter(|step| step["mode"] == "Moving") {
         for member in ["box", "apriori"] {
-            let lower = step[member]["v"]["lower"].as_str().expect("a rational");
-            assert!(!lower.starts_with('-'), "{step}");
+            let numerator = step[member]["v"]["lower"]["numerator"]
+                .as_str()
+                .expect("a rational");
+            assert!(!numerator.starts_with('-'), "{step}");
         }
     }
 }
@@ -336,16 +356,8 @@ fn a_claim_with_no_horizon_is_proved_inductively() {
     );
     assert_eq!(item["record"]["certification"], "certified", "{item}");
     let boxes = &item["certificate"]["form"]["boxes"];
-    assert_eq!(
-        boxes["Moving"]["v"],
-        json!({"lower": "0", "upper": "20"}),
-        "{item}"
-    );
-    assert_eq!(
-        boxes["Stopped"]["v"],
-        json!({"lower": "0", "upper": "0"}),
-        "{item}"
-    );
+    assert_eq!(boxes["Moving"]["v"], interval("0", "20"), "{item}");
+    assert_eq!(boxes["Stopped"]["v"], interval("0", "0"), "{item}");
 }
 
 /// FR-1019-AC-10: a violation inside a dwell no jump closes is reached by
@@ -366,17 +378,13 @@ fn a_violation_in_a_final_dwell_is_cut_by_end() {
     assert_eq!(item["record"]["result"], "refuted", "{item}");
     let trace = find(&item["counterexample"], "trace").expect("a hybrid trace");
     assert_eq!(trace["jumps"], json!([]), "{item}");
-    assert_eq!(trace["start"]["enclosure"]["v"]["lower"], "8", "{item}");
     assert_eq!(
-        trace["end"]["time"],
-        json!({"lower": "3", "upper": "3"}),
+        trace["start"]["enclosure"]["v"]["lower"],
+        rational("8"),
         "{item}"
     );
-    assert_eq!(
-        trace["end"]["enclosure"]["v"],
-        json!({"lower": "5", "upper": "5"}),
-        "{item}"
-    );
+    assert_eq!(trace["end"]["time"], interval("3", "3"), "{item}");
+    assert_eq!(trace["end"]["enclosure"]["v"], interval("5", "5"), "{item}");
 }
 
 /// FR-1019-AC-11: a cyclic polynomial flow refutes through a

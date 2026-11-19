@@ -169,15 +169,45 @@ pub struct HybridCounterexample {
 
 impl HybridCounterexample {
     /// The counterexample in FSpec FR-331's `hybrid-counterexample` wire form
-    /// over `model`; `None` for an `undefined-evaluation` counterexample,
-    /// whose wire form the writer does not yet spell.
-    pub fn to_wire(&self, model: &CheckedHybridModel) -> Option<serde_json::Value> {
-        matches!(self.kind, HybridCounterexampleKind::Formula).then(|| {
-            serde_json::json!({
-                "type": "hybrid-counterexample",
-                "kind": "formula",
-                "trace": self.trace.to_wire(model),
-            })
+    /// over `model`, of either kind (FR-750): kind `formula` writes
+    /// `"formula"`; kind `undefined-evaluation` writes FSpec FR-364's
+    /// envelope `{"type", "where": {"position", "time", "locus"}, "cause"}`.
+    /// `time` is a point interval when the instant is rational and otherwise
+    /// the isolating interval of the instant's root. `locate` spells the
+    /// FSpec FR-331 `Locus` of the term node an [`ExpressionLocus`] names in
+    /// the checked package; it is called for an `undefined-evaluation`
+    /// counterexample only, and the caller that cannot locate the term does
+    /// not write the counterexample.
+    pub fn to_wire(
+        &self,
+        model: &CheckedHybridModel,
+        locate: &dyn Fn(&ExpressionLocus) -> serde_json::Value,
+    ) -> serde_json::Value {
+        let kind = match &self.kind {
+            HybridCounterexampleKind::Formula => serde_json::json!("formula"),
+            HybridCounterexampleKind::UndefinedEvaluation { at, cause } => {
+                let (lower, upper) = match &at.time {
+                    ExactReal::Rational(point) => (point, point),
+                    ExactReal::Root(root) => (root.lower(), root.upper()),
+                };
+                serde_json::json!({
+                    "type": "undefined-evaluation",
+                    "where": {
+                        "position": at.state,
+                        "time": {
+                            "lower": trace::rational_wire(lower),
+                            "upper": trace::rational_wire(upper),
+                        },
+                        "locus": locate(&at.locus),
+                    },
+                    "cause": cause.spelling(),
+                })
+            }
+        };
+        serde_json::json!({
+            "type": "hybrid-counterexample",
+            "kind": kind,
+            "trace": self.trace.to_wire(model),
         })
     }
 
@@ -320,6 +350,22 @@ pub enum UndefinedCause {
         /// The capture's position.
         capture: usize,
     },
+}
+
+impl UndefinedCause {
+    /// The reason the native evaluator gives the same undefined value outside
+    /// a hybrid model (FSpec FR-193 "Continuous values and expressions"):
+    /// `division-by-zero` for a division by 0. The catalogue names no other
+    /// reason for a hybrid expression, so a range cause is spelled by its
+    /// variant, kebab-cased, until it does.
+    pub const fn spelling(&self) -> &'static str {
+        match self {
+            Self::DivisionByZero => "division-by-zero",
+            Self::OutsideParameterRange { .. } => "outside-parameter-range",
+            Self::OutsideResultRange { .. } => "outside-result-range",
+            Self::OutsideCaptureRange { .. } => "outside-capture-range",
+        }
+    }
 }
 
 /// A claim form exact replay does not decide.

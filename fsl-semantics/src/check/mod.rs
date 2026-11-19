@@ -142,6 +142,7 @@ pub(crate) use lowering::record_node_key;
 pub use lowering::{protocol_site, ProtocolSite, RelatedSide};
 mod extension;
 mod hybrid;
+mod hybrid_locus;
 mod hyper_clause;
 mod node_key;
 mod observation;
@@ -470,6 +471,7 @@ pub use field_refinement::RefinementObligation;
 pub use fsl_forms::{
     AccessOrdering, ChannelCapacity, ChannelDelivery, ChannelOverflow, LossSelector,
 };
+pub use hybrid_locus::{HybridTermHome, HybridTermNode};
 pub use hybrid::{
     hybrid_horizon, ArithmeticOp, CaptureIndex, CheckedFunctionRef, CheckedHybridClaim,
     CheckedHybridModel, CheckedMode, CheckedTransition, CompareOp, ContinuousVariable,
