@@ -32,4 +32,19 @@ Rust lane: `rust-review` and `rust-style` applied to the changed Rust files. Rev
 
 ## Dispositions
 
-No disposition pass was requested or performed.
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Removed both stale replay match arms in 17d35ec312; `cargo check -p fsl-replay --all-targets` passed. |
+
+```yaml
+dispositions:
+  - fnd: FND-001
+    outcome: fixed
+    after_excerpt: |4-
+            IllFormedBounds(TypeFormFault),
+            /// An alias's resolution reaches that alias again.
+            AliasCycle {
+                /// The cycle's dependency edges, `(alias, alias it names)`.
+                edges: Vec<(String, String)>,
+            },
+```
