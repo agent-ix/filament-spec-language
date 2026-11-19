@@ -496,3 +496,81 @@ fn source_projection_refutes_a_choice_hidden_from_the_target() {
     };
     assert_eq!(witness.merge_evidence.len(), 1, "{witness:?}");
 }
+
+fn root_wire() -> Value {
+    use filament_exact::{NodeKey, PathSegment};
+    let universe = NodeKey::new(
+        "example/parts",
+        vec![
+            PathSegment::Text("model".into()),
+            PathSegment::Text("object_type".into()),
+            PathSegment::Text("ix://example/parts/Job".into()),
+        ],
+        0,
+    )
+    .unwrap();
+    json!({"observation":{"authority":"example","identity":"ix://example/parts/data/saga-start"},
+        "subject":{"tag":"object","universe":filament_exact::node_key_to_text(&universe).unwrap(),
+            "type":serde_json::to_string(&json!([{"package":"example/parts","node":"ix://example/parts/Job"}])).unwrap(),
+            "object_identity":"j1"}})
+}
+
+#[test]
+#[trace("FR-570", "FR-571", "FR-636", "FR-574")]
+fn public_source_projection_realizability_and_deadlock_agree_on_bounded_static_programs() {
+    let directory = tempfile::tempdir().unwrap();
+    for (file, protocol, roles) in [
+        (
+            corpus("original/exchange.native"),
+            "Exchange",
+            vec!["Sender", "Receiver"],
+        ),
+        (
+            saga().join("rules/protocols/declaration/declaration-minimal.fsl"),
+            "PartFlow",
+            vec!["Planning"],
+        ),
+    ] {
+        let mut request = analysis_request(&file);
+        let bindings = roles
+            .iter()
+            .map(|role| {
+                (
+                    (*role).to_owned(),
+                    json!({"type":"model-binding","selection":"example/parts"}),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        request["request"]["subject"]["protocol"]["protocol"] = json!(protocol);
+        request["request"]["subject"]["protocol"]["roles"] = json!(bindings);
+        let mut items = roles
+            .iter()
+            .map(|role| {
+                json!({"claim":protocol,"kind":"local-projection",
+            "options":{"role":role},"assessed_root":root_wire(),
+            "temporal":{"profile":"bounded-static","max_depth":64}})
+            })
+            .collect::<Vec<_>>();
+        items.push(
+            json!({"claim":protocol,"kind":"realizability","assessed_root":root_wire(),
+            "premises":{"role_knowledge":[],"environment":[]},
+            "temporal":{"profile":"bounded-static","max_depth":64,"max_history":16}}),
+        );
+        items.push(json!({"claim":protocol,"kind":"global-conformance","temporal":{"item_kind":"deadlock-freedom"}}));
+        request["request"]["items"] = json!(items);
+        let output = command::analyze(
+            &write(directory.path(), &request),
+            &crate::negotiation::Fr290,
+            &Cancel::new(),
+        )
+        .expect("public protocol analysis");
+        let records = output.value.as_value()["items"]
+            .as_array()
+            .expect("one result per requested analysis");
+        assert_eq!(records.len(), roles.len() + 2, "{}", output.value);
+        for item in records {
+            assert_eq!(item["record"]["result"], "proved", "{protocol}: {item}");
+        }
+        assert_eq!(output.exit_code, 0, "{}", output.value);
+    }
+}
