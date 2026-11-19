@@ -202,6 +202,34 @@ item's `Counterexample`.
   at `end`.
 - Exact replay SHALL not substitute an approximate evaluation or a verdict
   when its meter denies a charge.
+- Exact replay SHALL decide an `on each` claim under `model-time` whose
+  body, guard or captures read the activation position's state (FSpec
+  FR-193 "Activations and captures"), which creates one obligation at every
+  activation instant `τ` of a dwell, each with its own captured values. It
+  SHALL treat `τ` as a second real variable: along a pair of dwells (the
+  activation's and the one an atom is read in) every activation-state read,
+  capture and atom is a bivariate rational function of `(τ, t)` with exact
+  rational coefficients, and replay SHALL decide whether some activation
+  instant's obligation is false by exact real algebraic decision over the
+  two variables (a cylindrical decomposition with exact root isolation in
+  each cell, no floating-point step). The decisive instant is the earliest
+  instant at which some obligation's prefix is a bad prefix or its capture
+  or atom has no value; a capture value outside its type's range there is
+  `UndefinedEvaluation` with cause `outside-capture-range`.
+- Exact replay SHALL decide a fairness constraint's enabledness (FSpec
+  FR-193 "Fairness", "Resets") for a transition whose reset leaves a
+  variable free (a non-deterministic reset): the transition is enabled at a
+  dwell instant `t` when its guard holds and some post-jump state satisfies
+  the reset and the target mode's invariant. Replay SHALL decide that
+  existence exactly, by real quantifier elimination over the post-jump
+  variables the reset leaves free, giving the set of instants of the dwell
+  at which the transition is enabled as a finite union of intervals with
+  real algebraic ends, and SHALL read the constraint's weak or strong
+  condition over the periodic behaviour from that set.
+- A trace exact replay does not decide is `NotExact` exactly when it is not
+  a point trace, dwells in a mode without a polynomial flow, or would
+  evaluate a recursive call (FSpec FR-193 "Exact replay"); no other claim
+  form or reset gives `NotExact`.
 - Check 5 SHALL evaluate the `CheckedHybridClaim` over the replayed
   behaviour by FSpec FR-193 "Hybrid claims": with its clock, its activation
   and every obligation it creates, its captures, and its fairness set, a
@@ -224,6 +252,17 @@ item's `Counterexample`.
 
 ### Settlement
 
+- A provider's claimed counterexample SHALL agree with the reproduced one
+  (FSpec FR-364 step 6, FSpec FR-193 "Solver result on the wire") when both
+  kinds are `Formula`, or both are `UndefinedEvaluation` with equal
+  `where.position`, equal `where.locus`, equal `cause` and a claimed
+  `where.time` interval that contains the reproduced instant. A trace that
+  reproduces with a kind that does not agree with the claim SHALL be
+  `NotReproduced` with `check` 5 and `at` the pointer of the trace state
+  holding the reproduced decisive instant (`/start` for position 0,
+  `/jumps/{k-1}` for position `k`), and settles as `NotReproduced` below:
+  `HybridTraceDisagreement::NotReproduced` carrying the provider's complete
+  counterexample.
 - A `Reproduced` trace SHALL settle the item `refuted` (ADR-018 V-4) with
   its `HybridCounterexample` as the item's `Counterexample` and one
   `counterexamples` entry, with the cause `UndefinedEvaluation{where, cause}`

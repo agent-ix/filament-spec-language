@@ -19,12 +19,16 @@ trips. Scope: FR-750-AC-12, FR-750-AC-13 and FR-750-AC-14.
 ## Test Procedure
 
 1. Over `Braking`, feed a provider `refuted` trace whose `loop_to` is past its
-   last state; build a claim whose model index the graph lacks, a call to a
+   last state, through analyze and inside a replay request; build a claim whose model index the graph lacks, a call to a
    missing function index and an ill-kinded term, and run each through
    analyze and through a replay request.
-2. Run FR-193-AC-15's `on each` claim under `model-time` with a provider
-   `refuted` point trace, as a `solver-inconclusive` trace, and as a replay
-   request.
+2. Run FSpec FR-193-AC-15's `on each (q: Braking) when (q.v > 10)` claim
+   capturing `v0 = q.v` with body `eventually [0, 10] holds(h.v < v0)` over a
+   provider `refuted` point trace holding `v` at 20 for 12 seconds, through
+   analyze and as a replay request; decide `fair Moving;` over a `Moving`
+   transition whose reset is `v >= 0`; run FR-450-AC-8's recursive-call guard
+   with an unexhausted meter as a provider `refuted` trace, as a
+   `solver-inconclusive` trace and as a replay request.
 3. Run FR-450-AC-7's trace under a `work_units` bound of 10 through analyze
    and through a replay request.
 4. Read FR-750-AC-7's process `expression-form` entry through
@@ -41,14 +45,20 @@ trips. Scope: FR-750-AC-12, FR-750-AC-13 and FR-750-AC-14.
 
 ## Expected Results
 
-- Step 1: the trace is refused `invalid_result`/`invalid-value` at `/loop`;
+- Step 1: on analyze the trace is refused `invalid_result`/`invalid-value`
+  at `/loop`, and the replay request is refused `ReplayRefusal::HybridTrace`,
+  `invalid_runtime_input`/`invalid-value` at its `/loop` pointer;
   the three faults settle `failed`, `runtime_invariant`/
   `established-invariant-broken` with invariants `hybrid-claim-model`,
   `hybrid-call-expansion` and `hybrid-term-kind`, and each replay request
   ends with exit `30` and no row.
-- Step 2: `inconclusive`, `ReplayParity(HybridTrace(NotExact{counterexample}))`;
-  `SolverInconclusive` with `exact` `not-exact`; the replay row
-  `inconclusive` with the `not-exact` disagreement.
+- Step 2: the capture claim is decided by exact replay and settles
+  `refuted` with one counterexample, its replay row
+  `reproduced-with-evaluated-witness`; the fairness constraint is decided
+  exactly; the recursive-call trace gives `inconclusive`,
+  `ReplayParity(HybridTrace(NotExact{counterexample}))`, `SolverInconclusive`
+  with `exact` `not-exact`, and a replay row `inconclusive` with the
+  `not-exact` disagreement.
 - Step 3: `incomplete`, `LimitReached{work_units, 10, accounting.work_units}`;
   the replay row `incomplete` with that limit.
 - Step 4: `Unsupported` with `v`'s flow site in `Moving` and the division's
