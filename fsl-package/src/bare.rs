@@ -169,7 +169,7 @@ impl<'p> BarePackage<'p> {
 
     /// The exact canonical bytes admitted for this package, when available.
     /// A value constructed with [`Self::new`] has no retained input bytes.
-    pub fn canonical_bytes(&self) -> Option<&[u8]> {
+    pub fn canonical_bytes(&self) -> Option<&'p [u8]> {
         self.canonical_bytes
     }
 

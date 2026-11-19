@@ -265,7 +265,6 @@ pub fn evaluate_temporal_evidence(
     meter: &mut Meter,
 ) -> Result<EvaluatedEvidence, CallFailure> {
     let resolved = resolve(subject, request)?;
-    super::producer::admitted().map_err(|_| fault("observation-producer-bundle-admits"))?;
     let facts = admit(&resolved, request, meter)?;
     let shape = resolved.shape();
     let outcome = assess(&facts, &shape, meter)?;
@@ -1320,7 +1319,12 @@ impl TemporalLetters for EvidenceLetters<'_> {
         if !self.bound.contains(&atom_index) {
             return Ok(match supplied.valuations.get(&atom_index) {
                 Some(valuation) => match self.owner {
-                    Some(owner) => owner.valuation(&supplied.observation.identity, atom_index, None, valuation)?,
+                    Some(owner) => owner.valuation(
+                        &supplied.observation.identity,
+                        atom_index,
+                        None,
+                        valuation,
+                    )?,
                     None => valuation.clone(),
                 },
                 None => {
@@ -1335,7 +1339,12 @@ impl TemporalLetters for EvidenceLetters<'_> {
             .and_then(|valuations| valuations.get(&atom_index));
         if let Some(valuation) = own {
             return match self.owner {
-                Some(owner) => Ok(owner.valuation(&supplied.observation.identity, atom_index, self.assessed, valuation)?),
+                Some(owner) => Ok(owner.valuation(
+                    &supplied.observation.identity,
+                    atom_index,
+                    self.assessed,
+                    valuation,
+                )?),
                 None => Ok(valuation.clone()),
             };
         }
@@ -1757,9 +1766,14 @@ fn run_instance(
                             }),
                         )
                     }
-                    InstanceState::Active => {
-                        evaluate(facts, trace, owner.as_ref(), *activation_position, trigger, call)?
-                    }
+                    InstanceState::Active => evaluate(
+                        facts,
+                        trace,
+                        owner.as_ref(),
+                        *activation_position,
+                        trigger,
+                        call,
+                    )?,
                 },
             }
         }
