@@ -121,11 +121,13 @@ enum Fixture {
     RandomParameter,
     /// TC-2062: a workload over the ConfigVersion domain package.
     Workload,
+    /// TC-2062: a `discrete` delay on a `time dense` ConfigVersion unit.
+    Delay,
 }
 
 impl Fixture {
     /// Every fixture; each must back at least one row.
-    const ALL: [Self; 33] = [
+    const ALL: [Self; 34] = [
         Self::Tc416Functions,
         Self::RecursiveF,
         Self::Tree,
@@ -159,6 +161,7 @@ impl Fixture {
         Self::MapRecord,
         Self::RandomParameter,
         Self::Workload,
+        Self::Delay,
     ];
 }
 
@@ -458,6 +461,12 @@ impl Fixture {
                 super::probabilistic::workload_package("weight ConfigVersion::attemptUpdate = 1;"),
                 vec![config_version_unit::DOMAIN_PACKAGE.as_bytes()],
             ),
+            Self::Delay => {
+                let (document, package) = super::probabilistic::delay_package(
+                    "delay ConfigVersion::attemptUpdate ~ discrete { 1 ms: 9, 3 ms: 1 };",
+                );
+                Emitted::placed_owned(package, vec![document])
+            }
             Self::ExtentRecords => whole(package_declaring(
                 TypeEnvironment::new(records(), []).expect("FR-143 admits the records"),
             )),
@@ -737,6 +746,10 @@ fn rows() -> Vec<Row> {
             F::RandomParameter,
         ),
         row(K::Probabilistic(ProbabilisticForm::Workload), F::Workload),
+        row(
+            K::Probabilistic(ProbabilisticForm::DelayDistribution),
+            F::Delay,
+        ),
     ]
 }
 
@@ -801,10 +814,6 @@ const NOT_EMITTED_BY_QSL: &[(CheckedNodeKind, &str)] = {
         (
             K::Probabilistic(ProbabilisticForm::Reward),
             "FSL's emitter refuses checked rewards as ProbabilisticModelNotEmitted (QSL-2440)",
-        ),
-        (
-            K::Probabilistic(ProbabilisticForm::DelayDistribution),
-            "FSL's emitter refuses checked delay distributions as ProbabilisticModelNotEmitted (QSL-2439)",
         ),
         (
             K::ScalarType(ScalarTypeForm::CarriedQuantity),
