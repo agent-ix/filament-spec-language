@@ -385,6 +385,7 @@ pub(crate) fn package_without_protocol_profile_selection(body: &str) -> CheckedP
             CheckMode::Linked,
             CheckingLimits::default(),
             &fsl_eval::value::S6aRewardEvaluator,
+            &fsl_eval::value::S6aRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
@@ -506,7 +507,11 @@ fn package_with_provisions(
         None => declarations.with_unwritten_refinements(),
     };
     let graph = declarations
-        .check(mode, CheckingLimits::default())
+        .check(
+            mode,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }

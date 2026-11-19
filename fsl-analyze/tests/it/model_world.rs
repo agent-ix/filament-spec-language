@@ -331,7 +331,11 @@ impl World {
         };
         let unit = format!("{text}{declared}");
         let graph = declarations(&unit)
-            .check(mode, CheckingLimits::default())
+            .check(
+                mode,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{unit}: the unit checks: {refusals:?}"));
         let checked: Vec<CheckedTemporalClause> = graph
             .temporal_clauses()

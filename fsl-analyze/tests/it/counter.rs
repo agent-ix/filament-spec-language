@@ -250,7 +250,11 @@ pub(crate) fn package(document: &[u8], body: &str) -> CheckedPackage {
 /// [`package`] checked under `mode`.
 pub(crate) fn package_with_mode(document: &[u8], body: &str, mode: CheckMode) -> CheckedPackage {
     let graph = declarations(document, body)
-        .check(mode, CheckingLimits::default())
+        .check(
+            mode,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -266,6 +270,7 @@ pub(crate) fn timed_package(document: &[u8], body: &str) -> CheckedPackage {
         .check(
             CheckMode::Linked,
             CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
             &fsl_eval::value::S6aRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
@@ -291,6 +296,7 @@ pub(crate) fn bounded_package_with_clauses(
         .check(
             CheckMode::Linked,
             CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
             &fsl_eval::value::S6aRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
@@ -327,6 +333,7 @@ pub(crate) fn mixed_package_with_clauses(
         .check(
             CheckMode::Linked,
             CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
             &fsl_eval::value::S6aRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
@@ -365,7 +372,11 @@ pub(crate) fn package_with_clauses_mode(
             text + &clause_text(name, fairness, formula)
         });
     let graph = declarations(document, &body)
-        .check(mode, CheckingLimits::default())
+        .check(
+            mode,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     let clauses = graph
         .temporal_clauses()
@@ -592,6 +603,7 @@ pub(crate) fn package_from_text(document: &[u8], text: &str) -> CheckedPackage {
     .check(
         CheckMode::Linked,
         CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
         &fsl_eval::value::S6aRewardEvaluator,
     )
     .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));

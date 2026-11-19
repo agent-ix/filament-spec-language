@@ -403,7 +403,11 @@ fn package_with_source_mode(declarations: &str, mode: CheckMode) -> (CheckedPack
     );
     let package = CheckedPackage::link(
         declarations
-            .check(mode, CheckingLimits::default())
+            .check(
+                mode,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap_or_else(|e| panic!("the package checks: {e:?}\n{text}")),
     );
     (package, text.into_bytes())
