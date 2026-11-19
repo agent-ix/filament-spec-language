@@ -881,11 +881,12 @@ what each such position means.
   whose `binders` hold the source binder as the slot parameter and which
   carries FSpec FR-322's `quantifier` binding, `each` for a `forall` read
   positively (or an `exists` negated) and `some` for an `exists` read
-  positively (or a `forall` negated). At a state whose collection holds `n`
+  positively (or a `forall` negated). In a state whose collection holds `n`
   elements the family part stands for the entry of size `n` of the family
   "Quantified reads" records: for `each`, the part's predicate and
-  constraints hold at every slot below `n`, true when `n` is 0; for `some`,
-  at some slot below `n`, false when `n` is 0. The `quantifier` binding is
+  constraints hold at every held slot (every held key, for a `Map`), true
+  when the collection is empty; for `some`, at some held slot or key, false
+  when it is empty. The `quantifier` binding is
   what tells the two apart, because both forms write the same binder and
   constraints. A bounded collection keeps FR-230-AC-55's form, one part for
   each live length (`forall`) or each selectable slot (`exists`), and its
