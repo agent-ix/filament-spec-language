@@ -658,6 +658,7 @@ fn a_compile_refusal_classifies_as_fr_341_does() {
 #[test]
 fn an_assembly_type_limit_is_incomplete_naming_the_limit() {
     let refusal = CompileRefusal::Assembly {
+        regions: vec![None],
         refusal: AssemblyRefusal {
             errors: vec![AssemblyError {
                 cause: AssemblyCause::TypeLimit(LimitExceeded::new(
@@ -706,6 +707,7 @@ fn a_population_bound_refusal_is_a_typed_refusal_of_the_content() {
         ),
     ] {
         let refusal = CompileRefusal::Assembly {
+            regions: vec![None],
             refusal: AssemblyRefusal {
                 errors: vec![AssemblyError {
                     cause: assembly_cause,

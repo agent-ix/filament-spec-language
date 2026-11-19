@@ -1418,6 +1418,14 @@ pub(crate) fn origin_locus(origin: &Value) -> (Option<String>, Option<LocatedSpa
 #[ix_trace_rs::string_edge]
 fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<ModelRefusal>> {
     let verdict = agent_ix_semantic_ir::decide(&document.bundle);
+    let conflicting_members: Vec<_> = verdict
+        .diagnostics
+        .iter()
+        .filter(|located| located.severity == agent_ix_semantic_ir::diag::Severity::Error)
+        .filter_map(|located| {
+            duplicate_member_identity_refusal(document, located).map(|refusal| (located, refusal))
+        })
+        .collect();
     let mut namespace_forms = std::collections::BTreeSet::new();
     let refusals: Vec<ModelRefusal> = verdict
         .diagnostics
@@ -1457,13 +1465,37 @@ fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<Model
         // normalization can report the ordered FSL loci.
         .filter(|located| !process_subtype_generalization_schema_diagnostic(document, located))
         .filter_map(|located| {
+            // Other reader diagnostics on this conflicting member are detail
+            // of its one refusal, even if the reader reports them first.
+            if let Some((identity, refusal)) = conflicting_members.iter().find(|(identity, _)| {
+                identity.pointer.rsplit_once('/').map(|(member, _)| member)
+                    == located.pointer.rsplit_once('/').map(|(member, _)| member)
+            }) {
+                if located.code != agent_ix_semantic_ir::rules::DUPLICATE_IDENTITY {
+                    return None;
+                }
+                let mut refusal = refusal.clone();
+                for detail in verdict.diagnostics.iter().filter(|detail| {
+                    detail.severity == agent_ix_semantic_ir::diag::Severity::Error
+                        && detail.code != agent_ix_semantic_ir::rules::DUPLICATE_IDENTITY
+                        && detail.pointer.rsplit_once('/').map(|(member, _)| member)
+                            == identity.pointer.rsplit_once('/').map(|(member, _)| member)
+                }) {
+                    refusal.detail.push_str(&format!(
+                        "\nagent-ix-semantic-ir refused this document at {} ({}) on {} ({}): {}",
+                        semantic_member_path(&detail.pointer),
+                        detail.pointer,
+                        detail.owner,
+                        detail.code,
+                        detail.message
+                    ));
+                }
+                return Some(refusal);
+            }
             if let Some(refusal) = missing_option_inner_schema_refusal(document, located) {
                 return Some(refusal);
             }
             if let Some(refusal) = option_presence_refusal(document, located) {
-                return Some(refusal);
-            }
-            if let Some(refusal) = duplicate_member_identity_refusal(document, located) {
                 return Some(refusal);
             }
             if let Some(refusal) = business_generalization_refusal(document, located) {
@@ -1934,8 +1966,8 @@ fn duplicate_member_identity_refusal(
             member: Some(path),
         },
         detail: format!(
-            "{source_member} ({}) on {owner_identity}: duplicate {member} identity {member_identity:?}",
-            located.pointer
+            "{source_member} ({}) on {owner_identity} ({}): duplicate {member} identity {member_identity:?}",
+            located.pointer, located.code
         ),
     })
 }
