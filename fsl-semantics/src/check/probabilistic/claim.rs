@@ -1504,13 +1504,20 @@ impl Pass<'_, '_> {
         }
         let before = refusals.len();
         for cause in causes {
+            if !bounded
+                && matches!(
+                    &cause,
+                    TemporalCause::MissingInterval { .. } | TemporalCause::OpenInterval { .. }
+                )
+            {
+                // The infinite-profile refusal above already names the whole
+                // unbounded event; do not add a duplicate interval refusal.
+                continue;
+            }
             refusals.push(match cause {
-                TemporalCause::MissingInterval { span } | TemporalCause::OpenInterval { span } => {
-                    refusal(ProbabilisticCause::UnboundedEvent {
-                        claim: claim.claim().to_owned(),
-                        span,
-                    })
-                }
+                // Bounded and timed profiles own operator-form admission.
+                // Match temporal-clause diagnostics before probabilistic
+                // event boundedness is considered.
                 other => temporal_refusal(other),
             });
         }

@@ -1682,9 +1682,9 @@ fn an_over_type_resolves_and_an_accumulate_event_compares() {
     assert_eq!(*bound, Bound::AtMost(ratio(7, 1)));
 }
 
-/// FR-186-AC-3 (TC-621 step 3): an event with an operator that has no closed
-/// interval is refused `unbounded-event`, located at the operator or the
-/// interval; a nested window checks with the horizon the intervals sum to.
+/// FR-186-AC-3 (TC-621 step 3): a bounded-profile event with an operator that
+/// has no closed interval is refused at operator admission; a nested window
+/// checks with the horizon the intervals sum to.
 #[trace("TC-621", "FR-186-AC-3")]
 #[test]
 fn an_unbounded_event_is_refused_and_a_windowed_one_has_its_horizon() {
@@ -1702,7 +1702,11 @@ fn an_unbounded_event_is_refused_and_a_windowed_one_has_its_horizon() {
     ] {
         assert_eq!(
             located(&event(&formula)),
-            [invalid("unbounded-event", at)],
+            [(
+                Code::UnsupportedConstruct,
+                Some("expression-form"),
+                at.to_owned()
+            )],
             "{formula}"
         );
     }
@@ -2160,8 +2164,8 @@ fn an_unbounded_event_under_the_infinite_profile_is_a_reach_form() {
 /// Checks FR-195-AC-1 (TC-630 step 1): a temporal operator, or a constant, where a
 /// reachability event needs a `holds(P)` state predicate is refused
 /// `not-state-predicate` at the operand; other events under the
-/// infinite-trace profile stay unbounded, and the same `eventually` under a
-/// bounded profile is still an unbounded event.
+/// infinite-trace profile stay unbounded; a bounded profile rejects an
+/// interval-less operator at operator admission.
 #[trace("TC-630", "FR-195-AC-1")]
 #[test]
 fn a_reach_operand_must_be_a_state_predicate() {
@@ -2211,7 +2215,11 @@ fn a_reach_operand_must_be_a_state_predicate() {
     );
     assert_eq!(
         refused("ev", &format!("eventually {holds}")),
-        [invalid("unbounded-event", "eventually")]
+        [(
+            Code::UnsupportedConstruct,
+            Some("expression-form"),
+            "eventually".to_owned()
+        )]
     );
 }
 
@@ -3387,7 +3395,6 @@ fn a_negative_workload_weight_is_refused() {
 #[trace("TC-2061", "FR-185-AC-11")]
 #[trace("FSpec-TC-1560", "FSpec-FR-405-AC-11")]
 #[test]
-#[ignore = "QSL-2252: negative-reward refusal at S3 not implemented yet"]
 fn s3_refuses_a_reward_that_can_be_negative() {
     let body = service(None, "reward refund on Server::attempt = d - 3;");
     let refusals = refusals_of(&body);
@@ -3414,7 +3421,6 @@ fn s3_refuses_a_reward_that_can_be_negative() {
 #[trace("TC-2063", "FR-186-AC-3")]
 #[trace("TC-2063", "FR-195-AC-1")]
 #[test]
-#[ignore = "QSL-2252: profile operator admission before the probabilistic event check not implemented yet"]
 fn a_bounded_profile_refuses_unbounded_operators_by_operator_admission() {
     let holds = format!("holds({IDLE})");
     let refused = |profile: &str, formula: &str| {
