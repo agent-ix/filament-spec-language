@@ -3343,6 +3343,7 @@ fn a_cancel_tripped_mid_run_is_cancelled_with_its_cause_never_a_fault() {
                 accounting: default_accounting(DEFAULT_WORK_UNITS),
                 supplied: SuppliedLimits::default(),
                 backend: filament_eval::ExecutionBackendChoice::Interpreter,
+                live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
             },
             &ObjectEnvironment::default(),
             cancel,

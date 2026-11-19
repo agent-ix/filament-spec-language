@@ -45,8 +45,9 @@ use filament_checked::key::DeclarationKey;
 
 mod package;
 pub use package::{
-    PackageLiteral, PackageProbabilistic, PackageProbabilisticRefusal, PackageRandomParameter,
-    PackageSupport, PackageWeight, PackageWorkload,
+    PackageDelay, PackageDelayFamily, PackageLiteral, PackageProbabilistic,
+    PackageProbabilisticRefusal, PackageRandomParameter, PackageSupport, PackageWeight,
+    PackageWorkload,
 };
 
 /// An operation a random parameter, a reward or a workload weight names,
@@ -277,6 +278,12 @@ pub struct Delay {
 }
 
 impl Delay {
+    /// The location of the declaration, whose region is the declaration's
+    /// label span.
+    pub fn declaration_location(&self) -> Location {
+        site_location(self.declared, Site::Declaration)
+    }
+
     /// The operation the delay is declared on.
     pub fn operation(&self) -> &ProbabilisticOperation {
         &self.operation
@@ -373,9 +380,9 @@ impl CheckedProbabilisticModel {
 
     /// The first checked declaration in source order that S4 has no node
     /// for, with its feature: what S4 names when it refuses the package
-    /// (FR-185 "Package emission"). A claim, a random parameter and a
-    /// workload are emitted as nodes (FR-498, FR-740), so they are never
-    /// named. A reward and a delay are named by their declared names.
+    /// (FR-185 "Package emission"). A claim, a random parameter, a
+    /// workload and a delay are emitted as nodes (FR-498, FR-740), so they are
+    /// never named. A reward is named by its declared name.
     pub fn first_declaration(&self) -> Option<(ProbabilisticFeature, String)> {
         self.first_declaration_details()
             .map(|(_, feature, name)| (feature, name))
@@ -396,16 +403,7 @@ impl CheckedProbabilisticModel {
                 reward.name.clone(),
             )
         });
-        let delays = self.delays.iter().map(|delay| {
-            (
-                delay.declared,
-                ProbabilisticFeature::Delay,
-                delay.operation.name.clone(),
-            )
-        });
-        rewards
-            .chain(delays)
-            .min_by_key(|(declared, _, _)| *declared)
+        rewards.min_by_key(|(declared, _, _)| *declared)
     }
 }
 

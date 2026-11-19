@@ -40,10 +40,10 @@ pub use claim::{
 };
 pub(crate) use model::{check, precondition_reads, site_spans, ProbabilisticInput, Unresolved};
 pub use model::{
-    CheckedProbabilisticModel, Delay, DelayDistribution, PackageLiteral, PackageProbabilistic,
-    PackageProbabilisticRefusal, PackageRandomParameter, PackageSupport, PackageWeight,
-    PackageWorkload, PreconditionSite, ProbabilisticFeature, ProbabilisticOperation,
-    RandomParameter, Reward, SupportValue, Workload,
+    CheckedProbabilisticModel, Delay, DelayDistribution, PackageDelay, PackageDelayFamily,
+    PackageLiteral, PackageProbabilistic, PackageProbabilisticRefusal, PackageRandomParameter,
+    PackageSupport, PackageWeight, PackageWorkload, PreconditionSite, ProbabilisticFeature,
+    ProbabilisticOperation, RandomParameter, Reward, SupportValue, Workload,
 };
 
 use filament_exact::Integer;

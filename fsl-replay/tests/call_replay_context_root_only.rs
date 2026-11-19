@@ -59,6 +59,7 @@ fn a_consumer_runs_builds_and_settles_through_the_crate_root() {
         },
         supplied: SuppliedLimits::default(),
         backend: filament_eval::ExecutionBackendChoice::Interpreter,
+        live_occurrences: fsl_replay::spine::DEFAULT_LIVE_OCCURRENCES,
     };
     let result = run_with_replay_context(
         SourceIdentity::new("a", "u"),

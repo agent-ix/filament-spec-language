@@ -58,7 +58,12 @@ ties at a deadline, so that every sampled run is a behaviour of the model.
 
 - The checker SHALL admit a `delay M::o ~ D;` declaration only on an operation of a `time
   dense` model, refusing it elsewhere with `invalid_probabilistic_model`/
-  `delay-on-untimed-model` at its span (FSpec FR-405).
+  `delay-on-untimed-model` at its span (FSpec FR-405). An operation of any
+  object type the unit declares in its own source is an operation of the
+  source model (FR-569), so a `delay` on it is admitted exactly when the
+  source model has a `dense` time member (FR-230 "The source model's time
+  member"), whichever source object type that member names, and its
+  distribution is converted to that member's unit.
 - If a distribution parameter is not an exact rational, `λ` is not
   positive, `uniform[a, b]` does not have `0 <= a <= b`, or a `discrete`
   distribution repeats a delay, has a negative delay or has a weight that

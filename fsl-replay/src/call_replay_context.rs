@@ -227,6 +227,7 @@ mod tests {
             accounting: default_accounting(1_000_000),
             supplied: filament_semantic_value::supplied_stop::SuppliedLimits::default(),
             backend: filament_eval::ExecutionBackendChoice::Interpreter,
+            live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
         };
         run_with_replay_context(
             SourceIdentity::new("a", "u"),
@@ -490,6 +491,7 @@ mod tests {
             accounting: default_accounting(1_000_000),
             supplied: filament_semantic_value::supplied_stop::SuppliedLimits::default(),
             backend: filament_eval::ExecutionBackendChoice::Interpreter,
+            live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
         };
         let result = run_with_replay_context_kernel(&source, CallerLimits::default(), &call);
         assert!(matches!(result.outcome(), CallOutcome::Undefined { .. }));

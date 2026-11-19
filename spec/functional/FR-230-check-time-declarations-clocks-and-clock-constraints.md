@@ -343,13 +343,35 @@ place(s) required by its declared bounds.
   object is required by the declaration itself, whether or not `P` reads
   `self`, because the declaration's bounds and urgency range over that
   object's places and every predicate is checked against it.
+- **Owning time source.** A `time invariant when` or `urgent` declaration
+  SHALL belong to one timed model, its **owning model**, and is read on that
+  model's time source. With one time source, the owning model is the model
+  that source times. With several (a refinement whose concrete `M` and
+  abstract `A` are both timed, FR-900), the owning model is the model the
+  declaration's reads name, by the rule a state clause's subject uses: a read
+  qualified by a model alias (`A::R` for a population, `A::T` for a type,
+  `A::T::op` for an `urgent` operation) names that alias's model, and the
+  declaration's `self` reads (in `P` and in its bounds) name the timed model
+  whose state object type declares every field path read from `self`. When
+  every read names one timed model, that model owns the declaration: its
+  state object is `self`, its clocks are the bounded places, and the
+  invariant or urgency is recorded on its timed model only. When a
+  declaration's reads name the objects of two different timed models, so no
+  single source owns it, the checker SHALL refuse
+  `ambiguous_declaration`/`ambiguous-name` at the first read that names the
+  second model, retaining both model aliases. A declaration whose `self`
+  reads fit the state object of several timed models and that names no
+  alias likewise has no single owning source and SHALL refuse
+  `ambiguous_declaration`/`ambiguous-name` at its span. Several time sources
+  alone are never a refusal.
 - **Population scope.** The data predicate `P` of a `time invariant when` and
   of an `urgent when` SHALL be a population position of FR-391. A two-segment
   `Name` `M::R` there SHALL resolve, type and lower as FR-391 resolves, types
   and lowers it in a unit-level invariant read at `current`, except that
-  `M` SHALL be the timed model's own model alias: the predicate is evaluated
+  `M` SHALL be the owning model's alias (Owning time source): the predicate is evaluated
   at that model's discrete state, which holds no other alias's population, so
-  `A::Q` with `A` another model alias of the unit SHALL refuse
+  `A::Q` with `A` another model alias of the unit that no time source times
+  SHALL refuse
   `missing_declaration`/`missing-name` at `Q`, as a name of no population of
   the timed model's domain package. It is read as the
   population operand of `allInstances<T>(M::R)` and `lookup<T>(M::R, r)`,

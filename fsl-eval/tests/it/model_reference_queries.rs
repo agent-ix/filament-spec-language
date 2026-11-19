@@ -2097,6 +2097,7 @@ fn all_instances_expression_target_declared_but_not_in_model_is_type_mismatch() 
             fsl_foundation::IdentityLimits::default(),
         );
         declarations.types = types;
+        declarations.models = vec![scenario.model.clone()];
         declarations
     }
     .check(CheckMode::Linked, CheckingLimits::default())

@@ -616,11 +616,19 @@ fn the_roles_set_does_not_follow_source_order() {
     assert_eq!(in_order, roles_of(&source(widget, gadget)));
 }
 
-/// FR-383-AC-23: selected whole-model identities are emitted as literal text,
-/// without a model dependency or replication group, and survive the I2 read.
-#[trace("FR-383-AC-23", "TC-1021")]
+/// FR-383-AC-68: a checked role on a whole model is emitted with its selected
+/// package identity, without a model dependency or replication group, and the
+/// I2 reader admits the same outcome.
+#[trace(
+    "FR-383-AC-68",
+    "FR-383-AC-23",
+    "TC-1021",
+    "TC-2020",
+    "FSpec-FR-465-AC-13",
+    "FSpec-TC-1525"
+)]
 #[test]
-fn a_whole_model_role_is_emitted_and_admitted() {
+fn a_role_on_a_model_has_one_outcome() {
     fn replace_strings(value: &mut Value, from: &str, to: &str) {
         match value {
             Value::String(text) => *text = text.replace(from, to),
@@ -1021,7 +1029,7 @@ fn a_reference_bound_to_a_key_no_node_carries_refuses_missing_name() {
 /// form over the alias refuses at S3 and writes no package.
 #[trace("FR-383-AC-68", "TC-2020", "FSpec-FR-465-AC-13", "FSpec-TC-1525")]
 #[test]
-fn a_whole_model_role_compiles_to_the_text_form_and_its_replicated_form_writes_no_package() {
+fn a_whole_model_role_round_trips() {
     let flow = |role: &str| {
         selecting(&format!(
             "protocol Flow using p over (input: M::Gadget) on origin {{\n\
@@ -1053,13 +1061,30 @@ fn a_whole_model_role_compiles_to_the_text_form_and_its_replicated_form_writes_n
         "a whole-model role is static"
     );
 
-    let found = refusals(&flow("role w each M from cells max 2 lifetime workflow;"));
-    assert!(
-        found.iter().any(|refusal| {
+    let refused_flow = flow("role w each M from cells max 2 lifetime workflow;");
+    let packages = fsl_semantics::model::intake::package_input([SPINE_MODEL_DOCUMENT]).unwrap();
+    let assembled = assemble_with_models(refused_flow.as_bytes(), &packages)
+        .expect("the replicated role unit assembles");
+    let regions = assembled.regions();
+    let found = assembled
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect_err("a replicated role over a model alias refuses");
+    let refusal = found
+        .iter()
+        .find(|refusal| {
             refusal.cause.code().as_str() == "invalid_model_binding"
                 && refusal.cause.cause() == Some("malformed-declaration")
-        }),
-        "{found:?}"
+        })
+        .unwrap_or_else(|| panic!("{found:?}"));
+    let region = regions
+        .refusal_region(refusal)
+        .unwrap_or_else(|| panic!("the refusal names a source region: {refusal:?}"));
+    let start = usize::try_from(region.start()).expect("region start fits usize");
+    let end = usize::try_from(region.end()).expect("region end fits usize");
+    assert_eq!(
+        &refused_flow[start..end],
+        "M",
+        "the refusal locus is exactly the whole-model alias"
     );
 }
 

@@ -74,11 +74,14 @@ pub(super) fn run_bytes(
         Vec::new(),
     )?;
     let result = fsl_replay::replay(request, limits);
-    let outcome = fsl_replay::OutcomeDocument::from_replay(&result);
     match result {
         Ok(result) => {
-            let row = result.to_function_json().map_err(RunCause::ReplayOutput)?;
+            let row = result.to_function_json().map_err(|error| RunCause::ReplayOutput {
+                outcome: fsl_replay::OutcomeDocument::from_replay_output_failure(0, &error),
+                error,
+            })?;
             let row: Value = serde_json::from_str(&row).map_err(RunCause::Output)?;
+            let outcome = fsl_replay::OutcomeDocument::from_replay_with_row(&result, row.clone());
             Ok(RunResult {
                 exit_code: outcome.category().exit_code(),
                 value: NativeResult::replay_document(json!({ "results": [row] })),
@@ -87,9 +90,12 @@ pub(super) fn run_bytes(
                 sources: crate::Sources::default(),
             })
         }
-        Err(refusal) => Err(RunCause::Replay(Box::new(ReplayFailure {
-            refusal,
-            outcome,
-        }))),
+        Err(refusal) => {
+            let outcome = fsl_replay::OutcomeDocument::from_replay_refusal(&refusal);
+            Err(RunCause::Replay(Box::new(ReplayFailure {
+                refusal,
+                outcome,
+            })))
+        }
     }
 }

@@ -269,6 +269,73 @@ pub struct AssessedRootDraft {
     pub object: Option<ObjectReference>,
 }
 
+impl AssessedRootDraft {
+    /// Read FR-351's object-root wire shape from a native-analyze request.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable field label when the observation or structural object
+    /// identity is malformed.
+    pub fn read_wire(value: &serde_json::Value) -> Result<Self, &'static str> {
+        let root = value.as_object().ok_or("assessed_root")?;
+        if root.len() != 2 {
+            return Err("assessed_root");
+        }
+        let observation = root
+            .get("observation")
+            .and_then(serde_json::Value::as_object)
+            .ok_or("assessed_root.observation")?;
+        if observation.len() != 2 {
+            return Err("assessed_root.observation");
+        }
+        let authority = observation
+            .get("authority")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or("assessed_root.observation.authority")?;
+        let identity = observation
+            .get("identity")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or("assessed_root.observation.identity")?;
+        let subject = root
+            .get("subject")
+            .and_then(serde_json::Value::as_object)
+            .ok_or("assessed_root.subject")?;
+        if subject.len() != 4
+            || subject.get("tag").and_then(serde_json::Value::as_str) != Some("object")
+        {
+            return Err("assessed_root.subject");
+        }
+        let universe = subject
+            .get("universe")
+            .and_then(serde_json::Value::as_str)
+            .and_then(crate::id_text::universe_from_text)
+            .ok_or("assessed_root.subject.universe")?;
+        let object_type = subject
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .and_then(crate::id_text::effective_from_text)
+            .ok_or("assessed_root.subject.type")?;
+        let object_identity = subject
+            .get("object_identity")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| filament_exact::ObjectId::new(value.to_owned()).ok())
+            .ok_or("assessed_root.subject.object_identity")?;
+        Ok(Self {
+            observation: Some(crate::ObservationIdentity {
+                authority: authority.to_owned(),
+                identity: identity.to_owned(),
+            }),
+            object: Some(filament_exact::ObjectReference::new(
+                universe,
+                object_type,
+                object_identity,
+            )),
+        })
+    }
+}
+
 /// An assessed-subject root with every component present.
 #[derive(Clone, Debug)]
 pub struct AssessedRoot {

@@ -303,7 +303,16 @@ restated here for the emitter and is deterministic and injective:
   `filament.op.temporal.clause` application, with one `temporal_profile` law
   equal to the package's `profile_selections` row of role
   `temporal_profile` for the clause's profile and the six arguments of FSpec FR-370, in order:
-  1. `over`: a reference to the slot node `<p>@<t>` of slot 0;
+  1. `over`: a reference to the slot node `<p>@<t>` of atom slot 0 or, when
+     the clause has no atom slot (its body reads no object parameter's state
+     in any trace, which is always so for a clause with no object
+     parameter), a reference to the `model`/`model_root` node of the
+     clause's first `subjects` binding, the root of the package the first
+     quantifier's alias selects. A clause with no atom slot has no
+     parameter node for `over` to reference, and the model root is the one
+     node every behaviours-domain clause has whose meaning does not depend
+     on the body, so the wrapper stays a well-formed FR-370 clause and its
+     identity stays a function of the checked clause;
   2. `clock`: the `text` literal `model-steps`;
   3. `activation`: the aggregate that binds `kind` to the text `origin`
      alone;
@@ -334,7 +343,8 @@ restated here for the emitter and is deterministic and injective:
   the wrapper in every node would share it.
 - **Consequence.** FR-370 gives a `temporal_clause` node `claim`
   occurrences only, and FSpec FR-402 "Body wrapper" makes the wrapper's
-  occurrences and name rows the hyper clause's, so every consumer, inside
+  `claim` occurrences the hyper clause's and gives it no name row (the
+  clause's name is on its `hyperproperty` node's `claim_names` row), so every consumer, inside
   FSL or not, SHALL exclude it from the single-trace temporal claims. Inside
   FSL: the I2 reader SHALL skip a
   `temporal`/`temporal_clause` node that is the `body` target of a
@@ -418,20 +428,22 @@ and checking work (NFR-011), the conditions as FR-487 states.
 
 ### Clause names and clock bindings
 
-A hyper clause is named by its body wrapper, the node a consumer resolves as
-the clause's claim, so its `temporal_clause_names` rows (FSpec FR-322-AC-342
-to FR-322-AC-370) key on the wrapper. It is clocked by its `hyperproperty`
-node: the node's identity holds the quantifier prefix and the wrapper's does
+A hyper clause is named and clocked by its `hyperproperty` node, the node a
+consumer resolves as the clause's claim. Its body wrapper has no
+`temporal_clause_names` row (FSpec FR-322 "Temporal clause names", FR-402
+"Body wrapper"). The reason is the same for the name and the clock: the node's identity holds the quantifier prefix and the wrapper's does
 not, so two clauses with equal bodies and different prefixes share one
 wrapper and keep their own per-trace rows (FSpec FR-322 "Hyper clause rows").
 
-- The emitter SHALL write one `temporal_clause_names` row
-  `{declaration, occurrence, name}` for every hyper clause, whatever its
-  profile: `declaration` is the wrapper's emitted NodeId, `occurrence` is the
-  ordinal of the clause's assembled `claim` occurrence of the wrapper (the
-  occurrence of AC-14) and `name` is the declared clause name. Two
-  structurally equal hyper clauses share a wrapper and carry two rows at their
-  own ordinals; the name enters no key (AC-12).
+- The emitter SHALL write one `claim_names` row
+  `{declaration, occurrence, name, qualified_name, declaration_region}` for
+  every hyper clause, whatever its profile, and no `temporal_clause_names` row
+  for its wrapper. `declaration` is the `hyperproperty` node's emitted NodeId,
+  `occurrence` is the clause's `claim` occurrence of that node (AC-14), `name`
+  and `qualified_name` are the declared clause name and its package-local path,
+  and `declaration_region` is the whole hyper declaration's span. Two
+  structurally equal hyper clauses share one `hyperproperty` node and carry two
+  rows at their own ordinals. The name enters no key (AC-12).
 - The emitter SHALL write, for a hyper clause whose profile is
   clock-configured, one `temporal_bindings` row
   `{declaration, occurrence, trace, clock_name, clock}` per quantifier, in
@@ -478,10 +490,11 @@ in FR-487. "Admitted" means FSL's I2 admission of the emitted package
 | FR-488-AC-19 | An event-position false-extension clause with body `always[0,3] holds(...)` emits a wrapper whose law is that profile's row and an `always` node with the interval `{lower: "0", upper: "3"}`; an infinite-trace `v.l @ a = 0 until v.l @ b = 1` clause emits `filament.op.temporal.until` with a `null` interval and `eventually[2,*]` emits `{lower: "2", upper: null}`. All are admitted. | Test (TC-1266) |
 | FR-488-AC-20 | A bounded-profile clause with `fair weak V::Vault::step` on `a`, which S3 admits, is refused `unsupported_construct`/`not-yet-implemented` at the constraint. | Test (TC-1266) |
 | FR-488-AC-21 | The nodes this requirement mints count toward the package node ceiling: with a ceiling one node below `NonInterference`'s emission, compiling is refused with the ceiling's existing refusal, and at the ceiling it compiles. | Test (TC-1266) |
-| FR-488-AC-24 | `NonInterference` emits one `temporal_clause_names` row keyed by its body wrapper's NodeId, at the ordinal of its assembled `claim` occurrence, with the name `NonInterference`; the `hyperproperty` node has no row; two structurally equal hyper clauses with different names share one wrapper and carry two rows at distinct ordinals; renaming one changes no NodeId; and the rows sort with the unit's temporal-clause rows by (NodeId, occurrence). | Test (TC-1327) |
+| FR-488-AC-24 | `NonInterference` emits one `claim_names` row keyed by its `hyperproperty` node's NodeId, at the ordinal of its `claim` occurrence of that node, with the name and `qualified_name` `NonInterference` and the whole hyper declaration as `declaration_region`; the body wrapper has no `temporal_clause_names` row, and the strict reader admits the package and refuses it with a wrapper row added; two structurally equal hyper clauses with different names share one `hyperproperty` node and carry two rows at distinct ordinals; renaming one changes no NodeId; and the rows sort with the unit's other `claim_names` rows by (NodeId, occurrence). | Test (TC-1327) |
 | FR-488-AC-25 | Under event-position false-extension, `NonInterference` emits two `temporal_bindings` rows at the `hyperproperty` node's NodeId and the ordinal of its `claim` occurrence, `trace` `a` then `b`, each with `clock_name` `model-steps` (the wrapper's clock text) and the configuration FR-640 derives from `V`; no `temporal_bindings` row names the body wrapper; under infinite-trace the clause has a name row and no binding. | Test (TC-1327) |
 | FR-488-AC-26 | Two hyper clauses with equal bodies, `Fwd` over `forall trace a of V forall trace b of V` and `Rev` over `forall trace b of V forall trace a of V`, emit two `hyperproperty` nodes whose `body` references one wrapper, and binding rows `a`, `b` at `Fwd`'s node and `b`, `a` at `Rev`'s node, none at the wrapper; the package is admitted. | Test (TC-3000) |
 | FR-488-AC-27 | The package FSL emits for `hyper Same using inf over behaviours (c: Config::ConfigVersion) forall trace a of Config forall trace b of Config { always holds(c.versionNumber @ a = c.versionNumber @ b) }`, edited so its second quantifier Group's `variable` is `a`, is refused by the reader with `ambiguous_declaration`/`ambiguous-name` at that Group's `variable` binding, `/semantic_graph/nodes/{n}/body/members/3/value/members/1/members/0`; the unedited package is admitted. | Test (TC-3007) |
+| FR-488-AC-28 | `hyper Whole using inf over behaviours () forall trace a of V forall trace b of V { always holds(true) }` over the vault model emits a body wrapper whose `over` argument references the `model`/`model_root` node of the vault package, which is among the wrapper's `dependencies`, and the strict reader admits the package; `NonInterference`, whose body reads `v @ a`, keeps `over` on the slot node `slot_sv_sa`. A package whose wrapper for `NonInterference` has `over` edited to the model root refuses `invalid_model_binding`/`malformed-declaration` at `/semantic_graph/nodes/{w}/body/arguments/0`, and one whose wrapper for `Whole` references the root of a package no `subjects` binding names refuses the same. | Test (TC-3010) |
 
 ## Open FSpec questions
 

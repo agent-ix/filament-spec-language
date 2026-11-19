@@ -751,6 +751,42 @@ fn rational_intake_document() -> Value {
     )
 }
 
+fn assemble_model_document(
+    package: &str,
+    document: &Value,
+    source_name: &str,
+) -> Result<fsl_semantics::check::PackageDeclarations, fsl_semantics::check::AssemblyRefusal> {
+    let bytes = serde_json::to_vec(document).expect("serialize package");
+    let packages = package_input([bytes.as_slice()]).expect("package input");
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         model M = {package:?};\n"
+    );
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", source_name),
+        &format!("{source_name}.native"),
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let selected = admit_unit(
+        &unit.selections().models,
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("I1 admits the package");
+    fsl_semantics::check::PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        crate::TEST_PACKAGE_NAME.to_owned(),
+        unit,
+        selected,
+        Vec::new(),
+    )
+}
+
 /// FR-505-AC-1: a bounded Rational value type is admitted through Semantic IR
 /// validation and package reading, and its typed field retains that identity.
 #[trace("FR-505-AC-1", "TC-1300")]
@@ -2588,6 +2624,125 @@ fn a_port_role_on_a_shared_alias_is_its_own_units_packages_port() {
     }
 }
 
+/// FR-103-AC-11 (QSL-2176): a package with a Part, a Port and an Allocation
+/// is admitted as model structure. Intake reads each record with its own
+/// fields, assembly adds no type-environment declaration and refuses none of
+/// them as `UnsupportedModelMember`, and a protocol role binds to the Port.
+#[trace("TC-3013", "FR-103-AC-11")]
+#[test]
+fn systems_part_port_allocation_records() {
+    use fsl_semantics::model::domain_package::{DomainPackageRecord, PortDirection};
+
+    const PACKAGE: &str = "test/plant";
+    let id = |name: &str| format!("ix://{PACKAGE}/{name}");
+    let mut document: Value =
+        serde_json::from_slice(&port_document(PACKAGE)).expect("fixture JSON");
+    document["constructs"]
+        .as_array_mut()
+        .expect("constructs")
+        .push(wire_construct(
+            PACKAGE,
+            "allocation",
+            meaning::SYSTEMS_ALLOCATION,
+            serde_json::json!({
+                "fields": "forbidden",
+                "operations": "forbidden",
+                "sourceElement": "required",
+                "targetElement": "required",
+            }),
+        ));
+    document["types"]
+        .as_array_mut()
+        .expect("types")
+        .push(wire_type(
+            &id("PumpAlloc"),
+            serde_json::json!({"module": PACKAGE, "name": "allocation"}),
+            serde_json::json!({
+                "sourceElement": id("PumpOut"),
+                "targetElement": id("SysPump"),
+            }),
+        ));
+    let document = serde_json::to_vec(&document).expect("fixture encoding");
+
+    // Step 1: intake reads each systems record with its own fields.
+    let packages = package_input([document.as_slice()]).expect("the package input admits");
+    let (_, admitted) = admit(PACKAGE, &packages, fsl_foundation::IntakeLimits::default())
+        .expect("the selection admits");
+    let records = read_records(PACKAGE, &admitted).expect("every record reads");
+    let part = records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::Component(part) if part.key == key(PACKAGE, &id("SysPump")) => {
+                Some(part)
+            }
+            _ => None,
+        })
+        .expect("SysPump is a Part record");
+    assert_eq!(part.owning_type, key(PACKAGE, &id("Sys")));
+    assert_eq!(part.value_type, key(PACKAGE, &id("Pump")));
+    let port = records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::Endpoint(port) if port.key == key(PACKAGE, &id("PumpOut")) => {
+                Some(port)
+            }
+            _ => None,
+        })
+        .expect("PumpOut is a Port record");
+    assert_eq!(port.owning_component, key(PACKAGE, &id("SysPump")));
+    assert_eq!(port.value_type, key(PACKAGE, &id("Flow")));
+    assert_eq!(port.direction, Some(PortDirection::Out));
+    let allocation = records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::Allocation(allocation)
+                if allocation.key == key(PACKAGE, &id("PumpAlloc")) =>
+            {
+                Some(allocation)
+            }
+            _ => None,
+        })
+        .expect("PumpAlloc is an Allocation record");
+    assert_eq!(allocation.source_element, key(PACKAGE, &id("PumpOut")));
+    assert_eq!(allocation.target_element, key(PACKAGE, &id("SysPump")));
+
+    // Step 2: the unit assembles and checks, and the role is the Port.
+    let unit = format!(
+        "profile s = \"filament.model.complete/v1\";\n\
+         profile p = \"filament.protocol.finite-global/v1\";\n\
+         model N = {PACKAGE:?};\n\
+         protocol P using p over (c: N::Sys) on origin {{\n\
+         role r on N::PumpOut;\n\
+         run sequence Main {{ }}\n\
+         finish Done as (d: Boolean) {{ true }};\n\
+         }}"
+    );
+    let declarations = crate::model_operations::try_assemble_units(
+        &[("u", unit.as_str())],
+        &[document.as_slice()],
+    )
+    .unwrap_or_else(|refusal| {
+        panic!("systems records assemble with no UnsupportedModelMember: {refusal:?}")
+    });
+    let checked = declarations
+        .with_unwritten_protocols()
+        .check(
+            CheckMode::Linked,
+            filament_semantic_value::checking::CheckingLimits::default(),
+        )
+        .unwrap_or_else(|refusals| panic!("the protocol checks: {refusals:?}"));
+    let protocol = checked
+        .protocols()
+        .iter()
+        .find(|checked| checked.name == "P")
+        .expect("P is checked");
+    let [role] = protocol.roles.as_slice() else {
+        panic!("P has one role: {:?}", protocol.roles);
+    };
+    assert_eq!(role.model_member, Some(key(PACKAGE, &id("PumpOut"))));
+    assert_eq!(role.model_selection.as_deref(), Some(PACKAGE));
+}
+
 /// FSpec FR-144-AC-33's domain-package key case: `M::Ratio` with `scalar`
 /// `rational` and no `constraints` is the unbounded `Rational`, which has no
 /// canonical-key row, so `Map<M::Ratio, Integer>` is `ill_typed`/
@@ -2839,7 +2994,6 @@ mod float_members {
 
     #[trace("TC-3004", "TC-405", "FR-056-AC-20")]
     #[test]
-    #[ignore = "QSL-2176: a domain-package Float64 field admitted as strict exact Float64 not implemented yet"]
     fn a_domain_package_float64_field_is_admitted() {
         let document = gauge_document(FLOAT64, 1, 1);
         let declarations =
@@ -2861,7 +3015,6 @@ mod float_members {
 
     #[trace("TC-3004", "FR-056-AC-53")]
     #[test]
-    #[ignore = "QSL-2176: a domain-package Float32 field admitted as strict exact Float32 not implemented yet"]
     fn a_domain_package_float32_field_is_admitted() {
         let document = gauge_document(FLOAT32, 1, 1);
         let declarations =
@@ -2874,7 +3027,6 @@ mod float_members {
 
     #[trace("TC-3004", "FR-056-AC-54")]
     #[test]
-    #[ignore = "QSL-2176: a Float64 operation parameter and result admitted as strict exact Float64 not implemented yet"]
     fn a_domain_package_float_operation_parameter_is_admitted() {
         let document = config_document(
             operation(
@@ -2904,7 +3056,6 @@ mod float_members {
 
     #[trace("TC-3004", "FR-056-AC-55")]
     #[test]
-    #[ignore = "QSL-2176: a Float64 tuple position admitted as strict exact Float64 not implemented yet"]
     fn a_domain_package_float_tuple_position_is_admitted() {
         let pair = wire_type(
             &identity("Pair"),
@@ -2938,7 +3089,6 @@ mod float_members {
 
     #[trace("TC-3004", "FR-056-AC-56")]
     #[test]
-    #[ignore = "QSL-2176: a Float32 union payload admitted as strict exact Float32 not implemented yet"]
     fn a_domain_package_float_union_payload_is_admitted() {
         let sample = wire_type(
             &identity("Sample"),
@@ -3074,4 +3224,83 @@ mod float_members {
             );
         }
     }
+}
+
+/// FR-056-AC-10 and FSpec FR-322's model-owned-member rule: an unbounded
+/// collection with a positive lower bound has no kernel type and is refused
+/// at the selected model with the typed unsupported-feature cause.
+#[trace("FR-056-AC-10")]
+#[test]
+fn unbounded_multiplicity_with_nonzero_lower_bound_is_unsupported_feature() {
+    let package = "test/rational-value-type";
+    let mut document = rational_intake_document();
+    document["types"][1]["fields"][0]["multiplicity"] =
+        serde_json::json!({"lower": 1, "ordered": false, "unique": true});
+    let refusal = assemble_model_document(package, &document, "unbounded-positive-lower")
+        .expect_err("an unbounded positive lower bound has no kernel collection type");
+    let [error] = refusal.errors.as_slice() else {
+        panic!("one unsupported model field refusal: {:?}", refusal.errors);
+    };
+    assert_eq!(
+        error.cause.catalog_code().to_string(),
+        "unknown_required_feature/unsupported-feature"
+    );
+    assert!(matches!(
+        error.cause,
+        fsl_semantics::check::AssemblyCause::UnsupportedModelMember { .. }
+    ));
+}
+
+/// FR-056-AC-43: bare native Text, Rational and Decimal members remain in an
+/// admitted model package even though they have no checked value type. The
+/// assembler records them as untyped members rather than rejecting the model.
+#[trace("FR-056-AC-43")]
+#[test]
+fn bare_native_text_rational_and_decimal_model_members_are_admitted() {
+    let package = "test/rational-value-type";
+    let mut document = rational_intake_document();
+    let fields = document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Holder fields");
+    fields[0]["typeRef"] = "ix://filament/native/Rational".into();
+    fields.push(wire_field(
+        "ix://test/rational-value-type/Holder/memo",
+        "memo",
+        "ix://filament/native/Text",
+    ));
+    fields.push(wire_field(
+        "ix://test/rational-value-type/Holder/amount",
+        "amount",
+        "ix://filament/native/Decimal",
+    ));
+    let bytes = serde_json::to_vec(&document).expect("serialize package");
+    let packages = package_input([bytes.as_slice()]).expect("package input");
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         model M = {package:?};\n"
+    );
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "bare-native-model-members"),
+        "bare-native-model-members.native",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let selected = admit_unit(
+        &unit.selections().models,
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("I1 admits the package");
+    fsl_semantics::check::PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        crate::TEST_PACKAGE_NAME.to_owned(),
+        unit,
+        selected,
+        Vec::new(),
+    )
+    .unwrap_or_else(|refusal| panic!("bare native members are admitted: {refusal:?}"));
 }

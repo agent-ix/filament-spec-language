@@ -29,5 +29,5 @@ Tag the tests `#[trace("TC-1328", "FR-447-AC-18", "FR-447-AC-19", "FR-322-AC-344
 
 - Step 1: one name row for `SlowEnough` at its node and occurrence ordinal; no `temporal_bindings` member.
 - Step 2: one node, two name rows at distinct ordinals in (NodeId, occurrence) order.
-- Step 3: a name row per occurrence of all three, one array sorted by (NodeId, occurrence); a binding row only for the clock-configured clause.
+- Step 3: a name row per occurrence of all three: the hybrid and temporal rows in `temporal_clause_names`, sorted by (NodeId, occurrence), and the hyper row in `claim_names` on the `hyperproperty` node, with no `temporal_clause_names` row for its body wrapper; a binding row only for the clock-configured clause.
 - Step 4: the reader refuses `invalid_package`/`invalid-value` at `/temporal_clause_names` (FR-322-AC-346).

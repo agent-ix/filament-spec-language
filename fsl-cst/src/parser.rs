@@ -222,24 +222,41 @@ pub(super) fn parse(
             }
         }
     }
-    let selection_nodes: &[RawNode] = if nodes.iter().any(|node| {
+    let parsed_selections = nodes.iter().any(|node| {
         matches!(
             node.production,
             Production::Profile | Production::ImportDeclaration | Production::Model
         )
-    }) {
-        &nodes
-    } else if !parser_failed {
-        &prelude_nodes
+    });
+    // A failed parse still reports the header selections its prelude holds,
+    // so a caller can select the extensions the unit names (FR-354 "Compile
+    // path" step 1); the prelude's own diagnostics are not reported
+    // there, because the parser's refusal already locates the failure.
+    let mut prelude_diagnostics = Vec::new();
+    let (selection_nodes, selection_diagnostics): (&[RawNode], _) = if parsed_selections {
+        (&nodes, &mut diagnostics)
+    } else if parser_failed {
+        (&prelude_nodes, &mut prelude_diagnostics)
     } else {
-        &[]
+        (&prelude_nodes, &mut diagnostics)
     };
     let selections = extract_selections(
         &source,
         &parse_significant,
         selection_nodes,
-        &mut diagnostics,
+        selection_diagnostics,
     );
+    // An unselected declaration form names the selections the unit made
+    // (FR-354 "Admission"), which are known only once they are extracted.
+    let summary = selection_summary(&selections);
+    for diagnostic in &mut diagnostics {
+        if diagnostic.cause == CompleteCause::DeclarationForm {
+            diagnostic.message = format!(
+                "{}; the unit's selections are {summary}",
+                diagnostic.message
+            );
+        }
+    }
     let cst = LosslessCst::new(source.clone(), tokens, nodes, root, recoveries);
     diagnostics.extend(reference_literal_spacing(&source, &cst));
     diagnostics.extend(interval_bounds(&source, &cst));
@@ -254,6 +271,28 @@ pub(super) fn parse(
         false,
         limits,
     ))
+}
+
+/// The unit's header selections in source order, as a refusal names them.
+fn selection_summary(selections: &SourceSelections) -> String {
+    let profiles = selections
+        .profiles
+        .iter()
+        .map(|selection| format!("profile {} = \"{}\"", selection.alias, selection.identity));
+    let imports = selections
+        .imports
+        .iter()
+        .map(|selection| format!("import \"{}\"", selection.identity));
+    let models = selections
+        .models
+        .iter()
+        .map(|selection| format!("model {} = \"{}\"", selection.alias, selection.identity));
+    let all: Vec<String> = profiles.chain(imports).chain(models).collect();
+    if all.is_empty() {
+        "none".into()
+    } else {
+        all.join(", ")
+    }
 }
 
 /// Reject trivia around the reference literal's `#`; this grammar's ordinary
@@ -459,14 +498,18 @@ fn parse_with_declaration_recovery(
                     return Ok((Some(forest), recovered, diagnostics, recoveries));
                 }
 
-                let header_start = if recovered_any {
+                // An unknown word where a declaration starts is an unselected
+                // declaration form (FR-354 "Admission"), refused as such
+                // rather than recovered as a malformed header.
+                let unknown_declaration = engine.starts_unknown_declaration(failure.position);
+                let header_start = if recovered_any || unknown_declaration {
                     None
                 } else {
                     header_start_for_failure(grammar, &tokens, failure.position)
                 };
                 let declaration_start = if header_start.is_some() {
                     header_start
-                } else if engine.starts_unknown_declaration(failure.position) {
+                } else if unknown_declaration {
                     None
                 } else {
                     engine

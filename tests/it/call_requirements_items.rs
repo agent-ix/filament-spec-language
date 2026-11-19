@@ -42,6 +42,7 @@ fn members(function: &str) -> Vec<(OccurrenceKey, usize)> {
         accounting: default_accounting(1_000_000),
         supplied: SuppliedLimits::default(),
         backend: filament_eval::ExecutionBackendChoice::Interpreter,
+        live_occurrences: fsl_replay::spine::DEFAULT_LIVE_OCCURRENCES,
     };
     let result = run_with_requirements(&fsl_replay::RequirementsRun {
         source: SourceIdentity::new("a", "u"),

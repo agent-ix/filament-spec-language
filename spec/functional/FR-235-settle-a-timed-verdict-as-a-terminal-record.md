@@ -112,6 +112,31 @@ refuted, with its trap evidence.
   `exhaustive`, or FR-127's methods.
 - A verdict SHALL hold for exactly its subject and claim; the record's
   obligation identity binds both (ADR-013 O-09).
+- The record of an item EN-6 decides on its liveness product (FR-240's
+  divergence acceptance set), and of one the digital-clock route decides by
+  EN-1's SCC phase (FR-632), SHALL carry `ZoneCheckRecord::non_zeno`,
+  written as the FSpec FR-416 result-entry member `non_zeno`:
+  `NotRequired` (`not-required`) for a proof whose product has no accepting
+  cycle even without the divergence set; `Assumed` (`assumed`) for a proof
+  whose product has accepting cycles without the divergence set and none
+  with it; `Checked` (`checked`) for a refutation whose lasso loop passes
+  the divergence set and whose delays FR-237's replay reproduces; and
+  `Refuted` (`refuted`) for `Inconclusive(NoAdmittedBehaviour)`. EN-6
+  decides `NotRequired` against `Assumed` by running FR-126's candidate rule
+  on the split graph a second time without the divergence set. A cycle of
+  positive but bounded total delay, such as FR-240-AC-1's `reply` self-loop
+  that resets no clock under `x <= 3 ms`, fails the divergence set, so that
+  proof is `Assumed`. Only the digital-clock route, where delays are integer
+  ticks, decides divergence by a cycle's positive total delay. Every other
+  row of the map carries `None`, the V-4 `refuted` row with cause
+  `UndefinedEvaluation{where, cause}` included, because its finite prefix
+  decides no liveness cycle; so does every TT-1, TT-2, time-lock-freedom and
+  deadlock-freedom record. A zone-certified proof states the value in its
+  certificate's `non_zeno` member (FSpec FR-418), and FR-245's checker
+  recomputes it from its own successors and the certificate's components
+  and rejects a mismatch, `CertificateRejected` with rule
+  `NonZenoMismatch` at `CertificateMember{non_zeno}`, so the value is
+  certified with the verdict and settles from the accepted certificate.
 
 ## Acceptance Criteria
 
@@ -123,6 +148,8 @@ refuted, with its trap evidence.
 | FR-235-AC-4 | FR-232-AC-3's `Stall` claim settles `inconclusive`, `NoAdmittedBehaviour`; FR-234-AC-3's punctual liveness claim settles `unsupported`, `PunctualInterval`; a zone search stopped by `max_symbolic_states` settles `incomplete`, `limit-reached`, naming the limit. | Test (TC-690) |
 | FR-235-AC-5 | FR-239-AC-5's outcome settles `refuted`, `decisive-counterexample`, category violation, cause `UndefinedEvaluation{where, cause: division-by-zero}` with `where` at position 2, time stamp 2, after FR-237's replay reproduces it; the time-locked variant's `Undecided(NoAdmittedBehaviour)` settles `inconclusive`, `NoAdmittedBehaviour`. | Test (TC-710) |
 | FR-235-AC-6 | An interval-demand task product stopped at `max_symbolic_states = 2` settles `incomplete`, `LimitReached{limit: max_symbolic_states, value: 2}` and carries a `task_search` record whose product identity and effective limit match the request; removing a reachable frontier node or changing an edge makes the record fail replay and the item settle `inconclusive`, `ReplayParity`. The incomplete record never settles `proved`. | Test (TC-704) |
+| FR-235-AC-7 | Settled through `settle_zone_check` with the core checker and FR-237's replay: FR-240-AC-1's response claim over `Rpc` with `T = 4 ms` proves with `non_zeno` `NotRequired`; its `reply` self-loop variant proves with `Assumed`; its `echo` variant refutes with `Checked`; FR-240-AC-4's `always eventually holds(true)` over `Stall` settles `Inconclusive(NoAdmittedBehaviour)` with `Refuted`; `NoLateReply` over `Rpc` and FR-239-AC-5's `UndefinedEvaluation` refutation carry `None`. | Test (TC-3021) |
+| FR-235-AC-8 | Through `fsl analyze`, FR-632-AC-2's `Within` proved on the zone route and on the digital-clock route carries the same `non_zeno` in both records, one of `not-required` and `assumed`; `Early`, refuted on both routes, carries `checked` in both. | Test (TC-3021) |
 
 ## Dependencies
 
