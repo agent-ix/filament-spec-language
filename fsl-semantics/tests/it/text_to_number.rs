@@ -9,7 +9,7 @@ use fsl_semantics::check::{
     MemberTerm, OperationMode, Operator, PackageDeclarations, SemanticNode,
 };
 use fsl_semantics::model::intake::SelectedModels;
-use fsl_semantics::value::Member;
+use fsl_semantics::value::{DefinitionRole, Member};
 use ix_trace_rs::trace;
 
 const UNITS: &str =
@@ -153,6 +153,14 @@ fn text_and_string_conversions_build_their_typed_operations() {
                 expected_roles.push(LawRole::IeeeProfile);
             }
             assert_eq!(roles, expected_roles, "{identity}");
+            for law in application.operation.laws() {
+                let expected_definition = match law.role {
+                    LawRole::TextProfile => DefinitionRole::TextProfile.reference(),
+                    LawRole::IeeeProfile => DefinitionRole::IeeeProfile.reference(),
+                    _ => panic!("unexpected law on {identity}: {:?}", law.role),
+                };
+                assert_eq!(law.definition, expected_definition, "{identity}");
+            }
             assert!(
                 !matches!(
                     application.operation.mode(),
