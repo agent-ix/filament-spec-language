@@ -5,7 +5,7 @@ use super::*;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
@@ -589,36 +589,102 @@ fn region_key(
             serde_json::from_str(&receiver).map_err(|_| ProbabilityDocumentError::Malformed)?;
         let identity = json!([declaring, field.name(), receiver]);
         let value = time_units(value, full_scale).ok_or(ProbabilityDocumentError::Unsupported)?;
-        clocks.push(RegionClockKey {
-            identity,
-            value,
-            cap: *cap,
-        });
+        clocks.push((identity, value, *cap));
     }
     let monitor = match state.phase {
         Phase::Pending => "pending",
         Phase::Accepted => "accept",
         Phase::Rejected => "reject",
     };
-    region_probability_product_key(RegionProductKeyInput {
+    let mut keyed_clocks = clocks
+        .into_iter()
+        .map(|(identity, value, cap)| {
+            if identity.as_array().is_none_or(|parts| parts.len() != 3) || value > cap {
+                return Err(ProbabilityDocumentError::Malformed);
+            }
+            let bytes =
+                super::super::canonical_json(&identity).map_err(ProbabilityDocumentError::Graph)?;
+            Ok((bytes, identity, value, cap))
+        })
+        .collect::<Result<Vec<_>, ProbabilityDocumentError>>()?;
+    keyed_clocks.sort_by(|left, right| left.0.cmp(&right.0));
+    if keyed_clocks.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+        return Err(ProbabilityDocumentError::Malformed);
+    }
+    let mut fractions = keyed_clocks
+        .iter()
+        .filter_map(|(_, _, value, cap)| {
+            (*value < *cap)
+                .then_some(*value % subdivisions)
+                .filter(|fraction| *fraction > 0)
+        })
+        .collect::<BTreeSet<_>>();
+    if state.elapsed < deadline.saturating_add(subdivisions) {
+        let fraction = state.elapsed % subdivisions;
+        if fraction > 0 {
+            fractions.insert(fraction);
+        }
+    }
+    let fraction_rank = |value: u64, cap: u64| -> String {
+        if value >= cap {
+            return "0".to_owned();
+        }
+        let fraction = value % subdivisions;
+        if fraction == 0 {
+            return "0".to_owned();
+        }
+        fractions
+            .iter()
+            .position(|candidate| *candidate == fraction)
+            .and_then(|position| u64::try_from(position + 1).ok())
+            .map(|rank| rank.to_string())
+            .unwrap_or_else(|| "0".to_owned())
+    };
+    let encoded_clocks = keyed_clocks
+        .into_iter()
+        .map(|(_, identity, value, cap)| {
+            json!([
+                identity,
+                if value >= cap {
+                    value.div_ceil(subdivisions)
+                } else {
+                    value / subdivisions
+                }
+                .to_string(),
+                cap.div_ceil(subdivisions).to_string(),
+                fraction_rank(value, cap)
+            ])
+        })
+        .collect::<Vec<_>>();
+    let deadline_key = json!([
+        "deadline",
+        (deadline / subdivisions).to_string(),
+        (state.elapsed / subdivisions).to_string(),
+        fraction_rank(state.elapsed, deadline.saturating_add(subdivisions))
+    ]);
+    let model = json!([
+        "filament.simulation.state-key/v1",
+        [
+            "region",
+            discrete,
+            unit,
+            base_scale.to_string(),
+            encoded_clocks,
+            deadline_key,
+            "running"
+        ]
+    ]);
+    let product = json!([
+        "filament.probability-product-key/v1",
         binding,
-        discrete,
-        unit,
-        scale: base_scale,
-        subdivisions,
-        clocks,
-        deadline: Some(RegionDeadlineKey {
-            limit: deadline,
-            elapsed: state.elapsed,
-        }),
-        tail: DigitalTail::Running,
-        monitor: Some(json!(["deadline", "eventually", monitor])),
-        accumulator: None,
-        pending: None,
-        kind: RegionKeyKind::Region,
-        corner: None,
-    })
-    .map_err(ProbabilityDocumentError::Graph)
+        model,
+        ["deadline", "eventually", monitor],
+        null,
+        null
+    ]);
+    super::super::canonical_json(&product)
+        .map(ProbabilityProductKey::from_canonical_bytes)
+        .map_err(ProbabilityDocumentError::Graph)
 }
 
 fn next_region_delay(
