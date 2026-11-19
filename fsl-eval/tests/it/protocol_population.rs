@@ -95,6 +95,23 @@ protocol Guard using P over (view: M::Node) on origin {
 }
 "#;
 
+const CHOICE_GUARD_SOURCE: &str = r#"
+language "ix:native" edition "1-draft";
+profile P = "filament.protocol.finite-global/v1";
+profile S = "filament.state.graph/v1";
+model M = "test/orders";
+protocol Guard using P over (view: M::Node) on origin {
+  role Observer on M::Node;
+  run sequence Main {
+    choice Decide by Observer visible () {
+      case HasNodes when { size(allInstances<M::Node>(M::nodes)) > 0 } sequence HasNodes { }
+      case NoNodes when { true } sequence NoNodes { }
+    }
+  }
+  finish Closed as (closed: M::Flag) { true };
+}
+"#;
+
 /// Build a checked package with an additional population of `Node` values.
 fn package(source: &str) -> (CheckedPackage, fsl_semantics::model::intake::PackageInput) {
     let parsed = fsl_cst::parse(
@@ -426,47 +443,52 @@ fn an_undefined_missing_lookup_in_a_protocol_capture_keeps_absent_key() {
 #[trace("TC-2507", "FR-883-AC-4")]
 #[test]
 fn all_instances_in_a_check_guard_is_refused_at_checking() {
-    let parsed = fsl_cst::parse(
-        fsl_foundation::SourceIdentity::new("qsl-2216", "guard.native"),
-        "guard.native",
-        CHECK_GUARD_SOURCE.as_bytes(),
-        fsl_cst::Limits::default(),
-    )
-    .expect("S1 reads the unit");
-    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
-    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
-    let domain_bytes = serde_json::to_vec(&tc1070::document()).expect("domain serializes");
-    let packages = package_input([domain_bytes.as_slice()]).expect("domain admits");
-    let models = admit_unit(
-        &unit.selections().models,
-        &packages,
-        ModelNormalizationLimits::default(),
-    )
-    .expect("I1 admits the model");
-    let graph = PackageDeclarations::assemble(
-        parsed.source().reference().clone(),
-        "qsl-2216".to_owned(),
-        unit,
-        models,
-        Vec::new(),
-    )
-    .expect("the unit assembles")
-    .check_with_protocol_results(
-        CheckMode::Linked,
-        CheckingLimits::default(),
-        &fsl_eval::value::S6aRewardEvaluator,
-    )
-    .expect("the protocol refusal is retained in its result");
-    let refusals: Vec<_> = graph
-        .protocol_refusals()
-        .iter()
-        .flat_map(|result| result.refusals.iter())
-        .collect();
-    assert!(
-        refusals.iter().any(|refusal| {
-            refusal.cause.code() == fsl_foundation::Code::IllTyped
-                && refusal.cause.cause() == Some("operator-ineligible")
-        }),
-        "expected FR-883's S3 slot refusal, got {refusals:?}"
-    );
+    for (name, source) in [
+        ("check", CHECK_GUARD_SOURCE),
+        ("choice", CHOICE_GUARD_SOURCE),
+    ] {
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("qsl-2216", format!("{name}-guard.native")),
+            format!("{name}-guard.native"),
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("S1 reads the unit");
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+        let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+        let domain_bytes = serde_json::to_vec(&tc1070::document()).expect("domain serializes");
+        let packages = package_input([domain_bytes.as_slice()]).expect("domain admits");
+        let models = admit_unit(
+            &unit.selections().models,
+            &packages,
+            ModelNormalizationLimits::default(),
+        )
+        .expect("I1 admits the model");
+        let graph = PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "qsl-2216".to_owned(),
+            unit,
+            models,
+            Vec::new(),
+        )
+        .expect("the unit assembles")
+        .check_with_protocol_results(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .expect("the protocol refusal is retained in its result");
+        let refusals: Vec<_> = graph
+            .protocol_refusals()
+            .iter()
+            .flat_map(|result| result.refusals.iter())
+            .collect();
+        assert!(
+            refusals.iter().any(|refusal| {
+                refusal.cause.code() == fsl_foundation::Code::IllTyped
+                    && refusal.cause.cause() == Some("operator-ineligible")
+            }),
+            "expected FR-883's S3 {name} slot refusal, got {refusals:?}"
+        );
+    }
 }
