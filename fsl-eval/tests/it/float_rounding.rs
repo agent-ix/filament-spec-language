@@ -64,7 +64,11 @@ fn add(float: &str, left: u64, right: u64) -> Outcome<Value> {
     declarations.ieee_profile = Some(ieee_profile());
     let package = CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .expect("the package checks"),
     );
     let mut meter = Meter::new(UNLIMITED);
@@ -113,7 +117,11 @@ fn sqrt(float: &str, operand: u64) -> Outcome<Value> {
     declarations.ieee_profile = Some(ieee_profile());
     let package = CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .expect("the package checks"),
     );
     let mut meter = Meter::new(UNLIMITED);
@@ -158,7 +166,11 @@ fn equal(left: u64, right: u64, operator: &str) -> Outcome<Value> {
     declarations.ieee_profile = Some(ieee_profile());
     let package = CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .expect("the package checks"),
     );
     let mut meter = Meter::new(UNLIMITED);
@@ -308,7 +320,11 @@ fn assert_mixed_mode_mismatch(result: &str, body: &str) {
     .expect("the assembler admits both types");
     declarations.ieee_profile = Some(ieee_profile());
     let refusals = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect_err("mixed-mode operands refuse");
     assert!(
         refusals.iter().any(|refusal| matches!(

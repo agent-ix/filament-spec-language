@@ -395,7 +395,11 @@ fn build_world_document(
         Vec::new(),
     )
     .expect("the unit assembles");
-    let graph = declarations.check(CheckMode::Linked, CheckingLimits::default())?;
+    let graph = declarations.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )?;
     Ok(World {
         extras,
         enum_mode,
