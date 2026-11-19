@@ -85,7 +85,11 @@ fn reachable(total: i64) -> fsl_eval::simulation::protocol::Reachable<Sc> {
             Vec::new(),
         )
         .expect("unit assembled")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("protocol checks: {refusals:?}")),
     );
 
