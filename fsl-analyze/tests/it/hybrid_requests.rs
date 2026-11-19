@@ -620,13 +620,11 @@ fn a_mismatched_certificate_form_refuses_at_certificate() {
     assert!(text.contains("/certificate"), "{item}");
 }
 
-/// FSpec FR-652-AC-3 and FR-193-AC-22: a point trace through a mode whose
-/// flow is not polynomial refutes with an accepted `validated-witness`, and
-/// without one stays `inconclusive`.
+/// FSpec FR-652-AC-3: only decisive boxes are accepted by the certificate
+/// checker. Settlement of an accepted witness is handled by QSL-2534.
 #[test]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-3")]
-#[trace("FSpec-TC-1605", "FSpec-FR-193-AC-22")]
-fn a_validated_witness_refutes_through_a_non_polynomial_flow() {
+fn a_validated_witness_requires_a_decisive_box() {
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
          profile p = \"filament.temporal.infinite-trace/v1\";\n\
          hybrid Grow using p {\n\
@@ -662,7 +660,7 @@ fn a_validated_witness_refutes_through_a_non_polynomial_flow() {
         json!({}),
         vec![hybrid_fixture("hybrid-fixture", &entry(Some(&witness)))],
     );
-    assert_eq!(with["record"]["result"], "refuted", "{with}");
+    assert_eq!(with["record"]["result"], "inconclusive", "{with}");
     assert_eq!(with["certificate"]["accepted"], true, "{with}");
     let (_, without) = first_item(
         "hybrid-652-3b",
