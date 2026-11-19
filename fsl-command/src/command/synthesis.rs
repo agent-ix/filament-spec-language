@@ -860,7 +860,14 @@ mod tests {
 
         let selected = select_claim_rows([&a, &b].into_iter(), Some("A::Pick"))
             .expect("qualified name selects one declaration");
-        assert_eq!(selected.qualified_name, ["A", "Pick"]);
+        assert_eq!(
+            selected
+                .qualified_name
+                .iter()
+                .map(|segment| segment.as_ref())
+                .collect::<Vec<_>>(),
+            ["A", "Pick"]
+        );
     }
 
     #[test]

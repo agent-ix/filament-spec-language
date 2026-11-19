@@ -45,6 +45,8 @@ tl-syntax = { git = "https://github.com/agent-ix/tl-syntax.git", tag = "v0.4.0",
 [dev-dependencies]
 tempfile = "3.27.0"
 jsonschema = { version = "0.17.1", default-features = false, features = ["draft202012"] }
+# FR-400-AC-9: command unit tests construct checked declaration keys.
+filament-checked = { workspace = true, features = ["test-support"] }
 
 [[test]]
 name = "it"
