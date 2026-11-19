@@ -101,7 +101,11 @@ fn with_peer_collection(document: &[u8], unique: bool) -> Vec<u8> {
 fn check(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
     admit_and_assemble_with_body(document, body)
         .unwrap_or_else(|refusal| panic!("{body}: the unit assembles: {refusal:?}"))
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
 }
 
 fn span_of(text: &str, needle: &str) -> Span {
