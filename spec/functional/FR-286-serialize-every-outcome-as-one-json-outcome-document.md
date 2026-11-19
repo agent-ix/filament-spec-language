@@ -320,6 +320,14 @@ The outcome document's bytes.
   that reached no stage and for a fault outcome.
 - The serialization shall write the `items` member on every document, as an
   empty array when the outcome has no items.
+- The serialization shall write a refusal that keeps several intake refusals
+  or assembly errors as one `diagnostics` entry per kept refusal, intake
+  refusals in FR-056's intake order (FR-056 "Admission") and assembly errors
+  in the order assembly reports them, each with the locus, message and
+  `details` FR-056 states, and the refusal's human message (its `Display`, which the CLI prints)
+  shall join those refusals' messages one per line, the form a source
+  refusal's message already takes; no entry is folded into a
+  count.
 - `OutcomeDocument::from_run` shall serialize `fsl_replay::spine::run`'s
   result as one `execute` document: a call that ran is `from_call`'s
   document with `artifacts` an empty array; a
@@ -439,6 +447,7 @@ FR-634's members. A clause-run and a `monitor` item carry FR-622's `axes`.
 | FR-286-AC-21 | The `replay` outcome of FR-862-AC-2's replay of `entry` serializes with `result` `{"kind": "replayed", "results": [R]}`, `R` equal to the one row of the `results` document `command::run` returns (`arm` `input`, `settlement` `reproduced-without-witness`); FR-862-AC-1's refused request serializes with `result` `null`. | Test (TC-2963) |
 | FR-286-AC-22 | The `export` outcome of FR-756-AC-1's counter serializes with `operation` `export`, `category` success, `last_stage` S4, `items` `[]`, `artifacts` `[]` and `result` `{"kind": "exported", "export": E}` with `E` equal to the run outcome's `export` member; the below-floor export of FR-1015-AC-1 serializes with category unsupported and the same `result` kind, the export under `export.output_bytes` 1 with category incomplete, and the export naming an existing output path with category refusal, `last_stage` `null` and `result` `null`. | Test (TC-2994) |
 | FR-286-AC-23 | The export of `SlowEnough` over `Braking` under `minimum_fidelity` `any` with `output` `{"file": "missing-directory/m.tla"}`, whose parent directory does not exist, exits `30` and serializes with `operation` `export`, `category` internal-failure, `last_stage` S4, `result` `null` and one diagnostic with `code` `output-failure`, `cause` `output-failure` and `details` `null`; no file is written. | Test (TC-3029) |
+| FR-286-AC-24 | The `check` outcome of FR-056-AC-73's package with three `DUPLICATE_PARAM` diagnostics serializes with category `refusal` and exactly three `diagnostics` entries in the reader's order, each with code `invalid_model_binding`, cause `malformed-declaration`, the locus of the unit's `model` declaration, `details` `null` and a message naming `DUPLICATE_PARAM` and that entry's own package pointer; the refusal's human message holds the three messages on three lines in that order and contains no ", and N more" suffix. Serializing it twice gives the same bytes. | Test (TC-3044) |
 
 ## Status
 

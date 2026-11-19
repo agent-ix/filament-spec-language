@@ -66,7 +66,7 @@ Scope: FR-093-AC-7, FR-093-AC-9, FR-093-AC-12, FR-093-AC-13, FR-093-AC-17, FR-09
     `function t using v(): Boolean pure { true }`; `record P { x: Int[0, 9]; }`
     with only `t`; `record Q { y: Int[0, 9]; }` declared before that `P`,
     with only `t`; and `record R { x: Int[0, 9]; }` beside the post clause
-    `VersionUnchanged` over `1 < 2` and a protocol attempt naming it. List each enum member
+    `VersionAdvances` over `1 < 2` and a protocol attempt naming it. List each enum member
     node's occurrences and the source text of each `generated` source-map
     region, and read each package back through FSL's I2 read
     (FR-093-AC-18).
@@ -148,7 +148,7 @@ itself (`fsl-package/src/emit/tests.rs`) instead of reading the node's
   occurrences are exactly one `generated` occurrence, ordinal 0, whose
   region text is `a < b`, `a = b`, or `Status` when no function names the
   enum; the `Int[0, 9]` node's region text is `P`, with or without `Q`;
-  with `R` and `VersionUnchanged`, the `Integer` node's only occurrence is
+  with `R` and `VersionAdvances`, the `Integer` node's only occurrence is
   `generated`, region text `1 < 2`. Each function-only package reads back
   Verified (FR-093-AC-18).
 - Step 11: every IR node kind is classified exactly once, and every family

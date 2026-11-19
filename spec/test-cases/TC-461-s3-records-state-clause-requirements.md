@@ -19,7 +19,7 @@ Scope: FR-104-AC-5, FR-104-AC-6.
 
 1. Check FR-108's unit without `sameIdentity` and read the requirement
    records of the `CheckedGraph`.
-2. Remove `VersionUnchanged` and check again.
+2. Remove `VersionAdvances` and check again.
 3. Check the step 1 unit twice, and once with its three clauses in reverse
    order.
 4. Add `invariant ParentOrder2` with `ParentOrder`'s body.

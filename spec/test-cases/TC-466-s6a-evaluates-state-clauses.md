@@ -21,10 +21,10 @@ Admit FR-108's case documents (FR-106) and call `evaluate_clause` with the
 default meter.
 
 1. `ParentOrder` over healthy-parent, absent-parent and violating-parent;
-   `NoCycle` over healthy-parent, cycle and self-loop; `VersionUnchanged` over
-   unchanged-version and changed-version.
+   `NoCycle` over healthy-parent, cycle and self-loop; `VersionAdvances` over
+   unchanged-version, advanced-version and changed-version.
 2. Over changed-version, evaluate the postconditions
-   `pre(self.versionNumber) = 2`, `self.versionNumber = 3` and
+   `pre(self.versionNumber) = 2`, `self.versionNumber = 4` and
    `pre(present(self.parent) implies deref(value(self.parent)).versionNumber = 1)`.
 3. Use a variant of TC-458's fixture package that adds operation
    `probe(target: ConfigVersion)` on `ConfigVersion`, with no result and an
@@ -53,7 +53,7 @@ that the walk never reaches completes `true`.
 
 - Step 1: `Completed(true)`, `Completed(true)`, `Completed(false)`;
   `Completed(true)`, `Completed(false)`, `Completed(false)`;
-  `Completed(true)`, `Completed(false)`.
+  `Completed(true)`, `Completed(true)`, `Completed(false)`.
 - Step 2: all three `Completed(true)`.
 - Step 3: (a) `Completed(true)`, and the `reaches` node's charge log is
   exactly `graph.expand`, `graph.edge`, `graph.expand`, `graph.edge`,

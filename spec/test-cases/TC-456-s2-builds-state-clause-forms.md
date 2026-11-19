@@ -29,7 +29,7 @@ Parse each through S1 and build through `fsl_forms::build_unit`.
    then the same with `post`.
 3. Declare `invariant NoCycle using v on Config::ConfigVersion at current
    { not reaches(self, self, parent) }`, then
-   `post VersionUnchanged using v on Config::ConfigVersion::attemptUpdate
+   `post VersionKept using v on Config::ConfigVersion::attemptUpdate
    { self.versionNumber = pre(self.versionNumber) }`, then
    `post R using v on Config::ConfigVersion::attemptUpdate { result }`,
    then `invariant Q using v on Config::ConfigVersion at current

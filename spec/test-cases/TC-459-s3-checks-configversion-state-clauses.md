@@ -23,8 +23,11 @@ FR-104-AC-9, FR-104-AC-10.
 Compile through S1 to S3 against TC-458's fixture package, with the header of
 FR-108's unit.
 
-1. Check `ParentOrder`, `NoCycle` and `VersionUnchanged` as FR-108 writes
-   them.
+1. Check `ParentOrder`, `NoCycle` and `VersionAdvances` as FR-108 writes
+   them; then `VersionAdvances` with its first consequent written
+   `self.versionNumber = pre(self.versionNumber) + 1`, and then that
+   consequent guarded as
+   `(pre(self.versionNumber) < 1000 and self.versionNumber = pre(self.versionNumber) + 1)`.
 2. Check `post R using v on Config::ConfigVersion::attemptUpdate { result }`.
 3. Check `invariant I using v on Config::ConfigVersion at current { result }`
    and `pre Q using v on Config::ConfigVersion::attemptUpdate { result }`.
@@ -69,7 +72,12 @@ Tag the tests `#[trace("TC-459", "FR-104-AC-n")]`.
   `Option<Reference<Config::ConfigVersion>>`, and `pre(self.versionNumber)`
   is a `Pre` node over that `Attribute`. `ParentOrder` checks with no
   definedness refusal, and each of its reads is `current`; in
-  `VersionUnchanged` the left read is `post` and the right `pre`.
+  each equality of `VersionAdvances` the left read is `post` and the right
+  `pre`; its first equality compares two `Integer` operands with no range
+  obligation and its second two `Int[0, 1000]` operands. Unconverted, the
+  clause refuses `undefined_expression`/`unproved-range` at
+  `pre(self.versionNumber) + 1`; guarded, it checks with the sum typed
+  `Int[0, 1000]`.
 - Step 2: checks, with `result: Boolean`.
 - Step 3: each refuses `wrong_snapshot`/`wrong-anchor` at `result`, naming
   the clause kind and `attemptUpdate` (the invariant names none).
