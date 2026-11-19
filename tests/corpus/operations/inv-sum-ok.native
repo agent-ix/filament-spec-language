@@ -1,4 +1,5 @@
 language "ix:native" edition "1-draft";
 profile v = "filament.model.complete/v1";
 model Config = "example/config-version";
-invariant Sum using v on Config::ConfigVersion at current { sum<Config::VersionNumber>(n in sequence[self.versionNumber]:n) = self.versionNumber }
+function one using v(n: Config::VersionNumber): Sequence<Config::VersionNumber>[1,1] pure { sequence[n] }
+invariant Sum using v on Config::ConfigVersion at current { sum<Config::VersionNumber>(n in one(self.versionNumber):n) = self.versionNumber }

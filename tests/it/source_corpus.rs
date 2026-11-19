@@ -235,12 +235,14 @@ fn execute_request(
                             .get("code")
                             .or_else(|| outcome.and_then(|outcome| outcome.get("code")))
                             .or_else(|| value.pointer("/disposition/refusal/code"))
+                            .or_else(|| value.pointer("/disposition/outcome/code"))
                             .and_then(string_member)
                             .map(str::to_owned),
                         cause: value
                             .get("cause")
                             .or_else(|| outcome.and_then(|outcome| outcome.get("cause")))
                             .or_else(|| value.pointer("/disposition/refusal/cause"))
+                            .or_else(|| value.pointer("/disposition/outcome/cause"))
                             .and_then(string_member)
                             .map(str::to_owned),
                         result: outcome

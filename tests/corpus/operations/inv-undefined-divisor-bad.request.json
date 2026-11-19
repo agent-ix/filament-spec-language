@@ -1,1 +1,27 @@
-{"format":"native-compile/1","request":{"models":[{"format":"semantic-ir/2.0.0","source":{"file":"../../../examples/config-version/model.semantic-ir.json","authority":"agent-ix","identity":"test:operations:config-model","document":"config-model","formal_revision":1}}],"program":{"source":{"file":"inv-undefined-divisor-bad.native","authority":"agent-ix","identity":"test:operations:inv-undefined-divisor-bad","document":"inv-undefined-divisor-bad","formal_revision":1}}}}
+{
+  "format": "native-compile/1",
+  "request": {
+    "models": [
+      {
+        "format": "semantic-ir/2.0.0",
+        "source": {
+          "file": "../../../examples/config-version/model.semantic-ir.json",
+          "authority": "agent-ix",
+          "identity": "test:operations:config-model",
+          "document": "config-model",
+          "formal_revision": 1
+        }
+      }
+    ],
+    "program": {
+      "source": {
+        "file": "inv-undefined-divisor-bad.native",
+        "authority": "agent-ix",
+        "identity": "test:operations:inv-undefined-divisor-bad",
+        "document": "inv-undefined-divisor-bad",
+        "formal_revision": 1
+      }
+    },
+    "integer_division": "euclidean"
+  }
+}
