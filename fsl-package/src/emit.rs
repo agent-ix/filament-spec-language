@@ -7078,7 +7078,7 @@ fn emit_package_inner(
         &source_map,
         temporal_selections,
     )?;
-    let claim_names = claim_name_rows(graph, &emitted_node_ids, &source_map)?;
+    let claim_names = claim_name_rows(graph, &emitted_node_ids, &nodes, &source_map)?;
     let equality_producer_identity_rows = equality_producer_emission_rows_excluding(
         graph,
         &emitted_node_ids,
@@ -8347,6 +8347,15 @@ fn validate_temporal_clock(
     Ok(())
 }
 
+/// Whether `node` is claim-bearing (FSpec FR-322 "Claim declaration names"):
+/// a `state`/`state_clause`, `relation`/`refinement` or `claim` node.
+fn claim_bearing(node: &CheckedSemanticNodeV2) -> bool {
+    let (tag, form) = (node.node_tag.as_ref(), node.semantic_form.as_ref());
+    (tag == CheckedNodeTag::State.as_wire() && form == "state_clause")
+        || (tag == CheckedNodeTag::Relation.as_wire() && form == "refinement")
+        || tag == CheckedNodeTag::Claim.as_wire()
+}
+
 /// FSpec FR-322 "Claim declaration names": one `claim_names` row for each
 /// `declaration` or `claim` occurrence through which a source declaration
 /// introduces a `state`/`state_clause`, `relation`/`refinement` or `claim`
@@ -8357,12 +8366,13 @@ fn validate_temporal_clock(
 fn claim_name_rows(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
+    nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
 ) -> Result<Vec<filament_contract_model::ClaimNameRow>, EmitRefusal> {
-    let mut sites: Vec<(&OccurrenceKey, &str, fsl_foundation::Span)> = Vec::new();
-    let mut owned: Vec<(OccurrenceKey, &str, fsl_foundation::Span)> = Vec::new();
+    // Each claim-bearing declaration: its own occurrence, name and span.
+    let mut sites: Vec<(OccurrenceKey, &str, fsl_foundation::Span)> = Vec::new();
     for clause in graph.state_clauses() {
-        owned.push((
+        sites.push((
             OccurrenceKey::new(clause.identity(), clause.claim().clone()),
             clause.name(),
             clause.declaration_span(),
@@ -8372,40 +8382,59 @@ fn claim_name_rows(
         let occurrence = refinement
             .requirement_occurrence()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
-        sites.push((occurrence, refinement.name(), refinement.declaration_span()));
+        sites.push((
+            occurrence.clone(),
+            refinement.name(),
+            refinement.declaration_span(),
+        ));
     }
     for claim in graph.state_graph_claims() {
         let occurrence = claim.occurrence().ok_or(EmitRefusal::SourceMapInvariant)?;
-        sites.push((occurrence, claim.name(), claim.span()));
+        sites.push((occurrence.clone(), claim.name(), claim.span()));
     }
     for claim in graph.probabilistic_model().claims() {
         let occurrence = claim.occurrence().ok_or(EmitRefusal::SourceMapInvariant)?;
-        sites.push((occurrence, claim.name.as_str(), claim.span));
+        sites.push((occurrence.clone(), claim.name.as_str(), claim.span));
     }
     for claim in graph.task_sets().claims() {
         // A claim whose task set did not convert has no node.
         if let Some(occurrence) = claim.occurrence() {
-            owned.push((occurrence, claim.name.as_str(), claim.span));
+            sites.push((occurrence, claim.name.as_str(), claim.span));
         }
     }
     for relation in graph.step_relations() {
         if let Some(occurrence) = relation.occurrence() {
-            sites.push((occurrence, relation.name(), relation.span()));
+            sites.push((occurrence.clone(), relation.name(), relation.span()));
         }
     }
-    let mut rows = Vec::with_capacity(sites.len() + owned.len());
-    for (occurrence, name, span) in sites.into_iter().chain(
-        owned
-            .iter()
-            .map(|(occurrence, name, span)| (occurrence, *name, *span)),
-    ) {
-        let Some(declaration) = emitted_node_ids.get(occurrence.node()).cloned() else {
-            continue;
-        };
-        let occurrence = CheckedOccurrence {
-            role: occurrence_role(occurrence.node(), occurrence.origin())?,
-            ordinal: occurrence.origin().ordinal(),
-        };
+    // FSpec FR-322 "Rows of one declaration": a hyper clause's name is on its
+    // `hyperproperty` node; its body wrapper has no name row.
+    for hyper in graph.hyper_clauses() {
+        let occurrence = hyper
+            .assembled_occurrence()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        sites.push((occurrence.clone(), hyper.name(), hyper.span()));
+    }
+    // The other occurrences one declaration introduces (a step relation's
+    // `declaration` occurrence, a derived conjunction's `claim` occurrence
+    // per contributing clause) are recorded at that declaration's own
+    // location, so each carries its name and region.
+    let located: Vec<(&Location, &str, fsl_foundation::Span)> = sites
+        .iter()
+        .filter_map(|(occurrence, name, span)| {
+            graph
+                .occurrence(occurrence.node().clone(), occurrence.origin())
+                .map(|location| (location, *name, *span))
+        })
+        .collect();
+    let keys: BTreeMap<&CheckedNodeId, &NodeKey> =
+        emitted_node_ids.iter().map(|(key, id)| (id, key)).collect();
+    let mut rows = Vec::with_capacity(sites.len());
+    let mut row = |declaration: CheckedNodeId,
+                   occurrence: CheckedOccurrence,
+                   name: &str,
+                   span: fsl_foundation::Span|
+     -> Result<(), EmitRefusal> {
         rows.push(filament_contract_model::ClaimNameRow {
             declaration_region: declaration_region(source_map, &declaration, &occurrence, span)?,
             declaration,
@@ -8413,6 +8442,45 @@ fn claim_name_rows(
             name: name.into(),
             qualified_name: vec![name.into()],
         });
+        Ok(())
+    };
+    let mut named: Vec<(CheckedNodeId, CheckedOccurrence)> = Vec::with_capacity(sites.len());
+    for (occurrence, name, span) in &sites {
+        let Some(declaration) = emitted_node_ids.get(occurrence.node()).cloned() else {
+            continue;
+        };
+        let occurrence = CheckedOccurrence {
+            role: occurrence_role(occurrence.node(), occurrence.origin())?,
+            ordinal: occurrence.origin().ordinal(),
+        };
+        named.push((declaration.clone(), occurrence.clone()));
+        row(declaration, occurrence, name, *span)?;
+    }
+    for node in nodes.iter().filter(|node| claim_bearing(node)) {
+        let Some(key) = keys.get(&node.node_id) else {
+            continue;
+        };
+        for occurrence in &node.occurrences {
+            let role = match occurrence.role {
+                CheckedOccurrenceRole::Declaration => "declaration",
+                CheckedOccurrenceRole::Claim => "claim",
+                _ => continue,
+            };
+            if named
+                .iter()
+                .any(|(id, held)| *id == node.node_id && held == occurrence)
+            {
+                continue;
+            }
+            let origin =
+                filament_exact::Origin::new(filament_exact::Role::new(role), occurrence.ordinal);
+            let Some(location) = graph.occurrence((*key).clone(), &origin) else {
+                continue;
+            };
+            if let Some((_, name, span)) = located.iter().find(|(at, _, _)| *at == location) {
+                row(node.node_id.clone(), occurrence.clone(), name, *span)?;
+            }
+        }
     }
     rows.sort_by(|left, right| {
         (&left.declaration, &left.occurrence).cmp(&(&right.declaration, &right.occurrence))
@@ -8619,22 +8687,10 @@ fn temporal_binding_rows(
         let occurrence = hyper
             .assembled_occurrence()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
+        // FSpec FR-322 "Temporal clause names": the body wrapper has no name
+        // row; the clause is named on its `hyperproperty` node's
+        // `claim_names` row.
         let wrapper = hyper_wrapper(graph, occurrence.node())?;
-        let declaration = emitted_node_ids
-            .get(&wrapper)
-            .cloned()
-            .ok_or(EmitRefusal::SourceMapInvariant)?;
-        names.push(filament_contract_model::TemporalClauseName {
-            declaration_region: declaration_region(
-                source_map,
-                &declaration,
-                &claim_occurrence(occurrence.origin().ordinal()),
-                hyper.span(),
-            )?,
-            declaration,
-            occurrence: occurrence.origin().ordinal(),
-            name: hyper.name().into(),
-        });
         let profile = hyper.profile();
         if !matches!(
             profile,
