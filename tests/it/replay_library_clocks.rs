@@ -158,7 +158,6 @@ fn refused(package: &Value, program: &str, cause: &str, pointer: &str) {
 
 #[trace("TC-2213", "FR-640-AC-11", "FSpec-TC-1662", "FSpec-FR-323-AC-38")]
 #[test]
-#[ignore = "QSL-2274: replay does not read library clock selections from the proving package yet"]
 fn replay_recovers_a_library_only_clock_from_the_proving_package() {
     let directory = tempfile::tempdir().unwrap();
     let package: Value =
