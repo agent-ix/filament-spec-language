@@ -511,6 +511,16 @@ fn an_observer_the_build_cannot_run_is_unsupported() {
     assert!(value["export"].get("target_text").is_none(), "{value}");
     assert!(value["export"].get("package").is_none(), "{value}");
     assert!(!directory.path().join("m.tla").exists());
+    let refusal = &value["export"]["refusal"];
+    let reason = refusal["reason"].as_str().expect("a string reason");
+    assert!(!reason.is_empty(), "{refusal}");
+    assert_eq!(
+        refusal,
+        &json!({"code": "unsupported_projection", "cause": "unsupported-requested-capability",
+            "capability": "observer", "observer": "tlc", "reason": reason,
+            "details": {"path": "/request/export/observer"}}),
+        "{refusal}"
+    );
     let document = outcome_json(&result.outcome.expect("an outcome"));
     assert_eq!(document["last_stage"], Value::Null, "{document}");
     assert_eq!(
