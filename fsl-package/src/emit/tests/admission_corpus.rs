@@ -669,6 +669,8 @@ fn rows() -> Vec<Row> {
         row(K::ScalarType(S::String), F::NativeScalars),
         row(K::ScalarType(S::Uuid), F::NativeScalars),
         row(K::ScalarType(S::Timestamp), F::NativeScalars),
+        row(K::ScalarType(S::Bytes), F::NativeScalars),
+        row(K::ScalarType(S::JsonObject), F::NativeScalars),
         row(K::ScalarType(S::Enum), F::OrderedEnum),
         row(K::ScalarType(S::Dimension), F::QuantityAndT),
         row(K::ScalarType(S::Unit), F::QuantityAndT),
@@ -778,6 +780,10 @@ const NOT_EMITTED_BY_QSL: &[(CheckedNodeKind, &str)] = {
         "lowering's record_form maps only object types, systems interfaces, record value types and variant types to model nodes";
     const NO_TAG: &str = "lowering builds no node of this tag";
     &[
+        (
+            K::BoundedDomain(BoundedDomainForm::FiniteTracePopulation),
+            "lowering builds no finite-trace population domain node",
+        ),
         (
             K::ScalarType(ScalarTypeForm::BoundedQuantity),
             "lowering refuses a bounded quantity type: no checked type node carries one",
