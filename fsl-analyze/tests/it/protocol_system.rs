@@ -70,7 +70,7 @@ pub(crate) struct Case {
     body: String,
     documents: Documents,
     initial: Vec<DocumentRef>,
-    checked: CheckedPackage,
+    pub(crate) checked: CheckedPackage,
     /// The subject's capacity binding (FSpec FR-785).
     capacities: Vec<CapacityBinding>,
 }
@@ -155,7 +155,7 @@ impl Case {
     }
 
     /// FR-217's replay of `payload` against this case's unit and documents.
-    fn replay(
+    pub(crate) fn replay(
         &self,
         protocol: &str,
         payload: TemporalCounterexample<ProtocolTransition>,
@@ -170,8 +170,21 @@ impl Case {
         payload: TemporalCounterexample<ProtocolTransition>,
         selections: &[TemporalClockSelection],
     ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+        let (_, occurrence) = protocol_anchor(&self.checked, protocol);
+        self.replay_at_occurrence(protocol, payload, selections, occurrence)
+    }
+
+    /// Replays a counterexample under the derived item's own occurrence,
+    /// such as a repeat's loop-proof anchor.
+    pub(crate) fn replay_at_occurrence(
+        &self,
+        protocol: &str,
+        payload: TemporalCounterexample<ProtocolTransition>,
+        selections: &[TemporalClockSelection],
+        occurrence: OccurrenceKey,
+    ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
         let unit = unit_text_with(PROTOCOL_PROFILE, &self.body).into_bytes();
-        let (node, occurrence) = protocol_anchor(&self.checked, protocol);
+        let (node, _) = protocol_anchor(&self.checked, protocol);
         replay_protocol_trace_with_temporal_selections(
             request(
                 &self.checked,
