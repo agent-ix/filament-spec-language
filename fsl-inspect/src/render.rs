@@ -478,18 +478,8 @@ fn outcome_text(
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| fault("outcome result has no kind"))?;
         if kind == "replayed" {
-            let rows = result
-                .get("results")
-                .and_then(serde_json::Value::as_array)
-                .ok_or_else(|| fault("replayed result has no results"))?;
-            for (index, row) in rows.iter().enumerate() {
-                let member = |name: &str| {
-                    row.get(name)
-                        .and_then(serde_json::Value::as_str)
-                        .ok_or_else(|| fault("replayed result row lacks arm or settlement"))
-                };
-                let (arm, settlement) = (member("arm")?, member("settlement")?);
-                writer.unit(|| format!("result {index}: {arm} {settlement}\n"))?;
+            for line in replay_result_lines(result)? {
+                writer.unit(|| line)?;
             }
             return Ok(());
         }
@@ -506,6 +496,27 @@ fn outcome_text(
         writer.unit(|| format!("result: {kind}{suffix}\n"))?;
     }
     Ok(())
+}
+
+/// Text lines for the replay rows, with the typed document shape checked
+/// before any output is charged or written.
+fn replay_result_lines(result: &serde_json::Value) -> Result<Vec<String>, Failure> {
+    let rows = result
+        .get("results")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| fault("replayed result has no results"))?;
+    rows.iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let member = |name: &str| {
+                row.get(name)
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| fault("replayed result row lacks arm or settlement"))
+            };
+            let (arm, settlement) = (member("arm")?, member("settlement")?);
+            Ok(format!("result {index}: {arm} {settlement}\n"))
+        })
+        .collect()
 }
 
 fn canonical_json(value: &serde_json::Value) -> String {
@@ -2370,5 +2381,24 @@ mod tests {
             Category::Indeterminate,
         );
         assert!(render(&indeterminate).starts_with("analyze: indeterminate (exit 11)\n"));
+    }
+
+    #[test]
+    fn replay_text_faults_on_missing_results_and_row_labels() {
+        assert!(replay_result_lines(&serde_json::json!({"kind": "replayed"})).is_err());
+        assert!(
+            replay_result_lines(&serde_json::json!({
+                "kind": "replayed",
+                "results": [{"settlement": "inconclusive"}]
+            }))
+            .is_err()
+        );
+        assert!(
+            replay_result_lines(&serde_json::json!({
+                "kind": "replayed",
+                "results": [{"arm": "input"}]
+            }))
+            .is_err()
+        );
     }
 }

@@ -2547,54 +2547,68 @@ impl OutcomeDocument {
             Ok(arm) => {
                 let row = arm
                     .to_function_json()
-                    .ok()
-                    .and_then(|row| serde_json::from_str(&row).ok());
-                match row {
-                    Some(row) => {
-                        let mut document =
-                            Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category());
-                        document.result = Some(OutcomeResult::Replayed(ReplayedOutcome {
-                            kind: "replayed",
-                            results: vec![row],
-                        }));
-                        document
-                    }
-                    None => Self::new(
-                        Operation::Replay,
-                        Some(OutcomeStage::S8),
-                        Category::InternalFailure,
-                    )
-                    .with_diagnostics(vec![OutcomeDiagnostic::new(
-                        None,
-                        Code::OutputFailure.as_str(),
-                        None,
-                        "the replay result row did not serialize",
-                    )]),
-                }
+                    .and_then(|row| serde_json::from_str(&row).map_err(Into::into));
+                Self::from_replay_row(arm, row)
             }
-            Err(refusal) => Self::new(
-                Operation::Replay,
-                replay_stage(refusal),
-                refusal.code().category(),
-            )
-            .with_diagnostics(vec![OutcomeDiagnostic::new(
-                refusal.cause(),
-                refusal.code().as_str(),
-                match refusal {
-                    ReplayRefusal::Package(_)
-                    | ReplayRefusal::RefinementInternals { .. }
-                    | ReplayRefusal::PackageSources(_)
-                    | ReplayRefusal::DependencySources { .. }
-                    | ReplayRefusal::DependencySelections(_)
-                    | ReplayRefusal::Request(crate::ReplayRequestRefusal::PackageMember {
-                        ..
-                    }) => refusal.pointer().map(|pointer| OutcomeLocus::Artifact {
+            Err(refusal) => Self::from_replay_refusal(refusal),
+        }
+    }
+
+    /// A successful replay outcome document with its already encoded result
+    /// row. Callers that need the row in a separate result document can encode
+    /// it once and pass the parsed value here.
+    pub fn from_replay_with_row(result: &ReplayResult, row: serde_json::Value) -> Self {
+        Self::from_replay_row(result, Ok(row))
+    }
+
+    /// The document of a refused replay.
+    pub fn from_replay_refusal(refusal: &ReplayRefusal) -> Self {
+        Self::new(
+            Operation::Replay,
+            replay_stage(refusal),
+            refusal.code().category(),
+        )
+        .with_diagnostics(vec![OutcomeDiagnostic::new(
+            refusal.cause(),
+            refusal.code().as_str(),
+            match refusal {
+                ReplayRefusal::Package(_)
+                | ReplayRefusal::RefinementInternals { .. }
+                | ReplayRefusal::PackageSources(_)
+                | ReplayRefusal::DependencySources { .. }
+                | ReplayRefusal::DependencySelections(_)
+                | ReplayRefusal::Request(crate::ReplayRequestRefusal::PackageMember { .. }) => {
+                    refusal.pointer().map(|pointer| OutcomeLocus::Artifact {
                         pointer: pointer.into_owned(),
-                    }),
-                    _ => None,
-                },
-                refusal.to_string(),
-            )]),
+                    })
+                }
+                _ => None,
+            },
+            refusal.to_string(),
+        )])
+    }
+
+    fn from_replay_row(
+        arm: &ReplayResult,
+        row: Result<serde_json::Value, crate::result::CauseCodecError>,
+    ) -> Self {
+        match row {
+            Ok(row) => {
+                let mut document =
+                    Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category());
+                document.result = Some(OutcomeResult::Replayed(ReplayedOutcome {
+                    kind: "replayed",
+                    results: vec![row],
+                }));
+                document
+            }
+            Err(_) => Self::new(Operation::Replay, None, Category::InternalFailure)
+                .with_diagnostics(vec![OutcomeDiagnostic::new(
+                    None,
+                    Code::OutputFailure.as_str(),
+                    None,
+                    "the replay result row did not serialize",
+                )]),
         }
     }
 
@@ -4257,6 +4271,33 @@ mod tests {
         assert_eq!(document["category"], "internal-failure");
         assert_eq!(document["last_stage"], Value::Null);
         assert_eq!(document["diagnostics"][0]["code"], "runtime_invariant");
+    }
+
+    /// FSpec FR-286-AC-21: a refused replay outcome has no result row.
+    #[trace("TC-2963", "FR-286-AC-21")]
+    #[test]
+    fn a_refused_replay_outcome_has_null_result() {
+        let refusal = ReplayRefusal::Request(crate::ReplayRequestRefusal::MissingReplayTarget);
+        let document = json_of(&OutcomeDocument::from_replay(&Err(refusal)));
+        assert_eq!(document["operation"], "replay");
+        assert_eq!(document["result"], Value::Null);
+    }
+
+    /// An unwriteable replay row has no reached stage, and records its
+    /// output-failure diagnostic (FR-286).
+    #[test]
+    fn replay_row_encoding_failure_is_an_unstaged_output_failure() {
+        let result =
+            ReplayResult::ProtocolAnalysis(crate::protocol_analysis::ProtocolReplayResult {
+                settlement: crate::protocol_analysis::ProtocolReplaySettlement::Reproduced,
+            });
+        let document = json_of(&OutcomeDocument::from_replay_row(
+            &result,
+            Err(crate::result::CauseCodecError::Empty("result row")),
+        ));
+        assert_eq!(document["category"], "internal-failure");
+        assert_eq!(document["last_stage"], Value::Null);
+        assert_eq!(document["diagnostics"][0]["code"], "output-failure");
     }
 
     fn run_source(

@@ -3,17 +3,18 @@
 //! replay: the observed-temporal, model-graph and protocol-analysis rows.
 
 use base64::Engine;
-use fsl_eval::temporal::{ObservedLocus, TemporalOutcome};
+use fsl_eval::temporal::TemporalOutcome;
 use fsl_package::protocol_view::{Port, PortRef};
 use fsl_semantics::check::PredicateRole;
-use quire_canonical::{to_vec, Limits};
 use serde::Serialize;
 use serde_json::value::RawValue;
+use serde_json::Value;
 
 use super::{limit_wire, Charges, LimitWire};
 use crate::model_check::graph_settle::{GraphReplayResult, GraphReplaySettlement};
 use crate::protocol_analysis::{ProtocolReplayResult, ProtocolReplaySettlement, WalkDisagreement};
 use crate::result::wire::{CauseCodecError, CauseWire};
+use crate::spine::{replay_locus_wire, replay_outcome_wire};
 use crate::ReachedLimit;
 use crate::{
     ObservedTemporalKind, ObservedTemporalResult, ObservedTemporalSettlement, ReplayResult,
@@ -21,7 +22,6 @@ use crate::{
 
 const REPRODUCED: &str = "reproduced-with-evaluated-witness";
 const INCONCLUSIVE: &str = "inconclusive";
-const MAX_WINDOW_VALUES: &str = "max_window_values";
 
 #[derive(Serialize)]
 struct ObservedWire {
@@ -29,42 +29,13 @@ struct ObservedWire {
     settlement: &'static str,
     category: &'static str,
     position: String,
-    outcome: OutcomeWire,
+    outcome: Value,
     undefined_locus: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     parity: Option<ParityWire>,
     charges: Charges,
     #[serde(skip_serializing_if = "Option::is_none")]
     limit: Option<LimitWire>,
-}
-
-/// FSpec FR-352's `disposition.temporal` row of an outcome's kind, without
-/// the `counterexample` member a replay row never carries.
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-enum OutcomeWire {
-    Holds,
-    Violated {
-        position: u64,
-    },
-    Undefined {
-        position: u64,
-    },
-    InsufficientData {
-        position: u64,
-        count: u64,
-        min_count: u64,
-    },
-    Pending,
-    MissingFairnessPremise {
-        constraint: Box<RawValue>,
-    },
-    Incomplete,
-    WindowLimitReached {
-        limit: &'static str,
-        value: u64,
-        setting: &'static str,
-    },
 }
 
 #[derive(Serialize)]
@@ -78,64 +49,19 @@ struct ParityWire {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 enum ExpectedWire {
     Formula,
-    UndefinedEvaluation {
-        locus: LocusWire,
-        cause: &'static str,
-    },
+    UndefinedEvaluation { locus: Value, cause: &'static str },
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum LocusWire {
-    FormulaNode(usize),
-    Guard(&'static str),
-    Capture(String),
-}
-
-fn outcome_wire(outcome: &TemporalOutcome) -> Result<OutcomeWire, CauseCodecError> {
-    Ok(match outcome {
-        TemporalOutcome::Holds => OutcomeWire::Holds,
-        TemporalOutcome::Violated { at } => OutcomeWire::Violated {
-            position: at.index(),
-        },
-        TemporalOutcome::Undefined(undefined) => OutcomeWire::Undefined {
-            position: undefined.at.index(),
-        },
-        TemporalOutcome::InsufficientData(short) => OutcomeWire::InsufficientData {
-            position: short.at.index(),
-            count: short.data.count,
-            min_count: short.data.min_count,
-        },
-        TemporalOutcome::Pending => OutcomeWire::Pending,
-        TemporalOutcome::MissingFairnessPremise { constraint } => {
-            let bytes = to_vec(constraint, Limits::new(u64::MAX))?;
-            OutcomeWire::MissingFairnessPremise {
-                constraint: serde_json::from_slice(&bytes)?,
-            }
-        }
-        TemporalOutcome::Incomplete(_) => OutcomeWire::Incomplete,
-        TemporalOutcome::WindowLimitReached(reached) => OutcomeWire::WindowLimitReached {
-            limit: MAX_WINDOW_VALUES,
-            value: reached.limit,
-            setting: reached.setting,
-        },
-    })
-}
-
-fn expected_wire(expected: &ObservedTemporalKind) -> ExpectedWire {
-    match expected {
+fn expected_wire(expected: &ObservedTemporalKind) -> Result<ExpectedWire, CauseCodecError> {
+    Ok(match expected {
         ObservedTemporalKind::Formula => ExpectedWire::Formula,
         ObservedTemporalKind::UndefinedEvaluation { locus, cause } => {
             ExpectedWire::UndefinedEvaluation {
-                locus: match locus {
-                    ObservedLocus::Atom(atom) => LocusWire::FormulaNode(atom.index()),
-                    ObservedLocus::Activation => LocusWire::Guard("on-each"),
-                    ObservedLocus::Capture(name) => LocusWire::Capture(name.clone()),
-                },
+                locus: replay_locus_wire(locus)?,
                 cause: crate::undefined_reason(cause),
             }
         }
-    }
+    })
 }
 
 /// The `observed-temporal` row of `result`.
@@ -143,21 +69,33 @@ pub(super) fn observed(
     row: &ReplayResult,
     result: &ObservedTemporalResult,
 ) -> Result<String, CauseCodecError> {
+    let outcome = replay_outcome_wire(result.outcome())?;
+    let category = if matches!(result.outcome(), TemporalOutcome::Pending) {
+        "pending"
+    } else {
+        row.category().as_str()
+    };
+    let parity = result
+        .parity()
+        .map(|parity| {
+            Ok::<_, CauseCodecError>(ParityWire {
+                expected: expected_wire(parity.expected())?,
+                expected_position: parity.expected_position().index().to_string(),
+                actual_locus: parity.actual_locus().map(|locus| locus.index()),
+            })
+        })
+        .transpose()?;
     let wire = ObservedWire {
         arm: "observed-temporal",
         settlement: match result.settlement() {
             ObservedTemporalSettlement::ReproducedWithEvaluatedWitness => REPRODUCED,
             ObservedTemporalSettlement::Inconclusive => INCONCLUSIVE,
         },
-        category: row.category().as_str(),
+        category,
         position: result.position().index().to_string(),
-        outcome: outcome_wire(result.outcome())?,
+        outcome,
         undefined_locus: result.undefined_locus().map(|locus| locus.index()),
-        parity: result.parity().map(|parity| ParityWire {
-            expected: expected_wire(parity.expected()),
-            expected_position: parity.expected_position().index().to_string(),
-            actual_locus: parity.actual_locus().map(|locus| locus.index()),
-        }),
+        parity,
         charges: Charges::from(result.charges()),
         limit: result.limit().map(limit_wire),
     };

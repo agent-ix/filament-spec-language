@@ -280,6 +280,7 @@ pub use native_result::{
     RefusalLocusRead, SourceRefRead, SpanRead, TemporalRecord, UndefinedLocusRead,
     UnsupportedDiagnostic,
 };
+pub(crate) use native_result::{replay_locus_wire, replay_outcome_wire};
 pub use protocol_proof::{
     ProtocolProofCause, ProtocolProofCorrespondence, ProtocolProofDisposition,
     ProtocolProofRequest, ProtocolProofResult,
