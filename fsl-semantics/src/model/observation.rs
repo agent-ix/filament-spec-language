@@ -860,6 +860,10 @@ pub enum NativeKind {
     Rational,
     /// `"decimal"`: read only as a Quantity's magnitude.
     Decimal,
+    /// `float32`: an exact binary32 bit pattern.
+    Float32,
+    /// `float64`: an exact binary64 bit pattern.
+    Float64,
 }
 
 /// A native payload object's `kind` member as read.
@@ -1338,6 +1342,23 @@ fn structure_identity<'t>(
                                 bytes.extend_from_slice(&interner.len().to_le_bytes());
                             }
                         },
+                        (_, RawNativeKind::Known(NativeKind::Float32 | NativeKind::Float64)) => {
+                            match document::float_payload(native) {
+                                Some(value) => {
+                                    bytes[0] = b'f';
+                                    bytes.push(match value.width() {
+                                        filament_exact::IeeeWidth::Binary32 => 32,
+                                        filament_exact::IeeeWidth::Binary64 => 64,
+                                    });
+                                    bytes.extend_from_slice(&value.bits().to_be_bytes());
+                                }
+                                None => {
+                                    bytes[0] = b'!';
+                                    bytes.extend_from_slice(&interner.len().to_le_bytes());
+                                }
+                            }
+                            done.push(intern(interner, bytes));
+                        }
                         (_, RawNativeKind::Known(NativeKind::Rational)) => {
                             match document::rational_payload(native) {
                                 // One value whatever its spelling (FR-106 "A

@@ -305,6 +305,8 @@ fn native_json(native: &super::NativeObject) -> serde_json::Value {
             RawNativeKind::Known(NativeKind::Quantity) => json!("quantity"),
             RawNativeKind::Known(NativeKind::Rational) => json!("rational"),
             RawNativeKind::Known(NativeKind::Decimal) => json!("decimal"),
+            RawNativeKind::Known(NativeKind::Float32) => json!("float32"),
+            RawNativeKind::Known(NativeKind::Float64) => json!("float64"),
             RawNativeKind::Unknown | RawNativeKind::NotText => Json::Null,
         },
     );

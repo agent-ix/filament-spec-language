@@ -1467,6 +1467,7 @@ fn native_payload(native: RawNative<'_>) -> Result<NativeKind, AdmissionRecord> 
         NativeKind::Timestamp => &["nanoseconds"],
         NativeKind::Rational => &["numerator", "denominator"],
         NativeKind::Decimal => &["coefficient", "scale"],
+        NativeKind::Float32 | NativeKind::Float64 => &["bits"],
         NativeKind::Quantity => &["unit", "magnitude"],
     };
     if let Some(missing) = payload
@@ -1646,6 +1647,20 @@ fn admit_native(
         (NativeKind::Text, filament_exact::ValueType::Text(declared)) => {
             admit_text(payload_text(native, "text"), declared)
         }
+        (NativeKind::Float32, filament_exact::ValueType::Float(declared))
+            if declared.width() == filament_exact::IeeeWidth::Binary32 =>
+        {
+            float_payload(native)
+                .map(Value::Float)
+                .ok_or_else(|| invalid_float_bits())
+        }
+        (NativeKind::Float64, filament_exact::ValueType::Float(declared))
+            if declared.width() == filament_exact::IeeeWidth::Binary64 =>
+        {
+            float_payload(native)
+                .map(Value::Float)
+                .ok_or_else(|| invalid_float_bits())
+        }
         (NativeKind::Rational, filament_exact::ValueType::Rational(domain)) => {
             let value = rational_payload(native)?;
             rational_in_domain(domain, value).map(Value::Rational)
@@ -1729,7 +1744,35 @@ fn admit_native(
             Code::InvalidRuntimeInput,
             "wrong-value-kind",
         )),
+        (NativeKind::Float32 | NativeKind::Float64, _) => Err(wrong("kind")),
     }
+}
+
+/// A Float native payload's exact IEEE bits, if its spelling is valid
+/// (FR-106's Float value). Every bit pattern is retained, including NaNs and
+/// signed zero.
+pub(super) fn float_payload(native: RawNative<'_>) -> Option<filament_exact::IeeeValue> {
+    let bits = payload_text(native, "bits");
+    if !bits.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)) {
+        return None;
+    }
+    match native.kind() {
+        RawNativeKind::Known(NativeKind::Float32) if bits.len() == 8 => {
+            u32::from_str_radix(bits, 16)
+                .ok()
+                .map(filament_exact::IeeeValue::binary32)
+        }
+        RawNativeKind::Known(NativeKind::Float64) if bits.len() == 16 => {
+            u64::from_str_radix(bits, 16)
+                .ok()
+                .map(filament_exact::IeeeValue::binary64)
+        }
+        _ => None,
+    }
+}
+
+fn invalid_float_bits() -> AdmissionRecord {
+    admission_record(Code::InvalidRuntimeInput, "invalid-value").with("member", "bits")
 }
 
 /// A Text payload admitted into `declared` (FR-106 check 7): the kernel
