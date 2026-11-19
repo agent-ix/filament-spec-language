@@ -128,6 +128,11 @@ item's FSpec FR-331 `memory`), so it can be re-requested exactly.
   item runs.
 - An entry naming an outermost `parallel` of a protocol no item is decided
   over is admitted and changes no item's identity.
+- On the package route (FR-850), `subject.protocol` and `memory` SHALL name
+  a protocol clause of the selected package, and the subject builder SHALL
+  read it from the package as FR-940 and FR-531's protocol-subject row
+  state, with the meaning and refusals this requirement gives on the source
+  route.
 
 ### Refusing a protocol binding
 
