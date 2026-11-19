@@ -382,7 +382,16 @@ pub fn check_protocol_step(
             model_result.abstract_successors,
         );
     }
-    if matches!(taken.as_ref(), Taken::Stutter) {
+    // In a protocol refinement, each protocol candidate already identifies
+    // one exact hidden model state. Preserve that candidate unchanged when
+    // the refinement row stutters; its CandidateSteps rows merely record the
+    // same hidden model stutters for non-protocol liveness checks.
+    if matches!(taken.as_ref(), Taken::Stutter)
+        || matches!(
+            taken.as_ref(),
+            Taken::CandidateSteps(steps) if steps.iter().all(|step| step.transition.is_none())
+        )
+    {
         post.abstract_protocol_states = pre.abstract_protocol_states.clone();
         return StepResult {
             verdict: passes(*post, Taken::Stutter),
