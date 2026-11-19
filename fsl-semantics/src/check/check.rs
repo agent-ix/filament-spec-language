@@ -4568,6 +4568,19 @@ impl<'a> Typer<'a> {
                     owner = owner.at(*before);
                 }
                 fsl_forms::ExprNode::SelfRef if !path.is_empty() => break,
+                fsl_forms::ExprNode::Name(name)
+                    if !path.is_empty()
+                        && name.segments.len() == 1
+                        && self.local(&name.name).is_some_and(|local| {
+                            matches!(local.value_type, ValueType::Reference(_))
+                        }) =>
+                {
+                    // A population binder is already the visited object
+                    // reference. Preserve it as the presence-read owner;
+                    // do not route it through the ordinary state-field
+                    // lookup, where clock places have no data field.
+                    break;
+                }
                 _ => return None,
             }
         }
