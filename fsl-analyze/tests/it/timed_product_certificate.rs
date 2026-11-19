@@ -492,7 +492,6 @@ fn every_scheduler_discrete_delay_is_certified() {
 #[trace("TC-2492", "FR-923-AC-2")]
 #[trace("FSpec-TC-1769", "FSpec-FR-752-AC-4")]
 #[test]
-#[ignore = "QSL-2156: delay distributions over every scheduler not implemented yet"]
 fn distribution_free_values_are_rejected() {
     let world = retx(GUARD, true, TWO_DELAYS, &every_deadlines());
     let record = settle_tampered(&world, "Deadline", |certificate| {
@@ -554,7 +553,6 @@ fn toggling() -> World {
 #[trace("TC-2493", "FR-924-AC-1")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-1")]
 #[test]
-#[ignore = "QSL-2156: zero-time end components made transient not implemented yet"]
 fn zero_time_components_take_their_best_exit() {
     let world = toggling();
     let record = settle(&world, "Deadline");
@@ -567,7 +565,6 @@ fn zero_time_components_take_their_best_exit() {
 #[trace("TC-2493", "FR-924-AC-2")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-2")]
 #[test]
-#[ignore = "QSL-2156: zero-time end components made transient not implemented yet"]
 fn zeno_values_are_rejected() {
     let world = toggling();
     let record = settle_tampered(&world, "Deadline", set_interior_values(ratio(0, 1)));
@@ -581,7 +578,6 @@ fn zeno_values_are_rejected() {
 #[trace("TC-2493", "FR-924-AC-3")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-3")]
 #[test]
-#[ignore = "QSL-2156: timed-product certificates for expected elapsed time not implemented yet"]
 fn delay_cycles_are_not_collapsed() {
     let world = retx(
         GUARD,
@@ -609,7 +605,6 @@ fn delay_cycles_are_not_collapsed() {
 /// FR-924-AC-4: a zero-time cycle every action leaves is no end component.
 #[trace("TC-2493", "FR-924-AC-4")]
 #[test]
-#[ignore = "QSL-2156: time-divergent decision of zero-delay cycles not implemented yet"]
 fn zero_time_cycle_without_end_component_is_certified() {
     let world = retx("", false, "", &every_deadlines());
     let record = settle(&world, "Deadline");
@@ -621,7 +616,6 @@ fn zero_time_cycle_without_end_component_is_certified() {
 #[trace("TC-2493", "FR-924-AC-5")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-6")]
 #[test]
-#[ignore = "QSL-2156: time-locked digital states not read as terminal yet"]
 fn time_locked_state_is_certified_terminal() {
     let world = retx(
         GUARD,
@@ -664,7 +658,6 @@ fn quantiles() -> World {
 #[trace("TC-2494", "FR-877-AC-1")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-4")]
 #[test]
-#[ignore = "QSL-2156: elapsed-time quantile forms over digital clocks not implemented yet"]
 fn elapsed_quantile_at_most_is_certified() {
     let world = quantiles();
     let record = settle(&world, "AtMostTwo");
@@ -682,7 +675,6 @@ fn elapsed_quantile_at_most_is_certified() {
 #[trace("TC-2494", "FR-877-AC-2")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-4")]
 #[test]
-#[ignore = "QSL-2156: elapsed-time quantile forms over digital clocks not implemented yet"]
 fn elapsed_quantile_at_most_refutes() {
     let world = quantiles();
     assert!(is_refuted(&settle(&world, "AtMostOne")));
@@ -703,7 +695,6 @@ fn elapsed_quantile_at_most_refutes() {
 #[trace("TC-2494", "FR-877-AC-3")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-5")]
 #[test]
-#[ignore = "QSL-2156: elapsed-time quantile forms over regions not implemented yet"]
 fn elapsed_quantile_at_least_is_certified_over_regions() {
     let world = quantiles();
     let record = settle(&world, "AtLeastOne");
@@ -721,7 +712,6 @@ fn elapsed_quantile_at_least_is_certified_over_regions() {
 /// the activated initial state, so the claim is refuted, never proved.
 #[trace("TC-2494", "FR-877-AC-4")]
 #[test]
-#[ignore = "QSL-2156: elapsed-time quantile forms over regions not implemented yet"]
 fn elapsed_quantile_tight_search_refutes() {
     let world = quantiles();
     assert!(is_refuted(&settle(&world, "Tight")));
@@ -767,7 +757,6 @@ fn a_wrong_clock_cap_is_malformed() {
 #[trace("TC-2493", "FR-924-AC-6")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-7")]
 #[test]
-#[ignore = "QSL-2156: the Alur–Dill progress condition on region end components not implemented yet"]
 fn reset_loop_zeno_values_are_rejected() {
     let world = retx_over(
         &["x", "y"],
