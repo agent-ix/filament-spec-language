@@ -3161,7 +3161,11 @@ mod float_members {
             },
         )?;
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
             .map(|_| ())
             .map_err(|refusals| {
                 refusals

@@ -247,7 +247,11 @@ pub fn check_with_profiles(
         }
     };
     let regions = declarations.regions();
-    match declarations.check(CheckMode::Linked, CheckingLimits::default()) {
+    match declarations.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    ) {
         Ok(graph) => Ok(Checked { graph, packages }),
         Err(refusals) => Err(refusals
             .into_iter()
