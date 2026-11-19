@@ -645,6 +645,7 @@ fn imported_callable_consumer_uses_a_real_emitted_and_admitted_library() {
         "fixture".to_owned(),
         fsl_foundation::IdentityLimits::default(),
     );
+    declarations.types = a_declared_type();
     declarations.imports.insert(
         "lib".to_owned(),
         AdmittedImport {
@@ -1085,6 +1086,7 @@ fn both_ieee_profile_checks_and_conversion_operand_check_are_real_producers() {
             fsl_foundation::IdentityLimits::default(),
         );
         declarations.ieee_profile = Some(profile);
+        declarations.types = a_declared_type();
         declarations
     }
     .check(
@@ -1111,6 +1113,17 @@ fn both_ieee_profile_checks_and_conversion_operand_check_are_real_producers() {
             m.apply(ieee.root())
         }
     );
+}
+
+/// One declared type: FR-746 admits no empty checked graph, and these
+/// packages otherwise declare nothing the probe reads.
+fn a_declared_type() -> filament_semantic_value::declaration::TypeEnvironment {
+    let declaration = filament_semantic_value::declaration::CompositeDeclaration::new(
+        crate::test_ids::node_key([9]),
+        "Placeholder",
+        CompositeShape::Record(vec![]),
+    );
+    filament_semantic_value::declaration::TypeEnvironment::new([declaration], []).unwrap()
 }
 
 #[test]

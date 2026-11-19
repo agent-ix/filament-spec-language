@@ -371,7 +371,7 @@ fn health_variants_are_not_markov() {
 #[test]
 fn a_negative_reward_refuses_admission() {
     let model = world::refund();
-    let world = World::new(&model);
+    let world = World::with_s3_reward_signs_unchecked(&model);
     let Err(AdmissionFailure::Refused(record)) = world.admit() else {
         panic!("admission refuses");
     };
