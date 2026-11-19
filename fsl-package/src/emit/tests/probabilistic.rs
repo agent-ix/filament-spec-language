@@ -37,7 +37,11 @@ pub(super) fn reward_package(declarations: &str) -> CheckedPackage {
     let unit = format!("{}{declarations}\n", config_version_unit::unit_text());
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -301,7 +305,11 @@ fn a_second_same_named_probabilistic_claim_is_ambiguous() {
     );
     let refusals = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .map(|_| ())
         .expect_err("two claims named Stable are ambiguous");
     let [refusal] = refusals.as_slice() else {
@@ -1455,7 +1463,11 @@ fn reward_over_parameter(declarations: &str) -> (Vec<u8>, CheckedPackage) {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     (document, CheckedPackage::link(graph))
 }
@@ -1858,7 +1870,11 @@ fn source_object_reward(declarations: &str) -> CheckedPackage {
         .expect("the package input is empty");
     let graph = assemble_with_models(source.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("S3 accepts the reward: {refusals:?}"));
     CheckedPackage::link(graph)
 }

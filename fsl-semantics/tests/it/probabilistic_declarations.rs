@@ -23,7 +23,7 @@ use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
     Bound, BoundedMeasure, CheckCause, CheckRefusal, CheckedGraph, CheckingLimitKind, Confidence,
     Event, PackageDeclarations, PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause,
-    ProbabilisticFeature, ReachTarget, Reward, RewardEvaluationFailure, RewardEvaluator,
+    ReachTarget, Reward, RewardEvaluationFailure, RewardEvaluator,
     SemanticNode, WeightOwner,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
