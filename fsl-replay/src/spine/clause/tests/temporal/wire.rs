@@ -567,7 +567,7 @@ fn finite_window_rows_round_trip_and_each_edit_refuses() {
         &json!({
             "kind": "progress-limit-reached",
             "limit": "node count",
-            "value": 4,
+            "value": "4",
             "setting": "progress.covered_positions",
         })
     );
@@ -736,7 +736,7 @@ fn insufficient_data_window_limit_and_family_undefined_rows_round_trip() {
         &json!({
             "kind": "window-limit-reached",
             "limit": "max_window_values",
-            "value": 2,
+            "value": "2",
             "setting": "monitor.max_window_values",
         })
     );

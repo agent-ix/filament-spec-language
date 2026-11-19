@@ -143,7 +143,7 @@ fn the_indeterminate_and_incomplete_rows_match_their_fspec_rows() {
             json!({
                 "kind": "progress-limit-reached",
                 "limit": "node count",
-                "value": 4,
+                "value": "4",
                 "setting": "progress.covered_positions",
             }),
             json!("incomplete"),
@@ -152,9 +152,6 @@ fn the_indeterminate_and_incomplete_rows_match_their_fspec_rows() {
             json!("unavailable")
         )
     );
-    // Reader vector: the writer still emits a numeric limit value.
-    let mut limited = limited;
-    limited["disposition"]["temporal"]["value"] = json!("4");
     read(&limited).expect("the decimal-string progress limit reads");
 }
 
@@ -235,12 +232,9 @@ fn temporal_rows_restore_verdicts_and_refuse_mismatched_members() {
         verdicts.push(TemporalVerdict::Indeterminate { at: 0, reason });
     }
     for verdict in verdicts {
-        let mut value = document(&with_disposition(ClauseDisposition::Temporal(
+        let value = document(&with_disposition(ClauseDisposition::Temporal(
             verdict.clone(),
         )));
-        if matches!(verdict, TemporalVerdict::ProgressLimitReached(_)) {
-            value["disposition"]["temporal"]["value"] = json!("4");
-        }
         let NativeRunResult::Clause(record) =
             read_native_run_result(&serde_json::to_vec(&value).expect("JSON"))
                 .expect("the specified row reads")
@@ -429,4 +423,87 @@ fn incomplete_and_violated_rows_refuse_temporal_category_mismatches() {
     assert_eq!(violated["disposition"]["temporal"]["kind"], "violated");
     violated["disposition"]["category"] = json!("indeterminate");
     refuses_at(&violated, "disposition.category");
+}
+
+/// The sixteenth registered kind is readable before QSL-1612 adds its writer.
+#[trace("FSpec-TC-1485", "FSpec-FR-352-AC-10", "FSpec-FR-352-AC-17")]
+#[test]
+fn a_condition_refusal_reads_its_position_and_catalog_outcome() {
+    let mut value = document(&with_disposition(ClauseDisposition::Temporal(
+        TemporalVerdict::Pending,
+    )));
+    value["basis"] = json!("unavailable");
+    value["disposition"] = json!({
+        "stage": "evaluate", "category": "refusal",
+        "temporal": {"kind": "condition-refused", "position": 2},
+        "outcome": {
+            "kind": "refused", "code": "invalid_runtime_input", "cause": "invalid-value",
+            "fields": {"reason": "condition-input"},
+            "locus": {"file": "window.native", "span": {
+                "start": {"byte": 0, "line": 1, "column": 1},
+                "end": {"byte": 1, "line": 1, "column": 2},
+            }},
+        },
+    });
+    let NativeRunResult::Clause(record) =
+        read_native_run_result(&serde_json::to_vec(&value).expect("JSON"))
+            .expect("the registered condition-refused row reads")
+    else {
+        panic!("a clause record");
+    };
+    assert!(matches!(
+        record.temporal(),
+        Some(crate::spine::TemporalRecord::ConditionRefused { position: 2 })
+    ));
+    assert_eq!(record.temporal().expect("row").kind(), "condition-refused");
+    assert_eq!(record.temporal().expect("row").verdict(), None);
+    assert_eq!(record.code(), Some("invalid_runtime_input"));
+    assert_eq!(record.cause(), Some("invalid-value"));
+    assert_eq!(
+        record
+            .fields()
+            .expect("refusal fields")
+            .get("reason")
+            .map(String::as_str),
+        Some("condition-input")
+    );
+    let locus = record.outcome_locus().expect("condition source locus");
+    assert_eq!(locus.file, "window.native");
+    assert_eq!((locus.span.start.byte, locus.span.end.byte), (0, 1));
+    for (member, wrong, path) in [
+        ("category", json!("unsupported"), "disposition.category"),
+        ("truth", json!(false), "disposition.truth"),
+        (
+            "outcome",
+            json!({"kind": "incomplete", "limit": "work_units"}),
+            "disposition.outcome",
+        ),
+    ] {
+        let mut edited = value.clone();
+        edited["disposition"][member] = wrong;
+        refuses_at(&edited, path);
+    }
+    let mut edited = value.clone();
+    edited["disposition"]["temporal"]["position"] = Value::Null;
+    refuses_at(&edited, "disposition.temporal.position");
+    let mut edited = value.clone();
+    edited["disposition"]["temporal"]["extra"] = json!(true);
+    assert!(read(&edited).expect_err("closed row").contains("extra"));
+    for (code, cause, category) in [
+        (
+            "unsupported_projection",
+            "missing-fairness-premise",
+            "unsupported",
+        ),
+        ("stage_limit_exceeded", "source-bytes", "incomplete"),
+    ] {
+        let mut edited = value.clone();
+        edited["disposition"]["outcome"]["code"] = json!(code);
+        edited["disposition"]["outcome"]["cause"] = json!(cause);
+        edited["disposition"]["category"] = json!(category);
+        read(&edited).expect("the refusal code's category reads");
+    }
+    let mut edited = value.clone();
+    edited["disposition"]["outcome"]["code"] = json!("not-a-code");
+    refuses_at(&edited, "disposition.outcome.code");
 }
