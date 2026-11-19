@@ -4366,6 +4366,8 @@ mod tests {
     use filament_exact::ValueType;
     use ix_trace_rs::trace;
 
+    mod collection_elements;
+
     /// The value form `text` spells, read as the admission reads it.
     fn snapshot(text: &str) -> SnapshotValue {
         let document =
