@@ -88,6 +88,7 @@ pub(super) fn check(
         TimedProbabilityRoute::Digital => enumerate_digital_deadline(
             system,
             &timed,
+            claim,
             binding.as_ref(),
             predicate,
             objective.scale,
@@ -176,6 +177,7 @@ struct RegionState {
 fn enumerate_digital_deadline(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
+    claim: &CheckedProbabilisticClaim,
     binding: Option<&filament_exact::ObjectReference>,
     predicate: &fsl_semantics::check::CheckedPredicate,
     key_scale: u64,
@@ -959,7 +961,8 @@ fn digital_key(
             .model()
             .clock(place.clock())
             .ok_or(ProbabilityDocumentError::Unsupported)?;
-        let owner = field.owner().original();
+        let owner = field.owner();
+        let owner = owner.original();
         let declaring = fsl_semantics::model::key::model_node_key(
             owner.package(),
             "model",
