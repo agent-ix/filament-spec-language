@@ -19,17 +19,15 @@ static PRODUCER: OnceLock<Result<AdmittedStaticBundle, String>> = OnceLock::new(
 /// The bundle and configuration digests are selected by the owner's canonical
 /// digest API. A refusal here indicates an internal producer-contract defect.
 pub(super) fn admitted() -> Result<&'static AdmittedStaticBundle, &'static str> {
-    PRODUCER
-        .get_or_init(build)
-        .as_ref()
-        .map_err(String::as_str)
+    PRODUCER.get_or_init(build).as_ref().map_err(String::as_str)
 }
 
 fn build() -> Result<AdmittedStaticBundle, String> {
     let mut configuration_selection = StaticProducerBundle::default();
-    configuration_selection
-        .extra
-        .insert("configurationIdentity".to_owned(), json!(CONFIGURATION_IDENTITY));
+    configuration_selection.extra.insert(
+        "configurationIdentity".to_owned(),
+        json!(CONFIGURATION_IDENTITY),
+    );
     let configuration_digest = configuration_selection
         .canonical_digest_selection()
         .map_err(|error| error.to_string())?;
@@ -57,6 +55,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ix_trace_rs::trace("TC-3036", "FR-944-AC-8")]
     fn static_producer_bundle_is_owner_admitted_once() {
         let first = admitted().expect("static bundle admission");
         let second = admitted().expect("cached static bundle admission");
