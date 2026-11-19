@@ -1,0 +1,10 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile clocked = "filament.temporal.timed/v1";
+model Network = "test/link";
+
+// FR-186-AC-13: the selected Link model declares no model-time binding.
+probabilistic Delivered using clocked on Network over (packet: Network::Msg)
+  under every scheduler on origin {
+  probability >= rational(1, 2) [ holds(packet.delivered) ]
+}
