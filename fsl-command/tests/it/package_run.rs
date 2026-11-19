@@ -121,6 +121,36 @@ fn a_package_only_call_runs_under_the_recorded_law_without_source() {
     names(&value, "program");
 }
 
+/// FR-1039: native-run's multi-selection wrapper executes each package call
+/// from the checked artifact after the source used to produce it is removed.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-1")]
+fn package_call_items_run_from_the_checked_artifact_without_source() {
+    let directory = tempfile::tempdir().unwrap();
+    compile(directory.path(), FLOOR_HALF);
+    let (exit, value) = run(
+        directory.path(),
+        json!({"models": [], "package": {"directory": "handoff"},
+        "items": {"selections": [
+            {"call": {"function": "half", "arguments": []}},
+            {"call": {"function": "twice", "arguments": [
+                {"parameter": "a", "value": -7}
+            ]}}
+        ]}}),
+    );
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(
+        value["items"][0]["result"]["outcome"]["value"],
+        json!({"integer": "-4"}),
+        "{value}"
+    );
+    assert_eq!(
+        value["items"][1]["result"]["outcome"]["value"],
+        json!({"integer": "-14"}),
+        "{value}"
+    );
+}
+
 /// FR-100 "Request-file preparation for the driver": preparing a package
 /// request performs no call, and the prepared package call runs to the same
 /// value as `run`.
