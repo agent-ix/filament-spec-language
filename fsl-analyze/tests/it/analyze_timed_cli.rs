@@ -262,11 +262,11 @@ fn max_clocks_is_read_on_a_timed_subject_and_unrouted_on_an_untimed_one() {
     assert_eq!(untimed.item(0)["record"]["result"], "unsupported");
 }
 
-/// A state-graph claim over a timed subject settles `unsupported`: EN-6
-/// lists no state-graph form and EN-1 reads no clocks (QSL-2305).
-#[trace("TC-1588", "FR-628-AC-1")]
+/// FR-852: a state-graph claim over a timed subject routes to EN-6 and
+/// proves with a certified zone graph and an exact-delay witness.
+#[trace("TC-2412", "FR-852")]
 #[test]
-fn a_state_graph_claim_over_a_timed_subject_is_unsupported() {
+fn a_state_graph_claim_over_a_timed_subject_proves_on_zones() {
     let (run, items) = run(
         "timed-state-graph",
         &rpc_unit(
@@ -276,14 +276,37 @@ fn a_state_graph_claim_over_a_timed_subject_is_unsupported() {
         json!([{"claim": "Reaches"}]),
     );
     let item = &items[0];
-    assert_eq!(label(item), "unsupported", "{item}");
-    assert!(
-        item["record"]["diagnostic"]["detail"]["reason"]
-            .as_str()
-            .is_some_and(|reason| reason.contains("QSL-2305")),
+    assert_eq!(label(item), "proved", "{item}");
+    assert_eq!(item["record"]["backend"], "en-6", "{item}");
+    assert_eq!(item["record"]["basis"]["type"], "zone-certified", "{item}");
+    assert_eq!(item["record"]["certification"], "certified", "{item}");
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    assert_eq!(item["certificate"]["checker"], "zone-certificate", "{item}");
+    assert_eq!(
+        item["certificate"]["document"]["state_graph"]["form"], "possible",
         "{item}"
     );
-    assert_eq!(run.exit, 21);
+    let evidence = &item["record"]["evidence"];
+    assert_eq!(evidence["arm"], "witness", "{item}");
+    assert_eq!(
+        evidence["paths"].as_array().map(Vec::len),
+        Some(1),
+        "{item}"
+    );
+    let steps = evidence["paths"][0]["path"]["steps"]
+        .as_array()
+        .expect("a concrete witness path");
+    assert_eq!(steps.len(), 1, "{item}");
+    assert_eq!(
+        steps[0]["transition"]["operation"]["node"], "ix://test/timed/Call/send",
+        "{item}"
+    );
+    assert_eq!(
+        steps[0]["delay"],
+        json!({"numerator": "0", "denominator": "1"}),
+        "{item}"
+    );
+    assert_eq!(run.exit, 0);
 }
 
 /// An item carrying a member no route reads (`witness_samples` on a clause)
@@ -442,7 +465,10 @@ fn digital_automaton_states_are_the_maximum_per_binding() {
     let ModelCheckOutcome::Violated { stats, .. } = outcome.outcome else {
         panic!("the false binding refutes: {outcome:?}");
     };
-    assert_eq!(letters.reads.borrow().keys().cloned().collect::<Vec<_>>(), ["a", "z"]);
+    assert_eq!(
+        letters.reads.borrow().keys().cloned().collect::<Vec<_>>(),
+        ["a", "z"]
+    );
     assert_eq!(stats.automaton_states, 1);
 }
 
@@ -461,7 +487,11 @@ impl ModelLetters for DifferentBindingAtoms<'_> {
         _state: &ModelSimState,
         _meter: &mut Meter,
     ) -> Result<AtomReading, AtomStop> {
-        *self.reads.borrow_mut().entry(instance.key.clone()).or_default() += 1;
+        *self
+            .reads
+            .borrow_mut()
+            .entry(instance.key.clone())
+            .or_default() += 1;
         Ok(if instance.key == "a" {
             AtomReading::True
         } else {
