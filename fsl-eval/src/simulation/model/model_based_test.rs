@@ -1552,7 +1552,10 @@ where
         ));
     }
     let mut generated_cases = Vec::new();
-    let mut partitions = Vec::new();
+    let mut partitions = partition_cases.as_ref().map_or_else(
+        || system.boundary_partitions(),
+        |cases| cases.iter().map(|case| case.partition.clone()).collect(),
+    );
     let mut provenance = Vec::new();
     let mut counts = ModelBasedTestCounts::default();
     let mut checks = ModelBasedTestChecks::default();
@@ -1562,7 +1565,7 @@ where
     let mut case_index = 0_u64;
     for mut partition_case in partition_cases.unwrap_or_default() {
         if partition_case.trace.is_none() && partition_case.discard.is_none() {
-            partitions.push(partition_case.partition);
+            record_partition(&mut partitions, partition_case.partition);
             continue;
         }
         if case_index >= max_cases {
@@ -1570,7 +1573,7 @@ where
                 reason: ModelPartitionUncoveredReason::NotGenerated,
                 bounds: Vec::new(),
             });
-            partitions.push(partition_case.partition);
+            record_partition(&mut partitions, partition_case.partition);
             continue;
         }
         let current_case = case_index;
@@ -1588,12 +1591,21 @@ where
                 });
             }
             record_discard(&mut counts, &mut discarded_by, reason, current_case);
-            partitions.push(partition_case.partition);
+            record_partition(&mut partitions, partition_case.partition);
             continue;
         }
         if let Some(trace) = partition_case.trace {
             add_trace_checks(system, clause, &trace, omitted_clause.as_ref(), &mut checks)?;
             let result = oracle(&trace)?;
+            if matches!(result, CaseResult::Pass | CaseResult::Fail(_)) {
+                cover_field_partitions(
+                    system,
+                    &trace,
+                    &mut partitions,
+                    current_case,
+                    omitted_clause.as_ref(),
+                )?;
+            }
             partition_case.partition.status = match result {
                 CaseResult::Pass | CaseResult::Fail(_) => Some(ModelPartitionStatus::Covered {
                     first_case: current_case,
@@ -1606,7 +1618,7 @@ where
                 }
                 CaseResult::Discard(ModelBasedTestDiscardReason::NoCheckPoint) => {
                     Some(ModelPartitionStatus::Uncovered {
-                        reason: ModelPartitionUncoveredReason::NoCheckPoint,
+                        reason: ModelPartitionUncoveredReason::NotGenerated,
                         bounds: Vec::new(),
                     })
                 }
@@ -1645,9 +1657,9 @@ where
                     counterexample = Some(ModelBasedCounterexample::Trace(Box::new(minimized)));
                 }
             }
-            partitions.push(partition_case.partition);
+            record_partition(&mut partitions, partition_case.partition);
         } else {
-            partitions.push(partition_case.partition);
+            record_partition(&mut partitions, partition_case.partition);
         }
     }
 
@@ -1683,7 +1695,17 @@ where
             }
         }
         add_trace_checks(system, clause, &trace, omitted_clause.as_ref(), &mut checks)?;
-        match oracle(&trace)? {
+        let outcome = oracle(&trace)?;
+        if matches!(outcome, CaseResult::Pass | CaseResult::Fail(_)) {
+            cover_field_partitions(
+                system,
+                &trace,
+                &mut partitions,
+                current_case,
+                omitted_clause.as_ref(),
+            )?;
+        }
+        match outcome {
             CaseResult::Pass => {
                 generated_cases.push(case_for(&trace, current_case));
                 counts.passing = counts.passing.saturating_add(1);
@@ -1777,6 +1799,74 @@ where
         cause,
         counterexample,
     })
+}
+
+fn record_partition(
+    partitions: &mut Vec<ModelBoundaryPartition>,
+    partition: ModelBoundaryPartition,
+) {
+    if let Some(existing) = partitions.iter_mut().find(|existing| {
+        existing.node == partition.node
+            && existing.path == partition.path
+            && existing.kind == partition.kind
+            && existing.value == partition.value
+            && existing.text_value == partition.text_value
+    }) {
+        if !matches!(existing.status, Some(ModelPartitionStatus::Covered { .. })) {
+            *existing = partition;
+        }
+    } else {
+        partitions.push(partition);
+    }
+}
+
+fn cover_field_partitions(
+    system: &ModelSystem<'_>,
+    trace: &ModelTrace,
+    partitions: &mut [ModelBoundaryPartition],
+    case: u64,
+    omitted: Option<&NodeKey>,
+) -> Result<(), ModelBasedTestError> {
+    let candidates: Vec<_> = partitions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, partition)| {
+            if matches!(
+                partition.status,
+                Some(ModelPartitionStatus::Covered { .. } | ModelPartitionStatus::Refused { .. })
+            ) || matches!(
+                partition.kind,
+                super::ModelBoundaryKind::LowerRefusal | super::ModelBoundaryKind::UpperRefusal
+            ) {
+                return None;
+            }
+            Some((index, partition_field_key(system, partition)?))
+        })
+        .collect();
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    let Some((_, states)) = super::rebuild_model_trace(
+        system,
+        &trace.trace.initial,
+        &trace.trace.steps,
+        trace.trace.provenance.as_ref(),
+        omitted,
+    )?
+    else {
+        return Err(ModelBasedTestError::Shrink(
+            ModelShrinkError::NotCounterexample,
+        ));
+    };
+    for (index, field) in candidates {
+        if states
+            .iter()
+            .any(|state| state_has_field_value(system, state, &field, &partitions[index]))
+        {
+            partitions[index].status = Some(ModelPartitionStatus::Covered { first_case: case });
+        }
+    }
+    Ok(())
 }
 
 fn add_trace_checks(

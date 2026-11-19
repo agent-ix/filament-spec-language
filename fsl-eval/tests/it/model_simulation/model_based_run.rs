@@ -1185,7 +1185,12 @@ fn contract_cases_start_with_ordered_domain_partitions() {
     assert!(result.checks.evaluated >= result.counts.passing);
     assert!(result.checks.skipped.values().all(|count| *count == 0));
     assert_eq!(result.partition_coverage.uncovered["precondition-false"], 1);
-    assert_eq!(result.partition_coverage.uncovered["no-check-point"], 1);
+    assert!(
+        !result
+            .partition_coverage
+            .uncovered
+            .contains_key("no-check-point")
+    );
 
     let bounded = run_model_based_test(
         &system,
@@ -1284,12 +1289,7 @@ fn contract_cases_start_with_ordered_domain_partitions() {
     );
     assert_eq!(
         result.partitions[1].status,
-        Some(
-            fsl_eval::simulation::model::ModelPartitionStatus::Uncovered {
-                reason: fsl_eval::simulation::model::ModelPartitionUncoveredReason::NoCheckPoint,
-                bounds: Vec::new(),
-            }
-        )
+        Some(fsl_eval::simulation::model::ModelPartitionStatus::Covered { first_case: 2 })
     );
 }
 
