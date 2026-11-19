@@ -208,8 +208,8 @@ fn check(fence: &Fence) -> Result<(), String> {
 
 /// NFR-017-AC-5: the two counts agree, every fence declares one stage, and
 /// every fence behaves as declared at that stage.
-#[trace("TC-2242", "NFR-017-AC-5")]
 #[test]
+#[trace("TC-2242", "NFR-017-AC-5")]
 fn every_fsl_fence_runs_at_its_declared_stage() {
     let mut total = 0;
     for file in documents() {
@@ -266,8 +266,8 @@ fn one(markdown: &str) -> Fence {
 
 /// NFR-017-AC-6: a deliberate syntax error passes only under its exact
 /// `reject` code and cause.
-#[trace("TC-2242", "NFR-017-AC-6")]
 #[test]
+#[trace("TC-2242", "NFR-017-AC-6")]
 fn reject_fences_refuse_with_the_named_code() {
     let body = "type Digit = Int[0, ;\n";
     let tagged = |info: &str| one(&format!("```{info}\n{body}```\n"));
@@ -288,8 +288,8 @@ fn reject_fences_refuse_with_the_named_code() {
 /// NFR-017-AC-7: a pending fence passes while it refuses as its expect
 /// comment records, and fails once it passes, names another code, or has no
 /// comment.
-#[trace("TC-2242", "NFR-017-AC-7")]
 #[test]
+#[trace("TC-2242", "NFR-017-AC-7")]
 fn pending_fences_match_their_current_refusal() {
     let fence = |body: &str, after: &str| {
         one(&format!(
@@ -319,8 +319,8 @@ fn pending_fences_match_their_current_refusal() {
 
 /// NFR-017-AC-5/6: parsing admits an ill-typed body, while checking and
 /// compiling reject it; a well-typed function reaches both later stages.
-#[trace("TC-2242", "NFR-017-AC-5", "NFR-017-AC-6")]
 #[test]
+#[trace("TC-2242", "NFR-017-AC-5", "NFR-017-AC-6")]
 fn check_and_compile_fences_execute_the_language_stages() {
     let valid = "function yes(): Boolean pure { true }";
     let invalid = "function yes(): Boolean pure { 7 }";
