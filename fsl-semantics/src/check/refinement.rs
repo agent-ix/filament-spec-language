@@ -4333,13 +4333,19 @@ fn population_uses(
                         Some((found.kind(), found.value_type()))
                     }) == Some((Integer::zero(), Integer::zero()))
                 };
-                if zero(root.at(*right))
-                    && let Some((key, value)) = population_query(root.at(*left))
-                {
-                    (key, value)
-                } else if zero(root.at(*left))
-                    && let Some((key, value)) = population_query(root.at(*right))
-                {
+                let query = if zero(root.at(*right)) {
+                    population_query(root.at(*left))
+                } else {
+                    None
+                }
+                .or_else(|| {
+                    if zero(root.at(*left)) {
+                        population_query(root.at(*right))
+                    } else {
+                        None
+                    }
+                });
+                if let Some((key, value)) = query {
                     (key, value)
                 } else {
                     return if relaxed_conforms(types, root.value_type(), required) {
