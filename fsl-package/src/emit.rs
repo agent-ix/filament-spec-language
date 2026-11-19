@@ -8677,6 +8677,7 @@ fn temporal_binding_rows(
             occurrence: temporal.claim().ordinal(),
             clock_name: clause.clock().into(),
             clock: clock.clone(),
+            trace: None,
         };
         keyed.rows.push((declaration_key, row.clone()));
         rows.push(row);
@@ -8744,6 +8745,7 @@ fn temporal_binding_rows(
             occurrence: occurrence.origin().ordinal(),
             clock_name: clock_name.into(),
             clock: clock.clone(),
+            trace: None,
         };
         keyed.rows.push((wrapper.clone(), row.clone()));
         rows.push(row);
@@ -8807,6 +8809,7 @@ fn temporal_binding_rows(
                     occurrence: ordinal,
                     clock_name: awaited.clock.as_str().into(),
                     clock: clock.clone(),
+                    trace: None,
                 });
             }
         }
@@ -8875,6 +8878,7 @@ fn temporal_binding_rows(
                         occurrence: ordinal,
                         clock_name: template.clock.as_str().into(),
                         clock: clock.clone(),
+                        trace: None,
                     });
                 }
             }

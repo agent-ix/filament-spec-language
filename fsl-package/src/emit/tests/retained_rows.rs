@@ -147,6 +147,7 @@ fn composite() -> Emission {
                 clock: ClockConfiguration::EventPosition {
                     sequence_authority: "authority".into(),
                 },
+                trace: None,
             },
         )],
         declarations: Vec::new(),
@@ -165,6 +166,7 @@ fn composite() -> Emission {
             clock: ClockConfiguration::EventPosition {
                 sequence_authority: "authority".into(),
             },
+            trace: None,
         }],
     };
     base
