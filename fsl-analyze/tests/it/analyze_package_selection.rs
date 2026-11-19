@@ -6,11 +6,11 @@
 //! `a_package_selection_analyzes_as_its_source`.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    HANDOFF, Run, Workspace, analyze, below_three, bounded, clause, counter_request, label,
-    package_selection, request_members,
+    analyze, below_three, bounded, clause, counter_request, label, package_selection,
+    request_members, Run, Workspace, HANDOFF,
 };
 
 fn at_most_two() -> String {
@@ -618,6 +618,40 @@ fn an_invariant_named_over_a_package_is_never_an_unknown_claim() {
             run.document()
         );
     }
+    assert_eq!(run.exit, source.exit);
+}
+
+/// FR-940-AC-6, FR-940-AC-9: when two invariant declarations share one
+/// package node, each `claim_names` row keeps its declaration occurrence;
+/// package dispatch must decide the same occurrence the source route names.
+#[trace("TC-2958", "FR-940-AC-6", "FR-940-AC-9")]
+#[test]
+fn package_invariants_keep_their_own_occurrence_on_a_shared_node() {
+    let body = format!(
+        "{}invariant AlsoNotAboveThree using v on M::Counter at current {{ self.value <= 3 }}\n",
+        not_above_three()
+    );
+    let items = json!([
+        {"claim": "NotAboveThree"},
+        {"claim": "AlsoNotAboveThree"}
+    ]);
+    let ws = Workspace::new("shared-invariant-node");
+    let source = analyze(&counter_request(&ws, &body, items.clone()));
+    let (members, _) = package_request(&ws, &body, items);
+    let run = analyze_members(&ws, "analyze-shared-invariants.json", &members);
+
+    for (index, ordinal) in [0, 1].into_iter().enumerate() {
+        assert_eq!(
+            label(&source.item(index)),
+            "proved",
+            "{}",
+            source.document()
+        );
+        assert_eq!(label(&run.item(index)), "proved", "{}", run.document());
+        assert_eq!(claim_ordinal(&source.item(index)), json!(ordinal));
+        assert_eq!(claim_ordinal(&run.item(index)), json!(ordinal));
+    }
+    assert_eq!(run.document()["items"], source.document()["items"]);
     assert_eq!(run.exit, source.exit);
 }
 
