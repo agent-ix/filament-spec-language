@@ -23,6 +23,7 @@ mod model_source;
 mod model_unit;
 mod nesting_levels;
 mod probabilistic;
+mod production_core;
 mod protocol_memory_refinement;
 mod readme_snippets;
 mod reserved_declaration_names;
