@@ -112,7 +112,10 @@ check the construction against FSpec FR-143's construction rule (ADR-012
   the exact integer conversion to the payload type, exactly as FR-065 does for
   a function-call argument; FR-093 lowers it to `filament.op.numeric.convert`.
   A payload argument whose type is already the payload type takes no
-  conversion. A payload argument whose integer type does not fit the payload
+  conversion, and neither does one at an `Integer` payload type whose term
+  the package already carries as `Integer` (an integer division, or a local
+  lowered as `Integer`), the same exception FR-065 makes for a call argument;
+  its type node is already the declared one. A payload argument whose integer type does not fit the payload
   type gets the verdict the same argument gets at a function parameter of
   that type: it carries the range obligation of the narrowing, and an
   unproved obligation is refused `undefined_expression`/`unproved-range` at
@@ -127,7 +130,13 @@ check the construction against FSpec FR-143's construction rule (ADR-012
   Contract IR reader requires for a non-record payload (Contract IR FR-347
   "Case arm bodies and union payloads"). An `Option` payload `Some(e)` is not
   a union-member construction and keeps FSpec FR-143's exact payload rule
-  (FSpec FR-143-AC-21).
+  (FSpec FR-143-AC-21). FSpec FR-149 "Integer widening at declared parameter
+  and payload positions" is the standard rule this implements.
+  Package impact: a construction whose payload arguments are literals, or are
+  already typed at the payload type, emits the same bytes as before, so union
+  goldens built from such sources do not change. A construction with a
+  bounded integer payload argument at a wider payload type now carries the
+  conversion node, which changes the package bytes of those sources only.
 - If a construction names an undeclared member of `U`, supplies a payload for
   a nullary member, omits the call for a member that declares a payload, or
   supplies an argument count other than the member's declared arity, then
@@ -146,7 +155,7 @@ check the construction against FSpec FR-143's construction rule (ADR-012
 | FR-317-AC-4 | `Shape::Rect(2, 3)` checks as a union construction inside a state clause body and inside a `decreases` measure, each under its own clause kind, and `Shape::Rect(1)` refuses `ill_typed`/`type-mismatch` in both. | Test (TC-819) |
 | FR-317-AC-5 | Over ADR-022 §7.2's `Game` (`phase: Phase`, the unordered enum `{Start, Mid, Won, Lost}` of the domain package selected as `G`), `from (x.phase != Lost) { x.phase = Won }` and `from (x.phase != G::Phase::Lost) { x.phase = G::Phase::Won }` check to equal claims and emit one node id; `Lost != x.phase` checks the same as `x.phase != Lost`. `x.phase = Draw` (no such case) refuses `missing_declaration`/`missing-name` at `Draw`; `Lost = Won` (no typed operand) refuses `missing_declaration`/`missing-name` twice, at `Lost` and then at `Won`; `x.phase < Mid` refuses `ill_typed`/`operator-ineligible` at the comparison, once, with no `missing-name`; `let Lost = 1 in x.phase != Lost` refuses `ambiguous_declaration`/`ambiguous-name` at the `Lost` of the comparison, naming the `let` binder and `G::Phase::Lost`. In a unit with `ordered enum Level { Low, Mid, High }` and `function AtLeastMid using v(l: Level): Boolean pure { l >= Mid }`, the body checks equal to `l >= Level::Mid` with one node id, `Mid <= l` checks the same as `l >= Mid`, and `l > Top` refuses `missing_declaration`/`missing-name` at `Top`. | Test (TC-819) |
 | FR-317-AC-6 | In a unit declaring `enum Status { Open, Closed }` and `ordered enum Level { Low, Mid, High }`, `Status::Pending = Status::Open` refuses `ill_typed`/`type-mismatch` at `Status::Pending`, naming `Status` and `Pending`, and `Level::Top` at a `Level` slot refuses the same way naming `Level` and `Top`; each has the code and tag of the undeclared model variant case `Config::Tier::Lost` (FR-360-AC-5) and of `Shape::Square(1)` (AC-2), and neither is `missing-name`. `Nope::Open`, whose qualifier names no type, alias or declaration, refuses `missing_declaration`/`missing-name`. | Test (TC-3051) |
-| FR-317-AC-7 | In a unit declaring `union Reading { Raw(Integer), Wide(Int[0, 2000]), Tiny(Int[0, 9]) }` and a function with parameters `x: Int[0, 1000]` and `n: Integer`, `Reading::Raw(x)` checks as a union construction whose payload argument is the exact integer conversion of `x` to `Integer`, the same node FR-065-AC-9's call `g(x)` gives its argument, and `Reading::Wide(x)` as one whose payload argument is the exact conversion of `x` to `Int[0, 2000]`; `Reading::Raw(n)` and `Reading::Raw(7)` take no conversion. The checked package of that unit reads back through the strict Contract IR reader, and the payload term of each `union_value` node has the member's declared payload type node. The same package with the `Raw(x)` conversion removed by hand, so that its payload term is typed `Int[0, 1000]` at the `Integer` member, is refused by that reader `ill_typed`/`type-mismatch` at the `union_value` node, which shows the test reads the payload's type node. | Test (TC-3134) |
+| FR-317-AC-7 | In a unit declaring `union Reading { Raw(Integer), Wide(Int[0, 2000]), Tiny(Int[0, 9]) }` and a function with parameters `x: Int[0, 1000]` and `n: Integer`, `Reading::Raw(x)` checks as a union construction whose payload argument is the exact integer conversion of `x` to `Integer`, the same node FR-065-AC-9's call `g(x)` gives its argument, and `Reading::Wide(x)` as one whose payload argument is the exact conversion of `x` to `Int[0, 2000]`; `Reading::Raw(n)` and `Reading::Raw(7)` take no conversion. The checked package of that unit reads back through the strict Contract IR reader, and the payload term of each `union_value` node has the member's declared payload type node. The same package edited by hand so that the `Raw(x)` payload term is `x` itself, typed `Int[0, 1000]` at the `Integer` member, with the then-unreferenced conversion node removed and every node's `dependencies` and identity re-derived, is first shown to pass strict wire, graph and identity admission with the `Raw(x)` construction left out, and with it is refused by that reader `ill_typed`/`type-mismatch` at the `union_value` node, so no earlier malformed package can satisfy the refusal. | Test (TC-3134) |
 | FR-317-AC-8 | In the unit of AC-7, with a parameter `w: Int[0, 20]` and `function t using v(a: Int[0, 9]): Boolean pure { true }`, `Reading::Tiny(w)` and `Reading::Tiny(n)` are each refused `undefined_expression`/`unproved-range` at the payload argument, the verdict and location role `t(w)` and `t(n)` get at their argument; `if w <= 9 then Reading::Tiny(w) else Reading::Raw(n)` is admitted, as `if w <= 9 then t(w) else false` is; `Reading::Tiny(true)` stays `ill_typed`/`type-mismatch` at `true`. | Test (TC-3134) |
 
 ## Dependencies
