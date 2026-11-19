@@ -1,135 +1,672 @@
 {
   "contractVersion": "2.0.0",
-  "canonicalization": {"algorithm": "rfc8785-v1"},
-  "source": {"identity": "ix://test/decimal/spec", "version": "1.0.0", "dialect": "spec-bundle"},
-  "package": {"identity": "test/decimal", "version": "1.0.0", "mappingVersions": [], "profileVersions": []},
+  "canonicalization": {
+    "algorithm": "rfc8785-v1"
+  },
+  "source": {
+    "identity": "ix://test/decimal/spec",
+    "version": "1.0.0",
+    "dialect": "spec-bundle"
+  },
+  "package": {
+    "identity": "test/decimal",
+    "version": "1.0.0",
+    "mappingVersions": [],
+    "profileVersions": []
+  },
   "occurrences": [],
   "extensions": [],
   "constructs": [
-    {"kind": {"module": "test/decimal", "name": "object_type"}, "moduleVersion": "1.0.0",
-     "construct": {"identity": "none", "shape": "record", "members": {}, "meaning": "filament.meaning.model.object-type/v1"}},
-    {"kind": {"module": "test/decimal", "name": "value_type"}, "moduleVersion": "1.0.0",
-     "construct": {"identity": "none", "shape": "record", "members": {}, "meaning": "filament.meaning.model.value-type/v1"}}
+    {
+      "kind": {
+        "module": "test/decimal",
+        "name": "object_type"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "record",
+        "members": {},
+        "meaning": "filament.meaning.model.object-type/v1"
+      }
+    },
+    {
+      "kind": {
+        "module": "test/decimal",
+        "name": "value_type"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "record",
+        "members": {},
+        "meaning": "filament.meaning.model.value-type/v1"
+      }
+    },
+    {
+      "kind": {
+        "module": "test/decimal",
+        "name": "population"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "record",
+        "members": {},
+        "meaning": "filament.meaning.model.population/v1"
+      }
+    }
   ],
   "types": [
     {
-      "identity": "ix://test/decimal/Soc", "displayName": "Soc",
-      "kind": {"module": "test/decimal", "name": "value_type"}, "roles": [],
-      "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Soc", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Soc"]}},
+      "identity": "ix://test/decimal/Soc",
+      "displayName": "Soc",
+      "kind": {
+        "module": "test/decimal",
+        "name": "value_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://test/decimal/Soc",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://test/decimal/Soc"
+          ]
+        }
+      },
       "constraints": [
-        {"identity": "ix://test/decimal/Soc/constraints/min", "keyword": "min", "operands": {"value": "0"}, "appliesTo": "ix://test/decimal/Soc", "diagnosticCode": "bound.min",
-         "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Soc/constraints/min", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Soc/constraints/min"]}}},
-        {"identity": "ix://test/decimal/Soc/constraints/max", "keyword": "max", "operands": {"value": "1"}, "appliesTo": "ix://test/decimal/Soc", "diagnosticCode": "bound.max",
-         "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Soc/constraints/max", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Soc/constraints/max"]}}}
+        {
+          "identity": "ix://test/decimal/Soc/constraints/min",
+          "keyword": "min",
+          "operands": {
+            "value": "0"
+          },
+          "appliesTo": "ix://test/decimal/Soc",
+          "diagnosticCode": "bound.min",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://test/decimal/Soc/constraints/min",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://test/decimal/Soc/constraints/min"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://test/decimal/Soc/constraints/max",
+          "keyword": "max",
+          "operands": {
+            "value": "1"
+          },
+          "appliesTo": "ix://test/decimal/Soc",
+          "diagnosticCode": "bound.max",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://test/decimal/Soc/constraints/max",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://test/decimal/Soc/constraints/max"
+              ]
+            }
+          }
+        }
       ],
-      "extensions": [], "unknownPolicy": "reject",
-      "scalar": "decimal", "decimal": {"precision": 5, "scale": 2}
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "scalar": "decimal",
+      "decimal": {
+        "precision": 5,
+        "scale": 2
+      }
     },
     {
-      "identity": "ix://test/decimal/Price", "displayName": "Price",
-      "kind": {"module": "test/decimal", "name": "value_type"}, "roles": [],
-      "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Price", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Price"]}},
+      "identity": "ix://test/decimal/Price",
+      "displayName": "Price",
+      "kind": {
+        "module": "test/decimal",
+        "name": "value_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://test/decimal/Price",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://test/decimal/Price"
+          ]
+        }
+      },
       "constraints": [],
-      "extensions": [], "unknownPolicy": "reject",
-      "scalar": "decimal", "decimal": {"precision": 10, "scale": 2}
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "scalar": "decimal",
+      "decimal": {
+        "precision": 10,
+        "scale": 2
+      }
     },
     {
-      "identity": "ix://test/decimal/Margin", "displayName": "Margin",
-      "kind": {"module": "test/decimal", "name": "value_type"}, "roles": [],
-      "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Margin", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Margin"]}},
+      "identity": "ix://test/decimal/Margin",
+      "displayName": "Margin",
+      "kind": {
+        "module": "test/decimal",
+        "name": "value_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://test/decimal/Margin",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://test/decimal/Margin"
+          ]
+        }
+      },
       "constraints": [
-        {"identity": "ix://test/decimal/Margin/constraints/exclusiveMax", "keyword": "exclusiveMax", "operands": {"value": "1"}, "appliesTo": "ix://test/decimal/Margin", "diagnosticCode": "bound.exclusiveMax",
-         "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Margin/constraints/exclusiveMax", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Margin/constraints/exclusiveMax"]}}},
-        {"identity": "ix://test/decimal/Margin/constraints/exclusiveMin", "keyword": "exclusiveMin", "operands": {"value": "-1"}, "appliesTo": "ix://test/decimal/Margin", "diagnosticCode": "bound.exclusiveMin",
-         "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Margin/constraints/exclusiveMin", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Margin/constraints/exclusiveMin"]}}}
+        {
+          "identity": "ix://test/decimal/Margin/constraints/exclusiveMax",
+          "keyword": "exclusiveMax",
+          "operands": {
+            "value": "1"
+          },
+          "appliesTo": "ix://test/decimal/Margin",
+          "diagnosticCode": "bound.exclusiveMax",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://test/decimal/Margin/constraints/exclusiveMax",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://test/decimal/Margin/constraints/exclusiveMax"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://test/decimal/Margin/constraints/exclusiveMin",
+          "keyword": "exclusiveMin",
+          "operands": {
+            "value": "-1"
+          },
+          "appliesTo": "ix://test/decimal/Margin",
+          "diagnosticCode": "bound.exclusiveMin",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://test/decimal/Margin/constraints/exclusiveMin",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://test/decimal/Margin/constraints/exclusiveMin"
+              ]
+            }
+          }
+        }
       ],
-      "extensions": [], "unknownPolicy": "reject",
-      "scalar": "decimal", "decimal": {"precision": 4, "scale": 1}
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "scalar": "decimal",
+      "decimal": {
+        "precision": 4,
+        "scale": 1
+      }
     },
     {
-      "identity": "ix://test/decimal/Tax", "displayName": "Tax",
-      "kind": {"module": "test/decimal", "name": "value_type"}, "roles": [],
-      "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Tax", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Tax"]}},
+      "identity": "ix://test/decimal/Tax",
+      "displayName": "Tax",
+      "kind": {
+        "module": "test/decimal",
+        "name": "value_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://test/decimal/Tax",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://test/decimal/Tax"
+          ]
+        }
+      },
       "constraints": [
-        {"identity": "ix://test/decimal/Tax/constraints/min", "keyword": "min", "operands": {"value": "0.125"}, "appliesTo": "ix://test/decimal/Tax", "diagnosticCode": "bound.min",
-         "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Tax/constraints/min", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Tax/constraints/min"]}}}
+        {
+          "identity": "ix://test/decimal/Tax/constraints/min",
+          "keyword": "min",
+          "operands": {
+            "value": "0.125"
+          },
+          "appliesTo": "ix://test/decimal/Tax",
+          "diagnosticCode": "bound.min",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://test/decimal/Tax/constraints/min",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://test/decimal/Tax/constraints/min"
+              ]
+            }
+          }
+        }
       ],
-      "extensions": [], "unknownPolicy": "reject",
-      "scalar": "decimal", "decimal": {"precision": 3, "scale": 3}
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "scalar": "decimal",
+      "decimal": {
+        "precision": 3,
+        "scale": 3
+      }
     },
     {
-      "identity": "ix://test/decimal/Whole", "displayName": "Whole",
-      "kind": {"module": "test/decimal", "name": "value_type"}, "roles": [],
-      "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Whole", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Whole"]}},
+      "identity": "ix://test/decimal/Whole",
+      "displayName": "Whole",
+      "kind": {
+        "module": "test/decimal",
+        "name": "value_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://test/decimal/Whole",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://test/decimal/Whole"
+          ]
+        }
+      },
       "constraints": [],
-      "extensions": [], "unknownPolicy": "reject",
-      "scalar": "decimal", "decimal": {"precision": 38, "scale": 0}
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "scalar": "decimal",
+      "decimal": {
+        "precision": 38,
+        "scale": 0
+      }
     },
     {
-      "identity": "ix://test/decimal/Rate", "displayName": "Rate",
-      "kind": "alias", "roles": [],
-      "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Rate", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Rate"]}},
+      "identity": "ix://test/decimal/Rate",
+      "displayName": "Rate",
+      "kind": "alias",
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://test/decimal/Rate",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://test/decimal/Rate"
+          ]
+        }
+      },
       "constraints": [
-        {"identity": "ix://test/decimal/Rate/constraints/min", "keyword": "min", "operands": {"value": "0.0001"}, "appliesTo": "ix://test/decimal/Rate", "diagnosticCode": "bound.min",
-         "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Rate/constraints/min", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Rate/constraints/min"]}}},
-        {"identity": "ix://test/decimal/Rate/constraints/max", "keyword": "max", "operands": {"value": "1"}, "appliesTo": "ix://test/decimal/Rate", "diagnosticCode": "bound.max",
-         "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Rate/constraints/max", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Rate/constraints/max"]}}}
+        {
+          "identity": "ix://test/decimal/Rate/constraints/min",
+          "keyword": "min",
+          "operands": {
+            "value": "0.0001"
+          },
+          "appliesTo": "ix://test/decimal/Rate",
+          "diagnosticCode": "bound.min",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://test/decimal/Rate/constraints/min",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://test/decimal/Rate/constraints/min"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://test/decimal/Rate/constraints/max",
+          "keyword": "max",
+          "operands": {
+            "value": "1"
+          },
+          "appliesTo": "ix://test/decimal/Rate",
+          "diagnosticCode": "bound.max",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://test/decimal/Rate/constraints/max",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://test/decimal/Rate/constraints/max"
+              ]
+            }
+          }
+        }
       ],
-      "extensions": [], "unknownPolicy": "reject",
-      "target": "ix://filament/native/Decimal", "decimal": {"precision": 7, "scale": 4}
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "target": "ix://filament/native/Decimal",
+      "decimal": {
+        "precision": 7,
+        "scale": 4
+      }
     },
     {
-      "identity": "ix://test/decimal/Meter", "displayName": "Meter",
-      "kind": {"module": "test/decimal", "name": "object_type"}, "roles": [],
-      "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Meter", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Meter"]}},
-      "constraints": [], "extensions": [], "unknownPolicy": "reject",
-      "supertypes": [], "relationships": [],
+      "identity": "ix://test/decimal/Half",
+      "displayName": "Half",
+      "kind": "alias",
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://test/decimal/Half",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://test/decimal/Half"
+          ]
+        }
+      },
+      "constraints": [
+        {
+          "identity": "ix://test/decimal/Half/constraints/max",
+          "keyword": "max",
+          "operands": {
+            "value": "0.5"
+          },
+          "appliesTo": "ix://test/decimal/Half",
+          "diagnosticCode": "bound.max",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://test/decimal/Half/constraints/max",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://test/decimal/Half/constraints/max"
+              ]
+            }
+          }
+        }
+      ],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "target": "ix://test/decimal/Soc"
+    },
+    {
+      "identity": "ix://test/decimal/Meter",
+      "displayName": "Meter",
+      "kind": {
+        "module": "test/decimal",
+        "name": "object_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://test/decimal/Meter",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://test/decimal/Meter"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "relationships": [],
       "fields": [
-        {"identity": "ix://test/decimal/Meter/soc", "name": "soc", "typeRef": "ix://test/decimal/Soc",
-         "presence": "required", "nullable": false, "defaultKind": "none",
-         "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
-         "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Meter/soc", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Meter/soc"]}}},
-        {"identity": "ix://test/decimal/Meter/price", "name": "price", "typeRef": "ix://test/decimal/Price",
-         "presence": "required", "nullable": false, "defaultKind": "none",
-         "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
-         "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Meter/price", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Meter/price"]}}},
-        {"identity": "ix://test/decimal/Meter/margin", "name": "margin", "typeRef": "ix://test/decimal/Margin",
-         "presence": "required", "nullable": false, "defaultKind": "none",
-         "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
-         "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Meter/margin", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Meter/margin"]}}},
-        {"identity": "ix://test/decimal/Meter/tax", "name": "tax", "typeRef": "ix://test/decimal/Tax",
-         "presence": "required", "nullable": false, "defaultKind": "none",
-         "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
-         "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Meter/tax", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Meter/tax"]}}},
-        {"identity": "ix://test/decimal/Meter/whole", "name": "whole", "typeRef": "ix://test/decimal/Whole",
-         "presence": "required", "nullable": false, "defaultKind": "none",
-         "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
-         "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Meter/whole", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Meter/whole"]}}},
-        {"identity": "ix://test/decimal/Meter/fee", "name": "fee", "typeRef": "ix://filament/native/Decimal",
-         "decimal": {"precision": 6, "scale": 2},
-         "presence": "required", "nullable": false, "defaultKind": "none",
-         "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
-         "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Meter/fee", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Meter/fee"]}}},
-        {"identity": "ix://test/decimal/Meter/rate", "name": "rate", "typeRef": "ix://test/decimal/Rate",
-         "presence": "required", "nullable": false, "defaultKind": "none",
-         "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
-         "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Meter/rate", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Meter/rate"]}}}
+        {
+          "identity": "ix://test/decimal/Meter/soc",
+          "name": "soc",
+          "typeRef": "ix://test/decimal/Soc",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://test/decimal/Meter/soc",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://test/decimal/Meter/soc"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://test/decimal/Meter/price",
+          "name": "price",
+          "typeRef": "ix://test/decimal/Price",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://test/decimal/Meter/price",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://test/decimal/Meter/price"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://test/decimal/Meter/margin",
+          "name": "margin",
+          "typeRef": "ix://test/decimal/Margin",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://test/decimal/Meter/margin",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://test/decimal/Meter/margin"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://test/decimal/Meter/tax",
+          "name": "tax",
+          "typeRef": "ix://test/decimal/Tax",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://test/decimal/Meter/tax",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://test/decimal/Meter/tax"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://test/decimal/Meter/whole",
+          "name": "whole",
+          "typeRef": "ix://test/decimal/Whole",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://test/decimal/Meter/whole",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://test/decimal/Meter/whole"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://test/decimal/Meter/fee",
+          "name": "fee",
+          "typeRef": "ix://filament/native/Decimal",
+          "decimal": {
+            "precision": 6,
+            "scale": 2
+          },
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://test/decimal/Meter/fee",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://test/decimal/Meter/fee"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://test/decimal/Meter/rate",
+          "name": "rate",
+          "typeRef": "ix://test/decimal/Rate",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://test/decimal/Meter/rate",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://test/decimal/Meter/rate"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://test/decimal/Meter/half",
+          "name": "half",
+          "typeRef": "ix://test/decimal/Half",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://test/decimal/Meter/half",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://test/decimal/Meter/half"
+              ]
+            }
+          }
+        }
       ],
       "operations": [
-        {"identity": "ix://test/decimal/Meter/adjust", "name": "adjust",
-         "params": [
-           {"identity": "ix://test/decimal/Meter/adjust/by", "name": "by", "typeRef": "ix://filament/native/Decimal",
-            "decimal": {"precision": 5, "scale": 2},
-            "presence": "required", "nullable": false, "defaultKind": "none",
-            "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
-            "origin": {"generated": {"generatorIdentity": "ix://test/decimal/Meter/adjust/by", "generatorVersion": "1.0.0", "inputIdentities": ["ix://test/decimal/Meter/adjust/by"]}}}
-         ],
-         "returns": {"typeRef": "ix://test/decimal/Soc"},
-         "pre": [], "post": [],
-         "origin": {"source": {"sourceIdentity": "ix://test/decimal/spec", "path": "spec.fspec", "startLine": 1, "startColumn": 1}},
-         "frame": {"modifies": [], "creates": [], "deletes": []}}
+        {
+          "identity": "ix://test/decimal/Meter/adjust",
+          "name": "adjust",
+          "params": [
+            {
+              "identity": "ix://test/decimal/Meter/adjust/by",
+              "name": "by",
+              "typeRef": "ix://filament/native/Decimal",
+              "decimal": {
+                "precision": 5,
+                "scale": 2
+              },
+              "presence": "required",
+              "nullable": false,
+              "defaultKind": "none",
+              "multiplicity": {
+                "lower": 1,
+                "upper": 1,
+                "ordered": false,
+                "unique": true
+              },
+              "origin": {
+                "generated": {
+                  "generatorIdentity": "ix://test/decimal/Meter/adjust/by",
+                  "generatorVersion": "1.0.0",
+                  "inputIdentities": [
+                    "ix://test/decimal/Meter/adjust/by"
+                  ]
+                }
+              }
+            }
+          ],
+          "returns": {
+            "typeRef": "ix://test/decimal/Soc"
+          },
+          "pre": [],
+          "post": [],
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://test/decimal/spec",
+              "path": "spec.fspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          },
+          "frame": {
+            "modifies": [],
+            "creates": [],
+            "deletes": []
+          }
+        }
       ]
     }
   ],
-  "populations": []
+  "populations": [
+    {
+      "identity": "ix://test/decimal/meters",
+      "displayName": "ix://test/decimal/meters",
+      "kind": {
+        "module": "test/decimal",
+        "name": "population"
+      },
+      "members": [
+        "ix://test/decimal/Meter"
+      ],
+      "extent": "closed",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://test/decimal/meters",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://test/decimal/meters"
+          ]
+        }
+      }
+    }
+  ]
 }
