@@ -2,4 +2,4 @@ language "ix:native" edition "1-draft";
 profile values = "filament.value.complete/v1";
 profile infinite = "filament.temporal.infinite-trace/v1";
 model CounterModel = "test/counter-step";
-hyper Whole using infinite over behaviours () forall trace alpha of CounterModel forall trace beta of CounterModel forall trace gamma of CounterModel { always (true and not false) }
+hyper Whole using infinite over behaviours forall trace alpha of CounterModel forall trace beta of CounterModel forall trace gamma of CounterModel { always (true and not false) }
