@@ -478,6 +478,32 @@ fn an_unfair_zero_counted_lasso_refuses_naming_the_scheduler_constraint() {
     let adversarial = echo("scheduling adversarial;", "eventually[1,1] holds(k.v = 1)");
     let payload = echo_lasso(&adversarial);
     let lasso = payload.lasso.expect("a lasso");
+    let entry = &payload.prefix[lasso.entry - 1].post_state;
+    let concrete_last = &payload.prefix.last().expect("loop post-state").post_state;
+    assert_ne!(
+        entry, concrete_last,
+        "the concrete ProtocolKey comparison must reject this loop before fairness"
+    );
+    let protocol = crate::fill::sc_system(&adversarial.subject("Echo"));
+    let mut concrete = protocol.initial().remove(0);
+    let mut states = Vec::new();
+    for kind in [StepKind::Send, StepKind::Duplicate, StepKind::Lose] {
+        let (_, next) = protocol
+            .successors(&concrete)
+            .expect("expansion")
+            .successors
+            .into_iter()
+            .find(|(step, _)| step.kind() == kind)
+            .expect("enabled Echo step");
+        states.push(next.clone());
+        concrete = next;
+    }
+    let identity_read = BTreeSet::from(["Echo::ch".to_owned()]);
+    assert_ne!(
+        protocol.cycle_key(&states[0], &identity_read).unwrap(),
+        protocol.cycle_key(&states[2], &identity_read).unwrap(),
+        "the adverse identity-reading closure rejects before scheduler fairness"
+    );
     assert!(payload.fairness.is_empty(), "no scheduler constraint");
     assert!(payload.prefix[lasso.entry..]
         .iter()
@@ -683,6 +709,289 @@ fn echo_cycle_keys_preserve_read_delivery_labels_and_pair_unread_steps() {
         "{:?}",
         explored.outcome
     );
+}
+
+/// FR-205-AC-12: reading message identity preserves the message ordinal while
+/// unread delivery indices are still canonicalized, leaving finite EN-1
+/// exploration.
+#[trace("TC-650", "FR-205-AC-12")]
+#[test]
+fn echo_message_read_set_keeps_ordinals_and_canonicalizes_delivery_indices() {
+    let case = echo_infinite("scheduling adversarial;", "always holds(k.v = 0)");
+    let system = crate::fill::sc_system(&case.subject("Echo"));
+    let step = |state: &fsl_eval::simulation::protocol::ProtocolState<
+        fsl_eval::simulation::protocol::Sc,
+    >,
+                kind| {
+        system
+            .successors(state)
+            .unwrap()
+            .successors
+            .into_iter()
+            .find(|(transition, _)| transition.kind() == kind)
+            .expect("enabled step")
+    };
+    let (_, s1) = step(&system.initial()[0], StepKind::Send);
+    let (_, both) = step(&s1, StepKind::Duplicate);
+    let losses: Vec<_> = system
+        .successors(&both)
+        .unwrap()
+        .successors
+        .into_iter()
+        .filter(|(transition, _)| transition.kind() == StepKind::Lose)
+        .collect();
+    assert_eq!(losses.len(), 2);
+    let s2 = &losses[0].1;
+    let s3 = &losses[1].1;
+    let message_reads = BTreeSet::from(["Echo::ch".to_owned()]);
+    let no_delivery_reads = BTreeSet::new();
+
+    let concrete_keys: BTreeSet<_> = [&s1, s2, s3]
+        .into_iter()
+        .map(|state| system.canonical_state_key(state).unwrap())
+        .collect();
+    assert_eq!(
+        concrete_keys.len(),
+        3,
+        "concrete delivery identities differ"
+    );
+    let initial_cycle_key = system
+        .canonical_state_key(&s1)
+        .expect("first queued message key");
+    for state in [&s1, s2, s3] {
+        assert_eq!(
+            system
+                .cycle_key_with_reads(state, &message_reads, &no_delivery_reads)
+                .unwrap(),
+            initial_cycle_key,
+            "message ordinal is preserved and unread delivery labels are quotiented"
+        );
+    }
+
+    let message_read_system = system.with_cycle_read_sets(message_reads, no_delivery_reads);
+    let explored = fsl_analyze::model_check::retain(
+        &message_read_system,
+        fsl_eval::simulation::Limits::default(),
+        fsl_foundation::IdentityLimits::default(),
+        Some(8),
+        || false,
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            explored.outcome,
+            fsl_eval::simulation::Outcome::Exhaustive(_)
+        ),
+        "message-only reads still yield finite exploration: {:?}",
+        explored.outcome
+    );
+
+    // Reuse the same message-only read set over an unbounded repeat. The
+    // source path is unchanged, so successive sends have occurrence ordinals
+    // 0 and 1. Delivery labels remain unread and are still quotiented.
+    let loop_channel = "channel ch from w to w carries Boolean ordering fifo by (m: Boolean) \
+                        { true } delivery unknown capacity 2 overflow block;";
+    let loop_run = "repeat Loop by w visible () while { true } sequence Body { \
+                    send Snd via ch as (s: Boolean) { s }; \
+                    receive Rcv via ch of Snd as (r: Boolean) { r }; }";
+    let loop_body = contracts("self.v <= 1")
+        + &protocol("Loop", loop_channel, loop_run, "d")
+        + &claim("always holds(k.v = 0)").replace("using tb over", "using t0 over");
+    let loop_case = Case::new(&loop_body);
+    let loop_system = crate::fill::sc_system(&loop_case.subject("Loop"));
+    let initial = loop_system.initial().remove(0);
+    let (send0, sent0) = loop_system
+        .successors(&initial)
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(transition, _)| transition.kind() == StepKind::Send)
+        .expect("first repeated send");
+    let message0 = send0.message().expect("message occurrence");
+    assert_eq!(message0.ordinal(), 0);
+    let (_, duplicated) = loop_system
+        .successors(&sent0)
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(transition, _)| transition.kind() == StepKind::Duplicate)
+        .expect("duplicate the first message");
+    let (_, after_loss) = loop_system
+        .successors(&duplicated)
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(transition, _)| transition.kind() == StepKind::Lose)
+        .expect("lose one concrete delivery");
+    assert_ne!(
+        loop_system.canonical_state_key(&sent0).unwrap(),
+        loop_system.canonical_state_key(&after_loss).unwrap(),
+        "the concrete delivery index differs after duplicate/lose"
+    );
+    let loop_message_reads = BTreeSet::from(["Loop::ch".to_owned()]);
+    let no_delivery_reads = BTreeSet::new();
+    let first_occurrence_key = loop_system
+        .cycle_key_with_reads(&sent0, &loop_message_reads, &no_delivery_reads)
+        .unwrap();
+    assert_eq!(
+        loop_system
+            .cycle_key_with_reads(&after_loss, &loop_message_reads, &no_delivery_reads)
+            .unwrap(),
+        first_occurrence_key,
+        "unread delivery indices canonicalize even when message identity is read"
+    );
+    let (_, received0) = loop_system
+        .successors(&after_loss)
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(transition, _)| transition.kind() == StepKind::Receive)
+        .expect("receive the remaining copy");
+    let (send1, sent1) = loop_system
+        .successors(&received0)
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(transition, _)| transition.kind() == StepKind::Send)
+        .expect("second repeated send");
+    let message1 = send1.message().expect("message occurrence");
+    assert_eq!(message1.node(), message0.node(), "same static send node");
+    assert_eq!(
+        message1.path(),
+        message0.path(),
+        "same repeated thread path"
+    );
+    assert_eq!(message1.ordinal(), 1);
+    let second_occurrence_key = loop_system
+        .cycle_key_with_reads(&sent1, &loop_message_reads, &no_delivery_reads)
+        .unwrap();
+    assert_ne!(
+        first_occurrence_key, second_occurrence_key,
+        "the message-only read set preserves occurrence ordinals 0 and 1"
+    );
+    let (_, received1) = loop_system
+        .successors(&sent1)
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(transition, _)| transition.kind() == StepKind::Receive)
+        .expect("receive the second message");
+    let loop_keys = [
+        loop_system
+            .cycle_key_with_reads(&initial, &loop_message_reads, &no_delivery_reads)
+            .unwrap(),
+        loop_system
+            .cycle_key_with_reads(&received0, &loop_message_reads, &no_delivery_reads)
+            .unwrap(),
+        loop_system
+            .cycle_key_with_reads(&received1, &loop_message_reads, &no_delivery_reads)
+            .unwrap(),
+    ];
+    assert_eq!(
+        loop_keys.iter().collect::<BTreeSet<_>>().len(),
+        3,
+        "received ordinals 0 and 1 stay distinct from the initial state"
+    );
+    let loop_read_system = loop_system.with_cycle_read_sets(loop_message_reads, no_delivery_reads);
+    let bounded = fsl_analyze::model_check::retain(
+        &loop_read_system,
+        fsl_eval::simulation::Limits::default(),
+        fsl_foundation::IdentityLimits::default(),
+        Some(8),
+        || false,
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            bounded.outcome,
+            fsl_eval::simulation::Outcome::BoundReached { depth: 8, .. }
+        ),
+        "retained message ordinals have the specified finite-depth outcome: {:?}",
+        bounded.outcome
+    );
+}
+
+/// FR-205-AC-15: received-message bounds and unread message ordinals disappear
+/// from cycle keys, while the concrete send transitions retain distinct
+/// occurrence ordinals. EN-1 proves the unchanged model claim by closure.
+#[trace("TC-650", "FR-205-AC-15")]
+#[test]
+fn loop_received_message_ordinals_canonicalize_and_en1_closes() {
+    let channel = "channel ch from w to w carries Boolean ordering fifo by (m: Boolean) \
+                   { true } delivery exactly-once-premise capacity 1 overflow block;";
+    let run = "repeat Loop by w visible () while { true } sequence Body { \
+               send Snd via ch as (s: Boolean) { s }; \
+               receive Rcv via ch of Snd as (r: Boolean) { r }; }";
+    let body = contracts("self.v <= 1")
+        + &protocol("Loop", channel, run, "d")
+        + &claim("always holds(k.v = 0)").replace("using tb over", "using t0 over");
+    let case = Case::new(&body);
+    let system = crate::fill::sc_system(&case.subject("Loop"));
+    let mut state = system.initial().remove(0);
+    let mut loop_states = vec![state.clone()];
+    let mut sent_states = Vec::new();
+    let mut send_identities = Vec::new();
+    for _ in 0..2 {
+        let (send, sent) = system
+            .successors(&state)
+            .unwrap()
+            .successors
+            .into_iter()
+            .find(|(transition, _)| transition.kind() == StepKind::Send)
+            .expect("the repeated send is enabled");
+        send_identities.push(send.message().expect("send message").ordinal());
+        sent_states.push(sent.clone());
+        let (_, received) = system
+            .successors(&sent)
+            .unwrap()
+            .successors
+            .into_iter()
+            .find(|(transition, _)| transition.kind() == StepKind::Receive)
+            .expect("the queued message is received");
+        state = received;
+        loop_states.push(state.clone());
+    }
+
+    assert_eq!(send_identities, [0, 1], "concrete sends remain distinct");
+    let concrete_keys: BTreeSet<_> = loop_states
+        .iter()
+        .map(|state| system.canonical_state_key(state).unwrap())
+        .collect();
+    assert_eq!(
+        concrete_keys.len(),
+        3,
+        "received-message next-delivery bounds and ordinal counters differ concretely"
+    );
+    let initial_cycle_key = system.loop_state_key(&loop_states[0]).unwrap();
+    for state in &loop_states {
+        assert_eq!(
+            system.loop_state_key(state).unwrap(),
+            initial_cycle_key,
+            "unread message ordinal and received-message bounds are canonicalized"
+        );
+    }
+    let sent_keys: BTreeSet<_> = sent_states
+        .iter()
+        .map(|state| system.canonical_state_key(state).unwrap())
+        .collect();
+    assert_eq!(sent_keys.len(), 2, "the concrete sent occurrences differ");
+    let sent_cycle_key = system.loop_state_key(&sent_states[0]).unwrap();
+    for state in &sent_states {
+        assert_eq!(
+            system.loop_state_key(state).unwrap(),
+            sent_cycle_key,
+            "post-send states retain one canonical queued-message identity"
+        );
+    }
+
+    let ModelCheckOutcome::Holds {
+        certificate: fsl_replay::ProofCertificate::Closure(_),
+        stats,
+    } = case.check("Loop", &CellV(is_zero))
+    else {
+        panic!("EN-1 should close the unread message loop");
+    };
+    assert!(stats.product_states < 100, "finite closure: {stats:?}");
 }
 
 #[trace("TC-650", "TC-525", "FR-205-AC-10", "FR-338-AC-26")]

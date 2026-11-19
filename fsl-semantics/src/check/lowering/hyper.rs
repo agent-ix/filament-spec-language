@@ -202,11 +202,11 @@ impl Lowering<'_> {
                     ),
                     MemberTerm::binding(
                         "preconditions",
-                        BindingValue::Group(GroupTerm::references(preconditions)),
+                        BindingValue::Group(GroupTerm::references_nodes(preconditions)),
                     ),
                     MemberTerm::binding(
                         "postconditions",
-                        BindingValue::Group(GroupTerm::references(postconditions)),
+                        BindingValue::Group(GroupTerm::references_nodes(postconditions)),
                     ),
                     MemberTerm::binding("implementation", implementation),
                 ])),
@@ -227,7 +227,7 @@ impl Lowering<'_> {
             invariants.sort();
             invariant_terms.push(MemberTerm::binding(
                 alias.clone(),
-                BindingValue::Group(GroupTerm::references(invariants)),
+                BindingValue::Group(GroupTerm::references_nodes(invariants)),
             ));
         }
 
