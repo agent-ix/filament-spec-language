@@ -25,6 +25,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-290
+    type: depends_on
 ---
 # FR-750: Run a hybrid item through its negotiated hybrid provider and settle what it returns
 
@@ -99,12 +101,13 @@ validated witness reproduces a trace, one `counterexamples` entry.
   does not run. An `UnsupportedConstruct` whose site or term the model does
   not have is an engine fault and settles `failed`
   `runtime_invariant`/`established-invariant-broken`.
-- `HybridAnswer::read_entry(entry, counterexamples, model)` SHALL read one
+- `HybridAnswer::read_entry(entry, counterexamples, graph, claim)` SHALL read one
   FSpec FR-331 hybrid result entry (its value, basis or cause, trace,
   counterexample and `certificate`) into a `HybridAnswer`, refusing an
   entry FSpec FR-331 refuses with that cause and pointer. It takes the
-  claim's `CheckedHybridModel` because every trace it reads is checked
-  against the model before it is kept (FR-250, FSpec FR-193 "Hybrid
+  checked package's graph and the `CheckedHybridClaim`, and reads the
+  claim's `CheckedHybridModel` (`model`) from them, because every trace it
+  reads is checked against the model before it is kept (FR-250, FSpec FR-193 "Hybrid
   trace"): mode and variable names become indices only through the model,
   and a trace that names no mode of it is refused at its pointer. It takes
   the frame's `counterexamples` array because a `refuted` entry's
@@ -114,7 +117,18 @@ validated witness reproduces a trace, one `counterexamples` entry.
   `/counterexample`. A `proved` entry reads into `Solved` by its `basis`,
   an `inconclusive` or `incomplete` entry into `Solved` by its `cause`, and
   an `unsupported` entry carrying the `expression-form` diagnostic into
-  `Unsupported`, its `detail`, `locus` included, read against `model`. Any other
+  `Unsupported`, its `detail` read against `model` and its `locus` resolved
+  through `graph`: a `Locus` `{node, occurrence}` names a package node, and
+  only the graph maps it to the `ExpressionSite` and `TermLocus` of the
+  model's flow, guard, reset, invariant or initial entry that holds it. The
+  locus is therefore read wherever the entry is read, and `read_entry`
+  never returns `NotRead` for an admitted `expression-form` entry. A
+  `locus` that names no term node of the named `mode`'s entry (for a flow,
+  of `variable`'s rate), or a `mode` or `variable` the model lacks, refuses
+  `invalid_result`/`invalid-value` at `/diagnostic/detail/locus`,
+  `/diagnostic/detail/mode` or `/diagnostic/detail/variable` (FSpec
+  FR-193): the construct is the provider's claim about the caller's model,
+  so an unresolvable one is a malformed result, not an engine fault. Any other
   admitted entry, such as `failed` with `tool-failure` or `unsupported`
   with `tool-unavailable`, is not a solver answer: `read_entry` returns
   `HybridEntryRefusal::NotRead` and the item takes FR-290's settlement of
@@ -138,7 +152,16 @@ validated witness reproduces a trace, one `counterexamples` entry.
   interval of the instant's root, with rational ends; `locus` is the FSpec
   FR-331 `Locus` (node and occurrence) of the term node that `at.locus`
   names in the checked package (FSpec FR-481); and `cause` is the
-  catalogued reason, `division-by-zero` for `DivisionByZero`. The plugin
+  FSpec FR-193 catalogued hybrid undefined reason, one-to-one
+  over `UndefinedCause`: `DivisionByZero` as `division-by-zero`,
+  `OutsideParameterRange` as `outside-parameter-range`,
+  `OutsideResultRange` as `outside-result-range` and `OutsideCaptureRange`
+  as `outside-capture-range`; the payload of the last three (function,
+  parameter, capture) is not written, because `locus` names the call or
+  capture term and replay recomputes it. The reader reads each spelling
+  back to its variant, taking that payload from the term `locus` names, and
+  refuses any other spelling `invalid_result`/`invalid-value` at
+  `/kind/cause`. The plugin
   reader SHALL read that form back, keeping a non-point `time` as the
   interval it read, so a provider's undefined-evaluation claim reaches
   FR-450 as a `Refuted` answer. The record's counterexample is always the
@@ -209,6 +232,36 @@ validated witness reproduces a trace, one `counterexamples` entry.
 - A provider that returns a certificate SHALL have it checked by FR-751
   before the record is written.
 
+### Replay refusals
+
+Every `HybridReplayRefusal` FR-450's replay functions return SHALL settle as
+the row below states, on the analyze path (the FR-621 outcome item) and on
+FR-098's replay path (the FSpec FR-323 `hybrid` row), and no refusal SHALL
+settle by a path the table does not name. Each settlement is the one its
+owning requirement already gives the same fact; the table assigns it.
+
+| Refusal | Analyze path (FR-621 item) | Replay path (FR-098, FSpec FR-323) |
+| --- | --- | --- |
+| `Trace(TraceRefusal)`: the trace breaks FSpec FR-193 "Hybrid trace" | the provider's entry is refused `invalid_result`/`invalid-value` at the trace member's pointer (FR-450), and the item takes FR-290's settlement of a refused result entry | the request is refused with the same code and cause at that member's pointer within the request's counterexample; no row is written |
+| `UnknownModel`: the claim names no hybrid model of the package | `failed`, `runtime_invariant`/`established-invariant-broken`, invariant `hybrid-claim-model`, naming the claim and the model index: the checked package's reader admits no claim whose `over` model it lacks (FSpec FR-322), so this is an evaluator fault, not provider or caller input | the request ends as an internal failure with the same code and invariant, exit `30`; no row is written |
+| `Expansion(UnreachableFunction)`, `Expansion(UnsupportedBodyForm)`: a called function is missing or its checked body holds a form outside the hybrid expression forms | `failed`, `runtime_invariant`/`established-invariant-broken`, invariant `hybrid-call-expansion`, naming the function and node: S3 refuses a hybrid expression whose call is unresolved or whose body leaves FSpec FR-193 "Continuous values and expressions" | internal failure, as for `UnknownModel` |
+| `Exact(IllKindedTerm)`: a Boolean read as a number or a number as a Boolean | `failed`, `runtime_invariant`/`established-invariant-broken`, invariant `hybrid-term-kind`: S3 refuses such a term `ill_typed`/`type-mismatch` (FSpec FR-193) | internal failure, as for `UnknownModel` |
+| `Exact(ActivationState)`, `Exact(NondeterministicReset)`, `Exact(RecursiveCall)`: a claim form exact replay does not decide | not a refusal: exact replay SHALL return `NotExact` for these forms (FR-450 "Exact replay", FSpec FR-193: such a trace is replayed statically only), so a `solver-inconclusive` trace stays `inconclusive`, `SolverInconclusive{trace, replay}` with `exact` `{"outcome": "not-exact"}`, a provider's `refuted` entry settles `inconclusive`, `ReplayParity(DisagreementCause::HybridTrace(NotExact{counterexample}))`, and an accepted FSpec FR-652 `validated-witness` certificate still refutes | the `hybrid` row settles `inconclusive` with the `hybrid-trace` `not-exact` disagreement |
+| `ResourceExhausted { counter: WorkUnits }` | FR-450 "Settlement": `incomplete`, `Incomplete(LimitReached{limit: work_units, value: <configured bound>, setting: accounting.work_units})`, no counterexample, no verdict | the `hybrid` row settles `incomplete` with that `limit` |
+
+`HybridReplayRefusal::UnsupportedCounterexampleKind` SHALL NOT exist. Every
+counterexample kind FSpec FR-193 admits (`formula` and the FSpec FR-364
+`undefined-evaluation` envelope) SHALL be exactly replayed, as "The
+in-process provider interface" reads a provider's undefined-evaluation
+claim into `Refuted`; a kind outside that set is refused by the reader
+before replay (FSpec FR-331's schema). A provider's claimed kind agrees with
+the reproduced one when both are `formula`, or both are
+`undefined-evaluation` with equal `where.position`, equal `where.locus`,
+equal `cause` spelling and a provider `where.time` interval that contains
+the reproduced instant; a reproduced kind that disagrees with the claim is
+`NotReproduced` (FR-450), and the record's counterexample is always the one
+replay reproduced.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -223,7 +276,10 @@ validated witness reproduces a trace, one `counterexamples` entry.
 | FR-750-AC-8 | An in-process fixture answering `Refuted` with the FR-450-AC-2 point trace against `always [0, 12] holds(h.v > 0)` settles `refuted` with one `HybridCounterexample`; the same answer with `before` `v = 1` settles `inconclusive`, `ReplayParity(DisagreementCause::HybridTrace(NotReproduced{counterexample}))` carrying the fixture's complete counterexample, never `SolverInconclusive`; and a `Solved` `Unknown(Some(trace))` with that trace settles `SolverInconclusive{trace, replay}`. | Test (TC-3035) |
 | FR-750-AC-9 | Over `Braking` against `always [0, 12] holds(1 / (h.v - 5) != 0)`, the reproduced counterexample's `to_wire` is `{"type": "hybrid-counterexample", "kind": {"type": "undefined-evaluation", "where": {"position": 0, "time": {"lower": {"numerator": "15", "denominator": "2"}, "upper": {"numerator": "15", "denominator": "2"}}, "locus": L}, "cause": "division-by-zero"}, "trace": ...}`, `L` the division's term node, and the plugin reader reads it back to a `Refuted` answer that FR-450 reproduces; a reproduced instant that is irrational writes a `time` with rational ends `lower < upper` that contains it; the analyze outcome item carries that counterexample and never settles `failed` for an unspelled counterexample. | Test (TC-3035) |
 | FR-750-AC-10 | The refuted hybrid item `TooSlow` carries `replay` `{"target": {"state_clause": "TooSlow"}, "reproduced": true}`; the replay request built from it resolves to the hybrid claim in the recompiled package and FR-098 writes the FSpec FR-323 `hybrid` row `reproduced-with-evaluated-witness`; the same request with a non-reproducing trace writes `inconclusive` with the `hybrid-trace` disagreement. | Test (TC-3035) |
-| FR-750-AC-11 | `read_entry(entry, counterexamples, model)` reads a `refuted` entry whose `counterexample` is 0 from `counterexamples[0]` against `model` into `Refuted`; `counterexample` 1 with one entry refuses `invalid_result`/`invalid-value` at `/counterexample`; a `solver-inconclusive` trace naming a mode `Halted` the model lacks refuses `invalid_result`/`invalid-value` at `/cause/trace/start/mode`; a `failed` `tool-failure` entry returns `NotRead` and the item settles `failed` by FR-290. | Test (TC-3035) |
+| FR-750-AC-11 | `read_entry(entry, counterexamples, graph, claim)` reads a `refuted` entry whose `counterexample` is 0 from `counterexamples[0]` against `model` into `Refuted`; `counterexample` 1 with one entry refuses `invalid_result`/`invalid-value` at `/counterexample`; a `solver-inconclusive` trace naming a mode `Halted` the model lacks refuses `invalid_result`/`invalid-value` at `/cause/trace/start/mode`; a `failed` `tool-failure` entry returns `NotRead` and the item settles `failed` by FR-290. | Test (TC-3035) |
+| FR-750-AC-12 | Each `HybridReplayRefusal` settles by its row of "Replay refusals" on both paths: a provider `refuted` trace whose `loop_to` is past its last state is refused `invalid_result`/`invalid-value` at `/loop` (FR-450); a claim whose model index the graph lacks, a call to a function index the package lacks and an ill-kinded term each settle `failed`, `runtime_invariant`/`established-invariant-broken` with invariants `hybrid-claim-model`, `hybrid-call-expansion` and `hybrid-term-kind`, and end a replay request with exit `30` and no row; FR-193-AC-15's `on each` claim under `model-time` reading `v0`, with a provider `refuted` point trace, settles `inconclusive`, `ReplayParity(HybridTrace(NotExact{counterexample}))` and as a `solver-inconclusive` trace stays `SolverInconclusive` with `exact` `not-exact`, and its replay row is `inconclusive` with the `not-exact` disagreement; FR-450-AC-7's trace under a `work_units` bound of 10 settles `incomplete`, `LimitReached{work_units, 10, accounting.work_units}` and its replay row `incomplete`; no row settles `failed` for any of these except the three invariant rows. | Test (TC-3037) |
+| FR-750-AC-13 | `read_entry(entry, counterexamples, graph, claim)` reads FR-750-AC-7's process `expression-form` entry into `Unsupported` with the flow site of `v` in `Moving` and the division's `TermLocus`, never `NotRead`; the same entry with `locus` naming a guard node of `Moving`, or a node outside the model, refuses `invalid_result`/`invalid-value` at `/diagnostic/detail/locus`, and with `mode` `Halted` at `/diagnostic/detail/mode`. | Test (TC-3037) |
+| FR-750-AC-14 | `to_wire` writes `division-by-zero`, `outside-parameter-range`, `outside-result-range` and `outside-capture-range` for the four `UndefinedCause` variants (a `drag(s: Rational[-100, 100])` call reached with `s = 120`, its result bounded by a `Rational[0, 1]` result type exceeded, and a capture `v0: Rational[0, 10]` initialized at 12), and the reader reads each back to the same variant with the payload taken from the term `locus` names; a `cause` `undefined` refuses `invalid_result`/`invalid-value` at `/kind/cause`. A provider's `undefined-evaluation` claim at the reproduced position, locus and cause whose `time` contains the reproduced irrational instant settles `refuted`, and the same claim with another `cause` or a `time` that excludes the instant settles `inconclusive`, `ReplayParity(HybridTrace(NotReproduced{..}))`. | Test (TC-3037) |
 
 ## Dependencies
 
