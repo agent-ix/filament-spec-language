@@ -415,9 +415,9 @@ fn each_temporal_clause_refusal_has_its_class() {
 #[trace("TC-861", "FR-341-AC-6")]
 #[test]
 fn a_prohibited_form_is_prohibited() {
-    let refusal = check(vec![CheckCause::ProtocolReference(Box::new(
-        ProtocolReferenceCause::Repeated { first: location() },
-    ))]);
+    let refusal = check(vec![CheckCause::ProfileProhibitedOperator(
+        fsl_forms::BinaryOperator::Divide,
+    )]);
     let classified = classify_refusal(&refusal);
     assert_eq!(classified.class, RefinementClass::Prohibited);
     assert_eq!(
