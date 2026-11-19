@@ -470,7 +470,6 @@ fn strict_mean_time_is_certified_over_boundary_regions() {
 #[trace("TC-2492", "FR-923-AC-1")]
 #[trace("FSpec-TC-1769", "FSpec-FR-752-AC-3")]
 #[test]
-#[ignore = "QSL-2156: delay distributions over every scheduler not implemented yet"]
 fn every_scheduler_discrete_delay_is_certified() {
     let world = retx(GUARD, true, TWO_DELAYS, &every_deadlines());
     let record = settle(&world, "Deadline");
