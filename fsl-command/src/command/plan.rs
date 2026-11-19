@@ -3,8 +3,8 @@
 //! member. [`request`] is its strict reader and [`outcome`] the writer of the
 //! `filament.verification-plan-outcome/v1` document.
 
-pub(crate) mod outcome;
-pub(crate) mod request;
+pub mod outcome;
+pub mod request;
 
 use super::{Result, RunCause};
 use serde_json::Value;

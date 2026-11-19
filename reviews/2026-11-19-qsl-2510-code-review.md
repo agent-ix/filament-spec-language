@@ -65,3 +65,21 @@ The reader is strict, small and follows the export reader's shape. The writer's 
 four places: the package route (FND-001), the sibling `decision` member (FND-002), `null` treated as
 present (FND-004) and the emit-only status (FND-005). The test does not assert `details.path`
 exactly (FND-003). Each is a small fix inside this PR. Not mergeable until they are fixed.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | high | The FND-006 fix (`pub` to `pub(crate)`) makes every unwired plan item dead code: `cargo clippy -p fsl-command --all-targets` now reports 11 new `dead_code` warnings in the diff (`Decision`, `StepStatus` and its methods, `StepDisposition`, `PlanRunOutcome` and its methods, `step_value`, `PlannedStep`, `Settled`, `settle_in_order`, `PlanRequest::effective_seed`/`close_by_plan`). CI runs `clippy ... -- -D warnings`, so these are new errors, and the house rule rules out `#[allow]`. Revert the visibility to `pub` (FND-006 then accepted-no-change) or wire the items | fsl-command/src/command/plan/outcome.rs:11-227; fsl-command/src/command/plan/request.rs:45-72 |
+| FND-008 | medium | `settle_in_order` settles steps in source order and only looks for blockers among steps it has already settled. FSpec FR-192 lets `depends` name a later step (it refuses only cycles) and has the coordinator dispatch topologically. A step whose prerequisite comes later in the source is therefore never blocked, and runs before its prerequisite. Settle in topological order, and keep `blocked_by` as the first unsatisfied prerequisite in source order. Not wired yet, but QSL-2511 would inherit it | fsl-command/src/command/plan/outcome.rs:227-264 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |
+| FND-005 | fixed | - |
+| FND-006 | rejected | withdrawn by the reviewer. Until QSL-2511 wires these items, `pub` is what keeps them clean under `-D warnings` without `#[allow]`; the `pub(crate)` fix produced FND-007 |

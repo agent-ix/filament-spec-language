@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 
 /// The decision of a `measured` step (FSpec FR-409).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Decision {
+pub enum Decision {
     /// The measurement met its acceptance bound.
     Accepted,
     /// The measurement missed it.
@@ -19,7 +19,7 @@ pub(crate) enum Decision {
 
 /// A step's closed status: the FSpec FR-331 result vocabulary plus `blocked`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum StepStatus {
+pub enum StepStatus {
     /// Proved.
     Proved,
     /// Refuted.
@@ -97,7 +97,7 @@ impl StepStatus {
 
 /// One plan node's disposition.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct StepDisposition {
+pub struct StepDisposition {
     /// The step name.
     pub name: String,
     /// The settled status.
@@ -115,7 +115,7 @@ pub(crate) struct StepDisposition {
 
 /// The plan run's whole outcome.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct PlanRunOutcome {
+pub struct PlanRunOutcome {
     /// The checked package identity.
     pub package: String,
     /// The selected plan's declared name.
@@ -206,37 +206,73 @@ fn step_value(step: &StepDisposition) -> Value {
 /// One plan node as the gate takes it: its name, method and `requires`
 /// prerequisites.
 #[derive(Clone, Debug)]
-pub(crate) struct PlannedStep {
+pub struct PlannedStep {
+    /// The step name.
     pub name: String,
+    /// The step's method.
     pub method: String,
+    /// The prerequisite step names (`depends`).
     pub requires: Vec<String>,
 }
 
 /// What an engine settled a step as.
 #[derive(Clone, Debug)]
-pub(crate) struct Settled {
+pub struct Settled {
+    /// The settled status.
     pub status: StepStatus,
+    /// The evidence kind produced, if any.
     pub evidence: Option<String>,
+    /// The step's FR-331 result entry.
     pub result: Option<Value>,
 }
 
-/// Settle `steps` in source order (FSpec FR-824 "Outcome document"): a step
-/// whose `requires` prerequisite is not satisfied is `blocked` by the first
-/// such prerequisite in source order, is not handed to `run` and gets no
-/// result; every other step is settled by `run`.
-pub(crate) fn settle_in_order(
+/// Settle `steps` in `requires` order (FSpec FR-824 "Outcome document"; FSpec
+/// FR-192 lets `depends` name a later step, so a step runs once its
+/// prerequisites have settled, the earliest ready step in source order first).
+/// A step whose prerequisite is not satisfied is `blocked` by the first such
+/// prerequisite in source order, is not handed to `run` and gets no result;
+/// every other step is settled by `run`. The dispositions come back in source
+/// order. A prerequisite cycle is refused upstream; were one to reach here its
+/// steps settle `blocked` by their first prerequisite.
+pub fn settle_by_requires(
     steps: &[PlannedStep],
     mut run: impl FnMut(&PlannedStep) -> Settled,
 ) -> Vec<StepDisposition> {
-    let mut settled: Vec<StepDisposition> = Vec::with_capacity(steps.len());
-    for step in steps {
-        let blocker = settled
+    let mut settled: Vec<Option<StepDisposition>> = vec![None; steps.len()];
+    let status_of = |settled: &[Option<StepDisposition>], name: &str| {
+        steps
             .iter()
-            .find(|earlier| {
-                step.requires.contains(&earlier.name) && !earlier.status.satisfies_requires()
+            .position(|step| step.name == name)
+            .and_then(|index| settled[index].as_ref().map(|done| done.status))
+    };
+    while settled.iter().any(Option::is_none) {
+        let ready = steps.iter().enumerate().find(|(index, step)| {
+            settled[*index].is_none()
+                && step.requires.iter().all(|name| {
+                    steps.iter().all(|other| other.name != *name)
+                        || status_of(&settled, name).is_some()
+                })
+        });
+        let (index, step) = match ready {
+            Some(found) => found,
+            None => match steps
+                .iter()
+                .enumerate()
+                .find(|(index, _)| settled[*index].is_none())
+            {
+                Some(found) => found,
+                None => break,
+            },
+        };
+        let blocker = steps
+            .iter()
+            .find(|other| {
+                step.requires.contains(&other.name)
+                    && status_of(&settled, &other.name)
+                        .is_none_or(|status| !status.satisfies_requires())
             })
-            .map(|earlier| earlier.name.clone());
-        let disposition = match blocker {
+            .map(|other| other.name.clone());
+        settled[index] = Some(match blocker {
             Some(name) => StepDisposition {
                 name: step.name.clone(),
                 status: StepStatus::Blocked,
@@ -256,10 +292,9 @@ pub(crate) fn settle_in_order(
                     result: outcome.result,
                 }
             }
-        };
-        settled.push(disposition);
+        });
     }
-    settled
+    settled.into_iter().flatten().collect()
 }
 
 #[cfg(test)]
@@ -301,7 +336,7 @@ mod tests {
         mut engine: impl FnMut(&str) -> Settled,
     ) -> (Vec<StepDisposition>, Vec<String>) {
         let mut handed = Vec::new();
-        let dispositions = settle_in_order(steps, |step| {
+        let dispositions = settle_by_requires(steps, |step| {
             handed.push(step.name.clone());
             engine(&step.name)
         });
@@ -438,6 +473,29 @@ mod tests {
                 if dependent_runs { "proved" } else { "blocked" }
             );
         }
+    }
+
+    #[test]
+    #[trace("FSpec-TC-2045", "FSpec-FR-824-AC-4")]
+    fn a_step_requiring_a_later_step_waits_for_it_and_is_blocked_when_it_fails() {
+        let steps = [planned("early", &["late"]), planned("late", &[])];
+        let (dispositions, handed) = gate(&steps, |_| {
+            settled(StepStatus::Refuted, Some("refutation"), json!({}))
+        });
+        assert_eq!(
+            handed,
+            ["late"],
+            "early is not handed on before late settles"
+        );
+        assert_eq!(dispositions[0].name, "early");
+        assert_eq!(dispositions[0].status, StepStatus::Blocked);
+        assert_eq!(dispositions[0].blocked_by.as_deref(), Some("late"));
+        assert_eq!(dispositions[1].status, StepStatus::Refuted);
+        let (dispositions, handed) = gate(&steps, |_| {
+            settled(StepStatus::Proved, Some("proof"), json!({}))
+        });
+        assert_eq!(handed, ["late", "early"]);
+        assert_eq!(dispositions[0].status, StepStatus::Proved);
     }
 
     #[test]

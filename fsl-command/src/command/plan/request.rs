@@ -13,7 +13,7 @@ const MEMBERS: [&str; 6] = ["plan", "emit", "execute", "initial", "seed", "docum
 /// Which run route carries the request: FSpec FR-824 "Selection" lets only a
 /// run over a selected checked package carry `document`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Route {
+pub enum Route {
     /// A source run: the program is compiled and the plan documents emitted.
     Source,
     /// A run over a selected checked package: no source is compiled, so the
@@ -23,7 +23,7 @@ pub(crate) enum Route {
 
 /// One verification plan request, read strictly.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PlanRequest {
+pub struct PlanRequest {
     /// The bare or qualified declared plan name, when given.
     pub plan: Option<String>,
     /// Whether the outcome carries the plan document (default `false`).
@@ -169,7 +169,7 @@ fn document(object: &Map<String, Value>, route: Route) -> Result<Option<String>>
 /// `unknown-member`, `wrong-value-kind`, `invalid-value` (`emit` and
 /// `execute` both `false`, at `/execute`; a `seed` outside the unsigned
 /// 64-bit range), or `missing-member` (`document` on a package route).
-pub(crate) fn read(member: &Value, route: Route) -> Result<PlanRequest> {
+pub fn read(member: &Value, route: Route) -> Result<PlanRequest> {
     let Some(object) = member.as_object() else {
         return Err(refuse("", "wrong-value-kind", "expected an object"));
     };

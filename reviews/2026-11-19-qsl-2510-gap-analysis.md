@@ -59,3 +59,13 @@ exercised. The gaps are trace accuracy (FND-001, FND-004: tags that claim coordi
 the writer tests do not exercise), the untested `close_by_plan` and package route (FND-002), and
 stale ignore reasons (FND-003). The newly ruled FR-1038-AC-3 / FSpec FR-824-AC-6 has no tagged
 tests (FND-005).
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | deferred | the other-package-identity `invalid-value` at `/document` needs the plan document's `package`, and the format comes from QSL-2509, which is not on main. The lead must add the clause to an AC of QSL-2509 or QSL-2511. Every other AC-3 clause is now tested |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |
+| FND-005 | fixed | - |
