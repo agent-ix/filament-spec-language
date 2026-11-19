@@ -3,11 +3,12 @@
 //! check nodes are normalized to this one arena before printing, so aliases
 //! and source trivia cannot affect labels.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use filament_checked::node::{
-    Arithmetic, CheckedLiteral, Connective, IntegerDivisionOperator, NodeKind,
+    Arithmetic, CheckedLiteral, Connective, IntegerDivisionOperator, NodeKind, Visit,
 };
+use filament_exact::IeeeWidth;
 use filament_exact::{CollectionKind, NodeKey, Value, ValueType};
 use filament_semantic_value::declaration::EqualityOperator;
 use fsl_semantics::check::{CheckedNode, NodeId};
@@ -22,25 +23,13 @@ pub(super) struct CanonicalRows {
     declarations: BTreeMap<NodeKey, String>,
     functions: BTreeMap<usize, String>,
     record_fields: BTreeMap<NodeKey, Vec<String>>,
+    union_members: BTreeMap<NodeKey, Vec<String>>,
 }
 
 /// A checked expression arena with children remapped to its own indices.
 pub(super) struct CheckedExpression {
     nodes: Vec<ExpressionNode>,
     root: usize,
-}
-
-/// A canonical printer refusal differs from an internal rendering fault:
-/// checked case arms do not retain their authored binder names.
-pub(super) enum CanonicalError {
-    UnsupportedCase,
-    Fault(String),
-}
-
-impl From<String> for CanonicalError {
-    fn from(message: String) -> Self {
-        Self::Fault(message)
-    }
 }
 
 impl CheckedExpression {
@@ -89,250 +78,727 @@ impl CheckedExpression {
 
     /// Render one checked condition using the FR-003 expression precedence
     /// rules and declaration keys held by the checked tree.
+    ///
+    /// Every binder prints under the declared name its checked binding site
+    /// carries (FR-931 "Binders"), and a local read resolves through the
+    /// binding sites that enclose it, innermost first. The same node under
+    /// two scopes is rendered once per scope.
     pub(super) fn render(
         &self,
         binders: &[String],
         rows: &CanonicalRows,
-    ) -> Result<String, CanonicalError> {
-        let mut rendered: Vec<Option<(String, u8)>> = vec![None; self.nodes.len()];
-        for (index, node) in self.nodes.iter().enumerate() {
-            let child = |child: usize| {
-                rendered
-                    .get(child)
-                    .and_then(Option::as_ref)
-                    .map(|(text, _)| text.clone())
-                    .ok_or_else(|| "checked expression operands precede their node".to_owned())
-            };
-            let child_prec = |child: usize| {
-                rendered
-                    .get(child)
-                    .and_then(Option::as_ref)
-                    .map(|(_, precedence)| *precedence)
-                    .ok_or_else(|| "checked expression operands precede their node".to_owned())
-            };
-            let (text, precedence) = match &node.kind {
-                NodeKind::Literal(literal) => (literal_text(&literal.0, &rows.declarations)?, 10),
-                NodeKind::Coerce(operand, _) => (child(*operand)?, child_prec(*operand)?),
-                NodeKind::Local(slot) => (
-                    binders
-                        .get(*slot)
-                        .cloned()
-                        .ok_or_else(|| "checked local has a clause binder".to_owned())?,
-                    10,
-                ),
-                // Checked field and attribute names are already alias-free; no selected
-                // row is needed to spell them (source records and object attributes have none).
-                NodeKind::Attribute {
-                    reference, field, ..
-                } => (format!("{}.{}", child(*reference)?, field.name), 9),
-                NodeKind::Field { operand, field, .. } => {
-                    (format!("{}.{}", child(*operand)?, field.name()), 9)
-                }
-                NodeKind::If {
-                    condition,
-                    then,
-                    otherwise,
-                } => (
-                    format!(
-                        "if {} then {} else {}",
-                        child(*condition)?,
-                        child(*then)?,
-                        child(*otherwise)?
-                    ),
-                    1,
-                ),
-                NodeKind::Contains(collection, value) => (
-                    format!("contains({}, {})", child(*collection)?, child(*value)?),
-                    10,
-                ),
-                NodeKind::Collection {
-                    collection_type,
-                    elements,
-                } => {
-                    let constructor = match collection_type.kind() {
-                        CollectionKind::Sequence => "sequence",
-                        CollectionKind::Set => "set",
-                        CollectionKind::Bag => "bag",
-                        CollectionKind::OrderedSet => "ordered_set",
-                    };
-                    let elements = elements
-                        .iter()
-                        .map(|element| child(*element))
-                        .collect::<Result<Vec<_>, _>>()?
-                        .join(", ");
-                    (format!("{constructor}[{elements}]"), 10)
-                }
-                NodeKind::Call {
-                    function,
-                    arguments,
-                } => {
-                    let function = rows.functions.get(function).ok_or_else(|| {
-                        "checked call has a canonical declaration identity".to_owned()
-                    })?;
-                    let arguments = arguments
-                        .iter()
-                        .map(|argument| child(*argument))
-                        .collect::<Result<Vec<_>, _>>()?
-                        .join(", ");
-                    (format!("{function}({arguments})"), 10)
-                }
-                NodeKind::ImportedCall {
-                    callee, arguments, ..
-                } => {
-                    let function = rows.declarations.get(callee).ok_or_else(|| {
-                        "imported call has a canonical declaration identity".to_owned()
-                    })?;
-                    let arguments = arguments
-                        .iter()
-                        .map(|argument| child(*argument))
-                        .collect::<Result<Vec<_>, _>>()?
-                        .join(", ");
-                    (format!("{function}({arguments})"), 10)
-                }
-                NodeKind::Record { declaration, slots } => {
-                    let identity = rows.declarations.get(declaration).ok_or_else(|| {
-                        "record constructor has a canonical declaration identity".to_owned()
-                    })?;
-                    let fields = rows.record_fields.get(declaration).ok_or_else(|| {
-                        "record constructor has checked declaration field order".to_owned()
-                    })?;
-                    if fields.len() != slots.len() {
-                        return Err("record constructor slots match its declaration"
-                            .to_owned()
-                            .into());
-                    }
-                    let members = fields
-                        .iter()
-                        .zip(slots)
-                        .filter_map(|(field, slot)| match slot {
-                            filament_checked::node::RecordSlot::Absent => None,
-                            filament_checked::node::RecordSlot::Null => {
-                                Some(Ok(format!("{field}: none")))
-                            }
-                            filament_checked::node::RecordSlot::Present(value) => {
-                                Some(child(*value).map(|value| format!("{field}: {value}")))
-                            }
-                        })
-                        .collect::<Result<Vec<_>, _>>()?
-                        .join(", ");
-                    (format!("{identity} {{ {members} }}"), 10)
-                }
-                NodeKind::Case { .. } => {
-                    return Err(CanonicalError::UnsupportedCase);
-                }
-                NodeKind::Order(operator, _, left, right) => binary(
-                    child(*left)?,
-                    child_prec(*left)?,
-                    ordering_text(*operator),
-                    child(*right)?,
-                    child_prec(*right)?,
-                    4,
-                    false,
-                ),
-                NodeKind::Equality(operator, _, left, right) => binary(
-                    child(*left)?,
-                    child_prec(*left)?,
-                    equality_text(*operator),
-                    child(*right)?,
-                    child_prec(*right)?,
-                    4,
-                    false,
-                ),
-                NodeKind::Arithmetic(operator, left, right) => {
-                    let (operator, precedence, right_associative) = match operator {
-                        Arithmetic::Add => ("+", 6, false),
-                        Arithmetic::Subtract => ("-", 6, false),
-                        Arithmetic::Multiply => ("*", 7, false),
-                    };
-                    binary(
-                        child(*left)?,
-                        child_prec(*left)?,
-                        operator,
-                        child(*right)?,
-                        child_prec(*right)?,
-                        precedence,
-                        right_associative,
-                    )
-                }
-                NodeKind::IntegerDivision {
-                    operator,
-                    left,
-                    right,
-                    ..
-                } => binary(
-                    child(*left)?,
-                    child_prec(*left)?,
-                    match operator {
-                        IntegerDivisionOperator::Div => "div",
-                        IntegerDivisionOperator::Rem => "rem",
-                        IntegerDivisionOperator::Mod => "mod",
-                    },
-                    child(*right)?,
-                    child_prec(*right)?,
-                    7,
-                    false,
-                ),
-                NodeKind::Connective(operator, _, left, right) => {
-                    let (operator, precedence, right_associative) = match operator {
-                        Connective::And => ("and", 3, false),
-                        Connective::Or => ("or", 2, false),
-                        Connective::Implies => ("implies", 1, true),
-                    };
-                    binary(
-                        child(*left)?,
-                        child_prec(*left)?,
-                        operator,
-                        child(*right)?,
-                        child_prec(*right)?,
-                        precedence,
-                        right_associative,
-                    )
-                }
-                NodeKind::Not(operand) => unary("not", child(*operand)?, child_prec(*operand)?, 8),
-                NodeKind::Negate(operand) => {
-                    unary("- ", child(*operand)?, child_prec(*operand)?, 8)
-                }
-                NodeKind::Size(operand) => (format!("size({})", child(*operand)?), 10),
-                NodeKind::PopulationObjects { population } => (declaration_text(population), 10),
-                NodeKind::NamedPopulation { population, .. } => (declaration_text(population), 10),
-                NodeKind::AllInstances { population } => {
-                    let population = child(*population)?;
-                    let type_argument = match &node.value_type {
-                        ValueType::Collection(collection) => match collection.element() {
-                            ValueType::Reference(identity) => identity
-                                .owner_chain()
-                                .last()
-                                .map(|key| declaration_uri(key.package(), key.node())),
-                            _ => None,
-                        },
-                        _ => None,
-                    };
-                    let prefix = type_argument
-                        .map(|argument| format!("allInstances<{argument}>"))
-                        .unwrap_or_else(|| "allInstances".to_owned());
-                    (format!("{prefix}({population})"), 10)
-                }
-                _ => {
-                    return Err("checked expression has no canonical printer for this form"
-                        .to_owned()
-                        .into());
-                }
-            };
-            rendered[index] = Some((text, precedence));
+    ) -> Result<String, String> {
+        let mut scopes = Vec::<Scope>::new();
+        let mut root_env: Env = None;
+        for (slot, name) in binders.iter().enumerate() {
+            scopes.push(Scope {
+                parent: root_env,
+                slot,
+                entry: Entry::Name(name.clone()),
+            });
+            root_env = Some(scopes.len() - 1);
         }
-        rendered
-            .get(self.root)
-            .and_then(Option::as_ref)
+        let mut printer = Printer {
+            expression: self,
+            rows,
+            scopes,
+            memo: HashMap::new(),
+            plans: HashMap::new(),
+            reads: HashMap::new(),
+        };
+        let mut pending = vec![Step::Enter(self.root, root_env)];
+        while let Some(step) = pending.pop() {
+            match step {
+                Step::Enter(index, env) => {
+                    let key = (index, env);
+                    if printer.memo.contains_key(&key) || printer.plans.contains_key(&key) {
+                        continue;
+                    }
+                    let plan = printer.plan(index, env)?;
+                    pending.push(Step::Exit(index, env));
+                    pending.extend(
+                        plan.iter()
+                            .rev()
+                            .map(|(child, child_env)| Step::Enter(*child, *child_env)),
+                    );
+                    printer.plans.insert(key, plan);
+                }
+                Step::Exit(index, env) => {
+                    let key = (index, env);
+                    if printer.memo.contains_key(&key) {
+                        continue;
+                    }
+                    let printed = printer.print(index, env)?;
+                    if let Some(reads) = printed.reads {
+                        printer.reads.insert(key, reads);
+                    }
+                    printer.memo.insert(key, (printed.text, printed.precedence));
+                }
+            }
+        }
+        printer
+            .memo
+            .get(&(self.root, root_env))
             .map(|(text, _)| text.clone())
-            .ok_or_else(|| "checked expression root is rendered".to_owned().into())
+            .ok_or_else(|| "checked expression root is rendered".to_owned())
     }
+}
+
+/// One scope: the binding site's slot and what a read of it prints as.
+struct Scope {
+    parent: Env,
+    slot: usize,
+    entry: Entry,
+}
+
+enum Entry {
+    /// A binder printed under its declared name.
+    Name(String),
+    /// A checker-made IEEE ordering operand binder: a read of it prints the
+    /// expression it holds (FR-931 "Binders").
+    Operand { value: Key },
+}
+
+/// The innermost enclosing scope, `None` outside every binding site.
+type Env = Option<usize>;
+/// A node rendered under one scope.
+type Key = (usize, Env);
+
+enum Step {
+    Enter(usize, Env),
+    Exit(usize, Env),
+}
+
+/// FR-397 "Operand binders": the declared name of the checker's own binder.
+const CHECKER_OPERAND: &str = "#ieee_operand";
+
+/// A node's text, its precedence, and the checker binders it still needs a
+/// `let` for.
+struct Printed {
+    text: String,
+    precedence: u8,
+    reads: Option<BTreeSet<usize>>,
+}
+
+struct Printer<'a> {
+    expression: &'a CheckedExpression,
+    rows: &'a CanonicalRows,
+    scopes: Vec<Scope>,
+    memo: HashMap<Key, (String, u8)>,
+    plans: HashMap<Key, Vec<Key>>,
+    /// For a checker operand `let` chain or the comparison it wraps: the
+    /// checker binders (scope indices) its reads still need a `let` for.
+    reads: HashMap<Key, BTreeSet<usize>>,
+}
+
+impl Printer<'_> {
+    fn bind(&mut self, env: Env, slot: usize, entry: Entry) -> Env {
+        self.scopes.push(Scope {
+            parent: env,
+            slot,
+            entry,
+        });
+        Some(self.scopes.len() - 1)
+    }
+
+    fn lookup(&self, env: Env, slot: usize) -> Option<usize> {
+        let mut cursor = env;
+        while let Some(index) = cursor {
+            let scope = self.scopes.get(index)?;
+            if scope.slot == slot {
+                return Some(index);
+            }
+            cursor = scope.parent;
+        }
+        None
+    }
+
+    /// The nodes `index` renders from, each with the scope it is read under,
+    /// in the order the binding sites' operands evaluate.
+    fn plan(&mut self, index: usize, env: Env) -> Result<Vec<Key>, String> {
+        let node = self
+            .expression
+            .nodes
+            .get(index)
+            .ok_or_else(|| "checked expression operands are retained".to_owned())?;
+        // FR-931 "Binders": the checker's ordering composition prints as one
+        // comparison, so only its two operands are rendered.
+        if let Some((lesser, greater, _)) = self.composition(index, env) {
+            return Ok(vec![(lesser, env), (greater, env)]);
+        }
+        Ok(match &node.kind {
+            NodeKind::Let {
+                slot,
+                name,
+                value,
+                body,
+            } => {
+                let entry = if name == CHECKER_OPERAND {
+                    Entry::Operand {
+                        value: (*value, env),
+                    }
+                } else {
+                    Entry::Name(name.clone())
+                };
+                let inner = self.bind(env, *slot, entry);
+                vec![(*value, env), (*body, inner)]
+            }
+            NodeKind::Query {
+                slot,
+                name,
+                source,
+                body,
+                ..
+            } => {
+                let inner = self.bind(env, *slot, Entry::Name(name.clone()));
+                vec![(*source, env), (*body, inner)]
+            }
+            NodeKind::Fold {
+                accumulator,
+                binder,
+                accumulator_name,
+                binder_name,
+                source,
+                step,
+                identity,
+            } => {
+                let inner = self.bind(env, *accumulator, Entry::Name(accumulator_name.clone()));
+                let inner = self.bind(inner, *binder, Entry::Name(binder_name.clone()));
+                let mut plan = vec![(*source, env)];
+                plan.extend(identity.map(|identity| (identity, env)));
+                plan.push((*step, inner));
+                plan
+            }
+            NodeKind::Seq {
+                slot,
+                name,
+                low,
+                high,
+                body,
+            } => {
+                let inner = self.bind(env, *slot, Entry::Name(name.clone()));
+                vec![(*low, env), (*high, env), (*body, inner)]
+            }
+            NodeKind::Case {
+                scrutinee, arms, ..
+            } => {
+                let mut plan = vec![(*scrutinee, env)];
+                for arm in arms {
+                    if arm.names.len() != arm.binders.len() {
+                        return Err("checked case arm names every payload binder".to_owned());
+                    }
+                    let mut inner = env;
+                    for (slot, name) in arm.binders.iter().zip(&arm.names) {
+                        inner = self.bind(inner, *slot, Entry::Name(name.clone()));
+                    }
+                    plan.push((arm.body, inner));
+                }
+                plan
+            }
+            kind => {
+                let mut children = Vec::new();
+                let _ = kind.map_ref(
+                    |child| {
+                        children.push(*child);
+                    },
+                    Clone::clone,
+                );
+                children.into_iter().map(|child| (child, env)).collect()
+            }
+        })
+    }
+
+    fn text_of(&self, key: Key) -> Result<&(String, u8), String> {
+        self.memo
+            .get(&key)
+            .ok_or_else(|| "checked expression operands precede their node".to_owned())
+    }
+
+    /// Text and precedence of a plain operand read under the node's scope.
+    fn operand(&self, index: usize, env: Env) -> Result<(String, u8), String> {
+        self.text_of((index, env)).cloned()
+    }
+
+    /// `C(l, g)` / `C=(l, g)` of FR-931 "Binders": the operands `l` and `g`
+    /// and whether the composition is strict, when `index` is the checker's
+    /// IEEE ordering composition over locals and literals.
+    fn composition(&self, index: usize, env: Env) -> Option<(usize, usize, bool)> {
+        let nodes = &self.expression.nodes;
+        let kind = |index: usize| nodes.get(index).map(|node| &node.kind);
+        let NodeKind::Connective(Connective::And, _, ordinary, relation) = kind(index)? else {
+            return None;
+        };
+        let NodeKind::Connective(Connective::And, _, left_ordinary, right_ordinary) =
+            kind(*ordinary)?
+        else {
+            return None;
+        };
+        let NodeKind::IeeeNumericEquality(l0, l1) = kind(*left_ordinary)? else {
+            return None;
+        };
+        let NodeKind::IeeeNumericEquality(g0, g1) = kind(*right_ordinary)? else {
+            return None;
+        };
+        let (total, equal, strict) = match kind(*relation)? {
+            NodeKind::Connective(Connective::And, _, total, apart) => {
+                let NodeKind::Not(equal) = kind(*apart)? else {
+                    return None;
+                };
+                (*total, *equal, true)
+            }
+            NodeKind::Connective(Connective::Or, _, total, equal) => (*total, *equal, false),
+            _ => return None,
+        };
+        let NodeKind::IeeeTotalOrder(_, l2, g2) = kind(total)? else {
+            return None;
+        };
+        let NodeKind::IeeeNumericEquality(l3, g3) = kind(equal)? else {
+            return None;
+        };
+        let is_operand =
+            |index: usize| matches!(kind(index), Some(NodeKind::Local(_) | NodeKind::Literal(_)));
+        if !is_operand(*l0) || !is_operand(*g0) {
+            return None;
+        }
+        let operands = [(*l0, *l1, *l2, *l3), (*g0, *g1, *g2, *g3)];
+        for (a, b, c, d) in operands {
+            for other in [b, c, d] {
+                if !self.same_operand(a, other, env) {
+                    return None;
+                }
+            }
+        }
+        Some((*l0, *g0, strict))
+    }
+
+    /// Whether `a` and `b` are the same local read or the same literal.
+    fn same_operand(&self, a: usize, b: usize, env: Env) -> bool {
+        let nodes = &self.expression.nodes;
+        match (nodes.get(a).map(|n| &n.kind), nodes.get(b).map(|n| &n.kind)) {
+            (Some(NodeKind::Local(x)), Some(NodeKind::Local(y))) => {
+                self.lookup(env, *x) == self.lookup(env, *y)
+            }
+            (Some(NodeKind::Literal(x)), Some(NodeKind::Literal(y))) => x == y,
+            _ => false,
+        }
+    }
+
+    /// The checker binder a local read reads, if it reads one.
+    fn operand_binder(&self, index: usize, env: Env) -> Option<usize> {
+        let NodeKind::Local(slot) = &self.expression.nodes.get(index)?.kind else {
+            return None;
+        };
+        let scope = self.lookup(env, *slot)?;
+        matches!(self.scopes[scope].entry, Entry::Operand { .. }).then_some(scope)
+    }
+
+    fn print(&self, index: usize, env: Env) -> Result<Printed, String> {
+        let rows = self.rows;
+        let node = &self.expression.nodes[index];
+        let plan =
+            self.plans.get(&(index, env)).cloned().ok_or_else(|| {
+                "checked expression node is planned before it is printed".to_owned()
+            })?;
+        let rendered = |child: usize| self.operand(child, env);
+        let child = |child: usize| rendered(child).map(|(text, _)| text);
+        let child_prec = |child: usize| rendered(child).map(|(_, precedence)| precedence);
+        let planned = |position: usize| -> Result<(String, u8), String> {
+            let key = plan
+                .get(position)
+                .copied()
+                .ok_or_else(|| "checked binding site operands are planned".to_owned())?;
+            self.text_of(key).cloned()
+        };
+        let mut reads = None;
+        let printed = match &node.kind {
+            NodeKind::Literal(literal) => (literal_text(&literal.0, &rows.declarations)?, 10),
+            NodeKind::Coerce(operand, _) => (child(*operand)?, child_prec(*operand)?),
+            NodeKind::Local(slot) => {
+                let scope = self
+                    .lookup(env, *slot)
+                    .ok_or_else(|| "checked local has a binding site".to_owned())?;
+                match &self.scopes[scope].entry {
+                    Entry::Name(name) => (name.clone(), 10),
+                    Entry::Operand { value } => self.text_of(*value)?.clone(),
+                }
+            }
+            NodeKind::Let { name, .. } => {
+                let (value, _) = planned(0)?;
+                let (body, body_precedence) = planned(1)?;
+                if name == CHECKER_OPERAND {
+                    // FR-931 "Binders": the checker's operand `let` is part of
+                    // the comparison it wraps and prints as that comparison.
+                    let inner = plan[1];
+                    let own = inner
+                        .1
+                        .ok_or_else(|| "checker operand binder has a scope".to_owned())?;
+                    let mut needed = self.reads.get(&inner).cloned().ok_or_else(|| {
+                        malformed("a checker operand binder outside an IEEE ordering")
+                    })?;
+                    if !needed.remove(&own) {
+                        return Err(malformed("a checker operand binder no operand reads"));
+                    }
+                    reads = Some(needed);
+                    (body, body_precedence)
+                } else {
+                    (format!("let {name} = {value} in {body}"), 0)
+                }
+            }
+            NodeKind::Case {
+                declaration, arms, ..
+            } => {
+                let (scrutinee, _) = planned(0)?;
+                let members = rows
+                    .union_members
+                    .get(declaration)
+                    .ok_or_else(|| "checked case has its union's declared members".to_owned())?;
+                let mut printed_arms = String::new();
+                for (position, arm) in arms.iter().enumerate() {
+                    let member = members
+                        .get(arm.member)
+                        .ok_or_else(|| "checked case arm names a declared member".to_owned())?;
+                    let (body, _) = planned(position + 1)?;
+                    let binders = if arm.names.is_empty() {
+                        String::new()
+                    } else {
+                        format!("({})", arm.names.join(", "))
+                    };
+                    printed_arms.push_str(&format!("{member}{binders}: {body}; "));
+                }
+                (format!("case {scrutinee} {{ {printed_arms}}}"), 0)
+            }
+            NodeKind::UnionValue {
+                declaration,
+                member,
+                arguments,
+            } => {
+                let identity = rows
+                    .declarations
+                    .get(declaration)
+                    .ok_or_else(|| "union value has a canonical declaration identity".to_owned())?;
+                let members = rows
+                    .union_members
+                    .get(declaration)
+                    .ok_or_else(|| "union value has its union's declared members".to_owned())?;
+                let member = members
+                    .get(*member)
+                    .ok_or_else(|| "union value names a declared member".to_owned())?;
+                let arguments = arguments
+                    .iter()
+                    .map(|argument| child(*argument))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if arguments.is_empty() {
+                    (format!("{identity}::{member}"), 10)
+                } else {
+                    (
+                        format!("{identity}::{member}({})", arguments.join(", ")),
+                        10,
+                    )
+                }
+            }
+            NodeKind::Query { visit, name, .. } => {
+                let keyword = match visit {
+                    Visit::Map => "map",
+                    Visit::Filter => "filter",
+                    Visit::Forall => "forall",
+                    Visit::Exists => "exists",
+                    Visit::Count | Visit::Sum | Visit::Only => {
+                        return Err(
+                            "checked expression has no canonical printer for this form".to_owned()
+                        );
+                    }
+                };
+                let (source, _) = planned(0)?;
+                let (body, _) = planned(1)?;
+                (format!("{keyword}({name} in {source}: {body})"), 10)
+            }
+            NodeKind::Seq { name, .. } => {
+                let (low, _) = planned(0)?;
+                let (high, _) = planned(1)?;
+                let (body, _) = planned(2)?;
+                (format!("seq({name} in {low} .. {high}: {body})"), 10)
+            }
+            // Checked field and attribute names are already alias-free; no selected
+            // row is needed to spell them. A `let`, `if`, `case` or operator base is
+            // parenthesised before the postfix `.` (FR-931 "Parenthesisation").
+            NodeKind::Attribute {
+                reference, field, ..
+            } => (
+                format!(
+                    "{}.{}",
+                    postfix_base(child(*reference)?, child_prec(*reference)?),
+                    field.name
+                ),
+                9,
+            ),
+            NodeKind::Field { operand, field, .. } => (
+                format!(
+                    "{}.{}",
+                    postfix_base(child(*operand)?, child_prec(*operand)?),
+                    field.name()
+                ),
+                9,
+            ),
+            NodeKind::If {
+                condition,
+                then,
+                otherwise,
+            } => (
+                format!(
+                    "if {} then {} else {}",
+                    child(*condition)?,
+                    child(*then)?,
+                    child(*otherwise)?
+                ),
+                1,
+            ),
+            NodeKind::Contains(collection, value) => (
+                format!("contains({}, {})", child(*collection)?, child(*value)?),
+                10,
+            ),
+            NodeKind::Collection {
+                collection_type,
+                elements,
+            } => {
+                let constructor = match collection_type.kind() {
+                    CollectionKind::Sequence => "sequence",
+                    CollectionKind::Set => "set",
+                    CollectionKind::Bag => "bag",
+                    CollectionKind::OrderedSet => "ordered_set",
+                };
+                let elements = elements
+                    .iter()
+                    .map(|element| child(*element))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(", ");
+                (format!("{constructor}[{elements}]"), 10)
+            }
+            NodeKind::Call {
+                function,
+                arguments,
+            } => {
+                let function = rows.functions.get(function).ok_or_else(|| {
+                    "checked call has a canonical declaration identity".to_owned()
+                })?;
+                let arguments = arguments
+                    .iter()
+                    .map(|argument| child(*argument))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(", ");
+                (format!("{function}({arguments})"), 10)
+            }
+            NodeKind::ImportedCall {
+                callee, arguments, ..
+            } => {
+                let function = rows.declarations.get(callee).ok_or_else(|| {
+                    "imported call has a canonical declaration identity".to_owned()
+                })?;
+                let arguments = arguments
+                    .iter()
+                    .map(|argument| child(*argument))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(", ");
+                (format!("{function}({arguments})"), 10)
+            }
+            NodeKind::Record { declaration, slots } => {
+                let identity = rows.declarations.get(declaration).ok_or_else(|| {
+                    "record constructor has a canonical declaration identity".to_owned()
+                })?;
+                let fields = rows.record_fields.get(declaration).ok_or_else(|| {
+                    "record constructor has checked declaration field order".to_owned()
+                })?;
+                if fields.len() != slots.len() {
+                    return Err("record constructor slots match its declaration".to_owned());
+                }
+                let members = fields
+                    .iter()
+                    .zip(slots)
+                    .filter_map(|(field, slot)| match slot {
+                        filament_checked::node::RecordSlot::Absent => None,
+                        filament_checked::node::RecordSlot::Null => {
+                            Some(Ok(format!("{field}: none")))
+                        }
+                        filament_checked::node::RecordSlot::Present(value) => {
+                            Some(child(*value).map(|value| format!("{field}: {value}")))
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(", ");
+                (format!("{identity} {{ {members} }}"), 10)
+            }
+            NodeKind::Order(operator, _, left, right) => binary(
+                child(*left)?,
+                child_prec(*left)?,
+                ordering_text(*operator),
+                child(*right)?,
+                child_prec(*right)?,
+                4,
+                false,
+            ),
+            NodeKind::Equality(operator, _, left, right) => binary(
+                child(*left)?,
+                child_prec(*left)?,
+                equality_text(*operator),
+                child(*right)?,
+                child_prec(*right)?,
+                4,
+                false,
+            ),
+            NodeKind::Arithmetic(operator, left, right) => {
+                let (operator, precedence, right_associative) = match operator {
+                    Arithmetic::Add => ("+", 6, false),
+                    Arithmetic::Subtract => ("-", 6, false),
+                    Arithmetic::Multiply => ("*", 7, false),
+                };
+                binary(
+                    child(*left)?,
+                    child_prec(*left)?,
+                    operator,
+                    child(*right)?,
+                    child_prec(*right)?,
+                    precedence,
+                    right_associative,
+                )
+            }
+            NodeKind::IntegerDivision {
+                operator,
+                left,
+                right,
+                ..
+            } => binary(
+                child(*left)?,
+                child_prec(*left)?,
+                match operator {
+                    IntegerDivisionOperator::Div => "div",
+                    IntegerDivisionOperator::Rem => "rem",
+                    IntegerDivisionOperator::Mod => "mod",
+                },
+                child(*right)?,
+                child_prec(*right)?,
+                7,
+                false,
+            ),
+            NodeKind::Connective(operator, _, left, right) => {
+                if let Some((lesser, greater, strict)) = self.composition(index, env) {
+                    return self.print_composition(env, lesser, greater, strict);
+                }
+                let (operator, precedence, right_associative) = match operator {
+                    Connective::And => ("and", 3, false),
+                    Connective::Or => ("or", 2, false),
+                    Connective::Implies => ("implies", 1, true),
+                };
+                binary(
+                    child(*left)?,
+                    child_prec(*left)?,
+                    operator,
+                    child(*right)?,
+                    child_prec(*right)?,
+                    precedence,
+                    right_associative,
+                )
+            }
+            NodeKind::Not(operand) => unary("not ", child(*operand)?, child_prec(*operand)?, 8),
+            NodeKind::Negate(operand) => unary("-", child(*operand)?, child_prec(*operand)?, 8),
+            NodeKind::Size(operand) => (format!("size({})", child(*operand)?), 10),
+            NodeKind::PopulationObjects { population } => (declaration_text(population), 10),
+            NodeKind::NamedPopulation { population, .. } => (declaration_text(population), 10),
+            NodeKind::AllInstances { population } => {
+                let population = child(*population)?;
+                let type_argument = match &node.value_type {
+                    ValueType::Collection(collection) => match collection.element() {
+                        ValueType::Reference(identity) => identity
+                            .owner_chain()
+                            .last()
+                            .map(|key| declaration_uri(key.package(), key.node())),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let prefix = type_argument
+                    .map(|argument| format!("allInstances<{argument}>"))
+                    .unwrap_or_else(|| "allInstances".to_owned());
+                (format!("{prefix}({population})"), 10)
+            }
+            _ => {
+                return Err("checked expression has no canonical printer for this form".to_owned());
+            }
+        };
+        Ok(Printed {
+            text: printed.0,
+            precedence: printed.1,
+            reads,
+        })
+    }
+
+    /// FR-931 "Binders": the checker's IEEE ordering composition prints as
+    /// the one comparison it denotes. With no operand binder or one, the
+    /// lesser operand is on the left; with two, the source orientation holds.
+    fn print_composition(
+        &self,
+        env: Env,
+        lesser: usize,
+        greater: usize,
+        strict: bool,
+    ) -> Result<Printed, String> {
+        let lesser_binder = self.operand_binder(lesser, env);
+        let greater_binder = self.operand_binder(greater, env);
+        let (left, left_precedence) = self.operand(lesser, env)?;
+        let (right, right_precedence) = self.operand(greater, env)?;
+        let needed = lesser_binder
+            .into_iter()
+            .chain(greater_binder)
+            .collect::<BTreeSet<_>>();
+        if needed.len()
+            != usize::from(lesser_binder.is_some()) + usize::from(greater_binder.is_some())
+        {
+            return Err(malformed(
+                "an IEEE ordering operand reading one binder twice",
+            ));
+        }
+        // The outer `let` (the source's left operand) is the earlier scope.
+        let greater_is_source_left = matches!(
+            (lesser_binder, greater_binder),
+            (Some(l), Some(g)) if g < l
+        );
+        let (operator, text) = if greater_is_source_left {
+            (
+                if strict { ">" } else { ">=" },
+                (right, right_precedence, left, left_precedence),
+            )
+        } else {
+            (
+                if strict { "<" } else { "<=" },
+                (left, left_precedence, right, right_precedence),
+            )
+        };
+        let (text, precedence) = binary(text.0, text.1, operator, text.2, text.3, 4, false);
+        Ok(Printed {
+            text,
+            precedence,
+            reads: Some(needed),
+        })
+    }
+}
+
+/// `base` as the operand of a postfix `.`: grouped unless it binds at least as
+/// tightly as a postfix form.
+fn postfix_base(base: String, precedence: u8) -> String {
+    if precedence < 9 {
+        format!("({base})")
+    } else {
+        base
+    }
+}
+
+fn malformed(what: &str) -> String {
+    format!("checked expression is malformed: {what}")
 }
 
 /// Build labels solely from the retained checked source conditions and their
 /// positional clause binders. Source slices are deliberately not involved.
 pub(super) fn source_labels(
     valuation: &fsl_replay::spine::TemporalValuation,
-) -> Result<BTreeMap<fsl_semantics::check::FormulaNodeId, String>, CanonicalError> {
+) -> Result<BTreeMap<fsl_semantics::check::FormulaNodeId, String>, String> {
     let clause = &valuation.clause;
     let mut binders = vec![clause.over().0.clone()];
     if let Some((trigger, _)) = clause.trigger() {
@@ -343,13 +809,13 @@ pub(super) fn source_labels(
         declarations: valuation.canonical_declarations.clone(),
         functions: valuation.canonical_functions.clone(),
         record_fields: valuation.canonical_record_fields.clone(),
+        union_members: valuation.canonical_union_members.clone(),
     };
     valuation
         .checked_conditions
         .iter()
         .map(|(atom, body)| {
             CheckedExpression::from_source(body.root())
-                .map_err(CanonicalError::Fault)
                 .and_then(|expression| expression.render(&binders, &rows))
                 .map(|label| (*atom, format!("holds({label})")))
         })
@@ -396,7 +862,10 @@ fn binary(
 
 fn unary(operator: &str, operand: String, precedence: u8, own_precedence: u8) -> (String, u8) {
     if precedence < own_precedence {
-        (format!("{operator} ({operand})"), own_precedence)
+        (
+            format!("{} ({operand})", operator.trim_end()),
+            own_precedence,
+        )
     } else {
         (format!("{operator}{operand}"), own_precedence)
     }
@@ -430,6 +899,10 @@ fn declaration_uri(package: &str, node: &str) -> String {
 fn literal_text(value: &Value, declarations: &BTreeMap<NodeKey, String>) -> Result<String, String> {
     match value {
         Value::Boolean(value) => Ok(value.to_string()),
+        Value::Float(value) => Ok(match value.width() {
+            IeeeWidth::Binary32 => format!("float32(bits: 0x{:08x})", value.bits()),
+            IeeeWidth::Binary64 => format!("float64(bits: 0x{:016x})", value.bits()),
+        }),
         Value::Integer(value) => Ok(value.to_string()),
         Value::Rational(value) => Ok(format!(
             "rational({}, {})",
@@ -452,5 +925,256 @@ fn literal_text(value: &Value, declarations: &BTreeMap<NodeKey, String>) -> Resu
             Ok(format!("{identity}::{}", member.variant().case()))
         }
         _ => Err("checked literal has no canonical expression spelling".to_owned()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use filament_checked::node::ConnectiveOrigin;
+    use filament_exact::IeeeValue;
+    use ix_trace_rs::trace;
+
+    fn ordinary(
+        nodes: &mut Vec<ExpressionNode>,
+        kind: NodeKind<usize, CheckedLiteral>,
+    ) -> usize {
+        nodes.push(ExpressionNode {
+            kind,
+            value_type: ValueType::Boolean,
+        });
+        nodes.len() - 1
+    }
+
+    fn float(nodes: &mut Vec<ExpressionNode>, bits: u64) -> usize {
+        ordinary(
+            nodes,
+            NodeKind::Literal(CheckedLiteral(Value::Float(IeeeValue::binary64(bits)))),
+        )
+    }
+
+    /// The checker's FR-397 composition of `lesser < greater` (strict) or
+    /// `lesser <= greater` over two operand nodes.
+    fn composition(
+        nodes: &mut Vec<ExpressionNode>,
+        lesser: usize,
+        greater: usize,
+        strict: bool,
+    ) -> usize {
+        let and = |nodes: &mut Vec<ExpressionNode>, left, right| {
+            ordinary(
+                nodes,
+                NodeKind::Connective(Connective::And, ConnectiveOrigin::Synthesized, left, right),
+            )
+        };
+        let lesser_ordinary = ordinary(nodes, NodeKind::IeeeNumericEquality(lesser, lesser));
+        let greater_ordinary = ordinary(nodes, NodeKind::IeeeNumericEquality(greater, greater));
+        let both = and(nodes, lesser_ordinary, greater_ordinary);
+        let total = ordinary(
+            nodes,
+            NodeKind::IeeeTotalOrder(filament_checked::node::OrderedKind::Float, lesser, greater),
+        );
+        let equal = ordinary(nodes, NodeKind::IeeeNumericEquality(lesser, greater));
+        let relation = if strict {
+            let apart = ordinary(nodes, NodeKind::Not(equal));
+            and(nodes, total, apart)
+        } else {
+            ordinary(
+                nodes,
+                NodeKind::Connective(
+                    Connective::Or,
+                    ConnectiveOrigin::Synthesized,
+                    total,
+                    equal,
+                ),
+            )
+        };
+        and(nodes, both, relation)
+    }
+
+    fn operand_let(
+        nodes: &mut Vec<ExpressionNode>,
+        slot: usize,
+        value: usize,
+        body: usize,
+    ) -> usize {
+        ordinary(
+            nodes,
+            NodeKind::Let {
+                slot,
+                name: CHECKER_OPERAND.to_owned(),
+                value,
+                body,
+            },
+        )
+    }
+
+    fn render(nodes: Vec<ExpressionNode>, root: usize) -> Result<String, String> {
+        CheckedExpression { nodes, root }.render(&[], &CanonicalRows::default())
+    }
+
+    const A: u64 = 0x3ff0_0000_0000_0000;
+    const A_TEXT: &str = "float64(bits: 0x3ff0000000000000)";
+    const Z_TEXT: &str = "float64(bits: 0x0000000000000000)";
+
+    /// FR-931-AC-14: with one bound operand the composition prints
+    /// lesser-left, the checker `let` and its name never print.
+    #[test]
+    #[trace("TC-3039", "FR-931-AC-14")]
+    fn one_operand_binder_prints_the_lesser_operand_left() {
+        let mut nodes = Vec::new();
+        let a = float(&mut nodes, A);
+        let negated = ordinary(&mut nodes, NodeKind::Negate(a));
+        let zero = float(&mut nodes, 0);
+        let bound = ordinary(&mut nodes, NodeKind::Local(0));
+        // `-A < Z`: the left operand is bound, the right is a literal.
+        let body = composition(&mut nodes, bound, zero, true);
+        let root = operand_let(&mut nodes, 0, negated, body);
+        assert_eq!(
+            render(nodes, root).unwrap(),
+            format!("-{A_TEXT} < {Z_TEXT}")
+        );
+
+        // `Z > -A` is the same tree with the operands read the other way.
+        let mut nodes = Vec::new();
+        let a = float(&mut nodes, A);
+        let negated = ordinary(&mut nodes, NodeKind::Negate(a));
+        let zero = float(&mut nodes, 0);
+        let bound = ordinary(&mut nodes, NodeKind::Local(0));
+        let body = composition(&mut nodes, bound, zero, false);
+        let root = operand_let(&mut nodes, 0, negated, body);
+        assert_eq!(
+            render(nodes, root).unwrap(),
+            format!("-{A_TEXT} <= {Z_TEXT}")
+        );
+    }
+
+    /// FR-931-AC-14: with two bound operands the source orientation holds,
+    /// so `-A > -Z` and `-Z < -A` print as two different texts.
+    #[test]
+    #[trace("TC-3039", "FR-931-AC-14")]
+    fn two_operand_binders_keep_the_source_orientation() {
+        let two = |greater_first: bool| {
+            let mut nodes = Vec::new();
+            let a = float(&mut nodes, A);
+            let left = ordinary(&mut nodes, NodeKind::Negate(a));
+            let z = float(&mut nodes, 0);
+            let right = ordinary(&mut nodes, NodeKind::Negate(z));
+            let outer = ordinary(&mut nodes, NodeKind::Local(0));
+            let inner = ordinary(&mut nodes, NodeKind::Local(1));
+            // `-A > -Z` composes (lesser, greater) = (inner, outer);
+            // `-A < -Z` composes (outer, inner).
+            let body = if greater_first {
+                composition(&mut nodes, inner, outer, true)
+            } else {
+                composition(&mut nodes, outer, inner, true)
+            };
+            let inner_let = operand_let(&mut nodes, 1, right, body);
+            let root = operand_let(&mut nodes, 0, left, inner_let);
+            render(nodes, root).unwrap()
+        };
+        assert_eq!(two(true), format!("-{A_TEXT} > -{Z_TEXT}"));
+        assert_eq!(two(false), format!("-{A_TEXT} < -{Z_TEXT}"));
+    }
+
+    /// FR-931-AC-14: a `#ieee_operand` let that wraps no composition, or
+    /// whose binder nothing reads, is malformed and prints no text.
+    #[test]
+    #[trace("TC-3039", "FR-931-AC-14")]
+    fn a_stray_checker_operand_let_is_malformed() {
+        let mut nodes = Vec::new();
+        let value = float(&mut nodes, A);
+        let body = ordinary(
+            &mut nodes,
+            NodeKind::Literal(CheckedLiteral(Value::Boolean(true))),
+        );
+        let root = operand_let(&mut nodes, 0, value, body);
+        assert!(render(nodes, root).unwrap_err().contains("malformed"));
+    }
+
+    /// FR-931 "Parenthesisation": a `case` or `let` under a field read is
+    /// parenthesised so the text parses back to the same tree.
+    #[test]
+    #[trace("TC-3039", "FR-931-AC-13")]
+    fn a_case_or_let_under_a_field_read_is_parenthesised() {
+        let key = NodeKey::new("p", vec![filament_exact::PathSegment::Text("U".into())], 0)
+            .unwrap();
+        let mut rows = CanonicalRows::default();
+        rows.declarations.insert(key.clone(), "ix://p/U".to_owned());
+        rows.union_members
+            .insert(key.clone(), vec!["A".to_owned(), "B".to_owned()]);
+        let mut nodes = Vec::new();
+        let scrutinee = ordinary(
+            &mut nodes,
+            NodeKind::UnionValue {
+                declaration: key.clone(),
+                member: 1,
+                arguments: vec![],
+            },
+        );
+        let truth = ordinary(
+            &mut nodes,
+            NodeKind::Literal(CheckedLiteral(Value::Boolean(true))),
+        );
+        let case = ordinary(
+            &mut nodes,
+            NodeKind::Case {
+                scrutinee,
+                declaration: key.clone(),
+                arms: vec![
+                    filament_checked::node::CaseArm {
+                        member: 0,
+                        binders: vec![],
+                        names: vec![],
+                        body: truth,
+                    },
+                    filament_checked::node::CaseArm {
+                        member: 1,
+                        binders: vec![],
+                        names: vec![],
+                        body: truth,
+                    },
+                ],
+            },
+        );
+        let field = filament_checked::node::RecordField::new(key, "f");
+        let root = ordinary(
+            &mut nodes,
+            NodeKind::Field {
+                operand: case,
+                field,
+                optional: false,
+            },
+        );
+        let text = CheckedExpression { nodes, root }
+            .render(&[], &rows)
+            .unwrap();
+        assert_eq!(
+            text,
+            "(case ix://p/U::B { A: true; B: true; }).f"
+        );
+    }
+
+    /// FR-931-AC-14: an author's `let ieee_operand_0 = e in ...` is an
+    /// ordinary `let` printed with its declared name.
+    #[test]
+    #[trace("TC-3039", "FR-931-AC-14")]
+    fn an_authors_let_prints_under_its_declared_name() {
+        let mut nodes = Vec::new();
+        let value = float(&mut nodes, A);
+        let read = ordinary(&mut nodes, NodeKind::Local(0));
+        let root = ordinary(
+            &mut nodes,
+            NodeKind::Let {
+                slot: 0,
+                name: "ieee_operand_0".to_owned(),
+                value,
+                body: read,
+            },
+        );
+        assert_eq!(
+            render(nodes, root).unwrap(),
+            format!("let ieee_operand_0 = {A_TEXT} in ieee_operand_0")
+        );
     }
 }

@@ -496,6 +496,9 @@ pub struct TemporalValuation {
     pub canonical_functions: BTreeMap<usize, String>,
     /// Declared field order of record constructors in checked conditions.
     pub canonical_record_fields: BTreeMap<filament_exact::NodeKey, Vec<String>>,
+    /// Declared member names, in declaration order, of the unions that checked
+    /// `case` and union-value nodes in the conditions name (FR-931 "Binders").
+    pub canonical_union_members: BTreeMap<filament_exact::NodeKey, Vec<String>>,
     /// The valuation over the supplied trace; `None` when the trace is an
     /// empty finite trace, which asks for the clause alone, or a lasso beside a
     /// profile that does not read one.
@@ -535,12 +538,14 @@ impl TemporalValuation {
         let canonical_declarations = canonical_condition_declarations(graph, &checked_conditions);
         let canonical_functions = canonical_condition_functions(graph, &checked_conditions);
         let canonical_record_fields = canonical_condition_record_fields(graph, &checked_conditions);
+        let canonical_union_members = canonical_condition_union_members(graph, &checked_conditions);
         Self {
             clause: clause.clone(),
             checked_conditions,
             canonical_declarations,
             canonical_functions,
             canonical_record_fields,
+            canonical_union_members,
             positions,
             behaviours,
         }
@@ -586,6 +591,51 @@ fn canonical_condition_record_fields(
         }
     }
     records
+}
+
+fn canonical_condition_union_members(
+    graph: &CheckedGraph,
+    conditions: &[(
+        fsl_semantics::check::FormulaNodeId,
+        fsl_semantics::check::CheckedBody,
+    )],
+) -> BTreeMap<filament_exact::NodeKey, Vec<String>> {
+    let mut unions = BTreeMap::new();
+    for (_, body) in conditions {
+        let mut pending = vec![body.root()];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node.id()) {
+                continue;
+            }
+            if let NodeKind::Case { declaration, .. } | NodeKind::UnionValue { declaration, .. } =
+                node.kind()
+            {
+                if let Some(composite) = graph.scope().types().composite(declaration.clone()) {
+                    if let filament_semantic_value::declaration::CompositeShape::Union(members) =
+                        composite.shape()
+                    {
+                        unions.insert(
+                            declaration.clone(),
+                            members
+                                .iter()
+                                .map(|member| member.identifier().to_owned())
+                                .collect(),
+                        );
+                    }
+                }
+            }
+            let mut children = Vec::new();
+            let _ = node.kind().map_ref(
+                |child| {
+                    children.push(*child);
+                },
+                Clone::clone,
+            );
+            pending.extend(children.into_iter().map(|child| node.at(child)));
+        }
+    }
+    unions
 }
 
 fn canonical_condition_functions(
@@ -662,6 +712,18 @@ fn canonical_condition_declarations(
             if let NodeKind::Record { declaration, .. } = node.kind() {
                 if let Some(identity) = source_function_identity(declaration) {
                     declarations.insert(declaration.clone(), identity);
+                }
+            }
+            if let NodeKind::Case { declaration, .. } | NodeKind::UnionValue { declaration, .. } =
+                node.kind()
+            {
+                if let Some(identity) = source_function_identity(declaration) {
+                    declarations.insert(declaration.clone(), identity);
+                } else if let Some(resolved) = graph.resolve_declaration(declaration.clone()) {
+                    declarations.insert(
+                        declaration.clone(),
+                        format!("ix://{}/{}", resolved.package, resolved.node),
+                    );
                 }
             }
             let key = match node.kind() {

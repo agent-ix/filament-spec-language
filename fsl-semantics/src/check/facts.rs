@@ -1198,6 +1198,7 @@ impl<'a> Definedness<'a> {
             slot: binder,
             source,
             body,
+            ..
         } = filter.kind()
         else {
             return None;
@@ -1409,7 +1410,9 @@ impl<'a> Definedness<'a> {
                     children.push(DefinedNode::Walk(node.at(*right), under));
                 }
             }
-            NodeKind::Let { slot, value, body } => {
+            NodeKind::Let {
+                slot, value, body, ..
+            } => {
                 if let Some(value) = self.numeric_literal(node.at(*value)) {
                     self.numeric_literals.insert(*slot, value);
                 }

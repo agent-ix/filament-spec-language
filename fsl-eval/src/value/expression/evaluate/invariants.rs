@@ -1871,6 +1871,7 @@ fn stack_extraction_and_frame_producers_report_their_own_invariants() {
         body(|_| NodeKind::Local(0)),
         body(|ids| NodeKind::Let {
             slot: 0,
+            name: "x".to_owned(),
             value: ids[0],
             body: ids[1],
         }),
@@ -2352,6 +2353,7 @@ fn iteration_resume_finish_and_stop_reporting_reach_distinct_producers() {
         let root = body(|ids| NodeKind::Query {
             visit,
             slot: 0,
+            name: "x".to_owned(),
             source: ids[0],
             body: ids[1],
         });
@@ -2367,6 +2369,7 @@ fn iteration_resume_finish_and_stop_reporting_reach_distinct_producers() {
     let sum = body(|ids| NodeKind::Query {
         visit: Visit::Sum,
         slot: 0,
+        name: "x".to_owned(),
         source: ids[0],
         body: ids[1],
     });
@@ -2381,6 +2384,8 @@ fn iteration_resume_finish_and_stop_reporting_reach_distinct_producers() {
     let fold = body(|ids| NodeKind::Fold {
         accumulator: 0,
         binder: 1,
+        accumulator_name: "acc".to_owned(),
+        binder_name: "x".to_owned(),
         source: ids[0],
         step: ids[1],
         identity: Some(ids[0]),
@@ -2403,6 +2408,7 @@ fn iteration_resume_finish_and_stop_reporting_reach_distinct_producers() {
     let query = body(|ids| NodeKind::Query {
         visit: Visit::Map,
         slot: 0,
+        name: "x".to_owned(),
         source: ids[0],
         body: ids[1],
     });
@@ -2425,6 +2431,7 @@ fn iteration_resume_finish_and_stop_reporting_reach_distinct_producers() {
         let root = body(|ids| NodeKind::Query {
             visit,
             slot: 0,
+            name: "x".to_owned(),
             source: ids[0],
             body: ids[1],
         });
@@ -2465,6 +2472,7 @@ fn scalar_query_resume_retains_the_valid_result_and_preserves_earlier_stops() {
             |ids| NodeKind::Query {
                 visit,
                 slot: 0,
+                name: "x".to_owned(),
                 source: ids[0],
                 body: ids[1],
             },
@@ -2549,6 +2557,8 @@ fn fold_resume_and_finish_retain_the_real_accumulator_and_earlier_stop() {
         |ids| NodeKind::Fold {
             accumulator: 0,
             binder: 1,
+            accumulator_name: "acc".to_owned(),
+            binder_name: "x".to_owned(),
             source: ids[0],
             step: ids[1],
             identity: Some(ids[2]),
@@ -2659,6 +2669,7 @@ fn a_query_binds_each_element_to_the_owner_of_its_source() {
     let query = body(|ids| NodeKind::Query {
         visit: Visit::Exists,
         slot: 0,
+        name: "x".to_owned(),
         source: ids[0],
         body: ids[1],
     });
@@ -2677,6 +2688,8 @@ fn a_fold_binds_its_accumulator_and_element_to_the_owner_of_its_source() {
     let fold = body(|ids| NodeKind::Fold {
         accumulator: 0,
         binder: 1,
+        accumulator_name: "acc".to_owned(),
+        binder_name: "x".to_owned(),
         source: ids[0],
         step: ids[1],
         identity: Some(ids[0]),
@@ -2698,6 +2711,7 @@ fn a_fold_binds_its_accumulator_and_element_to_the_owner_of_its_source() {
 fn a_seq_binds_each_integer_to_the_owner_of_its_bounds() {
     let seq = body(|ids| NodeKind::Seq {
         slot: 0,
+        name: "x".to_owned(),
         low: ids[0],
         high: ids[1],
         body: ids[1],
@@ -2736,6 +2750,7 @@ fn a_query_element_after_the_first_keeps_its_source_owner_not_the_merged_results
     let query = body(|ids| NodeKind::Query {
         visit: Visit::Exists,
         slot: 0,
+        name: "x".to_owned(),
         source: ids[0],
         body: ids[1],
     });
@@ -2758,6 +2773,8 @@ fn a_fold_element_after_the_first_keeps_its_source_owner_and_the_accumulator_tak
     let fold = body(|ids| NodeKind::Fold {
         accumulator: 0,
         binder: 1,
+        accumulator_name: "acc".to_owned(),
+        binder_name: "x".to_owned(),
         source: ids[0],
         step: ids[1],
         identity: Some(ids[0]),
@@ -2783,6 +2800,7 @@ fn a_fold_element_after_the_first_keeps_its_source_owner_and_the_accumulator_tak
 fn a_seq_integer_after_the_first_keeps_its_bounds_owner_not_the_merged_results() {
     let seq = body(|ids| NodeKind::Seq {
         slot: 0,
+        name: "x".to_owned(),
         low: ids[0],
         high: ids[1],
         body: ids[1],
