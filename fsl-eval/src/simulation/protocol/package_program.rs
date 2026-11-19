@@ -62,6 +62,19 @@ pub struct PackageRole {
     pub maximum: Option<u64>,
 }
 
+/// A package control's attempt placement under a memory-governed parallel.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackageAttemptContext {
+    /// The attempt control.
+    pub attempt: ProtocolNodeId,
+    /// The outermost parallel that governs this attempt.
+    pub parallel: ProtocolNodeId,
+    /// The branch label within that parallel.
+    pub branch: String,
+    /// The attempt's explicit ordering.
+    pub ordering: Option<fsl_forms::AccessOrdering>,
+}
+
 /// The package-native protocol program needed by selection and execution.
 pub struct PackageProtocolProgram<'a> {
     /// The admitted protocol name.
@@ -326,5 +339,62 @@ impl<'a> PackageProtocolProgram<'a> {
         self.evaluator
             .evaluate_package_protocol_slot(slot, supply, meter)
             .map(Some)
+    }
+
+    /// The outermost `parallel` whose memory model governs `control`, if the
+    /// control is within a parallel.
+    pub fn governing_parallel(&self, control: ProtocolNodeId) -> Option<ProtocolNodeId> {
+        let mut ancestors = Vec::new();
+        let mut cursor = Some(control);
+        while let Some(id) = cursor {
+            let node = self.controls.get(&id)?;
+            if node.operation == ControlOperation::Parallel {
+                ancestors.push(id);
+            }
+            cursor = node.parent;
+        }
+        ancestors.reverse();
+        ancestors.into_iter().next()
+    }
+
+    /// The resolved memory model governing `control`.
+    pub fn governing_memory(&self, control: ProtocolNodeId) -> Option<MemoryModelName> {
+        let parallel = self.governing_parallel(control)?;
+        let descriptor = self.controls.get(&parallel)?;
+        let path = std::iter::once(self.name.as_str())
+            .chain(descriptor.path.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join("::");
+        self.memory.model_of(&path)
+    }
+
+    /// The attempts nested in weak memory-governed branches, in package
+    /// control order. This is the package-native input to EN-1 access and
+    /// race prechecks.
+    pub fn weak_attempt_contexts(&self) -> Vec<PackageAttemptContext> {
+        self.controls
+            .values()
+            .filter(|control| control.operation == ControlOperation::Attempt)
+            .filter_map(|attempt| {
+                let memory = self.governing_memory(attempt.id)?;
+                memory.is_weak().then_some(())?;
+                let parallel = self.governing_parallel(attempt.id)?;
+                let parallel_control = self.controls.get(&parallel)?;
+                let mut child = attempt.id;
+                while self.controls.get(&child)?.parent != Some(parallel) {
+                    child = self.controls.get(&child)?.parent?;
+                }
+                let branch = parallel_control
+                    .branches
+                    .iter()
+                    .find_map(|(label, body)| (*body == child).then(|| label.clone()))?;
+                Some(PackageAttemptContext {
+                    attempt: attempt.id,
+                    parallel,
+                    branch,
+                    ordering: attempt.ordering,
+                })
+            })
+            .collect()
     }
 }
