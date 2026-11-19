@@ -78,7 +78,7 @@ is written `bounds`.
 
 | Failure | `rule` | `at` |
 | --- | --- | --- |
-| A required member is absent: `components` for a CF-2 form, `divergence` for the time-lock-freedom item, `positions` or `refinement` for a refinement form | `Malformed` | `CertificateMember` naming it |
+| A required member is absent: `components` for a CF-2 form, `divergence` for the time-lock-freedom item, `positions` or `refinement` for a refinement form, `admitted` for any item other than a state-graph item; or `admitted` is present on a state-graph item's certificate | `Malformed` | `CertificateMember` naming it |
 | In a refinement form, for a concrete initial state `i`, `check_initial` yields another position than its initial node lists, or it passes and that node is marked `locked`, or it fails (as `InitialNotAbstract`) and that node is not a `locked` entry node with the reserved index `positions.len()` | `InitialMismatch` | `ZoneNode` of the initial node of `i` |
 | In a refinement form, `check_step` fails (`Fails`, `Undefined`, or `Undetermined` that is not meter-only) on an edge whose target is not a `locked` entry node | `StepFails` | `ZoneEdge` of that edge, with the failing verdict as FR-149's locus carries it |
 | In a refinement form, a passing edge's target position or `taken` differs from what `check_step` yields, or an edge leaves the locked region for a positioned node | `PostDiffers` | `ZoneEdge` of that edge |
@@ -158,7 +158,19 @@ is written `bounds`.
     `non_zeno` is certified with its verdict (FR-235);
   - the `admitted` path starts at the initial node (in a refinement form, at any positioned `initials[i]`, so a locked `initials[0]` does not decide it), follows certificate
     edges, and ends at a quiescent node or at a node of a component with a
-    cycle of positive total delay (ADR-026 TD-6).
+    cycle of positive total delay (ADR-026 TD-6). This check applies to
+    every certificate except a state-graph item's.
+- **State-graph form.** For the certificate of a `possible`,
+  `always possible` or `unique path` item (FR-244 "State-graph form"; the
+  item named by the obligation identity is a `claim`/`state_graph` node),
+  the checker SHALL check the reachability part, and for `always possible`
+  the `state_graph` part, and SHALL NOT require a time-divergent witness: it
+  SHALL accept a certificate whose reachable graph holds no quiescent node
+  and no cycle of positive total delay, a Zeno-only graph, when every other
+  rule holds. The claim certifies the reachable timed graph and does not
+  depend on time divergence (FSpec FR-712). An `admitted` member on such a
+  certificate is rejected `Malformed`, so a state-graph certificate has one
+  canonical form.
 - The checker SHALL check the `Malformed` members first, then the initial
   coverage, then the nodes in node order, and SHALL return `Rejected` with
   the rule and locus the table above gives the first failure.
@@ -190,6 +202,7 @@ is written `bounds`.
 | FR-245-AC-8 | FR-244-AC-5's certificates are each `Accepted`. The refinement certificate of FR-430-AC-6 with the `locked` mark removed from the post-state of `undo` is `Rejected` `StepFails` at the `ZoneEdge` of the `undo` edge; the `TReq` certificate with `positions` removed is `Rejected` `Malformed` at `CertificateMember("positions")` before any successor is recomputed; FR-430-AC-7's refinement (abstract initial `sent` true, so the half is `Violated`) with a forged certificate whose initial node lists the abstract state `sent` false (and carries no `locked` mark) is `Rejected` `InitialMismatch` at the initial `ZoneNode`; the `TReq` certificate with one edge's target position replaced, or one `taken` changed to `Stutter`, is `Rejected` `PostDiffers` at that `ZoneEdge`; the `TReq` certificate checked under a request whose evaluation meter limit is 0 returns `Stopped(LimitReached)` naming `evaluation-meter` at the first `check_step` (FR-141-AC-9's `HeavyEnq` shape is the second fixture), never `Rejected`; AC-7's `Undetermined` variants return `Undecided` from the engine and have no certificate to check. | Test (TC-700) |
 | FR-245-AC-9 | Fixture `Init3`: abstract `Req` (`r.sent`, initial `false`; `send` sets it) refined by timed `TInit` (`time dense`; `r` with `sent: Bool`, `k: Int[0, 2]`, with three declared initial states by this fixture's own declaration, indices 0, 1, 2 having `k` 0, 1, 2, and initial `sent` `false` for `k` 0 and 2 and `true` for `k` 1; clock `x`; `send` with guard `x >= 1`, precondition `not self.sent and self.k <> 1`; time invariant `when self.k = 1 { x <= 0 }`; step map `send -> send`; mapping `sent -> sent`). Index 1 fails `check_initial` (`InitialNotAbstract{initial: 1}`) and is time-locked; indices 0 and 2 pass and diverge. EN-6 returns `Holds`; the certificate's `initials` has three nodes, index 1 a `locked` entry node with the reserved index, and the checker returns `Accepted` (`Proved`). Rejections, each at the initial `ZoneNode` of the named index: the `locked` mark removed from index 1, or added to index 0, is `InitialMismatch`; `initials[2]` replaced by a node that does not cover index 2's symbolic state is `InitialMissing` at that state's `ModelState`. In the variant fixture `Init3L` the invariant becomes `when self.k = 0 { x <= 0 }`, the `send` precondition `self.k <> 0` and initial `sent` `true` for `k` 0 and `false` for `k` 1 and 2, so index 0 is the locked one: the certificate is `Accepted` with `admitted` starting at `initials[1]`, and `admitted` starting at `initials[0]` is `WitnessFails`. The variant without the time invariant returns `Violated` from EN-6 with `InitialNotAbstract{initial: 1}` and an empty prefix; a forged `Holds` certificate marking its initial node `locked` is `BadState` at that node (a `locked` node reaches itself). Rejections use FSpec FR-331's rule spelling. | Test (TC-700) |
 | FR-245-AC-10 | The certificates of FR-240-AC-1's response proof over `Rpc` with `T = 4 ms` and of its `reply` self-loop variant carry `non_zeno` `NotRequired` and `Assumed` and are `Accepted`; either with the value swapped or removed, and the time-lock-freedom certificate of `Rpc` given a `non_zeno`, is `Rejected` with `NonZenoMismatch` at `CertificateMember{non_zeno}`. | Test (TC-3021) |
+| FR-245-AC-11 | FR-244-AC-7's `Replied` and `BackToIdle` certificates over the Zeno-only `Rpc` variant, whose reachable graph holds no quiescent node and no cycle of positive total delay, are each `Accepted`, and the items settle `certified`; either certificate given an `admitted` member is `Rejected` `Malformed` at `CertificateMember("admitted")`; FR-244-AC-1's `NoLateReply` certificate with `admitted` removed is `Rejected` `Malformed` at `CertificateMember("admitted")`. | Test (TC-3030) |
 
 ## Dependencies
 

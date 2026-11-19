@@ -164,6 +164,7 @@ fn output_admission_refusals_precede_the_observer_refusal() {
 /// output failure (exit 30) whose `last_stage` is the stage the export
 /// reached.
 #[test]
+#[trace("TC-3029", "FR-286-AC-23")]
 fn a_file_that_cannot_be_written_is_an_output_failure_after_s4() {
     let directory = tempfile::tempdir().unwrap();
     let mut member = braking_member();
@@ -178,4 +179,13 @@ fn a_file_that_cannot_be_written_is_an_output_failure_after_s4() {
     assert_eq!(value["stage"], "emit", "{value}");
     let document = outcome_json(&error.outcome_document(fsl_replay::Operation::Export));
     assert_eq!(document["last_stage"], "S4", "{document}");
+    assert_eq!(document["operation"], "export", "{document}");
+    assert_eq!(document["category"], "internal-failure", "{document}");
+    assert_eq!(document["result"], Value::Null, "{document}");
+    let diagnostics = document["diagnostics"].as_array().expect("diagnostics");
+    assert_eq!(diagnostics.len(), 1, "{document}");
+    assert_eq!(diagnostics[0]["code"], "output-failure", "{document}");
+    assert_eq!(diagnostics[0]["cause"], "output-failure", "{document}");
+    assert_eq!(diagnostics[0]["details"], Value::Null, "{document}");
+    assert!(!directory.path().join("missing-directory").exists());
 }

@@ -27,9 +27,14 @@ built from the retained symbolic graph, which a small checker verifies
 without trusting the search (ADR-026 CF-1, CF-2, CF-5). A safety form
 carries a reachability certificate; a liveness form and the
 time-lock-freedom item add a component numbering with each component's
-reason. Every certificate carries a witness that the subject admits a
-time-divergent behaviour (ADR-026 TD-6) and the obligation identity of the
-item it proves. A timed refinement's safety half (FR-430) is such a
+reason. Every certificate carries the obligation identity of the item it
+proves. Every certificate whose claim quantifies over time-divergent
+behaviours (a temporal form, the deadlock-freedom item, the time-lock-freedom
+item and a refinement half) carries a witness that the subject admits a
+time-divergent behaviour (ADR-026 TD-6). The certificate of a state-graph
+item (`possible`, `always possible`, `unique path`, FSpec FR-712) certifies
+the reachable timed graph, whose claim does not depend on time divergence,
+and carries no such witness. A timed refinement's safety half (FR-430) is such a
 proof: its `Holds` carries the same certificate over the refinement product.
 
 ## Use case
@@ -55,7 +60,7 @@ pub struct ZoneCertificate {
     pub initials: Vec<NodeIndex>,               // nonempty: one initial node per initial state, in the subject's order (FSpec FR-418)
     pub components: Option<Vec<CertComponent>>, // CF-2 forms only
     pub divergence: Option<Vec<DivergenceWitness>>, // time-lock-freedom item only
-    pub admitted: DivergenceWitness,            // every proof: TD-6 vacuity witness
+    pub admitted: Option<DivergenceWitness>,    // TD-6 vacuity witness: every certificate except a state-graph item's, which has none
     pub refinement: Option<RefinementPart>,     // refinement form only
     pub state_graph: Option<StateGraphPart>,    // `always possible` proof over a timed subject only (FR-852)
 }
@@ -100,11 +105,25 @@ pub struct RefinementPart {                     // FR-430
 - **Divergence part.** For the time-lock-freedom item, each node SHALL name
   a path in the certificate to a divergent target: a quiescent node, or a
   component that does not fail for want of the divergence set.
-- **Admitted part.** Every certificate SHALL carry `admitted`: a path of
+- **Admitted part.** Every certificate other than a state-graph item's SHALL carry `admitted`: a path of
   certificate edges from the node that covers the initial symbolic state
   (in a refinement form, from any positioned `initials[i]`, so
   a time-locked initial state does not decide it) to a quiescent node or to a node of a component with a cycle of positive
   total delay, so the proof is not vacuous (ADR-026 TD-6, CF-1).
+- **State-graph form.** The certificate of a `possible`, `always possible`
+  or `unique path` item over a timed subject (FR-852, FSpec FR-712) SHALL
+  certify the reachable timed graph: its reachability part covers every
+  reachable symbolic state, and, for `always possible`, `state_graph` lists
+  the `EF P` zones. It SHALL carry no `admitted` member. The engine emits it whether or not the reachable graph holds a quiescent node or a
+  cycle of positive total delay. These forms read reachable states and
+  discrete step sequences of the timed state graph, and FSpec FR-712 defines
+  that graph by reachability alone: a state reached only through zero-delay
+  steps is reachable, so a graph whose every infinite path is Zeno still
+  decides the claim. ADR-026 TD-6's vacuity concern is that a claim over
+  time-divergent behaviours holds vacuously when none exists; a state-graph
+  claim does not quantify over those behaviours, so requiring the witness
+  would refuse a sound proof without protecting any verdict. A certificate
+  whose claim depends on time divergence keeps the witness.
 - **Refinement form.** For the safety half of a refinement whose concrete
   model is timed (FR-430), the certificate SHALL be this same
   `ZoneCertificate` with `refinement` present and the reachability part read
@@ -155,6 +174,7 @@ pub struct RefinementPart {                     // FR-430
 | FR-244-AC-4 | Over a `Lock` model (one object with `phase: {A, B}` and a clock `x` never reset; `go` moves `A` to `B` with no guard; `time invariant when phase = B { x <= 1 ms }`; `ping`, enabled in `B`, changes no data field), `always holds(c.phase = A)` is proved, and its certificate lists the node `(B, x <= 1)` marked `locked`, with `ping` edges that stay in `B` and reach no quiescent node and no cycle of positive total delay. | Test (TC-699) |
 | FR-244-AC-5 | The safety half of FR-430-AC-1's `TReq` refinement returns a certificate with `refinement` present, each node's second component an index into `positions`, every edge a discrete `send` step, an `admitted` path, and the refinement item's obligation identity; FR-245 accepts it. FR-430-AC-6's `Holds` certificate lists the post-state of `undo` as a `locked` node with no position, entered by the failing `undo` edge. Two runs give byte-equal certificates. | Test (TC-699) |
 | FR-244-AC-6 | The certificate of FR-245-AC-9's `Init3` refinement has `initials` of length 3; the initial node of index 1 is a `locked` node with the reserved index and no position, the other two initial nodes carry positions, and two runs give byte-equal certificates. A refinement-form certificate of one initial state lists `initials` of length 1. | Test (TC-699) |
+| FR-244-AC-7 | Over the Zeno-only variant of FR-852's `Rpc` subject (time invariant `x <= 0 ms` at every state, `reply` guarded by `x >= 0 ms`, so no positive delay is ever admissible and the only infinite path is the zero-delay `send`, `reply`, `reset` cycle), `possible Replied` and `always possible BackToIdle` each settle `proved` with a certificate that has no `admitted` member, whose reachability part covers the three reachable phases, and, for `BackToIdle`, a `state_graph` part listing the `EF P` zones; `temporal NoLateReply` over the same subject still settles `inconclusive` `NoAdmittedBehaviour` and emits no certificate. | Test (TC-3030) |
 
 ## Dependencies
 

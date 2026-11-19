@@ -201,6 +201,53 @@ does not satisfy an event's `Timestamp` occurrence-field requirement under
 The compiler SHALL NOT replace `UUID`, `String` or `Timestamp` with a local
 alias or a Boolean stand-in.
 
+### Value types bound to a native by `target`
+
+A value type (FSpec FR-208 `filament.meaning.model.value-type/v1`) binds its
+native either by `scalar` and constraints (the Integer, Text and Rational
+value types below) or by a `target` naming `ix://filament/native/<Name>`. A
+value type bound by `target` is that native under its own name, exactly as an
+alias whose `target` is the native is (FSpec FR-154): for every `<Name>` of
+FSpec FR-154's native set, a field, an operation parameter, an operation
+result, a tuple position, a variant case payload, a sequence `items`, a map
+`keys` or `values`, an option `inner` and a `reference` `target` typed by the
+value type SHALL have the type, the admission and the refusals that the same
+position typed `ix://filament/native/<Name>` has. In particular:
+
+- `Boolean`, `Integer`, `String`, `UUID`, `Timestamp`, `Bytes` and
+  `JsonObject` give the native type of FSpec FR-322 "Model-owned members", and
+  `Float32` and `Float64` give the strict `exact` float type of "Float model
+  members" below. The value type and its native are one type: a value of one
+  fills a slot of the other and the two compare under the native's equality.
+- `Text`, `Rational` and `Decimal` give no checked type: the member is
+  admitted and every use of it refuses `ill_typed`/`operator-ineligible`, as
+  for a member typed by the bare native (FR-056-AC-43), naming the member's
+  node and typed member path. Bounds and a profile come only from the
+  `scalar`-and-constraints form, so a `target` adds none.
+- `Clock` makes the value type an alias of the clock type. It builds no type
+  declaration and holds no data value. A member typed by it is a clock member
+  with FSpec FR-154's clock member shape and FR-230's clock place semantics
+  (presence `optional` is a guarded `Option<Clock>` place, a multiplicity
+  other than `[1, 1]` a clock collection), a tuple position or variant payload
+  typed by it is a clock position or clock payload (FR-056-AC-25), a
+  `reference` whose `target` is it is `Reference<Clock>`, and an option
+  `inner` or a map `keys` naming it refuses as one naming
+  `ix://filament/native/Clock` does (FSpec FR-154-AC-40, FSpec FR-154 "Map
+  types"). A `max` or `min` constraint whose `appliesTo` is the value type is
+  a clock constraint on that type (FR-230 "Clock constraints on a type"):
+  `max` bounds every clock place the value type types and `min` refuses
+  `invalid_timed_model`/`time-invariant-shape`. Any other constraint keyword
+  on it refuses `invalid_model_binding`/`malformed-declaration` at the
+  constraint.
+
+Apart from the clock constraints above, a value type bound by `target` carries
+no constraint. The reason for the rule: a model has two spellings of a named
+native, the alias and the `target`-bound value type, and the same native SHALL
+NOT get two meanings from them. A clock-bound value type is admitted as a clock
+alias rather than refused because timed models already declare clock places
+through an alias of `Clock` (FR-230-AC-16), and refusing the second spelling
+would refuse a model the first one checks.
+
 ### K2 canonical native String, UUID and Timestamp payloads
 
 The following representation choices define the K2 String, UUID and Timestamp
@@ -1059,6 +1106,8 @@ value or substitutes decimal, rational or host floating point (FSpec FR-148).
 | FR-056-AC-60 | Over a model whose `Gauge` has a Float64 field `a` and an operation `flip()` with frame `modifies a` and `post F { self.a = -pre(self.a) }`, the explicit-state checker returns no `RequiresBound`. From initial `a` `3ff0000000000000` (1.0) it reaches exactly the states 1.0 and `bff0000000000000` (-1.0), with one candidate per application. From initial `a` `0000000000000000` (+0) it reaches exactly +0 and `8000000000000000` (-0), two states with distinct keys, and each application has two candidates, because both zeros are `numericEqual` to the solved value (FR-120-AC-34). A simulation run applying `flip()` twice from 1.0 ends at 1.0 with no flag. | Test (TC-3006) |
 | FR-056-AC-61 | Over the AC-60 model, negotiation of an SMT item settles it `unsupported` with `unknown_required_feature`/`unsupported-feature` naming the width `float64`, and admission of the package is unchanged; a direct `encode_smt_query` call refuses `SmtEncodingRefusal` `field-sort` naming the object and `a`, and writes no script. No script holds a `Real` or `Int` constant for `a`. | Test (TC-3006) |
 | FR-056-AC-62 | Exporting the AC-60 model writes `a` through FSpec FR-812's binary floating point mapping, a tagged value with its sign, integer significand and exponent, and its `-` as the generated negation; the invariant `self.a != float64(bits: 0x7ff8000000000001)` exports its constant as `[tag \|-> "nan", bits \|-> "7ff8000000000001"]` (FSpec FR-812-AC-8); the export never holds `a` as a rational or decimal value. | Test (TC-3006) |
+| FR-056-AC-63 | A domain package `test/bound` declaring value types `Flag`, `Count`, `Name`, `Reading` and `Sample`, each with `target` `ix://filament/native/Boolean`, `Integer`, `String`, `Float64` and `Float32` respectively, and an object type `Holder` with one field typed by each, is admitted and assembles with no `UnsupportedModelMember` refusal, and the fields' value types are `Boolean`, `Integer`, `String`, `Float64` (binary64, `exact`) and `Float32` (binary32, `exact`); `self.count = 1` and `self.flag = true` check. Value types `Memo`, `Ratio` and `Amount` with `target` `ix://filament/native/Text`, `Rational` and `Decimal` and fields `memo`, `ratio`, `amount` typed by them are admitted with the unit, and the clause `self.memo = self.memo` refuses `ill_typed`/`operator-ineligible` at the `field` projection, naming `Holder` and `Field.typeRef`. | Test (TC-3031) |
+| FR-056-AC-64 | A timed unit whose domain package declares a value type `Watch` with `target` `ix://filament/native/Clock` and a constraint `max` `5` whose `appliesTo` is `Watch`, and an object type `Call` with a field `w` typed `Watch` and an optional field `v` typed `Watch`, checks under `Dense` to the clock places `Call.w` and `Call.v` (guarded by `v`'s presence) with the time invariant `x <= 5` on each, and raises no `UnsupportedModelMember` or `malformed-declaration` refusal. The same package with `Watch`'s constraint keyword `min` refuses `invalid_timed_model`/`time-invariant-shape`; with keyword `maxLength` it refuses `invalid_model_binding`/`malformed-declaration` at the constraint; and an option value type whose `inner` is `Watch` refuses `invalid_model_binding`/`malformed-declaration` at `TypeDefinition.inner`. | Test (TC-3031) |
 
 ### FR-056-AC-17
 
