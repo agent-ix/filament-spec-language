@@ -9,6 +9,7 @@ mod items;
 mod monitor;
 mod output;
 mod output_file;
+pub mod plan;
 mod package_run;
 pub use package_run::PreparedPackageRun;
 mod replay;
@@ -746,6 +747,17 @@ pub enum RunCause {
         /// Why the member is refused.
         reason: String,
     },
+    /// FR-1038: a `verification_plan` member the request reader refuses, with
+    /// its FR-805 cause apart from the message.
+    #[error("invalid verification plan request member {path}: {cause}: {reason}")]
+    PlanRequest {
+        /// The JSON pointer of the member at fault.
+        path: String,
+        /// The FR-805 cause.
+        cause: &'static str,
+        /// Why the member is refused.
+        reason: String,
+    },
     /// FR-312: a clause request member cannot form a typed selection.
     #[error("invalid clause request member {member}: {reason}")]
     ClauseRequest {
@@ -1059,7 +1071,7 @@ impl RunCause {
             | Self::OutputGivenTwice
             | Self::OutputExists { .. } => Code::InvalidRequest,
             Self::ExportMapper { .. } => Code::RuntimeInvariant,
-            Self::ExportRequest { .. } => Code::InvalidRuntimeInput,
+            Self::ExportRequest { .. } | Self::PlanRequest { .. } => Code::InvalidRuntimeInput,
             Self::Output(_) | Self::ClauseOutput(_) | Self::ExportOutput { .. } => {
                 Code::OutputFailure
             }
@@ -1241,7 +1253,8 @@ impl RunError {
                 None,
                 self.outcome_message(),
             )]),
-            RunCause::ExportRequest { path, cause, .. } => {
+            RunCause::ExportRequest { path, cause, .. }
+            | RunCause::PlanRequest { path, cause, .. } => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
                         Some(*cause),
@@ -1698,6 +1711,7 @@ fn run_configured(
             // FR-862: a `native-replay/1` request replays its FR-336 request.
             replay::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
         } else {
+            plan::check_member(bytes)?;
             if let Some(result) = export::run_bytes(directory, bytes, limits, overrides)? {
                 return Ok(Some(result));
             }

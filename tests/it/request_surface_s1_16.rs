@@ -426,6 +426,58 @@ fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
     assert_eq!(exit, 22, "{value}");
 }
 
+/// FR-1038-AC-2, FSpec FR-824-AC-3: the strict reader refuses a malformed
+/// `verification_plan` member at its pointer before any stage runs, so no
+/// outcome is written and the run exits `20`.
+#[test]
+#[trace("TC-3018", "FR-1038-AC-2")]
+#[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
+fn the_verification_plan_reader_refuses_a_malformed_member_at_its_pointer() {
+    let unit = format!("{MODEL_HEADER}{RELEASE_PLAN}");
+    for (member, cause, pointer) in [
+        (
+            json!({"plan": "Release", "seed": "7"}),
+            "wrong-value-kind",
+            "/verification_plan/seed",
+        ),
+        (
+            json!({"plan": "Release", "seed": -1}),
+            "invalid-value",
+            "/verification_plan/seed",
+        ),
+        (
+            json!({"plan": "Release", "emit": "yes"}),
+            "wrong-value-kind",
+            "/verification_plan/emit",
+        ),
+        (
+            json!({"plan": "Release", "emit": false, "execute": false}),
+            "invalid-value",
+            "/verification_plan/execute",
+        ),
+        (
+            json!({"plan": "Release", "engine": "x"}),
+            "unknown-member",
+            "/verification_plan/engine",
+        ),
+        (
+            json!({"plan": "Release", "document": {"file": "p.json"}}),
+            "unknown-member",
+            "/verification_plan/document",
+        ),
+        (json!([]), "wrong-value-kind", "/verification_plan"),
+    ] {
+        let (exit, value) = run(&unit, true, ("verification_plan", member));
+        assert_eq!(exit, 20, "{value}");
+        refusal_names(&value, cause);
+        refusal_names(&value, pointer);
+        assert!(
+            value.get("verification_plan").is_none(),
+            "no outcome: {value}"
+        );
+    }
+}
+
 /// FR-1038-AC-2, FSpec FR-824-AC-2/AC-3: the plan is selected by declared
 /// name, an omitted name runs the only plan, and bad selections or inputs
 /// refuse at their `/verification_plan` pointers.
@@ -465,24 +517,6 @@ fn the_verification_plan_member_selects_one_plan_or_refuses() {
             json!({"plan": "Never"}),
             "missing-name",
             "/verification_plan/plan",
-        ),
-        (
-            one.as_str(),
-            json!({"plan": "Release", "seed": "7"}),
-            "wrong-value-kind",
-            "/verification_plan/seed",
-        ),
-        (
-            one.as_str(),
-            json!({"plan": "Release", "emit": false, "execute": false}),
-            "invalid-value",
-            "/verification_plan/execute",
-        ),
-        (
-            one.as_str(),
-            json!({"plan": "Release", "engine": "x"}),
-            "unknown-member",
-            "/verification_plan/engine",
         ),
     ] {
         let (exit, value) = run(unit, true, ("verification_plan", member));
