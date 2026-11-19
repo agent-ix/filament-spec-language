@@ -122,7 +122,7 @@ fn protocol_finish_is_a_concrete_step_mapped_to_stutter() {
 }
 
 #[test]
-#[trace("FR-171", "FR-488")]
+#[trace("FR-171")]
 #[ignore = "QSL-2609: emitted internal references must resolve to their semantic nodes"]
 fn execution_relations_keep_distinct_receivers_of_the_same_operation() {
     let package = emitted("relation-pre-and-post");
