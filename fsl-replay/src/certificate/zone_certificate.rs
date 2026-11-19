@@ -983,7 +983,7 @@ fn check_zone_certificate_with_time_source<O: Clone + Eq>(
                 };
                 let listed = RefinementIdentity {
                     refinement_node: part.refinement_node.clone(),
-                    abstract_package: emitted(request.simulation.package)?,
+                    abstract_package: emitted(source)?,
                 };
                 if listed != recompiled {
                     return Err(ZoneCertificateRefusal::RefinementMismatch {
