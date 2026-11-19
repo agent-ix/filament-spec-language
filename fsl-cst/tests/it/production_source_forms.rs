@@ -472,7 +472,7 @@ fn state_clause_and_operation_body_alternatives_keep_targets_and_predicates() {
 #[trace("FSpec-FR-339-AC-1")]
 fn population_bounds_and_terminal_alternatives_keep_their_subjects() {
     for (name, population, maximum) in [("Empty", "rows", 0), ("Small", "Store::rows", 2)] {
-        let declaration = format!("bound {name} on {population}[{maximum}];");
+        let declaration = format!("bound {name} on {population}[{maximum}]");
         let source = unit(&declaration);
         let parsed = accepted(&source);
         let bound = one(&source, &parsed, Production::PopulationBound, &declaration);
