@@ -40,7 +40,6 @@ const METER: filament_exact::ScalarLimits = filament_exact::ScalarLimits {
     result_units: u64::MAX,
 };
 
-
 const SOURCE: &str = r#"
 language "ix:native" edition "1-draft";
 profile P = "filament.protocol.finite-global/v1";
@@ -94,7 +93,11 @@ fn fixture(
             Vec::new(),
         )
         .expect("unit assembled")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("protocol checks: {refusals:?}")),
     );
 
@@ -148,10 +151,7 @@ fn reachable(source: &str) -> fsl_eval::simulation::protocol::Reachable<Sc> {
         meter: METER,
     };
     let model = ModelSystem::new(request.clone()).expect("model subject built");
-    let checked = package
-        .graph()
-        .protocol("Watch")
-        .expect("protocol checked");
+    let checked = package.graph().protocol("Watch").expect("protocol checked");
     let subject = ProtocolSubject {
         model: ModelSubject {
             simulation: request,
