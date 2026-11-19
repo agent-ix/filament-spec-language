@@ -179,7 +179,13 @@ fn a_compensation_and_a_timed_await_emit_together() {
     assert!(nodes
         .iter()
         .any(|node| node["semantic_form"] == "compensation"));
-    assert!(nodes.iter().any(|node| node["semantic_form"] == "await"));
+    let awaited = nodes
+        .iter()
+        .find(|node| {
+            node["semantic_form"] == "control"
+                && node["body"]["operation"]["member"]["operator"] == "await"
+        })
+        .expect("the awaited control node");
     assert!(nodes
         .iter()
         .any(|node| node["semantic_form"] == "temporal_clause"));
@@ -201,6 +207,16 @@ fn a_compensation_and_a_timed_await_emit_together() {
     let bindings = wire["temporal_bindings"]
         .as_array()
         .expect("clock bindings");
+    let await_bindings = bindings
+        .iter()
+        .filter(|row| row["declaration"] == awaited["node_id"])
+        .collect::<Vec<_>>();
+    assert_eq!(await_bindings.len(), 1, "the await has one clock binding");
+    assert_eq!(await_bindings[0]["clock_name"], "model-steps");
+    assert_eq!(
+        await_bindings[0]["clock"],
+        json!({"kind": "event_position", "sequence_authority": "compensation-events"})
+    );
     assert_eq!(
         bindings.len(),
         4,
