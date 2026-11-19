@@ -8,6 +8,9 @@
 
 use crate::command_harness::{run_file, Output};
 use crate::support::config_version_spine::{spine, Case};
+use fsl_replay::spine::{
+    read_native_run_result, ClauseRunRecord, NativeRunOutcome, NativeRunResult,
+};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -52,6 +55,16 @@ fn text(output: &Output) -> String {
     )
 }
 
+/// Parses the public native-run-result/2 response through the same reader a
+/// downstream consumer uses.
+fn read_clause_result(output: &Output) -> Box<ClauseRunRecord> {
+    match read_native_run_result(&output.stdout).expect("the command result is readable") {
+        NativeRunResult::Clause(record) => record,
+        NativeRunResult::CommandError(_) => panic!("a clause result, not a command error"),
+        NativeRunResult::ProtocolAnalysis(_) => panic!("a clause result, not protocol analysis"),
+    }
+}
+
 /// FR-867-AC-1 and AC-2.
 #[test]
 #[trace("TC-2459", "FR-867-AC-1")]
@@ -81,6 +94,13 @@ fn a_non_boolean_function_claim_names_the_function_and_its_type() {
             && refusal.contains("result is `Boolean`"),
         "{refusal}"
     );
+    let integer_record = read_clause_result(&refused);
+    assert_eq!(integer_record.stage(), "select");
+    assert_eq!(integer_record.code(), Some("ill_typed"));
+    assert_eq!(integer_record.cause(), Some("type-mismatch"));
+    let fields = integer_record.fields().expect("the selection name is retained");
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields.get("name").map(String::as_str), Some("seven"));
 
     let bounded = select(directory.path(), "boundedValue");
     assert_eq!(bounded.status.code(), Some(20), "{bounded:?}");
@@ -98,11 +118,27 @@ fn a_non_boolean_function_claim_names_the_function_and_its_type() {
         "{}",
         text(&tested)
     );
+    let boolean_record = read_clause_result(&tested);
+    assert_eq!(boolean_record.stage(), "evaluate");
+    assert_eq!(boolean_record.category(), "success");
+    assert_eq!(boolean_record.truth(), Some(true));
+    assert!(matches!(
+        boolean_record.outcome(),
+        Some(NativeRunOutcome::Boolean(true))
+    ));
 
-    let unknown = select(directory.path(), "nope");
-    assert_eq!(unknown.status.code(), Some(20), "{unknown:?}");
-    let unknown = text(&unknown);
+    let unknown_output = select(directory.path(), "nope");
+    assert_eq!(unknown_output.status.code(), Some(20), "{unknown_output:?}");
+    let unknown = text(&unknown_output);
     assert!(unknown.contains("\"stage\":\"select\""), "{unknown}");
     assert!(unknown.contains("missing_declaration"), "{unknown}");
     assert!(unknown.contains("nope"), "{unknown}");
+    let unknown_record = read_clause_result(&unknown_output);
+    assert_eq!(unknown_record.stage(), "select");
+    assert_eq!(unknown_record.code(), Some("missing_declaration"));
+    assert_eq!(unknown_record.cause(), Some("missing-name"));
+    let fields = unknown_record
+        .fields()
+        .expect("the unknown selection name is retained");
+    assert_eq!(fields.get("name").map(String::as_str), Some("nope"));
 }

@@ -21,8 +21,9 @@ invariant NoCycle using v on Config::ConfigVersion at current {
   not reaches(self, self, parent)
 }
 
-post VersionUnchanged using v on Config::ConfigVersion::attemptUpdate {
-  self.versionNumber = pre(self.versionNumber)
+post VersionAdvances using v on Config::ConfigVersion::attemptUpdate {
+  (result implies convert<Integer>(self.versionNumber) = pre(self.versionNumber) + 1)
+  and (not result implies self.versionNumber = pre(self.versionNumber))
 }
 "#;
 
@@ -104,7 +105,7 @@ fn the_readme_first_rule_compiles_against_its_model() {
         [
             ("ParentOrder", StateClauseKind::Invariant),
             ("NoCycle", StateClauseKind::Invariant),
-            ("VersionUnchanged", StateClauseKind::Postcondition),
+            ("VersionAdvances", StateClauseKind::Postcondition),
         ]
     );
 }

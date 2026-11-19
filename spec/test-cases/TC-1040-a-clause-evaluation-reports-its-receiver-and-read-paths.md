@@ -33,8 +33,8 @@ Tag the tests `#[trace("TC-1040", "FR-107-AC-n")]`.
 1. `ParentOrder` over `H`, `self` `child`: `receiver_path()`; `reads()`.
 2. `ParentOrder` over `A`, `self` `root`: `reads()`; and over `H` with a
    meter whose work budget is 0: `reads()`.
-3. `VersionUnchanged` over changed-version (pre snapshot `R`, `child` 2; post
-   snapshot `P`, `child` 3), `self` `child`: `reads()`.
+3. `VersionAdvances` over changed-version (pre snapshot `R`, `child` 2; post
+   snapshot `P`, `child` 4, result `true`), `self` `child`: `reads()`.
 4. Add to the unit the operation `probe(target: ConfigVersion)` with no result
    and an empty frame (TC-466 step 3) and the clause `pre ProbeOrdered using v
    on Config::ConfigVersion::probe { self.versionNumber <

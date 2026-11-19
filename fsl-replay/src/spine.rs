@@ -597,7 +597,9 @@ impl CompileRefusal {
                 | Setting::RenderOutputBytes
                 | Setting::PrepareCompileWorkUnits
                 | Setting::PrepareCodeBytes => {
-                    unreachable!("format, render, export and prepare limits are not compile refusals")
+                    unreachable!(
+                        "format, render, export and prepare limits are not compile refusals"
+                    )
                 }
                 Setting::EmitOutputBytes => SpineStage::Emit,
                 Setting::S1InputBytes
@@ -938,19 +940,6 @@ fn forms_message(refusal: &FormsRefusal) -> String {
             ..
         } => {
             let message = match construct {
-                fsl_forms::ConstructKind::NullValue => {
-                    "`null` is not supported as a value here yet".to_owned()
-                }
-                fsl_forms::ConstructKind::IndexSelection => {
-                    format!("the index selection `{text}` is not supported here yet")
-                }
-                fsl_forms::ConstructKind::SizeOfType => {
-                    let type_call = text.split_once('(').map_or(&**text, |(head, _)| head);
-                    format!("`{type_call}` is not supported in expressions yet")
-                }
-                fsl_forms::ConstructKind::QualifiedReachesEdge => {
-                    format!("`reaches` over the qualified edge `{text}` is not supported yet")
-                }
                 fsl_forms::ConstructKind::HyperCondition => {
                     "a hyper expression is not supported as a temporal condition yet".to_owned()
                 }
@@ -1270,6 +1259,12 @@ fn check_message_one(first: &CheckRefusal) -> String {
         );
     }
     match &first.cause {
+        CheckCause::NullExpression => {
+            message = format!(
+                "{message}: `null` is only a record field's explicit-null state; \
+                 use `none` or `absent` for an empty option"
+            );
+        }
         CheckCause::EmptyPackage {
             package_name,
             sources,

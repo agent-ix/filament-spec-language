@@ -97,6 +97,7 @@ mod probabilistic_declarations;
 mod profile_defaults;
 mod quantities;
 mod rational_value_types;
+mod text_to_number;
 mod readme_first_rule_checks;
 #[cfg(feature = "test-support")]
 mod refinement_class_catalog;

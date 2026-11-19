@@ -1,0 +1,13 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+model Factory = "example/parts";
+record Note { ok: Boolean; }
+protocol Exchange using p over (job: Factory::Job) on origin {
+  role Sender on Factory::PlanningService;
+  role Receiver on Factory::MachiningStation;
+  channel Queue from Sender to Receiver carries Note
+    ordering unordered delivery exactly-once-premise capacity 1 overflow block;
+run parallel Both { branch A sequence First { commit One by Sender as (one: Boolean) { true }; } branch B sequence Second { commit Two by Receiver as (two: Boolean) { true }; } } join any [A, B] outstanding cancel;
+  finish Done as (done: Boolean) { true };
+}

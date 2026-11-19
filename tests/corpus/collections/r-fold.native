@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type Total = Integer;
+function total using v(s: Sequence<Integer>[0,3]): Integer pure { fold<Total>(acc,x in s:acc+x,identity:0) }
+function f using v(): Integer pure { total(sequence[5,6,7]) }

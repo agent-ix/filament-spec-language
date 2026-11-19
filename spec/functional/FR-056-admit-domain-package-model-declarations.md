@@ -191,6 +191,36 @@ If `agent-ix-semantic-ir` refuses the selected bytes, then the compiler SHALL en
 intake with no declaration and SHALL retain every reader diagnostic with its IR
 node, artifact id and span.
 
+The compiler SHALL keep the refusals of one intake as one ordered list, the
+**intake order**: for a document the reader refuses, one refusal for each
+retained reader diagnostic in the order the reader reports them; for a
+document the reader admits, the compiler's own intake refusals in FR-154's
+declaration refusal order (node order, and within one node FR-154's table
+order). The two never mix, because a reader refusal ends intake before any
+intake check runs. A reader diagnostic is the refusal
+`invalid_model_binding`/`malformed-declaration`, except that a
+`DUPLICATE_IDENTITY` diagnostic is `invalid_model_binding`/`conflicting-binding`
+(FR-512). A further reader diagnostic on the member a `DUPLICATE_IDENTITY`
+covers, such as `DUPLICATE_PARAM`, is reader detail of that refusal and not a
+refusal of its own (FR-056-AC-19): it is not a list entry, and its text is a
+further line of that refusal's message.
+
+Every report built from the list SHALL carry each entry: FR-286's outcome
+document writes each kept refusal as its own entry of `diagnostics`, in
+intake order, and the refusal's human message joins the entries' messages one
+per line in the same order, as a source refusal's message joins its source
+diagnostics. Each entry's `locus` is the region of the unit's `model`
+declaration that selected the package, the one source position a package
+refusal has, and its message names the reader diagnostic code or the intake
+check, the IR node identity and the JSON pointer into the package document,
+so entries on different members differ by their message; its `details` is
+`null` (FR-286 "Diagnostic details"). No rendering of an intake or assembly
+refusal SHALL keep only the first entry and count the rest (", and N more"),
+because an author who fixes the first violation should not have to recompile
+to learn of the second, and a tool reading the document should see every
+violation. The list needs no cut marker: its length is bounded by the package
+document, which intake reads under its byte limit.
+
 The complete domain-model vocabulary is not limited to the native type
 spellings of FSL source grammar. The compiler SHALL retain the distinct native
 types `UUID`, `Integer`, `String`, `Boolean` and `Timestamp` required by FSpec
@@ -1247,7 +1277,8 @@ value or substitutes decimal, rational or host floating point (FSpec FR-148).
 | FR-056-AC-16 | A domain package whose scalar type `Wide` is bound to `Integer` with `min` the canonical string `"0"` and `max` the canonical string `"18446744073709551615"` is admitted, and `Wide` resolves to `Int[0, 18446744073709551615]` exactly. With `max` the string `"9223372036854775808"` it resolves to `Int[0, 9223372036854775808]`; with `max` the string `"1000"` it resolves to `Int[0, 1000]`. With `min` the JSON number `0` or `max` the JSON number `1000`, intake refuses `invalid_model_binding`/`malformed-declaration`, retaining the reader's `agent-ix.semantic-ir.INVALID_OPERAND` diagnostic at that operand and admitting no declaration. With `max` the JSON number `18446744073709551615` the read refuses `noncanonical_wire`/`inexact-integer` at that number's pointer; with `max` the string `"170141183460469231731687303715884105728"` (`i128::MAX + 1`) or the noncanonical string `"0018"`, intake refuses `invalid_model_binding`/`malformed-declaration` at the scalar type, naming the constraint and the value. | Test (TC-911) |
 | FR-056-AC-17 | The canonical native controls below admit exactly the stated UUID and Timestamp payloads, retain their distinct native identities and refuse the stated alternatives without normalization. K2's `Instant` resolves to `Timestamp`; changing that binding to `Integer` gives TC-235 M04 run 5's `invalid_model_binding`/`malformed-declaration` at `OrderPlaced`'s `TypeDefinition.occurrenceField`, rather than an admitted substitute. | Test |
 | FR-056-AC-18 | TC-235 M17 run 1 retains `TaxedMoney`'s inherited `amount_minor`, `currency` and invariant `NonNegative`, its own `tax_minor`, and conformance to `Money`: its stated value is admitted at `Order/total` and wherever a parameter or result names `Money`, yet is unequal to the stated `Money` value because their most-specific types differ. M17 runs 2 and 3 retain the exact wrong-meaning and specialization-cycle refusals, including the cycle list, rather than object-reference or Boolean substitutes. | Test |
-| FR-056-AC-19 | Offering K2 bytes that the actual Semantic IR reader refuses retains every reader diagnostic and exposes no declaration, effective view or `normalize.record` charge. No downstream native binding repairs a reader refusal. An intake diagnostic on the same member as a retained reader diagnostic is subsumed by it. A reader `DUPLICATE_IDENTITY` diagnostic is reported as the `invalid_model_binding`/`conflicting-binding` refusal of this requirement, and a further reader diagnostic on the same member, such as `DUPLICATE_PARAM`, is retained beside it as reader detail and is not a second refusal. Once the reader contract admits those inputs, K2's version `1`, unused `population` construct, Timestamp binding and all TC-235 vectors remain unchanged; native payload admission alone does not establish their declaration counts, refusals, normalization or runtime results. | Test |
+| FR-056-AC-19 | Offering K2 bytes that the actual Semantic IR reader refuses retains every reader diagnostic and exposes no declaration, effective view or `normalize.record` charge. No downstream native binding repairs a reader refusal. An intake diagnostic on the same member as a retained reader diagnostic is subsumed by it. A reader `DUPLICATE_IDENTITY` diagnostic is reported as the `invalid_model_binding`/`conflicting-binding` refusal of this requirement, and a further reader diagnostic on the same member, such as `DUPLICATE_PARAM`, is retained beside it as reader detail and is not a second refusal. In the outcome document that detail is a further line of the `conflicting-binding` entry's message and has no `diagnostics` entry of its own (intake order). Once the reader contract admits those inputs, K2's version `1`, unused `population` construct, Timestamp binding and all TC-235 vectors remain unchanged; native payload admission alone does not establish their declaration counts, refusals, normalization or runtime results. | Test |
+| FR-056-AC-73 | A domain package whose bytes the Semantic IR reader refuses with three `DUPLICATE_PARAM` diagnostics, one in each of three operations at `/ir/types/0/operations/k/params/1/name` for `k` 0, 1 and 2, gives a refused outcome document whose `diagnostics` holds exactly three entries, in that reader order, each `invalid_model_binding`/`malformed-declaration` with `details` `null`, each with the locus of the unit's `model` declaration, and each message naming `DUPLICATE_PARAM` and its own pointer, so the three messages differ. The refusal's human message (its `Display`) holds the three messages on three lines in the same order with no ", and N more" suffix. A package whose two operations each repeat one parameter identity under one name gives two `conflicting-binding` entries, each message holding a second line for its `DUPLICATE_PARAM` detail, and no third or fourth entry. An assembly refusal with two errors writes two entries and a two-line message. A package with one reader diagnostic writes one entry and a one-line message. | Test (TC-3044) |
 | FR-056-AC-20 | A selected domain package whose object type `Gauge` has a `[1, 1]` field `reading` typed `ix://filament/native/Float64` is admitted and assembles, and `reading`'s value type is `ValueType::Float` of width binary64 with rounding mode `exact`. The unit admits the IEEE profile with no float form of its own, and a `[0, 3]` field of the same type is a `Set<Float64>[0, 3]`. | Test (TC-405, TC-3004) |
 | FR-056-AC-21 | An admitted package containing record value type `Address { street: Text[0, 64; nfc] }`, object field `Account.address: Address` and a record subtype `PostalAddress` retains one `record` export per record, all effective fields and invariants, and subtype conformance. The type environment gives `Account.address` the record value type, an optional `Address` field `Option<Address>`, and an ordered non-unique `[0, 3]` field `Sequence<Address>[0, 3]`, never `Reference<Address>`; an operation parameter or result naming `Address` has the same value type. | Test |
 | FR-056-AC-22 | A record value type with an identity field or an operation refuses with FR-208's named cause before assembly; an object or record field whose `typeRef` names an event type, state machine, process, persistence interface or namespace refuses `invalid_model_binding`/`malformed-declaration` at intake. A valid finite recursive record field, such as `Node { next?: Node }`, retains its record type and optional edge in the type environment; it is not refused solely because the declaration graph is recursive. | Test |

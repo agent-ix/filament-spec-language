@@ -109,6 +109,26 @@ pub trait SubjectSystem:
     /// FR-101's canonical state key for internal simulation ordering.
     fn canonical_state_key(&self, state: &Self::State) -> Result<StateKey, EncodingRefusal>;
 
+    /// The key used only for closing a loop. Protocols canonicalise delivery
+    /// labels outside the checked item's read set; step post-states stay concrete.
+    fn loop_state_key(&self, state: &Self::State) -> Result<StateKey, EncodingRefusal> {
+        self.canonical_state_key(state)
+    }
+
+    /// Lift a canonical protocol edge from a concrete source. `None` means
+    /// this subject has no delivery-label quotient and the edge is concrete.
+    ///
+    /// # Errors
+    /// Stops when expansion fails or the edge has no concrete counterpart.
+    fn concrete_cycle_step(
+        &self,
+        _source: &Self::State,
+        _transition: &Self::TransitionId,
+        _target: &Self::State,
+    ) -> Result<Option<(Self::TransitionId, Self::State)>, ExpansionStop> {
+        Ok(None)
+    }
+
     /// FR-101's canonical bytes of `transition`, which order successors.
     ///
     /// # Errors

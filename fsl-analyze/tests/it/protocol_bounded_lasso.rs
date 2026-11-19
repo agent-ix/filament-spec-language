@@ -13,11 +13,13 @@
 //! atom.
 
 use std::cell::Cell;
+use std::collections::BTreeSet;
 
 use filament_exact::Meter;
 use fsl_eval::model_subject::ModelLetters;
 use fsl_eval::simulation::model::ExpansionLimits;
 use fsl_eval::simulation::protocol::{ProtocolTransition, StepKind};
+use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_eval::temporal::{
     evaluate_at, AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
     TemporalRefusal, TemporalTrace,
@@ -25,9 +27,10 @@ use fsl_eval::temporal::{
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
-    replay_protocol_trace_with_temporal_selections, DisagreementCause, ModelCheckOutcome,
-    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject,
-    ModelTraceValue, ProtocolTraceSubject, ReplayLimits, ReplayRefusal, TemporalCounterexample,
+    replay_protocol_trace_with_temporal_selections, CounterexampleKind, DisagreementCause, Lasso,
+    ModelCheckOutcome, ModelStep, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement,
+    ModelTraceSubject, ModelTraceValue, ProtocolTraceSubject, ReplayLimits, ReplayRefusal,
+    TemporalCounterexample,
 };
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
@@ -35,7 +38,7 @@ use ix_trace_rs::trace;
 use crate::counter::UNLIMITED;
 use crate::fill::{attempt, contracts, document, instance, protocol, universe};
 use crate::model_settle::{envelope_at, request};
-use crate::protocol_counted_steps::{claim, lossy_channel, Case, CellV};
+use crate::protocol_counted_steps::{claim, Case, CellV};
 
 /// A `repeat` around a `parallel` of two empty branches: the loop is `fork`
 /// then `join`.
@@ -65,7 +68,12 @@ fn replay(
     let node = &case.checked.graph().temporal_clauses()[0];
     let clause_node = node.identity().clone();
     let occurrence = OccurrenceKey::new(clause_node.clone(), node.claim().clone());
-    let subject = case.subject("P");
+    let protocol = if case.checked.graph().protocol("Echo").is_some() {
+        "Echo"
+    } else {
+        "P"
+    };
+    let subject = case.subject(protocol);
     replay_protocol_trace_with_temporal_selections(
         request(
             &case.checked,
@@ -83,7 +91,7 @@ fn replay(
                     max_candidates: 1_000_000,
                 },
             },
-            protocol: "P".to_owned(),
+            protocol: protocol.to_owned(),
             over: instance("c"),
             roles: subject.roles,
             capacities: Vec::new(),
@@ -104,7 +112,12 @@ fn refutation(
     case: &Case,
     letters: &dyn ModelLetters,
 ) -> TemporalCounterexample<ProtocolTransition> {
-    match case.check("P", letters) {
+    let protocol = if case.checked.graph().protocol("Echo").is_some() {
+        "Echo"
+    } else {
+        "P"
+    };
+    match case.check(protocol, letters) {
         ModelCheckOutcome::Violated { counterexample, .. } => counterexample.as_ref().clone(),
         other => panic!("expected a violation, got {:?}", other.stats()),
     }
@@ -339,13 +352,24 @@ fn a_bounded_clause_refuses_a_lasso_that_is_not_zero_counted() {
 /// step (FR-217-AC-7): the `touch` loop's lasso, found for the same package
 /// under the infinite-trace profile, replayed against the bounded clause
 /// gives no value.
-#[trace("TC-839", "FR-329-AC-9")]
+#[trace("TC-839", "TC-662", "FR-329-AC-9", "FR-217-AC-7")]
 #[test]
 fn replaying_a_counted_protocol_lasso_under_a_bounded_clause_gives_no_value() {
     let infinite = counted_loop(true);
     let payload = refutation(&infinite, &CellV(is_one));
-    assert!(payload.lasso.is_some());
-    assert!(payload.prefix.iter().any(|step| step.transition.counts()));
+    let lasso = payload.lasso.expect("a lasso");
+    assert_eq!(
+        payload.prefix[lasso.entry..]
+            .iter()
+            .filter(|step| step.transition.counts())
+            .count(),
+        1,
+        "exactly one loop step counts"
+    );
+    assert!(
+        !payload.fairness.is_empty(),
+        "the loop meets the default scheduler constraints"
+    );
 
     let bounded = counted_loop(false);
     // The bounded clause carries the package's scheduler set as the lasso does.
@@ -356,31 +380,62 @@ fn replaying_a_counted_protocol_lasso_under_a_bounded_clause_gives_no_value() {
     }
 }
 
-/// FR-329-AC-10: under a bounded profile, a zero-counted protocol lasso that
-/// is unfair for a scheduler constraint refuses `invalid_runtime_input`/
-/// `invalid-value` naming the constraint; the same lasso replayed against the
-/// package declaring `scheduling adversarial` is fair, and with `p` false at
-/// every position `eventually[1,1] holds(p)` is `Completed(false)` at
-/// position 0.
-///
-/// The lasso is `lossy_channel`'s: the stem is the counted `send`, the loop
-/// is the uncounted `duplicate` and `lose`, and the thread resting before `A`
-/// is enabled throughout.
-#[trace("TC-839", "FR-329-AC-10")]
+/// A counted touch loop can starve an enabled sibling under adversarial
+/// scheduling. Bounded replay has no value when fair, but checks the default
+/// package's scheduler constraints before evaluating the bounded clause.
+#[trace("TC-839", "TC-662", "FR-329-AC-9", "FR-217-AC-7")]
 #[test]
-fn an_unfair_zero_counted_lasso_refuses_naming_the_scheduler_constraint() {
-    let adversarial = lossy_channel("scheduling adversarial;");
-    let payload = refutation(&adversarial, &CellV(is_one));
+fn replaying_a_counted_protocol_lasso_refuses_an_unfair_scheduler_loop() {
+    let case = |infinite: bool, scheduling: &str| {
+        let run = format!(
+            "parallel Both {{ branch spinning repeat Loop by w visible () while {{ true }} {} \
+             branch waiting {} }} join all [spinning, waiting];",
+            attempt("T", "touch", "TouchPre", "t", "true"),
+            attempt("A", "inc", "IncPre, IncPost", "a", "true")
+        );
+        let unit = contracts("self.v <= 1") + &protocol("P", scheduling, &run, "d");
+        let formula = if infinite {
+            "temporal Claim using t0 over (k: M::Cell) clock \"model-steps\" on origin \
+             { always eventually holds(k.v = 1) }\n"
+                .to_owned()
+        } else {
+            claim("eventually[0,1] holds(k.v = 1)")
+        };
+        Case::new(&(unit + &formula))
+    };
+    let infinite = case(true, "scheduling adversarial;");
+    let payload = refutation(&infinite, &CellV(is_one));
     let lasso = payload.lasso.expect("a lasso");
-    assert!(payload.fairness.is_empty(), "no scheduler constraint");
-    assert!(payload.prefix[lasso.entry..]
-        .iter()
-        .all(|step| !step.transition.counts()));
+    assert_eq!(
+        payload.prefix[lasso.entry..]
+            .iter()
+            .filter(|step| step.transition.counts())
+            .count(),
+        1,
+        "the loop takes one touch while the sibling waits"
+    );
+    let bounded = case(false, "scheduling adversarial;");
+    let result = replay(&bounded, &CellV(is_one), &payload).expect("the fair lasso replays");
+    assert!(
+        matches!(
+            result.settlement,
+            ModelTraceSettlement::Inconclusive(DisagreementCause::NoValue { .. })
+        ),
+        "a fair counted loop has no bounded truth value: {:?}",
+        result.settlement
+    );
 
-    // The same lasso against the default scheduler: the first replay names
-    // the set the package recompiles, the second carries it.
-    let default = lossy_channel("");
-    let stale = replay(&default, &CellV(is_one), &payload);
+    let default = case(false, "");
+    assert_unfair_with_default_fairness(&default, &payload);
+}
+
+/// Carry the default package's fairness set, then require an unfairness refusal
+/// naming one of its scheduler constraints rather than a bounded no-value result.
+fn assert_unfair_with_default_fairness(
+    default: &Case,
+    payload: &TemporalCounterexample<ProtocolTransition>,
+) {
+    let stale = replay(default, &CellV(is_one), payload);
     let Err(ReplayRefusal::ModelTrace(stale)) = stale else {
         panic!("expected a fairness set refusal, got {stale:?}");
     };
@@ -390,7 +445,7 @@ fn an_unfair_zero_counted_lasso_refuses_naming_the_scheduler_constraint() {
     assert!(!recompiled.is_empty());
     let mut carried = payload.clone();
     carried.fairness.clone_from(&recompiled);
-    let unfair = replay(&default, &CellV(is_one), &carried);
+    let unfair = replay(default, &CellV(is_one), &carried);
     let Err(error) = unfair else {
         panic!("expected an unfair lasso, got {unfair:?}");
     };
@@ -406,21 +461,857 @@ fn an_unfair_zero_counted_lasso_refuses_naming_the_scheduler_constraint() {
     );
     assert_eq!(error.code(), Code::InvalidRuntimeInput);
     assert_eq!(error.cause(), Some("invalid-value"));
+}
+
+/// FR-329-AC-10: under a bounded profile, a zero-counted protocol lasso that
+/// is unfair for a scheduler constraint refuses `invalid_runtime_input`/
+/// `invalid-value` naming the constraint; the same lasso replayed against the
+/// package declaring `scheduling adversarial` is fair, and with `p` false at
+/// every position `eventually[1,1] holds(p)` is `Completed(false)` at
+/// position 0.
+///
+/// Echo sends once and rests at Rcv. Its concrete duplicate/lose loop
+/// advances delivery identity and closes only in the unread cycle key.
+#[trace("TC-839", "FR-329-AC-10")]
+#[test]
+fn an_unfair_zero_counted_lasso_refuses_naming_the_scheduler_constraint() {
+    let adversarial = echo("scheduling adversarial;", "eventually[1,1] holds(k.v = 1)");
+    let payload = echo_lasso(&adversarial);
+    let lasso = payload.lasso.expect("a lasso");
+    let entry = &payload.prefix[lasso.entry - 1].post_state;
+    let concrete_last = &payload.prefix.last().expect("loop post-state").post_state;
+    assert_ne!(
+        entry, concrete_last,
+        "the concrete ProtocolKey comparison must reject this loop before fairness"
+    );
+    let protocol = crate::fill::sc_system(&adversarial.subject("Echo"));
+    let mut concrete = protocol.initial().remove(0);
+    let mut states = Vec::new();
+    for kind in [StepKind::Send, StepKind::Duplicate, StepKind::Lose] {
+        let (_, next) = protocol
+            .successors(&concrete)
+            .expect("expansion")
+            .successors
+            .into_iter()
+            .find(|(step, _)| step.kind() == kind)
+            .expect("enabled Echo step");
+        states.push(next.clone());
+        concrete = next;
+    }
+    let identity_read = BTreeSet::from(["Echo::ch".to_owned()]);
+    assert_ne!(
+        protocol.cycle_key(&states[0], &identity_read).unwrap(),
+        protocol.cycle_key(&states[2], &identity_read).unwrap(),
+        "the adverse identity-reading closure rejects before scheduler fairness"
+    );
+    assert!(payload.fairness.is_empty(), "no scheduler constraint");
+    assert!(payload.prefix[lasso.entry..]
+        .iter()
+        .all(|step| !step.transition.counts()));
+    assert_eq!(
+        payload.prefix[lasso.entry..]
+            .iter()
+            .map(|step| step.transition.kind())
+            .collect::<Vec<_>>(),
+        [StepKind::Duplicate, StepKind::Lose]
+    );
+
+    // The same lasso against the default scheduler: the first replay names
+    // the set the package recompiles, the second carries it.
+    let default = echo("", "eventually[1,1] holds(k.v = 1)");
+    assert_unfair_with_default_fairness(&default, &payload);
 
     // Against the adversarial package it is fair; `p` false throughout, the
     // distance-1 window holds no `p`.
-    let window = adversarial_window();
-    assert_reproduced_at(replay(&window, &CellV(is_one), &payload), 0);
+    assert_reproduced_at(replay(&adversarial, &CellV(is_one), &payload), 0);
 }
 
-/// `lossy_channel`'s package with the claim `eventually[1,1] holds(k.v = 1)`.
-fn adversarial_window() -> Case {
-    let members = "channel ch from w to w carries Boolean ordering fifo by (m: Boolean) \
-                   { true } delivery unknown capacity 2 overflow block; scheduling adversarial;";
-    let run = format!(
-        "sequence Main {{ send S1 via ch as (s1: Boolean) {{ s1 }}; {} }}",
-        attempt("A", "inc", "IncPre, IncPost", "a", "true")
+fn echo(scheduling: &str, formula: &str) -> Case {
+    Case::new(&(echo_body(scheduling) + &claim(formula)))
+}
+
+fn echo_infinite(scheduling: &str, formula: &str) -> Case {
+    let clause = claim(formula).replace("using tb over", "using t0 over");
+    Case::new(&(echo_body(scheduling) + &clause))
+}
+
+const ECHO_RUN: &str = "sequence Main { send Snd via ch as (s: Boolean) { s }; \
+                       receive Rcv via ch of Snd as (r: Boolean) { r }; }";
+
+fn echo_body(scheduling: &str) -> String {
+    let members = format!(
+        "channel ch from w to w carries Boolean ordering fifo by (m: Boolean) \
+                   {{ true }} delivery unknown capacity 2 overflow block; {scheduling}"
     );
-    let unit = contracts("self.v <= 1") + &protocol("P", members, &run, "d");
-    Case::new(&(unit + &claim("eventually[1,1] holds(k.v = 1)")))
+    contracts("self.v <= 1") + &protocol("Echo", &members, ECHO_RUN, "d")
+}
+
+/// Build the witness from enabled concrete transitions, without model search.
+fn echo_lasso(case: &Case) -> TemporalCounterexample<ProtocolTransition> {
+    let system = crate::fill::sc_system(&case.subject("Echo"));
+    let mut state = system.initial().remove(0);
+    let mut prefix = Vec::new();
+    let mut entry = None;
+    for kind in [StepKind::Send, StepKind::Duplicate, StepKind::Lose] {
+        let (transition, next) = system
+            .successors(&state)
+            .expect("expansion")
+            .successors
+            .into_iter()
+            .find(|(step, _)| step.kind() == kind)
+            .expect("enabled Echo step");
+        let post_state = system.canonical_state_key(&next).expect("concrete key");
+        if kind == StepKind::Send {
+            entry = Some(next.clone());
+        }
+        prefix.push(ModelStep {
+            transition,
+            post_state,
+            delay: None,
+        });
+        state = next;
+    }
+    let entry = entry.expect("send entry");
+    assert_ne!(
+        system.canonical_state_key(&entry).unwrap(),
+        system.canonical_state_key(&state).unwrap()
+    );
+    assert_eq!(
+        system.cycle_key(&entry, &BTreeSet::new()).unwrap(),
+        system.cycle_key(&state, &BTreeSet::new()).unwrap()
+    );
+    TemporalCounterexample {
+        initial_state: 0,
+        prefix,
+        over_binding: Some(instance("c")),
+        fairness: Vec::new(),
+        kind: CounterexampleKind::Formula,
+        lasso: Some(Lasso {
+            entry: 1,
+            terminal_stutter: false,
+        }),
+        blocked: Vec::new(),
+        refinement: None,
+        final_delay: None,
+    }
+}
+
+/// The explicit read-set seam is exercised here because the checked language
+/// currently has no delivery-index-reading obligation form.
+#[trace("TC-650", "FR-205-AC-10", "FR-205-AC-11")]
+#[test]
+fn echo_cycle_keys_preserve_read_delivery_labels_and_pair_unread_steps() {
+    let case = echo_infinite("scheduling adversarial;", "always holds(k.v = 0)");
+    let system = crate::fill::sc_system(&case.subject("Echo"));
+    let step = |state: &fsl_eval::simulation::protocol::ProtocolState<
+        fsl_eval::simulation::protocol::Sc,
+    >,
+                kind| {
+        system
+            .successors(state)
+            .unwrap()
+            .successors
+            .into_iter()
+            .find(|(transition, _)| transition.kind() == kind)
+            .expect("enabled step")
+    };
+    let (_, s1) = step(&system.initial()[0], StepKind::Send);
+    let (duplicate, both) = step(&s1, StepKind::Duplicate);
+    assert_eq!(duplicate.delivery().unwrap().index(), 1);
+    let losses: Vec<_> = system
+        .successors(&both)
+        .unwrap()
+        .successors
+        .into_iter()
+        .filter(|(transition, _)| transition.kind() == StepKind::Lose)
+        .collect();
+    assert_eq!(losses.len(), 2);
+    let s2 = &losses[0].1; // remove original delivery 0
+    let s3 = &losses[1].1; // remove duplicate delivery 1
+    let raw: BTreeSet<_> = [&s1, s2, s3]
+        .into_iter()
+        .map(|state| system.canonical_state_key(state).unwrap())
+        .collect();
+    assert_eq!(raw.len(), 3);
+    let unread = BTreeSet::new();
+    for state in [&s1, s2, s3] {
+        assert_eq!(
+            system.cycle_key(state, &unread).unwrap(),
+            system.canonical_state_key(&s1).unwrap()
+        );
+        assert_eq!(crate::fill::v(state.model(), "c"), 0);
+    }
+    let (next_duplicate, _) = step(s2, StepKind::Duplicate);
+    assert_eq!(
+        next_duplicate.delivery().unwrap().index(),
+        2,
+        "concrete indices are never reused"
+    );
+    let reads = BTreeSet::from(["Echo::ch".to_owned()]);
+    for state in [&s1, s2, s3] {
+        assert_eq!(
+            system.cycle_key(state, &reads).unwrap(),
+            system.canonical_state_key(state).unwrap()
+        );
+    }
+    assert_ne!(
+        system.cycle_key(&s1, &reads).unwrap(),
+        system.cycle_key(s2, &reads).unwrap()
+    );
+
+    let left = system.successors(&s1).unwrap().successors;
+    let right = system.successors(s2).unwrap().successors;
+    assert_eq!(left.len(), right.len());
+    assert_eq!(left.len(), 3, "duplicate, lose and receive");
+    for (transition, post) in &left {
+        let (paired, paired_post) = right
+            .iter()
+            .find(|(candidate, _)| candidate.kind() == transition.kind())
+            .unwrap();
+        assert_eq!(transition.node(), paired.node());
+        assert_eq!(transition.counts(), paired.counts());
+        match (transition.binder_record(), paired.binder_record()) {
+            (
+                Some(filament_exact::Value::Boolean(left)),
+                Some(filament_exact::Value::Boolean(right)),
+            ) => assert_eq!(left, right),
+            (None, None) => assert_ne!(transition.kind(), StepKind::Receive),
+            records => panic!("paired Echo steps bind different payloads: {records:?}"),
+        }
+        assert_eq!(
+            system.cycle_key(post, &unread).unwrap(),
+            system.cycle_key(paired_post, &unread).unwrap()
+        );
+        assert_eq!(
+            crate::fill::v(post.model(), "c"),
+            crate::fill::v(paired_post.model(), "c")
+        );
+    }
+
+    let reading_system = system.with_cycle_keys(reads);
+    assert_ne!(
+        reading_system.loop_state_key(&s1).unwrap(),
+        reading_system.loop_state_key(s2).unwrap()
+    );
+    let explored = fsl_analyze::model_check::retain(
+        &reading_system,
+        fsl_eval::simulation::Limits::default(),
+        fsl_foundation::IdentityLimits::default(),
+        Some(8),
+        || false,
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            explored.outcome,
+            fsl_eval::simulation::Outcome::BoundReached { depth: 8, .. }
+        ),
+        "{:?}",
+        explored.outcome
+    );
+}
+
+/// FR-205-AC-12: reading message identity preserves the message ordinal while
+/// unread delivery indices are still canonicalized, leaving finite EN-1
+/// exploration.
+#[trace("TC-650", "FR-205-AC-12")]
+#[test]
+fn echo_message_read_set_keeps_ordinals_and_canonicalizes_delivery_indices() {
+    let case = echo_infinite("scheduling adversarial;", "always holds(k.v = 0)");
+    let system = crate::fill::sc_system(&case.subject("Echo"));
+    let step = |state: &fsl_eval::simulation::protocol::ProtocolState<
+        fsl_eval::simulation::protocol::Sc,
+    >,
+                kind| {
+        system
+            .successors(state)
+            .unwrap()
+            .successors
+            .into_iter()
+            .find(|(transition, _)| transition.kind() == kind)
+            .expect("enabled step")
+    };
+    let (_, s1) = step(&system.initial()[0], StepKind::Send);
+    let (_, both) = step(&s1, StepKind::Duplicate);
+    let losses: Vec<_> = system
+        .successors(&both)
+        .unwrap()
+        .successors
+        .into_iter()
+        .filter(|(transition, _)| transition.kind() == StepKind::Lose)
+        .collect();
+    assert_eq!(losses.len(), 2);
+    let s2 = &losses[0].1;
+    let s3 = &losses[1].1;
+    let message_reads = BTreeSet::from(["Echo::ch".to_owned()]);
+    let no_delivery_reads = BTreeSet::new();
+
+    let concrete_keys: BTreeSet<_> = [&s1, s2, s3]
+        .into_iter()
+        .map(|state| system.canonical_state_key(state).unwrap())
+        .collect();
+    assert_eq!(
+        concrete_keys.len(),
+        3,
+        "concrete delivery identities differ"
+    );
+    let initial_cycle_key = system
+        .canonical_state_key(&s1)
+        .expect("first queued message key");
+    for state in [&s1, s2, s3] {
+        assert_eq!(
+            system
+                .cycle_key_with_reads(state, &message_reads, &no_delivery_reads)
+                .unwrap(),
+            initial_cycle_key,
+            "message ordinal is preserved and unread delivery labels are quotiented"
+        );
+    }
+
+    let message_read_system = system.with_cycle_read_sets(message_reads, no_delivery_reads);
+    let explored = fsl_analyze::model_check::retain(
+        &message_read_system,
+        fsl_eval::simulation::Limits::default(),
+        fsl_foundation::IdentityLimits::default(),
+        Some(8),
+        || false,
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            explored.outcome,
+            fsl_eval::simulation::Outcome::Exhaustive(_)
+        ),
+        "message-only reads still yield finite exploration: {:?}",
+        explored.outcome
+    );
+
+    // Reuse the same message-only read set over an unbounded repeat. The
+    // source path is unchanged, so successive sends have occurrence ordinals
+    // 0 and 1. Delivery labels remain unread and are still quotiented.
+    let loop_channel = "channel ch from w to w carries Boolean ordering fifo by (m: Boolean) \
+                        { true } delivery unknown capacity 2 overflow block;";
+    let loop_run = "repeat Loop by w visible () while { true } sequence Body { \
+                    send Snd via ch as (s: Boolean) { s }; \
+                    receive Rcv via ch of Snd as (r: Boolean) { r }; }";
+    let loop_body = contracts("self.v <= 1")
+        + &protocol("Loop", loop_channel, loop_run, "d")
+        + &claim("always holds(k.v = 0)").replace("using tb over", "using t0 over");
+    let loop_case = Case::new(&loop_body);
+    let loop_system = crate::fill::sc_system(&loop_case.subject("Loop"));
+    let initial = loop_system.initial().remove(0);
+    let (send0, sent0) = loop_system
+        .successors(&initial)
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(transition, _)| transition.kind() == StepKind::Send)
+        .expect("first repeated send");
+    let message0 = send0.message().expect("message occurrence");
+    assert_eq!(message0.ordinal(), 0);
+    let (_, duplicated) = loop_system
+        .successors(&sent0)
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(transition, _)| transition.kind() == StepKind::Duplicate)
+        .expect("duplicate the first message");
+    let (_, after_loss) = loop_system
+        .successors(&duplicated)
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(transition, _)| transition.kind() == StepKind::Lose)
+        .expect("lose one concrete delivery");
+    assert_ne!(
+        loop_system.canonical_state_key(&sent0).unwrap(),
+        loop_system.canonical_state_key(&after_loss).unwrap(),
+        "the concrete delivery index differs after duplicate/lose"
+    );
+    let loop_message_reads = BTreeSet::from(["Loop::ch".to_owned()]);
+    let no_delivery_reads = BTreeSet::new();
+    let first_occurrence_key = loop_system
+        .cycle_key_with_reads(&sent0, &loop_message_reads, &no_delivery_reads)
+        .unwrap();
+    assert_eq!(
+        loop_system
+            .cycle_key_with_reads(&after_loss, &loop_message_reads, &no_delivery_reads)
+            .unwrap(),
+        first_occurrence_key,
+        "unread delivery indices canonicalize even when message identity is read"
+    );
+    let (_, received0) = loop_system
+        .successors(&after_loss)
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(transition, _)| transition.kind() == StepKind::Receive)
+        .expect("receive the remaining copy");
+    let (send1, sent1) = loop_system
+        .successors(&received0)
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(transition, _)| transition.kind() == StepKind::Send)
+        .expect("second repeated send");
+    let message1 = send1.message().expect("message occurrence");
+    assert_eq!(message1.node(), message0.node(), "same static send node");
+    assert_eq!(
+        message1.path(),
+        message0.path(),
+        "same repeated thread path"
+    );
+    assert_eq!(message1.ordinal(), 1);
+    let second_occurrence_key = loop_system
+        .cycle_key_with_reads(&sent1, &loop_message_reads, &no_delivery_reads)
+        .unwrap();
+    assert_ne!(
+        first_occurrence_key, second_occurrence_key,
+        "the message-only read set preserves occurrence ordinals 0 and 1"
+    );
+    let (_, received1) = loop_system
+        .successors(&sent1)
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(transition, _)| transition.kind() == StepKind::Receive)
+        .expect("receive the second message");
+    let loop_keys = [
+        loop_system
+            .cycle_key_with_reads(&initial, &loop_message_reads, &no_delivery_reads)
+            .unwrap(),
+        loop_system
+            .cycle_key_with_reads(&received0, &loop_message_reads, &no_delivery_reads)
+            .unwrap(),
+        loop_system
+            .cycle_key_with_reads(&received1, &loop_message_reads, &no_delivery_reads)
+            .unwrap(),
+    ];
+    assert_eq!(
+        loop_keys.iter().collect::<BTreeSet<_>>().len(),
+        3,
+        "received ordinals 0 and 1 stay distinct from the initial state"
+    );
+    let loop_read_system = loop_system.with_cycle_read_sets(loop_message_reads, no_delivery_reads);
+    let bounded = fsl_analyze::model_check::retain(
+        &loop_read_system,
+        fsl_eval::simulation::Limits::default(),
+        fsl_foundation::IdentityLimits::default(),
+        Some(8),
+        || false,
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            bounded.outcome,
+            fsl_eval::simulation::Outcome::BoundReached { depth: 8, .. }
+        ),
+        "retained message ordinals have the specified finite-depth outcome: {:?}",
+        bounded.outcome
+    );
+}
+
+/// FR-205-AC-15: received-message bounds and unread message ordinals disappear
+/// from cycle keys, while the concrete send transitions retain distinct
+/// occurrence ordinals. EN-1 proves the unchanged model claim by closure.
+#[trace("TC-650", "FR-205-AC-15")]
+#[test]
+fn loop_received_message_ordinals_canonicalize_and_en1_closes() {
+    let channel = "channel ch from w to w carries Boolean ordering fifo by (m: Boolean) \
+                   { true } delivery exactly-once-premise capacity 1 overflow block;";
+    let run = "repeat Loop by w visible () while { true } sequence Body { \
+               send Snd via ch as (s: Boolean) { s }; \
+               receive Rcv via ch of Snd as (r: Boolean) { r }; }";
+    let body = contracts("self.v <= 1")
+        + &protocol("Loop", channel, run, "d")
+        + &claim("always holds(k.v = 0)").replace("using tb over", "using t0 over");
+    let case = Case::new(&body);
+    let system = crate::fill::sc_system(&case.subject("Loop"));
+    let mut state = system.initial().remove(0);
+    let mut loop_states = vec![state.clone()];
+    let mut sent_states = Vec::new();
+    let mut send_identities = Vec::new();
+    for _ in 0..2 {
+        let (send, sent) = system
+            .successors(&state)
+            .unwrap()
+            .successors
+            .into_iter()
+            .find(|(transition, _)| transition.kind() == StepKind::Send)
+            .expect("the repeated send is enabled");
+        send_identities.push(send.message().expect("send message").ordinal());
+        sent_states.push(sent.clone());
+        let (_, received) = system
+            .successors(&sent)
+            .unwrap()
+            .successors
+            .into_iter()
+            .find(|(transition, _)| transition.kind() == StepKind::Receive)
+            .expect("the queued message is received");
+        state = received;
+        loop_states.push(state.clone());
+    }
+
+    assert_eq!(send_identities, [0, 1], "concrete sends remain distinct");
+    let concrete_keys: BTreeSet<_> = loop_states
+        .iter()
+        .map(|state| system.canonical_state_key(state).unwrap())
+        .collect();
+    assert_eq!(
+        concrete_keys.len(),
+        3,
+        "received-message next-delivery bounds and ordinal counters differ concretely"
+    );
+    let initial_cycle_key = system.loop_state_key(&loop_states[0]).unwrap();
+    for state in &loop_states {
+        assert_eq!(
+            system.loop_state_key(state).unwrap(),
+            initial_cycle_key,
+            "unread message ordinal and received-message bounds are canonicalized"
+        );
+    }
+    let sent_keys: BTreeSet<_> = sent_states
+        .iter()
+        .map(|state| system.canonical_state_key(state).unwrap())
+        .collect();
+    assert_eq!(sent_keys.len(), 2, "the concrete sent occurrences differ");
+    let sent_cycle_key = system.loop_state_key(&sent_states[0]).unwrap();
+    for state in &sent_states {
+        assert_eq!(
+            system.loop_state_key(state).unwrap(),
+            sent_cycle_key,
+            "post-send states retain one canonical queued-message identity"
+        );
+    }
+
+    let ModelCheckOutcome::Holds {
+        certificate: fsl_replay::ProofCertificate::Closure(_),
+        stats,
+    } = case.check("Loop", &CellV(is_zero))
+    else {
+        panic!("EN-1 should close the unread message loop");
+    };
+    assert!(stats.product_states < 100, "finite closure: {stats:?}");
+}
+
+#[trace("TC-650", "TC-525", "FR-205-AC-10", "FR-338-AC-26")]
+#[test]
+fn echo_unread_claim_has_a_finite_checked_cycle_closure() {
+    use fsl_replay::{
+        check_protocol_closure, ModelCheckItem, ModelCheckLimits, ProofCertificate,
+        ProtocolCertificateRequest, TemporalCertificateCheck,
+    };
+    let case = echo_infinite("scheduling adversarial;", "always holds(k.v = 0)");
+    let outcome = case.check("Echo", &CellV(is_zero));
+    let ModelCheckOutcome::Holds {
+        certificate: ProofCertificate::Closure(certificate),
+        stats,
+    } = outcome
+    else {
+        panic!("expected a finite closure: {outcome:?}");
+    };
+    assert!(
+        stats.product_states < 100,
+        "the unread delivery history is finite: {stats:?}"
+    );
+    let request = ProtocolCertificateRequest {
+        temporal_clock_selections: &case.temporal_clock_selections,
+        subject: case.subject("Echo"),
+        item: ModelCheckItem::Clause {
+            clause: case.clause(),
+            letters: &CellV(is_zero),
+        },
+        max_store_buffer: None,
+        max_messages: None,
+        max_live_instances: None,
+    };
+    let check = |certificate: &fsl_replay::ClosureCertificate| {
+        check_protocol_closure(
+            &request,
+            certificate,
+            &ModelCheckLimits::default(),
+            &filament_exact::Cancel::new(),
+        )
+        .unwrap()
+    };
+    assert_eq!(check(&certificate), TemporalCertificateCheck::Accepted);
+    let payload = echo_lasso(&case);
+    let canonical = &payload.prefix[0].post_state;
+    let concrete = &payload.prefix[2].post_state;
+    let mut incorrect = certificate.clone();
+    let mut replaced = 0;
+    for state in &mut incorrect.states {
+        if state.model_state == *canonical {
+            state.model_state = concrete.clone();
+            replaced += 1;
+        }
+    }
+    assert!(replaced > 0, "the certificate contains the cycle entry");
+    assert!(
+        matches!(check(&incorrect), TemporalCertificateCheck::Rejected(ref rejection)
+        if rejection.rule == fsl_replay::CertificateRule::SuccessorMissing),
+        "{:?}",
+        check(&incorrect)
+    );
+}
+
+#[trace("TC-839", "FR-329-AC-10", "FR-217-AC-7")]
+#[test]
+fn echo_en1_counterexample_replays_with_concrete_delivery_indices() {
+    let case = echo("scheduling adversarial;", "eventually[1,1] holds(k.v = 1)");
+    let payload = refutation(&case, &CellV(is_one));
+    assert_reproduced_at(replay(&case, &CellV(is_one), &payload), 2);
+}
+
+#[trace("TC-650", "FR-205-AC-13")]
+#[test]
+fn echo_infinite_trace_search_and_component_certificate_use_cycle_keys() {
+    let original = echo_infinite("scheduling adversarial;", "always holds(k.v = 0)");
+    let body = original
+        .body
+        .replace("using tb over", "using t0 over")
+        .replace("always holds(k.v = 0)", "always eventually holds(k.v = 0)");
+    let case = Case::new(&body);
+    let outcome = case.check("Echo", &CellV(is_zero));
+    let ModelCheckOutcome::Holds { certificate, stats } = outcome else {
+        panic!("the TP-4 claim holds on the finite quotient: {outcome:?}");
+    };
+    assert!(stats.product_states < 100, "{stats:?}");
+    assert!(
+        matches!(certificate, fsl_replay::ProofCertificate::Component(_)),
+        "{certificate:?}"
+    );
+    let request = fsl_replay::ProtocolCertificateRequest {
+        temporal_clock_selections: &case.temporal_clock_selections,
+        subject: case.subject("Echo"),
+        item: fsl_replay::ModelCheckItem::Clause {
+            clause: case.clause(),
+            letters: &CellV(is_zero),
+        },
+        max_store_buffer: None,
+        max_messages: None,
+        max_live_instances: None,
+    };
+    let fsl_replay::ProofCertificate::Component(certificate) = certificate else {
+        unreachable!()
+    };
+    assert_eq!(
+        fsl_replay::check_protocol_components(
+            &request,
+            &certificate,
+            &fsl_replay::ModelCheckLimits::default(),
+            &filament_exact::Cancel::new()
+        )
+        .unwrap(),
+        fsl_replay::TemporalCertificateCheck::Accepted
+    );
+    let failing = Case::new(&body.replace(
+        "always eventually holds(k.v = 0)",
+        "eventually holds(k.v = 1)",
+    ));
+    let payload = refutation(&failing, &CellV(is_one));
+    assert!(
+        payload.lasso.is_some(),
+        "the infinite-trace refutation is a lasso"
+    );
+    assert_reproduced_at(replay(&failing, &CellV(is_one), &payload), 0);
+}
+
+#[trace("TC-650", "FR-205-AC-10", "FR-205-AC-13")]
+#[test]
+fn echo_cycle_edges_lift_to_never_reused_concrete_delivery_indices() {
+    let case = echo("scheduling adversarial;", "eventually[1,1] holds(k.v = 1)");
+    let raw = crate::fill::sc_system(&case.subject("Echo"));
+    let canonical = crate::fill::sc_system(&case.subject("Echo")).with_cycle_keys(BTreeSet::new());
+    let mut payload = echo_lasso(&case);
+    payload.prefix.truncate(1);
+    let (_, mut concrete) = raw
+        .successors(&raw.initial()[0])
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(step, _)| step.kind() == StepKind::Send)
+        .unwrap();
+    let entry = concrete.clone();
+    for expected in [1, 2, 3] {
+        let (duplicate, both) = canonical
+            .successors(&entry)
+            .unwrap()
+            .successors
+            .into_iter()
+            .find(|(step, _)| step.kind() == StepKind::Duplicate)
+            .unwrap();
+        let (lose, closed) = canonical
+            .successors(&both)
+            .unwrap()
+            .successors
+            .into_iter()
+            .find(|(step, _)| step.kind() == StepKind::Lose)
+            .unwrap();
+        for (step, target) in [(&duplicate, &both), (&lose, &closed)] {
+            let (actual, next) =
+                SubjectSystem::concrete_cycle_step(&canonical, &concrete, step, target)
+                    .unwrap()
+                    .expect("the canonical edge lifts");
+            if actual.kind() == StepKind::Duplicate {
+                assert_eq!(actual.delivery().unwrap().index(), expected);
+            }
+            payload.prefix.push(ModelStep {
+                transition: actual,
+                post_state: raw.canonical_state_key(&next).unwrap(),
+                delay: None,
+            });
+            concrete = next;
+        }
+    }
+    assert_ne!(
+        payload.prefix.first().unwrap().post_state,
+        payload.prefix.last().unwrap().post_state
+    );
+    assert_reproduced_at(replay(&case, &CellV(is_one), &payload), 0);
+    let mut stale = payload.clone();
+    stale.prefix[3].transition = stale.prefix[1].transition.clone();
+    let error = replay(&case, &CellV(is_one), &stale)
+        .expect_err("a reused duplicate identity is not enabled");
+    assert_eq!(error.code(), Code::InvalidRuntimeInput);
+    assert_eq!(error.cause(), Some("invalid-value"));
+    assert!(
+        matches!(error, ReplayRefusal::ModelTrace(ref refusal)
+        if matches!(refusal.as_ref(), ModelTraceRefusal::ProtocolNotEnabled { step: 3, .. })),
+        "{error:?}"
+    );
+}
+
+#[trace("TC-650", "FR-205-AC-11")]
+#[test]
+fn echo_unordered_cycle_keys_renumber_nonconsecutive_copies() {
+    let original = echo_infinite("scheduling adversarial;", "always holds(k.v = 0)");
+    let case = Case::new(&original.body.replace(
+        "ordering fifo by (m: Boolean) { true }",
+        "ordering unordered",
+    ));
+    assert!(matches!(
+        case.checked.graph().protocol("Echo").unwrap().channels[0].ordering,
+        fsl_semantics::check::CheckedOrdering::Unordered
+    ));
+    let system = crate::fill::sc_system(&case.subject("Echo"));
+    let take = |state: &fsl_eval::simulation::protocol::ProtocolState<
+        fsl_eval::simulation::protocol::Sc,
+    >,
+                kind,
+                indices: &[u64]| {
+        system
+            .successors(state)
+            .unwrap()
+            .successors
+            .into_iter()
+            .find(|(step, next)| {
+                step.kind() == kind
+                    && queue_delivery_indices(&system.canonical_state_key(next).unwrap()) == indices
+            })
+            .expect("the required concrete queue is reachable")
+            .1
+    };
+    let s0 = system.initial().remove(0);
+    let s1 = take(&s0, StepKind::Send, &[0]);
+    let both = take(&s1, StepKind::Duplicate, &[0, 1]);
+    let one = take(&both, StepKind::Lose, &[1]);
+    let both = take(&one, StepKind::Duplicate, &[1, 2]);
+    let one = take(&both, StepKind::Lose, &[1]);
+    let both = take(&one, StepKind::Duplicate, &[1, 3]);
+    let normalized = system
+        .delivery_canonical_state(&both, &BTreeSet::new())
+        .unwrap();
+    assert_eq!(
+        queue_delivery_indices(&system.canonical_state_key(&normalized).unwrap()),
+        [0, 1]
+    );
+    let expected = take(&s1, StepKind::Duplicate, &[0, 1]);
+    assert_eq!(
+        system.canonical_state_key(&normalized).unwrap(),
+        system.canonical_state_key(&expected).unwrap(),
+        "the next-delivery bound is 2 too"
+    );
+}
+
+#[trace("TC-650", "FR-205-AC-10")]
+#[test]
+fn echo_pending_interval_send_keeps_its_delivery_labels_and_bound() {
+    let original = echo_infinite("scheduling adversarial;", "always holds(k.v = 0)");
+    // The interval-send rule needs a concurrent receiver to free capacity.
+    // This is the same pending-send shape as protocol_delivery_interval.
+    let concurrent = "parallel Main { \
+        branch sending send Snd via ch as (s: Boolean) { s }; \
+        branch receiving receive Rcv via ch of sending::Snd as (r: Boolean) { r }; \
+        } join all [sending, receiving];";
+    let case = Case::new(
+        &original
+            .body
+            .replace("delivery unknown", "delivery [3,3]")
+            .replace(ECHO_RUN, concurrent),
+    );
+    let system = crate::fill::sc_system(&case.subject("Echo"));
+    let (_, forked) = system
+        .successors(&system.initial()[0])
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(step, _)| step.kind() == StepKind::Fork)
+        .expect("fork sender and receiver");
+    let (_, pending) = system
+        .successors(&forked)
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(step, _)| step.kind() == StepKind::Send)
+        .expect("partial send fills capacity 2");
+    assert_eq!(
+        queue_delivery_indices(&system.canonical_state_key(&pending).unwrap()),
+        [0, 1]
+    );
+    let (_, received) = system
+        .successors(&pending)
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(step, next)| {
+            step.kind() == StepKind::Receive
+                && queue_delivery_indices(&system.canonical_state_key(next).unwrap()) == [1]
+        })
+        .expect("receive original while the interval send is pending");
+    for state in [&pending, &received] {
+        assert_eq!(
+            system.cycle_key(state, &BTreeSet::new()).unwrap(),
+            system.canonical_state_key(state).unwrap(),
+            "pending sends retain labels and their next-delivery counter"
+        );
+    }
+}
+
+fn queue_delivery_indices(key: &fsl_eval::simulation::StateKey) -> Vec<u64> {
+    fn collect(value: &serde_json::Value, indices: &mut Vec<u64>) {
+        match value {
+            serde_json::Value::Object(members) => {
+                if members.get("type").and_then(|value| value.as_str()) == Some("queue-entry") {
+                    indices.push(members["delivery"].as_str().unwrap().parse().unwrap());
+                } else {
+                    for value in members.values() {
+                        collect(value, indices);
+                    }
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    collect(value, indices);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut indices = Vec::new();
+    collect(
+        &serde_json::from_slice(key.as_bytes()).unwrap(),
+        &mut indices,
+    );
+    indices
 }

@@ -1,26 +1,32 @@
 ---
 id: TC-2160
-title: "The parse document renders the construct cause"
+title: "Null refuses at check with its source span"
 type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-763
     type: verifies
 ---
-# TC-2160: The parse document renders the construct cause
+# TC-2160: Null refuses at check with its source span
 
 ## Description
 
-The parse document renders the construct cause.
+The checker reports the type error for a null expression that S2 admits.
 
 Scope: FR-763-AC-6.
 
 ## Test Procedure
 
-Serialize the `parse` outcome document of TC-2156's unit. Test: `tests/it/forms_refusal_cause.rs` `the_parse_document_renders_the_construct_cause`.
+Parse, select and check a function whose body is `null`, with no model
+imports, and serialize its check outcome. Test:
+`tests/it/forms_refusal_cause.rs`
+`a_null_expression_is_refused_at_check_with_its_locus`.
+The S2 unsupported payload remains covered by TC-2159's hyper condition.
 
 Tag the tests `#[trace("TC-2160", "FR-763-AC-6")]`.
 
 ## Expected Results
 
-- One diagnostic: `code` `unsupported_construct`, `cause` `not-yet-implemented` (not `null`), with the payload of TC-2156.
-- Category `unsupported`, exit 21.
+- S2 succeeds. Check returns exactly one `ill_typed`/`type-mismatch`
+  diagnostic whose locus is the exact four-byte span of `null` and whose
+  message names `null`, `none` and `absent` (FR-986).
+- Category `refusal`, exit 20.

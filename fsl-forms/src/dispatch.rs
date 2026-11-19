@@ -437,14 +437,6 @@ pub enum LeadingTokenKind {
 /// The closed source vocabulary for a construct that S2 does not build.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConstructKind {
-    /// `null` outside a record field value.
-    NullValue,
-    /// Indexing not attached directly to a field or selector.
-    IndexSelection,
-    /// `size<T>(e)` in an expression.
-    SizeOfType,
-    /// A multi-segment edge passed to `reaches`.
-    QualifiedReachesEdge,
     /// A hyper expression in a temporal condition.
     HyperCondition,
     /// A declaration with no dispatch entry.
@@ -455,10 +447,6 @@ impl ConstructKind {
     /// The stable source and wire spelling.
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::NullValue => "null-value",
-            Self::IndexSelection => "index-selection",
-            Self::SizeOfType => "size-of-type",
-            Self::QualifiedReachesEdge => "qualified-reaches-edge",
             Self::HyperCondition => "hyper-condition",
             Self::Declaration => "declaration",
         }

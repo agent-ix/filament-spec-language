@@ -5362,7 +5362,30 @@ impl<'a> Typer<'a> {
         operand: Node,
         location: &Location,
     ) -> Result<Node, CheckRefusal> {
+        if &operand.value_type == target
+            && matches!(&operand.value_type, ValueType::Text(_) | ValueType::String)
+        {
+            return Ok(operand);
+        }
         match (&operand.value_type, target) {
+            (ValueType::Text(_) | ValueType::String, target)
+                if matches!(
+                    target,
+                    ValueType::Integer
+                        | ValueType::Int(_)
+                        | ValueType::Decimal(_)
+                        | ValueType::Rational(_)
+                        | ValueType::Float(_)
+                        | ValueType::Quantity(_)
+                ) =>
+            {
+                Ok(node(
+                    NodeKind::ConvertText(target.clone(), self.push(operand)),
+                    target.clone(),
+                    location,
+                ))
+            }
+            (ValueType::Text(_) | ValueType::String, _) => Err(ineligible(location)),
             (ValueType::Collection(source), ValueType::Collection(to)) => {
                 if source.element() != to.element() {
                     return Err(mismatch(location));

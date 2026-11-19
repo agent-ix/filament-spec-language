@@ -15,6 +15,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-397
+    type: references
 ---
 # FR-940: Analyze a checked package through one sealed read view over source-built and byte-read packages
 
@@ -159,6 +161,15 @@ and `FR-621`'s outcome document is unchanged.
   with the verdict, record, counterexample and replay the source route gives
   (FR-850 "Equality with the source route"). No package-route item SHALL
   settle `unsupported` for a fact or an evaluator the source route reads.
+- The package form of an expression evaluator SHALL charge the evaluation
+  meter exactly what the source form charges, entry for entry in the charge
+  log, for the package and the source it was compiled from. A charge that the
+  source form decides from a fact of the checked graph SHALL be decided on
+  both routes from a fact the package records; where the checked graph
+  holds a fact the package does not, the charge is derived from what both
+  hold, as FR-397 "Ordering parts" derives the charge of an IEEE ordering
+  composition's `numeric_equal` parts from the expression's shape, and is
+  never read from a fact only the source route has.
 - On the package route, the subject builder SHALL build an item's protocol
   subject (FR-205) from FR-531's protocol-subject row: the protocol clause
   it builds from the admitted `protocol` nodes and `protocol_locations` rows
@@ -376,6 +387,7 @@ route reads them and settles the item with the source route's record.
 | FR-940-AC-12 | AC-8's colliding source unit refuses at S3 with `ambiguous_declaration`/`ambiguous-name` at the second `Bounded`, naming both declarations, exit `20`, no item settled; AC-8's package with the `ReachThree` row renamed `Bounded` refuses the whole `package` request at the request stage, category refusal, `ambiguous_declaration`/`ambiguous-name` with `details.path` `/claim_names/{i}/name` of that row, `items` `[]`, `last_stage` `null`, exit `20`, and runs no engine. | Test (TC-3034) |
 | FR-940-AC-13 | Over FR-531-AC-35's unit, the `AdmittedPackageRead` of its emission and the `BarePackage` of its written bytes return equal `requirement_items()` and equal `value_validity_records_of` for `f`, `f2`, `sq` and `g`, and their rows equal `CheckedGraph::requirements()` position for position. For FR-961-AC-1's `Even` unit, the FR-331 request items written on the package route from these rows (claim, request index, kind, extent, result bound, path condition, candidates) equal the source route's for the same registry, and the linked engine settles each item with the source route's record; for RR-12's `f` with `n` an `Integer`, each item is `unbounded` with one `integer` domain at `n`'s parameter node and `finite_bound_available` true on both routes. A test-only view whose record of `f`'s `+` row lacks its one guard makes the package-route linked engine's record differ from the source route's (the guard `n >= 0 and n < 10` is no longer assumed), so the comparison can fail. | Test (TC-2620) |
 | FR-940-AC-14 | For FR-1033-AC-1's `SB` unit and its handoff directory, the protocol clause the package route builds for `SB` from the admitted `protocol` nodes and `protocol_locations` rows equals S3's FR-218 checked clause in every member; the subject built on each route for `subject.protocol` with `roles` `w` and `c` bound to `test/litmus` binds `w` to `M::Cell` and `c` to `M::Core` with the same selection, the same `over` universe and the same resolved model of `SB::Both` (`Sc` with no `memory`, `Tso` with the `tso` entry); a `roles` entry for `w` naming a model the package does not select settles `declined` with `invalid_runtime_input`/`wrong-role-mapping` naming `w` on both routes. A test-only package whose `SB::Both` `parallel` node carries `memory` `tso` makes the package-built clause differ from the source clause, so the comparison can fail. | Test (TC-3050) |
+| FR-940-AC-15 | For FR-397-AC-30's and FR-397-AC-31's bodies, the source form and the package form of the expression evaluator, given the same inputs and remaining budget, write equal outcomes and equal charge logs; a package form that charges every `numeric_equal` node one `compare_ieee` writes a log for `p < q` with entries the source form lacks, so the comparison can fail. | Test (TC-3077) |
 
 ## Dependencies
 

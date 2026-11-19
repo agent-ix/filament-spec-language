@@ -1221,17 +1221,23 @@ fn an_open_window_reads_from_its_lower_bound_on_or_back_from_it() {
     assert_eq!(at(3, &[0, 1, 0, 0, 0]), TemporalOutcome::Holds);
 }
 
-/// A lasso is read under the infinite-trace profile only.
+/// An observed lasso under a bounded profile refuses without reading an atom.
+#[trace("TC-839", "FR-329-AC-9")]
 #[test]
 fn a_lasso_under_a_bounded_profile_is_refused() {
     let fx = counter(EVENT, "eventually[0,2] holds(c.level = 2)");
     let mut letters = Letters::new(&fx, counters(&[0, 1, 2]));
     let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
     let refused = evaluate(&fx.clause, lasso(0, 3), &mut letters, &mut meter);
+    let refusal = refused.expect_err("an observed bounded-profile lasso has no truth value");
     assert!(matches!(
-        refused,
-        Err(TemporalRefusal::LassoUnderBoundedProfile { .. })
+        refusal,
+        TemporalRefusal::LassoUnderBoundedProfile { .. }
     ));
+    assert_eq!(
+        refusal.catalog_code(),
+        CatalogCode::new("unsupported_construct", "expression-form")
+    );
     assert!(letters.reads.is_empty());
 }
 

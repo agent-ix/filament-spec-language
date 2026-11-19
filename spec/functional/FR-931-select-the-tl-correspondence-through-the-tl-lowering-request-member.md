@@ -365,11 +365,11 @@ local read or a literal, and the connectives nested as FR-397 nests them.
   `T(l) <= T(g)`. This holds whoever wrote the expression. An author who
   spells the composition with `filament::value::ieee::numericEqual` and
   `filament::value::ieee::totalOrder` over locals or literals writes a
-  different in-process term: its connectives are source connectives, it
-  carries no ordering-part mark, and under FR-397 each intrinsic call
-  charges one `compare_ieee`. It still prints as the comparison, because it
-  computes the same Boolean value, and the atom text labels that value, not
-  the charges spent computing it.
+  different in-process term: its connectives are source connectives
+  (FR-265), and FR-397 "Ordering parts" charges it as the comparison it
+  spells, because the charge is read from the expression's shape. It prints
+  as the comparison, because it computes the same Boolean value with the
+  same charges.
 - **One checker `let`.** `let #ieee_operand = e in C(l, g)` (or `C=`), where
   exactly one of `l` and `g` reads that binder, prints with `T(e)` in place
   of that read, the lesser operand on the left: `T(l) < T(g)` or
@@ -383,6 +383,8 @@ local read or a literal, and the connectives nested as FR-397 nests them.
   so `a > b` and `b < a` are different trees (their binders hold different
   expressions at each level), and only the source orientation re-checks to
   the same one.
+
+A timed node's producer-created place binder (FR-230, `<field>#<depth>`) never reaches the printer: it binds no checked-term slot (FR-400).
 
 A `let` whose binder is named `#ieee_operand` anywhere else is not a checker
 composition; the printer refuses that checked expression as malformed and
@@ -444,6 +446,26 @@ as itself), whatever escapes the source used; a collection value as
 checked order; a record value with its fields in the record's effective
 field order; a reference literal as `Q#"key"`.
 
+### Caller bounds
+
+- `fsl_command::command::PreparedLowering` SHALL expose
+  `clause_request_mut(&mut self) -> &mut ClauseRunRequest`, a mutable
+  reference to the one typed clause request that the lowering's valuation run
+  and its cross-evaluation read. A caller applies its bound overrides to that
+  request, as it applies them to a prepared clause run through
+  `PreparedClauseRun`, and then calls `execute_tl_lowering`.
+- `execute_tl_lowering` SHALL run the lowering under the request's stage
+  limits, observation limits and accounting limits as they stand when it is
+  called. A bound the lowering reaches SHALL settle FR-255's typed limit
+  outcome naming the setting and its configured value, category `incomplete`,
+  exit 22, with no lowering record.
+- The reason is that every FSL-enforced bound of a prepared run is
+  caller-configurable (FR-287, FR-312). Without the accessor, a caller holding a
+  prepared lowering could only run it under the limits fixed when it was
+  prepared, so a command-line `--limit` could not reach a `tl_lowering` request.
+  The accessor exposes only the request; the clause, the requested
+  correspondence and the cross-evaluation inputs stay as FSL prepared them.
+
 ### Placement
 
 - The lowering and the cross-evaluation SHALL be served by the command adapter
@@ -468,6 +490,7 @@ field order; a reference literal as `Q#"key"`.
 | FR-931-AC-12 | Over the `Low` unit with the ConfigVersion model `example/config-version` selected under the alias `Config`, with a source enumeration `enum Mode { On, Off }` declared by the unit (its `SourceOwner` identity `I`) and a state read `c.mode: Mode`, the leaves `holds(c.mode = Mode::On)` and `holds(size(allInstances<Config::ConfigVersion>(Config::P)) >= 1)` (`P` the model's population of `ConfigVersion`) give the atom texts `holds(c.mode = ix://I/Mode::On)` and `holds(size(allInstances<ix://example/config-version/ConfigVersion>(ix://example/config-version/P)) >= 1)`; the same unit with the alias renamed to `K` throughout gives byte-equal `atoms`, and so does each unit's checked package selected as `package` (FR-1039) with the source removed. | Test (TC-2601) |
 | FR-931-AC-13 | Over the `Low` unit with a source union `union Shape { Circle(Integer), Rect(Integer, Integer), Empty }` declared by the unit (its `SourceOwner` identity `I`), the leaf written `holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })` has the atom text `holds(case ix://I/Shape::Rect(c.versionNumber, 2) { Circle(r): r <= 2; Rect(w, h): w + h <= 4; Empty: true; })`, arms in member declaration order and binders under their declared names; the leaf `holds(let k = c.versionNumber in case Shape::Rect(k, 1) { Circle(r): r <= k; Rect(_, h): case Shape::Circle(h) { Circle(x): x + k <= 4; Rect(a, b): false; Empty: true; }; Empty: true; })` prints `holds(let k = c.versionNumber in case ix://I/Shape::Rect(k, 1) { Circle(r): r <= k; Rect(_, h): case ix://I/Shape::Circle(h) { Circle(x): x + k <= 4; Rect(a, b): false; Empty: true; }; Empty: true; })`, with `_` printed as an ordinary binder; the first leaf with `w` renamed to `width` throughout prints `Rect(width, h): width + h <= 4`, so the atom texts differ; and each unit's checked package selected as `package` (FR-1039) with the source removed gives byte-equal `atoms`. | Test (TC-3039) |
 | FR-931-AC-14 | Over FR-931-AC-13's unit, with `A` = `float64(bits: 0x3ff0000000000000)` and `Z` = `float64(bits: 0x0000000000000000)`: the leaf `holds(-A < Z)` (one checker `let`) has the atom text `holds(-float64(bits: 0x3ff0000000000000) < float64(bits: 0x0000000000000000))`, and `holds(Z > -A)` gives the same text; `holds(-A > -Z)` (two checker `let`s) prints `holds(-float64(bits: 0x3ff0000000000000) > -float64(bits: 0x0000000000000000))` as written and `holds(-Z < -A)` prints `holds(-float64(bits: 0x0000000000000000) < -float64(bits: 0x3ff0000000000000))`, two different texts; no atom text contains `let` or `#ieee_operand`; the author-written `holds(let ieee_operand_0 = -A in ieee_operand_0 < Z)` prints `holds(let ieee_operand_0 = -float64(bits: 0x3ff0000000000000) in ieee_operand_0 < float64(bits: 0x0000000000000000))`; and each unit's checked package selected as `package` (FR-1039) with the source removed gives byte-equal `atoms`. | Test (TC-3039) |
+| FR-931-AC-15 | The FR-931-AC-1 request `{"clause": "Low"}`, prepared through `prepare_run`, is `PreparedRun::TlLowering`; executed through `execute_tl_lowering` with its request unchanged it returns the record `run` returns for the same request, byte-equal, exit 0. With the `s1.nodes` bound of `clause_request_mut().limits` set to 1 through `SettingLimits::set_bound`, `execute_tl_lowering` settles the typed limit outcome naming `s1.nodes` with configured value 1, category `incomplete`, exit 22, and writes no lowering record; with that bound set back to 50000 the record equals the unchanged one. Setting the bound changes no other member of the request: its selection, its other stage limits, its observation limits and its accounting limits are equal before and after. | Test (TC-3065) |
 
 ## Dependencies
 

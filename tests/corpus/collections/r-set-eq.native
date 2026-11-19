@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function same using v(a: Set<Integer>[0,3],b: Set<Integer>[0,3]): Boolean pure { a=b }
+function f using v(): Boolean pure { same(set[2,1],set[1,2]) }

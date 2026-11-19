@@ -216,6 +216,15 @@ impl MessageOccurrence {
         self.ordinal
     }
 
+    pub(crate) fn with_ordinal(&self, ordinal: u64) -> Self {
+        Self {
+            instance: self.instance,
+            node: self.node,
+            path: self.path.clone(),
+            ordinal,
+        }
+    }
+
     pub(crate) fn enc(&self) -> Enc {
         Enc::tagged(
             "message-occurrence",
@@ -888,6 +897,28 @@ pub(crate) struct VisibilityRead {
 }
 
 impl ProtocolTransition {
+    /// Map message and delivery labels in an identity; reporting metadata stays concrete.
+    pub(super) fn relabel_cycle_labels(
+        &self,
+        entries: &[(Enc, Enc)],
+        mut relabel_message: impl FnMut(&MessageOccurrence) -> MessageOccurrence,
+        mut relabel_delivery: impl FnMut(&DeliveryIdentity) -> DeliveryIdentity,
+    ) -> Self {
+        let mut renamed = self.clone();
+        if let Members::Channel { entry, .. } = &mut renamed.members {
+            if let Some((_, canonical)) = entries.iter().find(|(concrete, _)| concrete == entry) {
+                *entry = canonical.clone();
+            }
+        }
+        if let Some(message) = &self.message {
+            renamed.message = Some(relabel_message(message));
+        }
+        if let Some(delivery) = &self.delivery {
+            renamed.delivery = Some(relabel_delivery(delivery));
+        }
+        renamed
+    }
+
     /// `fork(node)` by `thread`.
     pub fn fork(thread: ThreadPath, node: impl Into<String>) -> Self {
         Self::control(StepKind::Fork, thread, node.into())

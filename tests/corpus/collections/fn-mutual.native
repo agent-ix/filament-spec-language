@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function a using v(n: Int[0,9]): Integer pure decreases(n) { if n>0 then b(n-1) else 0 }
+function b using v(n: Int[0,9]): Integer pure decreases(n) { if n>0 then a(n-1) else 0 }

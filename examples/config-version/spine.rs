@@ -113,7 +113,13 @@ fn snapshot_bytes(case: Case, role: &str, rows: &[Row], complete: bool) -> Vec<u
 /// (`attemptUpdate`) takes no parameters, returns `Boolean` and its frame
 /// modifies exactly `versionNumber`; `created`/`deleted` are always empty
 /// (no case creates or deletes an object).
-fn invocation_bytes(case: Case, self_key: &str, pre: &DocumentRef, post: &DocumentRef) -> Vec<u8> {
+fn invocation_bytes(
+    case: Case,
+    self_key: &str,
+    pre: &DocumentRef,
+    post: &DocumentRef,
+    result: bool,
+) -> Vec<u8> {
     let identity =
         |label: &DocumentRef| json!({"authority": label.authority, "identity": label.identity});
     json!({
@@ -126,7 +132,7 @@ fn invocation_bytes(case: Case, self_key: &str, pre: &DocumentRef, post: &Docume
         "pre": {"identity": identity(pre)},
         "post": {"identity": identity(post)},
         "parameters": {},
-        "result": {"boolean": true},
+        "result": {"boolean": result},
         "created": [],
         "deleted": [],
     })
@@ -176,7 +182,13 @@ fn write_current(
     })
 }
 
-fn write_update(directory: &Path, case: Case, pre: &[Row], post: &[Row]) -> io::Result<Written> {
+fn write_update(
+    directory: &Path,
+    case: Case,
+    pre: &[Row],
+    post: &[Row],
+    result: bool,
+) -> io::Result<Written> {
     let complete = case.spec().complete;
     let pre_bytes = snapshot_bytes(case, "pre", pre, complete);
     let post_bytes = snapshot_bytes(case, "post", post, complete);
@@ -184,7 +196,7 @@ fn write_update(directory: &Path, case: Case, pre: &[Row], post: &[Row]) -> io::
     write_json(directory, "spine-post-snapshot.json", &post_bytes)?;
     let pre_ref = document_ref(&identity_json(case, "pre"));
     let post_ref = document_ref(&identity_json(case, "post"));
-    let invocation_bytes = invocation_bytes(case, "child", &pre_ref, &post_ref);
+    let invocation_bytes = invocation_bytes(case, "child", &pre_ref, &post_ref, result);
     write_json(directory, "spine-invocation.json", &invocation_bytes)?;
     let invocation_ref = document_ref(&identity_json(case, "invocation"));
     let selection = ClauseSelection {
@@ -248,7 +260,7 @@ fn written(directory: &Path, case: Case) -> io::Result<Written> {
             other: Some(other),
         } => write_function(directory, case, rows, self_key, other),
         Input::Current { rows, self_key, .. } => write_current(directory, case, rows, self_key),
-        Input::Update { pre, post } => write_update(directory, case, pre, post),
+        Input::Update { pre, post, result } => write_update(directory, case, pre, post, result),
     }
 }
 

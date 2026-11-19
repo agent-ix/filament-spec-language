@@ -67,7 +67,7 @@ Claim identity, at both levels:
 18. Order and refuse harness bounds.
 19. Replay a function request and an operator request with the replay
     target replaced by `frame_operation` (`Config::ConfigVersion`,
-    `attemptUpdate`), and by `state_clause` (`VersionUnchanged`).
+    `attemptUpdate`), and by `state_clause` (`VersionAdvances`).
 
 Read an envelope carrying a `ScalarAgrees` cause, and one whose cause is over
 the encoded-size bound.

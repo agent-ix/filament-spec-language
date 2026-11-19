@@ -1431,15 +1431,7 @@ fn choices_and_repeats_nest_in_each_other_and_read_back() {
     );
 }
 
-/// A post-test `repeat`, whose guard reads a binder its body declares, has
-/// no FR-466 node form (the guard reads the repeat's entry only), as does a
-/// repeat whose `visible` entry, invariant or variant reads a body binder; a
-/// guard that refers to a protocol directly is not written yet either;
-/// FSpec #481 (STD-539) settles these as non-encodings. A repeat that steps
-/// only through a nested repeat has a node form (FR-464 "Nested `repeat`
-/// rule") but is withheld until IR's reader decides that rule (IR-1100).
-/// Each refuses the protocol `unsupported_construct`/`not-yet-implemented`
-/// naming the construct.
+/// A guard that refers to a protocol directly is not written yet.
 #[trace("FR-092-AC-18", "TC-1021")]
 #[test]
 fn decisions_without_a_node_form_are_not_written() {
@@ -1447,62 +1439,6 @@ fn decisions_without_a_node_form_are_not_written() {
     use super::protocol_reference::not_emitted;
     use fsl_semantics::check::ProtocolConstruct;
     let cases = [
-        (
-            ProtocolConstruct::PostTestRepeat,
-            "STD-539",
-            deciding(
-                "sequence Main { repeat Loop by Seller visible (got.ok) while { not got.ok } \
-                 sequence Body { send Placed via Ch as (placed: Ack) { true }; \
-                 receive Got via Ch of Placed as (got: Ack) { true }; } }",
-            ),
-        ),
-        (
-            ProtocolConstruct::RepeatDecisionReadsBody,
-            "STD-539",
-            deciding(
-                "sequence Main { repeat Loop by Seller visible (got.ok) while { true } \
-                 sequence Body { send Placed via Ch as (placed: Ack) { true }; \
-                 receive Got via Ch of Placed as (got: Ack) { true }; } }",
-            ),
-        ),
-        (
-            ProtocolConstruct::RepeatDecisionReadsBody,
-            "STD-539",
-            deciding(
-                "sequence Main { repeat Loop by Seller visible () invariant { got.ok } \
-                 variant { 1 } while { true } sequence Body { send Placed via Ch as (placed: Ack) { true }; \
-                 receive Got via Ch of Placed as (got: Ack) { true }; } }",
-            ),
-        ),
-        (
-            ProtocolConstruct::RepeatDecisionReadsBody,
-            "STD-539",
-            deciding(
-                "sequence Main { repeat Loop by Seller visible () invariant { true } \
-                 variant { if got.ok then 1 else 0 } while { true } sequence Body { send Placed via Ch as (placed: Ack) { true }; \
-                 receive Got via Ch of Placed as (got: Ack) { true }; } }",
-            ),
-        ),
-        (
-            ProtocolConstruct::RepeatStepsThroughRepeat,
-            "IR-1100",
-            flow(
-                "sequence Main { repeat Loop by Buyer visible () while { true } \
-                 choice Pick by Buyer visible () { \
-                 case a when { true } sequence A { event Ea by Buyer as (ea: Boolean) { true }; } \
-                 case b when { false } repeat Inner by Buyer visible () while { true } \
-                 sequence S { event Eb by Buyer as (eb: Boolean) { true }; } } }",
-            ),
-        ),
-        (
-            ProtocolConstruct::RepeatStepsThroughRepeat,
-            "IR-1100",
-            flow(
-                "sequence Main { repeat Loop by Buyer visible () while { true } \
-                 repeat Inner by Buyer visible () while { true } \
-                 sequence Step { event Tick by Buyer as (tick: Boolean) { true }; } }",
-            ),
-        ),
         (
             ProtocolConstruct::ProtocolReferenceInBody,
             "QSL-1121g",
@@ -1781,16 +1717,28 @@ fn e_c_shared_constraint_has_occurrence_zero_at_tried_and_one_at_picked() {
 /// is written and read back.
 #[test]
 #[trace("TC-2502", "FR-880-AC-8", "FSpec-FR-729-AC-1")]
-#[ignore = "QSL-2424: the pinned contract reader has no repeat.test=post schema"]
 fn a_post_test_repeat_is_written() {
     let post_test = emitted(&deciding(
-        "sequence Main { repeat Loop by Seller visible (got.ok) while { not got.ok } \
+        "sequence Main { repeat Loop by Seller visible (got.ok) invariant { got.ok } \
+         variant { if got.ok then 1 else 0 } while { not got.ok } \
          sequence Body { send Placed via Ch as (placed: Ack) { true }; \
          receive Got via Ch of Placed as (got: Ack) { true }; } }",
     ));
     let repeat = run_control(&post_test.wire, "Loop");
-    assert!(
-        repeat.to_string().contains("\"post\""),
+    let members = [
+        "owner",
+        "visible",
+        "maximum",
+        "proof",
+        "guard",
+        "body",
+        "exhausted",
+        "test",
+    ];
+    assert_eq!(names(repeat), members);
+    assert_eq!(
+        argument(repeat, &members, "test")["value"],
+        "post",
         "the repeat carries test post: {repeat}"
     );
 }
@@ -1850,7 +1798,6 @@ fn a_self_referring_protocol_is_written_as_one_recursion_group() {
 /// FSpec FR-729 back-edge reads, and the package is admitted.
 #[test]
 #[trace("TC-2502", "FR-880-AC-9", "FSpec-FR-729-AC-5")]
-#[ignore = "QSL-2424: the pinned contract reader refuses repeat back-edge reads"]
 fn a_pre_test_decision_that_reads_its_body_is_written() {
     for run in [
         "sequence Main { repeat Loop by Seller visible (got.ok) while { true } \
@@ -1863,9 +1810,10 @@ fn a_pre_test_decision_that_reads_its_body_is_written() {
     ] {
         let lowered = emitted(&deciding(run));
         let repeat = run_control(&lowered.wire, "Loop");
-        assert!(
-            !repeat.to_string().contains("\"post\""),
-            "a pre-test repeat carries no test member: {repeat}"
-        );
+        assert_eq!(names(repeat), REPEAT, "a pre-test repeat has no test member");
+        let visible = argument(repeat, &REPEAT, "visible");
+        if let Some(entry) = visible["members"].as_array().and_then(|members| members.first()) {
+            assert_eq!(target(&lowered.wire, entry)["node_tag"], "expression");
+        }
     }
 }

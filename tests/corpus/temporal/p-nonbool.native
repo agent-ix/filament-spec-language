@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile t = "filament.temporal.infinite-trace/v1";
+record Reading { level: Int[0,9]; }
+temporal NonBoolean using t over (r: Reading) clock "steps" on origin {
+  eventually holds(r.level)
+}

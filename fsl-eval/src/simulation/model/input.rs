@@ -128,7 +128,7 @@ impl TerminalWhen<'_> {
                 Some((_, ValueType::Reference(context))) => Some(context),
                 _ => None,
             },
-            Self::Package(predicate) => Some(predicate.context()),
+            Self::Package(predicate) => predicate.reads_self().then(|| predicate.context()),
         }
     }
 }
@@ -942,7 +942,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         &self,
         predicate: TerminalWhen<'_>,
         current: &ObjectEnvironment,
-        self_object: ObjectReference,
+        self_object: Option<ObjectReference>,
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault>;
 
@@ -1423,7 +1423,7 @@ impl ModelEvaluator for CheckedPackage {
         &self,
         predicate: TerminalWhen<'_>,
         current: &ObjectEnvironment,
-        self_object: ObjectReference,
+        self_object: Option<ObjectReference>,
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault> {
         match predicate {
@@ -1852,7 +1852,7 @@ impl ModelEvaluator for BarePackage<'_> {
         &self,
         predicate: TerminalWhen<'_>,
         current: &ObjectEnvironment,
-        self_object: ObjectReference,
+        self_object: Option<ObjectReference>,
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault> {
         match predicate {

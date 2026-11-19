@@ -93,6 +93,15 @@ and `m[k]` SHALL check and evaluate per FSpec FR-144 "Map values". S3 SHALL
 admit `=` and `!=` over two maps of one map type under the FSpec FR-149
 `Map` row instead of being refused for want of a relation.
 
+**Map key guards.** S3 SHALL discharge the presence obligation of `m[i]` with
+a `contains(m, j)` guard fact whose key is the same key as `i`, by FSpec
+FR-146 "Accepted proof forms" item 4 and its index obligation: `i` and `j`
+the same stable path at the same observation, or `i` and `j` scalar literals
+whose values, checked against `K`, are the same map key. A literal key is
+fixed in the source, so `contains(m, 1)` proves `m[1]` as surely as
+`contains(m, k)` proves `m[k]`; it proves no read of another literal or of a
+path.
+
 **Option construction.** `Some(e)` SHALL be the option constructor in every
 expression position, not only in a refinement row (FR-135). S3 SHALL check its
 payload against the element type `T` of a unique expected type `Option<T>`, so
@@ -114,6 +123,20 @@ range with a range obligation, discharged by FR-104 and FR-577 facts. The
 `unproved-range` refusal SHALL name the derived interval of the arithmetic node,
 the expected `Int[lo,hi]` and the operand that supplied it.
 
+**Two-path term guards.** A comparison of a two-path `+` or `-` term against
+an integer literal, such as `x + y <= 9`, SHALL add the sum or difference
+bound FSpec FR-146 "Accepted proof forms" item 8 defines, and S3 SHALL
+intersect the interval of a `+` or `-` node over the same two paths with it
+wherever the node stands, including a call argument checked against an
+`Int[lo,hi]` parameter. So `if x + y <= 9 then narrow(x + y) else 0`, for
+`x`, `y` of `Int[0, 9]` and a parameter `Int[0, 9]` of `narrow`, checks.
+Item 8 is the whole of this rule. It reads operands as FR-577 does, through
+`convert<Integer>` of an integer path and by (observation, path) key; a
+one-path term shifted by a literal, such as `x + 1 != 10` or `9 - x <= 3`, is an
+interval fact on that path; a two-path term compared with `!=` or with a
+non-literal, a term of three or more operands, and any combination of two
+bounds add no fact.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -125,6 +148,8 @@ the expected `Int[lo,hi]` and the operand that supplied it.
 | FR-680-AC-5 | With `ms` of scale `1/1000` over `s`, `d * 2`, `2 * d` and `d / 2` for `d: Quantity<ms>` check as `Quantity<ms>` at a `Quantity<ms>` result; `d / k` for `k: Int[0, 9]` with no fact refuses `undefined_expression`/`unproved-nonzero`; `d * f` for `f: Float64` and `2 / d` refuse `ill_typed`/`type-mismatch`. | Test (TC-1824) |
 | FR-680-AC-6 | `c = a + b` over `a`, `b`, `c` of `Int[0, 10]` refuses `undefined_expression`/`unproved-range` at `a + b` with a message naming `[0, 20]`, `Int[0, 10]` and `c`; `convert<Integer>(c) = a + b` checks. | Test (TC-1825) |
 | FR-680-AC-7 | For a source `tuple Pair(Boolean, Integer);` and for a model tuple `M::Slot` of a selected domain package, `p[1]` checks to a `TupleProject` node whose tuple key equals the node key of the operand's checked type `Composite(key)` and whose position is 1, for the source tuple as for the model tuple, never a `{package, node}` declaration key; the checked package of each carries `filament.op.tuple.project` with the member `{kind: "position", declaration, position: 1}`, `declaration` the emitted tuple node of that key. | Test (TC-2973) |
+| FR-680-AC-8 | Over `m: Map<Int[0, 9], Integer>[0, 3]` and `k: Int[0, 9]`, `fsl check` of a function whose body is `if contains(m, 1) then m[1] else -1` succeeds at S4 with exit 0, as does `if not contains(m, 1) then -1 else m[1]`; `if contains(m, 1) then m[2] else -1`, `if contains(m, 1) then m[k] else -1` and `if contains(m, k) then m[1] else -1` each refuse `undefined_expression`/`unproved-presence` at the index, exit 20. | Test (TC-3063) |
+| FR-680-AC-9 | With `function narrow using v(x: Int[0, 9]): Integer pure { x }` and `x`, `y`, `z` of `Int[0, 9]`, `fsl check` of `if x + y <= 9 then narrow(x + y) else 0` and of `if x - y >= 0 then narrow(x - y) else 0` succeeds at S4 with exit 0; `if x + y <= 10 then narrow(x + y) else 0`, `if x + y != 10 then narrow(x + y) else 0`, `if x + y + z <= 9 then narrow(x + y + z) else 0` and `if x + y <= 9 and y >= 2 then narrow(x + 2) else 0` each refuse `undefined_expression`/`unproved-range` at the argument, exit 20. | Test (TC-3064) |
 
 ## Dependencies
 

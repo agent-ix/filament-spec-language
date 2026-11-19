@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+model M = "agent-ix/checked-handoff";
+dimension Money;
+unit U : Money = rational(1,1);
+pre Rule using v on M::Workflow::probe { missingN <= 3 }

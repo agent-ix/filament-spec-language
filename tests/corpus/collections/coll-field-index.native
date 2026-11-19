@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+record R { xs: Sequence<Integer>[1,3]; }
+function f using v(r: R): Integer pure { r.xs[0] }

@@ -86,7 +86,8 @@ impl BarePackage<'_> {
             self.equality_decisions(),
             self.exact_type_projections(),
         )
-        .map_err(crate::protocol_selection::SlotSelectionFailure::Fault)?;
+        .map_err(crate::protocol_selection::SlotSelectionFailure::Fault)?
+        .with_populations(self);
         let world = self.world()?;
         let objects = self
             .object_declarations()

@@ -35,8 +35,9 @@ pub fn unit_text() -> String {
          present(self.parent) implies deref(value(self.parent)).versionNumber < self.versionNumber }}\n\
          invariant NoCycle using v on Config::ConfigVersion at current {{ \
          not reaches(self, self, parent) }}\n\
-         post VersionUnchanged using v on Config::ConfigVersion::attemptUpdate {{ \
-         self.versionNumber = pre(self.versionNumber) }}\n\
+         post VersionAdvances using v on Config::ConfigVersion::attemptUpdate {{ \
+         (result implies convert<Integer>(self.versionNumber) = pre(self.versionNumber) + 1) \
+         and (not result implies self.versionNumber = pre(self.versionNumber)) }}\n\
          function sameIdentity using v(a: Config::ConfigVersion, b: Config::ConfigVersion): \
          Boolean pure {{ a = b }}\n",
     )

@@ -104,7 +104,7 @@ pub struct ProbProduct {
     pub states: Vec<ProbKey>,                     // canonical discovery order
     pub kind: ProductKind,                        // Dtmc or Mdp
     pub edges: Vec<ProbEdge>,                     // grouped by source in discovery order; FR-187's order within a source
-    pub initial: Vec<(u32, Option<ModelInstance>, ProbStateId)>, // per subject initial state and `over` binding
+    pub initial: Vec<(u32, Option<ModelInstance>, Option<ModelInstance>, ProbStateId)>, // per subject initial state, `over` binding and `on each` instance
     pub decided: Vec<(ProbStateId, MonitorVerdict)>, // MonitorVerdict { Accept, Reject }: a bounded event's decided states
     pub labels: Vec<Vec<bool>>,                   // unbounded forms: per state, the claim's predicates' truths in claim order (P; A then B; B; P of a long-run fraction); empty for a bounded form
 }
@@ -113,6 +113,8 @@ pub struct ProbProduct {
 // (see "Canonical probability product key"); the builder does not encode it.
 pub struct ProbKey {
     pub binding: Option<ModelInstance>,           // the `over` binding the claim's predicates are read for
+    pub instance: Option<ModelInstance>,          // the `on each` object the instance is read for; None for `on origin`
+    pub activation: Option<ActivationPhase>,      // Waiting or Active for an `on each` instance; None for `on origin`
     pub model: Vec<u8>,                           // FR-101's complete state-key bytes
     pub monitor: Option<MonitorState>,            // Formula(Running(local index) | Decided(verdict)), Measure{remaining, phase}, Fraction{remaining}
     pub accumulator: Option<Accumulator>,
@@ -177,7 +179,9 @@ without it replays to several model states. Every other step has
 `ProductAction` is the following new closed semantic action type, owned with
 ProductKey in fsl-replay. The untimed build uses its first three members,
 `Identity`, `PostState` and `TerminalStutter`; the six delay, observation
-and race members exist in a timed product only (FR-204). The enum below is the
+and race members exist in a timed product only (FR-204). `Reset` is never an
+edge of the product: it names the action the reset process adds
+("Conditioned readings") where a certificate policy chooses it. The enum below is the
 `fsl-replay` form, whose `PostState` holds the canonical `ProductKey`; the
 builder's `ProductAction` holds the in-memory `ProbKey` in the same member. An edge's `action` is its operation projection;
 None alone SHALL NOT identify a delay or observation choice.
@@ -193,6 +197,7 @@ pub enum ProductAction {
     IdleObserve,                // clock-valued observation, no additional elapsed time
     WorkloadResolve { identity: ScheduledIdentity, delay: u64 }, // all-free workload race choice (FR-204)
     FreeDelays(Vec<FreeDelayRow>), // mixed given/free workload race: post-draw free delays (FR-204, ADR-026 SD-3)
+    Reset,                       // the reset process's step back to the instance's initial key ("Conditioned readings")
 }
 pub struct FreeDelayRow {
     pub given: Vec<(ScheduledIdentity, u64)>, // one drawn given-delay vector, digital units
@@ -203,8 +208,8 @@ pub struct FreeDelayRow {
 Canonical semantic action bodies use exactly `["identity",schedule]`,
 `["post-state",product_key]`, `["terminal-stutter"]`, `["delay"]`,
 `["enter-idle-delay"]`, `["idle-delay"]`, `["idle-observe"]`,
-`["workload-resolve",schedule,delay]` and
-`["free-delays",[[given,free],...]]` respectively, where `delay` is the digital
+`["workload-resolve",schedule,delay]`,
+`["free-delays",[[given,free],...]]` and `["reset"]` respectively, where `delay` is the digital
 unit count as a canonical unsigned decimal string, and where schedule uses the full existing schedule form below and product_key
 is a parsed full canonical key, not a local index/string wrapper. In
 `free-delays`, `given` and `free` are arrays of `[schedule,delay]` pairs, each
@@ -272,6 +277,85 @@ TerminalStutter retains its existing untimed profile meaning and is not a
 synonym for IdleObserve. FR-202 owns choice entries/path replay, FR-201 owns
 certificate policy entries, and FR-204 enumerates these actual digital actions.
 
+### Activation of an `on each` instance
+
+An `on each (x: T) when (g)` instance starts `"waiting"`, with the monitor
+and accumulator at their pre-read position-zero control. At each position,
+position 0 included, a waiting state reads `g` for its instance's object;
+when `g` holds it becomes `"active"` at that position, and the monitor or
+measure initializes by reading that position exactly as an `on origin`
+claim's does at position 0; when `g` does not hold it stays waiting and its
+monitor and accumulator do not advance. An instance with no `when` is active
+at position 0. A waiting state at a terminal model state stays waiting on
+its stutter steps, so a run that never activates is an infinite waiting
+path. An active state never returns to waiting: the first activation is
+retained, as a measure's is. An edge from a waiting state to an active state
+is an **activating edge**. An active state that is the target of an
+activating edge, or an initial state that is active, is a **first
+activating state**; whether a state is one is a property of the product
+graph, not of the path that reaches it.
+
+### Conditioned readings
+
+An `on each` instance and a quantile are conditioned readings (FSpec FR-407
+"Conditioned values"); a quantile's activating states are those where its
+measure becomes active. EN-5 computes each over this product, and FR-201's
+checker rederives every set below with its own graph code:
+
+- **Vacuity.** The reading holds vacuously exactly when no first activating
+  state is reachable from the instance's initial state along edges of
+  positive probability; with a fairness set, none from which a fair
+  continuation exists (FR-200). This is graph reachability, with no value
+  computed, and is decided before any value is.
+- **Under a workload that leaves no choice.** The value is
+  `Pr(E and act) / Pr(act)`, or `Ex(X · [act]) / Pr(act)` for an expectation
+  or long-run form, both computed exactly on this one Markov chain: the numerator is the form's value
+  with every never-activating path valued 0, the denominator the
+  reachability probability of the first activating states.
+- **Under every scheduler, and under a workload with free delays.** The
+  value is the minimum for a `>=` bound, the maximum for a `<=` bound, of the
+  conditional value over the schedulers that activate with positive
+  probability; under a workload with free delays (FR-204's
+  `workload-minimum` and `workload-maximum`) the schedulers choose only the
+  free delays. The ratio of a separately optimised numerator and
+  denominator is not this optimum, so no ratio is formed here. It is computed by
+  the reset construction of Baier, Klein, Klüppelholz and Märcker (TACAS
+  2014). First the optimal value of the form from every first activating
+  state, `post(s)`, is computed over the product read from activation on.
+  Then the **reset process** is derived from the waiting states: each
+  activating edge into `s` leads instead to a terminal state valued
+  `post(s)`, and an initial state that is active takes `post` as its value
+  with no reset process; each waiting state from which no first activating
+  state is reachable gets one edge of probability 1 back to the instance's
+  initial state in place of its own edges; and each waiting state that lies
+  in an end component of the waiting states gains one extra action,
+  `ProductAction::Reset`, with one edge of probability 1 back to the initial
+  state. A terminal state of the reset process is a copy of its first
+  activating state: it keeps that state's key, has no edges and takes
+  `post`'s value at that key. The value is the optimal expected terminal
+  value of the reset process at the initial state over its **proper**
+  schedulers, those that reach a terminal state with probability 1; with a
+  fairness set, only fair schedulers count (FR-200). The optimum is attained
+  by a memoryless proper scheduler, which activates with positive
+  probability.
+- **Proper optimum without qualitative collapse.** A run that stays in a
+  waiting end component forever, by an ordinary action or by `Reset`, is
+  not proper. So no `Prob0` or `Prob1` set is computed in the reset
+  process, and its optimum is characterised by two conditions. The first is
+  a bound that every action respects at every waiting state: `x <= F(x)`
+  for a minimum and `F(y) <= y` for a maximum, `Reset` included, with no
+  ranking. By the submartingale argument it bounds every proper scheduler's
+  value. The second is a proper memoryless policy that attains the bound:
+  `x = F_policy(x)` at every waiting state, and a ranking under which every
+  waiting state has a successor of positive probability under the policy
+  with a smaller rank, so its chain reaches a terminal state with
+  probability 1. Staying forever has value 0 in the reset process but is
+  never proper, so it attains no minimum.
+
+A quantile over every scheduler is decided by ADR-028 XF-2's shifted reward,
+which already gives a never-activating scheduler no part in the bound; its
+other readings follow this section.
+
 ### Canonical probability product key
 
 A formula monitor's local state index (`MonitorState::Formula(Running(index))` above) describes graph-local storage only.
@@ -282,7 +366,7 @@ undefined-evaluation evidence and certificate rejection loci. A model
 state key alone or a partial tuple SHALL NOT replace it.
 
 `probabilityProductKey` SHALL be the RFC 8785 UTF-8 JCS octets of
-`["filament.probability-product-key/v1",binding,model,monitor,accumulator,pending]`,
+`["filament.probability-product-key/v1",binding,instance,activation,model,monitor,accumulator,pending]`,
 through ADR-013/FR-259's one encoder. These are complete octets.
 Equality SHALL compare complete canonical octets;
 ordering SHALL be ascending unsigned lexicographic octet order. All
@@ -318,6 +402,15 @@ model state with one monitor state and one accumulator have different
 futures, and a key without the binding would merge them. A product is built
 over every binding of the claim (`initial` is per binding), and the key of a
 state names the binding that state was reached under.
+
+`instance` is the FR-181 reference triple of the object an `on each (x: T)`
+claim's instance is read for, one per key of `T`'s populations in the start
+snapshot (FR-125 "Instancing"), and null for an `on origin` claim.
+`activation` is `"waiting"` or `"active"` for an `on each` instance and null
+for an `on origin` claim. Both are part of the key for the reason `binding`
+is: one model state reached by two instances, or by one instance before and
+after its activation, has different futures. A product is built over every
+pair of binding and instance (`initial` is per pair).
 
 `model` is `["filament.simulation.state-key/v1",model_form]`, with
 `model_form` the full FR-101/FSpec FR-181 typed simulation-state form,
@@ -379,7 +472,7 @@ For bounded forms its closed alternatives are:
 
 | Event/measure | Canonical monitor |
 | --- | --- |
-| bounded event-position formula | `["formula",automaton_key]`, where `automaton_key` is the parsed complete FR-338 canonical key array, not its local u32 index or transport base64url string. Its context selects this checked formula, profile, origin activation and actual binding. |
+| bounded event-position formula | `["formula",automaton_key]`, where `automaton_key` is the parsed complete FR-338 canonical key array, not its local u32 index or transport base64url string. Its context selects this checked formula, profile, the claim's activation and the actual binding and instance. |
 | timed deadline event | `["deadline",kind,phase]`, where kind is `"eventually"` or `"until"` and phase is `"pending"`, `"accept"` or `"reject"`; D and the exact elapsed clock are retained in the model member above, never inferred from a position horizon. |
 | accumulate / steps comparison or quantile | `["measure",remaining,phase]`, with remaining future model positions in `0..h` and phase one of `"inactive"`, `"active"`, `"complete"`, `"censored"`, `"unactivated"`. The last three phases are decided and absorbing. |
 | fraction comparison or mean of fraction | `["fraction",remaining,phase]`, with phase `"collecting"` or `"complete"`; remaining is the number of included positions whose contribution is still unread, initially `h+1`, including position zero. Completion has remaining `"0"`. |
@@ -639,7 +732,8 @@ default monitor, default accumulator or fabricated pending data.
 ### Worked canonical vectors
 
 Hold the actual rederived binding B, model form M, checked reward/model/unit
-identities and FR-338 formula context fixed for each pair. `P(B,M,N,A,D)` is exactly
+identities and FR-338 formula context fixed for each pair. `P(B,X,H,M,N,A,D)`,
+with X the instance and H the activation phase, is exactly
 the JCS UTF-8 array defined above; this parameterized notation specifies
 full key octets without guessing a semantic model form. Component body
 strings below are exact ASCII octets; embedding them uses these same
@@ -657,7 +751,8 @@ JSON values, not an additional JSON/base64 string layer.
 | fraction horizon 1 | unweighted P true then false completes at `["count-fraction","1","2"]`; weighted positions with weights 2 then 1 complete at exact sums `["2","1"]` and `["3","1"]`. |
 | pending draw with no random parameters | `["drawn",schedule,[]]` differs from null when that real residual nondeterministic draw is admitted. |
 | two random Booleans | `[{"type":"boolean","value":true},{"type":"boolean","value":false}]` differs from the reversed vector; type and declared parameter positions are retained. |
-| repeated model key | Changing only the `over` binding, formula remaining horizon, activation, exact sum, phase or pending receiver changes P's octets; reversing graph discovery order changes none. |
+| `on each` waiting versus active | `P(B,X,"waiting",M,N,A,D)` differs from `P(B,X,"active",M,N,A,D)`, and two instances X1 and X2 at one model state differ; an `on origin` claim writes null for both X and H. |
+| repeated model key | Changing only the `over` binding, the `on each` instance, its activation phase, formula remaining horizon, measure activation, exact sum, phase or pending receiver changes P's octets; reversing graph discovery order changes none. |
 | typed draw identity | Positive and negative IEEE zero bits differ; two NaN payloads differ; option None differs from a present value; a reference with another universe differs even with the same object identity bytes. |
 
 Timed vectors use ADR-028 §15.5's actual checked Retx/Deadline context.
@@ -765,7 +860,7 @@ acceptance justified only by a post-D predicate. Terminal closure and a
 resource stop must preserve the same complete digital form.
 
 These vectors prescribe prospective qualification, not implementation PASS.
-All five components must be round-tripped by each consumer, including
+All eight members must be round-tripped by each consumer, including
 rejection loci, with no model-only shortcut.
 
 ## Behavior
@@ -840,6 +935,8 @@ rejection loci, with no model-only shortcut.
 | FR-196-AC-12 | Over every scheduler, a draw with several post-states followed by an accumulating step adds the draw's reward to the accumulator once, at the resolution; each resolution edge carries every reward at 0 and the draw edge carries the draw's. An `Undefined` path through such a draw names the complete product key of the post-state taken (`resolved`) and replays to one model state; every other step has `resolved: None`. An `Undefined` path over a claim `over` two objects carries the initial-state index and the binding of the undefined read, and its `key` is the complete pre-read product key at the undefined read (AC-13). A path to an instance that is undefined at an initial state has no step and position 0. | Test (TC-631, TC-641) |
 | FR-196-AC-13 | At every undefined read, `UndefinedPath.key` is the complete pre-read product key at that read: it retains the model state reached and the real control before evaluating the position's letter, and does not advance that control on the undefined result. For an undefined read at position 0, the key uses the initial model state and the claim-initialized non-null formula, measure or fraction control (or null control for an unbounded form); for a first undefined read after a step, it uses the reached post-state and the control carried from the preceding defined position. A resolved multi-post-state draw names the selected post-state with no pending draw. | Test (TC-641) |
 | FR-196-AC-14 | A mixed given/free workload race whose given identity `A` has the conditioned support 9 and 10 digital units and whose free identity `B` has the window `[1, 2]` offers four `FreeDelays` actions; each canonical body lists the row given `[9]` before the row given `[10]` (numeric order, although `"10"` precedes `"9"` as bytes), and its `given` names `A` only and its `free` `B` only. A body in byte order, with a row missing or repeated, with `free` empty or naming `A`, or with `B` delay 3 refuses. The state's ProductKey carries `pending: null` (no given-draw member), and two rows reaching one post-key with one elapsed amount are one merged edge whose probability is their sum. | Test (TC-631) |
+| FR-196-AC-15 | Over FR-875's `Link` claim `E` under `Even`, with a start snapshot holding `m` undelivered and `n` delivered, the product has one initial key with `instance` `m` and `activation` `"active"` and one with `instance` `n` and `activation` `"waiting"`; every key reachable from `n`'s is waiting, so `n` holds vacuously with no value computed; `m`'s numerator is `391/400` and its denominator 1, so its value `391/400` equals the `on origin` claim's. Keys of `m` and `n` at one model state are distinct octets, and a key with the six members of an `on origin` claim is refused. | Test (TC-3060) |
+| FR-196-AC-16 | Over FSpec FR-407-AC-18's model with a further action `stay` at `s0` that loops at `s0` without activating, the reset process sends the state after `a` from which `g` is unreachable back to `s0` and gives the end component `{s0}` under `stay` a reset action; the conditioned minimum is `1/2` and the maximum 1, never 0 by a scheduler that stays forever, and over the model without `stay`, under the workload choosing `a` and `b` with `1/2` each, the value is `3/5`. | Test (TC-3060) |
 
 ## Dependencies
 
