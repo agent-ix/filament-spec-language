@@ -241,6 +241,17 @@ pub(super) fn prepare(
                 "value clause must return Boolean",
             ));
         }
+        if selection.max_value_bits.is_some()
+            && callable
+                .parameters
+                .iter()
+                .any(|(_, value_type)| matches!(value_type, filament_exact::ValueType::Int(_)))
+        {
+            return Err(invalid(
+                "max_value_bits",
+                "not valid for a bounded integer parameter",
+            ));
+        }
         if callable
             .parameters
             .iter()

@@ -875,6 +875,7 @@ fn tl_cross_evaluation_agrees_and_timed_clauses_do_not_lower() {
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-8")]
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-9")]
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-10")]
+#[trace("TC-2102", "FR-752-AC-5")]
 fn model_based_test_request_rules() {
     let unit =
         format!("{VALUE_HEADER}predicate Square using v (x: Integer): Boolean {{ x * x >= 0 }}\n");
@@ -895,6 +896,24 @@ fn model_based_test_request_rules() {
     let mut unknown = bounded;
     unknown["clause"] = json!("Nothing");
     refusal_names(&mbt(unknown), "Nothing");
+
+    let bounded_unit = format!(
+        "{VALUE_HEADER}predicate Small using v (value: Int[0, 5]): Boolean {{ value <= 3 }}\n"
+    );
+    let (_, bounded_value) = run(
+        &bounded_unit,
+        false,
+        (
+            "model_based_test",
+            json!({
+                "clause": "Small",
+                "seed": 7,
+                "max_cases": 20,
+                "max_value_bits": 8,
+            }),
+        ),
+    );
+    refusal_names(&bounded_value, "max_value_bits");
 }
 
 /// FSpec FR-190-AC-8 and FR-752-AC-5: a direct value-clause request evaluates
