@@ -273,6 +273,44 @@ fn package_call_snapshot_is_admitted_by_the_v2_package_owner() {
     assert!(value.get("source").is_none(), "{value}");
 }
 
+/// FR-931-AC-11/12: source TL atoms use one precedence-aware printer over
+/// checked expressions, and enum literals use the declaration's alias-free
+/// identity rather than the authored enum alias.
+#[test]
+#[trace("FR-931-AC-11", "FR-931-AC-12")]
+fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
+    let directory = tempfile::tempdir().unwrap();
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+        profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+        enum Status { RED, BLUE }\n\
+        temporal Arithmetic using inf over (x: Integer) clock \"model-steps\" on origin { always holds(-(x + 2) > 0) }\n\
+        temporal EnumCase using inf over (x: Status) clock \"model-steps\" on origin { always holds(x = Status::RED or x = Status::BLUE and true) }\n";
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+
+    let run_clause = |clause: &str| {
+        run(
+            directory.path(),
+            json!({"models": [], "program": {"source": source("unit.native")},
+                "tl_lowering": {"clause": clause}}),
+        )
+    };
+    let (exit, value) = run_clause("Arithmetic");
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(
+        value["tl_lowering"]["atoms"]["p0"],
+        "- (x + 2) > 0",
+        "{value}"
+    );
+
+    let (exit, value) = run_clause("EnumCase");
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(
+        value["tl_lowering"]["atoms"]["p0"],
+        "x = ix://test:package-run:unit.native/Status::RED or x = ix://test:package-run:unit.native/Status::BLUE and true",
+        "{value}"
+    );
+}
+
 /// FR-100 "Request-file preparation for the driver": preparing a package
 /// request performs no call, and the prepared package call runs to the same
 /// value as `run`.

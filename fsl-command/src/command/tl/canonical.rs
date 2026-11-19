@@ -253,7 +253,7 @@ impl CheckedExpression {
                     )
                 }
                 NodeKind::Not(operand) => unary("not", child(*operand)?, child_prec(*operand)?, 8),
-                NodeKind::Negate(operand) => unary("-", child(*operand)?, child_prec(*operand)?, 8),
+                NodeKind::Negate(operand) => unary("- ", child(*operand)?, child_prec(*operand)?, 8),
                 NodeKind::Size(operand) => (format!("size({})", child(*operand)?), 10),
                 NodeKind::PopulationObjects { population } => (declaration_text(population), 10),
                 NodeKind::NamedPopulation { population, .. } => (declaration_text(population), 10),
