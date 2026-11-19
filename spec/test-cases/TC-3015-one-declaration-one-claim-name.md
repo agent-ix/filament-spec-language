@@ -1,12 +1,12 @@
 ---
-id: TC-3013
+id: TC-3015
 title: "Each claim declaration is one name in the claim namespace"
 type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-940
     type: verifies
 ---
-# TC-3013: Each claim declaration is one name in the claim namespace
+# TC-3015: Each claim declaration is one name in the claim namespace
 
 ## Description
 
