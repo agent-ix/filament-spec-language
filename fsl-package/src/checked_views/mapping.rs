@@ -11,7 +11,8 @@
 //! connectives `not`, `and`, `or` and `implies` carry no direction.
 
 use filament_contract_model::{
-    AdmissionBinding, CheckedArtifactRef, CheckedNodeId, CheckedPackageV2, CheckedSelection,
+    AdmissionBinding, CheckedArtifactRef, CheckedNodeId, CheckedOperationInterval,
+    CheckedPackageV2, CheckedSelection,
 };
 use fsl_semantics::check::TemporalProfile;
 
@@ -39,6 +40,9 @@ pub enum Target {
     /// `mltl.origin-complete-history/v1`: every bounded past operator alone,
     /// under either false-extension profile, whatever the surrounding closure.
     OriginCompleteHistory,
+    /// `mltl.infinite-trace/v1`: closed-interval past operators alone, under
+    /// the infinite-trace profile, over a lasso trace (FR-045).
+    InfiniteTrace,
 }
 
 impl Target {
@@ -48,6 +52,7 @@ impl Target {
             Self::ClosedTrace => "mltl.closed-trace/v1",
             Self::OnlinePrefix => "mltl.online-prefix/v1",
             Self::OriginCompleteHistory => "mltl.origin-complete-history/v1",
+            Self::InfiniteTrace => "mltl.infinite-trace/v1",
         }
     }
 }
@@ -259,16 +264,20 @@ pub fn mapping_support(
 ) -> Result<Classification, MappingRefusal> {
     let profile = TemporalProfile::from_identity(&subject.profile().definition.identity)
         .ok_or(MappingRefusal::NoProfileSelection)?;
-    let (mut future, mut past) = (false, false);
+    let (mut future, mut past, mut unclosed) = (false, false, false);
     for used in subject.formula_graph() {
         match used.direction() {
             Some(OperatorDirection::Future) => future = true,
             Some(OperatorDirection::Past) => past = true,
-            None => {}
+            None => continue,
         }
+        unclosed |= !matches!(
+            used.interval,
+            Some(CheckedOperationInterval::Integer { upper: Some(_), .. })
+        );
     }
     Ok(Classification {
-        support: support_of(profile, future, past, surrounding),
+        support: support_of(profile, future, past, unclosed, surrounding),
         retained: Retained {
             declaration: subject.declaration().clone(),
             profile: subject.profile().clone(),
@@ -287,16 +296,27 @@ pub fn mapping_support(
 /// FR-045's table, in row order: the disposition of a clause under
 /// `profile` whose reachable operators include a future one (`future`) and a
 /// past one (`past`), under the surrounding-execution closure `surrounding`.
-/// [`mapping_support`] reads the operator directions from the checked view;
-/// a caller holding the checked clause reads them from its formula.
+/// `unclosed` is whether some reachable temporal operator lacks a closed
+/// interval `[a, b]` (interval-less or `[a, *]`); only the infinite-trace
+/// bounded-past row reads it. [`mapping_support`] reads the operator directions
+/// and intervals from the checked view; a caller holding the checked clause
+/// reads them from its formula.
 pub fn support_of(
     profile: TemporalProfile,
     future: bool,
     past: bool,
+    unclosed: bool,
     surrounding: Closure,
 ) -> Support {
     let mut dimensions = Vec::new();
     match profile {
+        TemporalProfile::InfiniteTrace if past && !future && !unclosed => {
+            return Support::Supported {
+                target: Target::InfiniteTrace,
+                total_sample_valuation: false,
+                premises: OUTSTANDING_PREMISES,
+            };
+        }
         TemporalProfile::InfiniteTrace => dimensions.push(Unmatched::InfiniteTrace),
         TemporalProfile::TimestampedEventFiniteWindow => dimensions.push(Unmatched::FiniteWindow),
         TemporalProfile::Timed => dimensions.push(Unmatched::TimedProfile),

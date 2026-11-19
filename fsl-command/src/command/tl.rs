@@ -14,16 +14,19 @@ use fsl_semantics::check::{
 };
 use serde_json::{json, Map, Value};
 use tl_syntax::{
-    Formula, Interval, Node, NodeId, NodeKind, PropositionId, SemanticProfile, TemporalFamily,
+    Formula, InfiniteClock, InfiniteFormulaDocument, InfiniteNode, InfiniteNodeKind, Interval,
+    LassoTraceDocument, Node, NodeId, NodeKind, PartialValuation, PartialValue, PropositionId,
+    SemanticProfile, TemporalFamily, TemporalInterval, TraceObservation, ValuationEntry,
 };
 
 use super::{Result, RunCause};
 
-/// The three correspondence identities a request may name (FR-931).
-const CORRESPONDENCES: [TlTarget; 3] = [
+/// The four correspondence identities a request may name (FR-931).
+const CORRESPONDENCES: [TlTarget; 4] = [
     TlTarget::ClosedTrace,
     TlTarget::OnlinePrefix,
     TlTarget::OriginCompleteHistory,
+    TlTarget::InfiniteTrace,
 ];
 
 /// A decoded `tl_lowering` member.
@@ -40,13 +43,16 @@ pub(super) struct TlLowering {
 /// The `cross_evaluate` member's form.
 #[derive(Clone, Debug)]
 pub(super) enum CrossEvaluate {
-    /// A closed finite trace, read as FR-312 reads a `temporal` selection's
-    /// `trace` and `over`.
+    /// A closed finite trace or a lasso, read as FR-312 reads a `temporal`
+    /// selection's `trace` and `over`.
     Trace {
         /// The `trace` member.
         trace: Value,
         /// The `over` member, if any.
         over: Option<Value>,
+        /// Whether the trace is a `lasso` (an infinite trace) rather than a
+        /// `finite` one.
+        lasso: bool,
     },
     /// Every finite behaviour of the subject's model from the snapshot
     /// `initial`, of 1 to `max_steps` steps.
@@ -102,11 +108,75 @@ pub(super) fn decode(value: &Value) -> Result<TlLowering> {
         Some(Value::Object(cross)) => Some(decode_cross(cross)?),
         Some(_) => return Err(invalid("cross_evaluate", "expected an object")),
     };
+    // FR-931 "Cross-evaluation": the trace form matches the correspondence
+    // when one is named; an unnamed one is checked after classification.
+    if let (Some(target), Some(cross)) = (correspondence, &cross) {
+        if let Some(member) = TraceForm::of_request(cross).mismatch(target) {
+            return Err(invalid(member, TraceForm::reason(target)));
+        }
+    }
     Ok(TlLowering {
         clause,
         correspondence,
         cross,
     })
+}
+
+/// The trace form a lowering cross-evaluates over.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TraceForm {
+    /// No cross-evaluation.
+    Absent,
+    /// A closed finite trace.
+    Finite,
+    /// A lasso.
+    Lasso,
+    /// Every finite behaviour of a model subject.
+    Initial,
+}
+
+impl TraceForm {
+    fn of_request(cross: &CrossEvaluate) -> Self {
+        match cross {
+            CrossEvaluate::Trace { lasso: true, .. } => Self::Lasso,
+            CrossEvaluate::Trace { lasso: false, .. } => Self::Finite,
+            CrossEvaluate::Initial { .. } => Self::Initial,
+        }
+    }
+
+    fn of_valuation(valuation: &TemporalValuation) -> Self {
+        match (&valuation.positions, &valuation.behaviours) {
+            (Some(positions), _) => match positions.trace {
+                fsl_eval::temporal::TemporalTrace::Lasso { .. } => Self::Lasso,
+                fsl_eval::temporal::TemporalTrace::Finite { .. } => Self::Finite,
+            },
+            (None, Some(_)) => Self::Initial,
+            (None, None) => Self::Absent,
+        }
+    }
+
+    /// The request member this form is refused at beside `target`, when the
+    /// correspondence does not read it: `mltl.infinite-trace/v1` reads a
+    /// lasso only, the other three a finite trace or the `initial` form.
+    fn mismatch(self, target: TlTarget) -> Option<&'static str> {
+        match (target, self) {
+            (_, Self::Absent) => None,
+            (TlTarget::InfiniteTrace, Self::Lasso) => None,
+            (TlTarget::InfiniteTrace, Self::Finite) => Some("cross_evaluate.trace"),
+            (TlTarget::InfiniteTrace, Self::Initial) => Some("cross_evaluate.initial"),
+            (_, Self::Lasso) => Some("cross_evaluate.trace"),
+            (_, Self::Finite | Self::Initial) => None,
+        }
+    }
+
+    fn reason(target: TlTarget) -> &'static str {
+        match target {
+            TlTarget::InfiniteTrace => "mltl.infinite-trace/v1 reads a lasso trace only",
+            TlTarget::ClosedTrace | TlTarget::OnlinePrefix | TlTarget::OriginCompleteHistory => {
+                "the correspondence reads a finite trace, not a lasso"
+            }
+        }
+    }
 }
 
 fn decode_cross(cross: &Map<String, Value>) -> Result<CrossEvaluate> {
@@ -135,18 +205,20 @@ fn decode_cross(cross: &Map<String, Value>) -> Result<CrossEvaluate> {
                     "max_steps is given with initial only",
                 ));
             }
-            match trace {
-                Value::Object(kinds) if kinds.len() == 1 && kinds.contains_key("finite") => {}
+            let lasso = match trace {
+                Value::Object(kinds) if kinds.len() == 1 && kinds.contains_key("finite") => false,
+                Value::Object(kinds) if kinds.len() == 1 && kinds.contains_key("lasso") => true,
                 _ => {
                     return Err(invalid(
                         "cross_evaluate.trace",
-                        "only a finite trace is cross-evaluated",
-                    ))
+                        "only a finite trace or a lasso is cross-evaluated",
+                    ));
                 }
-            }
+            };
             Ok(CrossEvaluate::Trace {
                 trace: trace.clone(),
                 over: cross.get("over").cloned(),
+                lasso,
             })
         }
         (None, Some(initial)) => {
@@ -190,7 +262,7 @@ pub(super) const INITIAL_KEY: &str = "initial";
 /// which asks for the checked clause alone.
 pub(super) fn selection(lowering: &TlLowering) -> Value {
     let mut temporal = json!({"name": lowering.clause, "trace": {"finite": []}});
-    if let Some(CrossEvaluate::Trace { trace, over }) = &lowering.cross {
+    if let Some(CrossEvaluate::Trace { trace, over, .. }) = &lowering.cross {
         temporal["trace"] = trace.clone();
         if let Some(over) = over {
             temporal["over"] = over.clone();
@@ -239,6 +311,7 @@ pub fn record(
     correspondence: Option<&str>,
     mapping: &AtomMapping,
 ) -> std::result::Result<TlRecord, String> {
+    let form = TraceForm::of_valuation(valuation);
     let named = match correspondence {
         None => None,
         Some(identity) => Some(
@@ -248,7 +321,30 @@ pub fn record(
                 .ok_or_else(|| format!("unknown correspondence {identity}"))?,
         ),
     };
-    lowering_record(valuation, source, named, mapping)
+    lowering_record(valuation, source, named, mapping, form).map_err(|failure| match failure {
+        Failure::Fault(message) => message,
+        Failure::Form { member, reason } => format!("tl_lowering.{member}: {reason}"),
+    })
+}
+
+/// Why a lowering produced no record.
+enum Failure {
+    /// A lowering or cross-evaluation fault.
+    Fault(String),
+    /// The trace form the request cross-evaluates over is not the one the
+    /// classified correspondence reads (FR-931), refused at `member`.
+    Form {
+        /// The `tl_lowering` member, below `tl_lowering.`.
+        member: &'static str,
+        /// Why it is refused.
+        reason: &'static str,
+    },
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self::Fault(message)
+    }
 }
 
 /// The FR-931-AC-8 fragment of a formula by the direction of its operators.
@@ -265,7 +361,10 @@ fn classification(correspondence: &str, fragment: &str) -> Value {
 }
 
 fn direction(target: TlTarget) -> bool {
-    matches!(target, TlTarget::OriginCompleteHistory)
+    matches!(
+        target,
+        TlTarget::OriginCompleteHistory | TlTarget::InfiniteTrace
+    )
 }
 
 fn dimension(unmatched: TlUnmatched) -> &'static str {
@@ -276,48 +375,71 @@ fn dimension(unmatched: TlUnmatched) -> &'static str {
     }
 }
 
+/// Whether `interval` is a closed step interval `[a, b]`.
+fn is_closed(interval: Option<&CheckedInterval>) -> bool {
+    matches!(
+        interval,
+        Some(CheckedInterval::Steps(steps))
+            if matches!(steps.upper(), fsl_foundation::bound::TemporalUpper::Finite(_))
+    )
+}
+
 fn lowering_record(
     valuation: &TemporalValuation,
     source: &str,
     named: Option<TlTarget>,
     mapping: &AtomMapping,
-) -> std::result::Result<TlRecord, String> {
+    form: TraceForm,
+) -> std::result::Result<TlRecord, Failure> {
     let clause = &valuation.clause;
     let formula = clause.formula();
-    let (mut future, mut past) = (false, false);
+    let (mut future, mut past, mut unclosed) = (false, false, false);
     for node in formula.nodes() {
-        match node {
+        let interval = match node {
             FormulaNode::Unary {
                 operator: UnaryTemporal::Eventually | UnaryTemporal::Always,
+                interval,
                 ..
             }
             | FormulaNode::Binary {
                 operator: BinaryTemporal::Until | BinaryTemporal::Release,
+                interval,
                 ..
-            } => future = true,
+            } => {
+                future = true;
+                interval
+            }
             FormulaNode::Unary {
                 operator: UnaryTemporal::Once | UnaryTemporal::Historically,
+                interval,
                 ..
             }
             | FormulaNode::Binary {
                 operator: BinaryTemporal::Since | BinaryTemporal::Triggered,
+                interval,
                 ..
-            } => past = true,
+            } => {
+                past = true;
+                interval
+            }
             FormulaNode::Constant(_)
             | FormulaNode::Holds { .. }
             | FormulaNode::Aggregate { .. }
             | FormulaNode::Not(_)
             | FormulaNode::And(..)
             | FormulaNode::Or(..)
-            | FormulaNode::Implies(..) => {}
-        }
+            | FormulaNode::Implies(..) => continue,
+        };
+        unclosed |= !is_closed(interval.as_ref());
     }
     // FR-931 "The correspondence": the member fixes the closure.
     let surrounding = match named {
         Some(TlTarget::OnlinePrefix) => TlClosure::Open,
-        Some(TlTarget::ClosedTrace | TlTarget::OriginCompleteHistory) | None => TlClosure::Complete,
+        Some(TlTarget::ClosedTrace | TlTarget::OriginCompleteHistory | TlTarget::InfiniteTrace)
+        | None => TlClosure::Complete,
     };
-    let support = fsl_replay::spine::tl_support_of(clause.profile(), future, past, surrounding);
+    let support =
+        fsl_replay::spine::tl_support_of(clause.profile(), future, past, unclosed, surrounding);
     let mut record = Map::new();
     record.insert("clause".to_owned(), json!(clause.name()));
     let classified = match support {
@@ -339,28 +461,36 @@ fn lowering_record(
         record.insert("disposition".to_owned(), json!("unsupported"));
         record.insert("correspondence".to_owned(), json!(target.identity()));
         record.insert("classified".to_owned(), json!(classified.identity()));
-        let dimension = if direction(target) == direction(classified) {
-            "closure"
-        } else {
-            "direction"
-        };
+        // A correspondence that reads the other kind of trace differs by
+        // the profile; otherwise by the operator direction or the closure.
+        let dimension =
+            if (target == TlTarget::InfiniteTrace) != (classified == TlTarget::InfiniteTrace) {
+                "profile"
+            } else if direction(target) == direction(classified) {
+                "closure"
+            } else {
+                "direction"
+            };
         record.insert("dimensions".to_owned(), json!([dimension]));
         return Ok(TlRecord {
             record: Value::Object(record),
             exit_code: 21,
         });
     }
-    let profile = match classified {
-        TlTarget::ClosedTrace => SemanticProfile::ClosedTraceV1,
-        TlTarget::OnlinePrefix => SemanticProfile::OnlinePrefixV1,
-        TlTarget::OriginCompleteHistory => SemanticProfile::OriginCompleteHistoryV1,
-    };
+    // FR-931 "Cross-evaluation": the trace form matches the target the
+    // classification names, checked here when the request named none.
+    if let Some(member) = form.mismatch(classified) {
+        return Err(Failure::Form {
+            member,
+            reason: TraceForm::reason(classified),
+        });
+    }
     let mut lowered = Lowered::default();
     let root = lowered.lower(formula, formula.root(), source)?;
-    let tl = Formula::new(profile, root, &lowered.nodes).map_err(|error| error.to_string())?;
+    let tl = lowered.document(classified, root)?;
     record.insert("disposition".to_owned(), json!("supported"));
     record.insert("correspondence".to_owned(), json!(classified.identity()));
-    record.insert("formula".to_owned(), json!(display(tl, root)));
+    record.insert("formula".to_owned(), json!(display(&lowered.nodes, root)));
     record.insert(
         "atoms".to_owned(),
         Value::Object(
@@ -377,14 +507,11 @@ fn lowering_record(
     // the TL side is read from the lowered formula alone, by its profile and
     // the direction of its temporal nodes.
     let native = classification(classified.identity(), fragment_of(past));
-    let lowered_past = tl
-        .nodes()
-        .iter()
-        .any(|node| node.kind.temporal_family() == Some(TemporalFamily::Past));
+    let (lowered_profile, lowered_past) = tl.classification();
     let lowered_profile = mapping
         .lowered_correspondence
         .as_deref()
-        .unwrap_or_else(|| tl.profile().as_str());
+        .unwrap_or(lowered_profile);
     let lowered_class = classification(lowered_profile, fragment_of(lowered_past));
     if lowered_class == native {
         record.insert("classification".to_owned(), native);
@@ -406,7 +533,7 @@ fn lowering_record(
             (None, None) => None,
         };
     if let Some((traces, complete)) = traces {
-        let cross = cross_evaluate(clause.name(), tl, &lowered, &traces, mapping, classified)?;
+        let cross = cross_evaluate(clause.name(), &tl, &lowered, &traces, mapping, classified)?;
         if cross["agree"] != json!(true) {
             exit_code = 30;
         } else if !complete && exit_code == 0 {
@@ -422,6 +549,58 @@ fn lowering_record(
     })
 }
 
+/// The lowered formula in the edition its correspondence names.
+enum LoweredFormula<'a> {
+    /// A bounded-edition formula over a finite trace.
+    Bounded(Formula<'a>),
+    /// An unbounded-edition formula over a lasso trace.
+    Unbounded(InfiniteFormulaDocument),
+}
+
+impl LoweredFormula<'_> {
+    /// The profile and past-ness the lowered formula carries, read from the
+    /// formula alone: its semantic profile, and whether every temporal node
+    /// is a past node (with a closed interval in the unbounded edition).
+    fn classification(&self) -> (&str, bool) {
+        match self {
+            Self::Bounded(formula) => (
+                formula.profile().as_str(),
+                formula
+                    .nodes()
+                    .iter()
+                    .any(|node| node.kind.temporal_family() == Some(TemporalFamily::Past)),
+            ),
+            Self::Unbounded(document) => (
+                document.semantic_profile().as_str(),
+                document.nodes().iter().all(|node| {
+                    use InfiniteNodeKind as K;
+                    match node.kind {
+                        K::Once { interval, .. }
+                        | K::Historically { interval, .. }
+                        | K::Since { interval, .. }
+                        | K::Triggered { interval, .. } => {
+                            matches!(interval, TemporalInterval::Closed(_))
+                        }
+                        K::StrongPrevious { .. }
+                        | K::False
+                        | K::True
+                        | K::Proposition { .. }
+                        | K::Not { .. }
+                        | K::And { .. }
+                        | K::Or { .. }
+                        | K::Implies { .. }
+                        | K::Equivalent { .. } => true,
+                        K::Future { .. }
+                        | K::Globally { .. }
+                        | K::Until { .. }
+                        | K::Release { .. } => false,
+                    }
+                }),
+            ),
+        }
+    }
+}
+
 /// A native formula lowered to a `tl-syntax` arena, operands first.
 #[derive(Default)]
 struct Lowered {
@@ -432,6 +611,34 @@ struct Lowered {
 }
 
 impl Lowered {
+    /// The lowered arena as a `tl-syntax` document of the edition `target`
+    /// reads: the bounded edition for the finite-trace targets, the unbounded
+    /// edition for the infinite-trace one.
+    fn document(
+        &self,
+        target: TlTarget,
+        root: NodeId,
+    ) -> std::result::Result<LoweredFormula<'_>, String> {
+        let profile = match target {
+            TlTarget::ClosedTrace => SemanticProfile::ClosedTraceV1,
+            TlTarget::OnlinePrefix => SemanticProfile::OnlinePrefixV1,
+            TlTarget::OriginCompleteHistory => SemanticProfile::OriginCompleteHistoryV1,
+            TlTarget::InfiniteTrace => {
+                return InfiniteFormulaDocument::new(
+                    SemanticProfile::InfiniteTraceV1,
+                    InfiniteClock::EventPosition,
+                    root,
+                    self.nodes.iter().map(infinite_node).collect(),
+                )
+                .map(LoweredFormula::Unbounded)
+                .map_err(|error| error.to_string());
+            }
+        };
+        Formula::new(profile, root, &self.nodes)
+            .map(LoweredFormula::Bounded)
+            .map_err(|error| error.to_string())
+    }
+
     fn push(&mut self, kind: NodeKind) -> std::result::Result<NodeId, String> {
         let id = u32::try_from(self.nodes.len()).map_err(|_| "formula too large".to_owned())?;
         self.nodes.push(Node::new(kind));
@@ -482,7 +689,7 @@ impl Lowered {
                 }
             }
             FormulaNode::Aggregate { .. } => {
-                return Err("a window aggregate atom has no TL atom".to_owned())
+                return Err("a window aggregate atom has no TL atom".to_owned());
             }
             FormulaNode::Not(operand) => NodeKind::Not {
                 operand: self.lower(formula, *operand, source)?,
@@ -550,30 +757,103 @@ impl Lowered {
     }
 }
 
-/// The display form of node `id` of `formula`: `G[0,3] p0`, `(p0 U[0,2] p1)`.
-fn display(formula: Formula<'_>, id: NodeId) -> String {
-    let Some(node) = formula.node(id) else {
+/// The unbounded-edition node of the bounded-edition `node`: each closed
+/// interval `[a, b]` lowered to the same closed interval.
+fn infinite_node(node: &Node) -> InfiniteNode {
+    use InfiniteNodeKind as K;
+    let closed = TemporalInterval::Closed;
+    InfiniteNode::new(match node.kind {
+        NodeKind::False => K::False,
+        NodeKind::True => K::True,
+        NodeKind::Proposition { proposition } => K::Proposition { proposition },
+        NodeKind::Not { operand } => K::Not { operand },
+        NodeKind::And { left, right } => K::And { left, right },
+        NodeKind::Or { left, right } => K::Or { left, right },
+        NodeKind::Implies { left, right } => K::Implies { left, right },
+        NodeKind::Equivalent { left, right } => K::Equivalent { left, right },
+        NodeKind::Future { interval, operand } => K::Future {
+            interval: closed(interval),
+            operand,
+        },
+        NodeKind::Globally { interval, operand } => K::Globally {
+            interval: closed(interval),
+            operand,
+        },
+        NodeKind::Once { interval, operand } => K::Once {
+            interval: closed(interval),
+            operand,
+        },
+        NodeKind::Historically { interval, operand } => K::Historically {
+            interval: closed(interval),
+            operand,
+        },
+        NodeKind::StrongPrevious { operand } => K::StrongPrevious { operand },
+        NodeKind::Until {
+            interval,
+            left,
+            right,
+        } => K::Until {
+            interval: closed(interval),
+            left,
+            right,
+        },
+        NodeKind::Release {
+            interval,
+            left,
+            right,
+        } => K::Release {
+            interval: closed(interval),
+            left,
+            right,
+        },
+        NodeKind::Since {
+            interval,
+            left,
+            right,
+        } => K::Since {
+            interval: closed(interval),
+            left,
+            right,
+        },
+        NodeKind::Triggered {
+            interval,
+            left,
+            right,
+        } => K::Triggered {
+            interval: closed(interval),
+            left,
+            right,
+        },
+    })
+}
+
+/// The display form of node `id` of `nodes`: `G[0,3] p0`, `(p0 U[0,2] p1)`.
+fn display(nodes: &[Node], id: NodeId) -> String {
+    let Some(node) = usize::try_from(id.0)
+        .ok()
+        .and_then(|index| nodes.get(index))
+    else {
         return String::new();
     };
     let unary = |symbol: &str, interval: Interval, operand: NodeId| {
         format!(
             "{symbol}{} {}",
             display_interval(interval),
-            display(formula, operand)
+            display(nodes, operand)
         )
     };
     let binary = |symbol: String, left: NodeId, right: NodeId| {
         format!(
             "({} {symbol} {})",
-            display(formula, left),
-            display(formula, right)
+            display(nodes, left),
+            display(nodes, right)
         )
     };
     match node.kind {
         NodeKind::False => "false".to_owned(),
         NodeKind::True => "true".to_owned(),
         NodeKind::Proposition { proposition } => format!("p{}", proposition.0),
-        NodeKind::Not { operand } => format!("!{}", display(formula, operand)),
+        NodeKind::Not { operand } => format!("!{}", display(nodes, operand)),
         NodeKind::And { left, right } => binary("&".to_owned(), left, right),
         NodeKind::Or { left, right } => binary("|".to_owned(), left, right),
         NodeKind::Implies { left, right } => binary("->".to_owned(), left, right),
@@ -594,7 +874,7 @@ fn display(formula: Formula<'_>, id: NodeId) -> String {
             interval: at,
             operand,
         } => unary("H", at, operand),
-        NodeKind::StrongPrevious { operand } => format!("Y {}", display(formula, operand)),
+        NodeKind::StrongPrevious { operand } => format!("Y {}", display(nodes, operand)),
         NodeKind::Until {
             interval: at,
             left,
@@ -636,7 +916,7 @@ fn native_verdict(outcome: &fsl_replay::spine::TemporalOutcome) -> Value {
 /// activation position of the valuation, against the native one.
 fn cross_evaluate(
     clause: &str,
-    formula: Formula<'_>,
+    formula: &LoweredFormula<'_>,
     lowered: &Lowered,
     traces: &[&fsl_replay::spine::ObservedValuation],
     mapping: &AtomMapping,
@@ -665,9 +945,16 @@ fn cross_evaluate(
             }
             trace.push(true_at);
         }
+        let reading = Reading::of(
+            formula,
+            &trace,
+            positions.trace,
+            lowered.atoms.len(),
+            target,
+        )?;
         for (position, outcome) in &positions.activations {
             let at = position.index();
-            let tl = tl_verdict(formula, &trace, at, target)?;
+            let tl = reading.verdict(at)?;
             let native = native_verdict(outcome);
             if native != json!(tl) {
                 faults.push(json!({
@@ -688,6 +975,142 @@ fn cross_evaluate(
         "agree": faults.is_empty(),
         "faults": faults,
     }))
+}
+
+/// The identity of the proposition map a lasso trace document is over.
+const PROPOSITION_MAP: &str = "fsl-atoms";
+
+/// How `tl-mltl` reads one trace of a cross-evaluation.
+enum Reading<'a> {
+    /// A closed finite trace, under a finite-trace correspondence.
+    Finite {
+        formula: Formula<'a>,
+        trace: &'a [Vec<PropositionId>],
+        target: TlTarget,
+    },
+    /// A lasso trace, under `mltl.infinite-trace/v1`.
+    Lasso {
+        formula: &'a InfiniteFormulaDocument,
+        graph: String,
+        trace: LassoTraceDocument,
+        identity: String,
+    },
+}
+
+impl<'a> Reading<'a> {
+    /// The reading of `trace`, the true propositions at each represented
+    /// position, which `shape` splits into a lasso's prefix and loop.
+    fn of(
+        formula: &'a LoweredFormula<'a>,
+        trace: &'a [Vec<PropositionId>],
+        shape: fsl_eval::temporal::TemporalTrace,
+        atoms: usize,
+        target: TlTarget,
+    ) -> std::result::Result<Self, String> {
+        let (formula, prefix) = match (formula, shape) {
+            (LoweredFormula::Bounded(formula), _) => {
+                return Ok(Self::Finite {
+                    formula: *formula,
+                    trace,
+                    target,
+                });
+            }
+            (
+                LoweredFormula::Unbounded(formula),
+                fsl_eval::temporal::TemporalTrace::Lasso { prefix, .. },
+            ) => (formula, prefix),
+            (LoweredFormula::Unbounded(_), fsl_eval::temporal::TemporalTrace::Finite { .. }) => {
+                return Err("an unbounded formula is evaluated over a lasso".to_owned());
+            }
+        };
+        let propositions = (0..atoms)
+            .map(|index| {
+                u32::try_from(index)
+                    .map(PropositionId)
+                    .map_err(|_| "too many atoms".to_owned())
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut observations = Vec::with_capacity(trace.len());
+        for (position, true_at) in trace.iter().enumerate() {
+            let entries = propositions
+                .iter()
+                .map(|proposition| ValuationEntry {
+                    proposition: *proposition,
+                    value: if true_at.contains(proposition) {
+                        PartialValue::True
+                    } else {
+                        PartialValue::False
+                    },
+                })
+                .collect();
+            observations.push(TraceObservation {
+                position: u32::try_from(position).map_err(|_| "trace too long".to_owned())?,
+                valuation: PartialValuation::new(
+                    PROPOSITION_MAP.to_owned(),
+                    &propositions,
+                    entries,
+                )
+                .map_err(|error| format!("{error:?}"))?,
+            });
+        }
+        let prefix = usize::try_from(prefix).map_err(|_| "prefix too long".to_owned())?;
+        let loop_observations = observations.split_off(prefix.min(observations.len()));
+        let trace = LassoTraceDocument::new(
+            SemanticProfile::InfiniteTraceV1,
+            InfiniteClock::EventPosition,
+            PROPOSITION_MAP.to_owned(),
+            propositions,
+            observations,
+            loop_observations,
+        )
+        .map_err(|error| format!("{error:?}"))?;
+        Ok(Self::Lasso {
+            graph: formula
+                .content_identity()
+                .map_err(|error| error.to_string())?,
+            identity: trace
+                .content_identity()
+                .map_err(|error| error.to_string())?,
+            formula,
+            trace,
+        })
+    }
+
+    /// `tl-mltl`'s verdict of the formula at position `at`.
+    fn verdict(&self, at: u64) -> std::result::Result<bool, String> {
+        match self {
+            Self::Finite {
+                formula,
+                trace,
+                target,
+            } => tl_verdict(*formula, trace, at, *target),
+            Self::Lasso {
+                formula,
+                graph,
+                trace,
+                identity,
+            } => {
+                let result = tl_mltl::infinite::evaluate_lasso(&tl_mltl::infinite::LassoRequest {
+                    formula,
+                    trace,
+                    fairness: None,
+                    evidence_closure: tl_mltl::infinite::EvidenceClosure::Closed,
+                    graph_id: graph,
+                    trace_id: identity,
+                    selected_position: at,
+                    limit: tl_mltl::infinite::EvaluationLimit::default(),
+                })
+                .map_err(|error| error.to_string())?;
+                match result.disposition {
+                    tl_mltl::infinite::Disposition::Proved => Ok(true),
+                    tl_mltl::infinite::Disposition::Refuted => Ok(false),
+                    other => Err(format!(
+                        "an exact lasso settles every verdict, not {other:?}"
+                    )),
+                }
+            }
+        }
+    }
 }
 
 /// `tl-mltl`'s verdict of `formula` at `at` over the closed finite `trace`.
@@ -764,6 +1187,7 @@ fn tl_verdict(
             .map_err(|error| error.to_string())?
             .verdict)
         }
+        TlTarget::InfiniteTrace => Err("an infinite-trace verdict is read over a lasso".to_owned()),
     }
 }
 
@@ -778,11 +1202,20 @@ pub(super) fn lower(
     valuation: &TemporalValuation,
     source: &str,
     lowering: &TlLowering,
-) -> std::result::Result<TlRecord, String> {
+) -> Result<TlRecord> {
+    let form = lowering
+        .cross
+        .as_ref()
+        .map_or(TraceForm::Absent, TraceForm::of_request);
     lowering_record(
         valuation,
         source,
         lowering.correspondence,
         &AtomMapping::default(),
+        form,
     )
+    .map_err(|failure| match failure {
+        Failure::Fault(message) => RunCause::TlFault(message),
+        Failure::Form { member, reason } => invalid(member, reason),
+    })
 }

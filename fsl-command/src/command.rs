@@ -784,7 +784,7 @@ pub enum RunCause {
     EmptyCompileProgram,
     /// FR-931: `tl_lowering.correspondence` names no TL correspondence.
     #[error(
-        "unknown_profile/unsupported-selection: tl_lowering.correspondence {value:?} is none of mltl.closed-trace/v1, mltl.online-prefix/v1 and mltl.origin-complete-history/v1"
+        "unknown_profile/unsupported-selection: tl_lowering.correspondence {value:?} is none of mltl.closed-trace/v1, mltl.online-prefix/v1, mltl.origin-complete-history/v1 and mltl.infinite-trace/v1"
     )]
     TlCorrespondence {
         /// The value given.
@@ -3588,7 +3588,7 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
         }
         _ => return output::clause_report(report, &selection),
     };
-    let record = tl::lower(valuation, &source, &lowering).map_err(RunCause::TlFault)?;
+    let record = tl::lower(valuation, &source, &lowering)?;
     Ok(RunResult {
         exit_code: record.exit_code,
         value: NativeResult::lowering_document(tl::document(record.record)),
