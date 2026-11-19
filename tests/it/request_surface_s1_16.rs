@@ -595,7 +595,7 @@ fn pick(block: &str, objective: &str) -> String {
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-6")]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-1")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-7")]
-#[ignore = "QSL-2235: bounded synthesis run not implemented yet"]
+#[ignore = "QSL-2235: value synthesis run depends on FR-1037 selection through the Arch #2961 claim_names writer"]
 fn pick_finds_validates_exhausts_and_optimizes() {
     let synth = |unit: String| run(&unit, false, ("synthesis", json!({"declaration": "Pick"}))).1;
     let found = synth(pick("Pick * Pick = 49", ""));
