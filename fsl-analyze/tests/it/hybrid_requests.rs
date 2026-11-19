@@ -519,7 +519,6 @@ fn a_process_provider_refutation_settles_by_exact_replay() {
 #[test]
 #[trace("TC-2101", "FR-751-AC-1")]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-1")]
-#[ignore = "QSL-2531: core check of hybrid provider certificates not implemented yet"]
 fn an_inductive_enclosure_certificate_is_checked_in_the_core() {
     let unit = braking(&claim("Bounded", "always holds(h.v < 30)"));
     let (_, accepted) = first_item(
@@ -561,7 +560,6 @@ fn an_inductive_enclosure_certificate_is_checked_in_the_core() {
 #[test]
 #[trace("TC-2101", "FR-751-AC-2")]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-2")]
-#[ignore = "QSL-2531: core check of flowpipe certificates not implemented yet"]
 fn a_flowpipe_step_violating_picard_is_rejected() {
     let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
         "basis": {"type": "bounded-solver", "method": "flowpipe-outward-rounded",
@@ -587,7 +585,6 @@ fn a_flowpipe_step_violating_picard_is_rejected() {
 #[test]
 #[trace("TC-2101", "FR-751-AC-3")]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-4")]
-#[ignore = "QSL-2531: work-limited certificate check not implemented yet"]
 fn a_work_limited_certificate_check_is_rejected() {
     let unit = braking(&claim("Bounded", "always holds(h.v < 30)"));
     let (_, item) = first_item(
@@ -605,7 +602,6 @@ fn a_work_limited_certificate_check_is_rejected() {
 /// entry refuses `invalid_result`/`invalid-value` at `/certificate`.
 #[test]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-4")]
-#[ignore = "QSL-2531: certificate form check not implemented yet"]
 fn a_mismatched_certificate_form_refuses_at_certificate() {
     let mut entry = inductive_entry("20");
     entry["certificate"] = json!({"type": "flowpipe", "steps": []});
@@ -700,7 +696,6 @@ fn braking_flowpipe(jump_time: (&str, &str)) -> Value {
 /// accepted; against a violated claim it is rejected with rule `claim`.
 #[test]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-5")]
-#[ignore = "QSL-2531: flowpipe guard and boundary-invariant check not implemented yet"]
 fn a_flowpipe_jump_step_carries_the_guarded_part_and_its_jump_times() {
     let unit = braking_pair();
     let check = |name: &str, claim: &str, jump_time: (&str, &str)| {
@@ -847,7 +842,10 @@ fn a_refuted_hybrid_item_replays_through_fr_098() {
     // `TooSlow` holds throughout [0, 10], so exact replay must report that
     // the provider's refuted trace does not reproduce the claim violation.
     let non_reproducing = fsl_replay::replay(
-        hybrid_replay_request(&braking_pair(), point_counterexample_with_acceleration(1, 20)),
+        hybrid_replay_request(
+            &braking_pair(),
+            point_counterexample_with_acceleration(1, 20),
+        ),
         fsl_replay::ReplayLimits::default(),
     )
     .expect("a valid trace that does not violate TooSlow settles as a row");
