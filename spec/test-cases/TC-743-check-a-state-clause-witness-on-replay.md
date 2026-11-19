@@ -38,7 +38,7 @@ provision.
    `Int[0, 0]` of a one-element collection, in a package checked under
    `CheckMode::Kernel`; FR-268-AC-3); then over `AllBelow` with the
    evaluation meter one unit below step 2's need.
-4. TC-517 step 1's `VersionUnchanged` and `ParentOrder` envelopes; an
+4. TC-517 step 1's `VersionAdvances` and `ParentOrder` envelopes; an
    `AllBelow` envelope whose reader bound is smaller than its encoded
    record, by a long member name, a long text deciding element or a long
    object identity in its value path; step 1's `Witness`-arm envelope twice.

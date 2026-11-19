@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify the 17-case ConfigVersion corpus through `run_clause` against the
+Verify the 18-case ConfigVersion corpus through `run_clause` against the
 independent expected dispositions, through FR-267 native-run-result/2
 serialization, at the FSpec FR-180-AC-4 boundaries, for input-fixed identity,
 and through I3 extraction.
@@ -31,7 +31,7 @@ inputs. `cases.rs` gains `BoundaryZero` (root 0, child 1), `BoundaryMax`
 (root 999, child 1000), `BelowRange` (root -1) and `AboveRange` (child 1001),
 all under `ParentOrder` with self `child`.
 
-1. For each of the 17 cases, run `run_clause` and compare the report with an
+1. For each of the 18 cases, run `run_clause` and compare the report with an
    exhaustive `match` over `Case` giving FR-108's Corpus table.
 2. For each case, serialize the `run_clause` report as native-run-result/2,
    read it through FR-267's strict reader, and compare stage, category, truth
@@ -40,14 +40,14 @@ all under `ParentOrder` with self `child`.
    from the native-run-result/2 record.
 4. Generate the corpus into two temporary directories and compare every
    file, in both directions (identical file sets, not just one direction's
-   files present in the other); run every one of the 17 cases twice and
+   files present in the other); run every one of the 18 cases twice and
    compare the full report; then,
    for every case that reaches compile, run again with the expected
    `package_id` set to the `package_id` spine `compile` emits for the unit,
    and compare.
 5. In `fsl-replay`'s integration tests, built with
    `cargo test -p fsl-replay --features quire-extraction` (the root crate has
-   no `quire-extraction` feature), take each of the 17 cases' units from the
+   no `quire-extraction` feature), take each of the 18 cases' units from the
    same case catalog, embed each in a `rules.md` fence, extract it through `fsl-source`, and run the extracted
    source. Independently compile the extracted body's bytes under its body
    identity with a direct `spine::compile` call.

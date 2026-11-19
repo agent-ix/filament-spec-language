@@ -23,7 +23,7 @@ Scope: FR-104-AC-15; FR-105-AC-1, FR-105-AC-2, FR-105-AC-5, FR-105-AC-8 to FR-10
    fixture package, and decode the emitted `filament.checked-package/v2` graph.
 2. For each `state` node, compare its `semantic_type`, `body`,
    `dependencies` and occurrences with FR-105's Outputs table.
-3. Walk `VersionUnchanged`'s, `NoCycle`'s and `ParentOrder`'s condition
+3. Walk `VersionAdvances`'s, `NoCycle`'s and `ParentOrder`'s condition
    terms.
 4. Run `CheckedClauseKind`'s mapping forward over all eight variants and
    backward over every triple the forward pass gives and over
@@ -33,7 +33,7 @@ Scope: FR-104-AC-15; FR-105-AC-1, FR-105-AC-2, FR-105-AC-5, FR-105-AC-8 to FR-10
    only `I`.
 6. Read the `source_map` entry of step 1's frame node's `generated`
    occurrence; recompile with a second `post` clause naming `attemptUpdate`
-   placed before `VersionUnchanged`; compile TC-1043's fixture R; emit a package
+   placed before `VersionAdvances`; compile TC-1043's fixture R; emit a package
    whose frame occurrence has its region removed (FR-105-AC-9).
 7. Spine-compile step 1's unit with `constraint Low using v on
    Config::ConfigVersion at current { self.versionNumber <= 1 }` added, then
@@ -67,11 +67,16 @@ Tag the tests `#[trace("TC-462", "FR-105-AC-n")]`.
 - Step 2: each matches the table. The frame's `modifies` is exactly
   (`ConfigVersion` node, `versionNumber`), `creates` and `deletes` are empty,
   and the `ConfigVersion` node is in the frame's `dependencies`.
-  `VersionUnchanged`'s anchor argument references the `operation_anchor`
+  `VersionAdvances`'s anchor argument references the `operation_anchor`
   node; each invariant's references the `ConfigVersion` node. Each clause
   application's operation is `filament.op.state.clause`.
-- Step 3: `VersionUnchanged`'s condition holds a `filament.op.state.pre`
-  application over the field read of `versionNumber`. `NoCycle`'s holds a
+- Step 3: `VersionAdvances`'s condition has the shape FR-105-AC-2 states:
+  a `filament.op.boolean.and` of two `filament.op.boolean.implies`, the first
+  consequent an `Integer` `filament.op.integer.eq` of the converted post read
+  and a `filament.op.integer.add` over a `filament.op.state.pre` application,
+  the second an equality of the post read and a `filament.op.state.pre`
+  application over the field read of `versionNumber`, and no
+  `filament.op.numeric.narrow` node. `NoCycle`'s holds a
   `filament.op.model.reaches_field` application whose member is
   `{kind: "field", declaration: <ConfigVersion node>, name: "parent"}`, and
   `ParentOrder`'s `self.parent` read carries a member of the same shape.
@@ -89,7 +94,7 @@ Tag the tests `#[trace("TC-462", "FR-105-AC-n")]`.
   1, the emitted-node assertions wait on STD-111; the checked-graph
   assertions do not.
 - Step 6: one region, the span of `attemptUpdate`'s reference in
-  `VersionUnchanged`; with the earlier clause, that clause's span and the
+  `VersionAdvances`; with the earlier clause, that clause's span and the
   same (node id, role, ordinal); in R, each operation's first naming span;
   the regionless occurrence refuses
   `UnlocatedOccurrence`.
