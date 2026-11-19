@@ -1010,7 +1010,6 @@ fn changing_one_weight_or_support_value_changes_the_node_identity() {
 /// package holding the claim, the reward and the workload.
 #[trace("TC-2062", "FR-740-AC-4")]
 #[test]
-#[ignore = "QSL-2441: a claim's workload resolves to its emitted workload node; the claim also reads a reward"]
 fn a_claim_under_a_workload_is_emitted_with_its_workload_node() {
     let package = claims_package(&[
         "workload Steady on Config { weight ConfigVersion::attemptUpdate = 1; }",
@@ -1022,14 +1021,69 @@ fn a_claim_under_a_workload_is_emitted_with_its_workload_node() {
     let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
     let (wire, read) = emit_and_read(&package, document);
     assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    let [workload] = super::owners::node_where(&wire, "probabilistic", "workload")[..] else {
+        panic!("one workload node");
+    };
+    let [claim] = super::owners::node_where(&wire, "claim", "probabilistic_claim")[..] else {
+        panic!("one claim node");
+    };
+    let emission = emit_checked(&package).expect("the package emits");
+    let [resolved] = emission.claim_workloads() else {
+        panic!("one resolution: {:?}", emission.claim_workloads());
+    };
     assert_eq!(
-        super::owners::node_where(&wire, "probabilistic", "workload").len(),
-        1
+        serde_json::to_value(&resolved.claim).unwrap(),
+        claim["node_id"],
+        "the resolution names the claim's node"
     );
     assert_eq!(
-        super::owners::node_where(&wire, "claim", "probabilistic_claim").len(),
-        1
+        serde_json::to_value(&resolved.workload).unwrap(),
+        workload["node_id"],
+        "the claim resolves to the Steady workload node"
     );
+}
+
+/// TC-2062 (FR-740-AC-4): a claim `under every scheduler` names no workload
+/// and resolves to none; two claims under two workloads each resolve to the
+/// workload of their own name.
+#[trace("TC-2062", "FR-740-AC-4")]
+#[test]
+fn each_claim_resolves_to_the_workload_it_is_stated_under() {
+    let formula = "{ probability >= 0.5 [ always[0,2] holds(true) ] }";
+    let package = claims_package(&[
+        "workload Steady on Config { weight ConfigVersion::attemptUpdate = 1; }",
+        "workload Bursty on Config { weight ConfigVersion::attemptUpdate = 3; }",
+        &format!(
+            "probabilistic A using ev on Config under Steady on origin \
+             with alpha 0.01, beta 0.01, indifference 0.01 {formula}"
+        ),
+        &format!(
+            "probabilistic B using ev on Config under Bursty on origin \
+             with alpha 0.01, beta 0.01, indifference 0.01 {formula}"
+        ),
+        &format!("probabilistic C using ev on Config under every scheduler on origin {formula}"),
+    ]);
+    let emission = emit_checked(&package).expect("the package emits");
+    let wire = wire(&emission);
+    let workload_named = |name: &str| {
+        super::owners::node_where(&wire, "probabilistic", "workload")
+            .into_iter()
+            .find(|node| node["body"].to_string().contains(name))
+            .map(|node| node["node_id"].clone())
+            .expect("the workload node")
+    };
+    let resolved: Vec<serde_json::Value> = emission
+        .claim_workloads()
+        .iter()
+        .map(|resolved| serde_json::to_value(&resolved.workload).unwrap())
+        .collect();
+    assert_eq!(
+        resolved.len(),
+        2,
+        "the claim under every scheduler has none"
+    );
+    assert!(resolved.contains(&workload_named("Steady")), "{resolved:?}");
+    assert!(resolved.contains(&workload_named("Bursty")), "{resolved:?}");
 }
 
 /// TC-1563 (FSpec FR-640-AC-4): a `workload` node whose weights name an
@@ -1843,7 +1897,7 @@ fn rewards_keep_their_nodes_whatever_unrelated_declarations_surround_them() {
 /// every claim that reads it.
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
 #[test]
-#[ignore = "QSL-2441: a claim names no reward it reads yet; its node has an empty body"]
+#[ignore = "QSL-2441 spec question: FSL FR-498 fixes a claim node's identity as name + content ordinal with an empty body, so no workload or reward identity reaches it; FSpec FR-640-AC-3 says it does"]
 fn a_claim_that_reads_a_reward_changes_identity_with_the_reward_expression() {
     let claim_id = |reward: &str| {
         probabilistic_nodes_of(&[reward, &claim("Stable", "0.5")])
@@ -1920,4 +1974,51 @@ fn a_reward_on_a_source_object_is_emitted() {
         super::owners::node_where(&wire, "probabilistic", "reward").len(),
         1
     );
+}
+
+/// TC-2062 (FR-185-AC-12): every S4 refusal of a random parameter, a
+/// workload, a reward or a delay is located at the declaration (a non-empty
+/// label region) and names the declaration in words, with no debug rendering
+/// of a span or source reference.
+#[trace("TC-2062", "FR-185-AC-12")]
+#[test]
+fn probabilistic_refusals_have_locus() {
+    let objects = "object O { n: Integer; operation step(x: Integer) modifies self.n; }\n";
+    let timed = "profile T = \"filament.temporal.complete/v1\";\n\
+                 dimension Time; unit ms : Time = rational(1, 1);\ntime O dense unit ms;\n";
+    let cases = [
+        (
+            format!("profile P = \"filament.model.complete/v1\";\n{objects}reward cost on O::step = x;\n"),
+            fsl_semantics::check::ProbabilisticFeature::Reward,
+        ),
+        (
+            format!("{timed}{objects}delay O::step ~ uniform;\n"),
+            fsl_semantics::check::ProbabilisticFeature::Delay,
+        ),
+    ];
+    for (body, expected) in cases {
+        let source = format!("language \"ix:native\" edition \"1-draft\";\n{body}");
+        let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+            .expect("the package input is empty");
+        let graph = assemble_with_models(source.as_bytes(), &packages)
+            .expect("the unit assembles")
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
+            .unwrap_or_else(|refusals| panic!("{expected:?}: S3 accepts: {refusals:?}"));
+        let refusal = emit_checked(&CheckedPackage::link(graph)).expect_err("emission refuses");
+        let EmitRefusal::ProbabilisticModelNotEmitted {
+            feature, region, ..
+        } = &refusal
+        else {
+            panic!("{expected:?}: {refusal:?}");
+        };
+        assert_eq!(*feature, expected);
+        assert!(region.start() < region.end(), "{expected:?}: {refusal:?}");
+        let message = refusal.to_string();
+        assert!(!message.contains("Span {"), "{message}");
+        assert!(!message.contains("RawSourceRef"), "{message}");
+    }
 }
