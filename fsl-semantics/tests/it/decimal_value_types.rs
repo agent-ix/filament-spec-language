@@ -418,12 +418,15 @@ fn decimal_policy_defects_refuse_once() {
     // diagnostic is retained)
     let mut cases: Vec<(&str, Value, &str, &str, bool)> = Vec::new();
     let mut document = golden();
-    type_mut(&mut document, "Soc")
-        .as_object_mut()
-        .expect("Soc")
-        .remove("decimal");
+    let mut bare = type_mut(&mut document, "Soc").clone();
+    let object = bare.as_object_mut().expect("Soc");
+    object.insert("identity".to_owned(), "ix://test/decimal/Bare".into());
+    object.insert("displayName".to_owned(), "Bare".into());
+    object.remove("decimal");
+    object.insert("constraints".to_owned(), json!([]));
+    document["types"].as_array_mut().expect("types").push(bare);
     cases.push((
-        "Soc without a policy",
+        "standalone Decimal without a policy",
         document,
         "malformed-declaration",
         "DECIMAL_POLICY_MISSING",

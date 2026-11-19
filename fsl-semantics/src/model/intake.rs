@@ -1453,6 +1453,10 @@ fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<Model
         // `unit` refusal on scalar Decimal subjects; suppress only the
         // corresponding closed-vocabulary diagnostic.
         .filter(|located| !rational_value_type_schema_diagnostic(document, located))
+        // FR-056's Decimal reader owns Decimal policy and bound diagnostics;
+        // the shared validator reports their dependencies individually, but
+        // this intake stage emits the ordered first refusal for the subject.
+        .filter(|located| !decimal_value_type_semantic_diagnostic(document, located))
         // The upstream validator also emits generic supertype diagnostics for
         // process cross-meaning edges and cycles, and for record, event and
         // state machine cycles. The binder retains those edges so
@@ -1845,6 +1849,78 @@ fn rational_value_type_schema_diagnostic(
             }),
         _ => false,
     }
+}
+
+/// Whether a shared-validator policy or bound diagnostic belongs to a
+/// Decimal type subject whose ordered refusal FSL reports itself.
+#[ix_trace_rs::string_edge]
+fn decimal_value_type_semantic_diagnostic(
+    document: &PackageDocument,
+    located: &agent_ix_semantic_ir::diag::Located,
+) -> bool {
+    let policy_diagnostic = matches!(
+        located.code,
+        agent_ix_semantic_ir::rules::DECIMAL_POLICY_MISSING
+            | agent_ix_semantic_ir::rules::DECIMAL_POLICY_CONFLICT
+    );
+    let operand_diagnostic = located.code == agent_ix_semantic_ir::rules::INVALID_OPERAND
+        && located.pointer.contains("/constraints/");
+    if !policy_diagnostic && !operand_diagnostic {
+        return false;
+    }
+    let Some(rest) = located.pointer.strip_prefix("/ir/types/") else {
+        return false;
+    };
+    let Some(position) = rest
+        .split('/')
+        .next()
+        .and_then(|text| text.parse::<usize>().ok())
+    else {
+        return false;
+    };
+    let Some(types) = document.tree.get("types").and_then(Value::as_array) else {
+        return false;
+    };
+    let Some(type_value) = types.get(position) else {
+        return false;
+    };
+    if type_value.get("scalar").and_then(Value::as_str) == Some("decimal") {
+        return true;
+    }
+    if type_value.get("kind").and_then(Value::as_str) != Some("alias") {
+        return false;
+    }
+    let Some(target) = type_value.get("target").and_then(Value::as_str) else {
+        return false;
+    };
+    decimal_target(types, target, &mut std::collections::BTreeSet::new())
+}
+
+fn decimal_target(
+    types: &[Value],
+    target: &str,
+    seen: &mut std::collections::BTreeSet<String>,
+) -> bool {
+    if target == "ix://filament/native/Decimal" {
+        return true;
+    }
+    if !seen.insert(target.to_owned()) {
+        return false;
+    }
+    let Some(node) = types
+        .iter()
+        .find(|node| node.get("identity").and_then(Value::as_str) == Some(target))
+    else {
+        return false;
+    };
+    if node.get("scalar").and_then(Value::as_str) == Some("decimal") {
+        return true;
+    }
+    node.get("kind").and_then(Value::as_str) == Some("alias")
+        && node
+            .get("target")
+            .and_then(Value::as_str)
+            .is_some_and(|target| decimal_target(types, target, seen))
 }
 
 #[ix_trace_rs::string_edge]
