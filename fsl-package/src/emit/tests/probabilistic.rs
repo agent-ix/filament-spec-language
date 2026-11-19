@@ -1953,8 +1953,10 @@ fn source_object_reward(declarations: &str) -> CheckedPackage {
 
 /// TC-2062 (FR-740-AC-1), FSpec FR-322: a reward on a source-declared object
 /// is emitted as a `reward` node whose clause function is a `SourceOwner`
-/// declaration `[O, step, reward, cost]` at ordinal 0, and the strict reader
-/// admits the package.
+/// declaration `[O, step, reward, cost]` at ordinal 0. The test does not read the
+/// package back: emission follows spec W76 and the strict reader (contract-ir
+/// dd390f51) is behind it, refusing a source-declared `declaring` loudly
+/// (QSL-2592).
 #[trace("TC-2062", "FR-740-AC-1")]
 #[test]
 fn a_reward_on_a_source_object_is_emitted() {
@@ -2100,48 +2102,15 @@ fn a_source_declared_reward_is_a_source_owned_declaration_at_ordinal_zero() {
 }
 
 /// FSpec FR-640-AC-7, FR-322-AC-471: the strict reader admits the clause kind
-/// `reward` for a reward's function, and refuses the same function once its
-/// `clause` binding is rewritten to `precondition` (FR-640 reader rule 4: a
-/// reward's expression is a `reward` clause function).
+/// `reward` for a reward's function. The refusals of any other kind or owner
+/// are asserted, with code and locus, by
+/// `operation_bodies::a_reward_function_with_another_clause_kind_or_owner_is_refused`.
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-7")]
 #[trace("FSpec-TC-1563", "FSpec-FR-322-AC-471")]
 #[test]
-fn the_reader_admits_the_reward_clause_kind_and_refuses_any_other_for_a_reward() {
+fn the_reader_admits_the_reward_clause_kind() {
     let (document, package) =
         reward_over_parameter("reward cost on ConfigVersion::attemptUpdate = n + 1;");
-    let (wire, read) = emit_and_read(&package, &document);
+    let (_, read) = emit_and_read(&package, &document);
     assert!(matches!(read, Read::Verified { .. }), "{read:?}");
-
-    let [reward] = super::owners::node_where(&wire, "probabilistic", "reward")[..] else {
-        panic!("one reward node");
-    };
-    let function = bound(&reward["body"], "expression")["target"].clone();
-    let mut edited = wire.clone();
-    let position = super::nodes(&edited)
-        .iter()
-        .position(|node| node["node_id"] == function)
-        .expect("the reward's function node");
-    let members = edited["semantic_graph"]["nodes"][position]["body"]["members"]
-        .as_array_mut()
-        .expect("an aggregate body");
-    let clause = members
-        .iter_mut()
-        .find(|member| member["name"] == "clause")
-        .expect("the clause binding");
-    clause["value"]["value"] = json!("precondition");
-
-    fsl_semantics::check::wire_id::write_operand_rows(&mut edited);
-    let bytes = quire_canonical::to_vec(&edited, ceiling().canonical()).expect("canonical");
-    let mut evidence = CheckedPackageEvidence::new();
-    for feature in edited["lock"]["required_features"].as_array().unwrap() {
-        evidence.support_feature(feature.as_str().unwrap());
-    }
-    evidence
-        .insert_domain_package_document(package_identity(&document), document.as_slice())
-        .expect("a fresh evidence key");
-    let refused = read_v2(&bytes, library(), V2ReadLimits::fixture(), &evidence);
-    assert!(
-        !matches!(refused, Read::Verified { .. }),
-        "a reward whose function is a precondition is refused: {refused:?}"
-    );
 }

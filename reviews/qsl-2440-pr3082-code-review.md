@@ -79,3 +79,22 @@ refuses (FND-001), and the "after every other clause function" ordering, which a
 in the crate could test, is untested (FND-002). FND-003 to FND-006 are low. Mergeable after
 FND-001 and FND-002 are fixed in this PR; the low findings should be fixed in the same round
 since they are one-line edits.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | medium | A reward on a source-declared object now emits a package that the pinned strict reader (contract-ir dd390f51) refuses at the reward's `declaring` binding: `probabilistic_join::operation` accepts only a `Model` node as `declaring`, and a source reward's `declaring` is the source object type's node. On main, the same unit was refused at S4 with the reward's locus and `not-yet-implemented`. After this PR, `fsl compile` succeeds and hands consumers a package every strict reader refuses, and no FSL test reads it back (the narrowing to QSL-2592 drops the read). The emitter matches FSpec FR-640, so the reader is the side that is behind. The lead must choose: keep the S4 refusal for source-declared rewards until QSL-2592 lands, or ship knowingly with QSL-2592 as the tracked gap | fsl-package/src/emit/probabilistic.rs:543-551; fsl-package/src/emit/tests/probabilistic.rs:1954-1968 |
+| FND-008 | low | The doc of `a_reward_on_a_source_object_is_emitted` still ends "and the strict reader admits the package". The fix round states the opposite (the reader refuses it, QSL-2592), and the test performs no read | fsl-package/src/emit/tests/probabilistic.rs:1954-1957 |
+| FND-009 | low | `the_reader_admits_the_reward_clause_kind_and_refuses_any_other_for_a_reward` still asserts only `!matches!(refused, Read::Verified { .. })` for the `precondition` rewrite, while tagged FSpec-FR-640-AC-7 and FSpec-FR-322-AC-471. `a_reward_function_with_another_clause_kind_or_owner_is_refused` now asserts the same mutation with code and locus, so the weak half is redundant. Drop it, or reuse `refusal_of` / `summary` to assert the code and locus | fsl-package/src/emit/tests/probabilistic.rs:2101-2147 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |
+| FND-005 | fixed | - |
+| FND-006 | fixed | - |

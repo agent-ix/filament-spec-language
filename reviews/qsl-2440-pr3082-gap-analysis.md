@@ -49,3 +49,11 @@ are tagged on tests that cover their positive halves only. Either add the missin
 mutation cases (most use the existing emit-and-read harness and the `V2ReadRefusal::Envelope`
 pattern), or narrow the tags to what is tested and leave the rest to a named ticket. Not
 mergeable as-is on tag accuracy.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | deferred | Model half fixed in 09c3011e0: no_body row, reward-only clauses on the operation, foreign-owner refusal and the precondition rewrite at /body/expression. Source half (reader admits a source-declared reward; the rename to `load` refuses rule 4) deferred to QSL-2592. The pinned contract-ir reader refuses a source `declaring` node (`probabilistic_join::operation` accepts only a Model node), so these cases cannot be built in FSL yet. The test doc states the narrowing. |
+| FND-003 | fixed | - |
