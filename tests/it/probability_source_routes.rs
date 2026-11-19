@@ -37,11 +37,13 @@ fn write(directory: &Path, value: &Value) -> PathBuf {
 }
 
 #[test]
-#[trace("FR-186-AC-1", "FR-498-AC-4")]
+#[trace("FR-186-AC-1", "FR-186-AC-3", "FR-186-AC-8", "FR-498-AC-4")]
 fn original_probability_forms_compile_under_every_scheduler() {
     let directory = tempfile::tempdir().unwrap();
     for name in [
         "bounded-every-scheduler",
+        "fair-weak",
+        "on-each",
         "scheduler-reachability",
         "scheduler-quantile",
         "scheduler-mean",
