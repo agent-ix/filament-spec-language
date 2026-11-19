@@ -16,7 +16,7 @@ and its own crate-constant producer bundle alone, that the owner admits it,
 that an owner refusal of that request is an internal failure and an owner
 maximum a limit, and that the package selection and its in-memory digest
 are equal on the source and bare-package routes. Scope: FR-944-AC-8,
-FR-944-AC-9 and FR-944-AC-10.
+FR-944-AC-9, FR-944-AC-10 and the relabelling case of FR-944-AC-4.
 
 ## Test Procedure
 
@@ -35,8 +35,12 @@ FR-944-AC-9 and FR-944-AC-10.
    `max_string_bytes`.
 3. Compile one package, evaluate it on the source route, emit it
    canonically, read the bytes back and evaluate on the bare-package route;
-   feed the reader a reordered, whitespace-padded copy; inspect the run's
-   package, plan and outcome documents.
+   feed the reader a reordered, whitespace-padded copy; inspect every
+   document and file the run writes.
+4. With a ledger retaining `Complete { through: T }` that covers one
+   position, deliver a position equal to it in content, stamp, order key,
+   interval and arrival under a new FR-106 identity, then the same position
+   under its covered FR-106 identity.
 
 ## Expected Results
 
@@ -59,4 +63,9 @@ FR-944-AC-9 and FR-944-AC-10.
   on both routes; equal `package` selections (revision
   `filament.checked-package/v2`, equal digest) and `Context` authorities;
   the non-canonical copy is refused `noncanonical_wire` and admits nothing;
-  no package, plan or outcome document carries the digest.
+  no document or file FSL writes carries the digest.
+- Step 4: the relabelled position is refused before `revise` is called, a
+  contradiction on `Completeness`, `invalid_runtime_input`/`invalid-value`,
+  with the clock name, the retained assertion and the position, the ledger
+  unchanged; the position under its covered identity passes the check and
+  `revise` accepts it.
