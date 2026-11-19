@@ -26,25 +26,28 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Integer, Rational};
 use filament_semantic_value::catalog::InternalFault;
-use filament_semantic_value::fairness::FairnessKind;
+use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_eval::fairness::{analyze, Analysis, EdgeLabel, FairnessError, Graph, Identity, Vertex};
-use fsl_eval::simulation::model::{ModelFinding, ModelSimState};
+use fsl_eval::fairness::{
+    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex, analyze,
+};
 use fsl_eval::simulation::ExpansionLimit;
+use fsl_eval::simulation::model::{ModelFinding, ModelSimState};
 use fsl_replay::{
-    abstract_classes, check_step, AbstractClass, ConcreteStep, CounterexampleKind, Lasso,
+    AbstractClass, CandidateFairState, CandidateFairStep, ConcreteStep, CounterexampleKind, Lasso,
     ModelCheckLimit, ReachedLimit, RefinementFailure, Taken, TemporalCounterexample, Undetermined,
+    abstract_classes, candidate_lasso_has_fair_run, check_step,
 };
 use num_bigint::BigInt;
 
 use super::{
     Judgement, Product, TimedRefinementStop, TimedRefinementUndecided, TimedSafetyOutcome,
 };
-use crate::model_check::fair_walk::{fairness_constraints, FairModel};
-use crate::zone_check::concretise::{concretise, Stage, Target};
-use crate::zone_check::liveness::{next_cell, Cells, Sign};
+use crate::model_check::fair_walk::{FairModel, fairness_constraints};
+use crate::zone_check::concretise::{Stage, Target, concretise};
+use crate::zone_check::liveness::{Cells, Sign, next_cell};
 use crate::zone_check::search::{
-    constrain_at, scaled, widen, zone_bytes, Halt, Run, ZoneCheckRefusal, ZoneStats, ZoneUndecided,
+    Halt, Run, ZoneCheckRefusal, ZoneStats, ZoneUndecided, constrain_at, scaled, widen, zone_bytes,
 };
 use crate::zone_check::{Bound, Dbm};
 
@@ -255,6 +258,11 @@ impl Product<'_, '_> {
                 }));
             }
         };
+        let hidden = self
+            .refinement
+            .objects()
+            .iter()
+            .any(|object| !object.hidden.is_empty());
         let mut not_concretised = false;
         for class in &classes {
             let (model, within, kept) = self.fair_model(run, live, class, &enabled)?;
@@ -283,6 +291,11 @@ impl Product<'_, '_> {
                         .copied()
                         .ok_or(ZoneCheckRefusal::Fault("walk-edge"))?;
                     cycle.push(index);
+                }
+                if hidden
+                    && self.candidate_loop_has_fair_run(run, live, &cycle, class.constraint())?
+                {
+                    continue;
                 }
                 if let Some(found) = self.lasso(run, live, class, entry.index(), &cycle)? {
                     return Ok(Lived::Violated(Box::new(found)));
@@ -654,6 +667,210 @@ impl Product<'_, '_> {
         Ok(Ok(here))
     }
 
+    fn candidate_loop_has_fair_run(
+        &self,
+        run: &mut Run<'_, '_, '_>,
+        live: &Live,
+        cycle: &[usize],
+        through: usize,
+    ) -> Result<bool, Halt> {
+        let mut positions = Vec::with_capacity(cycle.len());
+        let mut steps = Vec::with_capacity(cycle.len());
+        let mut transitions = BTreeSet::<ModelTransition>::new();
+        for &arc_index in cycle {
+            run.poll()?;
+            let arc = live
+                .arcs
+                .get(arc_index)
+                .ok_or(ZoneCheckRefusal::Fault("candidate-loop-arc"))?;
+            let source = live
+                .nodes
+                .get(arc.from)
+                .ok_or(ZoneCheckRefusal::Fault("candidate-loop-source"))?;
+            let mut candidates = Vec::new();
+            for candidate in &self.positions[source.q].abstract_states {
+                run.poll()?;
+                let (key, _) = self
+                    .abstract_system
+                    .state_key_of(candidate)
+                    .map_err(|_| ZoneCheckRefusal::Fault("candidate-loop-state-key"))?;
+                let expansion = match self.abstract_system.expand_state(candidate) {
+                    Ok(expansion) => expansion,
+                    Err(stop) if stop.is_internal_failure() => {
+                        return Ok(false);
+                    }
+                    Err(stop) => {
+                        let reached = match stop.limit {
+                            Some(ExpansionLimit::EvaluationMeter(counter)) => ReachedLimit {
+                                limit: ModelCheckLimit::EvaluationMeter { counter },
+                                value: fsl_replay::meter_bound(
+                                    &self.abstract_system.meter(),
+                                    counter,
+                                ),
+                            },
+                            Some(ExpansionLimit::MaxCandidates) | None => ReachedLimit {
+                                limit: ModelCheckLimit::MaxCandidates,
+                                value: self.abstract_system.max_candidates(),
+                            },
+                        };
+                        return Err(Halt::Outcome(Box::new(Decided::Stopped {
+                            cause: TimedRefinementStop::Step(reached),
+                            stats: run.stats(),
+                        })));
+                    }
+                };
+                if expansion
+                    .findings
+                    .iter()
+                    .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
+                {
+                    return Err(Halt::Outcome(Box::new(Decided::Undecided {
+                        cause: TimedRefinementUndecided::Undetermined(
+                            Undetermined::UndecidedSuccessor,
+                        ),
+                        stats: run.stats(),
+                    })));
+                }
+                let enabled: Vec<_> = expansion
+                    .successors
+                    .into_iter()
+                    .map(|(transition, _)| transition)
+                    .collect();
+                transitions.extend(enabled.iter().cloned());
+                candidates.push((key, enabled));
+            }
+            positions.push(candidates);
+            match arc.taken.as_ref() {
+                Some(Taken::CandidateSteps(rows)) => {
+                    transitions.extend(rows.iter().filter_map(|row| row.transition.clone()));
+                }
+                Some(Taken::Stutter) | None => {}
+                Some(Taken::Abstract(_)) => {
+                    return Err(ZoneCheckRefusal::Fault(
+                        "hidden-model-edge-retains-candidate-steps",
+                    )
+                    .into());
+                }
+                Some(Taken::Protocol(_) | Taken::ProtocolTraces(_)) => {
+                    return Err(ZoneCheckRefusal::Fault(
+                        "hidden-model-edge-is-not-a-protocol-edge",
+                    )
+                    .into());
+                }
+            }
+        }
+        let numbered: BTreeMap<_, _> = transitions
+            .into_iter()
+            .enumerate()
+            .map(|(index, transition)| (transition, Identity::new(widen(index))))
+            .collect();
+        let fair_positions = positions
+            .iter()
+            .map(|candidates| {
+                candidates
+                    .iter()
+                    .map(|(key, enabled)| {
+                        Ok(CandidateFairState {
+                            key: key.clone(),
+                            enabled: enabled
+                                .iter()
+                                .map(|transition| {
+                                    numbered.get(transition).copied().ok_or(
+                                        ZoneCheckRefusal::Fault(
+                                            "enabled-candidate-transition-numbered",
+                                        ),
+                                    )
+                                })
+                                .collect::<Result<Vec<_>, _>>()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ZoneCheckRefusal>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let fair_steps = cycle
+            .iter()
+            .enumerate()
+            .map(|(index, &arc_index)| {
+                let arc = &live.arcs[arc_index];
+                let source = &positions[index];
+                let rows = match arc.taken.as_ref() {
+                    Some(Taken::CandidateSteps(rows)) => rows
+                        .iter()
+                        .map(|row| {
+                            Ok(CandidateFairStep {
+                                pre_state: row.pre_state.clone(),
+                                transition: row
+                                    .transition
+                                    .as_ref()
+                                    .map(|transition| {
+                                        numbered.get(transition).copied().ok_or(
+                                            ZoneCheckRefusal::Fault(
+                                                "taken-candidate-transition-numbered",
+                                            ),
+                                        )
+                                    })
+                                    .transpose()?,
+                                post_state: row.post_state.clone(),
+                            })
+                        })
+                        .collect::<Result<Vec<_>, ZoneCheckRefusal>>()?,
+                    Some(Taken::Stutter) | None => source
+                        .iter()
+                        .map(|(key, _)| CandidateFairStep {
+                            pre_state: key.clone(),
+                            transition: None,
+                            post_state: key.clone(),
+                        })
+                        .collect(),
+                    _ => return Err(ZoneCheckRefusal::Fault("candidate-loop-taken-shape")),
+                };
+                Ok(rows)
+            })
+            .collect::<Result<Vec<_>, ZoneCheckRefusal>>()?;
+        let fairness: Vec<_> = self
+            .refinement
+            .abstract_operation_fairness()
+            .cloned()
+            .collect();
+        let mut constraints = Vec::new();
+        for constraint in fairness.iter().take(through.saturating_add(1)) {
+            let operation = constraint.operation();
+            let name = self
+                .abstract_system
+                .operation_text(operation.declaring_type(), operation.name())
+                .ok_or(ZoneCheckRefusal::Fault("candidate-fairness-operation"))?;
+            let covered: Vec<_> = numbered
+                .iter()
+                .filter_map(|(transition, identity)| {
+                    (transition.operation() == name).then_some(*identity)
+                })
+                .collect();
+            let strength = Strength::from(constraint.kind());
+            match constraint.granularity() {
+                FairnessGranularity::Whole => {
+                    constraints.push(Constraint::new(strength, covered));
+                }
+                FairnessGranularity::Each => constraints.extend(
+                    covered
+                        .into_iter()
+                        .map(|identity| Constraint::new(strength, [identity])),
+                ),
+            }
+        }
+        candidate_lasso_has_fair_run(&fair_positions, &fair_steps, &constraints, run.cancel)
+            .map_err(|error| {
+                fairness(
+                    run,
+                    match error {
+                        fsl_replay::CandidateLivenessError::Fairness(error) => error,
+                        fsl_replay::CandidateLivenessError::InvalidGraph => {
+                            FairnessError::EmptyLoop
+                        }
+                    },
+                )
+            })
+    }
+
     /// The product as the fairness kernels read it for `class`: each
     /// vertex with the concrete steps enabled at its instants, the edges
     /// that do not take `class`, divergence and positions as acceptance
@@ -670,6 +887,11 @@ impl Product<'_, '_> {
         class: &AbstractClass,
         enabled: &BTreeMap<usize, Vec<ModelTransition>>,
     ) -> Result<(FairModel, BTreeSet<Vertex>, Vec<Vec<usize>>), Halt> {
+        let hidden = self
+            .refinement
+            .objects()
+            .iter()
+            .any(|object| !object.hidden.is_empty());
         let mut transitions: Vec<ModelTransition> = Vec::new();
         let mut number = |transition: &ModelTransition| -> Identity {
             let index = match transitions.iter().position(|held| held == transition) {
@@ -696,10 +918,11 @@ impl Product<'_, '_> {
         for (from, out) in live.out.iter().enumerate() {
             for &index in out {
                 let arc = &live.arcs[index];
-                if arc
-                    .taken
-                    .as_ref()
-                    .is_some_and(|taken| class.is_taken_by(taken))
+                if !hidden
+                    && arc
+                        .taken
+                        .as_ref()
+                        .is_some_and(|taken| class.is_taken_by(taken))
                 {
                     continue;
                 }
@@ -738,7 +961,7 @@ impl Product<'_, '_> {
             .abstract_operation_fairness()
             .nth(class.constraint())
             .ok_or(ZoneCheckRefusal::Fault("class-constraint"))?;
-        let strong = constraint.kind() == FairnessKind::Strong;
+        let strong = !hidden && constraint.kind() == FairnessKind::Strong;
         let class_enabled: Vec<Vertex> = handles
             .iter()
             .zip(&live.nodes)
@@ -754,7 +977,7 @@ impl Product<'_, '_> {
                 .add_acceptance_set(class_enabled.iter().copied())
                 .map_err(|_| ZoneCheckRefusal::Fault("strong-abstract-acceptance"))?;
         }
-        let within: BTreeSet<Vertex> = if strong {
+        let within: BTreeSet<Vertex> = if hidden || strong {
             handles.iter().copied().collect()
         } else {
             class_enabled.iter().copied().collect()
@@ -808,7 +1031,16 @@ impl Product<'_, '_> {
             .nth(class.constraint())
             .ok_or(ZoneCheckRefusal::Fault("class-constraint"))?
             .clone();
-        let failure = if taking || constraint.kind() == FairnessKind::Strong {
+        let hidden = self
+            .refinement
+            .objects()
+            .iter()
+            .any(|object| !object.hidden.is_empty());
+        let failure = if hidden {
+            RefinementFailure::HiddenUnfair {
+                constraint: constraint.clone(),
+            }
+        } else if taking || constraint.kind() == FairnessKind::Strong {
             RefinementFailure::AbstractUnfair { constraint }
         } else {
             RefinementFailure::Divergence {

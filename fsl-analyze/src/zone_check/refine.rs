@@ -51,28 +51,28 @@ use std::collections::{BTreeMap, VecDeque};
 
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::InternalFault;
-use fsl_eval::simulation::model::{
-    check_model_bounds, GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem,
-    PlaceConstraint, TimedSubjectRefusal, TimedSystem,
-};
 use fsl_eval::simulation::BOUND_POSITIONS;
+use fsl_eval::simulation::model::{
+    GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem, PlaceConstraint,
+    TimedSubjectRefusal, TimedSystem, check_model_bounds,
+};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    check_initial, check_step, open_systems, CertifiedPosition, ConcreteStep, CounterexampleKind,
-    ReachedLimit, RefinementFailure, RefinementPart, RefinementPosition, RefinementSystems,
-    StepVerdict, SubjectRefusal, Taken, TemporalCounterexample, UnavailabilityCause,
-    UndefinedEvaluation, Undetermined, ZoneCertificate,
+    CertifiedPosition, ConcreteStep, CounterexampleKind, ReachedLimit, RefinementFailure,
+    RefinementPart, RefinementPosition, RefinementSystems, StepVerdict, SubjectRefusal, Taken,
+    TemporalCounterexample, UnavailabilityCause, UndefinedEvaluation, Undetermined,
+    ZoneCertificate, check_initial, check_step, open_systems,
 };
 use fsl_route::deadlock::ItemObligation;
 use fsl_semantics::check::{CheckedRefinement, ClockOp};
 use fsl_semantics::model::observation::DocumentRef;
 
 use super::certificate::Proof;
-use super::concretise::{concretise, Stage, Target};
+use super::concretise::{Stage, Target, concretise};
 use super::divergence::{Escape, EscapeWitness};
 use super::search::{
-    not_simulated, widen, Arrival, Halt, Inserted, Judged, Run, Searched, ZoneCheckLimits,
-    ZoneCheckRefusal, ZoneStats, ZoneStop, ZoneUndecided,
+    Arrival, Halt, Inserted, Judged, Run, Searched, ZoneCheckLimits, ZoneCheckRefusal, ZoneStats,
+    ZoneStop, ZoneUndecided, not_simulated, widen,
 };
 use super::{Bound, Dbm};
 
@@ -378,38 +378,17 @@ fn check_refinement_with_time_source<S>(
             }
         },
     };
-    let liveness = match unsupported_liveness(refinement) {
-        Some(unsupported) => Some(unsupported),
-        None if refinement.abstract_operation_fairness().next().is_some()
-            && matches!(safety, TimedSafetyOutcome::Holds { .. }) =>
-        {
-            Some(TimedLivenessHalf::Checked(liveness(
-                &mut product,
-                &mut run,
-            )?))
-        }
-        None => None,
-    };
-    Ok(TimedRefinementOutcome { safety, liveness })
-}
-
-/// The liveness half of a refinement it does not run on: none with `F_A`
-/// empty; `Unsupported` with a hidden abstract field, then with a strong
-/// `F_A` constraint, as for an untimed subject (FR-143).
-fn unsupported_liveness(refinement: &CheckedRefinement) -> Option<TimedLivenessHalf> {
-    if refinement.abstract_operation_fairness().next().is_none() {
-        None
-    } else if refinement
-        .objects()
-        .iter()
-        .any(|object| !object.hidden.is_empty())
+    let liveness = if refinement.abstract_operation_fairness().next().is_some()
+        && matches!(safety, TimedSafetyOutcome::Holds { .. })
     {
-        Some(TimedLivenessHalf::Unsupported(
-            UnavailabilityCause::HiddenFieldLiveness,
-        ))
+        Some(TimedLivenessHalf::Checked(liveness(
+            &mut product,
+            &mut run,
+        )?))
     } else {
         None
-    }
+    };
+    Ok(TimedRefinementOutcome { safety, liveness })
 }
 
 /// The liveness half over the product of a holding safety half; its
