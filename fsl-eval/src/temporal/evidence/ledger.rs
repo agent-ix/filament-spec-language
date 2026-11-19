@@ -13,7 +13,7 @@ use filament_exact::ValueType;
 
 use super::activation::ActivationFault;
 use super::identity::{InputIdentity, ResultIdentity};
-use super::trigger::{CapturedValue, Payload, Receipt, SemanticTriggerIdentity};
+use super::trigger::{CaptureFact, CapturedValue, Payload, Receipt, SemanticTriggerIdentity};
 
 /// The obligation an instance or a result belongs to: the checked package
 /// identity and the clause occurrence (FR-524 "The evidence ledger"). Two
@@ -167,6 +167,7 @@ pub struct RetainedInstance {
     payload: Payload,
     receipts: Vec<Receipt>,
     environment: CaptureEnvironment,
+    capture_facts: Vec<CaptureFact>,
     evaluations: u64,
     fault: Option<ActivationFault>,
 }
@@ -176,11 +177,13 @@ impl RetainedInstance {
         payload: Payload,
         receipt: Option<Receipt>,
         env: CaptureEnvironment,
+        capture_facts: Vec<CaptureFact>,
     ) -> Self {
         Self {
             payload,
             receipts: receipt.into_iter().collect(),
             environment: env,
+            capture_facts,
             evaluations: 1,
             fault: None,
         }
@@ -192,11 +195,13 @@ impl RetainedInstance {
         payload: Payload,
         receipt: Option<Receipt>,
         fault: ActivationFault,
+        capture_facts: Vec<CaptureFact>,
     ) -> Self {
         Self {
             payload,
             receipts: receipt.into_iter().collect(),
             environment: CaptureEnvironment::default(),
+            capture_facts,
             evaluations: 0,
             fault: Some(fault),
         }
@@ -221,6 +226,10 @@ impl RetainedInstance {
     /// The captures, as established when the instance was created.
     pub fn environment(&self) -> &CaptureEnvironment {
         &self.environment
+    }
+
+    pub(super) fn capture_facts(&self) -> &[CaptureFact] {
+        &self.capture_facts
     }
 
     /// The fault of an instance whose activation could not be established,
