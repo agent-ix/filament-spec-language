@@ -198,6 +198,9 @@ impl Env {
     pub(crate) fn subject(&self, bound: &[u64]) -> EvidenceSubject<'_> {
         EvidenceSubject {
             package_identity: "a".to_owned(),
+            canonical_package_bytes: None,
+            time_unit_scale: None,
+            signal: &self.declaration,
             declaration: &self.declaration,
             profile: &self.profile,
             occurrences: vec![SubjectOccurrence {
