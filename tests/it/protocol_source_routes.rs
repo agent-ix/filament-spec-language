@@ -584,7 +584,7 @@ fn original_compensation_has_an_accepting_template_and_zero_attempt_refusal() {
     let zero = directory.path().join("zero-attempts.native");
     std::fs::write(
         &zero,
-        source.replace("attempts 1 of Boolean", "attempts 0 of Boolean"),
+        source.replace("attempts 1 of Completion", "attempts 0 of Completion"),
     )
     .unwrap();
     refusal(directory.path(), &zero, "ill_typed", "type-mismatch");
