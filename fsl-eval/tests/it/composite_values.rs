@@ -32,7 +32,7 @@ use filament_semantic_value::object_closure::{
     ObjectClosure, ObjectClosureCause, ObjectClosureRefusal,
 };
 use fsl_eval::value::QualifiedName;
-use fsl_semantics::library::{ImportDeclaration, LibraryName, LibraryPackage, resolve_libraries};
+use fsl_semantics::library::{resolve_libraries, ImportDeclaration, LibraryName, LibraryPackage};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
 
@@ -406,11 +406,9 @@ fn r07_absence_null_and_malformed_constructions_refuse_at_their_origin() {
         field_refusal("o", ConstructionCause::NullForRequiredField)
     );
     let none = OptionValue::none(ValueType::Integer);
-    assert!(
-        options
-            .record(key("Holder"), vec![("o", FieldValue::Present(none))])
-            .is_ok()
-    );
+    assert!(options
+        .record(key("Holder"), vec![("o", FieldValue::Present(none))])
+        .is_ok());
 }
 
 fn node_environment() -> TypeEnvironment {
@@ -761,7 +759,7 @@ mod checked {
     use filament_exact::{BoundViolation, Outcome, Refusal};
     use filament_semantic_value::call::InputRefusal;
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-    use fsl_eval::value::{CheckedPackageEvaluation, input_refusal_code};
+    use fsl_eval::value::{input_refusal_code, CheckedPackageEvaluation};
     use fsl_forms::{BinaryOperator, Expression, FunctionDeclaration, TypeForm};
     use fsl_package::CheckedPackage;
     use fsl_semantics::check::{
@@ -851,7 +849,11 @@ mod checked {
             declarations.functions = functions;
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         // ADR-013 T-1 (FR-087): the S4 link step, over an
         // empty dependency closure -- this fixture declares no import.
         .map(CheckedPackage::link)
@@ -1478,6 +1480,15 @@ fn float_leaf_record_union_option_and_sequence_compare_under_numeric_equal() {
         equal(&env, &composite("U"), &union(&qnan), &union(&qnan)),
         Ok(Outcome::Completed(false))
     );
+    // The union type is admitted as an `=` operand.
+    assert!(env
+        .check_equality(
+            EqualityOperator::Equal,
+            EqualityOperand::typed(composite("U")),
+            EqualityOperand::typed(composite("U")),
+            &EnumMemberIndex::default(),
+        )
+        .is_ok());
 }
 
 /// FR-149-AC-25: NaN leaves are unequal to themselves, while signed zero
