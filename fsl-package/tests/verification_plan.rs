@@ -132,6 +132,26 @@ fn emission_keeps_package_identity_and_writes_the_plan_graph() {
     assert_eq!(plan.edges[0].from, "timely");
     assert_eq!(plan.edges[0].to, "safe");
     assert_eq!(plan.edges[0].edge_type, "requires");
+
+    let bytes = serde_json::to_vec(plan).expect("the emitted plan serializes");
+    let round_trip = read_verification_plan(&with, &bytes)
+        .expect("the strict reader accepts the plan for its checked package");
+    assert_eq!(
+        round_trip.plan.source_location, plan.plan.source_location,
+        "the plan source location survives the reader"
+    );
+    assert_eq!(
+        round_trip.nodes[0].claim, plan.nodes[0].claim,
+        "the checked clause identity and claim occurrence survive the reader"
+    );
+    assert_eq!(
+        round_trip.nodes[0].method, plan.nodes[0].method,
+        "the method kind, extent and evidence semantics survive the reader"
+    );
+    assert_eq!(
+        round_trip.nodes[0].domain, plan.nodes[0].domain,
+        "the resolved domain declaration key survives the reader"
+    );
 }
 
 #[trace("TC-3028", "FR-753-AC-5")]
