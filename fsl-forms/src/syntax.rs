@@ -5254,9 +5254,32 @@ pub struct VerificationPlanForm {
     pub name: DeclaredName,
     /// The selected profile alias.
     pub profile: UsingAlias,
+    /// The plan's checks, in source order.
+    pub steps: Vec<VerificationStepForm>,
     /// The complete source spelling retained for later stages.
     pub source: String,
     /// The declaration's source span.
+    pub span: Span,
+}
+
+/// One named verification step in a [`VerificationPlanForm`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerificationStepForm {
+    /// The step's authored name.
+    pub name: DeclaredName,
+    /// The claim name.
+    pub claim: NameForm,
+    /// The evidence method name.
+    pub method: NameForm,
+    /// The verification domain name.
+    pub domain: NameForm,
+    /// Names of prerequisite steps, in source order.
+    pub depends: Vec<DeclaredName>,
+    /// Optional finite method bound.
+    pub bound: Option<String>,
+    /// The bound literal's span, when `bound` is present.
+    pub bound_span: Option<Span>,
+    /// The step's source span.
     pub span: Span,
 }
 
