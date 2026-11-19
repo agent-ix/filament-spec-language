@@ -300,8 +300,12 @@ fn integer_value(value: &Integer) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{search_integer_domain, SearchDisposition, SearchLimits};
+    use super::{
+        search_integer_domain, SearchDisposition, SearchLimits, SynthesisOutcomeDocument,
+        DEFAULT_MAX_WORK,
+    };
     use filament_exact::{Integer, IntegerInterval};
+    use serde_json::Value;
 
     fn digit_domain() -> IntegerInterval {
         IntegerInterval::new(Integer::from(0_i64), Integer::from(9_i64)).expect("digit range")
