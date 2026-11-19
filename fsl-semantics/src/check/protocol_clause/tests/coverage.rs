@@ -11,14 +11,22 @@ use filament_semantic_value::checking::CheckingLimits;
 fn checks_with_header(header: &str, source: &str) {
     let (_, assembled) = super::assemble_with(header, source);
     assembled
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{source}: {refusals:?}"));
 }
 
 fn refusals_with_header(header: &str, source: &str) -> (String, Vec<crate::check::CheckRefusal>) {
     let (text, assembled) = super::assemble_with(header, source);
     let refusals = assembled
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("the wrong profile kind refuses");
     (text, refusals)
 }

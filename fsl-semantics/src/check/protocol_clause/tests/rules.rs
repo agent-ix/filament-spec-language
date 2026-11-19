@@ -6,8 +6,8 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use ix_trace_rs::trace;
 
 use super::assemble;
-use crate::check::CheckRefusal;
 use crate::check::refusal::ProtocolAnchorCause;
+use crate::check::CheckRefusal;
 
 fn catalog(refusal: &CheckRefusal) -> (&'static str, Option<&'static str>) {
     (refusal.cause.code().as_str(), refusal.cause.cause())
@@ -18,15 +18,18 @@ fn catalog(refusal: &CheckRefusal) -> (&'static str, Option<&'static str>) {
 pub(super) fn located_refusals(declarations: &str) -> Vec<(CheckRefusal, String)> {
     let (text, assembled) = assemble(declarations);
     let regions = assembled.regions();
-    let refusals: Vec<CheckRefusal> =
-        match assembled.check_with_protocol_results(CheckMode::Linked, CheckingLimits::default()) {
-            Ok(graph) => graph
-                .protocol_refusals()
-                .iter()
-                .flat_map(|result| result.refusals.iter().cloned())
-                .collect(),
-            Err(refusals) => refusals,
-        };
+    let refusals: Vec<CheckRefusal> = match assembled.check_with_protocol_results(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    ) {
+        Ok(graph) => graph
+            .protocol_refusals()
+            .iter()
+            .flat_map(|result| result.refusals.iter().cloned())
+            .collect(),
+        Err(refusals) => refusals,
+    };
     refusals
         .into_iter()
         .map(|refusal| {
