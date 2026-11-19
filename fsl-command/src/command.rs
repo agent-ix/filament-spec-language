@@ -2366,6 +2366,22 @@ fn compile_outcome_inner(
             (Some(member), None) => Some(directory.join(&member.package)),
             (None, supplied) => supplied.map(Path::to_path_buf),
         };
+        if let (Some(handoff), Some(output)) = (&request.handoff, &output) {
+            let handoff_directory = directory.join(&handoff.directory);
+            if resolved_path_for_comparison(output)
+                .zip(resolved_path_for_comparison(&handoff_directory))
+                .is_some_and(|(output, handoff)| output.starts_with(&handoff))
+            {
+                return Err(RunCause::ClauseRequest {
+                    member: "output and handoff".to_owned(),
+                    reason: format!(
+                        "output path {} is inside handoff directory {}",
+                        output.display(),
+                        handoff_directory.display()
+                    ),
+                });
+            }
+        }
         if request.program.extraction {
             return Err(RunCause::ExtractionRequiresRun);
         }
@@ -2439,6 +2455,45 @@ fn compile_outcome_inner(
             error
         })
     }
+}
+
+/// Resolve existing path components before normalizing `..`, so a symlinked
+/// parent keeps the same meaning it will have when the output is opened. The
+/// final output path may not exist yet, so unresolved components remain lexical.
+fn resolved_path_for_comparison(path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+
+    let mut resolved = if path.is_absolute() {
+        PathBuf::new()
+    } else {
+        std::env::current_dir().ok()?
+    };
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => resolved.push(prefix.as_os_str()),
+            Component::RootDir => resolved.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            Component::Normal(name) => {
+                let candidate = resolved.join(name);
+                resolved = match std::fs::canonicalize(&candidate) {
+                    Ok(canonical) => canonical,
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                        ) =>
+                    {
+                        candidate
+                    }
+                    Err(_) => return None,
+                };
+            }
+        }
+    }
+    Some(resolved)
 }
 
 /// Reject malformed FR-665 handoff selections before opening selected inputs.

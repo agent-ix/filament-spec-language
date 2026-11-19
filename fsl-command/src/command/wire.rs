@@ -680,11 +680,6 @@ pub(super) struct NormalizationLimits {
     pub effective_declarations: Option<u64>,
     #[serde(default, deserialize_with = "limit")]
     pub dispatch_candidates: Option<u64>,
-    /// `model.hashed_bytes` is FSpec's limit name (FR-255): it is read and
-    /// range-checked so a request that states it is admitted, but FSL's
-    /// normalization hashes under no byte meter, so no FSL limit takes it.
-    #[serde(default, rename = "hashed_bytes", deserialize_with = "limit")]
-    _hashed_bytes: Option<u64>,
     #[serde(default, deserialize_with = "limit")]
     pub work_units: Option<u64>,
     #[serde(default, deserialize_with = "limit")]
