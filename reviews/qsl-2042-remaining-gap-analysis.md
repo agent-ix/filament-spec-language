@@ -183,3 +183,19 @@ No applicable AssuranceProfile was selected in the lead's established context; n
 }
 ```
 
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1, fix 66ea0c21707a08b2a6be3727e201ca6c735eef48 adds the history-dependent true,false,true trace with expected tested. At position 1 the earlier true value keeps the past-window count at 1; a current-only implementation instead counts 0 and refutes. Existing controls remain unchanged. |
+
+### Round 1 after excerpt
+
+```rust
+        (vec![true, false, true], 0, "tested"),
+```
+
+## Disposition Verdict
+
+**PASS after disposition round 1.** The sole finding is fixed in both companion methods; no unresolved or new findings remain. Only the one-line fix and artifact custody were examined; the original findings and review evidence above remain unchanged. The coder's affected test PASS 1/0/0 ignored is accepted without repetition. No test, build, matrix, full review sweep or aggregate gate ran in this pass. The lead owns final artifact custody and the final changed-module gate before merge. Plan completion: not assessed.
