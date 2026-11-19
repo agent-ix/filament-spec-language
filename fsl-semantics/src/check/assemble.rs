@@ -824,8 +824,7 @@ impl AssemblyCause {
             Self::Handle(_) | Self::NominalAdmission(_) => "established-invariant-broken",
             Self::UnsupportedLayerForm { form, .. } => form.refusal_cause(),
             Self::UnselectedModelConstruct(refusal) => refusal.family.refusal_cause(),
-            Self::TimedNotChecked(_)
-            | Self::SynthesisNotChecked { .. } => "not-yet-implemented",
+            Self::TimedNotChecked(_) | Self::SynthesisNotChecked { .. } => "not-yet-implemented",
         };
         CatalogCode::new(self.code().as_str(), cause)
     }
@@ -2657,6 +2656,7 @@ fn model_value_type(
                         .map_err(|_| Unmapped::Unsupported)?,
                 ),
                 ScalarValueDomain::Text(text) => ValueType::Text(*text),
+                ScalarValueDomain::Decimal(decimal) => ValueType::Decimal(decimal.clone()),
                 ScalarValueDomain::Rational {
                     domain: Some(domain),
                     unit: None,

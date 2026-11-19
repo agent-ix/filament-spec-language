@@ -61,7 +61,10 @@ use crate::model::domain_package::{
 use crate::model::normalize::{ModelRefusal, ModelRefusalCause, Refusals};
 use crate::model::refusal::{Inexact, IntakeLimit, MemberPath, MemberRoot};
 use filament_checked::key::DeclarationKey;
-use filament_exact::{Integer, IntegerInterval, Presence, RationalDomain, TextProfile, TextType};
+use filament_exact::{
+    DecimalType, Integer, IntegerInterval, Presence, RationalDomain, RoundingMode, TextProfile,
+    TextType, ValueType,
+};
 use fsl_foundation::diagnostic::{Code, JsonPointer};
 use fsl_foundation::source::{LocatedSpan, Position};
 use fsl_foundation::IntakeLimits;
@@ -2722,7 +2725,7 @@ fn read_operation_parameter(
     }
     let type_ref = ctx.str_field("typeRef")?;
     // A `Clock` parameter is a place (FR-230 "Operation parameters").
-    let value_type = read_value_type_ref(package, &ctx, type_ref, true)?;
+    let value_type = read_member_value_type(package, type_ref, &ctx, at, true)?;
     let multiplicity = ctx.multiplicity("multiplicity")?;
     Ok(OperationParameterRecord {
         key: declaration_key(package, node),
@@ -2882,7 +2885,13 @@ pub(super) fn read_operation_member(
                     returns_ctx.malformed_in("returns.typeRef", "missing or not a string")
                 })?;
             // A `Clock` result is a place (FR-230 "Results").
-            let value_type = read_value_type_ref(package, &returns_ctx, type_ref, true)?;
+            let value_type = read_member_value_type(
+                package,
+                type_ref,
+                &NodeCtx::new(returns, format!("{at}.returns")),
+                &format!("{at}.returns"),
+                true,
+            )?;
             let multiplicity = returns_ctx.multiplicity_of(returns, "returns.multiplicity")?;
             Some(OperationResult {
                 value_type,
@@ -3229,6 +3238,23 @@ fn read_value_type_ref(
     Ok(ValueTypeRef::Package(declaration_key(package, type_ref)))
 }
 
+/// Reads a member type while preserving an FCD Decimal policy carried by
+/// that field, parameter or operation result itself.
+#[ix_trace_rs::string_edge]
+fn read_member_value_type(
+    package: &str,
+    type_ref: &str,
+    ctx: &NodeCtx<'_>,
+    at: &str,
+    allow_clock: bool,
+) -> Result<ValueTypeRef, ModelRefusal> {
+    if type_ref == "ix://filament/native/Decimal" && ctx.value.get("decimal").is_some() {
+        return read_decimal_domain(ctx, at)
+            .map(|domain| ValueTypeRef::Resolved(Box::new(ValueType::Decimal(domain))));
+    }
+    read_value_type_ref(package, ctx, type_ref, allow_clock)
+}
+
 /// The `bound` of a map type `type_value` (FR-154 "Map types"): an object of
 /// exactly an integer `lower` of at least `0` and, when present, an integer
 /// `upper` of at least `0`. A `lower` above `upper`, or above `0` with no
@@ -3435,7 +3461,7 @@ fn read_field_member(
     let type_ref = ctx.str_field("typeRef")?;
     // FR-230 models Clock as a place, so only a field reader can admit it;
     // parameters and results use the ordinary data value algebra.
-    let value_type = read_value_type_ref(package, &ctx, type_ref, true)?;
+    let value_type = read_member_value_type(package, type_ref, &ctx, at, true)?;
     let multiplicity = ctx.multiplicity("multiplicity")?;
     // FSpec's own Presence row (`model-complete.md`:158): `presence` is
     // exactly `required` or `optional`, independent of `multiplicity`'s
@@ -3843,6 +3869,9 @@ fn read_value_type(
     if scalar == "rational" {
         return read_rational_value_type(package, node, &ctx, at);
     }
+    if scalar == "decimal" {
+        return read_decimal_value_type(package, node, &ctx, at);
+    }
     if scalar != "integer" {
         return Err(unsupported_at(
             type_value,
@@ -3924,6 +3953,250 @@ fn read_value_type(
         key: declaration_key(package, node),
         domain: ScalarValueDomain::Integer { lower, upper },
     })
+}
+
+/// Reads a Decimal value type from its FCD decimal policy and bounds. The
+/// policy scale is both Decimal scale bounds; every bound is shifted exactly
+/// to that scale before it narrows the policy's coefficient range (FSL
+/// FR-056 "Decimal value types").
+#[ix_trace_rs::string_edge]
+fn read_decimal_value_type(
+    package: &str,
+    node: &str,
+    ctx: &NodeCtx<'_>,
+    at: &str,
+) -> Result<ScalarTypeRecord, ModelRefusal> {
+    let domain = read_decimal_domain(ctx, at)?;
+    Ok(ScalarTypeRecord {
+        key: declaration_key(package, node),
+        domain: ScalarValueDomain::Decimal(domain),
+    })
+}
+
+/// Reads a subject's FCD Decimal policy and constraints into FR-140's exact
+/// coefficient domain. The semantic-IR validator has already checked the
+/// decimal string grammar and policy shape; the reader still checks the
+/// bounds it consumes and refuses any extension it does not preserve.
+#[ix_trace_rs::string_edge]
+fn read_decimal_domain(ctx: &NodeCtx<'_>, at: &str) -> Result<DecimalType, ModelRefusal> {
+    if ctx.value.get("unit").is_some() {
+        return Err(ctx.malformed_in("unit", "a Decimal value type carries no unit"));
+    }
+    let policy = ctx
+        .value
+        .get("decimal")
+        .and_then(Value::as_object)
+        .ok_or_else(|| ctx.malformed_in("decimal", "missing or not an object"))?;
+    let precision = policy
+        .get("precision")
+        .and_then(Value::as_u64)
+        .filter(|precision| (1..=38).contains(precision))
+        .ok_or_else(|| ctx.malformed_in("decimal.precision", "not in 1..=38"))?;
+    let scale = policy
+        .get("scale")
+        .and_then(Value::as_u64)
+        .filter(|scale| *scale <= precision)
+        .ok_or_else(|| ctx.malformed_in("decimal.scale", "not in 0..=precision"))?;
+    let limit = 10_i128
+        .checked_pow(precision as u32)
+        .and_then(|power| power.checked_sub(1))
+        .ok_or_else(|| ctx.malformed_in("decimal.precision", "coefficient limit overflowed"))?;
+    let (lower, upper) = read_decimal_bounds(ctx, at, scale, -limit, limit)?;
+    DecimalType::new(
+        Integer::from(lower),
+        Integer::from(upper),
+        scale,
+        scale,
+        RoundingMode::Exact,
+    )
+    .map_err(|_| ctx.malformed_in("decimal", "invalid Decimal domain"))
+}
+
+/// Applies the bounds on one node of a Decimal resolution walk to its
+/// inherited coefficient interval.
+#[ix_trace_rs::string_edge]
+fn read_decimal_bounds(
+    ctx: &NodeCtx<'_>,
+    at: &str,
+    scale: u64,
+    mut lower: i128,
+    mut upper: i128,
+) -> Result<(i128, i128), ModelRefusal> {
+    let constraints = ctx.array_field("constraints")?;
+
+    // FSL's first-defect order checks the member-level unit above, then any
+    // unsupported keyword, before considering duplicate bound keywords.
+    for (position, constraint) in constraints.iter().enumerate() {
+        let constraint_at = format!("{at}.constraints[{position}]");
+        let keyword = NodeCtx::new(constraint, &constraint_at).str_field("keyword")?;
+        if !matches!(keyword, "min" | "max" | "exclusiveMin" | "exclusiveMax") {
+            return Err(unsupported_member(
+                constraint,
+                &constraint_at,
+                MemberPath::from_document_location(&constraint_at).child("keyword"),
+                format!("{}:constraints:{keyword}", meaning::VALUE_TYPE),
+            ));
+        }
+    }
+
+    let mut seen = std::collections::BTreeSet::new();
+    for (position, constraint) in constraints.iter().enumerate() {
+        let constraint_at = format!("{at}.constraints[{position}]");
+        let constraint_ctx = NodeCtx::new(constraint, &constraint_at);
+        let keyword = constraint_ctx.str_field("keyword")?;
+        if !seen.insert(keyword) {
+            return Err(
+                constraint_ctx.malformed_in("keyword", format!("{keyword:?} is declared twice"))
+            );
+        }
+        let operand = constraint
+            .get("operands")
+            .and_then(|operands| operands.get("value"))
+            .and_then(Value::as_str)
+            .and_then(|text| decimal_bound_at_scale(text, scale));
+        let Some(value) = operand else {
+            return Err(constraint_ctx.malformed_in(
+                "operands.value",
+                format!("{keyword}: invalid canonical Decimal bound"),
+            ));
+        };
+        match keyword {
+            "min" => lower = lower.max(value),
+            "exclusiveMin" => {
+                let next = value.checked_add(1).ok_or_else(|| {
+                    constraint_ctx.malformed_in("exclusiveMin", "bound has no successor")
+                })?;
+                lower = lower.max(next);
+            }
+            "max" => upper = upper.min(value),
+            "exclusiveMax" => {
+                let previous = value.checked_sub(1).ok_or_else(|| {
+                    constraint_ctx.malformed_in("exclusiveMax", "bound has no predecessor")
+                })?;
+                upper = upper.min(previous);
+            }
+            _ => unreachable!("unsupported Decimal keywords were rejected above"),
+        }
+    }
+    if lower > upper {
+        return Err(ctx.malformed_in(
+            "constraints",
+            format!(
+                "lower coefficient bound {lower} is greater than upper coefficient bound {upper}"
+            ),
+        ));
+    }
+    Ok((lower, upper))
+}
+
+/// The canonical Decimal bound `text` lifted to an integer coefficient at
+/// the policy's scale, or `None` when it is malformed or finer than the
+/// policy scale.
+#[ix_trace_rs::string_edge]
+fn decimal_bound_at_scale(text: &str, scale: u64) -> Option<i128> {
+    let (negative, unsigned) = match text.strip_prefix('-') {
+        Some(unsigned) => (true, unsigned),
+        None => (false, text),
+    };
+    if unsigned.is_empty() || (negative && unsigned == "0") {
+        return None;
+    }
+    let (whole, fraction) = match unsigned.split_once('.') {
+        Some((whole, fraction)) => (whole, Some(fraction)),
+        None => (unsigned, None),
+    };
+    if whole.is_empty()
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || (whole.len() > 1 && whole.starts_with('0'))
+    {
+        return None;
+    }
+    let fraction = fraction.unwrap_or("");
+    if (text.contains('.')
+        && (fraction.is_empty()
+            || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+            || fraction.ends_with('0')))
+        || fraction.len() as u64 > scale
+    {
+        return None;
+    }
+    let mut digits = String::with_capacity(whole.len() + scale as usize);
+    digits.push_str(whole);
+    digits.push_str(fraction);
+    digits.extend(std::iter::repeat_n('0', scale as usize - fraction.len()));
+    let magnitude = digits.parse::<i128>().ok()?;
+    if negative {
+        magnitude.checked_neg()
+    } else {
+        Some(magnitude)
+    }
+}
+
+/// Computes Decimal domains for scalar Decimal declarations and aliases that
+/// reach them, without depending on document order. Invalid validator input
+/// is left for the ordinary refusal path; this index is only a reader aid.
+fn decimal_type_domains(types: &[Value]) -> HashMap<String, DecimalType> {
+    fn resolve(
+        identity: &str,
+        by_identity: &HashMap<&str, &Value>,
+        cache: &mut HashMap<String, Option<DecimalType>>,
+        active: &mut std::collections::BTreeSet<String>,
+    ) -> Option<DecimalType> {
+        if let Some(domain) = cache.get(identity) {
+            return domain.clone();
+        }
+        if !active.insert(identity.to_owned()) {
+            return None;
+        }
+        let domain = by_identity.get(identity).and_then(|node| {
+            let at = "$.types[decimal-index]";
+            let ctx = NodeCtx::new(node, at);
+            if node.get("scalar").and_then(Value::as_str) == Some("decimal") {
+                return read_decimal_domain(&ctx, at).ok();
+            }
+            if node.get("kind").and_then(Value::as_str) != Some("alias") {
+                return None;
+            }
+            let target = node.get("target").and_then(Value::as_str)?;
+            if target == "ix://filament/native/Decimal" {
+                return read_decimal_domain(&ctx, at).ok();
+            }
+            let mut inherited = resolve(target, by_identity, cache, active)?;
+            if node.get("decimal").is_some() {
+                return None;
+            }
+            let scale = u64::from(inherited.max_scale());
+            let lower = inherited.lower().to_string().parse::<i128>().ok()?;
+            let upper = inherited.upper().to_string().parse::<i128>().ok()?;
+            let (lower, upper) = read_decimal_bounds(&ctx, at, scale, lower, upper).ok()?;
+            inherited = DecimalType::new(
+                Integer::from(lower),
+                Integer::from(upper),
+                scale,
+                scale,
+                RoundingMode::Exact,
+            )
+            .ok()?;
+            Some(inherited)
+        });
+        active.remove(identity);
+        cache.insert(identity.to_owned(), domain.clone());
+        domain
+    }
+
+    let by_identity: HashMap<&str, &Value> = types
+        .iter()
+        .filter_map(|node| Some((node.get("identity")?.as_str()?, node)))
+        .collect();
+    let mut cache = HashMap::new();
+    let mut active = std::collections::BTreeSet::new();
+    for identity in by_identity.keys().copied() {
+        let _ = resolve(identity, &by_identity, &mut cache, &mut active);
+    }
+    cache
+        .into_iter()
+        .filter_map(|(identity, domain)| domain.map(|domain| (identity, domain)))
+        .collect()
 }
 
 /// FR-506: the Contract IR text ceiling, in scalars. A Text value type whose
@@ -5120,6 +5393,9 @@ struct TypeNodeReader<'a> {
     /// reach them: the unbounded `Rational`, which a tuple position or a
     /// variant payload cannot carry (FR-505).
     unbounded_rationals: &'a std::collections::BTreeSet<String>,
+    /// Decimal type of each scalar Decimal declaration and policy-carrying
+    /// alias, including bounds on every alias in its resolution walk.
+    decimal_types: &'a HashMap<String, DecimalType>,
     semantic: Option<&'a agent_ix_semantic_ir::rules::Document<'a>>,
     semantic_members: &'a HashMap<&'a str, &'a agent_ix_semantic_ir::json::Json>,
 }
@@ -5138,6 +5414,7 @@ fn read_type_node(
         type_meanings,
         rational_types,
         unbounded_rationals,
+        decimal_types,
         semantic,
         semantic_members,
     } = reader;
@@ -5215,7 +5492,9 @@ fn read_type_node(
                 )
                 .into());
         }
-        let target = if target == "ix://filament/native/Clock" {
+        let target = if let Some(decimal) = decimal_types.get(node) {
+            ValueTypeRef::Resolved(Box::new(ValueType::Decimal(decimal.clone())))
+        } else if target == "ix://filament/native/Clock" {
             ValueTypeRef::Clock
         } else if target.starts_with("ix://filament/unit/") {
             read_value_type_ref(package, &ctx, target, false)?
@@ -5252,7 +5531,11 @@ fn read_type_node(
         // An alias's `min`/`max` constraints bound the clocks or the
         // quantities it types (FR-230 "Clock constraints on a type", FSpec
         // FR-154 "Unit bounds").
-        let bounds = read_value_bounds(package, &ctx, at, node, Some((&key, &target)))?;
+        let bounds = if decimal_types.contains_key(node) {
+            Vec::new()
+        } else {
+            read_value_bounds(package, &ctx, at, node, Some((&key, &target)))?
+        };
         let mut records = vec![DomainPackageRecord::AliasType(AliasTypeRecord {
             key,
             target,
@@ -6324,6 +6607,7 @@ fn read_nodes_partial(
             ))
         })
         .collect();
+    let decimal_types = decimal_type_domains(types);
     // `agent-ix-semantic-ir`'s own `IR_MEMBERS` requires `types` present and
     // `expect_array` guarantees it is an array; `populations` is optional
     // but array-shaped when present.
@@ -6440,6 +6724,7 @@ fn read_nodes_partial(
                         type_meanings: &type_meanings,
                         rational_types: &rational_types,
                         unbounded_rationals: &unbounded_rationals,
+                        decimal_types: &decimal_types,
                         semantic,
                         semantic_members: &semantic_members,
                     },
@@ -6558,9 +6843,11 @@ fn key_eligibility(records: &[DomainPackageRecord], keys: &ValueTypeRef) -> Opti
                 return Some(
                     if matches!(
                         scalar.domain,
-                        ScalarValueDomain::Native(
-                            NativeValueType::Decimal | NativeValueType::Rational
-                        ) | ScalarValueDomain::Rational { domain: None, .. }
+                        ScalarValueDomain::Decimal(_)
+                            | ScalarValueDomain::Native(
+                                NativeValueType::Decimal | NativeValueType::Rational
+                            )
+                            | ScalarValueDomain::Rational { domain: None, .. }
                     ) {
                         KeyEligibility::Ineligible
                     } else {
@@ -6872,6 +7159,7 @@ mod tests {
         let shapes = HashMap::new();
         let type_meanings = HashMap::new();
         let rational_types = std::collections::BTreeSet::new();
+        let decimal_types = HashMap::new();
         let semantic_members = HashMap::new();
         let reader = TypeNodeReader {
             package: "acme/orders",
@@ -6880,6 +7168,7 @@ mod tests {
             type_meanings: &type_meanings,
             rational_types: &rational_types,
             unbounded_rationals: &std::collections::BTreeSet::new(),
+            decimal_types: &decimal_types,
             semantic: None,
             semantic_members: &semantic_members,
         };

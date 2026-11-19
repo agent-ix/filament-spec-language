@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::model::normalize::ModelRefusal;
 use crate::model::origin::JsonValue;
 use filament_checked::key::DeclarationKey;
-use filament_exact::{Presence, RationalDomain, TextType, ValueType};
+use filament_exact::{DecimalType, Presence, RationalDomain, TextType, ValueType};
 use filament_semantic_value::location::OperationClauseKind;
 use fsl_forms::Expression;
 
@@ -445,6 +445,9 @@ pub enum ScalarValueDomain {
     },
     /// A bounded text `Text[min, max; profile]` (FR-056's Text value type).
     Text(TextType),
+    /// A Decimal domain derived from the FCD decimal policy and every bound
+    /// on the subject's resolution walk (FR-056 "Decimal value types").
+    Decimal(DecimalType),
     /// A bounded or unbounded exact Rational value type (FR-505), optionally
     /// carrying a nominal unit. An absent domain is the unbounded Rational.
     Rational {

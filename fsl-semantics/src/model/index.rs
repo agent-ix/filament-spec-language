@@ -902,7 +902,9 @@ impl RecordIndex {
                         // A Text scalar names no integer bound and no native
                         // alias target: it conforms only through the declared
                         // subtype graph.
-                        ScalarValueDomain::Text(_) | ScalarValueDomain::Rational { .. } => {}
+                        ScalarValueDomain::Text(_)
+                        | ScalarValueDomain::Decimal(_)
+                        | ScalarValueDomain::Rational { .. } => {}
                         ScalarValueDomain::Native(native) => {
                             index.scalar_natives.insert(own, *native);
                         }

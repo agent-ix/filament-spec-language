@@ -3228,6 +3228,7 @@ impl<'a> Lowering<'a> {
                         ScalarValueDomain::Rational { unit, .. } => unit.as_deref(),
                         ScalarValueDomain::Integer { .. }
                         | ScalarValueDomain::Text(_)
+                        | ScalarValueDomain::Decimal(_)
                         | ScalarValueDomain::Native(_) => None,
                     },
                     DomainPackageRecord::Enum(_)
