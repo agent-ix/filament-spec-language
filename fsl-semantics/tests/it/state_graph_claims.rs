@@ -225,7 +225,11 @@ fn a_claim_accepts_the_temporal_complete_header_layer_as_its_value_profile() {
     )
     .expect("the unit assembles");
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect("the temporal-complete header layer is state-bearing");
     assert!(matches!(
         claim(&graph, "ReachesTwo").form(),
