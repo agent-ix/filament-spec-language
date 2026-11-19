@@ -89,11 +89,7 @@ mod tests {
         let set = TaskSet::new(
             QualifiedName::new(vec![Identifier::new("Ctl").expect("a set name")])
                 .expect("one name segment"),
-            vec![
-                task("a", 5, 20, 1),
-                task("b", 10, 50, 2),
-                task("c", 20, 100, 3),
-            ],
+            vec![task("a", 1, 4, 1), task("b", 2, 6, 2), task("c", 5, 12, 3)],
         )
         .expect("an admitted task set");
         let subject = ScheduleSubject::new(
@@ -119,6 +115,6 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(responses, vec![integer(5), integer(15), integer(40)]);
+        assert_eq!(responses, vec![integer(1), integer(3), integer(12)]);
     }
 }
