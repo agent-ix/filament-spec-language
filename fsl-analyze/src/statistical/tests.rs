@@ -1260,7 +1260,7 @@ fn clopper_pearson_selectable() {
     let claim = claim(
         ClaimForm::Probability,
         Comparison::AtLeast,
-        ratio(9, 10),
+        ratio(4, 5),
         ratio(1, 10),
     );
     let sampler = sampler_ref();
