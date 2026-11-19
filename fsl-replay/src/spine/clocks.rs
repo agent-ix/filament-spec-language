@@ -499,14 +499,12 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
         });
     }
     for hyper in graph.finite_hyper_clauses() {
-        let Some(source) = hyper
+        let source = hyper
             .occurrence()
             .and_then(|occurrence| graph.occurrence(occurrence.node().clone(), occurrence.origin()))
             .and_then(|location| graph.region(location))
             .map(|region| region.source().clone())
-        else {
-            continue;
-        };
+            .unwrap_or_else(|| graph.source().clone());
         declarations.push(Declaration {
             name: hyper.name(),
             profile: hyper.profile(),
