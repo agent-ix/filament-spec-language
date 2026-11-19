@@ -143,6 +143,36 @@ struct CandidateNode {
     edges: Vec<CandidateEdge>,
 }
 
+/// Abstract operations enabled at one hidden-field candidate state.
+struct CandidateEnabled {
+    key: Vec<u8>,
+    transitions: Vec<ModelTransition>,
+}
+
+/// One transition-label summary component: taken on some edge, enabled at
+/// some source, and enabled at every source.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct FairMark {
+    taken: bool,
+    enabled_somewhere: bool,
+    enabled_everywhere: bool,
+}
+
+type FairLabel = Vec<FairMark>;
+type CandidatePair = (Vec<u8>, Vec<u8>);
+type CandidateRelation = BTreeMap<CandidatePair, Vec<FairLabel>>;
+
+/// The concrete and candidate-path summaries of one retained walk.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct WalkSummary {
+    concrete: FairLabel,
+    candidates: CandidateRelation,
+}
+
+/// One retained lasso edge, as its source product node and canonical edge
+/// offset.
+type RetainedPathEdge = (usize, usize);
+
 /// The first failing initial state or edge: the node it leaves, the step it
 /// takes, and what failed.
 struct Failure {
@@ -2404,12 +2434,16 @@ impl Run<'_, '_> {
 
     /// The transition identities the abstract subject enables from each
     /// product state's mapped state (CO-2), in the order of `nodes`.
-    fn abstract_enabled(&mut self) -> Result<Vec<Vec<ModelTransition>>, End> {
+    fn abstract_enabled(
+        &mut self,
+    ) -> Result<(Vec<Vec<ModelTransition>>, Vec<Vec<CandidateEnabled>>), End> {
         let mut enabled = Vec::with_capacity(self.nodes.len());
+        let mut candidates_enabled = Vec::with_capacity(self.nodes.len());
         let mut transitions = self.transitions;
         for node in &self.nodes {
             self.poll()?;
             let mut here = Vec::new();
+            let mut candidate_enabled = Vec::new();
             for candidate in &node.position.abstract_states {
                 if transitions >= self.limits.limits.max_transitions {
                     return Err(Self::stopped(
@@ -2431,24 +2465,30 @@ impl Run<'_, '_> {
                         Undetermined::UndecidedSuccessor,
                     )));
                 }
-                here.extend(
-                    expansion
-                        .successors
-                        .into_iter()
-                        .map(|(transition, _)| transition),
-                );
+                let candidate_transitions = expansion
+                    .successors
+                    .into_iter()
+                    .map(|(transition, _)| transition)
+                    .collect::<Vec<_>>();
+                let (key, _) = Self::encoding(self.abstract_system.state_key_of(candidate))?;
+                here.extend(candidate_transitions.iter().cloned());
+                candidate_enabled.push(CandidateEnabled {
+                    key,
+                    transitions: candidate_transitions,
+                });
             }
             enabled.push(here);
+            candidates_enabled.push(candidate_enabled);
         }
         self.transitions = transitions;
-        Ok(enabled)
+        Ok((enabled, candidates_enabled))
     }
 
     /// The second phase: the first violated class of `F_A`, as its lasso, or
     /// `Holds` when none is violated.
     fn second_phase(&mut self) -> Result<ModelCheckOutcome, End> {
         self.poll()?;
-        let enabled = self.abstract_enabled()?;
+        let (enabled, candidate_enabled) = self.abstract_enabled()?;
         let mut identities = BTreeMap::new();
         for transition in enabled.iter().flatten() {
             let order = Self::encoding(self.abstract_system.transition_key(transition))?;
