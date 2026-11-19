@@ -46,8 +46,8 @@ impl CheckedSynthesisClaim {
 }
 
 /// One synthesis declaration after its names and expressions pass S3.
-#[derive(Debug)]
-pub(crate) struct CheckedSynthesis {
+#[derive(Clone, Debug)]
+pub struct CheckedSynthesis {
     /// The S2 declaration and its authored spans.
     pub(crate) form: fsl_forms::SynthesisForm,
     /// The resolved candidate grammar type.
@@ -60,6 +60,51 @@ pub(crate) struct CheckedSynthesis {
     pub(crate) objective: Option<CheckedBody>,
     /// The candidate binder name shared by both checked expressions.
     pub(crate) slot_names: Vec<String>,
+}
+
+impl CheckedSynthesis {
+    /// The authored declaration name used by checked-package claim selection.
+    pub fn name(&self) -> &str {
+        &self.form.name.name
+    }
+
+    /// The complete source span of this declaration.
+    pub fn span(&self) -> fsl_foundation::Span {
+        self.form.span
+    }
+
+    /// The checked finite domain type.
+    pub fn domain(&self) -> &ValueType {
+        &self.domain
+    }
+
+    /// The checked grammar type.
+    pub fn grammar(&self) -> &ValueType {
+        &self.grammar
+    }
+
+    /// The checked satisfaction expression.
+    pub fn satisfies(&self) -> &CheckedBody {
+        &self.satisfies
+    }
+
+    /// The checked objective expression, when authored.
+    pub fn objective(&self) -> Option<&CheckedBody> {
+        self.objective.as_ref()
+    }
+
+    /// Candidate binder names in evaluation frame order.
+    pub fn slot_names(&self) -> &[String] {
+        &self.slot_names
+    }
+
+    /// Objective expression's source spelling, when authored.
+    pub fn objective_source(&self) -> Option<&str> {
+        let objective = self.form.objective.as_ref()?;
+        let start = objective.span.start.checked_sub(self.form.span.start)?;
+        let end = objective.span.end.checked_sub(self.form.span.start)?;
+        self.form.source.get(start..end)
+    }
 }
 
 /// Resolve and type-check each source synthesis declaration (FR-754 S3).
