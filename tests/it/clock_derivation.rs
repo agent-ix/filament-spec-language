@@ -382,6 +382,19 @@ fn a_hyper_clause_over_two_models_binds_one_clock_per_trace() {
         "{}",
         String::from_utf8_lossy(&sampled.stderr)
     );
+    let sampled_package: Value = serde_json::from_slice(&sampled.stdout).expect("package JSON");
+    let sampled_rows = find(&sampled_package, "temporal_bindings")
+        .and_then(Value::as_array)
+        .expect("temporal binding rows");
+    let [saving, normal] = sampled_rows.as_slice() else {
+        panic!("fixed-sample also emits one binding row per trace: {sampled_rows:?}");
+    };
+    assert_eq!(saving["trace"], "s");
+    assert_eq!(normal["trace"], "n");
+    assert_eq!(saving["clock_name"], "model-steps");
+    assert_eq!(normal["clock_name"], "model-steps");
+    assert_eq!(saving["clock"]["kind"], "fixed_sample");
+    assert_eq!(saving["clock"], normal["clock"]);
 }
 
 /// FR-326-AC-4 (TC-836): a clause whose `using` alias selects the value

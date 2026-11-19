@@ -882,9 +882,9 @@ impl TemporalRows {
 }
 
 /// The `temporal_bindings` rows (FR-050, FR-515) an emission wrote for the
-/// checked graph's clauses, keyed by the clause's [`NodeKey`] and claim
-/// occurrence ordinal, so a reader of the in-process package finds a
-/// declaration's row without the wire's node identities (FR-522
+/// checked graph's temporal clauses and hyper clauses. Rows are keyed by the
+/// clause's [`NodeKey`], claim occurrence and optional quantified trace, so a
+/// reader finds a declaration's row without wire node identities (FR-522
 /// "Authentication").
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TemporalBindingRows {
