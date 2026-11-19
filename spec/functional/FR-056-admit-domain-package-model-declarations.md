@@ -896,9 +896,13 @@ value sites, which remain JSON numbers subject to the number rules above.
 In particular, the generated safe-integer instance-wire number encoding in
 filament-core-data FR-144 is distinct from its integer IR value-site encoding.
 
+A systems part, port or allocation record is model structure, not a value
+type: the assembler admits it into the selected model view and adds no
+type-environment declaration for it, as FR-103 states, and FR-086 classifies
+and admits it.
+
 If an admitted package declares a record the type environment does not
-represent (a systems part, port or allocation, or a
-field whose value type or multiplicity has no kernel type, other than a member
+represent (a field whose value type or multiplicity has no kernel type, other than a member
 typed by bare `Text`, `Rational` or `Decimal`, which the paragraph on those
 natives above governs), then the
 assembler SHALL refuse it with
