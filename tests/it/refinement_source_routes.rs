@@ -170,3 +170,6 @@ fn indexed_reads_outside_hyper_keep_the_defined_boundary_cause() {
     assert_eq!(value["code"], "unsupported_construct", "{value}");
     assert_eq!(value["cause"], "expression-form", "{value}");
 }
+
+#[path = "refinement_remaining_source_routes.rs"]
+mod remaining;

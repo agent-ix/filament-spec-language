@@ -2,4 +2,4 @@ language "ix:native" edition "1-draft";
 profile values = "filament.value.complete/v1";
 profile infinite = "filament.temporal.infinite-trace/v1";
 model CounterModel = "test/counter-step";
-hyper IgnoreTick using infinite over behaviours (item: CounterModel::Counter) forall trace left of CounterModel fair { weak CounterModel::Counter::inc } forall trace right of CounterModel align skip { CounterModel::Counter::inc } match { left.step.op = right.step.op } { always holds(item.value @ left = item.value @ right) }
+hyper IgnoreTick using infinite over behaviours (item: CounterModel::Counter) forall trace left of CounterModel fair weak CounterModel::Counter::inc; forall trace right of CounterModel align skip { CounterModel::Counter::inc } match { left.step.op = right.step.op } { always holds(item.value @ left = item.value @ right) }

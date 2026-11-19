@@ -64,7 +64,7 @@ fn corpus_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus")
 }
 
-fn run_directory(directory: &Path) -> Result<String, String> {
+pub(super) fn run_directory(directory: &Path) -> Result<String, String> {
     let entries = std::fs::read_dir(directory)
         .map_err(|error| format!("{}: cannot read corpus area: {error}", directory.display()))?;
     let mut programs = BTreeSet::new();
