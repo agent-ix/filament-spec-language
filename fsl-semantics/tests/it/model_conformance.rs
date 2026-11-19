@@ -1169,7 +1169,11 @@ fn a_wide_domain_and_a_literal_above_i64_max_are_decided_exactly() {
             vec![],
         )
         .expect("model-owned narrowing waits for its checked clause");
-        let result = declarations.check(CheckMode::Linked, CheckingLimits::default());
+        let result = declarations.check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        );
         if succeeds {
             assert!(result.is_ok(), "exact 2^63 bound: {result:?}");
         } else {

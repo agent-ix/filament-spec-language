@@ -88,6 +88,7 @@ use filament_exact::Cancel;
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::semantic_node::IdentityRefusal;
 use fsl_cst::Limits as SourceLimits;
+use fsl_eval::value::S6aRewardEvaluator;
 use fsl_forms::{parse_clause_text, FormsRefusal, ParsedUnit};
 use fsl_foundation::diagnostic::{LimitExceeded, Locus, StageFailure, StageWork, Staged};
 use fsl_foundation::selection::ImportSelection;
@@ -4319,10 +4320,16 @@ impl<'a> Resolution<'a> {
                 declarations.check_with_protocol_continuation_and_cancel(
                     self.check_mode,
                     limits.checking,
+                    &S6aRewardEvaluator,
                     cancel,
                 )
             } else {
-                declarations.check_with_cancel(self.check_mode, limits.checking, cancel)
+                declarations.check_with_cancel(
+                    self.check_mode,
+                    limits.checking,
+                    &S6aRewardEvaluator,
+                    cancel,
+                )
             }
         })
         .map_err(|refusals| {

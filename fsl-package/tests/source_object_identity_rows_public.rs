@@ -57,7 +57,11 @@ fn checked_source_object(
         .link_dispatch(Default::default())
         .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{:?}", pending.report(refusals)));
     let package = CheckedPackage::link(graph);
     let emission = emit_checked(&package, EmitLimits::new(10_000_000)).expect("the package emits");

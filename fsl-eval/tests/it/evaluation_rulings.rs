@@ -55,7 +55,11 @@ fn package() -> CheckedPackage {
     .expect("the unit assembles");
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .expect("the package checks"),
     )
 }

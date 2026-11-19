@@ -112,7 +112,11 @@ fn compile_in_mode(
         .expect("the unit assembles");
     let pending = assembled.link_dispatch(Default::default())?;
     let graph = assembled
-        .check(mode, CheckingLimits::default())
+        .check(
+            mode,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .map_err(|refusals| pending.report(refusals))?;
     Ok(emit_checked(&CheckedPackage::link(graph)).expect("the package emits"))
 }
@@ -518,7 +522,11 @@ fn under_kernel_a_precondition_clause_function_is_linked_and_a_body_is_kernel() 
             .expect("the unit assembles");
     let pending = assembled.link_dispatch(Default::default()).expect("links");
     let graph = assembled
-        .check(CheckMode::Kernel, CheckingLimits::default())
+        .check(
+            CheckMode::Kernel,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{:?}", pending.report(refusals)));
     let modes: Vec<_> = (0..)
         .map_while(|index| graph.function_check_mode(index))

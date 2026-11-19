@@ -135,6 +135,7 @@ fn quantity_types_check_in_every_position_over_the_one_unit_node() {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect("every position checks");
     let semantic = graph.semantic_graph();
@@ -234,6 +235,7 @@ fn quantity_types_check_in_every_position_over_the_one_unit_node() {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("3 s is not a Quantity<ms>");
     let [refusal] = refusals.as_slice() else {
@@ -349,6 +351,7 @@ fn source_model_alias_names_preserve_nominal_units_and_member_bounds() {
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
     )
     .expect("the function checks with the alias's admitted target");
     let semantic = graph.semantic_graph();
@@ -446,6 +449,7 @@ fn unit_bounds_bound_the_members_of_their_unit_or_alias() {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect("checks");
     let model = StateModel::new(
@@ -648,6 +652,7 @@ fn unit_bounds_reach_records_aliases_of_aliases_and_every_node() {
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
             )
             .expect("checks");
         let model = StateModel::new(

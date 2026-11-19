@@ -43,7 +43,11 @@ fn check(declarations: &str, mode: CheckMode) -> Result<CheckedGraph, Vec<CheckR
         )
         .expect("the Euclidean definition admits"),
     );
-    package.check(mode, CheckingLimits::default())
+    package.check(
+        mode,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
 }
 
 fn refusals(declarations: &str, mode: CheckMode) -> Vec<CheckRefusal> {
@@ -126,7 +130,11 @@ fn a_state_clause_still_refuses_its_obligation_under_kernel() {
             guarded,
         )
         .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
-        .check(mode, CheckingLimits::default())
+        .check(
+            mode,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{mode:?}: the guarded clause checks: {refusals:?}"));
         assert!(graph.state_clause("ParentOrder").is_some(), "{mode:?}");
     }
@@ -137,7 +145,11 @@ fn a_state_clause_still_refuses_its_obligation_under_kernel() {
         )
         .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"));
         let refusals = declarations
-            .check(mode, CheckingLimits::default())
+            .check(
+                mode,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
             .expect_err("the clause is refused");
         assert!(
             matches!(
@@ -263,7 +275,11 @@ fn a_count_range_in_a_state_clause_refuses_under_both_modes() {
             clause,
         )
         .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
-        .check(mode, CheckingLimits::default())
+        .check(
+            mode,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("the count range is unproved in a declared clause");
         assert!(
             matches!(

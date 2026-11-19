@@ -58,7 +58,11 @@ fn unit_text(declarations: &str) -> String {
 fn check(declarations: &str) -> Result<CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
     admit_and_assemble_with_profiles(&document(), PROFILES, &unit_text(declarations))
         .expect("S2 keeps the task-set forms")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
 }
 
 fn checked(declarations: &str) -> CheckedGraph {
@@ -460,7 +464,11 @@ fn each_task_set_declaration_needs_the_temporal_complete_layer() {
     ] {
         let refusals = admit_and_assemble_with_body(&document(), &unit_text(body))
             .expect("S2 retains the declaration")
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
             .expect_err("S3 requires the temporal facet");
         let [error] = refusals.as_slice() else {
             panic!("{body}: one error expected: {refusals:?}");

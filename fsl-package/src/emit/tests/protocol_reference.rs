@@ -53,7 +53,11 @@ fn refusals(text: &str) -> Vec<CheckRefusal> {
     let packages = fsl_semantics::model::intake::package_input([SPINE_MODEL_DOCUMENT]).unwrap();
     assemble_with_models(text.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("the unit refuses")
 }
 
@@ -206,7 +210,11 @@ fn a_later_attempt_protocol_lowers_after_an_earlier_refusal() {
         Vec::new(),
     )
     .expect("the declarations assemble")
-    .check_with_protocol_results(CheckMode::Linked, CheckingLimits::default())
+    .check_with_protocol_results(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    )
     .expect("protocol-local S3 refusal is retained");
     assert_eq!(checked.protocol_refusals().len(), 1);
     assert_eq!(checked.protocol_refusals()[0].declaration, "Broken");
@@ -682,7 +690,11 @@ fn a_role_on_a_model_has_one_outcome() {
             .unwrap();
     let graph = assemble_with_models(text.as_bytes(), &models)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("whole-model role should be admitted: {refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
     assert_eq!(emission.omitted, []);
@@ -999,7 +1011,11 @@ fn a_reference_bound_to_a_key_no_node_carries_refuses_missing_name() {
     let packages = fsl_semantics::model::intake::package_input([SPINE_MODEL_DOCUMENT]).unwrap();
     let mut graph = assemble_with_models(text.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the package checks");
     let key_of = |form: &str| {
         graph
@@ -1067,7 +1083,11 @@ fn a_whole_model_role_round_trips() {
         .expect("the replicated role unit assembles");
     let regions = assembled.regions();
     let found = assembled
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("a replicated role over a model alias refuses");
     let refusal = found
         .iter()

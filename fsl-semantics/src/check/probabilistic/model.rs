@@ -210,6 +210,11 @@ pub struct Reward {
 }
 
 impl Reward {
+    /// The source location of the reward expression.
+    pub fn evaluation_location(&self) -> Location {
+        site_location(self.declared, Site::Reward)
+    }
+
     /// The reward's declared name.
     pub fn name(&self) -> &str {
         &self.name

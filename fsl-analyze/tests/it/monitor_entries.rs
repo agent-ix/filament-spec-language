@@ -69,7 +69,11 @@ pub(crate) fn package_of(declarations: &str) -> CheckedPackage {
     .expect("the assembler builds the package declarations");
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}\n{text}")),
     )
 }

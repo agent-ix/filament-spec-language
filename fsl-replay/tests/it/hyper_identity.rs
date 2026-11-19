@@ -211,7 +211,11 @@ fn a_package_with_no_emission_names_product_identity() {
         "fixture",
         fsl_foundation::IdentityLimits::default(),
     )
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .expect("an empty package checks");
     let empty = CheckedPackage::link(graph);
     let subjects = [world.subject_over(&empty, Vec::new())];

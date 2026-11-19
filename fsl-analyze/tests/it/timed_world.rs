@@ -484,7 +484,11 @@ fn world_built_in_with_protocol_selection_and_source(
     }
     let graph = declarations
         .with_unwritten_timed_members()
-        .check(mode, CheckingLimits::default())
+        .check(
+            mode,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
     let header = json!({"identity": package});
     let mut fields = json!({"phase": {"integer": "0"}, "inflight": {"boolean": false},
@@ -654,7 +658,11 @@ pub(crate) fn refining_from(
     .with_unwritten_refinements();
     let regions = declarations.regions();
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .map_err(|refusals| {
             refusals
                 .into_iter()

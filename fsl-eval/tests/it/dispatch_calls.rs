@@ -319,7 +319,11 @@ fn one_candidate_package(
 fn d07_dispatch_call_admitted_only_inside_invariant_precondition_postcondition() {
     let receiver_type = object_type("ix://test/orders/dispatch-calls.Receiver");
     let package = one_candidate_package(receiver_type.clone(), None, ValueType::Integer)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
     let parameters = vec![("self".to_owned(), ValueType::Reference(receiver_type))];
     let expression = dispatch_expression();
@@ -387,7 +391,11 @@ fn d07_own_shape_a_dispatch_call_inside_an_ordinary_function_body_is_refused() {
         body,
     ));
     let refusals = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect_err("a dispatch call inside an ordinary function body must be refused");
     let refusal = refusals
         .iter()
@@ -416,7 +424,11 @@ fn dispatch_argument_never_admits_integer_to_int_coercion() {
     ));
     package.dispatch_operations[0].parameters = vec![narrow];
     let checked_package = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
     let parameters = vec![
         ("self".to_owned(), ValueType::Reference(receiver_type)),
@@ -467,7 +479,11 @@ fn dispatch_argument_admits_a_reference_upcast() {
     )
     .unwrap();
     let checked_package = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
     let parameters = vec![
         ("self".to_owned(), ValueType::Reference(receiver_type)),
@@ -572,7 +588,11 @@ fn dispatch_argument_admits_a_conforming_record_and_refuses_the_rest() {
     let receiver_type = object_type("ix://test/orders/dispatch-calls.Receiver");
     let (package, [money, taxed, fee]) = record_dispatch_package();
     let checked_package = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
     let call = Expression::dispatch(
         Expression::name("self".to_owned()),
@@ -610,7 +630,11 @@ fn dispatch_argument_admits_a_conforming_record_and_refuses_the_rest() {
     ));
     package.dispatch_operations[0].parameters = vec![ValueType::Composite(taxed)];
     let checked_package = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
     let refusal = checked_package
         .check_clause_expression(
@@ -652,7 +676,11 @@ fn a_dispatched_call_with_a_child_argument_runs_through_guard_and_body() {
         let (declarations, [_, taxed, _]) = record_dispatch_package_guarded(precondition);
         let types = declarations.types.clone();
         let checked_package = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap();
         let checked = checked_package
             .check_clause_expression(
@@ -734,7 +762,11 @@ fn dispatch_argument_refuses_a_reference_downcast() {
     )
     .unwrap();
     let checked_package = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
     let parameters = vec![
         ("self".to_owned(), ValueType::Reference(receiver_type)),
@@ -783,7 +815,11 @@ fn dispatch_argument_refuses_an_unrelated_reference_type() {
     )
     .unwrap();
     let checked_package = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
     let parameters = vec![
         ("self".to_owned(), ValueType::Reference(receiver_type)),
@@ -830,7 +866,11 @@ fn synthesized_dispatch_candidate_is_not_callable_by_name() {
         ),
     ));
     let refusals = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect_err("a synthesized candidate body must not be callable by name");
     assert!(
         refusals.iter().any(|refusal: &CheckRefusal| refusal.cause
@@ -885,7 +925,11 @@ fn checked_package_call_refuses_a_non_callable_by_name_function_found_by_lookup(
         )];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .expect("a single clause-kind function with no dispatch table checks cleanly");
     let package = CheckedPackage::link(graph);
     let objects = ObjectEnvironment::default();
@@ -922,7 +966,11 @@ fn checked_package_call_refuses_a_non_callable_by_name_function_found_by_lookup(
 fn check_postcondition_expression_still_admits_a_real_postcondition() {
     let receiver_type = object_type("ix://test/orders/dispatch-calls.Receiver");
     let package = one_candidate_package(receiver_type.clone(), None, ValueType::Integer)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
     let parameters = vec![("self".to_owned(), ValueType::Reference(receiver_type))];
     let checked = package
@@ -959,7 +1007,11 @@ fn dispatch_candidate_with_an_out_of_range_body_index_is_refused_invalid_dispatc
         1,
     );
     let refusals = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect_err("an out-of-range candidate body index must be refused");
     assert!(
         refusals.iter().any(|refusal: &CheckRefusal| matches!(
@@ -991,7 +1043,11 @@ fn dispatch_candidate_with_a_mismatched_arity_is_refused_invalid_dispatch() {
     // function accepts (`one_candidate_package`'s body only takes `self`).
     package.dispatch_operations[0].parameters = vec![ValueType::Integer];
     let refusals = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect_err("a candidate/operation arity mismatch must be refused");
     assert!(
         refusals.iter().any(|refusal: &CheckRefusal| matches!(
@@ -1055,7 +1111,11 @@ fn dispatch_candidate_with_a_mismatched_parameter_type_is_refused_invalid_dispat
         DeclaredClauseKind::Body,
     );
     let refusals = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect_err("a candidate/operation parameter type mismatch must be refused");
     let location = refusals
         .iter()
@@ -1097,7 +1157,11 @@ fn dispatch_candidate_with_a_mismatched_result_type_is_refused_invalid_dispatch(
     let mut package = one_candidate_package(receiver_type, None, ValueType::Integer);
     package.dispatch_operations[0].result = ValueType::Boolean;
     let refusals = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect_err("a candidate/operation result type mismatch must be refused");
     let location = refusals
         .iter()
@@ -1220,7 +1284,11 @@ fn ab_bridge_package(
     pb: Option<Expression>,
 ) -> CheckedPackage {
     let graph = ab_bridge_declarations(receiver_type, pa, pb)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
     CheckedPackage::link(graph)
 }
@@ -1476,7 +1544,11 @@ fn d06_two_operations_sharing_one_table_report_the_operation_actually_dispatched
         ]);
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .unwrap();
 
     let objects = objects(receiver_type.clone(), "r1");
@@ -1541,7 +1613,11 @@ fn d08_a_cycle_through_a_dispatch_edge_is_refused_definition_cycle() {
         ValueType::Boolean,
     );
     let refusals = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect_err("a dispatch-edge cycle must be refused");
     let refusal = refusals
         .iter()
@@ -1688,7 +1764,11 @@ fn d08_bridge_self_recursive_precondition_is_refused_definition_cycle() {
     let a_type = ab_type("ix://test/orders/A");
     let declarations = ab_bridge_declarations(a_type, Some(self_recursive_precondition()), None);
     let refusals = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect_err("a dispatch-edge cycle through the bridge must be refused");
     let refusal = refusals
         .iter()
@@ -1727,7 +1807,11 @@ fn d08_bridge_ancestor_cycle_survives_a_sibling_combinator() {
         Some(Expression::boolean(false)),
     );
     let refusals = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect_err("a dispatch-edge cycle through the bridge must be refused");
     let refusal = refusals
         .iter()
@@ -1822,7 +1906,11 @@ fn d06_bridge_ancestor_let_binder_colliding_with_descendant_parameter_does_not_c
     });
 
     let package = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| {
             panic!("expected the capture-avoiding rename to check cleanly, got {refusals:?}")
         });
@@ -2083,7 +2171,11 @@ fn bridge_links_a_real_family_and_evaluates_through_the_built_table() {
     });
     let types = declarations.types.clone();
     let package = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
 
     let objects = ObjectEnvironment::new(
@@ -2169,7 +2261,11 @@ fn bridge_environment_admits_a_subtype_argument_at_a_supertype_parameter() {
     .unwrap_or_else(|refusal| panic!("expected a linked dispatch family, got {refusal:?}"));
     let conforms = declarations.types.conforms(b_type.clone(), a_type.clone());
     let package = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
     let call = Expression::dispatch(
         Expression::name("self".to_owned()),
@@ -2261,7 +2357,11 @@ fn bridge_links_an_object_type_specializing_a_process() {
     )
     .unwrap_or_else(|refusal| panic!("expected a linked dispatch family, got {refusal:?}"));
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect("the linked family checks");
 }
 
@@ -2404,7 +2504,11 @@ fn d01_runtime_dispatches_d_and_c_receivers_and_observes_the_work_limit() {
         add_invariant("D01SelectA", selected_c),
     ]);
     let graph_a = declarations_a
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
     let objects = ObjectEnvironment::new(
         ObjectClosure::new(
@@ -2683,7 +2787,11 @@ fn bridge_exposes_dispatch_through_an_inherited_static_type_that_never_redefines
     );
 
     let package = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
 
     // The real proof: a clause whose own `self` parameter is declared
@@ -3081,7 +3189,11 @@ fn money_bridge(root_at_b: bool) -> MoneyBridge {
     .unwrap_or_else(|refusal| panic!("expected a linked dispatch family, got {refusal:?}"));
     let package = CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap(),
     );
     MoneyBridge {
@@ -3265,7 +3377,11 @@ fn dispatch_declaration_refusals_are_the_same_under_both_check_modes() {
     let package = || one_candidate_package(receiver_type.clone(), None, ValueType::Integer);
     let refusals_of = |declarations: PackageDeclarations, mode: CheckMode| {
         declarations
-            .check(mode, CheckingLimits::default())
+            .check(
+                mode,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .expect_err("the malformed dispatch declaration is refused")
     };
     let table_out_of_range = || {

@@ -120,7 +120,11 @@ fn finish(
 ) -> Result<CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
     let pending = declarations.link_dispatch(ModelNormalizationLimits::default())?;
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .map_err(|refusals| pending.report(refusals))
 }
 

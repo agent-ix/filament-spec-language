@@ -56,7 +56,11 @@ fn check_source(temporal: bool, body: &str) -> Result<CheckedGraph, Vec<CheckRef
         Vec::new(),
     )
     .expect("the unit assembles");
-    declarations.check(CheckMode::Linked, CheckingLimits::default())
+    declarations.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
 }
 
 /// `result` is exactly one refusal with `code` and `cause`.

@@ -87,7 +87,11 @@ fn fixture_of(functions: &str) -> Fixture {
     let types = declarations.types.clone();
     let package = CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .expect("the unit checks"),
     );
     Fixture { package, types }

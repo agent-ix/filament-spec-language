@@ -95,6 +95,7 @@ fn timestamped<R>(
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
     )
     .unwrap_or_else(|refusals| panic!("{body}: {refusals:?}"));
     let [node] = graph.temporal_clauses() else {
@@ -542,6 +543,7 @@ fn event_clause<R>(
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
     )
     .unwrap_or_else(|refusals| panic!("{body}: {refusals:?}"));
     let [node] = graph.temporal_clauses() else {

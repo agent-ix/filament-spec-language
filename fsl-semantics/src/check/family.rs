@@ -3943,7 +3943,11 @@ pub(crate) mod checking_tests {
                     fsl_foundation::IdentityLimits::default(),
                 )
             }
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the fixture checks")
             .function_identity(name)
             .expect("the fixture declares its function")
@@ -4063,7 +4067,11 @@ pub(crate) mod checking_tests {
                 fsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("repeated names are refused");
         let at = |index: usize| {
             BodyLocation::root(BodyOrigin::Body {

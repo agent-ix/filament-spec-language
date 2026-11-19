@@ -1432,6 +1432,30 @@ impl Pass<'_, '_> {
         refusals: &mut Vec<CheckRefusal>,
     ) -> Option<(CheckedTemporalFormula, u64, Option<Rational>)> {
         let mut causes: Vec<TemporalCause> = Vec::new();
+        if timed_reader.is_some() {
+            for (_, node) in formula.iter() {
+                let fsl_forms::TemporalNodeForm::Operator(operator) = node else {
+                    continue;
+                };
+                match &operator.interval {
+                    None => causes.push(TemporalCause::MissingInterval {
+                        span: operator.operator_span,
+                    }),
+                    Some(fsl_forms::OperatorInterval::Timed(interval))
+                        if matches!(&interval.upper, fsl_forms::TimedUpper::Open) =>
+                    {
+                        causes.push(TemporalCause::OpenInterval {
+                            span: interval.span,
+                        })
+                    }
+                    _ => {}
+                }
+            }
+            if !causes.is_empty() {
+                refusals.extend(causes.into_iter().map(temporal_refusal));
+                return None;
+            }
+        }
         let reading = match timed_reader {
             Some(reader) => IntervalReading::Timed(reader),
             None => IntervalReading::Steps { bounded: true },
@@ -1504,13 +1528,20 @@ impl Pass<'_, '_> {
         }
         let before = refusals.len();
         for cause in causes {
+            if !bounded
+                && matches!(
+                    &cause,
+                    TemporalCause::MissingInterval { .. } | TemporalCause::OpenInterval { .. }
+                )
+            {
+                // The infinite-profile refusal above already names the whole
+                // unbounded event; do not add a duplicate interval refusal.
+                continue;
+            }
             refusals.push(match cause {
-                TemporalCause::MissingInterval { span } | TemporalCause::OpenInterval { span } => {
-                    refusal(ProbabilisticCause::UnboundedEvent {
-                        claim: claim.claim().to_owned(),
-                        span,
-                    })
-                }
+                // Bounded and timed profiles own operator-form admission.
+                // Match temporal-clause diagnostics before probabilistic
+                // event boundedness is considered.
                 other => temporal_refusal(other),
             });
         }
@@ -2506,7 +2537,11 @@ mod conversion_budget_tests {
     fn units() -> super::super::super::CheckedGraph {
         let text = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\ndimension Time;\nunit ms : Time = rational(1,1);\nunit s : Time = rational(2,1) * ms;\n";
         declarations(text)
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap()
     }
 

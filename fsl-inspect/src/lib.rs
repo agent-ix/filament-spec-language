@@ -429,7 +429,11 @@ pub(crate) mod tests {
             Vec::new(),
         )
         .expect("the fixture assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect("the fixture checks");
         let package = fsl_package::CheckedPackage::link(graph);
         let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::new(1 << 32))

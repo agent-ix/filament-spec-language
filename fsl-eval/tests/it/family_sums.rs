@@ -56,7 +56,11 @@ fn evaluation(functions: &str) -> (Outcome<Value>, Vec<LocatedLoss>) {
         Some(admit_ieee_profile(&[DefinitionRole::IeeeProfile.reference()], &[]).unwrap());
     let package = CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap_or_else(|refusal| panic!("{functions}: {refusal:?}")),
     );
     let evaluation = package

@@ -46,7 +46,11 @@ fn check(declarations: &str) -> Result<Vec<CheckRefusal>, String> {
         PackageDeclarations::assemble(raw, "fixture".to_string(), unit, models, Vec::new())
             .expect("the unit assembles");
     Ok(
-        match declarations.check(CheckMode::Linked, CheckingLimits::default()) {
+        match declarations.check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        ) {
             Ok(_) => Vec::new(),
             Err(refusals) => refusals,
         },

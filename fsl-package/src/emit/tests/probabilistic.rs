@@ -20,7 +20,11 @@ fn probabilistic_package() -> CheckedPackage {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     assert!(!graph.probabilistic_model().is_empty());
     CheckedPackage::link(graph)
@@ -59,7 +63,11 @@ pub(super) fn workload_package(weights: &str) -> CheckedPackage {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -77,7 +85,11 @@ fn claims_package(declarations: &[&str]) -> CheckedPackage {
     let unit = format!("{unit}{}\n", declarations.join("\n"));
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -391,7 +403,11 @@ pub(super) fn random_parameter_package() -> (Vec<u8>, CheckedPackage) {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     (document, CheckedPackage::link(graph))
 }
@@ -743,7 +759,11 @@ fn an_enum_valued_random_parameter_refuses_emission_with_its_locus() {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let refusal = emit_checked(&CheckedPackage::link(graph)).expect_err("emission refuses");
     assert!(matches!(
@@ -778,7 +798,11 @@ fn a_quantity_valued_random_parameter_reads_back_as_the_s3_record() {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let package = CheckedPackage::link(graph);
     assert!(matches!(
@@ -814,7 +838,11 @@ fn lineage_package(declarations: &str) -> (Vec<u8>, CheckedPackage) {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     (document, CheckedPackage::link(graph))
 }
@@ -877,7 +905,11 @@ fn a_workload_over_unrelated_types_refuses_with_its_locus_qsl_2444() {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let refusal = emit_checked(&CheckedPackage::link(graph)).expect_err("emission refuses");
     assert!(matches!(
@@ -960,7 +992,11 @@ fn changing_one_weight_or_support_value_changes_the_node_identity() {
         );
         let graph = assemble_with_models(unit.as_bytes(), &packages)
             .expect("the unit assembles")
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
         let (wire, _) = emit_and_read(&CheckedPackage::link(graph), &document);
         let [node] = super::owners::node_where(&wire, "probabilistic", "random_parameter")[..]
@@ -1046,7 +1082,11 @@ pub(super) fn delay_package(delay: &str) -> (Vec<u8>, CheckedPackage) {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the delay checks: {refusals:?}"));
     (document, CheckedPackage::link(graph))
 }
@@ -1282,7 +1322,11 @@ fn a_delay_beside_a_second_object_type_is_refused_at_the_time_source() {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default());
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        );
     let Err(refusals) = graph else {
         panic!("a timed model over two object types checks");
     };
@@ -1376,7 +1420,11 @@ fn a_delay_on_a_timed_source_model_refuses_emission_with_its_locus() {
             .expect("the package input is empty");
         let graph = assemble_with_models(source.as_bytes(), &packages)
             .expect("the unit assembles")
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{operation}: S3 accepts the delay: {refusals:?}"));
         assert_eq!(
             graph.probabilistic_model().delays().len(),

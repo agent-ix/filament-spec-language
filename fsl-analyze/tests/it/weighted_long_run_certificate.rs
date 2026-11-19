@@ -428,10 +428,12 @@ fn actual_weight_representation_and_numeric_arithmetic_limits_are_separate() {
 #[test]
 fn global_negative_admission_precedes_proofs_and_zero_binding_invents_nothing() {
     for initial in [0, 2] {
-        let world = periodic(initial, "1: 1, 3: 1", "-1", false);
+        let model = periodic_model(initial, "1: 1, 3: 1", "-1", false);
+        let world = World::try_new_with_evaluator(&model, &prob_world::ZeroRewardEvaluator)
+            .expect("a fixture evaluator lets S3 build the graph for ModelSystem re-check");
         let error = ModelSystem::new(world.subject().simulation)
             .err()
-            .expect("FR187 rejects an enumerable negative reward");
+            .expect("ModelSystem's evaluator re-check rejects an enumerable negative reward");
         let fsl_semantics::model::observation::AdmissionFailure::Refused(ref record) = error else {
             panic!("{error:?}");
         };

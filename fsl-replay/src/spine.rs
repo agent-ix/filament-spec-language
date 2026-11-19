@@ -54,17 +54,16 @@ mod clocks;
 mod lifecycle;
 #[cfg(feature = "quire-extraction")]
 mod native_fences;
-pub(crate) use clocks::ClockLocator;
-pub use clocks::{InvalidClock, RequestClocks};
 /// FR-527's TL mapping table and the native valuation a TL cross-evaluation
 /// reads (FR-757, FR-931), for the command adapter's correspondence stage.
 pub use crate::spine_eval_api::{
     SpineEvalAtomReading as AtomReading, SpineEvalLateCutoff as LateCutoff,
-    SpineEvalObservedValuation as ObservedValuation,
-    SpineEvalStampInterval as StampInterval, SpineEvalTemporalOutcome as TemporalOutcome,
-    SpineEvalTemporalRefusal as TemporalRefusal,
+    SpineEvalObservedValuation as ObservedValuation, SpineEvalStampInterval as StampInterval,
+    SpineEvalTemporalOutcome as TemporalOutcome, SpineEvalTemporalRefusal as TemporalRefusal,
     SpineEvalValueInvariantEvaluation as ValueInvariantEvaluation,
 };
+pub(crate) use clocks::ClockLocator;
+pub use clocks::{InvalidClock, RequestClocks};
 pub use fsl_package::checked_views::{
     support_of as tl_support_of, Closure as TlClosure, Support as TlSupport, Target as TlTarget,
     Unmatched as TlUnmatched,
@@ -223,17 +222,17 @@ mod call;
 mod identity_form;
 mod package_call;
 mod run_value;
-pub use package_call::run_package;
 pub use call::{
     default_accounting, run, run_with_profile_catalog,
     run_with_profile_catalog_and_integer_division, Call, CallArgument, CallIncomplete, CallLocus,
     CallOutcome, CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument,
     DEFAULT_LIVE_OCCURRENCES, DEFAULT_WORK_UNITS,
 };
-pub(crate) use call::{run_reading, run_reading_with_integer_division};
 #[cfg(test)]
 pub(crate) use call::{run_compiled, CallSources};
+pub(crate) use call::{run_reading, run_reading_with_integer_division};
 pub use identity_form::{effective_form, node_key_form, universe_form};
+pub use package_call::run_package;
 pub use run_value::ArgumentDefect;
 
 pub(crate) mod clause;
@@ -280,12 +279,12 @@ pub(crate) use native_result::{item_record, ReasonWire};
 pub use native_result::{
     read_native_run_result, read_native_run_result_bounded, temporal_disposition_json,
     write_clause_run_result, write_clause_run_result_for,
-    write_clause_run_result_for_with_extraction, CallLocationRead, CallLocusRead,
-    CallOriginRead, ClauseRunRecord, ClosureRead, CommandErrorRecord, CounterexampleRead,
-    DimensionRead, EffectiveIdRead, FairnessGranularityRead, FairnessKindRead,
-    FairnessOperationRead, FairnessRead, GuardRead, IndeterminateReasonRead, NativeRunLimits,
-    NativeRunOutcome, NativeRunReadError, NativeRunResult, NativeRunResultError, PositionRead,
-    ProgressValueRead, ProtocolAnalysisKind, ProtocolAnalysisRecord, ProtocolIncompleteCause,
+    write_clause_run_result_for_with_extraction, CallLocationRead, CallLocusRead, CallOriginRead,
+    ClauseRunRecord, ClosureRead, CommandErrorRecord, CounterexampleRead, DimensionRead,
+    EffectiveIdRead, FairnessGranularityRead, FairnessKindRead, FairnessOperationRead,
+    FairnessRead, GuardRead, IndeterminateReasonRead, NativeRunLimits, NativeRunOutcome,
+    NativeRunReadError, NativeRunResult, NativeRunResultError, PositionRead, ProgressValueRead,
+    ProtocolAnalysisKind, ProtocolAnalysisRecord, ProtocolIncompleteCause,
     ProtocolInconclusiveCause, ProtocolProofBasis, ProtocolRecordError, ProtocolSettlementEntry,
     RefusalLocusRead, SourceRefRead, SpanRead, TemporalRecord, UndefinedLocusRead,
     UnsupportedDiagnostic,
@@ -1894,6 +1893,13 @@ fn check_message_one(first: &CheckRefusal) -> String {
                     reward, operation, ..
                 } => format!(
                     "{message}: reward `{reward}` on `{operation}` reads state or an ambient value"
+                ),
+                ProbabilisticCause::NegativeReward {
+                    reward,
+                    operation,
+                    arguments,
+                } => format!(
+                    "{message}: reward `{reward}` on `{operation}` is negative for arguments {arguments:?}"
                 ),
                 ProbabilisticCause::QualitativeThreshold {
                     claim,

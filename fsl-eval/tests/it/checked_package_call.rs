@@ -139,10 +139,18 @@ fn evaluate_refuses_expression_from_another_checked_graph() {
     let source_b = fsl_foundation::source::provenance::RawSourceRef::new("test", "graph-b")
         .expect("source B is valid");
     let graph_a = declarations_with_source(vec![function_one()], source_a)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect("package A checks");
     let graph_b = declarations_with_source(vec![function_one()], source_b)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect("package B checks");
     let expression_a = graph_a
         .check_expression(
@@ -224,7 +232,11 @@ fn call_resolves_by_name_regardless_of_declaration_order() {
     ] {
         let package = link(
             declarations(functions)
-                .check(CheckMode::Linked, CheckingLimits::default())
+                .check(
+                    CheckMode::Linked,
+                    CheckingLimits::default(),
+                    &fsl_eval::value::S6aRewardEvaluator,
+                )
                 .unwrap(),
         );
         let mut meter = Meter::new(UNLIMITED);
@@ -281,7 +293,11 @@ fn evaluated_call_slots_are_stable_across_declaration_order() {
         vec![function_two(), function_one()],
     ] {
         let graph = declarations(functions)
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap();
         let call_one = graph
             .check_expression(
@@ -337,8 +353,11 @@ fn evaluated_call_slots_are_stable_across_declaration_order() {
 #[trace("TC-174", "FR-068-AC-5")]
 #[test]
 fn duplicate_function_name_is_refused_ambiguous_name() {
-    let result = declarations(vec![function_one(), function_one()])
-        .check(CheckMode::Linked, CheckingLimits::default());
+    let result = declarations(vec![function_one(), function_one()]).check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    );
     let refusals = result.expect_err("a duplicate name must be refused, not admitted");
     assert!(refusals.iter().any(|refusal: &CheckRefusal| matches!(
         &refusal.cause,
@@ -353,7 +372,11 @@ fn duplicate_function_name_is_refused_ambiguous_name() {
 fn call_to_an_unknown_function_is_refused() {
     let package = link(
         declarations(vec![function_one()])
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap(),
     );
     let objects = ObjectEnvironment::default();
@@ -381,7 +404,11 @@ fn call_charges_the_top_level_function_call_to_the_callers_meter() {
     let objects = ObjectEnvironment::default();
     let package = link(
         declarations(vec![function_one()])
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap(),
     );
     let mut meter = Meter::new(UNLIMITED);
@@ -420,7 +447,11 @@ fn a_second_call_on_a_spent_meter_is_denied_at_its_function_call() {
     let objects = ObjectEnvironment::default();
     let package = link(
         declarations(vec![function_one()])
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap(),
     );
     let mut meter = Meter::new(ScalarLimits {
@@ -497,7 +528,11 @@ fn refused_call(package: &CheckedPackage, function: &QualifiedName) -> CallFailu
 fn h1_an_undeclared_name_is_refused_by_the_spelling_given() {
     let package = link(
         declarations(vec![function_one()])
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap(),
     );
     for segments in [vec!["missing"], vec!["pkg", "one"], vec!["one", "missing"]] {
@@ -542,7 +577,11 @@ fn h2_a_declaration_not_callable_by_name_is_refused_like_an_undeclared_one() {
             ];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap(),
     );
     assert!(

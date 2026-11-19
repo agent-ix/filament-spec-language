@@ -204,15 +204,139 @@ pub fn evaluate_reward(
     arguments: Vec<Value>,
     meter: &mut Meter,
 ) -> Result<Evaluation, InternalFault> {
+    evaluate_reward_in_graph(package.graph(), reward, arguments, meter)
+}
+
+/// Evaluate an S3 reward against its assembled checked graph (FR-185). This
+/// is the graph-level half of `evaluate_reward`; it lets S3 call the same
+/// S6a interpreter before S4 has built a `CheckedPackage`.
+pub fn evaluate_reward_in_graph(
+    graph: &fsl_semantics::check::CheckedGraph,
+    reward: &fsl_semantics::check::Reward,
+    arguments: Vec<Value>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
     let objects = ObjectEnvironment::default();
     Machine::new(
-        package.graph().scope(),
-        package.graph(),
+        graph.scope(),
+        graph,
         &objects,
         meter,
-        package.graph().dispatch_tables(),
+        graph.dispatch_tables(),
     )
     .run(reward.expression(), reward.slots(), arguments)
+}
+
+/// The S6a reward evaluator supplied to every S3 check by the spine.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct S6aRewardEvaluator;
+
+impl fsl_semantics::check::RewardEvaluator for S6aRewardEvaluator {
+    fn evaluate(
+        &self,
+        graph: &fsl_semantics::check::CheckedGraph,
+        reward: &fsl_semantics::check::Reward,
+        arguments: Vec<Value>,
+        meter: &mut Meter,
+    ) -> Result<Value, fsl_semantics::check::RewardEvaluationFailure> {
+        use filament_eval::{FamilyOutcome, FamilyResult};
+        use filament_semantic_value::catalog::CatalogCode;
+        use fsl_foundation::diagnostic::{kernel_refusal_record, refusal_record, Code};
+
+        fn failure(
+            diagnostic_code: Code,
+            catalog: CatalogCode,
+            fields: impl IntoIterator<Item = (&'static str, String)>,
+        ) -> fsl_semantics::check::RewardEvaluationFailure {
+            fsl_semantics::check::RewardEvaluationFailure {
+                diagnostic_code,
+                catalog,
+                fields: fields.into_iter().collect(),
+            }
+        }
+
+        fn code(catalog: CatalogCode) -> Code {
+            match catalog.code() {
+                "ill_typed" => Code::IllTyped,
+                "undefined_expression" => Code::UndefinedExpression,
+                "stage_limit_exceeded" => Code::StageLimitExceeded,
+                "invalid_probabilistic_model" => Code::InvalidProbabilisticModel,
+                _ => Code::RuntimeInvariant,
+            }
+        }
+
+        let evaluation =
+            evaluate_reward_in_graph(graph, reward, arguments, meter).map_err(|_| {
+                failure(
+                    Code::RuntimeInvariant,
+                    CatalogCode::new("runtime_invariant", "established-invariant-broken"),
+                    std::iter::empty::<(&'static str, String)>(),
+                )
+            })?;
+        match evaluation.outcome {
+            FamilyOutcome::Evaluated(Outcome::Completed(value)) => Ok(value),
+            FamilyOutcome::Evaluated(Outcome::Undefined(reason)) => Err(failure(
+                Code::UndefinedExpression,
+                CatalogCode::new("undefined_expression", "unproved-nonzero"),
+                [("reason", format!("{reason:?}"))],
+            )),
+            FamilyOutcome::Evaluated(Outcome::Refused(refusal)) => {
+                let Some(record) = kernel_refusal_record(&refusal, None) else {
+                    return Err(failure(
+                        Code::RuntimeInvariant,
+                        CatalogCode::new("runtime_invariant", "established-invariant-broken"),
+                        [("reason", format!("{refusal:?}"))],
+                    ));
+                };
+                let catalog = record.code();
+                Err(failure(
+                    code(catalog),
+                    catalog,
+                    record
+                        .fields()
+                        .iter()
+                        .map(|(key, value)| (*key, value.clone())),
+                ))
+            }
+            FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)) => Err(failure(
+                Code::StageLimitExceeded,
+                CatalogCode::new("stage_limit_exceeded", "work-budget-exceeded"),
+                [
+                    ("limit", incomplete.limit.to_string()),
+                    ("consumed", incomplete.consumed.to_string()),
+                    ("next_charge", incomplete.next_charge.to_string()),
+                ],
+            )),
+            FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause)) => {
+                let record = cause.undefined_record();
+                Err(failure(
+                    Code::UndefinedExpression,
+                    CatalogCode::new("undefined_expression", record.reason.as_str()),
+                    record.fields,
+                ))
+            }
+            FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause)) => {
+                let Some(record) = refusal_record(cause.as_ref(), None) else {
+                    return Err(failure(
+                        Code::RuntimeInvariant,
+                        CatalogCode::new("runtime_invariant", "established-invariant-broken"),
+                        [("reason", format!("{cause:?}"))],
+                    ));
+                };
+                let catalog = record.code();
+                Err(failure(
+                    code(catalog),
+                    catalog,
+                    record
+                        .fields()
+                        .iter()
+                        .map(|(key, value)| (*key, value.clone())),
+                ))
+            }
+            #[cfg(seam_probe)]
+            FamilyOutcome::__SeamProbe => unreachable!("probe outcome is not constructed"),
+        }
+    }
 }
 
 /// FR-124 (ADR-018 DL-1): evaluate the `terminal when` predicate
@@ -2925,7 +3049,11 @@ mod tests {
             declarations.functions = vec![identity_function()];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
         .expect("id(x: Integer[0,10]): Integer[0,10] = x checks cleanly");
         let identity = graph
             .function_identity("id")
@@ -3032,7 +3160,11 @@ mod tests {
             )];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
         .expect("flip(x: Boolean): Boolean = not x checks cleanly");
         let flip = graph.function_identity("flip").expect("flip is declared");
         let package = fsl_package::CheckedPackage::link(graph);
@@ -3142,7 +3274,11 @@ mod tests {
                 "fixture".to_owned(),
                 fsl_foundation::IdentityLimits::default(),
             )
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
+            )
             .expect("an empty package checks cleanly"),
         );
         let objects = ObjectEnvironment::default();
@@ -3201,7 +3337,11 @@ mod tests {
             declarations.functions = vec![identity_function()];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
         .expect("id(x: Integer[0,10]): Integer[0,10] = x checks cleanly");
         let identity = graph
             .function_identity("id")

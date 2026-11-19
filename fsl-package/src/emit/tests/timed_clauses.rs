@@ -46,7 +46,11 @@ fn checked(
     let unit = clocked_unit(body);
     let checked = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default());
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        );
     (unit, checked)
 }
 
@@ -1076,7 +1080,11 @@ fn a_point_qualified_clock_clause_refuses_at_the_clause() {
         },
     )
     .expect("the unit assembles")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    )
     .expect_err("a point-qualified clock clause is not written yet");
     let found = refusals.iter().find_map(|refusal| match &refusal.cause {
         fsl_semantics::check::CheckCause::Temporal(cause) => match &**cause {
@@ -1566,7 +1574,11 @@ fn a_point_bound_clock_clause_names_its_point_anchor() {
         },
     )
     .expect("the unit assembles")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("the point-bound clause checks: {refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
     let wire = wire(&emission);

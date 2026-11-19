@@ -62,7 +62,11 @@ fn fixtures_s_s_r_and_s_p_emit_source_objects() {
             .link_dispatch(Default::default())
             .unwrap_or_else(|refusals| panic!("{name}: {refusals:?}"));
         let graph = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{name}: {:?}", pending.report(refusals)));
         let package = CheckedPackage::link(graph);
         let emission = emit_checked(&package).unwrap_or_else(|error| panic!("{name}: {error:?}"));
@@ -123,7 +127,11 @@ fn fixture_s_m_emits_the_selected_and_source_object_routes() {
         .link_dispatch(Default::default())
         .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{:?}", pending.report(refusals)));
     let package = CheckedPackage::link(graph);
     let emission = emit_checked(&package).expect("the source-owned package emits");
@@ -153,7 +161,11 @@ fn fixture_e_s_checks_and_emits_object_node() {
         .link_dispatch(Default::default())
         .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("E-S checks: {:?}", pending.report(refusals)));
     let package = CheckedPackage::link(graph);
     let emission = emit_checked(&package).expect("the source-owned package emits");
@@ -174,7 +186,11 @@ fn fixture_s_package() -> CheckedPackage {
         .link_dispatch(Default::default())
         .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{:?}", pending.report(refusals)));
     CheckedPackage::link(graph)
 }
@@ -309,7 +325,11 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
         fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
     let declarations = assemble_with_models(source.as_bytes(), &packages).unwrap();
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("source object checks: {refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the source emits");
     let wire = wire(&emission);
@@ -473,7 +493,11 @@ fn source_object_operations_roundtrip_through_qc30_intake() {
         fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
     let declarations = assemble_with_models(source.as_bytes(), &packages).unwrap();
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("source object checks: {refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the source emits");
     let wire = wire(&emission);
@@ -543,7 +567,11 @@ fn source_object_rows_carry_their_own_operations_and_query_flag() {
         fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
     let declarations = assemble_with_models(source.as_bytes(), &packages).unwrap();
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("source object checks: {refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("S4 emits fixture S");
     let wire = wire(&emission);
@@ -635,7 +663,11 @@ fn fixture_d_emission_has_no_source_object_operations() {
     )
     .expect("D assembles");
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("D checks: {refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("D emits");
     assert!(emission.selected_source_object_rows().is_empty());
@@ -654,7 +686,11 @@ fn source_spelling_registry_changes_do_not_change_emitted_package_bytes() {
         let declarations = assemble_with_models(text.as_bytes(), &packages)
             .expect("the spelling variant assembles");
         let graph = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("the spelling variant checks: {refusals:?}"));
         emit_checked(&CheckedPackage::link(graph))
             .expect("the spelling variant emits")
@@ -678,7 +714,11 @@ fn source_object_node_identity_tracks_only_the_object_declaration_identity() {
         let declarations = assemble_with_models(text.as_bytes(), &packages)
             .unwrap_or_else(|error| panic!("source assembles: {error:?}"));
         let graph = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("source checks: {refusals:?}"));
         let emission = emit_checked(&CheckedPackage::link(graph)).expect("source emits");
         let wire = wire(&emission);
@@ -731,7 +771,11 @@ fn source_object_node_identity_differs_from_selected_model_node_identity() {
             .link_dispatch(Default::default())
             .unwrap_or_else(|refusals| panic!("{refusals:?}"));
         let graph = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{:?}", pending.report(refusals)));
         wire(&emit_checked(&CheckedPackage::link(graph)).expect("S-M emits"))
     };
@@ -837,7 +881,11 @@ fn fixture_s_protocol_package() -> CheckedPackage {
         .link_dispatch(Default::default())
         .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{:?}", pending.report(refusals)));
     CheckedPackage::link(graph)
 }
@@ -1122,7 +1170,11 @@ fn timed_source_package() -> CheckedPackage {
     let declarations =
         assemble_with_models(text.as_bytes(), &packages).expect("the unit assembles");
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -1412,9 +1464,14 @@ fn admitted_identity_file(unit: &str) -> (Value, CheckedPackageV2, Vec<u8>) {
     let text = format!("{HEADER}{unit}");
     let packages =
         fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
-    let declarations = assemble_with_models(text.as_bytes(), &packages).expect("the unit assembles");
+    let declarations =
+        assemble_with_models(text.as_bytes(), &packages).expect("the unit assembles");
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("S4 emits the unit");
     let wire = wire(&emission);
@@ -1500,7 +1557,10 @@ fn source_identity_rows_list_clock_members_and_clock_parameters() {
     let w = identity_row(&file, "source_records", "W");
     assert_eq!(w["members"][0]["admitted_name"], "c");
     assert_eq!(w["members"][0]["member_type"], "ix://filament/native/Clock");
-    assert!(read_identity_file(&file, &package).is_ok(), "the file reads back");
+    assert!(
+        read_identity_file(&file, &package).is_ok(),
+        "the file reads back"
+    );
 }
 
 /// FR-531-AC-34's unit.
@@ -1536,7 +1596,13 @@ fn the_identity_file_carries_data_and_clock_member_entries() {
         .collect();
     assert_eq!(
         kinds,
-        [("w", true), ("d", false), ("q", false), ("p", true), ("u", true)]
+        [
+            ("w", true),
+            ("d", false),
+            ("q", false),
+            ("p", true),
+            ("u", true)
+        ]
     );
     let q = &o["members"][2];
     assert_eq!(q["member_type"], "Sequence<ix://filament/native/Clock>");
@@ -1545,13 +1611,22 @@ fn the_identity_file_carries_data_and_clock_member_entries() {
         json!([{"kind": "sequence", "minimum": "0", "maximum": "3"}])
     );
     let p = identity_row(&file, "source_tuples", "P");
-    assert_eq!(p["positions"][0]["member_type"], "ix://filament/native/Clock");
+    assert_eq!(
+        p["positions"][0]["member_type"],
+        "ix://filament/native/Clock"
+    );
     assert!(p["positions"][1]["type_node"].is_string());
     let u = identity_row(&file, "source_unions", "U");
     let armed = &u["members"][0];
     assert_eq!(armed["payload_nodes"], json!([]));
-    assert_eq!(armed["clock_payload"][0]["member_type"], "ix://filament/native/Clock");
-    assert!(read_identity_file(&file, &package).is_ok(), "the file reads back");
+    assert_eq!(
+        armed["clock_payload"][0]["member_type"],
+        "ix://filament/native/Clock"
+    );
+    assert!(
+        read_identity_file(&file, &package).is_ok(),
+        "the file reads back"
+    );
     let mut old = file.clone();
     old["format"] = json!("filament.checked-handoff.identities/4");
     let mut both = file.clone();
@@ -1570,7 +1645,10 @@ fn the_identity_file_carries_data_and_clock_member_entries() {
         ("no tuples", no_tuples),
         ("no clock_parameters", no_parameters),
     ] {
-        assert!(read_identity_file(&edited, &package).is_err(), "{name} refuses");
+        assert!(
+            read_identity_file(&edited, &package).is_err(),
+            "{name} refuses"
+        );
     }
 }
 
@@ -1580,14 +1658,19 @@ fn the_identity_file_carries_data_and_clock_member_entries() {
 fn a_source_clock_member_row_refuses_at_the_identity_row_join() {
     let (wire, package, bytes) = admitted_identity_file(TIMED);
     let mut file: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");
-    assert!(read_identity_file(&file, &package).is_ok(), "both places join");
+    assert!(
+        read_identity_file(&file, &package).is_ok(),
+        "both places join"
+    );
     let index = file["source_objects"]
         .as_array()
         .unwrap()
         .iter()
         .position(|row| row["source_identity"] == "O")
         .expect("O's row");
-    let members = file["source_objects"][index]["members"].as_array_mut().unwrap();
+    let members = file["source_objects"][index]["members"]
+        .as_array_mut()
+        .unwrap();
     let d = members
         .iter()
         .position(|entry| entry["admitted_name"] == "d")
@@ -1601,7 +1684,9 @@ fn a_source_clock_member_row_refuses_at_the_identity_row_join() {
     let text = format!("{refusal:?}");
     assert!(text.contains("MalformedClockPlace"), "{text}");
     assert!(
-        text.contains(&format!("/semantic_graph/nodes/{place}/body/members/2/value/members/0")),
+        text.contains(&format!(
+            "/semantic_graph/nodes/{place}/body/members/2/value/members/0"
+        )),
         "{text}"
     );
 }

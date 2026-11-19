@@ -292,7 +292,11 @@ impl World {
             .link_dispatch(ModelNormalizationLimits::default())
             .unwrap_or_else(|refusals| panic!("the dispatch links: {refusals:#?}"));
         let graph = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:#?}"));
 
         let header = json!({"identity": model.package});

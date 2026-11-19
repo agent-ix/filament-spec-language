@@ -165,7 +165,11 @@ pub(crate) fn checked_with_mode(
     )
     .expect("the unit assembles");
     let graph = declarations
-        .check(mode, CheckingLimits::default())
+        .check(
+            mode,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{text}: the unit checks: {refusals:?}"));
     let clauses = graph
         .temporal_clauses()

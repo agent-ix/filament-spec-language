@@ -689,7 +689,11 @@ mod checked {
 
     fn package(declarations: PackageDeclarations) -> CheckedPackage {
         let graph = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap();
         // ADR-013 T-1 (FR-087): the S4 link step, over an
         // empty dependency closure -- this fixture declares no import.
@@ -1202,7 +1206,11 @@ mod map_source {
             Vec::new(),
         )
         .expect("the assembler admits the declarations")
-        .check(mode, CheckingLimits::default())
+        .check(
+            mode,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .map(CheckedPackage::link)
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"))
     }

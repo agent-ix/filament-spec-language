@@ -238,7 +238,11 @@ fn fixture_with_recovery_predicate(bound: u64, recovery_predicate: Option<&str>)
             Vec::new(),
         )
         .expect("unit assembled")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("protocol checks: {refusals:?}")),
     );
 

@@ -27,7 +27,11 @@ fn source(text: &str) -> CheckedGraph {
         Vec::new(),
     )
     .expect("the source assembles")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .expect("the source checks")
 }
 

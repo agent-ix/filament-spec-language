@@ -509,7 +509,11 @@ fn an_operation_parameter_read_refuses_as_a_missing_name() {
     let declarations = admit_and_assemble_with_body(&document, body).expect("the unit assembles");
     let regions = declarations.regions();
     let refusals = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("the parameter is not in scope");
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal: {refusals:?}");

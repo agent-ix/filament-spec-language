@@ -25,7 +25,11 @@ fn refusals(unit: &str, documents: &[Vec<u8>]) -> Vec<CheckRefusal> {
         fsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice)).unwrap();
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .map(|_| ())
         .expect_err("the unit refuses")
 }

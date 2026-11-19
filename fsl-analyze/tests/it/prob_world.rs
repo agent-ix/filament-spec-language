@@ -12,14 +12,18 @@
 use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
-use filament_exact::ScalarLimits;
+use filament_exact::{Integer, ScalarLimits, Value};
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, PopulationUniverse};
+use fsl_eval::value::S6aRewardEvaluator;
 use fsl_package::CheckedPackage;
 use fsl_replay::ModelCheckLimits;
-use fsl_semantics::check::{CheckRefusal, CheckedProbabilisticClaim, PackageDeclarations};
+use fsl_semantics::check::{
+    CheckRefusal, CheckedGraph, CheckedProbabilisticClaim, PackageDeclarations, Reward,
+    RewardEvaluationFailure, RewardEvaluator,
+};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
@@ -236,7 +240,41 @@ pub(crate) const UNLIMITED: ScalarLimits = ScalarLimits {
     result_units: 1 << 30,
 };
 
+/// Lets S3 assemble a deliberately unsafe reward graph so ModelSystem's
+/// independent evaluator check can be exercised below.
+pub(crate) struct ZeroRewardEvaluator;
+
+impl RewardEvaluator for ZeroRewardEvaluator {
+    fn evaluate(
+        &self,
+        _graph: &CheckedGraph,
+        _reward: &Reward,
+        _arguments: Vec<Value>,
+        _meter: &mut filament_exact::Meter,
+    ) -> Result<Value, RewardEvaluationFailure> {
+        Ok(Value::Integer(Integer::zero()))
+    }
+}
+
 impl World {
+    /// `model`, checked with a caller supplied evaluator for S3 boundary
+    /// tests. Model admission still uses its real evaluator afterward.
+    pub(crate) fn try_new_with_evaluator(
+        model: &Model,
+        evaluator: &dyn RewardEvaluator,
+    ) -> Result<Self, Vec<CheckRefusal>> {
+        Self::try_build_with_mode_and_evaluator(
+            model,
+            &[model.key],
+            &[model.key],
+            &[&model.initial],
+            false,
+            false,
+            CheckMode::Linked,
+            evaluator,
+        )
+    }
+
     /// `model`, checked.
     pub(crate) fn new(model: &Model) -> Self {
         Self::build(
@@ -395,6 +433,28 @@ impl World {
         value_profile: bool,
         mode: CheckMode,
     ) -> Result<Self, Vec<CheckRefusal>> {
+        Self::try_build_with_mode_and_evaluator(
+            model,
+            keys,
+            live,
+            initials,
+            symmetric,
+            value_profile,
+            mode,
+            &S6aRewardEvaluator,
+        )
+    }
+
+    fn try_build_with_mode_and_evaluator(
+        model: &Model,
+        keys: &[&str],
+        live: &[&str],
+        initials: &[&Json],
+        symmetric: bool,
+        value_profile: bool,
+        mode: CheckMode,
+        evaluator: &dyn RewardEvaluator,
+    ) -> Result<Self, Vec<CheckRefusal>> {
         let document = model.document(symmetric);
         let packages = package_input([document.as_slice()]).unwrap();
         let unit = format!(
@@ -437,7 +497,7 @@ impl World {
             Vec::new(),
         )
         .expect("the unit assembles")
-        .check(mode, CheckingLimits::default())?;
+        .check(mode, CheckingLimits::default(), evaluator)?;
 
         let header = json!({"identity": model.package});
         let mut snapshots = BTreeMap::new();

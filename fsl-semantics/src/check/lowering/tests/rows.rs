@@ -672,7 +672,11 @@ fn enum_parameter_package(functions: usize) -> PackageDeclarations {
 #[test]
 fn preimage_bytes_bind_before_the_work_budget() {
     enum_parameter_package(4_000)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("4,000 enum-parameter functions check at the default ceilings");
     let bytes = 10_000;
     let refusals = enum_parameter_package(2)
@@ -715,7 +719,11 @@ fn assert_rows(rows: Vec<Row>) {
         let name = row.package.functions[0].name.clone();
         let graph = row
             .package
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{name}: {refusals:?}"));
         let node = application(graph.semantic_graph(), row.identity);
         let operation = &node["body"]["operation"];
@@ -832,7 +840,11 @@ fn a_tuple_value_is_a_value_node_over_its_arguments() {
             fsl_foundation::IdentityLimits::default(),
         )
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .expect("the tuple fixture checks");
     let graph = checked.semantic_graph();
     let tuple = graph

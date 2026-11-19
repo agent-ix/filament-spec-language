@@ -1641,7 +1641,9 @@ fn tc_741_corpus_and_function_reports_carry_their_basis() {
         |request: ClauseRunRequest, basis, parent_version, child_version| {
             let report = run_clause(request).expect("a well-formed request always reports");
             assert_eq!(report.basis, basis);
-            let record = report.witness.expect("the decisive report has a witness record");
+            let record = report
+                .witness
+                .expect("the decisive report has a witness record");
             assert_eq!(record.deciding_comparison, Some(comparison.clone()));
             let operands = record.operands.as_ref().expect("comparison operands");
             assert!(crate::result::same_element(
@@ -1677,11 +1679,19 @@ fn tc_741_corpus_and_function_reports_carry_their_basis() {
         |report: crate::spine::ClauseRunReport, basis, truth, post_version, pre_version| {
             assert_eq!(report.basis, basis);
             assert_eq!(report.disposition.truth(), Some(truth));
-            let record = report.witness.expect("the decisive report has a witness record");
+            let record = report
+                .witness
+                .expect("the decisive report has a witness record");
             assert_eq!(record.deciding_comparison, Some(version_comparison.clone()));
             let operands = record.operands.as_ref().expect("comparison operands");
-            assert!(crate::result::same_element(&operands[0], &integer(post_version)));
-            assert!(crate::result::same_element(&operands[1], &integer(pre_version)));
+            assert!(crate::result::same_element(
+                &operands[0],
+                &integer(post_version)
+            ));
+            assert!(crate::result::same_element(
+                &operands[1],
+                &integer(pre_version)
+            ));
             assert_eq!(record.decision_path, Some(vec![version_comparison.clone()]));
         };
     assert_version_unchanged_record(
@@ -2690,6 +2700,7 @@ fn metre_package() -> (fsl_package::CheckedPackage, filament_exact::UnitId) {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
         )
         .expect("the unit table checks");
     (

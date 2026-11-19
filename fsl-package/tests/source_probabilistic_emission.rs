@@ -59,7 +59,11 @@ fn check(body: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
         .link_dispatch(Default::default())
         .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .map(CheckedPackage::link)
 }
 

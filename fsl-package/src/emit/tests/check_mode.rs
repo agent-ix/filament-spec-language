@@ -16,7 +16,11 @@ fn emitted(declarations: &str, mode: CheckMode) -> Value {
     let packages = fsl_semantics::model::intake::package_input([]).unwrap();
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(mode, CheckingLimits::default())
+        .check(
+            mode,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the unit checks under {mode:?}: {refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
     wire(&emission)

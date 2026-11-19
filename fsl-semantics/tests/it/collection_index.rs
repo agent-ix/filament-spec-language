@@ -31,7 +31,11 @@ fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
         Vec::new(),
     )
     .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
 }
 
 fn assert_refused(declarations: &str, code: Code, cause: &str) {

@@ -84,7 +84,11 @@ fn check(text: &str, packages: &fsl_semantics::model::intake::PackageInput) -> C
     .expect("the model is admitted");
     PackageDeclarations::assemble(raw, "fixture".to_string(), unit, models, Vec::new())
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect("the unit checks")
 }
 

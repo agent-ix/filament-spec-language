@@ -165,7 +165,11 @@ fn a_channel_emits_only_its_declared_connection_reference() {
         Vec::new(),
     )
     .expect("I1 admits the model")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
     assert_eq!(emission.omitted, []);
@@ -864,7 +868,11 @@ fn admitted_config(declarations: &str) -> Value {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{unit}\n{refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
     assert_eq!(emission.omitted, []);
@@ -1146,7 +1154,11 @@ fn an_attempt_ordering_outside_a_parallel_is_refused_so_the_group_is_empty() {
     );
     let refusals = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("an ordering on a local attempt is refused");
     let text = format!("{refusals:?}");
     assert!(
@@ -1566,7 +1578,11 @@ fn activation_capture_self_and_foreign_reads_are_refused_by_the_reader() {
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let graph = assemble_with_models(tc1070::SOURCE.as_bytes(), &packages)
         .expect("E assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("E checks");
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("E emits");
     assert!(emission.omitted.is_empty());
@@ -1671,7 +1687,11 @@ fn each_position_of_an_application_has_its_own_occurrence_in_document_order() {
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let graph = assemble_with_models(tc1070::SOURCE.as_bytes(), &packages)
         .expect("E assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("E checks");
     let site = |name: &str, path: &[usize]| {
         Location::at(
@@ -1736,7 +1756,11 @@ fn e_c_shared_constraint_has_occurrence_zero_at_tried_and_one_at_picked() {
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let graph = assemble_with_models(E_C_TRIED_PICKED.as_bytes(), &packages)
         .expect("E-C fragment assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("E-C fragment checks");
     let body = |attempt: &str| {
         Location::at(

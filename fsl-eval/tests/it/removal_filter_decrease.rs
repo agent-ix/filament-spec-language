@@ -52,7 +52,11 @@ fn check(declarations: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
     )
     .expect("the unit assembles");
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .map(CheckedPackage::link)
 }
 

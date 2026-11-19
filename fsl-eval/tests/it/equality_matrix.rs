@@ -278,7 +278,11 @@ fn real_public_enum_comparator_fault_retains_its_nested_ill_typed_cause() {
         };
         let package = CheckedPackage::link(
             declarations
-                .check(CheckMode::Linked, CheckingLimits::default())
+                .check(
+                    CheckMode::Linked,
+                    CheckingLimits::default(),
+                    &fsl_eval::value::S6aRewardEvaluator,
+                )
                 .unwrap(),
         );
         let checked = package
@@ -2238,7 +2242,11 @@ fn expression_package(types: TypeEnvironment, ieee: bool) -> CheckedPackage {
         declarations.ieee_profile = ieee.then(|| profile().clone());
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .unwrap();
     // ADR-013 T-1 (FR-087): the S4 link step, over an empty
     // dependency closure -- this fixture declares no import.
@@ -3708,7 +3716,11 @@ fn e20_source_order_row_evaluates_fields_in_declaration_order() {
         )];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .unwrap();
     // ADR-013 T-1 (FR-087): the S4 link step, over an empty
     // dependency closure -- this fixture declares no import.

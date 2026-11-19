@@ -384,6 +384,7 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::Extension(_)
         | CheckCause::RefinementNotEmitted { .. }
         | CheckCause::Probabilistic(_)
+        | CheckCause::RewardEvaluation(_)
         | CheckCause::TimedNotChecked { .. }
         | CheckCause::Temporal(_)
         | CheckCause::Hyper(_)

@@ -57,7 +57,11 @@ fn compile(declarations: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
     declarations.ieee_profile =
         Some(admit_ieee_profile(&[DefinitionRole::IeeeProfile.reference()], &[]).unwrap());
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .map(CheckedPackage::link)
 }
 

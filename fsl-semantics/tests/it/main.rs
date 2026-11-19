@@ -11,6 +11,8 @@
 
 #[path = "../../../tests/support/published_fspec.rs"]
 pub(crate) mod published_fspec;
+#[path = "../support/reward_evaluator.rs"]
+mod reward_evaluator;
 
 // Integration units declare this source package name explicitly. Imported model
 // identities in individual fixtures remain independent of the source package.

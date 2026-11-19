@@ -34,7 +34,11 @@ fn protocol_emission(model: &[u8]) -> fsl_package::Emission {
         Vec::new(),
     )
     .expect("protocol assembles")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    )
     .expect("protocol checks");
     let source = graph.source().clone();
     let clock = filament_contract_model::ClockConfiguration::Timed {

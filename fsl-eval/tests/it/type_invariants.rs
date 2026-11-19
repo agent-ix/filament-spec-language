@@ -259,7 +259,11 @@ fn compile_parsed(unit: &str, packages: &Packages) -> Compiled {
         Vec::new(),
     )
     .expect("the unit assembles");
-    match declarations.check(CheckMode::Linked, CheckingLimits::default()) {
+    match declarations.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    ) {
         Ok(graph) => Compiled::Checked(Box::new(graph)),
         Err(refusals) => Compiled::Refused(refusals),
     }

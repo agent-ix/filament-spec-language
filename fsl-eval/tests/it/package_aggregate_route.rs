@@ -55,7 +55,11 @@ fn with_routes<R>(
     )
     .expect("the unit assembles");
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect("the aggregate clause checks");
     let selection = graph
         .temporal_clauses()

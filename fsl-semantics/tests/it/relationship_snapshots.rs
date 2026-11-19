@@ -451,7 +451,11 @@ fn checked(variant: &Variant) -> Admission {
         Vec::new(),
     )
     .expect("the model assembles")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
     .expect("the unit checks");
     Admission { graph, packages }
 }
