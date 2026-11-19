@@ -47,12 +47,38 @@ pub enum ModelCheckItem<'a> {
     /// FR-224's derived race-freedom item, `always holds(not raced)`, over a
     /// protocol subject with a weak `parallel`.
     RaceFreedom,
-    /// FR-951's invariant item: the checked `invariant` state clause
-    /// `clause` holds at every reachable state of a model subject.
+    /// FR-951's invariant item: the `invariant` state clause `clause` holds
+    /// at every reachable state of a model subject.
     Invariant {
-        /// The checked `invariant` state clause.
-        clause: &'a CheckedStateClause,
+        /// The `invariant` state clause, by name and claim occurrence.
+        clause: InvariantClause<'a>,
     },
+}
+
+/// The `invariant` state clause an invariant item decides (FR-951): its
+/// declared name, which keys its evaluation, and its node and `claim`
+/// occurrence, which key the proof's key-context root. The source route
+/// reads them from its checked clause, the package route from the clause's
+/// `claim_names` row (FR-940).
+#[derive(Clone, Copy, Debug)]
+pub struct InvariantClause<'a> {
+    /// The declared name.
+    pub name: &'a str,
+    /// The clause's `state_clause` node.
+    pub node: &'a filament_exact::NodeKey,
+    /// The declaration's `claim` occurrence of the node.
+    pub claim: &'a filament_exact::Origin,
+}
+
+impl<'a> InvariantClause<'a> {
+    /// The source route's invariant clause.
+    pub fn of(clause: &'a CheckedStateClause) -> Self {
+        Self {
+            name: clause.name(),
+            node: clause.node(),
+            claim: clause.claim(),
+        }
+    }
 }
 
 /// One instance of an item: the bound population key, `None` for the
@@ -226,14 +252,17 @@ impl ModelCheckItem<'_> {
                 ),
             }]),
             Self::Invariant { clause } => {
-                let package = subject
-                    .simulation
-                    .source_package()
-                    .ok_or(ItemRefusal::Fault(InternalFault::new(
-                        "model-check-item",
-                        "the-item-reads-source-forms",
-                    )))?;
-                let occurrence = invariant_root(package, clause)?;
+                // The source route checks the root against its own checked
+                // clauses; the package route's root is the clause's
+                // `claim_names` row, which only an invariant row selects
+                // (FR-940).
+                let occurrence = match subject.simulation.source_package() {
+                    Some(package) => invariant_root(package, *clause)?,
+                    None => fsl_foundation::source::provenance::OccurrenceKey::new(
+                        clause.node.clone(),
+                        clause.claim.clone(),
+                    ),
+                };
                 Ok(vec![Instance {
                     binding: None,
                     translation: Translation::Safety(
@@ -343,7 +372,7 @@ impl ModelCheckItem<'_> {
 /// [`ClauseRootRefusal::Undeclared`] naming the clause.
 pub fn invariant_root(
     package: &fsl_package::CheckedPackage,
-    clause: &CheckedStateClause,
+    clause: InvariantClause<'_>,
 ) -> Result<fsl_foundation::source::provenance::OccurrenceKey, ClauseRootRefusal> {
     package
         .graph()
@@ -351,8 +380,8 @@ pub fn invariant_root(
         .iter()
         .find(|candidate| {
             candidate.is_invariant()
-                && candidate.identity() == clause.identity()
-                && candidate.claim() == clause.claim()
+                && candidate.node() == clause.node
+                && candidate.claim() == clause.claim
         })
         .map(|found| {
             fsl_foundation::source::provenance::OccurrenceKey::new(
@@ -361,6 +390,6 @@ pub fn invariant_root(
             )
         })
         .ok_or_else(|| ClauseRootRefusal::Undeclared {
-            name: clause.name().to_owned(),
+            name: clause.name.to_owned(),
         })
 }

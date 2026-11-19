@@ -659,13 +659,17 @@ pub fn graph_evidence_wire(
             stem, undefined, ..
         } => {
             let role = undefined.predicate.map(|role| match (role, form) {
+                (
+                    fsl_semantics::check::PredicateRole::Target,
+                    StateGraphPropertyForm::UniquePath,
+                ) => "Y",
                 (fsl_semantics::check::PredicateRole::Target, _) => "P",
                 (
                     fsl_semantics::check::PredicateRole::From,
                     StateGraphPropertyForm::AlwaysPossible,
                 ) => "Q",
                 (fsl_semantics::check::PredicateRole::From, _) => "X",
-                (fsl_semantics::check::PredicateRole::To, _) => "Y",
+                
             });
             let mut at = json!({
                 "position": stem.steps.len(),

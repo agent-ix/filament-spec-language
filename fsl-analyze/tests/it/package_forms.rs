@@ -12,13 +12,13 @@ use fsl_package::{BarePackage, BareSupply, ReadEqualityRows, ReadIdentityRows};
 use fsl_semantics::check::{FormulaNode, FormulaNodeId, TemporalClauseNode};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::model::observation::{admit_trace_snapshot, DocumentRef, ObservationLimits};
+use fsl_semantics::model::observation::{DocumentRef, ObservationLimits, admit_trace_snapshot};
 use ix_trace_rs::trace;
 
 use crate::analyze_cli_support::{
-    counter_request_with, counter_snapshot, package_selection, request_members, Workspace, HANDOFF,
+    HANDOFF, Workspace, counter_request_with, counter_snapshot, package_selection, request_members,
 };
-use crate::counter::{document, package_with_mode, CONTRACT};
+use crate::counter::{CONTRACT, document, package_with_mode};
 use filament_semantic_value::checking::CheckMode;
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -66,8 +66,20 @@ fn handoff(
     Handoff,
     filament_contract_model::NativeJoinBudget,
 ) {
+    handoff_of(name, CLAUSES)
+}
+
+/// [`handoff`] of the unit whose claims are `claims`.
+fn handoff_of(
+    name: &str,
+    claims: &str,
+) -> (
+    Workspace,
+    Handoff,
+    filament_contract_model::NativeJoinBudget,
+) {
     let ws = Workspace::new(name);
-    let _ = counter_request_with(&ws, CLAUSES, request_members(None));
+    let _ = counter_request_with(&ws, claims, request_members(None));
     let (_, bytes) = package_selection(&ws, &request_members(None));
     let directory = ws.path(HANDOFF);
     let compiled = fsl_command::checked_handoff::compile(&directory)
@@ -390,7 +402,7 @@ fn document_ref(label: &str) -> DocumentRef {
 fn package_frame_equals_source_frame() {
     use filament_exact::Identifier;
     use fsl_semantics::model::observation::{
-        admit_frame_invocation, FrameFacts, OperationFacts, Provisions,
+        FrameFacts, OperationFacts, Provisions, admit_frame_invocation,
     };
 
     let (_ws, handoff, mut budget) = handoff("package-forms-frame");
@@ -741,7 +753,7 @@ fn admit_clause(
     input: fsl_semantics::model::observation::ClauseSelectionInput,
 ) -> fsl_semantics::model::observation::AdmittedObservations {
     use fsl_semantics::model::observation::{
-        admit_observations, ClauseFacts, ClauseSelection, OperationFacts, Provisions,
+        ClauseFacts, ClauseSelection, OperationFacts, Provisions, admit_observations,
     };
     let graph = handoff.compiled.checked().graph();
     let clause = graph.state_clause(name).expect("the clause");
@@ -974,7 +986,10 @@ fn the_package_form_of_each_temporal_clause_equals_its_source_form() {
     assert_eq!(clauses.len(), 4);
     for source in clauses {
         let mut form = bare
-            .temporal_clause_form(&source.identity())
+            .temporal_clause_form(&fsl_foundation::source::provenance::OccurrenceKey::new(
+                source.identity(),
+                source.claim().clone(),
+            ))
             .unwrap_or_else(|refusal| panic!("{}: {refusal:?}", source.clause().name()));
         if let filament_exact::ValueType::Reference(object) = &form.over.1 {
             form.populations = model.overlapping_populations(object.clone());
@@ -997,4 +1012,179 @@ fn the_package_form_of_each_temporal_clause_equals_its_source_form() {
         );
         assert!(package == *source.clause());
     }
+}
+
+/// The four state-graph claims of FR-940-AC-11 over the Counter unit: one of
+/// each form, `Back` written without `from`.
+const STATE_GRAPH_CLAIMS: &str = "\
+     possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n\
+     always possible Back using v over (c: M::Counter) { c.value = 0 }\n\
+     always possible FromOne using v over (c: M::Counter) from (c.value = 1) { c.value = 0 }\n\
+     unique path Straight using v over (c: M::Counter) from (c.value = 0) to (c.value = 1);\n";
+
+/// The predicates of `form` in order `from`, `target`.
+fn graph_predicates(
+    form: &fsl_semantics::check::StateGraphForm,
+) -> Vec<&fsl_semantics::check::CheckedStatePredicate> {
+    use fsl_semantics::check::StateGraphForm;
+    match form {
+        StateGraphForm::Possible { target } => vec![target],
+        StateGraphForm::AlwaysPossible { from, target } => vec![from, target],
+        StateGraphForm::UniquePath { from, to } => vec![from, to],
+    }
+}
+
+/// FR-940-AC-11 (first half): `BarePackage::state_graph_claim_form` of each
+/// claim's `claim_names` occurrence, rebuilt by
+/// `CheckedStateGraphClaim::of_package_form`, equals the source route's
+/// checked claim in name, span, `over`, form, capability, requirements and
+/// occurrence; `Back`'s `from` is the constant predicate and a written
+/// predicate holds its package node and no checked body.
+#[trace("TC-3034", "FR-940-AC-11")]
+#[test]
+fn the_package_form_of_each_state_graph_claim_equals_its_source_claim() {
+    let (_ws, handoff, mut budget) = handoff_of("package-forms-state-graph", STATE_GRAPH_CLAIMS);
+    let bare = BarePackage::new(&handoff.admitted)
+        .with_supply(
+            BareSupply {
+                identities: &handoff.identities,
+                equality: handoff.equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .expect("the handoff's supply joins the package");
+    let world = bare.world().expect("the package's declarations read");
+    let sources = handoff.compiled.checked().graph().state_graph_claims();
+    assert_eq!(sources.len(), 4);
+    for source in sources {
+        let occurrence = source.occurrence().expect("an assembled claim").clone();
+        let form = bare
+            .state_graph_claim_form(&occurrence)
+            .unwrap_or_else(|refusal| panic!("{}: {refusal:?}", source.name()));
+        let package = fsl_semantics::check::CheckedStateGraphClaim::of_package_form(
+            form,
+            world.types(),
+            filament_semantic_value::checking::CheckingLimits::default().nodes(),
+        )
+        .unwrap_or_else(|refusal| panic!("{}: {refusal}", source.name()));
+        let name = source.name();
+        assert_eq!(package.name(), name);
+        assert_eq!(package.span(), source.span(), "{name}");
+        assert_eq!(package.over(), source.over(), "{name}");
+        assert_eq!(package.occurrence(), source.occurrence(), "{name}");
+        assert_eq!(package.claim().kind(), source.claim().kind(), "{name}");
+        assert_eq!(
+            package.claim().requirements(occurrence.node().clone()),
+            source.claim().requirements(occurrence.node().clone()),
+            "{name}"
+        );
+        assert_eq!(
+            std::mem::discriminant(package.form()),
+            std::mem::discriminant(source.form()),
+            "{name}"
+        );
+        for (package, source) in graph_predicates(package.form())
+            .into_iter()
+            .zip(graph_predicates(source.form()))
+        {
+            assert_eq!(
+                package.is_constant_true(),
+                source.is_constant_true(),
+                "{name}"
+            );
+            assert_eq!(
+                package.package().is_some(),
+                source.body().is_some(),
+                "{name}"
+            );
+            assert!(package.body().is_none(), "{name}");
+        }
+    }
+}
+
+/// FR-940-AC-11 (clause): at each state the Counter explores (`value` 0
+/// through 3), the keyed evaluator port gives the package route's predicate
+/// of each role of each state-graph claim the source route's value and location,
+/// and the same symbolic reads (the footprint a partial-order reduction takes
+/// of each predicate).
+#[trace("TC-3034", "FR-940-AC-11")]
+#[test]
+fn the_port_evaluates_each_state_graph_role_alike_at_each_explored_state() {
+    use fsl_eval::simulation::model::ModelEvaluator;
+    use fsl_semantics::check::PredicateRole;
+    let (_ws, handoff, mut budget) = handoff_of("package-forms-port-roles", STATE_GRAPH_CLAIMS);
+    let bare = BarePackage::new(&handoff.admitted)
+        .with_supply(
+            BareSupply {
+                identities: &handoff.identities,
+                equality: handoff.equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .expect("the handoff's supply joins the package");
+    let world = bare.world().expect("the package's declarations read");
+    let selections = fsl_package::AnalysisView::model_selections(&bare);
+    let model = fsl_semantics::model::state::StateModel::new(
+        fsl_semantics::model::observation::ModelSelections::new(&selections, &[]),
+        world.types(),
+        handoff.compiled.packages(),
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the supplied domain package admits");
+    let source: &dyn ModelEvaluator = handoff.compiled.checked();
+    let package: &dyn ModelEvaluator = &bare;
+    let mut compared = 0;
+    for claim in handoff.compiled.checked().graph().state_graph_claims() {
+        let name = claim.name();
+        let occurrence = claim.occurrence().expect("an assembled claim");
+        let (from, target) = claim.node_predicates();
+        let roles = [
+            (PredicateRole::From, from),
+            (PredicateRole::Target, Some(target)),
+        ];
+        for (role, predicate) in roles {
+            let Some(predicate) = predicate.filter(|predicate| !predicate.is_constant_true())
+            else {
+                continue;
+            };
+            assert!(predicate.body().is_some(), "{name} {role:?}");
+            assert_eq!(
+                package.state_graph_reads(&model, occurrence, role),
+                source.state_graph_reads(&model, occurrence, role),
+                "{name} {role:?}"
+            );
+            for value in 0..=3 {
+                let objects = objects(&handoff, value);
+                let over = Some(counter(&objects));
+                let (mut at_source, mut at_package) =
+                    (Meter::new(UNLIMITED), Meter::new(UNLIMITED));
+                let from_source = source
+                    .evaluate_state_graph_predicate(
+                        occurrence,
+                        role,
+                        &objects,
+                        over.clone(),
+                        Vec::new(),
+                        &mut at_source,
+                    )
+                    .expect("the source predicate evaluates");
+                let from_package = package
+                    .evaluate_state_graph_predicate(
+                        occurrence,
+                        role,
+                        &objects,
+                        over,
+                        Vec::new(),
+                        &mut at_package,
+                    )
+                    .expect("the package predicate evaluates");
+                let at = format!("{name} {role:?} at {value}");
+                assert_eq!(outcome(&from_package), outcome(&from_source), "{at}");
+                assert_eq!(from_package.location, from_source.location, "{at}");
+                compared += 1;
+            }
+        }
+    }
+    // ReachThree and Back (target), FromOne and Straight (from and target).
+    assert_eq!(compared, 6 * 4);
 }

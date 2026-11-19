@@ -182,18 +182,7 @@ impl ClaimItem {
                 .claims()
                 .iter()
                 .any(|checked| checked.occurrence().as_ref() == Some(&claim));
-        let wrong_authored_occurrence = graph
-            .temporal_clauses()
-            .iter()
-            .find(|clause| clause.identity() == *claim.node())
-            .is_some_and(|clause| clause.claim() != claim.origin())
-            || graph
-                .probabilistic_model()
-                .claims()
-                .iter()
-                .filter_map(|checked| checked.occurrence())
-                .find(|checked| checked.node() == claim.node())
-                .is_some_and(|checked| checked != &claim);
+        let wrong_authored_occurrence = names_other_occurrence(graph, &claim);
         if !occurs
             || wrong_authored_occurrence
             || family.is_none_or(|family| !kind.applies_to_declaration(family))
@@ -729,20 +718,7 @@ fn work<'a>(
     } else {
         crate::claim_family::claim_family(package, temporal_kind, &item.claim)
     };
-    let wrong_occurrence = package
-        .graph()
-        .temporal_clauses()
-        .iter()
-        .find(|clause| clause.identity() == *item.claim.node())
-        .is_some_and(|clause| clause.claim() != item.claim.origin())
-        || package
-            .graph()
-            .probabilistic_model()
-            .claims()
-            .iter()
-            .filter_map(|claim| claim.occurrence())
-            .find(|claim| claim.node() == item.claim.node())
-            .is_some_and(|claim| claim != &item.claim);
+    let wrong_occurrence = names_other_occurrence(package.graph(), &item.claim);
     let family = if wrong_occurrence { None } else { family };
     let absent = || AnalyzeItem::unadapted(item.request_index, item.kind, family);
     // FR-243: an item naming `options.method` `digital-clocks` negotiated to
@@ -1249,4 +1225,31 @@ mod tests {
         let entries: Vec<_> = provision.entries().collect();
         assert_eq!(entries, vec![("a", "a", &b"a"[..]), ("b", "z", &b"z"[..])]);
     }
+}
+
+/// FR-940 "Claim occurrence ordinals": whether `claim` names a node an
+/// authored temporal clause or probabilistic claim declares, at an
+/// occurrence none of that node's declarations owns. Structurally equal
+/// declarations share one node, so the whole key (node, `claim`, ordinal)
+/// is matched against every declaration of the node, never the first.
+fn names_other_occurrence(
+    graph: &fsl_semantics::check::CheckedGraph,
+    claim: &OccurrenceKey,
+) -> bool {
+    let temporal = || {
+        graph
+            .temporal_clauses()
+            .iter()
+            .filter(|clause| clause.identity() == *claim.node())
+    };
+    let probabilistic = || {
+        graph
+            .probabilistic_model()
+            .claims()
+            .iter()
+            .filter_map(|checked| checked.occurrence())
+            .filter(|checked| checked.node() == claim.node())
+    };
+    (temporal().next().is_some() && !temporal().any(|clause| clause.claim() == claim.origin()))
+        || (probabilistic().next().is_some() && !probabilistic().any(|checked| checked == claim))
 }

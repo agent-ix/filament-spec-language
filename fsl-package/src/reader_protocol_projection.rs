@@ -84,6 +84,17 @@ impl ReaderProtocolProjection {
             .and_then(|node| node.location.as_ref())
     }
 
+    /// The occurrence key of the node at an arena index when it has just one `expression`
+    /// occurrence; `None` otherwise.
+    pub fn occurrence(
+        &self,
+        index: usize,
+    ) -> Option<&fsl_foundation::source::provenance::OccurrenceKey> {
+        self.nodes
+            .get(index)
+            .and_then(|node| node.occurrence.as_ref())
+    }
+
     /// Ordered child node indices.
     pub fn children(&self, index: usize) -> Option<&[usize]> {
         self.nodes.get(index).map(|node| node.children.as_slice())
@@ -1605,6 +1616,30 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         Ok(())
     }
 
+    /// The occurrence key of `node` (ADR-013 O-07) when it has exactly one
+    /// `expression` occurrence. A node shared by structurally equal
+    /// expressions has several, and the wire pairs none with a position of
+    /// this walk, so such a node names none.
+    fn sole_expression_occurrence(
+        &self,
+        id: &CheckedNodeId,
+        node: &CheckedSemanticNodeV2,
+    ) -> Option<fsl_foundation::source::provenance::OccurrenceKey> {
+        let mut expression = node.occurrences.iter().filter(|occurrence| {
+            occurrence.role == filament_contract_model::CheckedOccurrenceRole::Expression
+        });
+        let (Some(only), None) = (expression.next(), expression.next()) else {
+            return None;
+        };
+        Some(fsl_foundation::source::provenance::OccurrenceKey::new(
+            self.index.key(id).ok()?,
+            filament_exact::Origin::new(
+                filament_exact::Role::new(crate::checked_v2::role_spelling(&only.role)),
+                only.ordinal,
+            ),
+        ))
+    }
+
     fn push(&mut self, node: ReaderProjectedNode) -> usize {
         let index = self.nodes.len();
         self.nodes.push(node);
@@ -1949,6 +1984,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             children,
             term,
             absorbed: None,
+            occurrence: self.sole_expression_occurrence(id, node),
         }))
     }
 
@@ -3514,6 +3550,8 @@ struct ReaderProjectedNode {
     /// other node, the wire carrying no location of its own for it.
     location: Option<Location>,
     children: Vec<usize>,
+    /// The occurrence of the node at this position, when it has just one.
+    occurrence: Option<fsl_foundation::source::provenance::OccurrenceKey>,
     /// The application this slot-walk position is a term of (FR-383).
     term: Option<CheckedNodeId>,
     /// A quantity conversion the walk visits directly above this node,
@@ -3530,6 +3568,7 @@ impl ReaderProjectedNode {
             children: Vec::new(),
             term: None,
             absorbed: None,
+            occurrence: None,
         }
     }
 

@@ -340,11 +340,12 @@ impl DeclarationRegions {
     /// order (FSpec FR-272's `related`): both workloads of a repeated
     /// workload name (FR-185); none for every other refusal.
     pub fn related_regions(&self, refusal: &CheckRefusal) -> Vec<SourceRegion> {
-        let CheckCause::Probabilistic(cause) = &refusal.cause else {
-            return Vec::new();
+        let related = match &refusal.cause {
+            CheckCause::Probabilistic(cause) => cause.related().to_vec(),
+            CheckCause::StateGraph(cause) => cause.related(),
+            _ => return Vec::new(),
         };
-        cause
-            .related()
+        related
             .iter()
             .filter_map(|span| region(&self.source, self.embedding.as_deref(), *span))
             .collect()

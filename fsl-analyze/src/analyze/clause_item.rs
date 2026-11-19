@@ -672,7 +672,8 @@ pub struct PackageClauseSubject<'a> {
 }
 
 impl<'a> PackageClauseSubject<'a> {
-    /// The subject of the clause whose node key is `key` over `package`,
+    /// The subject of the clause declared at the `claim` occurrence `claim`
+    /// (its node key and occurrence) over `package`,
     /// the package route's model-check input, whose admitted bytes are
     /// `package_bytes` and whose handoff supply is `supply`.
     ///
@@ -689,16 +690,17 @@ impl<'a> PackageClauseSubject<'a> {
         supply: fsl_replay::HandoffSupply<'a>,
         binding: SubjectBinding<'a>,
         limits: AnalyzeLimits,
-        key: &filament_exact::NodeKey,
+        claim: &OccurrenceKey,
         run: ClauseLimits,
     ) -> Result<Self, ClauseItemRefusal> {
+        let key = claim.node();
         let input = package.input();
         let admitted = input
             .admitted_package()
             .ok_or(ClauseItemRefusal::UnknownClause)?;
         let clause = package
             .temporal_clause(
-                key,
+                claim,
                 filament_semantic_value::checking::CheckingLimits::default().nodes(),
             )
             .map_err(|refusal| match refusal.pending_fact() {

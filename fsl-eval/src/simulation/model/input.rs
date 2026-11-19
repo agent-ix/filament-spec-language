@@ -55,6 +55,8 @@ pub struct StateClauseEntry {
     pub name: String,
     /// The clause's node identity.
     pub identity: NodeKey,
+    /// The declaration's `claim` occurrence of the node.
+    pub claim: filament_exact::Origin,
     /// The object type the clause constrains.
     pub context: EffectiveId,
     /// The declaring type and name of the operation the clause belongs to;
@@ -63,6 +65,8 @@ pub struct StateClauseEntry {
     /// Which state the clause observes: an invariant the current state, a
     /// precondition the pre-state, a postcondition the post-state.
     pub observation: Observation,
+    /// Whether the clause is an `invariant` (and no `constraint`).
+    pub invariant: bool,
 }
 
 /// What a model check reads of a checked package (FR-531, FR-940): the
@@ -126,6 +130,7 @@ impl<'a> ModelCheckInput<'a> {
                 .map(|clause| StateClauseEntry {
                     name: clause.name().to_owned(),
                     identity: clause.identity(),
+                    claim: clause.claim().clone(),
                     context: clause.context(),
                     operation: clause.operation().map(|operation| {
                         (
@@ -134,6 +139,7 @@ impl<'a> ModelCheckInput<'a> {
                         )
                     }),
                     observation: clause.observation(),
+                    invariant: clause.kind() == fsl_forms::StateClauseKind::Invariant,
                 })
                 .collect(),
             terminals: fsl_package::resolve_terminals(package),
@@ -239,6 +245,7 @@ pub struct PackageModelInput<'p> {
     model_selections: Vec<DomainPackageRef>,
     operations: OperationTable,
     probabilistic: CheckedProbabilisticModel,
+    state_clauses: Vec<StateClauseEntry>,
 }
 
 impl<'p> PackageModelInput<'p> {
@@ -295,6 +302,24 @@ impl<'p> PackageModelInput<'p> {
         let probabilistic = model
             .probabilistic_model(&operations, &nodes)
             .map_err(PendingPackageForm::Probabilistic)?;
+        // FR-940: the state clauses by their `claim_names` rows (FSpec
+        // FR-322), in source order, as the source route lists them.
+        let state_clauses = package
+            .state_clause_declarations()
+            .map_err(PendingPackageForm::World)?
+            .into_iter()
+            .map(|declaration| StateClauseEntry {
+                name: declaration.name,
+                identity: declaration.identity,
+                claim: declaration.claim,
+                context: declaration.context,
+                operation: declaration
+                    .operation
+                    .map(|operation| (operation.declaring, operation.operation)),
+                observation: declaration.observation,
+                invariant: declaration.invariant,
+            })
+            .collect();
         Ok(Self {
             package,
             world,
@@ -302,11 +327,12 @@ impl<'p> PackageModelInput<'p> {
             model_selections,
             operations,
             probabilistic,
+            state_clauses,
         })
     }
 
-    /// FR-940: the package form of the temporal clause whose node key is
-    /// `clause`, the model checker's clause on the package route: read from
+    /// FR-940: the package form of the temporal clause declared at the
+    /// `claim` occurrence `claim`, the model checker's clause on the package route: read from
     /// the package's nodes ([`BarePackage::temporal_clause_form`]) with the
     /// population domains of the supplied domain packages, and rebuilt as S3
     /// builds it ([`CheckedTemporalClause::of_package_form`]) within S3's
@@ -322,12 +348,13 @@ impl<'p> PackageModelInput<'p> {
     /// (`profile`, `capture`) before any engine runs.
     pub fn temporal_clause(
         &self,
-        clause: &NodeKey,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
         position_limit: u64,
     ) -> Result<CheckedTemporalClause, PendingClauseForm> {
+        let clause = claim.node();
         let mut form = self
             .package
-            .temporal_clause_form(clause)
+            .temporal_clause_form(claim)
             .map_err(PendingClauseForm::Read)?;
         let pending = |fact| -> Result<CheckedTemporalClause, PendingClauseForm> {
             let node = self
@@ -354,6 +381,101 @@ impl<'p> PackageModelInput<'p> {
             .map_err(PendingClauseForm::Build)
     }
 
+    /// FR-940 "Package form of a state-graph claim": the state-graph claim
+    /// declared at the `claim` occurrence `claim`, read from the package's
+    /// nodes ([`BarePackage::state_graph_claim_form`]) and rebuilt as S3
+    /// builds it ([`CheckedStateGraphClaim::of_package_form`]) within S3's
+    /// domain `position_limit`. Its predicates are evaluated through the
+    /// evaluator port ([`ModelEvaluator::evaluate_state_graph_predicate`]).
+    ///
+    /// # Errors
+    ///
+    /// [`PendingClauseForm`] for a claim the package does not select or
+    /// whose facts do not rebuild it.
+    pub fn state_graph_claim(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        position_limit: u64,
+    ) -> Result<fsl_semantics::check::CheckedStateGraphClaim, PendingClauseForm> {
+        let form = self
+            .package
+            .state_graph_claim_form(claim)
+            .map_err(PendingClauseForm::Read)?;
+        fsl_semantics::check::CheckedStateGraphClaim::of_package_form(
+            form,
+            self.world.types(),
+            position_limit,
+        )
+        .map_err(PendingClauseForm::Build)
+    }
+
+    /// The state clause declared at the `claim` occurrence `claim` of the
+    /// node `clause`, as its `claim_names` row names it (FR-940).
+    pub fn state_clause(
+        &self,
+        clause: &NodeKey,
+        claim: &filament_exact::Origin,
+    ) -> Option<&StateClauseEntry> {
+        self.state_clauses
+            .iter()
+            .find(|entry| entry.identity == *clause && entry.claim == *claim)
+    }
+
+    /// Every state clause declaration, in source order (FR-940).
+    pub fn state_clauses(&self) -> &[StateClauseEntry] {
+        &self.state_clauses
+    }
+
+    /// The state clause whose node key is `clause`, declared at its own
+    /// `claim_names` row (FR-940).
+    pub fn state_clause_at(&self, clause: &NodeKey) -> Option<&StateClauseEntry> {
+        self.state_clauses
+            .iter()
+            .find(|entry| entry.identity == *clause)
+    }
+
+    /// FR-104 "Requirements", FR-940: the domain kinds of the
+    /// `operation-contract` record of the `invariant` state clause `entry`,
+    /// as S3 classifies them: the domains of its `self` parameter's type
+    /// within `position_limit`, then its context's population. `None` when
+    /// no single population of the selected domain packages covers the
+    /// context, so the record's other populations (those its body walks or
+    /// names) would decide the extent, and for a type that does not
+    /// classify.
+    pub fn invariant_domain_kinds(
+        &self,
+        entry: &StateClauseEntry,
+        position_limit: u64,
+    ) -> Option<Vec<fsl_foundation::bound::DomainKind>> {
+        let receiver = ValueType::Reference(entry.context.clone());
+        let mut kinds: Vec<fsl_foundation::bound::DomainKind> =
+            match fsl_semantics::family::classify_extent(
+                &[(entry.identity.clone(), &receiver)],
+                self.world.types(),
+                position_limit,
+            )
+            .ok()?
+            {
+                fsl_semantics::family::ClaimExtent::Bounded => Vec::new(),
+                fsl_semantics::family::ClaimExtent::Unbounded(domains) => {
+                    domains.iter().map(|(_, kind)| kind).collect()
+                }
+            };
+        // A domain package population declares no maximum, and the
+        // package route reads no authored bound, as for a temporal clause's
+        // populations ([`StateModel::overlapping_populations`]).
+        self.model
+            .covering_population(entry.context.clone())
+            .ok()??;
+        kinds.push(fsl_foundation::bound::DomainKind::Population);
+        Some(kinds)
+    }
+
+    /// The package this input was built from.
+    pub fn package(&self) -> &'p BarePackage<'p> {
+        self.package
+    }
+
     /// The input this package lends.
     pub fn input(&self) -> ModelCheckInput<'_> {
         ModelCheckInput {
@@ -366,7 +488,7 @@ impl<'p> PackageModelInput<'p> {
             timed_models: &[],
             time_sources: &[],
             probabilistic: &self.probabilistic,
-            state_clauses: Vec::new(),
+            state_clauses: self.state_clauses.clone(),
             terminals: Ok(Vec::new()),
             evaluator: self.package,
             source: None,
@@ -533,6 +655,59 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     fn evaluate_state_predicate_at_absent_key(
         &self,
         predicate: &dyn StatePredicate,
+        current: &ObjectEnvironment,
+        key: ObjectReference,
+        binding: String,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault>;
+
+    /// FR-940 "Package form of a state-graph claim": the predicate of
+    /// `role` of the state-graph claim declared at `claim`, with its `over`
+    /// parameter bound to `over` (`None` for a claim with no `over`) and
+    /// the slots after it to `further`, at the state whose objects are
+    /// `current`. Both routes evaluate it: the source route its checked
+    /// body, the package route the predicate node's reader projection, so a
+    /// predicate has one value on both.
+    ///
+    /// # Errors
+    ///
+    /// An internal fault when the claim has no written predicate of `role`.
+    fn evaluate_state_graph_predicate(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+        current: &ObjectEnvironment,
+        over: Option<ObjectReference>,
+        further: Vec<Value>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault>;
+
+    /// FR-156, FR-940 "Package form of a state-graph claim": the symbolic
+    /// locations the predicate of `role` of the claim at `claim` reads, as the
+    /// partial-order reduction takes them; none for the constant `true`.
+    ///
+    /// # Errors
+    ///
+    /// [`FootprintRefusal`] as the derivation refuses a form with no
+    /// footprint rule.
+    fn state_graph_reads(
+        &self,
+        model: &StateModel,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+    ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal>;
+
+    /// [`Self::evaluate_state_graph_predicate`] for an instance whose key
+    /// holds no object conforming to the `over` parameter's type, as
+    /// [`crate::value::evaluate_state_predicate_at_absent_key`] reads it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::evaluate_state_graph_predicate`].
+    fn evaluate_state_graph_predicate_at_absent_key(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
         current: &ObjectEnvironment,
         key: ObjectReference,
         binding: String,
@@ -890,6 +1065,46 @@ impl ModelEvaluator for CheckedPackage {
         )
     }
 
+    fn state_graph_reads(
+        &self,
+        model: &StateModel,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+    ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
+        let body = source_predicate(self, claim, role).map_err(|_| FootprintRefusal::Unresolved {
+            what: "state-graph predicate",
+        })?;
+        derive_atom_reads(self.graph(), model, &(String::new(), ValueType::Boolean), body.body())
+    }
+
+    fn evaluate_state_graph_predicate(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+        current: &ObjectEnvironment,
+        over: Option<ObjectReference>,
+        further: Vec<Value>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        let body = source_predicate(self, claim, role)?;
+        crate::value::evaluate_state_predicate_with(self, body, current, over, further, meter)
+    }
+
+    fn evaluate_state_graph_predicate_at_absent_key(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+        current: &ObjectEnvironment,
+        key: ObjectReference,
+        binding: String,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        let body = source_predicate(self, claim, role)?;
+        crate::value::evaluate_state_predicate_at_absent_key(
+            self, body, current, key, binding, meter,
+        )
+    }
+
     fn evaluate_activation_guard(
         &self,
         guard: &dyn StatePredicate,
@@ -1219,6 +1434,60 @@ impl ModelEvaluator for BarePackage<'_> {
         Err(SOURCE_FORM)
     }
 
+    fn state_graph_reads(
+        &self,
+        model: &StateModel,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+    ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
+        let unresolved = || FootprintRefusal::Unresolved {
+            what: "state-graph predicate",
+        };
+        let predicate = self
+            .project_state_graph_predicate(claim, role)
+            .map_err(|_| unresolved())?;
+        let world = self.world().map_err(|_| unresolved())?;
+        crate::value::projection_atom_reads(predicate.projection(), world.types(), model)
+    }
+
+    fn evaluate_state_graph_predicate(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+        current: &ObjectEnvironment,
+        over: Option<ObjectReference>,
+        further: Vec<Value>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        let over = over.map_or(
+            crate::value::StateGraphOver::None,
+            crate::value::StateGraphOver::Bound,
+        );
+        crate::value::evaluate_bare_state_graph_predicate(
+            self, claim, role, current, over, further, meter,
+        )
+    }
+
+    fn evaluate_state_graph_predicate_at_absent_key(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+        current: &ObjectEnvironment,
+        key: ObjectReference,
+        binding: String,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        crate::value::evaluate_bare_state_graph_predicate(
+            self,
+            claim,
+            role,
+            current,
+            crate::value::StateGraphOver::Absent { key, binding },
+            Vec::new(),
+            meter,
+        )
+    }
+
     fn evaluate_activation_guard(
         &self,
         _guard: &dyn StatePredicate,
@@ -1404,5 +1673,35 @@ impl ModelEvaluator for BarePackage<'_> {
         _condition: CheckedNode<'_>,
     ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
         Err(NO_SOURCE_FOOTPRINT)
+    }
+}
+
+/// The checked predicate of `role` of the source package's state-graph claim
+/// at `claim`: a written one, which the port evaluates.
+fn source_predicate<'p>(
+    package: &'p CheckedPackage,
+    claim: &fsl_foundation::source::provenance::OccurrenceKey,
+    role: fsl_semantics::check::PredicateRole,
+) -> Result<&'p fsl_semantics::check::CheckedPredicateBody, InternalFault> {
+    use fsl_semantics::check::{CheckedStatePredicate, PredicateRole, StateGraphForm};
+    let fault = |cause: &'static str| InternalFault::new("FR-940", cause);
+    let claim = package
+        .graph()
+        .state_graph_claims()
+        .iter()
+        .find(|held| held.occurrence() == Some(claim))
+        .ok_or_else(|| fault("state-graph-claim-is-in-the-package"))?;
+    let (from, target) = match claim.form() {
+        StateGraphForm::Possible { target } => (None, target),
+        StateGraphForm::AlwaysPossible { from, target } => (Some(from), target),
+        StateGraphForm::UniquePath { from, to } => (Some(from), to),
+    };
+    let predicate = match role {
+        PredicateRole::From => from,
+        PredicateRole::Target => Some(target),
+    };
+    match predicate {
+        Some(CheckedStatePredicate::Checked(body)) => Ok(body),
+        _ => Err(fault("state-graph-predicate-is-written")),
     }
 }

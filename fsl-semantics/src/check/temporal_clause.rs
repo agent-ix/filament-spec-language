@@ -2563,6 +2563,9 @@ pub enum PackageClauseRefusal {
     /// The parameter types do not classify within the position limit.
     #[error("the clause's parameter domains do not classify")]
     Domains,
+    /// The package form's predicates do not fit its state-graph form.
+    #[error("the package state-graph predicates do not fit the claim form")]
+    Shape,
     /// The clause's clock binding key is not a node key.
     #[error("the clause's clock binding is not keyed")]
     ClockBinding,

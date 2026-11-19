@@ -1571,7 +1571,7 @@ fn prepare(
         // share an automaton.
         let derived = match (item, counting) {
             (ModelCheckItem::Invariant { clause }, _) => Item::Invariant {
-                name: clause.name(),
+                name: clause.name,
             },
             (ModelCheckItem::RaceFreedom, Counting::Every) => {
                 return Err(ModelCheckRefusal::RaceOverModel);

@@ -10,8 +10,8 @@ use std::path::Path;
 
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::document::{
-    resolve_items, settle_package_run, settle_run, AnalyzeDocumentError, AnalyzeRun, ItemSelection,
-    Negotiate, PackageRun, PackageRunError, SettledRun, SubjectSelection,
+    AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, PackageRun, PackageRunError,
+    SettledRun, SubjectSelection, resolve_items, settle_package_run, settle_run,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
@@ -19,8 +19,9 @@ use fsl_semantics::model::observation::DocumentProvision;
 
 use super::settle::Settle;
 use super::{
+    FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
     check_sources, intake_with_bytes, request, request_integer_division, require_complete_edition,
-    wire, FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
+    wire,
 };
 
 fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
@@ -795,6 +796,17 @@ fn admit_package<'d>(
                 witness_refusal(EQUALITY_FILE, "refused-file", &refusal.to_string())
             })?;
         (Some(rows), Some(equality_bytes))
+    } else if admitted
+        .checked_term_data()
+        .is_some_and(|data| !data.equality_decisions.is_empty())
+    {
+        // FR-850 "Admission": a package holding equality applications is
+        // read with the producer's equality rows, so their file is required.
+        return Err(witness_refusal(
+            EQUALITY_FILE,
+            "missing-file",
+            "the handoff directory holds no equality file for the package's equality applications",
+        ));
     } else {
         (None, None)
     };
@@ -887,6 +899,18 @@ fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
         pointer,
         identity,
     } = refusal;
+    // FR-940 "Claim names": a name shared by two `claim_names` rows is the
+    // one ambiguous declaration, whichever reader found it. QSL-2545: the
+    // contract-ir reader still reports `invalid_package` here; delete this
+    // remap once the reader returns `ambiguous_declaration` itself.
+    let code = match (&cause, &pointer) {
+        (Some(cause), Some(pointer))
+            if cause == "ambiguous-name" && pointer.starts_with("/claim_names/") =>
+        {
+            fsl_foundation::Code::AmbiguousDeclaration
+        }
+        _ => code,
+    };
     let named = match (&identity, &pointer) {
         (Some(identity), _) => format!(": no models entry supplies {identity}"),
         (None, Some(pointer)) => format!(" at {pointer}"),
@@ -948,7 +972,7 @@ fn read_memory(
                     return Err(invalid(
                         &format!("/memory/{position}/model"),
                         "a memory model is sc, tso or ra",
-                    ))
+                    ));
                 }
             };
             Ok(fsl_eval::simulation::protocol::MemorySelection {
@@ -1082,13 +1106,13 @@ pub(super) fn validate_items(items: Option<&[ItemSelection]>) -> Result<()> {
                 return Err(invalid(
                     &format!("/items/{position}/simulation"),
                     "simulation is only valid on a simulation item",
-                ))
+                ));
             }
             (None, true) => {
                 return Err(invalid(
                     &format!("/items/{position}/simulation"),
                     "a simulation item carries its simulation member",
-                ))
+                ));
             }
             (Some(settings), true) => {
                 if item.claim.is_some() {

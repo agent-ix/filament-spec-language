@@ -224,7 +224,7 @@ pub use model_check::counterexample::{
 };
 pub use model_check::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
 pub use model_check::graph_replay::{
-    replay_model_graph, replay_model_graph_with_cancel,
+    replay_model_graph, replay_model_graph_from_package, replay_model_graph_with_cancel,
     replay_model_graph_with_cancel_and_temporal_selections,
     replay_model_graph_with_temporal_selections,
 };
@@ -253,7 +253,7 @@ pub use model_check::identity::{
     node_occurrence, ClauseIdentity, ClauseRootRefusal, HyperIdentity, StateGraphIdentity,
 };
 pub use model_check::item::{
-    Instance, ItemRefusal, LivenessTranslation, ModelCheckItem, Translation,
+    Instance, InvariantClause, ItemRefusal, LivenessTranslation, ModelCheckItem, Translation,
 };
 pub use model_check::limits::{
     meter_bound, ExactProbLimit, ExactProbLimits, ModelCheckLimit, ModelCheckLimits, ReachedLimit,

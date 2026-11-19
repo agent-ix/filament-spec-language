@@ -377,22 +377,10 @@ pub(crate) fn parameter_target(value_type: &ValueType) -> Option<EffectiveId> {
 pub fn derive_atom_reads(
     graph: &CheckedGraph,
     model: &StateModel,
-    over: &(String, ValueType),
+    _over: &(String, ValueType),
     condition: CheckedNode<'_>,
 ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-    let reader = Reader::new(graph.scope().types(), model)?;
-    let scope = BodyScope {
-        name: "holds",
-        binds_result: false,
-        parameters: std::slice::from_ref(over),
-        observations: None,
-        observation: Observation::Current,
-    };
-    Ok(reader
-        .body_reads(&scope, condition)?
-        .into_iter()
-        .map(|(location, _)| location)
-        .collect())
+    derive_atom_reads_over(graph.scope().types(), model, condition)
 }
 
 /// FR-125-AC-18, FR-156: the locations the `when` guard of an `on each`
@@ -1206,4 +1194,186 @@ enum Holder {
     Receiver,
     Parameter(String),
     Other,
+}
+
+/// What an atom-footprint derivation reads of one expression node: only the
+/// forms FSpec FR-383 gives a read rule, so a tree of either node source (a
+/// checked body, or the package route's reader projection) derives the
+/// reads it would on the other.
+pub enum AtomForm<'a, N> {
+    /// A field read through `reference`.
+    Attribute {
+        /// The reference operand.
+        reference: N,
+        /// The field's owner type.
+        owner: &'a EffectiveId,
+        /// The field's name.
+        name: &'a str,
+    },
+    /// Reachability through an edge field.
+    Reaches {
+        /// The edge field's owner type.
+        owner: &'a EffectiveId,
+        /// The edge field's name.
+        name: &'a str,
+    },
+    /// `all instances` or a lookup: the population it names, if one.
+    Population {
+        /// The named population (`M::P`), when the operand names one.
+        named: Option<&'a DeclarationKey>,
+        /// The node's static type.
+        value_type: &'a ValueType,
+    },
+    /// A local slot.
+    Local(usize),
+    /// A node that reads through its operand without changing it.
+    Wrap(N),
+    /// A form with no footprint rule.
+    Unsupported(&'static str),
+    /// A form that reads nothing of its own.
+    Other,
+}
+
+/// A node of an expression tree an atom footprint is derived from.
+pub trait AtomNode<'a>: Copy {
+    /// What the node reads.
+    fn form(self) -> AtomForm<'a, Self>;
+    /// The node's operands.
+    fn children(self) -> Vec<Self>;
+}
+
+impl<'a> AtomNode<'a> for CheckedNode<'a> {
+    fn form(self) -> AtomForm<'a, Self> {
+        atom_form(self.kind(), self.value_type(), |child| self.at(child), |child| {
+            self.at(child).kind()
+        })
+    }
+
+    fn children(self) -> Vec<Self> {
+        super::ir::node_children(self.kind())
+            .into_iter()
+            .map(|id| self.at(id))
+            .collect()
+    }
+}
+
+/// FR-156 "Atom footprints" over any [`AtomNode`] tree: [`derive_atom_reads`]
+/// and the package route's derivation for a state-graph predicate's reader
+/// projection are this one function.
+///
+/// # Errors
+///
+/// As [`derive_atom_reads`].
+pub fn derive_atom_reads_over<'a, N: AtomNode<'a>>(
+    types: &TypeEnvironment,
+    model: &StateModel,
+    root: N,
+) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
+    let reader = Reader::new(types, model)?;
+    let mut reads = BTreeSet::new();
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        let unsupported = |form| FootprintRefusal::UnsupportedForm {
+            clause: "holds".to_owned(),
+            form,
+        };
+        match node.form() {
+            AtomForm::Attribute {
+                reference,
+                owner,
+                name,
+            } => {
+                let field = reader.field_key(owner.clone(), name)?;
+                let mut holder = reference;
+                let location = loop {
+                    match holder.form() {
+                        AtomForm::Wrap(operand) => holder = operand,
+                        // The `over` parameter is slot 0, the receiver.
+                        AtomForm::Local(0) => {
+                            break SymbolicLocation::Field {
+                                object: FootprintObject::Receiver,
+                                field,
+                            };
+                        }
+                        _ => break SymbolicLocation::AnyField { field },
+                    }
+                };
+                reads.insert(location);
+            }
+            AtomForm::Reaches { owner, name } => {
+                reads.insert(SymbolicLocation::AnyField {
+                    field: reader.field_key(owner.clone(), name)?,
+                });
+            }
+            AtomForm::Population {
+                named: Some(population),
+                ..
+            } => {
+                reads.insert(SymbolicLocation::AnyMembership {
+                    population: population.clone(),
+                });
+            }
+            AtomForm::Population {
+                named: None,
+                value_type,
+            } => {
+                let mut targets = Vec::new();
+                referenced_types(value_type, &mut targets);
+                for target in targets {
+                    for population in reader.populations_relating(target) {
+                        reads.insert(SymbolicLocation::AnyMembership {
+                            population: population.clone(),
+                        });
+                    }
+                }
+            }
+            AtomForm::Unsupported(form) => return Err(unsupported(form)),
+            AtomForm::Local(_) | AtomForm::Wrap(_) | AtomForm::Other => {}
+        }
+        pending.extend(node.children());
+    }
+    Ok(reads)
+}
+
+/// What a node of kind `kind` reads, for any tree whose children are `Child`
+/// handles: `at` makes a node of a child and `kind_of` is the kind of a
+/// child, so the one rule serves every [`AtomNode`] source.
+pub fn atom_form<'a, C: Copy, L, N>(
+    kind: &'a NodeKind<C, L>,
+    value_type: &'a ValueType,
+    at: impl Fn(C) -> N,
+    kind_of: impl Fn(C) -> &'a NodeKind<C, L>,
+) -> AtomForm<'a, N> {
+    match kind {
+        NodeKind::Attribute {
+            reference, field, ..
+        } => AtomForm::Attribute {
+            reference: at(*reference),
+            owner: &field.owner,
+            name: &field.name,
+        },
+        NodeKind::Reaches { edge, .. } => AtomForm::Reaches {
+            owner: &edge.owner,
+            name: &edge.name,
+        },
+        NodeKind::AllInstances { population } | NodeKind::Lookup { population, .. } => {
+            AtomForm::Population {
+                named: match kind_of(*population) {
+                    NodeKind::NamedPopulation { population, .. } => Some(population),
+                    _ => None,
+                },
+                value_type,
+            }
+        }
+        NodeKind::Local(slot) => AtomForm::Local(*slot),
+        NodeKind::Value(operand) | NodeKind::Coerce(operand, _) => AtomForm::Wrap(at(*operand)),
+        NodeKind::Navigate { .. } => AtomForm::Unsupported("relationship navigation"),
+        NodeKind::ReachesEnd { .. } => AtomForm::Unsupported("relationship reachability"),
+        NodeKind::Call { .. } | NodeKind::ImportedCall { .. } => {
+            AtomForm::Unsupported("function call")
+        }
+        NodeKind::Dispatch { .. } => AtomForm::Unsupported("dispatched call"),
+        NodeKind::ProtocolReference { .. } => AtomForm::Unsupported("protocol reference"),
+        _ => AtomForm::Other,
+    }
 }

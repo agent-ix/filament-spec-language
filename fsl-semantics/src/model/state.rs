@@ -359,6 +359,30 @@ impl StateModel {
         )
     }
 
+    /// FR-940: the one population domain of the selected domain packages
+    /// that covers `object` by conformance, as S3 reads a state clause's
+    /// context population (FR-104 "Resolution"), before the unit's authored
+    /// bounds (FR-380) are applied: `Ok(None)` when none does, and the
+    /// populations' keys when several do.
+    ///
+    /// # Errors
+    ///
+    /// The covering populations' declaration keys, ascending, when more
+    /// than one covers `object`.
+    pub fn covering_population(
+        &self,
+        object: filament_exact::EffectiveId,
+    ) -> Result<Option<crate::check::PopulationDomain>, Vec<filament_checked::key::DeclarationKey>>
+    {
+        let models: Vec<crate::check::lowering::AdmittedModel> = self
+            .views
+            .iter()
+            .filter(|view| !view.is_source())
+            .map(|view| crate::check::lowering::AdmittedModel::from_view(&view.view))
+            .collect();
+        crate::check::state_clause::population_of(&models, object, &self.types)
+    }
+
     /// FR-940: the population domains of the selected domain packages whose
     /// member types overlap `object`, as S3 reads them for a temporal
     /// clause's claim over `object` (FR-336), before the unit's authored
