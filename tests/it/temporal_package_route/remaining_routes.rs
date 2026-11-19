@@ -129,6 +129,7 @@ fn record_window_count_has_true_false_and_insufficient_history_cases() {
     let directory = tempfile::tempdir().unwrap();
     for (values, exit, expected) in [
         (vec![true, true, true], 0, "tested"),
+        (vec![true, false, true], 0, "tested"),
         (vec![false, true, true], 10, "refuted"),
     ] {
         let mut request = clock_request(
