@@ -907,7 +907,7 @@ pub fn check_protocol_constrained(
 
 fn new_protocol_system<'a, M: MemoryModel>(
     model: ModelSystem<'a>,
-    subject: 'a ProtocolSubject<'a>,
+    subject: &'a ProtocolSubject<'a>,
     memory: M,
 ) -> Result<ProtocolSystem<'a, M>, ProtocolRefusal> {
     match subject
