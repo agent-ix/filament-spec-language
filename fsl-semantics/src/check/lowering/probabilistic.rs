@@ -122,11 +122,9 @@ impl Lowering<'_> {
             .iter()
             .zip(rewards)
             .map(|(reward, lowered)| {
-                lowered
-                    .as_ref()
-                    .and_then(|lowered| {
-                        reward.node_key_over(&self.package_name, &lowered.declaring, &lowered.operand)
-                    })
+                lowered.as_ref().and_then(|lowered| {
+                    reward.node_key_over(&self.package_name, &lowered.declaring, &lowered.operand)
+                })
             })
             .collect();
         let paths: Vec<Vec<PathSegment>> = claims

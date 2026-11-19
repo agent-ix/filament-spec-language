@@ -1248,8 +1248,8 @@ fn a_claim_binds_every_random_parameter_of_its_subject() {
         let changed = random_claims_wire(support, &claims);
         for name in ["A", "B"] {
             assert_ne!(
-                claim_named(&base, name)["node_id"],
-                claim_named(&changed, name)["node_id"],
+                resolved_id(&base, &claim_named(&base, name)["node_id"], 8),
+                resolved_id(&changed, &claim_named(&changed, name)["node_id"], 8),
                 "{name} under {support}"
             );
         }
