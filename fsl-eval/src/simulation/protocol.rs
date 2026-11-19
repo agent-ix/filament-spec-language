@@ -1087,6 +1087,47 @@ pub fn classify_package_accesses(
     )
 }
 
+/// FR-226, FR-940: load-buffering shapes of an admitted package protocol
+/// under `ra`, preserving the same access and program-order rules as source.
+pub fn package_load_buffering_shapes(
+    model: &ModelSystem<'_>,
+    program: &PackageProtocolProgram<'_>,
+    over: &Value,
+) -> Result<Vec<LoadBufferingShape>, ProtocolRefusal> {
+    let governing = program
+        .governing_models()
+        .map_err(ProtocolRefusal::Memory)?;
+    if !governing
+        .values()
+        .any(|model| *model == fsl_foundation::MemoryModelName::Ra)
+    {
+        return Ok(Vec::new());
+    }
+    let runtime = Program::new_package(model, program)?;
+    let orderings = program
+        .controls
+        .values()
+        .filter(|control| {
+            control.operation == fsl_package::protocol_view::ControlOperation::Attempt
+        })
+        .map(|control| (control.id, control.ordering))
+        .collect();
+    let accesses = access::classify_package(
+        model,
+        &runtime,
+        &governing,
+        model.initial().first(),
+        over,
+        access::ClassificationMode::Potential,
+        &orderings,
+    )?;
+    Ok(
+        access::load_buffering_shapes(&runtime, &governing, &accesses)?
+            .into_iter()
+            .collect(),
+    )
+}
+
 /// One bounded protocol expansion together with its terminal classification.
 pub type ProtocolSuccessorsAndTerminal<M> = (
     Expansion<ProtocolTransition, ProtocolState<M>, ModelFinding>,
