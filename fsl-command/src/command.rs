@@ -12,6 +12,7 @@ mod replay;
 mod requirements;
 mod settle;
 mod tl;
+mod verification_plan;
 mod wire;
 
 pub use analyze::{
@@ -717,6 +718,10 @@ pub enum RunCause {
         /// Why this member is invalid.
         reason: String,
     },
+    /// FR-1038: the verification-plan request reader or selection refused a
+    /// member with its closed catalog code, cause and request pointer.
+    #[error("{0}")]
+    VerificationPlanRequest(#[source] Box<verification_plan::Refusal>),
     /// Typed output serialization failed.
     #[error("cannot serialize native result: {0}")]
     Output(#[source] serde_json::Error),
@@ -1021,6 +1026,7 @@ impl RunCause {
             | Self::ClocksGivenTwice
             | Self::OutputGivenTwice
             | Self::OutputExists { .. } => Code::InvalidRequest,
+            Self::VerificationPlanRequest(refusal) => refusal.code,
             Self::Output(_) | Self::ClauseOutput(_) => Code::OutputFailure,
             Self::Format => Code::UnknownWire,
             Self::Limit(_) => Code::ResourceExhausted,
@@ -1200,9 +1206,24 @@ impl RunError {
                     )]))),
                 ])
             }
+            RunCause::VerificationPlanRequest(refusal) => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        Some(refusal.cause),
+                        refusal.code.as_str(),
+                        None,
+                        self.outcome_message(),
+                    )
+                    .with_details(Some(serde_json::Map::from_iter([(
+                        "path".to_owned(),
+                        serde_json::Value::String(refusal.pointer.clone()),
+                    )]))),
+                ])
+            }
             RunCause::Io { .. }
             | RunCause::Json(_)
             | RunCause::ClauseRequest { .. }
+            | RunCause::VerificationPlanRequest(_)
             | RunCause::IntegerDivisionLaw { .. }
             | RunCause::TlCorrespondence { .. }
             | RunCause::TlClause { .. }
@@ -3189,6 +3210,15 @@ fn prepare_run_bytes_with_sources(
     admitted_sources: &mut crate::Sources,
 ) -> Result<PreparedRun> {
     let request: wire::Request = request_with_overrides(bytes, overrides)?;
+    // FR-1038: close and type-check the plan member before source intake or
+    // any stage can run. Selection is performed after source declarations
+    // have been admitted.
+    let _verification_plan_request = request
+        .verification_plan
+        .as_ref()
+        .map(verification_plan::read_source)
+        .transpose()
+        .map_err(|refusal| RunCause::VerificationPlanRequest(Box::new(refusal)))?;
     if request.package.is_some() && request.integer_division.is_some() {
         return Err(RunCause::ClauseRequest {
             member: "integer_division".to_owned(),

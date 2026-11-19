@@ -292,6 +292,10 @@ pub(super) struct Request {
     /// each refusal names its member path; none when absent.
     #[serde(default, deserialize_with = "present_json_value")]
     pub tl_lowering: Option<serde_json::Value>,
+    /// FSL FR-1038 / FSpec FR-824: select and optionally execute one
+    /// verification plan emitted from the program.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub verification_plan: Option<serde_json::Value>,
 }
 
 fn from_object_opt<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
