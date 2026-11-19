@@ -370,7 +370,8 @@ pub use refinement_query::{
 pub use refinement::{
     AbstractClass, AbstractInitial, AbstractProtocolSystem, AssumptionIdentity, AssumptionOrigin,
     AssumptionSelectedMember, AssumptionSide, AssumptionTarget, ConcreteStep, EvalFailure,
-    HiddenSlot, HistoryValues, LivenessHalf, MappedState, MappingFailure, MappingRowRef,
+    CandidateFairState, CandidateFairStep, CandidateLivenessError, HiddenSlot, HistoryValues,
+    LivenessHalf, MappedState, MappingFailure, MappingRowRef,
     MappingUndetermined, ObjectKey, ObservationField, ObservationLabel, PairedAssumptionPath,
     PairedAssumptionStep, ProtocolAssumptionFairness, ProtocolAssumptionReason,
     ProtocolAssumptionWitness, ProtocolCandidate, ProtocolRelationError, ProtocolStateRelation,
@@ -380,8 +381,8 @@ pub use refinement::{
     StepArgument, StepRejection, StepResult, StepVerdict, StepViewRefusal, SubjectRefusal, Taken,
     TerminalSuccessDirection, Undetermined, UnsteppedConstruct, abstract_classes, check_initial,
     check_protocol_initial, check_protocol_state_relations, check_protocol_step, check_step,
-    initial_history, map_state, open_protocol_systems, open_systems, protocol_observation_label,
-    protocol_transition_class, step_history, step_view_over,
+    candidate_lasso_has_fair_run, initial_history, map_state, open_protocol_systems, open_systems,
+    protocol_observation_label, protocol_transition_class, step_history, step_view_over,
 };
 // The equality operator a composite parity claim names (FR-358).
 pub use filament_semantic_value::declaration::EqualityOperator;
