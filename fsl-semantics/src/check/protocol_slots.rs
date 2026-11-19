@@ -518,16 +518,27 @@ impl Checker<'_, '_> {
         };
         // A role's `until` reads model state as a state clause does, so its
         // population positions name the unit's populations (FR-208, FR-391).
+        // FR-883 permits population reads in event, send and finish
+        // constraints, as well as `terminal when`; barred slots resolve the
+        // names too, so their S3 refusal can point at the actual read.
         let names_model_populations = slot.bars_model_state
-            || matches!(
-                slot.owner,
-                SlotOwner::Node(node)
-                    if self
-                        .protocol
+            || match slot.owner {
+                SlotOwner::Clause => slot.kind == SlotKind::Terminal,
+                SlotOwner::Node(node) => {
+                    self.protocol
                         .declarations
                         .get(node)
-                        .is_some_and(|declaration| declaration.kind == ProtocolNodeKind::Send)
-            );
+                        .is_some_and(|declaration| {
+                            matches!(
+                                declaration.kind,
+                                ProtocolNodeKind::Event
+                                    | ProtocolNodeKind::Send
+                                    | ProtocolNodeKind::Finish
+                            )
+                        })
+                }
+                SlotOwner::Role(_) => false,
+            };
         let named = (role_bound.is_some() || names_model_populations).then(|| {
             NamedScope::of(
                 self.declarations.models,

@@ -112,6 +112,23 @@ protocol Guard using P over (view: M::Node) on origin {
 }
 "#;
 
+const EVENT_AND_FINISH_SOURCE: &str = r#"
+language "ix:native" edition "1-draft";
+profile P = "filament.protocol.finite-global/v1";
+model M = "test/orders";
+protocol SlotReads using P over (view: M::Node) on origin {
+  role Observer on M::Node;
+  run sequence Main {
+    event Seen by Observer as (seen: M::Flag) {
+      size(allInstances<M::Node>(M::otherNodes)) >= 0
+    };
+  }
+  finish Closed as (closed: M::Flag) {
+    size(allInstances<M::Node>(M::otherNodes)) >= 0
+  };
+}
+"#;
+
 /// Build a checked package with an additional population of `Node` values.
 fn package(source: &str) -> (CheckedPackage, fsl_semantics::model::intake::PackageInput) {
     let parsed = fsl_cst::parse(
@@ -443,9 +460,19 @@ fn an_undefined_missing_lookup_in_a_protocol_capture_keeps_absent_key() {
 #[trace("TC-2507", "FR-883-AC-4")]
 #[test]
 fn all_instances_in_a_check_guard_is_refused_at_checking() {
-    for (name, source) in [
-        ("check", CHECK_GUARD_SOURCE),
-        ("choice", CHOICE_GUARD_SOURCE),
+    for (name, source, expected_node, expected_slot) in [
+        (
+            "check",
+            CHECK_GUARD_SOURCE,
+            "HasNodes",
+            fsl_semantics::check::SlotKind::Condition,
+        ),
+        (
+            "choice",
+            CHOICE_GUARD_SOURCE,
+            "Decide",
+            fsl_semantics::check::SlotKind::Guard,
+        ),
     ] {
         let parsed = fsl_cst::parse(
             fsl_foundation::SourceIdentity::new("qsl-2216", format!("{name}-guard.native")),
@@ -483,12 +510,32 @@ fn all_instances_in_a_check_guard_is_refused_at_checking() {
             .iter()
             .flat_map(|result| result.refusals.iter())
             .collect();
-        assert!(
-            refusals.iter().any(|refusal| {
-                refusal.cause.code() == fsl_foundation::Code::IllTyped
-                    && refusal.cause.cause() == Some("operator-ineligible")
-            }),
-            "expected FR-883's S3 {name} slot refusal, got {refusals:?}"
-        );
+        let [refusal] = refusals.as_slice() else {
+            panic!("expected one FR-883 S3 {name} slot refusal, got {refusals:?}");
+        };
+        assert_eq!(refusal.cause.code(), fsl_foundation::Code::IllTyped);
+        assert_eq!(refusal.cause.cause(), Some("operator-ineligible"));
+        let fsl_semantics::check::CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+            panic!("expected a protocol-slot refusal, got {refusal:?}");
+        };
+        let fsl_semantics::check::ProtocolAnchorCause::SlotModelState { node, slot, span } =
+            cause.as_ref()
+        else {
+            panic!("expected the named slot's model-state refusal, got {cause:?}");
+        };
+        assert_eq!(node, expected_node, "the refusal identifies its node");
+        assert_eq!(slot, &expected_slot, "the refusal identifies its slot");
+        let locus = &source[span.start..span.end];
+        assert_eq!(locus, "allInstances<M::Node>(M::nodes)");
+        let detail = format!("{cause:?}");
+        assert!(detail.contains(expected_node));
+        assert!(detail.contains(&format!("slot: {expected_slot:?}")));
     }
+}
+
+/// Provenance: QSL-2216.
+#[trace("TC-2507", "FR-883")]
+#[test]
+fn event_and_finish_constraints_resolve_named_model_populations() {
+    let _ = package(EVENT_AND_FINISH_SOURCE);
 }
