@@ -79,3 +79,43 @@ the shape slice 1 ships: `HybridAnswer`/`HybridVerdict` (FND-009), the `Refuted`
 fixture wire spelling (FND-013). These should land in this PR, after a rebase onto main at
 bdb9a2efa, before merge. FND-001 to FND-003 are pre-ruling defects to fix in the same round.
 Not mergeable as is.
+
+## New findings (disposition pass 1)
+
+Pass 1 was checked against head 544461c15e18d11b7a724eca22e28eccf1989a8b, which includes fix rounds 1 and 2, the W72 rows, and the merge of origin/main d6d365427.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-014 | medium | 17574bef4 added `#[allow(clippy::large_enum_variant)]` on `HybridVerdict`. The house rule allows no `#[allow]` in the diff | fsl-replay/src/hybrid/provider.rs:57 |
+| FND-015 | low | `AnalyzeRecord.hybrid_certificate` is written but never emitted or read, and no test asserts that a certificate-bearing answer keeps it. The docs say it is "kept unchecked beside" the record, yet the outcome item carries no `certificate` member | fsl-analyze/src/analyze.rs:1695-1698; fsl-analyze/src/analyze.rs:2595 |
+| FND-016 | low | `the_providers_deadline_is_the_requests_deadline` is tagged `FR-750-AC-1`. AC-1 is the covering delta-complete proof and says nothing about deadlines, so the tag misbinds a test of FR-750 behaviour that has no AC | fsl-analyze/tests/it/hybrid_provider.rs:376-378 |
+| FND-017 | medium | `read_entry` takes a fifth parameter, `wire: &WireGraph`. Merged FR-750 (W72) specifies `read_entry(entry, counterexamples, graph, claim)` in its Behavior and in AC-11/AC-13. The coder's reason is that emitted node order differs from `semantic_graph()` order. The deviation is technically justified, but the spec and the code disagree until arch rules: either amend FR-750 or derive the wire ids from `graph` | fsl-replay/src/hybrid/provider.rs:153-160 |
+| FND-018 | low | `wire_graph(package, spelling).unwrap_or_default()` hands the provider an empty `WireGraph` when emission or admission fails. A provider's correct `locus` then refuses `invalid-value` at `/diagnostic/detail/locus`, which blames the provider for an FSL emission failure. Each hybrid item also emits and admits the package up to three times (request, unsupported, counterexample) | fsl-analyze/src/analyze/hybrid_item.rs:87 |
+| FND-019 | low | `WireGraph::of_keys` is new public API in the core crate fsl-semantics with no caller anywhere in the workspace. It also uses `at as u64` | fsl-semantics/src/check/wire_id.rs:895-909 |
+| FND-020 | low | `read_unsupported` finds the claim's position by `std::ptr::eq(candidate, claim)`. A `claim` not borrowed from `graph.hybrid_claims()` (a clone, or one from another graph instance) refuses `UnknownModel`, a misleading cause for a claim whose model exists | fsl-replay/src/hybrid/provider.rs:681-685 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The certificate is carried in `HybridReport.certificate` and `AnalyzeRecord.hybrid_certificate`. The crate and seam docs now say FR-751 is a later slice and the record stays `uncertified` (FND-015 for the field never being emitted) |
+| FND-002 | fixed | `fault_of` follows the W72 "Replay refusals" rows. `Trace` is `invalid_result`/`invalid-value` with `pointer`. `UnknownModel`, `Expansion` and `IllKindedTerm` are `runtime_invariant` naming `hybrid-claim-model`/`hybrid-call-expansion`/`hybrid-term-kind`. `ResourceExhausted` is `incomplete` `LimitReached{work_units}`. Tested by `each_replay_refusal_settles_by_its_row` (TC-3037) |
+| FND-003 | fixed | `deadline_ms: Option<u64>` comes from `AnalyzeLimits.deadline`. Tested for 250 ms and for unbounded |
+| FND-004 | fixed | Causes a `SolverResult` cannot hold are now `NotRead("<result>/<type>")` and are no longer folded into `Unknown(None)` |
+| FND-005 | fixed | `Disposition::Unsupported if !engines.has_hybrid_candidate()` guards `HybridProviderAbsent` |
+| FND-006 | fixed | `fsl-hybrid-reference/src` was added to the xtask string-edge `crate_roots` |
+| FND-007 | fixed | The reference provider answers `SolverMethod::Unclassified`, and its doc says no method ran |
+| FND-008 | fixed | The `HybridItem.proof_bounds` doc states why it stays empty (a hybrid request item names no subject) |
+| FND-009 | fixed | `HybridAnswer{verdict: HybridVerdict{Solved, Refuted(Box<..>), Unsupported(UnsupportedConstruct)}, certificate}`. `Unsupported` settles `unsupported_construct`/`expression-form` with form, declaration, mode, variable, backend and locus, and runs no replay. A bad mode settles `failed` (AC-7 in-process test) |
+| FND-010 | fixed | `Refuted` settles only through `from_provider_counterexample`. Non-reproduction gives `ReplayParity(HybridTrace(NotReproduced))`, `Unknown(trace)` keeps `SolverInconclusive`, and undefined-evaluation agreement follows the W72 rule (AC-8 and AC-14 comparison tests) |
+| FND-011 | fixed | `read_entry` reads the frame's `counterexamples` (`refuted` by position, `/counterexample` refusal), `incomplete` timed-out/steps, and `unsupported` `expression-form` with its locus resolved through the graph (AC-13). `failed` and other `unsupported` return `NotRead`. The extra `wire` parameter is FND-017 |
+| FND-012 | fixed | `to_wire(model, locate)` returns a `Value` for both kinds, with the four catalogued `UndefinedCause` spellings. An unlocatable locus gives a wire `Err`, never `failed` |
+| FND-013 | fixed | The `interval()` helper builds `{lower: rational(..), upper: rational(..)}`. No string horizon, bound or certificate step is left in the hybrid fixtures |
+| FND-014 | fixed | 8c8282076 boxes the payload (`Refuted(Box<HybridCounterexample>)`) and removes the `#[allow]`. No `#[allow]` remains in `git diff origin/main...HEAD` |
+
+## Gates run (disposition pass 1, reviewer worktree at 544461c15)
+
+- clippy `-p fsl-hybrid-reference -p fsl-replay -p fsl-route -p fsl-analyze -p fsl-semantics -p xtask --all-targets -- --cap-lints warn`: no warning in any diff file. Only inherited warnings remain.
+- `cargo test -p fsl-replay --lib -- hybrid`: 49 passed, 0 failed.
+- `cargo test -p fsl-analyze --lib -- hybrid`: 1 passed (`each_replay_refusal_settles_by_its_row`).
+- `cargo test -p fsl-analyze --test it -- hybrid` (with the two house skips): 12 passed, 0 failed, 26 ignored. Every ignore has a QSL-2234 reason.

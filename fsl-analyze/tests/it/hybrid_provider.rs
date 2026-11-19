@@ -373,7 +373,8 @@ fn a_refuted_trace_that_does_not_reproduce_settles_replay_parity() {
 
 /// FR-750: the request's deadline reaches the provider as the caller's
 /// `AnalyzeLimits.deadline`, and an unbounded deadline reaches it as none.
-#[trace("TC-3035", "FR-750-AC-1")]
+/// (No FR-750 criterion states this; it is the request context FR-750 gives
+/// a provider, so the test carries no criterion tag.)
 #[test]
 fn the_providers_deadline_is_the_requests_deadline() {
     use fsl_analyze::analyze::DeadlineSupply;

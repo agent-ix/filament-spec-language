@@ -1692,10 +1692,6 @@ pub struct AnalyzeRecord {
     /// The replayed hybrid counterexample of a `refuted` hybrid item
     /// (FR-750), with its FR-286 spelling.
     pub hybrid_counterexample: Option<Spelled<fsl_replay::HybridCounterexample>>,
-    /// The certificate a hybrid provider returned, as its entry wrote it.
-    /// FR-751's checker is a later slice, so it is kept unchecked and the
-    /// item settles `uncertified`.
-    pub hybrid_certificate: Option<serde_json::Value>,
     /// The number of steps of a supplied trace a `finite-replay` item
     /// replayed to its proof (FR-941).
     pub replayed_steps: Option<u64>,
@@ -1738,7 +1734,6 @@ impl AnalyzeRecord {
             closed_form: None,
             schedule_miss: None,
             hybrid_counterexample: None,
-            hybrid_certificate: None,
             state_graph: None,
         }
     }
@@ -2582,7 +2577,6 @@ fn settle(
                 value,
                 counterexample,
                 wire,
-                certificate,
             } = *report;
             // A refuted value without its replayed counterexample is an
             // engine fault, never a verdict.
@@ -2592,7 +2586,6 @@ fn settle(
             );
             AnalyzeRecord {
                 hybrid_counterexample: counterexample.map(|found| Spelled { found, wire }),
-                hybrid_certificate: certificate,
                 ..AnalyzeRecord::of(index, settlement)
             }
         }

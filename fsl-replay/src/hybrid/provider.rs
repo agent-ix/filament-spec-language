@@ -48,8 +48,9 @@ pub struct HybridSolveRequest<'a> {
 
 /// What a provider returns for one request (FR-750): its verdict and, when
 /// the provider returned one, its FSpec FR-652 certificate as the entry wrote
-/// it. FR-751's checker is a later slice, so the certificate is carried
-/// unchecked and the item settles `uncertified`.
+/// it. FR-751's checker is a later slice (QSL-2531), so the certificate is
+/// carried on the answer unchecked, `analyze` does not write it to the
+/// outcome, and the item settles `uncertified`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HybridAnswer {
     /// What the provider answered.
@@ -373,7 +374,7 @@ fn read_unsupported(
     let position = graph
         .hybrid_claims()
         .iter()
-        .position(|candidate| std::ptr::eq(candidate, claim))
+        .position(|candidate| candidate == claim)
         .ok_or(HybridEntryRefusal::UnknownModel(claim.model))?;
     let found = super::locus::hybrid_locus_site(graph, wire, position, mode, variable, locus)
         .ok_or_else(|| invalid("locus", ValueFault::InvalidValue))?;

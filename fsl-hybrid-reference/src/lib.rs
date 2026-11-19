@@ -5,10 +5,11 @@
 //! dependency cycle.
 //!
 //! Nothing here is certified yet. FR-751's certificate checker is a later
-//! slice, so a certificate-bearing answer settles `proved`/`uncertified` and
-//! its certificate is kept unchecked; the record becomes `certified` only
-//! once the checker accepts the certificate. Until then a proof rests on
-//! this crate's correctness.
+//! slice (QSL-2531), so a certificate-bearing answer settles
+//! `proved`/`uncertified` and its certificate is neither checked nor written
+//! to the outcome; the record becomes `certified` only once the checker
+//! accepts the certificate. Until then a proof rests on this crate's
+//! correctness.
 //!
 //! The flowpipe method of FR-1019 "Method" is not implemented: every request
 //! is answered `solver-inconclusive` with no trace, a result FR-250 settles

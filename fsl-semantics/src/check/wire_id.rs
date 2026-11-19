@@ -892,22 +892,6 @@ impl WireGraph {
         })
     }
 
-    /// The graph whose nodes, in graph order, are `keys`: the index form a
-    /// package emitted from the same graph writes, with no operand rows.
-    pub fn of_keys(keys: Vec<NodeKey>) -> Self {
-        let index = keys
-            .iter()
-            .enumerate()
-            .map(|(at, key)| (key.clone(), at as u64))
-            .collect();
-        Self {
-            keys,
-            index,
-            slots: BTreeMap::new(),
-            rows: Vec::new(),
-        }
-    }
-
     /// Resolve node-held IDs through their corresponding operand rows.
     ///
     /// # Errors

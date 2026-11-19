@@ -1637,6 +1637,7 @@ mod settlement {
     /// at `/diagnostic/detail/locus` and a `mode` the model lacks at
     /// `/diagnostic/detail/mode`; another diagnostic is not a solver answer.
     #[trace("TC-3037", "FR-750-AC-13")]
+    #[trace("FSpec-TC-2051", "FSpec-FR-193-AC-25")]
     #[test]
     fn read_entry_resolves_an_unsupported_entrys_locus_through_the_graph() {
         use crate::hybrid::{
@@ -1716,6 +1717,7 @@ mod settlement {
     /// the reproduced position, locus and cause with a `time` that contains
     /// the reproduced instant; any other claim is `NotReproduced`.
     #[trace("TC-3037", "FR-750-AC-14")]
+    #[trace("FSpec-TC-2051", "FSpec-FR-193-AC-26")]
     #[test]
     fn an_undefined_evaluation_claim_agrees_only_with_the_reproduced_one() {
         let unit = braking_unit(FLOW, "v = 0");

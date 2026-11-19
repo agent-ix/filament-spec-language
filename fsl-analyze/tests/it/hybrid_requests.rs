@@ -327,7 +327,7 @@ fn a_covering_delta_complete_proof_settles_proved_bounded_solver() {
 /// request wrote, and its exact numbers are read only as FSpec FR-193
 /// `{numerator, denominator}` objects.
 #[test]
-#[trace("TC-2100", "FR-750-AC-6")]
+#[trace("TC-3035", "FR-750-AC-6")]
 fn item_options_reach_the_provider_as_strings() {
     let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
         "basis": {"type": "bounded-solver", "method": "delta-complete",
@@ -387,7 +387,7 @@ pub(crate) fn refuted_entry(trace: Value) -> Value {
 /// `inconclusive`, `replay-parity`.
 #[test]
 #[trace("TC-2100", "FR-750-AC-5")]
-#[ignore = "QSL-2234: process-provider composition for hybrid clause requests not implemented yet"]
+#[ignore = "QSL-2532: process-provider composition for hybrid clause requests not implemented yet"]
 fn a_process_provider_refutation_settles_by_exact_replay() {
     let unit = braking(&claim("Positive", "always [0, 12] holds(h.v > 0)"));
     let (_, item) = first_item(
@@ -428,7 +428,7 @@ fn a_process_provider_refutation_settles_by_exact_replay() {
 #[test]
 #[trace("TC-2101", "FR-751-AC-1")]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-1")]
-#[ignore = "QSL-2234: core check of hybrid provider certificates not implemented yet"]
+#[ignore = "QSL-2531: core check of hybrid provider certificates not implemented yet"]
 fn an_inductive_enclosure_certificate_is_checked_in_the_core() {
     let unit = braking(&claim("Bounded", "always holds(h.v < 30)"));
     let (_, accepted) = first_item(
@@ -470,7 +470,7 @@ fn an_inductive_enclosure_certificate_is_checked_in_the_core() {
 #[test]
 #[trace("TC-2101", "FR-751-AC-2")]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-2")]
-#[ignore = "QSL-2234: core check of flowpipe certificates not implemented yet"]
+#[ignore = "QSL-2531: core check of flowpipe certificates not implemented yet"]
 fn a_flowpipe_step_violating_picard_is_rejected() {
     let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
         "basis": {"type": "bounded-solver", "method": "flowpipe-outward-rounded",
@@ -496,7 +496,7 @@ fn a_flowpipe_step_violating_picard_is_rejected() {
 #[test]
 #[trace("TC-2101", "FR-751-AC-3")]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-4")]
-#[ignore = "QSL-2234: work-limited certificate check not implemented yet"]
+#[ignore = "QSL-2531: work-limited certificate check not implemented yet"]
 fn a_work_limited_certificate_check_is_rejected() {
     let unit = braking(&claim("Bounded", "always holds(h.v < 30)"));
     let (_, item) = first_item(
@@ -514,7 +514,7 @@ fn a_work_limited_certificate_check_is_rejected() {
 /// entry refuses `invalid_result`/`invalid-value` at `/certificate`.
 #[test]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-4")]
-#[ignore = "QSL-2234: certificate form check not implemented yet"]
+#[ignore = "QSL-2531: certificate form check not implemented yet"]
 fn a_mismatched_certificate_form_refuses_at_certificate() {
     let mut entry = inductive_entry("20");
     entry["certificate"] = json!({"type": "flowpipe", "steps": []});
@@ -537,7 +537,7 @@ fn a_mismatched_certificate_form_refuses_at_certificate() {
 #[test]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-3")]
 #[trace("FSpec-TC-1605", "FSpec-FR-193-AC-22")]
-#[ignore = "QSL-2234: validated-witness refutation not implemented yet"]
+#[ignore = "QSL-2531: validated-witness refutation not implemented yet"]
 fn a_validated_witness_refutes_through_a_non_polynomial_flow() {
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
          profile p = \"filament.temporal.infinite-trace/v1\";\n\
@@ -609,7 +609,7 @@ fn braking_flowpipe(jump_time: (&str, &str)) -> Value {
 /// accepted; against a violated claim it is rejected with rule `claim`.
 #[test]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-5")]
-#[ignore = "QSL-2234: flowpipe guard and boundary-invariant check not implemented yet"]
+#[ignore = "QSL-2531: flowpipe guard and boundary-invariant check not implemented yet"]
 fn a_flowpipe_jump_step_carries_the_guarded_part_and_its_jump_times() {
     let unit = braking_pair();
     let check = |name: &str, claim: &str, jump_time: (&str, &str)| {
@@ -651,7 +651,7 @@ fn a_flowpipe_jump_step_carries_the_guarded_part_and_its_jump_times() {
 #[test]
 #[trace("FSpec-TC-373", "FSpec-FR-193-AC-23")]
 #[trace("TC-1221", "FR-450-AC-10")]
-#[ignore = "QSL-2234: hybrid trace `end` replay not implemented yet"]
+#[ignore = "QSL-2533: hybrid trace `end` replay not implemented yet"]
 fn a_trace_cut_by_end_replays_to_its_bad_prefix() {
     let unit = braking(&claim("TooSlow", "always [0, 10] holds(h.v > 5)"));
     let trace = |end_v: &str| {
@@ -703,9 +703,9 @@ fn a_trace_cut_by_end_replays_to_its_bad_prefix() {
 /// same located `unsupported` as the in-process fixture.
 #[test]
 #[trace("TC-3035", "FR-750-AC-7")]
-#[ignore = "QSL-2234: `Engine::hybrid_process` and the reader turning an entry's `locus` back into a site do not exist yet"]
+#[ignore = "QSL-2532: `Engine::hybrid_process` does not exist yet"]
 fn a_process_unsupported_entry_settles_a_located_expression_form() {
-    todo!("QSL-2234: process half of FR-750-AC-7");
+    todo!("QSL-2532: process half of FR-750-AC-7");
 }
 
 /// FR-750-AC-9 (reader and irrational instant): the plugin reader reads a
@@ -714,9 +714,9 @@ fn a_process_unsupported_entry_settles_a_located_expression_form() {
 /// interval that contains it.
 #[test]
 #[trace("TC-3035", "FR-750-AC-9")]
-#[ignore = "QSL-2234: the reader's read-back of `where`/`locus` and the irrational-instant solver are not implemented yet"]
+#[ignore = "QSL-2533: the reader's read-back of `where`/`locus` and the irrational-instant solver are not implemented yet"]
 fn an_undefined_evaluation_counterexample_reads_back() {
-    todo!("QSL-2234: AC-9 read-back and irrational instant");
+    todo!("QSL-2533: AC-9 read-back and irrational instant");
 }
 
 /// FR-750-AC-10: the refuted `TooSlow` item's `replay` resolves to the
@@ -725,18 +725,18 @@ fn an_undefined_evaluation_counterexample_reads_back() {
 /// `inconclusive` with the `hybrid-trace` disagreement.
 #[test]
 #[trace("TC-3035", "FR-750-AC-10")]
-#[ignore = "QSL-2234: FR-098's hybrid replay row is not implemented yet"]
+#[ignore = "QSL-2530: FR-098's hybrid replay row is not implemented yet"]
 fn a_refuted_hybrid_item_replays_through_fr_098() {
-    todo!("QSL-2234: FR-098 hybrid row");
+    todo!("QSL-2530: FR-098 hybrid row");
 }
 
 /// FR-750-AC-11 (process half): a process `failed` `tool-failure` entry is
 /// `NotRead` and the item settles `failed` by FR-290.
 #[test]
 #[trace("TC-3035", "FR-750-AC-11")]
-#[ignore = "QSL-2234: process providers (`Engine::hybrid_process`) do not exist yet"]
+#[ignore = "QSL-2532: process providers (`Engine::hybrid_process`) do not exist yet"]
 fn a_process_failed_entry_settles_failed_by_fr_290() {
-    todo!("QSL-2234: process half of FR-750-AC-11");
+    todo!("QSL-2532: process half of FR-750-AC-11");
 }
 
 /// FR-1021-AC-3: the plan's `Fill`/`Drain` validation item reaches the
@@ -744,9 +744,9 @@ fn a_process_failed_entry_settles_failed_by_fr_290() {
 /// trace bound written as `"8"` refuses `invalid_result`/`wrong-value-kind`.
 #[test]
 #[trace("TC-3035", "FR-1021-AC-3")]
-#[ignore = "QSL-2234: the plan's validation items over the reference provider land with the reference solver"]
+#[ignore = "QSL-2534: the plan's validation items over the reference provider land with the reference solver"]
 fn a_plan_validation_item_carries_rational_objects() {
-    todo!("QSL-2234: FR-1021-AC-3");
+    todo!("QSL-2534: FR-1021-AC-3");
 }
 
 /// FR-750-AC-12 (exact-replay half): over `Shuttle`, a lasso trace for an
@@ -755,9 +755,9 @@ fn a_plan_validation_item_carries_rational_objects() {
 /// reproduce by exact replay instead of refusing.
 #[test]
 #[trace("TC-3037", "FR-750-AC-12")]
-#[ignore = "QSL-2234: exact replay of activation-state and non-deterministic-reset claims (tau as a second real variable, quantifier elimination) is not implemented; those gaps still settle `NotExact`"]
+#[ignore = "QSL-2529: exact replay of activation-state and non-deterministic-reset claims (tau as a second real variable, quantifier elimination) is not implemented; those gaps still settle `NotExact`"]
 fn exact_replay_decides_activation_state_and_nondeterministic_reset_claims() {
-    todo!("QSL-2234: FR-450 exact replay of the Shuttle claims");
+    todo!("QSL-2529: FR-450 exact replay of the Shuttle claims");
 }
 
 /// FR-750-AC-12 (replay-request half): the same refusals on FR-098's replay
@@ -765,9 +765,9 @@ fn exact_replay_decides_activation_state_and_nondeterministic_reset_claims() {
 /// the three package faults.
 #[test]
 #[trace("TC-3037", "FR-750-AC-12")]
-#[ignore = "QSL-2234: FR-098's hybrid replay path is not implemented yet"]
+#[ignore = "QSL-2530: FR-098's hybrid replay path is not implemented yet"]
 fn a_replay_request_settles_each_hybrid_refusal_by_its_row() {
-    todo!("QSL-2234: replay path of FR-750 'Replay refusals'");
+    todo!("QSL-2530: replay path of FR-750 'Replay refusals'");
 }
 
 /// FR-750-AC-14 (wire half): `to_wire` writes the four undefined causes and
@@ -776,7 +776,8 @@ fn a_replay_request_settles_each_hybrid_refusal_by_its_row() {
 /// irrational instant is claimed through its isolating interval.
 #[test]
 #[trace("TC-3037", "FR-750-AC-14")]
-#[ignore = "QSL-2234: the plugin reader does not read an undefined-evaluation counterexample back yet"]
+#[trace("FSpec-TC-2051", "FSpec-FR-193-AC-26")]
+#[ignore = "QSL-2533: the plugin reader does not read an undefined-evaluation counterexample back yet"]
 fn the_four_undefined_causes_round_trip_through_the_wire() {
-    todo!("QSL-2234: undefined-evaluation read-back");
+    todo!("QSL-2533: undefined-evaluation read-back");
 }

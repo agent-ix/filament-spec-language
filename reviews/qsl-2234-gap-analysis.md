@@ -53,3 +53,22 @@ The slice's claimed ACs (FR-750-AC-1..4, FR-1019-AC-4/5/12) are covered by real,
 non-tautological tests. The remaining ACs stay ignored with honest reasons. The defects are
 one inflating tag (FND-001), one unasserted AC clause (FND-002), and the W68 ACs with no
 tests or stubs (FND-005).
+
+## New findings (disposition pass 1)
+
+Pass 1 was checked against head 544461c15e18d11b7a724eca22e28eccf1989a8b.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | low | `item_options_reach_the_provider_as_strings` is tagged `TC-2100` for `FR-750-AC-6`, whose verification is TC-3035. The sibling AC-6 test in fsl-replay uses TC-3035 | fsl-analyze/tests/it/hybrid_requests.rs:330 |
+| FND-007 | low | The W72 FSpec criteria FSpec-FR-193-AC-25/26 (FSpec-TC-2051) carry no FSpec-qualified tag, though the tests that exercise them are active (`read_entry_resolves_an_unsupported_entrys_locus_through_the_graph`, `an_undefined_evaluation_claim_agrees_only_with_the_reproduced_one`). The repo already tags FSpec criteria without their text being local (`FSpec-TC-373`/`FSpec-FR-193-AC-7`, NFR-140), so the missing local text is no reason to leave them untagged | fsl-replay/src/hybrid_replay/tests.rs:1639; fsl-replay/src/hybrid_replay/tests.rs:1718 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Retagged `#[trace("TC-3035", "FR-750-AC-9")]` as "the formula kind of the writer". The real AC-5 test stays ignored |
+| FND-002 | fixed | The FR-1019-AC-4 test asserts that under `Engines::fsl()` alone the item settles `unsupported` naming `temporal-satisfaction` and `hybrid-dynamics` |
+| FND-003 | fixed | The AC-3 test asserts `diagnostic_detail` `kind`/`requirement`. The AC-1 test asserts `seen.calls() == 1` |
+| FND-004 | fixed | The AC-6 ignore reason now names what remains (`options` defaults and the solver step budget) |
+| FND-005 | fixed | Active TC-3035/TC-3037 tests now cover AC-6, AC-7 (in process), AC-8, the AC-9 writer, AC-11, the analyze half of AC-12, AC-13 and the AC-14 comparison. Ignored QSL-2234 stubs with accurate reasons cover the AC-7 process half, AC-9/AC-14 read-back, AC-10, the AC-11 process half, the AC-12 exact-replay and replay-request halves, and FR-1021-AC-3 |

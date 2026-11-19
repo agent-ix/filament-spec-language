@@ -3,7 +3,9 @@
 //! provider its negotiated candidate names and settled by the arm of the
 //! provider's verdict: a solver result by FR-250's map, a claimed refutation
 //! by FR-450's exact replay, and an unsupported construct as a located
-//! `unsupported` record.
+//! `unsupported` record. A provider's certificate is not read here: FR-751's
+//! checker is a later slice (QSL-2531), so the item settles `uncertified` and
+//! the answer's certificate is neither checked nor written to the outcome.
 
 use filament_exact::LimitKind;
 use filament_semantic_value::catalog::CatalogCode;
@@ -30,10 +32,6 @@ pub(crate) struct HybridReport {
     pub(crate) value: TerminalValue,
     pub(crate) counterexample: Option<Box<HybridCounterexample>>,
     pub(crate) wire: Result<Value, fsl_replay::CounterexampleWireError>,
-    /// The certificate the provider returned, as its entry wrote it. FR-751's
-    /// checker is a later slice: nothing here checks it, so the record
-    /// settles `uncertified` and keeps the certificate unchecked beside it.
-    pub(crate) certificate: Option<Value>,
 }
 
 /// The package and request context a hybrid item reads to spell a locus.
@@ -84,7 +82,15 @@ pub(super) fn hybrid_item<'a>(
                         .and_then(|bounds| bounds.max_solver_steps)
                         .unwrap_or(u64::MAX),
                 );
-                let wire = wire_graph(package, spelling).unwrap_or_default();
+                // The package is emitted once for the item. When FSL cannot
+                // emit it, no locus can be spelled or read: an FSL fault, not
+                // the provider's.
+                let Some(wire) = wire_graph(package, spelling) else {
+                    return EngineReport::Refused(Refusal::Failed(CatalogCode::new(
+                        "runtime_invariant",
+                        "established-invariant-broken",
+                    )));
+                };
                 let request = HybridSolveRequest {
                     graph,
                     wire: &wire,
@@ -98,7 +104,6 @@ pub(super) fn hybrid_item<'a>(
                     },
                 };
                 let answer = provider.solve(&request, cancel);
-                let certificate = answer.certificate;
                 let mut meter = HybridReplayMeter::new(work_units);
                 let settled = match answer.verdict {
                     HybridVerdict::Solved(result) => result.settle(graph, checked, &mut meter),
@@ -108,24 +113,21 @@ pub(super) fn hybrid_item<'a>(
                         )
                     }
                     HybridVerdict::Unsupported(construct) => {
-                        return unsupported_construct(
-                            package, graph, spelling, position, model, &construct,
-                        );
+                        return unsupported_construct(graph, &wire, position, model, &construct);
                     }
                 };
                 match settled {
                     Ok(settled) => {
                         let wire = match &settled.counterexample {
-                            Some(found) => counterexample_wire(
-                                package, graph, spelling, position, model, found,
-                            ),
+                            Some(found) => {
+                                counterexample_wire(graph, &wire, position, model, found)
+                            }
                             None => Ok(Value::Null),
                         };
                         EngineReport::Hybrid(Box::new(HybridReport {
                             value: settled.value,
                             counterexample: settled.counterexample.map(Box::new),
                             wire,
-                            certificate,
                         }))
                     }
                     Err(refusal) => fault_of(&refusal, work_units),
@@ -194,9 +196,8 @@ fn fault_of(refusal: &HybridReplayRefusal, work_units: u64) -> EngineReport {
 /// `expression-form` detail with the construct's `locus`, or an engine fault
 /// when the model has no such mode, variable, expression or term.
 fn unsupported_construct(
-    package: &CheckedPackage,
     graph: &CheckedGraph,
-    spelling: Spelling<'_>,
+    wire: &WireGraph,
     claim: usize,
     model: &CheckedHybridModel,
     construct: &UnsupportedConstruct,
@@ -217,17 +218,15 @@ fn unsupported_construct(
         },
         None => None,
     };
-    let located = wire_graph(package, spelling).and_then(|wire| {
-        hybrid_locus_wire(
-            graph,
-            &wire,
-            claim,
-            &fsl_replay::ExpressionLocus {
-                site: construct.site,
-                term: construct.term.clone(),
-            },
-        )
-    });
+    let located = hybrid_locus_wire(
+        graph,
+        wire,
+        claim,
+        &fsl_replay::ExpressionLocus {
+            site: construct.site,
+            term: construct.term.clone(),
+        },
+    );
     let Some(locus) = located else {
         return fault();
     };
@@ -253,9 +252,8 @@ fn wire_graph(package: &CheckedPackage, spelling: Spelling<'_>) -> Option<WireGr
 /// locus the package cannot spell stays the item's counterexample with its
 /// spelling refused: the item never settles `failed` for it (FR-750).
 fn counterexample_wire(
-    package: &CheckedPackage,
     graph: &CheckedGraph,
-    spelling: Spelling<'_>,
+    wire: &WireGraph,
     claim: usize,
     model: &CheckedHybridModel,
     found: &HybridCounterexample,
@@ -264,8 +262,7 @@ fn counterexample_wire(
     match &found.kind {
         HybridCounterexampleKind::Formula => Ok(found.to_wire(model, &|_| Value::Null)),
         HybridCounterexampleKind::UndefinedEvaluation { at, .. } => {
-            let wire = wire_graph(package, spelling).ok_or_else(unspelled)?;
-            let locus = hybrid_locus_wire(graph, &wire, claim, &at.locus).ok_or_else(unspelled)?;
+            let locus = hybrid_locus_wire(graph, wire, claim, &at.locus).ok_or_else(unspelled)?;
             Ok(found.to_wire(model, &|_| locus.clone()))
         }
     }

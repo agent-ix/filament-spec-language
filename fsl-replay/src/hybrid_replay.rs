@@ -492,12 +492,12 @@ pub fn exact_replay(
         // replay returns `NotExact` for it, as for a trace that is not a
         // point trace or that dwells in a mode without a polynomial flow.
         //
-        // TEMPORARY (QSL-2234, later slice): `ActivationState` and
+        // TEMPORARY (QSL-2529): `ActivationState` and
         // `NondeterministicReset` are gaps FR-750 deletes, because exact
         // replay decides those claims (tau as a second real variable,
         // quantifier elimination for reset enabledness). Until that replay
         // exists they also settle `NotExact`, the only honest answer short of
-        // a verdict; the ignored QSL-2234 tests name each case.
+        // a verdict; the ignored QSL-2529 test names the case.
         Err(HybridReplayRefusal::Exact(
             ExactGap::RecursiveCall
             | ExactGap::ActivationState
