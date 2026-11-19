@@ -212,7 +212,13 @@ item's `Counterexample`.
   rational coefficients, and replay SHALL decide whether some activation
   instant's obligation is false by exact real algebraic decision over the
   two variables (a cylindrical decomposition with exact root isolation in
-  each cell, no floating-point step). The decisive instant is the earliest
+  each cell, no floating-point step). On a `loop_to` trace the activation
+  instants are infinitely many, but under `model-time` an obligation's truth
+  depends only on the behaviour from its activation instant on and is
+  shift-invariant: the periodic behaviour repeats with the loop's period `P`,
+  so the obligations activated at `τ` and `τ + P` in the periodic part agree,
+  and replay SHALL decide the activation instants of the prefix and of one
+  period, which decides them all. The decisive instant is the earliest
   instant at which some obligation's prefix is a bad prefix or its capture
   or atom has no value; a capture value outside its type's range there is
   `UndefinedEvaluation` with cause `outside-capture-range`.

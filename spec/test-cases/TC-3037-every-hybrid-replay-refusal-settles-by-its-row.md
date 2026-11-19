@@ -22,11 +22,15 @@ trips. Scope: FR-750-AC-12, FR-750-AC-13 and FR-750-AC-14.
    last state, through analyze and inside a replay request; build a claim whose model index the graph lacks, a call to a
    missing function index and an ill-kinded term, and run each through
    analyze and through a replay request.
-2. Run FSpec FR-193-AC-15's `on each (q: Braking) when (q.v > 10)` claim
-   capturing `v0 = q.v` with body `eventually [0, 10] holds(h.v < v0)` over a
-   provider `refuted` point trace holding `v` at 20 for 12 seconds, through
-   analyze and as a replay request; decide `fair Moving;` over a `Moving`
-   transition whose reset is `v >= 0`; run FR-450-AC-8's recursive-call guard
+2. Over FR-750-AC-12's `Shuttle` and its point lasso `L` (`loop_to` 0, period
+   1 s), run as provider `refuted` claims on `L`, through analyze and as
+   replay requests: (a) the FSpec FR-193-AC-15-form capture claim
+   `on each (q: Shuttle) when (q.v > 0) { capture v0: Rational = q.v;
+   eventually [0, 1] holds(h.v >= v0 + 1/2) }`, then with body
+   `eventually [0, 1] holds(h.v >= v0)`; (b) `on origin { fair Moving;
+   eventually [0, *] holds(h.v > 1) }`, then with `fair Moving::Stopped;`,
+   then with `fair Moving::Stopped;` and the `Moving -> Stopped` reset
+   `v <= 1/2`. Run FR-450-AC-8's recursive-call guard
    with an unexhausted meter as a provider `refuted` trace, as a
    `solver-inconclusive` trace and as a replay request.
 3. Run FR-450-AC-7's trace under a `work_units` bound of 10 through analyze
@@ -52,10 +56,17 @@ trips. Scope: FR-750-AC-12, FR-750-AC-13 and FR-750-AC-14.
   `established-invariant-broken` with invariants `hybrid-claim-model`,
   `hybrid-call-expansion` and `hybrid-term-kind`, and each replay request
   ends with exit `30` and no row.
-- Step 2: the capture claim is decided by exact replay and settles
-  `refuted` with one counterexample, its replay row
-  `reproduced-with-evaluated-witness`; the fairness constraint is decided
-  exactly; the recursive-call trace gives `inconclusive`,
+- Step 2: (a) obligations activated at `τ` in `(0, 1/2]` of each period
+  hold and those at `τ` in `(1/2, 1)` are false, so the first claim
+  reproduces with kind `formula`, settles `refuted` with one counterexample
+  and its replay row is `reproduced-with-evaluated-witness`; the `v0` body
+  holds for every `τ`, `NotReproduced` at check 5, `inconclusive`,
+  `ReplayParity(HybridTrace(NotReproduced{..}))`. (b) `Moving -> Stopped` is
+  enabled at every instant of every period; `fair Moving;` is taken every
+  period by the self-loop, so `L` is fair and the claim settles `refuted`;
+  `fair Moving::Stopped;` is never taken, so `L` is unfair, `NotReproduced`
+  at check 5, `inconclusive`; with the reset `v <= 1/2` the enabled set is
+  empty and the claim settles `refuted`. The recursive-call trace gives `inconclusive`,
   `ReplayParity(HybridTrace(NotExact{counterexample}))`, `SolverInconclusive`
   with `exact` `not-exact`, and a replay row `inconclusive` with the
   `not-exact` disagreement.
