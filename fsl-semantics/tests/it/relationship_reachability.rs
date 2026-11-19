@@ -411,15 +411,18 @@ fn an_unqualified_edge_still_resolves() {
 #[trace("TC-456", "FR-104-AC-17", "TC-1046", "FR-365-AC-1")]
 #[test]
 fn a_qualified_edge_resolves_to_the_declared_edge() {
-    for owner in ["Order", "Rush"] {
-        let graph = check(&invariant(owner, "reaches(self, self, M::Order::trail)"))
-            .expect("the qualified field edge checks");
+    for (owner, qualifier) in [("Order", "Order"), ("Rush", "Order"), ("Rush", "Rush")] {
+        let graph = check(&invariant(
+            owner,
+            &format!("reaches(self, self, M::{qualifier}::trail)"),
+        ))
+        .expect("the qualified field edge checks");
         let body = graph.state_clause("I").expect("I is checked").body();
         assert_eq!(body.value_type(), &ValueType::Boolean);
         assert!(matches!(body.kind(), NodeKind::Reaches { edge, .. }
             if edge == &FieldRef::new(object(&graph, "Order"), "trail")));
         assert_admitted(
-            &invariant(owner, "reaches(self, self, M::Order::next)"),
+            &invariant(owner, &format!("reaches(self, self, M::{qualifier}::next)")),
             "next",
             "next",
         );

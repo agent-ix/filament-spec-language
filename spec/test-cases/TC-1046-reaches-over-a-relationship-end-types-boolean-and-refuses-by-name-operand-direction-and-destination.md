@@ -5,6 +5,8 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-365
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-104
+    type: verifies
 ---
 # TC-1046: reaches over a relationship end types as Boolean and refuses by name, operand, direction and destination
 
@@ -12,7 +14,7 @@ relationships:
 
 Verify that the `StateModel` hook checks `reaches(a, b, name)` when `name` is a
 relationship end, and refuses each inadmissible form with its code and cause.
-Scope: FR-365-AC-1 to FR-365-AC-4.
+Scope: FR-365-AC-1 to FR-365-AC-4 and FR-104-AC-17.
 
 Catches a checker that resolves the third argument only as a field (every
 positive vector then refuses `missing-name`), that skips the direction or the
@@ -30,7 +32,8 @@ static type or the refusal's code, cause, family and location with the vector.
 Fixture **R** (domain package `test/orders`) declares object types `Order`,
 `Rush` (supertype `Order`) and `Person`; `Order` declares the field `trail` typed
 `Option<Reference<Order>>` and the field `parent` typed
-`Option<Reference<Order>>`; a population `orders` with member type `Order` and no
+`Option<Reference<Order>>`; `Person` declares its own `trail` field typed
+`Option<Reference<Person>>`; a population `orders` with member type `Order` and no
 maximum, and a population `people` with member type `Person`. `Rush` declares the operations `hop(target: Reference<Order>)` and
 `hopRush(target: Reference<Rush>)`. Each relationship
 is declared by its source type; the end names type, role and multiplicity
