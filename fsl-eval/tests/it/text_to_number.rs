@@ -41,7 +41,7 @@ const DECLARATIONS: &str = "\
     unit ms : Time = rational(1, 1000) * s;\n\
     function convert_integer using v(t: Text[0, 64; unicode-scalars]): Integer pure { convert<Integer>(t) }\n\
     function convert_bounded using v(t: Text[0, 64; unicode-scalars]): Int[0, 99] pure { convert<Int[0, 99]>(t) }\n\
-    function convert_decimal_wide using v(t: Text[0, 64; unicode-scalars]): Decimal[0, 1000; 0, 18; nearest-even] pure { convert<Decimal[0, 1000; 0, 18; nearest-even]>(t) }\n\
+    function convert_decimal_wide using v(t: Text[0, 64; unicode-scalars]): Decimal[-1000, 1000; 0, 18; nearest-even] pure { convert<Decimal[-1000, 1000; 0, 18; nearest-even]>(t) }\n\
     function convert_rational using v(t: Text[0, 64; unicode-scalars]): Rational[-9, 9; 1, 9] pure { convert<Rational[-9, 9; 1, 9]>(t) }\n\
     function convert_rational_wide using v(t: Text[0, 64; unicode-scalars]): Rational[-1000, 1000; 1, 1000] pure { convert<Rational[-1000, 1000; 1, 1000]>(t) }\n\
     function convert_decimal using v(t: Text[0, 64; unicode-scalars]): Decimal[0, 1000; 0, 2; nearest-even] pure { convert<Decimal[0, 1000; 0, 2; nearest-even]>(t) }\n\
