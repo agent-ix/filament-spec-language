@@ -3,7 +3,8 @@
 //! declarations of an admitted `filament.checked-package/v2`.
 //!
 //! IR's reader has already refused every FR-476 defect, so this reads the
-//! admitted `temporal`/`terminal` nodes alone: the model each names, its mode
+//! admitted terminal rows by (model, ordinal) and their `temporal`/`terminal`
+//! nodes: the model each names, its mode
 //! and the nodes of its `self` parameter and condition. A model with no node
 //! reads as [`ReadTerminalDeclaration::None`].
 
@@ -40,6 +41,9 @@ pub struct ReadTerminal {
     pub node: NodeKey,
     /// The `model` node the declaration is on.
     pub model: NodeKey,
+    /// The position among the model's terminal nodes in terminal node key order;
+    /// (`model`, `ordinal`) is the terminal key.
+    pub ordinal: u32,
     /// The declaration: never [`ReadTerminalDeclaration::None`].
     pub declaration: ReadTerminalDeclaration,
 }
@@ -88,6 +92,7 @@ fn bindings(node: &CheckedSemanticNodeV2) -> Option<[&CheckedTerm; 4]> {
 fn read_node(
     graph: &WireGraph,
     node: &CheckedSemanticNodeV2,
+    ordinal: u32,
 ) -> Result<ReadTerminal, InternalFault> {
     let key = |id: &filament_contract_model::CheckedNodeId| key(graph, id);
     let [model, mode, parameters, condition] = bindings(node).ok_or(SHAPE)?;
@@ -117,35 +122,40 @@ fn read_node(
     Ok(ReadTerminal {
         node: key(&node.node_id)?,
         model,
+        ordinal,
         declaration,
     })
 }
 
-/// Every `terminal` node of `package`, in graph order.
+/// Every `terminal` node of `package`, one per admitted terminal row, in the
+/// rows' order: the model node's structural key, then the terminal node's
+/// (FSpec FR-476-AC-6). A model with several terminal nodes has one entry
+/// each, told apart by [`ReadTerminal::ordinal`].
 ///
 /// # Errors
 ///
 /// [`InternalFault`] when an admitted node has a shape IR's reader admits and
 /// this read does not expect.
 pub fn read_terminals(package: &CheckedPackageV2) -> Result<Vec<ReadTerminal>, InternalFault> {
-    read_nodes(&package.resolved_graph().nodes)
-}
-
-/// Every `terminal` node among `nodes`, a whole graph, in order.
-pub(crate) fn read_nodes(
-    nodes: &[CheckedSemanticNodeV2],
-) -> Result<Vec<ReadTerminal>, InternalFault> {
+    let nodes = &package.resolved_graph().nodes;
     let graph = WireGraph::new(nodes.iter().map(|node| &node.node_id)).map_err(|_| SHAPE)?;
-    nodes
+    package
+        .terminal_rows()
         .iter()
-        .filter(|node| is_terminal(node))
-        .map(|node| read_node(&graph, node))
+        .map(|row| {
+            let wanted = key(&graph, &row.node)?;
+            let node = nodes
+                .iter()
+                .filter(|node| is_terminal(node))
+                .find(|node| key(&graph, &node.node_id).as_ref() == Ok(&wanted))
+                .ok_or(SHAPE)?;
+            read_node(&graph, node, row.ordinal)
+        })
         .collect()
 }
 
-/// The intended terminal states of the model node `model`:
-/// [`ReadTerminalDeclaration::None`] when the package holds no `terminal`
-/// node on it.
+/// The intended terminal states of the terminal row (`model`, `ordinal`):
+/// [`ReadTerminalDeclaration::None`] when the package holds no such row.
 ///
 /// # Errors
 ///
@@ -153,10 +163,11 @@ pub(crate) fn read_nodes(
 pub fn read_terminal(
     package: &CheckedPackageV2,
     model: &NodeKey,
+    ordinal: u32,
 ) -> Result<ReadTerminalDeclaration, InternalFault> {
     Ok(read_terminals(package)?
         .into_iter()
-        .find(|terminal| &terminal.model == model)
+        .find(|terminal| &terminal.model == model && terminal.ordinal == ordinal)
         .map_or(ReadTerminalDeclaration::None, |terminal| {
             terminal.declaration
         }))
