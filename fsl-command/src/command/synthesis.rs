@@ -616,23 +616,47 @@ fn select_claim<'p>(
 ) -> super::Result<&'p filament_contract_model::ClaimNameRow> {
     let rows = package.claim_names().unwrap_or_default();
     let graph = package.resolved_graph();
-    let synthesis_rows: Vec<_> = rows
+    let declarations: std::collections::BTreeSet<_> = graph
+        .nodes
         .iter()
-        .filter(|row| {
-            graph.nodes.iter().any(|node| {
-                node.node_id == row.declaration
-                    && node.node_tag.as_ref() == "claim"
-                    && node.semantic_form.as_ref() == "synthesis_request"
-            })
+        .filter(|node| {
+            node.node_tag.as_ref() == "claim" && node.semantic_form.as_ref() == "synthesis_request"
         })
+        .map(|node| &node.node_id)
         .collect();
+    select_claim_rows(
+        rows.iter()
+            .filter(|row| declarations.contains(&row.declaration)),
+        requested,
+    )
+}
+
+fn select_claim_rows<'p>(
+    rows: impl Iterator<Item = &'p filament_contract_model::ClaimNameRow>,
+    requested: Option<&str>,
+) -> super::Result<&'p filament_contract_model::ClaimNameRow> {
+    let rows: Vec<_> = rows.collect();
+    let unique_declarations = |matching: &[&'p filament_contract_model::ClaimNameRow]| {
+        let mut declarations = Vec::new();
+        for row in matching {
+            if !declarations
+                .iter()
+                .any(|known: &&filament_contract_model::ClaimNameRow| {
+                    known.declaration == row.declaration
+                })
+            {
+                declarations.push(*row);
+            }
+        }
+        declarations
+    };
     let selected = match requested {
         Some(name) => {
             let path: Vec<_> = name.split("::").collect();
             if path.iter().any(|segment| segment.is_empty()) {
                 return Err(refused("/request/synthesis/declaration", "missing-name"));
             }
-            let matches: Vec<_> = synthesis_rows
+            let matching: Vec<_> = rows
                 .iter()
                 .copied()
                 .filter(|row| {
@@ -646,15 +670,15 @@ fn select_claim<'p>(
                     }
                 })
                 .collect();
-            match matches.as_slice() {
+            match unique_declarations(&matching).as_slice() {
                 [row] => *row,
                 [] => return Err(refused("/request/synthesis/declaration", "missing-name")),
                 _ => return Err(refused("/request/synthesis/declaration", "ambiguous-name")),
             }
         }
-        None => match synthesis_rows.as_slice() {
+        None => match unique_declarations(&rows).as_slice() {
             [row] => *row,
-            [] => return Err(refused("/request/synthesis/declaration", "missing-member")),
+            [] => return Err(refused("/request/synthesis/declaration", "missing-name")),
             _ => return Err(refused("/request/synthesis/declaration", "missing-member")),
         },
     };
@@ -696,7 +720,7 @@ fn refused(member: &str, reason: impl Into<String>) -> super::RunCause {
 mod tests {
     use super::{
         DEFAULT_MAX_WORK, SearchDisposition, SearchLimits, SynthesisOutcomeDocument,
-        search_integer_domain,
+        search_integer_domain, select_claim_rows,
     };
     use filament_exact::{Integer, IntegerInterval};
     use ix_trace_rs::trace;
@@ -704,6 +728,42 @@ mod tests {
 
     fn digit_domain() -> IntegerInterval {
         IntegerInterval::new(Integer::from(0_i64), Integer::from(9_i64)).expect("digit range")
+    }
+
+    fn claim_row(scope: &str) -> filament_contract_model::ClaimNameRow {
+        serde_json::from_value(serde_json::json!({
+            "declaration": {
+                "package": "pkg",
+                "path": [scope, "Pick"],
+                "ordinal": 0
+            },
+            "occurrence": {"role": "declaration", "ordinal": 0},
+            "name": "Pick",
+            "qualified_name": [scope, "Pick"],
+            "declaration_region": {
+                "source": {"authority": "test", "identity": scope},
+                "start": 0,
+                "end": 4
+            }
+        }))
+        .expect("a valid claim-name row")
+    }
+
+    /// FSpec FR-823-AC-3: a bare name matching two declarations is
+    /// ambiguous; a fully qualified name selects exactly one row.
+    #[test]
+    #[trace("TC-3017", "FR-1037-AC-2")]
+    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-3")]
+    fn claim_selection_refuses_ambiguous_bare_names_and_accepts_qualified_names() {
+        let a = claim_row("A");
+        let b = claim_row("B");
+        let ambiguous = select_claim_rows([&a, &b].into_iter(), Some("Pick"))
+            .expect_err("two matching declarations are ambiguous");
+        assert!(format!("{ambiguous:?}").contains("ambiguous-name"));
+
+        let selected = select_claim_rows([&a, &b].into_iter(), Some("A::Pick"))
+            .expect("qualified name selects one declaration");
+        assert_eq!(selected.qualified_name, ["A", "Pick"]);
     }
 
     #[test]

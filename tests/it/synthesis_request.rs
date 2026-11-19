@@ -134,7 +134,7 @@ fn a_plan_synthesis_node_names_the_object_type_and_the_lengths() {
         &format!(
             "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
              synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
-             satisfies {{ Reach.length >= 1 }};\n"
+             satisfies {{ Reach.versionNumber >= 1 }};\n"
         ),
         &packages,
     );
@@ -327,27 +327,4 @@ fn the_synthesis_member_selects_one_declaration_or_refuses() {
         names(&value, pointer);
         assert!(value["synthesis"].get("status").is_none(), "{value}");
     }
-}
-
-/// FSpec FR-823-AC-3: a bare name two scopes declare is ambiguous, and the
-/// qualified name selects one.
-#[test]
-#[trace("FSpec-TC-2038", "FSpec-FR-823-AC-3")]
-fn a_bare_name_two_scopes_declare_is_ambiguous() {
-    let unit = format!(
-        "{VALUE_HEADER}type Digit = Int[0, 9];\n\
-         namespace A {{ synthesis Pick using v grammar Digit domain Digit satisfies {{ Pick = 1 }}; }}\n\
-         namespace B {{ synthesis Pick using v grammar Digit domain Digit satisfies {{ Pick = 2 }}; }}\n"
-    );
-    let (exit, value) = run(&unit, json!({"declaration": "Pick"}));
-    assert_eq!(exit, 20, "{value}");
-    names(&value, "ambiguous-name");
-    names(&value, "/synthesis/declaration");
-    let (exit, value) = run(&unit, json!({"declaration": "A::Pick"}));
-    assert_eq!(exit, 0, "{value}");
-    assert_eq!(
-        value["synthesis"]["candidate"],
-        json!({"type": "integer", "value": "1"}),
-        "{value}"
-    );
 }
