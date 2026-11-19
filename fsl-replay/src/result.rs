@@ -45,6 +45,10 @@ pub fn runtime_value_path_json(path: &RuntimeValuePath) -> serde_json::Value {
         .expect("runtime value path wire form is serializable")
 }
 
+pub(crate) fn expression_location_json(location: &Location) -> serde_json::Value {
+    wire::expression_location_json(location)
+}
+
 /// The verdict a proved or replayed outcome settles to, taken from the
 /// FSpec outcome-to-verdict map fixed per ADR-013 O-16 category (QC-8). A
 /// newtype over the category, not a bare alias: FR-072 says the verdict

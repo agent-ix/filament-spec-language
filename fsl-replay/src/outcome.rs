@@ -32,7 +32,7 @@ pub use counterexample::{
 use crate::hybrid::{BoundDimension, SolverHorizon};
 use filament_exact::{CancelCause, Integer, NodeKey};
 use filament_semantic_value::catalog::Category;
-use filament_semantic_value::location::{ExpressionLocation, ExpressionOwner, OperationClauseKind};
+use filament_semantic_value::location::ExpressionLocation;
 use fsl_cst::format::FormatRefusal;
 use fsl_foundation::diagnostic::{Code, Locus, StageFailure, Staged, Stopped};
 use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef};
@@ -379,97 +379,7 @@ enum CauseLimit {
 #[serde(untagged)]
 enum ItemWhere {
     Text(String),
-    Expression(ExpressionLocationWire),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-struct ExpressionLocationWire {
-    declaration: ExpressionDeclarationWire,
-    path: Vec<usize>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-enum ExpressionDeclarationWire {
-    Body {
-        function: String,
-        index: usize,
-    },
-    Measure {
-        function: String,
-        index: usize,
-    },
-    Expression,
-    TypeDeclaration {
-        name: String,
-    },
-    StateClause {
-        clause: String,
-        index: usize,
-    },
-    ProtocolAttempt {
-        protocol: usize,
-        attempt: usize,
-    },
-    ModelOperationClause {
-        operation: String,
-        clause: OperationClauseWire,
-        position: usize,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-enum OperationClauseWire {
-    Requires,
-    Ensures,
-}
-
-impl ExpressionLocationWire {
-    fn of(location: &ExpressionLocation) -> Self {
-        let declaration = match &location.origin {
-            ExpressionOwner::Body { function, index } => ExpressionDeclarationWire::Body {
-                function: function.clone(),
-                index: *index,
-            },
-            ExpressionOwner::Measure { function, index } => ExpressionDeclarationWire::Measure {
-                function: function.clone(),
-                index: *index,
-            },
-            ExpressionOwner::Expression => ExpressionDeclarationWire::Expression,
-            ExpressionOwner::TypeDeclaration { name } => {
-                ExpressionDeclarationWire::TypeDeclaration { name: name.clone() }
-            }
-            ExpressionOwner::StateClause { clause, index } => {
-                ExpressionDeclarationWire::StateClause {
-                    clause: clause.clone(),
-                    index: *index,
-                }
-            }
-            ExpressionOwner::ProtocolAttempt { protocol, attempt } => {
-                ExpressionDeclarationWire::ProtocolAttempt {
-                    protocol: *protocol,
-                    attempt: *attempt,
-                }
-            }
-            ExpressionOwner::ModelOperationClause {
-                operation,
-                kind,
-                position,
-            } => ExpressionDeclarationWire::ModelOperationClause {
-                operation: operation.clone(),
-                clause: match kind {
-                    OperationClauseKind::Requires => OperationClauseWire::Requires,
-                    OperationClauseKind::Ensures => OperationClauseWire::Ensures,
-                },
-                position: *position,
-            },
-        };
-        Self {
-            declaration,
-            path: location.path(),
-        }
-    }
+    Expression(serde_json::Value),
 }
 
 /// The diagnostic a disposition-settled item carries: its catalog code and
@@ -817,7 +727,9 @@ impl ItemCause {
 
     fn undefined_evaluation_at(location: &ExpressionLocation, cause: impl Into<String>) -> Self {
         Self {
-            at: Some(ItemWhere::Expression(ExpressionLocationWire::of(location))),
+            at: Some(ItemWhere::Expression(
+                crate::result::expression_location_json(location),
+            )),
             cause: Some(cause.into()),
             ..Self::kind("undefined-evaluation")
         }
@@ -3230,7 +3142,7 @@ mod tests {
         String::from_utf8(document.to_bytes().expect("encodes")).expect("is UTF-8")
     }
 
-    fn clause_item(disposition: ClauseDisposition) -> Value {
+    fn clause_document(disposition: ClauseDisposition) -> Value {
         let report = ClauseRunReport {
             disposition,
             usage: Default::default(),
@@ -3246,14 +3158,15 @@ mod tests {
             authenticated_temporal_selection: None,
             refused_at: None,
         };
-        let item = OutcomeItem::from_clause_run(RequestIndex::new(0), "claim", &report)
-            .expect("refusal and undefined dispositions settle as items");
-        serde_json::to_value(item).expect("item serializes")
+        let document =
+            OutcomeDocument::from_clause_runs(Some(OutcomeStage::S6c), [("claim", &report)])
+                .expect("refusal and undefined dispositions settle as items");
+        json_of(&document)
     }
 
     /// FR-867-AC-3: an undefined function claim carries its retained
     /// expression location in `where` and its evaluator reason in `cause`.
-    #[trace("TC-2951", "FR-867-AC-3")]
+    #[trace("TC-2951", "FR-867-AC-3", "FR-286-AC-13")]
     #[test]
     fn undefined_claim_item_serializes_location_and_cause() {
         use filament_semantic_value::location::{ExpressionLocation, ExpressionOwner};
@@ -3262,12 +3175,12 @@ mod tests {
             function: "claim".to_owned(),
             index: 0,
         });
-        let item = clause_item(ClauseDisposition::Evaluate(CallOutcome::Undefined {
+        let document = clause_document(ClauseDisposition::Evaluate(CallOutcome::Undefined {
             reason: "division-by-zero",
             location: Some(location),
         }));
         assert_eq!(
-            item["cause"],
+            document["items"][0]["cause"],
             json!({
                 "kind": "undefined-evaluation",
                 "where": {
@@ -3280,16 +3193,20 @@ mod tests {
     }
 
     /// FR-867-AC-4: an integer function claim emits its type-mismatch detail.
-    #[trace("TC-2951", "FR-867-AC-4")]
+    #[trace("TC-2951", "FR-867-AC-4", "FR-286-AC-13")]
     #[test]
     fn integer_claim_item_serializes_diagnostic_detail() {
-        let item = clause_item(ClauseDisposition::NotAPredicate {
+        let document = clause_document(ClauseDisposition::NotAPredicate {
             name: "integerClaim".to_owned(),
             actual: "Integer".to_owned(),
             result_type_locus: None,
         });
         assert_eq!(
-            item["diagnostic"],
+            document["items"][0]["cause"],
+            json!({"kind": "type-mismatch", "code": "ill_typed"})
+        );
+        assert_eq!(
+            document["items"][0]["diagnostic"],
             json!({
                 "code": "ill_typed",
                 "cause": "type-mismatch",
@@ -3304,26 +3221,37 @@ mod tests {
 
     /// FR-867-AC-4: a bounded integer function claim preserves its declared
     /// result type in its detail.
-    #[trace("TC-2951", "FR-867-AC-4")]
+    #[trace("TC-2951", "FR-867-AC-4", "FR-286-AC-13")]
     #[test]
     fn bounded_claim_item_serializes_diagnostic_detail() {
-        let item = clause_item(ClauseDisposition::NotAPredicate {
+        let document = clause_document(ClauseDisposition::NotAPredicate {
             name: "boundedClaim".to_owned(),
             actual: "Int[0, 3]".to_owned(),
             result_type_locus: None,
         });
-        assert_eq!(item["diagnostic"]["detail"]["actual"], "Int[0, 3]");
+        assert_eq!(
+            document["items"][0]["cause"],
+            json!({"kind": "type-mismatch", "code": "ill_typed"})
+        );
+        assert_eq!(
+            document["items"][0]["diagnostic"]["detail"]["actual"],
+            "Int[0, 3]"
+        );
     }
 
     /// FR-867-AC-4: an unknown function claim emits missing-name detail.
-    #[trace("TC-2951", "FR-867-AC-4")]
+    #[trace("TC-2951", "FR-867-AC-4", "FR-286-AC-13")]
     #[test]
     fn unknown_claim_item_serializes_diagnostic_detail() {
-        let item = clause_item(ClauseDisposition::MissingName {
+        let document = clause_document(ClauseDisposition::MissingName {
             name: "missingClaim".to_owned(),
         });
         assert_eq!(
-            item["diagnostic"],
+            document["items"][0]["cause"],
+            json!({"kind": "missing-name", "code": "missing_declaration"})
+        );
+        assert_eq!(
+            document["items"][0]["diagnostic"],
             json!({
                 "code": "missing_declaration",
                 "cause": "missing-name",
