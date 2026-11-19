@@ -2,7 +2,7 @@
 //! The helpers below are shared by every submodule.
 
 use filament_semantic_value::checking::CheckMode;
-use fsl_forms::{build_unit, AnchorSite, ProtocolDeclarationForm, ProtocolNodeKind};
+use fsl_forms::{AnchorSite, ProtocolDeclarationForm, ProtocolNodeKind, build_unit};
 use fsl_foundation::SourceIdentity;
 
 use super::super::{
@@ -17,7 +17,7 @@ mod attempt_fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_attempt.rs");
 }
-use attempt_fixture::{m_actor_model, HEADER};
+use attempt_fixture::{HEADER, m_actor_model};
 
 mod anchors;
 mod attempts;
@@ -26,6 +26,7 @@ mod controls;
 mod coverage;
 mod declaration;
 mod graph;
+mod guards;
 mod observe_only;
 mod refusal_corpus;
 mod rules;
