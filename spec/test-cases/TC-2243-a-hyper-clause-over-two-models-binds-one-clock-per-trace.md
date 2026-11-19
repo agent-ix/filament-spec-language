@@ -16,7 +16,7 @@ Verify FR-640's per-trace clock bindings for hyper clauses. Scope: FR-640-AC-12.
 
 1. Compile, with models `S` (`example/device-saving`) and `N` (`example/device-normal`) and no `clocks` member, the event-position hyper clause `Saves` over `forall trace s of S forall trace n of N`.
 2. Compile the hyper clause `Same` over two traces of one model.
-3. Analyze `Saves` over the two models and replay a refuted item's counterexample.
+3. In `fsl-analyze`'s tests, analyze `Saves` over the two models through the `native-analyze/1` entry, which runs the layer-A hyper model checker, and replay a refuted item's counterexample through `fsl_replay::replay`. The step runs there because the hyper checker is a layer-A engine that `fsl-replay` and `fsl-semantics` cannot reach (ADR-011 §6.1).
 4. Read the step 1 package with the `n` row removed.
 
 ## Expected Results

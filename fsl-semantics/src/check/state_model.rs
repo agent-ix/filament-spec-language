@@ -249,7 +249,6 @@ impl FamilyContract for StateModelFamily {
                 value_type,
                 location: location.clone(),
                 equality_producer: None,
-                ordering_part: false,
                 field_population: None,
                 equality_range_context: None,
             }))

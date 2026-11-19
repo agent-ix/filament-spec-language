@@ -73,9 +73,6 @@ pub struct Node {
     /// FSL producer facts that the equality checker selected, retained until
     /// lowering assigns the checked application its structural key.
     pub(in crate::check) equality_producer: Option<Box<EqualityProducerData>>,
-    /// A numeric-equality part of a float ordering's composition: FR-397
-    /// charges the ordering once, so such a part adds no charge of its own.
-    pub(in crate::check) ordering_part: bool,
     /// The authored bound of the population a field-edge `Reaches` walks,
     /// linked by the state-clause checker (FR-380 "Field-edge
     /// reachability"); `None` on every other node. `NodeKind::Reaches`
@@ -462,7 +459,6 @@ impl CheckedBody {
                     filament_semantic_value::location::ExpressionOwner::Expression,
                 ),
                 equality_producer: None,
-                ordering_part: false,
                 field_population: None,
                 equality_range_context: None,
             })
@@ -474,7 +470,6 @@ impl CheckedBody {
                 filament_semantic_value::location::ExpressionOwner::Expression,
             ),
             equality_producer: None,
-            ordering_part: false,
             field_population: None,
             equality_range_context: None,
         });
@@ -511,7 +506,6 @@ impl CheckedBody {
                     filament_semantic_value::location::ExpressionOwner::Expression,
                 ),
                 equality_producer: None,
-                ordering_part: false,
                 field_population: None,
                 equality_range_context: None,
             })
@@ -691,12 +685,6 @@ impl<'a> CheckedNode<'a> {
 
     pub(crate) fn equality_range_context(self) -> Option<&'a EqualityRangeContext> {
         self.node().equality_range_context.as_ref()
-    }
-
-    /// Whether the node is a numeric-equality part of a float ordering's
-    /// composition (FR-397), which adds no charge beyond the ordering's own.
-    pub fn is_ordering_part(self) -> bool {
-        self.node().ordering_part
     }
 
     /// The authored bound a field-edge `Reaches` is linked to (FR-380).
@@ -1315,7 +1303,6 @@ mod tests {
             value_type: ValueType::Integer,
             location: Location::root(Origin::Expression),
             equality_producer: None,
-            ordering_part: false,
             field_population: None,
             equality_range_context: None,
         };
