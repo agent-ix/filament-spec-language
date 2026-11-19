@@ -73,7 +73,6 @@ fn analyze_recording(
 #[trace("TC-2702", "FR-962-AC-1")]
 #[trace("TC-2702", "FR-962-AC-2")]
 #[test]
-#[ignore = "QSL-2192: analyze resolves no claim named for an `invariant` state clause (`AtMostThree` settles unknown-claim), so the tie rule is never reached"]
 fn an_unnamed_tied_item_reaches_negotiation_with_one_candidate() {
     let ws = Workspace::new("tied-item-one-candidate");
     let request = counter_request(&ws, AT_MOST_THREE, json!([{"claim": "AtMostThree"}]));
@@ -98,7 +97,7 @@ fn an_unnamed_tied_item_reaches_negotiation_with_one_candidate() {
 /// so the unnamed item settles `ambiguous-backend` naming all three.
 #[trace("TC-2702", "FR-962-AC-3")]
 #[test]
-#[ignore = "QSL-2192: FR-635-AC-4 and FR-281-AC-17 refuse a provider not advertising (value-validity, unbounded); FR-962-AC-3 needs an operation-contract provider to register"]
+#[ignore = "QSL-2564: Engine::external refuses a provider not advertising (value-validity, unbounded); FR-968 registers an operation-contract provider"]
 fn an_undecided_tie_settles_ambiguous_backend() {
     use fsl_semantics::check::Capability;
     let descriptor = fsl_route::descriptor_from_manifest(
@@ -182,10 +181,12 @@ fn advertising(
 /// naming its `BackendId`, and a refused provider is never called.
 #[trace("TC-2725", "FR-968-AC-1")]
 #[test]
-#[ignore = "QSL-2192: Engine::external still requires (value-validity, unbounded) of every provider"]
+#[ignore = "QSL-2564: Engine::external still requires (value-validity, unbounded) of every provider and names no refusal reason"]
 fn a_provider_registers_for_the_kinds_it_advertises() {
     use fsl_route::Mode;
-    use fsl_semantics::check::Capability::{OperationContract, ValueValidity};
+    use fsl_semantics::check::Capability::{
+        OperationContract, Schedulability, TemporalSatisfaction, ValueValidity,
+    };
     #[derive(Debug)]
     struct Never;
     impl fsl_analyze::provider::ExternalProvider for Never {
@@ -228,6 +229,30 @@ fn a_provider_registers_for_the_kinds_it_advertises() {
     ];
     let refusal = build(advertising(id, &pairs)).expect_err("refused at registration");
     assert_eq!(refusal.backend.as_str(), id);
+    // FR-968-AC-4: the refusal names the rule the descriptor breaks.
+    let bounded_only = build(advertising(
+        "fsl.test-bounded-only",
+        &[(ValueValidity, Mode::Bounded)],
+    ))
+    .expect_err("value-validity in bounded mode only is refused");
+    assert_eq!(bounded_only.backend.as_str(), "fsl.test-bounded-only");
+    assert!(
+        bounded_only
+            .to_string()
+            .contains("value-validity-not-unbounded"),
+        "{bounded_only}"
+    );
+    // FR-968-AC-4: any other kind registers, whatever its mode.
+    for (id, pairs) in [
+        ("fsl.test-temporal", [(TemporalSatisfaction, Mode::Bounded)]),
+        (
+            "fsl.test-schedulability",
+            [(Schedulability, Mode::Unbounded)],
+        ),
+    ] {
+        build(advertising(id, &pairs))
+            .unwrap_or_else(|refusal| panic!("{id} registers: {refusal:?}"));
+    }
     // No advertised pair: refused by the manifest reader (FR-288-AC-3) or at
     // registration, never registered.
     let empty = fsl_route::descriptor_from_manifest(
@@ -245,5 +270,158 @@ fn a_provider_registers_for_the_kinds_it_advertises() {
     if let Ok(descriptor) = empty {
         let refusal = build(descriptor).expect_err("an empty advertisement is refused");
         assert_eq!(refusal.backend.as_str(), "fsl.test-nothing");
+        assert!(
+            refusal.to_string().contains("no-advertised-pair"),
+            "{refusal}"
+        );
     }
+}
+
+/// The Counter `post` clause the operation `setTo` keeps.
+const KEEPS: &str = "post Keeps using v on M::Counter::setTo { self.value = n }\n";
+
+/// A Counter `post` clause `setTo` violates at every case.
+const WRONG: &str = "post Wrong using v on M::Counter::setTo { self.value = n + 1 }\n";
+
+/// A provider `fsl.test-contract` advertising (`operation-contract`,
+/// `unbounded`) that answers every item with `verdict` and records the
+/// FSpec FR-331 request it is sent.
+#[derive(Debug)]
+struct Answering {
+    verdict: fn() -> fsl_analyze::provider::ProviderVerdict,
+    sent: std::sync::Arc<Mutex<Vec<Value>>>,
+}
+
+impl fsl_analyze::provider::ExternalProvider for Answering {
+    fn settle(
+        &self,
+        request: &fsl_analyze::provider::ProviderRequest<'_>,
+        _cancel: &filament_exact::Cancel,
+    ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
+        let wire = serde_json::to_value(request).expect("the request serializes");
+        self.sent.lock().expect("the record lock").push(wire);
+        request.items().iter().map(|_| (self.verdict)()).collect()
+    }
+}
+
+fn contract_provider(
+    verdict: fn() -> fsl_analyze::provider::ProviderVerdict,
+) -> (
+    fsl_analyze::analyze::Engine,
+    std::sync::Arc<Mutex<Vec<Value>>>,
+) {
+    use fsl_semantics::check::Capability::OperationContract;
+    let sent = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let engine = fsl_analyze::analyze::Engine::external(
+        advertising(
+            "fsl.test-contract",
+            &[(OperationContract, fsl_route::Mode::Unbounded)],
+        ),
+        fsl_analyze::analyze::BackendTool::new("test-contract", "1").expect("a tool"),
+        Box::new(Answering {
+            verdict,
+            sent: std::sync::Arc::clone(&sent),
+        }),
+    )
+    .expect("an operation-contract provider registers (FR-968)");
+    (engine, sent)
+}
+
+/// FR-968-AC-2: with the provider registered, an unnamed `post` item matches
+/// exactly `[contract-checker, <provider>]` (FR-962 excludes `en-1`) and
+/// settles `ambiguous-backend`; naming the provider sends it one
+/// `operation-contract` request item.
+#[trace("TC-2725", "FR-968-AC-2")]
+#[test]
+#[ignore = "QSL-2564: Engine::external refuses an operation-contract provider and sends no operation-contract item to a provider"]
+fn a_post_item_with_a_provider_matches_contract_checker_and_the_provider() {
+    use fsl_analyze::provider::ProviderVerdict;
+    let ws = Workspace::new("post-item-with-provider");
+    let (provider, sent) = contract_provider(|| ProviderVerdict::Unknown);
+    let request = counter_request(&ws, KEEPS, json!([{"claim": "Keeps"}]));
+    let (document, seen) = analyze_recording(&request, vec![provider]);
+    assert_eq!(
+        seen,
+        vec![vec![
+            "contract-checker".to_owned(),
+            "fsl.test-contract".to_owned()
+        ]],
+        "{document}"
+    );
+    assert!(
+        document["items"][0]
+            .to_string()
+            .contains("ambiguous-backend"),
+        "{document}"
+    );
+    assert!(sent.lock().expect("the record lock").is_empty());
+
+    let ws = Workspace::new("post-item-named-provider");
+    let (provider, sent) = contract_provider(|| ProviderVerdict::Unknown);
+    let request = counter_request(
+        &ws,
+        KEEPS,
+        json!([{"claim": "Keeps", "backend": "fsl.test-contract"}]),
+    );
+    let (document, _) = analyze_recording(&request, vec![provider]);
+    let sent = sent.lock().expect("the record lock");
+    assert_eq!(sent.len(), 1, "{document}");
+    let items = sent[0]["items"].as_array().expect("request items");
+    assert_eq!(items.len(), 1, "{document}");
+    assert_eq!(items[0]["kind"], "operation-contract", "{}", sent[0]);
+}
+
+/// FR-968-AC-3: a provider's verdict on an `operation-contract` item settles
+/// by FR-281's provider-arm rules: `proved` `trusted`, `unknown` as
+/// `solver-inconclusive`, and an `assignments` counterexample, which is not
+/// an `operation-contract` counterexample, as `replay-parity` with no
+/// counterexample. The `Contract` counterexample rows of FR-968-AC-3 join
+/// this test with the verdict variant that carries one.
+#[trace("TC-2725", "FR-968-AC-3")]
+#[test]
+#[ignore = "QSL-2564: no operation-contract item reaches a provider and its verdict is not settled by FR-968"]
+fn a_provider_contract_verdict_settles_after_replay() {
+    use fsl_analyze::provider::ProviderVerdict;
+    let settle = |name: &str, verdict: fn() -> ProviderVerdict| {
+        let ws = Workspace::new(name);
+        let (provider, _) = contract_provider(verdict);
+        let request = counter_request(
+            &ws,
+            WRONG,
+            json!([{"claim": "Wrong", "backend": "fsl.test-contract"}]),
+        );
+        let (document, _) = analyze_recording(&request, vec![provider]);
+        document
+    };
+    let proved = settle("contract-provider-proved", || ProviderVerdict::Proved);
+    let item = &proved["items"][0];
+    assert_eq!(label(item), "proved", "{item}");
+    assert_eq!(item["record"]["backend"], "fsl.test-contract", "{item}");
+    assert_eq!(item["record"]["certification"], "trusted", "{item}");
+
+    let unknown = settle("contract-provider-unknown", || ProviderVerdict::Unknown);
+    let item = &unknown["items"][0];
+    assert_eq!(label(item), "inconclusive", "{item}");
+    assert!(
+        item["record"].to_string().contains("solver-inconclusive"),
+        "{item}"
+    );
+
+    let assignments = settle("contract-provider-assignments", || {
+        ProviderVerdict::Refuted {
+            counterexample: vec![filament_exact::Value::Integer(0_i64.into())],
+        }
+    });
+    let item = &assignments["items"][0];
+    assert_eq!(label(item), "inconclusive", "{item}");
+    assert!(
+        item["record"].to_string().contains("replay-parity"),
+        "{item}"
+    );
+    assert!(
+        assignments["counterexamples"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "{assignments}"
+    );
 }

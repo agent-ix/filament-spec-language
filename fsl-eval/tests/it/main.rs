@@ -50,6 +50,7 @@ mod float_rounding;
 mod footprints;
 mod hyper_tuple;
 mod ieee_node_charges;
+mod ieee_ordering_route_parity;
 mod inherited_attributes;
 mod int_arithmetic_expected_type;
 mod kernel_refusal_payloads;

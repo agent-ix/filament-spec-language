@@ -19,6 +19,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-201
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-940
+    type: references
 ---
 # FR-397: Select the IEEE profile of a package that declares or evaluates a float
 
@@ -154,7 +156,7 @@ into a float. A float model member of a selected domain package (a field, an ope
     that part. The `numericEqual` parts of the composition, `N(a)`, `N(b)` and
     `numericEqual(a, b)`, take their decision from the owned `compare_ieee`
     run on an unlimited scratch meter over the evaluated operand bits; the
-    evaluator SHALL NOT charge the evaluation meter anything for them. A standalone `filament.op.ieee.numeric_equal`,
+    evaluator SHALL NOT charge the evaluation meter anything for them. A standalone ("Ordering parts" below) `filament.op.ieee.numeric_equal`,
     `filament.op.ieee.total_order` or `filament.op.ieee.bit_identical` node (`a = b`,
     the `numeric_equal` node under the `not` of `a != b`, and the
     `numericEqual`, `totalOrder` and `bitIdentical` calls) charges one
@@ -169,6 +171,33 @@ into a float. A float model member of a selected domain package (a field, an ope
     and package routes (FR-931 "Binders"), its parameter node id depends on
     its level and type and not on how many slots the checker had used before,
     and no author binder can take its name.
+  - **Ordering parts.** Whether a `numeric_equal` node charges SHALL be
+    decided from the shape of the expression it is evaluated in, the same way
+    on the source route and on the package route; neither the checked graph
+    nor the package carries a marker for it. An *ordering composition* is a
+    `filament.op.boolean.and` node whose two operands are, in order,
+    `and(numeric_equal(x, x), numeric_equal(y, y))` and either
+    `and(total_order(x, y), not(numeric_equal(x, y)))` or
+    `or(total_order(x, y), numeric_equal(x, y))`, where every `x` is a read of
+    one local (a parameter, an `#ieee_operand` binder or any other binder) or
+    one literal value, and likewise every `y`. The three `numeric_equal`
+    nodes reached from an ordering composition along those operand edges are
+    its *ordering parts*: they take their decision as "Evaluate once" states,
+    charge the evaluation meter nothing, and are not retained as authored
+    comparisons (FR-265). A `numeric_equal` node reached in any other way is
+    standalone and charges one `compare_ieee`, also where the package holds
+    one node for it and for an ordering part, because the rule reads the
+    position a node is evaluated in, not the node. The rule reads only node
+    kinds, operator identities and operand reads, which the package records
+    (FSpec FR-322), so the package route charges exactly what the source
+    route charges for the package and the source it was compiled from
+    (FR-940). An author's composition written in the same shape, such as
+    `numericEqual(p, p) && numericEqual(q, q) && (totalOrder(p, q) &&
+    !numericEqual(p, q))`, is the computation `p < q` lowers to and is
+    charged as `p < q` is on both routes. The package carries no marker because
+    it would make two packages of the same nodes and the same meaning differ
+    in FSpec FR-322 identity only to differ in charge, and a package written
+    by another producer could set it on any `numeric_equal` node.
   - `=` and `!=` also apply to an option, record, tuple, union or collection
     whose type reaches a float at any depth (FSpec FR-149 "IEEE relations").
     They lower to `filament.op.structural.eq` and `.ne` (FR-093), whose leaves
@@ -356,6 +385,8 @@ into a float. A float model member of a selected domain package (a field, an ope
 | FR-397-AC-27 | Conversion and negation rows (QSL-1655; FSpec TC-193 F24, F25, F27, F28, F31, F32 and F33; FSpec FR-148-AC-9, AC-11 and AC-13). Write `I(i,o,w,r)` as TC-193 does. Each vector of these rows, written as its FR-397 source form (a width conversion as `convert<Float32[m]>(x)` or `convert<Float64[m]>(x)` over a bit constructor, an exact-to-IEEE conversion as `convert<Float32[m]>(e)` over the row's `Rational[..]` or `Decimal[..]` value, an IEEE-to-exact conversion as `convert<Rational[lo, hi; dmin, dmax]>(x)` with the row's target, a negation as `-x`) and evaluated with the row's limit tuple as the meter's remaining budget at that node, gives exactly the row's bits and flags, rational, `Undefined`, refusal or `incomplete` record (`limit_kind`, `limit`, `consumed`, `next_charge`, `charge_point`), and the node's entries in the meter's charge log are the row's charge points in the row's order. In particular: `convert<Float64[nearest-even]>(float32(bits: 0x3f800000))` is `0x3ff0000000000000` with no flags under `I(64,1,4,1)` and `incomplete { limit_kind: integer_bits, limit: 32, consumed: 32, next_charge: 64, charge_point: ieee.exact-intermediate }` under `I(32,1,4,1)` (F24); `convert<Float32[nearest-even]>(float64(bits: 0x7ff8000000400000))` is `refused { code: ieee_nan_payload_not_representable, cause: payload-exceeds-target }` with no flags after `ieee.operands` under `I(64,1,1,0)`, and the signaling `0x7ff0000000400000` gives the same refusal with no `invalid` flag (F25); the `Decimal[0, 100; 0, 2; exact]` value `decimal(100, 2)` converted to `Float32[nearest-even]` is `0x3f800000` under `I(32,1,4,1)` and `incomplete { limit_kind: integer_bits, limit: 6, consumed: 0, next_charge: 7, charge_point: ieee.operands }` under `I(6,1,4,1)` (F28); `convert<Float32[exact]>(float64(bits: 0x3fb999999999999a))` is `refused { code: ieee_not_exact, cause: rounding-required }` with the would-be `{inexact}` after `ieee.round` under `I(64,1,3,1)` and `incomplete { limit_kind: work_units, limit: 2, consumed: 2, next_charge: 1, charge_point: ieee.round }` under `I(64,1,2,1)` (F31); `-x` of each F32 pattern under `nearest-even`, `toward-zero` and `exact` gives the F32 bits with no flag and `-(-x)` the original bits (F32); and `-float32(bits: 0x3f800000)` charges exactly `ieee.operands` then `ieee.result-retain`, is `incomplete { limit_kind: work_units, limit: 1, consumed: 1, next_charge: 1, charge_point: ieee.result-retain }` with `work_units: 1`, and is incomplete at `ieee.operands` with no bits with `value_occurrences: 0` (F33). | Test (TC-1091) |
 | FR-397-AC-28 | IEEE numeric equality charges as `compare_ieee` (QSL-1654; FSpec TC-193 F17, FR-148-AC-7). With `qn` = `float32(bits: 0x7fc00001)` and `one` = `float32(bits: 0x3f800000)`, each of `qn = one`, `filament::value::ieee::numericEqual(qn, one)` and the `numeric_equal` node under `qn != one`, evaluated with `ScalarLimitsV1 { integer_bits: 32, decimal_digits: 0, scale_expansion: 0, text_input_bytes: 0, text_scalars: 0, normalized_scalars: 0, unit_edges: 0, value_occurrences: 2, work_units: 2, result_units: 1 }` as the meter's remaining budget at the node, gives `false` (`true` for `!=`; the `not` of `!=` charges one `boolean.result-retain` after the node, so that budget needs room for it and the whole log of `qn != one` is `ieee.operands`, `ieee.result-retain`, `boolean.result-retain`), and the node's entries in the meter's charge log are exactly `ieee.operands` (32 `integer_bits`, two value occurrences, one work unit) then `ieee.result-retain` (one work unit, one result unit), equal to the log of `filament_exact::compare_ieee` over the same operands; the same holds over `one = one`. With `work_units: 1` the node is `incomplete { limit_kind: work_units, limit: 1, consumed: 1, next_charge: 1, charge_point: ieee.result-retain }` with no Boolean, and with `value_occurrences: 0` it is incomplete at `ieee.operands` with no Boolean. The same over `Float64` constants charges 64 `integer_bits`. An ordering `qn < one` still charges no `numericEqual` part (FR-397-AC-26). | Test (TC-1091) |
 | FR-397-AC-29 | In `function lt using v(p: Float64[nearest-even], q: Float64[nearest-even]): Boolean pure { -p < -q }` the comparison lowers to two `let`s around the composition, the outer binding `-p` at level 2 and the inner binding `-q` at level 3, each binder a `value`/`parameter` node named `#ieee_operand`; with the body `-p < q` it lowers to one such `let` at level 2, and with `p < q` to none; the checked package of each holds no parameter node whose name begins with `ieee_operand`. | Test (TC-3039) |
+| FR-397-AC-30 | Over `p: Float64[nearest-even]` and `q: Float64[nearest-even]`, each of the bodies `p < q`, `p <= q`, `p > q`, `p >= q`, `-p < -q` and `sqrt(p) <= sqrt(q)` is evaluated on the source route and, from the written bytes of the same unit's compiled package, on the package route (FR-940), with the same remaining budget and inputs, once with `p` and `q` ordinary (`1.0` and `2.0`) and once with `p` the quiet NaN `float64(bits: 0x7ff8000000000001)`. On both routes each body gives the same outcome and the meter's charge logs are equal entry for entry. A package-route evaluator that charges an ordering part one `compare_ieee` adds an entry the source route lacks and fails the equality. | Test (TC-3077) |
+| FR-397-AC-31 | Over AC-30's `p` and `q` and a third `r: Float64[nearest-even]`, the hand-written body `numericEqual(p, p) && numericEqual(q, q) && (totalOrder(p, q) && !numericEqual(p, q))` charges exactly the log of `p < q` on both routes; the near-miss bodies `numericEqual(p, p) && numericEqual(q, q) && (totalOrder(p, q) && !numericEqual(q, p))` and `numericEqual(p, p) && numericEqual(r, r) && (totalOrder(p, q) && !numericEqual(p, q))` are not ordering compositions and charge one `compare_ieee` for each `numeric_equal` node they reach, on both routes alike; and `p < q && numericEqual(p, p)` charges `p < q`'s log plus exactly one `compare_ieee` for the standalone `numericEqual(p, p)`, on both routes, although the package may hold one node for it and for `p < q`'s part `N(p)`. | Test (TC-3077) |
 
 ## Rulings
 

@@ -206,9 +206,11 @@ lifecycle matrix uses.
 `analyze` also runs a registered external provider: a decision procedure
 outside FSL, such as an SMT solver, that decides a `value-validity` item over
 unbounded mathematical `Integer` operands, which no in-process engine decides
-(FR-495). The provider is an FSL-owned interface. It receives the item's claim
-target and reports one of three verdicts, `proved`, `refuted` with a
-counterexample assignment, or `unknown`; its types are FSL's own, so FSL
+(FR-495), or an item of any other kind it advertises (FR-968). The provider is
+an FSL-owned interface. It receives each item's claim target and reports one
+of three verdicts, `proved`, `refuted` with a counterexample (an assignment of
+the claim's parameters for a `value-validity` item, a `contract-counterexample`
+for an `operation-contract` item, FR-968 "Verdicts"), or `unknown`; its types are FSL's own, so FSL
 depends on no CG crate for it (FR-280).
 
 - An engine is built from a provider only with a descriptor that advertises
