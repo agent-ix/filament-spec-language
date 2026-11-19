@@ -3788,15 +3788,18 @@ fn unchecked_selector(
             matches!(
                 node.node(),
                 ExprNode::Select { .. } | ExprNode::Index { .. }
-            ) && !under_ref.contains(&node.id()) && !self_path(form, node.id()).is_some_and(|path| {
-                let Some((PlaceStep::Field(position), parent)) = path.split_last() else { return false; };
-                position.parse::<usize>().is_ok() && clocks.fields.iter().any(|clock| {
-                    clock.path.len() > parent.len()
-                        && same_place(&clock.path[..parent.len()], parent)
-                        && matches!(&clock.path[parent.len()], PlaceStep::Field(name) if name.parse::<usize>().is_ok())
-                        && clocks.model.conforms(context.clone(), clock.owner.clone())
+            ) && !under_ref.contains(&node.id())
+                && !self_path(form, node.id()).is_some_and(|path| {
+                    let Some((PlaceStep::Field(_), parent)) = path.split_last() else {
+                        return false;
+                    };
+                    clocks.fields.iter().any(|clock| {
+                        clock.path.len() > parent.len()
+                            && same_place(&clock.path[..parent.len()], parent)
+                            && matches!(&clock.path[parent.len()], PlaceStep::Field(_))
+                            && clocks.model.conforms(context.clone(), clock.owner.clone())
+                    })
                 })
-            })
         })
         .and_then(|node| spans.get(node.id().index()).copied())
 }

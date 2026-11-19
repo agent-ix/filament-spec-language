@@ -637,6 +637,7 @@ impl Lowering<'_> {
     /// each slot step's selector the `Integer` type node, and the place
     /// self-typed. The places are kept for the `presence_read` and the
     /// clauses that name them.
+    #[ix_trace_rs::string_edge]
     pub(crate) fn clock_places(
         &mut self,
         clocks: &[ClockField],
