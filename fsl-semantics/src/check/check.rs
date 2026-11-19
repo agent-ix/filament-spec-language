@@ -5362,6 +5362,11 @@ impl<'a> Typer<'a> {
         operand: Node,
         location: &Location,
     ) -> Result<Node, CheckRefusal> {
+        if operand.value_type == *target
+            && matches!(operand.value_type, ValueType::Text(_) | ValueType::String)
+        {
+            return Ok(operand);
+        }
         match (&operand.value_type, target) {
             (ValueType::Text(_) | ValueType::String, target)
                 if matches!(
