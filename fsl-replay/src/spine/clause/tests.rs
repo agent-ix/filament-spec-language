@@ -98,39 +98,6 @@ fn compose(
     Ok(original)
 }
 
-/// Assemble the fixture before selecting its package check mode.
-fn fixture_declarations(
-    identity: fsl_foundation::SourceIdentity,
-    path: &str,
-    bytes: &[u8],
-    packages: &fsl_semantics::model::intake::PackageInput,
-) -> (
-    fsl_semantics::check::PackageDeclarations,
-    fsl_foundation::Source,
-) {
-    let parsed = fsl_cst::parse(identity, path, bytes, fsl_cst::Limits::default()).unwrap();
-    let built = fsl_forms::build_unit(&parsed).unwrap();
-    let models = fsl_semantics::model::intake::admit_unit(
-        &built.selections().models,
-        packages,
-        Default::default(),
-    )
-    .unwrap()
-    .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
-    })
-    .unwrap();
-    let declarations = fsl_semantics::check::PackageDeclarations::assemble(
-        parsed.source().reference().clone(),
-        "fixture".to_owned(),
-        built,
-        models,
-        Vec::new(),
-    )
-    .unwrap();
-    (declarations, parsed.source().clone())
-}
-
 #[trace("FR-003-AC-9")]
 #[test]
 fn private_clause_source_generators_keep_format_identity() {

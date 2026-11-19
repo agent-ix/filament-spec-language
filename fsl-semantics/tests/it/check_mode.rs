@@ -264,7 +264,6 @@ fn an_unproved_nonempty_reduction_checks_only_under_kernel() {
 /// a declared clause, here a function body, is left to S6a under `Kernel`.
 #[trace("TC-2240", "FR-766-AC-8")]
 #[test]
-#[ignore = "QSL-2003: a count<N> result range is not proved at check yet"]
 fn a_count_range_in_a_state_clause_refuses_under_both_modes() {
     let clause = "type Zero = Int[0, 0];\n\
                   invariant I using v on Config::ConfigVersion at current { \
