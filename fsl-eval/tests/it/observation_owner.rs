@@ -329,3 +329,72 @@ fn observation_producers_are_caller_owned_without_global_storage() {
         .collect();
     assert!(findings.is_empty(), "producer globals: {findings:?}");
 }
+
+#[test]
+#[trace("TC-2624", "FR-944-AC-14", "FR-944-AC-3")]
+fn evidence_calls_consume_optional_activation_views_for_scopes_and_instances() {
+    use crate::temporal_activation as fixture;
+    use fsl_eval::temporal::evidence::{ActivationState, NonValueKind, TriggerEvidence, Truth};
+    use fsl_eval::temporal::{ProgressClosure, Valuation};
+    let env = fixture::env(fixture::GUARDED, "eventually[0,2] holds(p)");
+    let atom = env.atom("p");
+    // This low-level checked-facts fixture supplies the same opaque package
+    // selection bytes as the owner unit fixtures; source/reader parity is separate.
+    let mut subject = env.subject(&[]);
+    subject.canonical_package_bytes = Some(b"{}");
+    subject.time_unit_scale =
+        Some(filament_exact::Rational::new(1_i64.into(), 1000_i64.into()).expect("ms"));
+    let mut request = fixture::request(&env, fixture::at_t0(&[(atom, Valuation::True)]));
+    request.trigger = Some(fixture::id("t1"));
+    let mut delivery = fixture::delivery("t1", "r1", "payload", &[]);
+    delivery.guard = Some(false);
+    request.deliveries.push(delivery);
+    let inactive = fixture::call(&env, &subject, &request).expect("owner inactive");
+    assert_eq!(inactive.activation, ActivationState::Inactive);
+    assert!(inactive.instances.is_empty());
+    assert_eq!(
+        inactive.non_value.expect("inactive detail").kind,
+        NonValueKind::Inactive
+    );
+    for (closure, evidence, kind) in [
+        (
+            ProgressClosure::Open,
+            TriggerEvidence::Admitted,
+            "trigger-scope-open",
+        ),
+        (
+            ProgressClosure::Closed,
+            TriggerEvidence::Missing,
+            "trigger-evidence-missing",
+        ),
+        (
+            ProgressClosure::Closed,
+            TriggerEvidence::Refused,
+            "trigger-evidence-refused",
+        ),
+    ] {
+        let mut unknown = request.clone();
+        unknown.trigger_scope = closure;
+        unknown.trigger_evidence = evidence;
+        let result = fixture::call(&env, &subject, &unknown).expect("owner unknown");
+        assert_eq!(result.activation, ActivationState::Unknown);
+        assert_eq!(result.non_value.expect("unknown detail").code, kind);
+    }
+    let env = fixture::env(fixture::EACH, fixture::ONE_CAPTURE);
+    let atom = env.atom("p");
+    let mut subject = env.subject(&[]);
+    subject.canonical_package_bytes = Some(b"{}");
+    subject.time_unit_scale =
+        Some(filament_exact::Rational::new(1_i64.into(), 1000_i64.into()).expect("ms"));
+    let mut request = fixture::request(&env, fixture::at_t0(&[(atom, Valuation::True)]));
+    request.trigger = Some(fixture::id("t1"));
+    request.deliveries = vec![
+        fixture::delivery("t1", "r1", "one", &["5"]),
+        fixture::delivery("t2", "r2", "two", &["5"]),
+    ];
+    let result = fixture::call(&env, &subject, &request)
+        .expect("two instance-specific activation histories");
+    assert_eq!(result.activation, ActivationState::Active);
+    assert_eq!(result.truth, Some(Truth::True));
+    assert_eq!(result.instances.len(), 2);
+}
