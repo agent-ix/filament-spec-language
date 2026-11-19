@@ -778,6 +778,7 @@ fn a_channel_carries_every_type_the_reader_admits() {
 const KEYED: &str = "record Plain { x: Integer; }\n\
     record WithQuantity { q: Quantity<m>; }\n\
     record WithBounded { b: Int[0, 5]; }\n\
+    record WithFloat { f: Float64[nearest-even]; }\n\
     record WithDecimal { d: Decimal[-100,100;0,0;nearest-even]; }\n\
     record WithRational { r: Rational[-100, 100; 1, 1]; }\n\
     record WithText { t: Text[0, 8; nfc]; }\n";
@@ -1863,7 +1864,11 @@ fn a_fifo_key_stable_key_is_written() {
 #[test]
 #[trace("TC-2504", "FR-881-AC-1")]
 fn an_unstable_fifo_key_refuses_at_the_key() {
-    for carries in ["Float64[nearest-even]", "Option<Float32[nearest-even]>"] {
+    for carries in [
+        "Float64[nearest-even]",
+        "Option<Float32[nearest-even]>",
+        "WithFloat",
+    ] {
         let text = keyed_flow(carries, "m");
         let refusals = checked(&text, true).expect_err(&text);
         let [refusal] = refusals.as_slice() else {
