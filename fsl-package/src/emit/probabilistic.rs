@@ -543,12 +543,11 @@ fn reward_node(
         )
     };
     let region = region_of(graph, &location)?;
-    let (declaring_key, declaring) = model_node(
-        ids,
-        nodes,
-        operation.declaring_key().ok_or_else(unwritable)?,
-    )
-    .ok_or_else(unwritable)?;
+    let declaring_key = reward.declaring_node().ok_or_else(unwritable)?.clone();
+    let declaring = node_id(ids, declaring_key.clone());
+    if !nodes.iter().any(|node| node.node_id == declaring) {
+        return Err(unwritable());
+    }
     let function_key = reward.function().ok_or_else(unwritable)?;
     let function = node_id(ids, function_key);
     let function_node = nodes

@@ -83,6 +83,7 @@ mod hybrid;
 mod hyper;
 mod model;
 mod probabilistic;
+pub(crate) use probabilistic::LoweredReward;
 mod protocol;
 mod refinement_rows;
 mod state;

@@ -483,6 +483,9 @@ pub enum DeclaredClauseKind {
     Precondition,
     /// A function body, an operation body, or a `decreases` measure.
     Body,
+    /// A probabilistic `reward` expression, owned by its operation member
+    /// (FSpec FR-322, FR-640).
+    Reward,
 }
 
 impl From<DeclaredClauseKind> for ClauseKind {
@@ -490,7 +493,7 @@ impl From<DeclaredClauseKind> for ClauseKind {
         match kind {
             DeclaredClauseKind::Invariant => Self::Invariant,
             DeclaredClauseKind::Precondition => Self::Precondition,
-            DeclaredClauseKind::Body => Self::Body,
+            DeclaredClauseKind::Body | DeclaredClauseKind::Reward => Self::Body,
         }
     }
 }

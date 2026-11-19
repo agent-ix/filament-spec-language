@@ -2477,6 +2477,7 @@ fn clause_spelling(kind: DeclaredClauseKind) -> &'static str {
         DeclaredClauseKind::Precondition => "precondition",
         DeclaredClauseKind::Body => "body",
         DeclaredClauseKind::Invariant => "invariant",
+        DeclaredClauseKind::Reward => "reward",
     }
 }
 

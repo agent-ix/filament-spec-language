@@ -262,7 +262,7 @@ fn probabilistic_claim_identity_survives_reordering() {
     assert_eq!(forward[1].1["declaration"]["ordinal"], 0, "Steady@0.25");
     assert_eq!(forward[0].1["declaration"]["ordinal"], 0, "Stable@0.5");
 
-    // Renaming a claim changes its identity and no other claim's.
+    // Renaming a claim changes its identity and no  claim's.
     let renamed = claims_package(&[
         &claim("Stable", "0.5"),
         &claim("Steady", "0.25"),
@@ -1566,10 +1566,10 @@ fn node_by_id<'w>(wire: &'w Value, id: &Value) -> &'w Value {
 /// bindings are `declaring`, `operation`, `name`, `value_type` and
 /// `expression`, in that order, and whose `expression` is a clause function
 /// owned by the operation member with the operation's parameter `n`, the
-/// random one included, and the clause kind `precondition`, which stands in
-/// for a kind of its own until QSL-2535 adds `reward`.
+/// random one included, and the clause kind `reward` (FSpec FR-322).
 #[trace("TC-2062", "FR-740-AC-1")]
 #[trace("TC-2062", "FR-185-AC-7")]
+#[trace("FSpec-TC-1563", "FSpec-FR-322-AC-471")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-1")]
 #[test]
 fn a_reward_is_emitted_with_its_clause_function() {
@@ -1604,7 +1604,7 @@ fn a_reward_is_emitted_with_its_clause_function() {
         bound(body, "value_type")["target"],
         "the function is typed by the reward's value type"
     );
-    assert_eq!(bound(&function["body"], "clause")["value"], "precondition");
+    assert_eq!(bound(&function["body"], "clause")["value"], "reward");
     let parameters = bound(&function["body"], "parameters")["members"]
         .as_array()
         .expect("the parameters are an aggregate");
@@ -1951,39 +1951,12 @@ fn source_object_reward(declarations: &str) -> CheckedPackage {
     CheckedPackage::link(graph)
 }
 
-/// FSL FR-740 interim: a reward declared on a source-declared object has no
-/// `model` node to hang from (QSL-2463 emits source objects; contract-ir
-/// admits a source-owned declaring node only after #1053), so emission refuses
-/// it with the reward's locus rather than writing the package without it.
-#[trace("TC-2062", "FR-185-AC-12")]
-#[test]
-fn a_reward_on_a_source_object_refuses_emission_with_its_locus() {
-    let package = source_object_reward("reward cost on O::step = x;");
-    assert_eq!(package.graph().probabilistic_model().rewards().len(), 1);
-    let refusal = emit_checked(&package).expect_err("emission refuses");
-    assert!(
-        matches!(
-            &refusal,
-            EmitRefusal::ProbabilisticModelNotEmitted {
-                declaration,
-                feature: fsl_semantics::check::ProbabilisticFeature::Reward,
-                region,
-                ..
-            } if declaration == "cost" && region.start() < region.end()
-        ),
-        "{refusal:?}"
-    );
-    assert_eq!(
-        (refusal.code(), refusal.cause()),
-        (Code::UnsupportedConstruct, Some("not-yet-implemented"))
-    );
-}
-
-/// TC-2062 (FR-740-AC-1): QSL-2463 emits a reward on a source-declared object
-/// as a `reward` node the strict reader admits.
+/// TC-2062 (FR-740-AC-1), FSpec FR-322: a reward on a source-declared object
+/// is emitted as a `reward` node whose clause function is a `SourceOwner`
+/// declaration `[O, step, reward, cost]` at ordinal 0, and the strict reader
+/// admits the package.
 #[trace("TC-2062", "FR-740-AC-1")]
 #[test]
-#[ignore = "QSL-2463: source-declared objects emit as nodes IR can join (contract-ir #1053)"]
 fn a_reward_on_a_source_object_is_emitted() {
     let package = source_object_reward("reward cost on O::step = x;");
     let emission = emit_checked(&package).expect("the reward emits");
@@ -2036,13 +2009,7 @@ fn probabilistic_refusals_have_locus() {
     let abstraction_document =
         crate::emit::tests::wire_bytes(&abstraction::document()).expect("serializes");
     let variant_document = serde_json::to_vec(&variants::document()).expect("serializes");
-    let cases: [(String, Vec<u8>, ProbabilisticFeature, &str); 4] = [
-        (
-            format!("{head}profile P = \"filament.model.complete/v1\";\n{objects}reward cost on O::step = x;\n"),
-            Vec::new(),
-            ProbabilisticFeature::Reward,
-            "cost",
-        ),
+    let cases: [(String, Vec<u8>, ProbabilisticFeature, &str); 3] = [
         (
             format!("{head}{timed}{objects}delay O::step ~ uniform;\n"),
             Vec::new(),
@@ -2102,4 +2069,125 @@ fn probabilistic_refusals_have_locus() {
         assert!(!message.contains("Span {"), "{message}");
         assert!(!message.contains("RawSourceRef"), "{message}");
     }
+}
+
+/// The `(reward name, clause kind, ordinal)` of each clause function the
+/// reward nodes of `wire` name, in wire order.
+fn reward_function_ordinals(wire: &Value) -> Vec<(String, u64)> {
+    super::owners::node_where(wire, "probabilistic", "reward")
+        .into_iter()
+        .map(|reward| {
+            let function = node_by_id(wire, &bound(&reward["body"], "expression")["target"]);
+            assert_eq!(bound(&function["body"], "clause")["value"], "reward");
+            (
+                bound(&reward["body"], "name")["value"]
+                    .as_str()
+                    .expect("a text name")
+                    .to_owned(),
+                function["node_id"]["ordinal"]
+                    .as_u64()
+                    .expect("a numeric ordinal"),
+            )
+        })
+        .collect()
+}
+
+/// FSpec FR-322, FR-640 "Reward identity": the clause functions of the rewards
+/// of one operation take ordinals ranked by (operation key, reward name),
+/// whatever order the rewards are written in. The fixture operation has no
+/// other emitted clause function, so "after every other clause function" is
+/// held by the lowering order (rewards are lowered last), not asserted here.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+fn reward_functions_rank_by_reward_name_whatever_the_written_order() {
+    let ordinals = |declarations: &str| {
+        let (document, package) = reward_over_parameter(declarations);
+        let (wire, read) = emit_and_read(&package, &document);
+        assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+        let mut rewards = reward_function_ordinals(&wire);
+        rewards.sort();
+        rewards
+    };
+    let cost = "reward cost on ConfigVersion::attemptUpdate = n + 1;";
+    let load = "reward load on ConfigVersion::attemptUpdate = n;";
+    let forward = ordinals(&format!("{cost}\n{load}"));
+    let reverse = ordinals(&format!("{load}\n{cost}"));
+    assert_eq!(forward, reverse, "the written order changes no ordinal");
+    let [(first, low), (second, high)] = &forward[..] else {
+        panic!("two reward functions: {forward:?}");
+    };
+    assert_eq!((first.as_str(), second.as_str()), ("cost", "load"));
+    assert!(low < high, "ranked by reward name: {forward:?}");
+}
+
+/// FSpec FR-322, TC-1563: a reward on a source-declared object is a clause
+/// function whose owner is the source object's declaration `[O, step, reward,
+/// cost]` at ordinal 0, with the clause kind `reward`.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-7")]
+#[test]
+fn a_source_declared_reward_is_a_source_owned_declaration_at_ordinal_zero() {
+    let package = source_object_reward("reward cost on O::step = x;");
+    let emission = emit_checked(&package).expect("the reward emits");
+    let wire = wire(&emission);
+    let [reward] = super::owners::node_where(&wire, "probabilistic", "reward")[..] else {
+        panic!("one reward node");
+    };
+    let function = node_by_id(&wire, &bound(&reward["body"], "expression")["target"]);
+    assert_eq!(bound(&function["body"], "clause")["value"], "reward");
+    assert_eq!(
+        function["declaration"]["qualified_name"],
+        json!(["O", "step", "reward", "cost"])
+    );
+    assert_eq!(function["node_id"]["ordinal"], 0);
+    assert_eq!(
+        node_by_id(&wire, &bound(&reward["body"], "declaring")["target"])["semantic_form"],
+        "object_type"
+    );
+}
+
+/// FSpec FR-640-AC-7, FR-322-AC-471: the strict reader admits the clause kind
+/// `reward` for a reward's function, and refuses the same function once its
+/// `clause` binding is rewritten to `precondition` (FR-640 reader rule 4: a
+/// reward's expression is a `reward` clause function).
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-7")]
+#[trace("FSpec-TC-1563", "FSpec-FR-322-AC-471")]
+#[test]
+fn the_reader_admits_the_reward_clause_kind_and_refuses_any_other_for_a_reward() {
+    let (document, package) =
+        reward_over_parameter("reward cost on ConfigVersion::attemptUpdate = n + 1;");
+    let (wire, read) = emit_and_read(&package, &document);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+
+    let [reward] = super::owners::node_where(&wire, "probabilistic", "reward")[..] else {
+        panic!("one reward node");
+    };
+    let function = bound(&reward["body"], "expression")["target"].clone();
+    let mut edited = wire.clone();
+    let position = super::nodes(&edited)
+        .iter()
+        .position(|node| node["node_id"] == function)
+        .expect("the reward's function node");
+    let members = edited["semantic_graph"]["nodes"][position]["body"]["members"]
+        .as_array_mut()
+        .expect("an aggregate body");
+    let clause = members
+        .iter_mut()
+        .find(|member| member["name"] == "clause")
+        .expect("the clause binding");
+    clause["value"]["value"] = json!("precondition");
+
+    fsl_semantics::check::wire_id::write_operand_rows(&mut edited);
+    let bytes = quire_canonical::to_vec(&edited, ceiling().canonical()).expect("canonical");
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in edited["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    evidence
+        .insert_domain_package_document(package_identity(&document), document.as_slice())
+        .expect("a fresh evidence key");
+    let refused = read_v2(&bytes, library(), V2ReadLimits::fixture(), &evidence);
+    assert!(
+        !matches!(refused, Read::Verified { .. }),
+        "a reward whose function is a precondition is refused: {refused:?}"
+    );
 }
