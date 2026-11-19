@@ -197,10 +197,10 @@ fn value_declarations_keep_ordered_members_payloads_and_optional_markers() {
             vec!["Stop = \"halt\"", "Wait", "Go"],
         ),
         (
-            "record Pair { first: Integer; second: Option<Boolean>?; }",
+            "record Pair { left: Integer; right: Option<Boolean>?; }",
             Production::RecordDeclaration,
             Production::Field,
-            vec!["first: Integer;", "second: Option<Boolean>?;"],
+            vec!["left: Integer;", "right: Option<Boolean>?;"],
         ),
         (
             "tuple Single(Boolean);",
