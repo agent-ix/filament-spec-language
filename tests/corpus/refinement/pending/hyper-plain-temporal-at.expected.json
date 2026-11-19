@@ -4,6 +4,6 @@
   "category": "unsupported",
   "last_stage": "S2",
   "code": "unsupported_construct",
-  "flips_with": "none",
+  "flips_with": "QSL-2595",
   "cause": "expression-form"
 }

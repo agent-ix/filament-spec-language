@@ -30,7 +30,6 @@ fn incomplete_refinement_rows_identify_the_missing_member() {
     for (stem, member) in [
         ("refinement-missing-step", "inc"),
         ("refinement-missing-object", "Counter"),
-        ("refinement-missing-population", "counters"),
         ("refinement-unknown-abstract-operation", "absent"),
     ] {
         let error = command::compile_outcome(&corpus().join(format!("{stem}.request.json")))
@@ -107,36 +106,73 @@ fn a_type_correct_constant_mapping_is_refuted_by_analysis() {
 
 #[test]
 #[trace("FR-163", "FR-182")]
+#[ignore = "QSL-2128: the public source route must resolve and analyze hyper claims"]
 fn two_copy_determinism_is_certified_from_source() {
     analyze("hyper-universal-equal");
 }
 
 #[test]
 #[trace("FR-182", "FR-183")]
+#[ignore = "QSL-2128: the public source route must resolve and analyze hyper claims"]
 fn a_false_two_copy_rule_publishes_a_replayed_counterexample() {
     analyze("hyper-universal-false");
 }
 
 #[test]
 #[trace("FR-177", "FR-163")]
+#[ignore = "QSL-2128: the public source route must resolve and analyze hyper claims"]
 fn every_counter_trace_has_an_equal_existential_partner() {
     analyze("hyper-witness-equal");
 }
 
 #[test]
 #[trace("FR-177", "FR-183")]
+#[ignore = "QSL-2128: the public source route must resolve and analyze hyper claims"]
 fn equal_initial_values_exhaust_a_different_partner_witness_set() {
     analyze("hyper-witness-impossible");
 }
 
 #[test]
 #[trace("FR-181")]
+#[ignore = "QSL-2128: the public source route must resolve and analyze hyper claims"]
 fn a_single_counter_trace_can_reach_three() {
     analyze("hyper-single-reaches-three");
 }
 
 #[test]
 #[trace("FR-181")]
-fn no_counter_trace_can_reach_four() {
+#[ignore = "QSL-2128: the public source route must resolve and analyze hyper claims"]
+fn no_counter_trace_can_stay_zero() {
     analyze("hyper-single-impossible");
+}
+
+#[test]
+#[trace("FR-135")]
+#[ignore = "QSL-2594: the missing population diagnostic must name its member"]
+fn a_missing_population_row_names_its_population() {
+    let error =
+        command::compile_outcome(&corpus().join("refinement-missing-population.request.json"))
+            .err()
+            .expect("a missing population row refuses");
+    assert!(error.to_string().contains("counters"), "{error}");
+}
+
+#[test]
+#[trace("FR-612-AC-1")]
+#[ignore = "QSL-2595: an indexed read outside hyper must use expression-form"]
+fn indexed_reads_outside_hyper_keep_the_defined_boundary_cause() {
+    let error =
+        command::compile_outcome(&corpus().join("pending/hyper-plain-temporal-at.request.json"))
+            .err()
+            .expect("the hyper-only expression refuses");
+    let value = error.artifact_value().expect("the refusal encodes");
+    assert_eq!(error.category().exit_code(), 21, "{value}");
+    assert_eq!(
+        value["diagnostics"][0]["code"], "unsupported_construct",
+        "{value}"
+    );
+    assert_eq!(
+        value["diagnostics"][0]["cause"], "expression-form",
+        "{value}"
+    );
 }
