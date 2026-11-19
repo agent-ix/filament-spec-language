@@ -228,16 +228,33 @@ mod source_journeys {
     #[trace("FR-645-AC-1", "FR-645-AC-2")]
     fn empty_corpus_traces_refuse_with_the_precise_reason() {
         let directory = tempfile::tempdir().unwrap();
-        for (trace, reason) in [
-            (json!({"lasso":{"prefix":[],"loop":[]}}), "empty-lasso-loop"),
-            (json!({"finite":[]}), "empty-finite-trace"),
+        for (trace, reason, pointer) in [
+            (
+                json!({"lasso":{"prefix":[],"loop":[]}}),
+                "empty-lasso-loop",
+                "selection.temporal.trace.lasso.loop",
+            ),
+            (
+                json!({"finite":[]}),
+                "empty-finite-trace",
+                "selection.temporal.trace.finite",
+            ),
         ] {
             let (exit, _, document) = run(&source_request(directory.path(), "NextDerived", trace));
             assert_eq!(exit, 20, "{document}");
-            assert_eq!(
-                document["disposition"]["temporal"]["reason"], reason,
+            let refusal = &document["disposition"]["refusal"];
+            assert_eq!(refusal["fields"]["reason"], reason, "{document}");
+            assert_eq!(refusal["fields"]["request_pointer"], pointer, "{document}");
+            assert_eq!(refusal["code"], "invalid_runtime_input", "{document}");
+            assert_eq!(refusal["cause"], "invalid-value", "{document}");
+            assert!(
+                refusal["message"]
+                    .as_str()
+                    .is_some_and(|text| !text.is_empty()),
                 "{document}"
             );
+            assert!(refusal["locus"].is_object(), "{document}");
+            assert_eq!(document["disposition"]["stage"], "evaluate", "{document}");
             assert_eq!(document["disposition"]["category"], "refusal", "{document}");
         }
     }
