@@ -1150,9 +1150,9 @@ fn clause_name_rows_carry_the_whole_declaration_region() {
             let row = &mut wire["temporal_clause_names"][0];
             row.as_object_mut().unwrap().remove("declaration_region");
         });
-        let refused = removed
-            .try_read(&removed.emission)
-            .expect_err("a row without declaration_region is refused");
+        let Err(refused) = removed.try_read(&removed.emission) else {
+            panic!("a row without declaration_region is refused");
+        };
         assert!(
             format!("{refused:?}").contains("declaration_region"),
             "{refused:?}"
@@ -1163,9 +1163,9 @@ fn clause_name_rows_carry_the_whole_declaration_region() {
             let start = region["start"].as_u64().unwrap();
             region["end"] = Value::from(start + 1);
         });
-        let refused = shrunk
-            .try_read(&shrunk.emission)
-            .expect_err("a region without the name token is refused");
+        let Err(refused) = shrunk.try_read(&shrunk.emission) else {
+            panic!("a region without the name token is refused");
+        };
         assert!(
             format!("{refused:?}").contains("/temporal_clause_names/0/declaration_region"),
             "{refused:?}"
