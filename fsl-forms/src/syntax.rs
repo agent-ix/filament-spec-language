@@ -493,6 +493,9 @@ impl From<DeclaredClauseKind> for ClauseKind {
         match kind {
             DeclaredClauseKind::Invariant => Self::Invariant,
             DeclaredClauseKind::Precondition => Self::Precondition,
+            // A reward expression is pure over the operation's parameters:
+            // it is checked like a body, which refuses a dispatched call a
+            // precondition context admits (TC-196 D06-D08).
             DeclaredClauseKind::Body | DeclaredClauseKind::Reward => Self::Body,
         }
     }

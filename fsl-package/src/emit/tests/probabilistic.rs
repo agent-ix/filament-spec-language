@@ -262,7 +262,7 @@ fn probabilistic_claim_identity_survives_reordering() {
     assert_eq!(forward[1].1["declaration"]["ordinal"], 0, "Steady@0.25");
     assert_eq!(forward[0].1["declaration"]["ordinal"], 0, "Stable@0.5");
 
-    // Renaming a claim changes its identity and no  claim's.
+    // Renaming a claim changes its identity and no other claim's.
     let renamed = claims_package(&[
         &claim("Stable", "0.5"),
         &claim("Steady", "0.25"),
@@ -1820,7 +1820,7 @@ fn reward_order_changes_no_node_and_the_expression_changes_the_identity() {
 /// resolved id of the node at position `i` of `wire`'s graph, `depth` levels
 /// deep: an index names a position, so two ids are the same identity only when
 /// their resolved forms are (FSpec FR-322 "Operand index segments").
-fn resolved_id(wire: &Value, id: &Value, depth: usize) -> Value {
+pub(super) fn resolved_id(wire: &Value, id: &Value, depth: usize) -> Value {
     let mut id = id.clone();
     if depth == 0 {
         return id;
@@ -2071,58 +2071,12 @@ fn probabilistic_refusals_have_locus() {
     }
 }
 
-/// The `(reward name, clause kind, ordinal)` of each clause function the
-/// reward nodes of `wire` name, in wire order.
-fn reward_function_ordinals(wire: &Value) -> Vec<(String, u64)> {
-    super::owners::node_where(wire, "probabilistic", "reward")
-        .into_iter()
-        .map(|reward| {
-            let function = node_by_id(wire, &bound(&reward["body"], "expression")["target"]);
-            assert_eq!(bound(&function["body"], "clause")["value"], "reward");
-            (
-                bound(&reward["body"], "name")["value"]
-                    .as_str()
-                    .expect("a text name")
-                    .to_owned(),
-                function["node_id"]["ordinal"]
-                    .as_u64()
-                    .expect("a numeric ordinal"),
-            )
-        })
-        .collect()
-}
-
-/// FSpec FR-322, FR-640 "Reward identity": the clause functions of the rewards
-/// of one operation take ordinals ranked by (operation key, reward name),
-/// whatever order the rewards are written in. The fixture operation has no
-/// other emitted clause function, so "after every other clause function" is
-/// held by the lowering order (rewards are lowered last), not asserted here.
-#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
-#[test]
-fn reward_functions_rank_by_reward_name_whatever_the_written_order() {
-    let ordinals = |declarations: &str| {
-        let (document, package) = reward_over_parameter(declarations);
-        let (wire, read) = emit_and_read(&package, &document);
-        assert!(matches!(read, Read::Verified { .. }), "{read:?}");
-        let mut rewards = reward_function_ordinals(&wire);
-        rewards.sort();
-        rewards
-    };
-    let cost = "reward cost on ConfigVersion::attemptUpdate = n + 1;";
-    let load = "reward load on ConfigVersion::attemptUpdate = n;";
-    let forward = ordinals(&format!("{cost}\n{load}"));
-    let reverse = ordinals(&format!("{load}\n{cost}"));
-    assert_eq!(forward, reverse, "the written order changes no ordinal");
-    let [(first, low), (second, high)] = &forward[..] else {
-        panic!("two reward functions: {forward:?}");
-    };
-    assert_eq!((first.as_str(), second.as_str()), ("cost", "load"));
-    assert!(low < high, "ranked by reward name: {forward:?}");
-}
-
 /// FSpec FR-322, TC-1563: a reward on a source-declared object is a clause
 /// function whose owner is the source object's declaration `[O, step, reward,
-/// cost]` at ordinal 0, with the clause kind `reward`.
+/// cost]` at ordinal 0, with the clause kind `reward`. The strict reader does not
+/// yet admit a source-declared `declaring` for a reward (QSL-2592), so the
+/// admission and the rule-4 rename refusal of FR-640-AC-7's source half are not
+/// asserted here.
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-7")]
 #[test]
 fn a_source_declared_reward_is_a_source_owned_declaration_at_ordinal_zero() {

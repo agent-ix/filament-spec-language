@@ -198,9 +198,8 @@ impl Lowering<'_> {
     /// FSpec FR-640 `reward`: the clause function of `reward`'s expression,
     /// owned by the operation member it is declared on (FR-094), with a
     /// parameter for each of the operation's parameters in declared order,
-    /// the random ones included. A reward whose operation's declaring type
-    /// has no `model` node (a source-declared object type) lowers to
-    /// nothing, and emission refuses it with its locus.
+    /// the random ones included. A reward whose operation names no declaring
+    /// object type lowers to nothing, and emission refuses it with its locus.
     ///
     /// The function's clause kind is `reward` (FSpec FR-322): a precondition
     /// consumer never reads it as a guard and no `operation_bodies` row is
@@ -217,22 +216,19 @@ impl Lowering<'_> {
         };
         let declaring_node = self.model_node(declaring, &at)?;
         self.record_generated(declaring_node.clone(), &at);
-        let source_declaration = operation
-            .model()
-            .is_empty()
-            .then(|| {
-                let type_name = crate::model::intake::type_identity_segment(
-                    &declaring.package,
-                    &declaring.node,
-                )?;
-                Some(vec![
-                    type_name.to_owned(),
-                    operation.name().to_owned(),
-                    "reward".to_owned(),
-                    reward.name().to_owned(),
-                ])
-            })
-            .flatten();
+        let source_declaration = if operation.model().is_empty() {
+            let type_name =
+                crate::model::intake::type_identity_segment(&declaring.package, &declaring.node)
+                    .ok_or_else(|| stage_fault(&at, "reward-source-type-is-named"))?;
+            Some(vec![
+                type_name.to_owned(),
+                operation.name().to_owned(),
+                "reward".to_owned(),
+                reward.name().to_owned(),
+            ])
+        } else {
+            None
+        };
         let clause = ModelClause {
             declaration: operation.key().clone(),
             kind: DeclaredClauseKind::Reward,
