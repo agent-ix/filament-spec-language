@@ -209,3 +209,47 @@ fn integer_range_narrowing_uses_rational_and_decimal_target_domains() {
         FamilyOutcome::Evaluated(Outcome::Refused(Refusal::DecimalOutOfDomain { .. }))
     ));
 }
+
+#[trace("FR-093-AC-67", "FR-096-AC-8", "FSpec-FR-149")]
+#[test]
+fn scale_zero_decimal_to_integer_is_exact_and_bounded_narrowing_checks_its_domain() {
+    let exact = package(
+        "function f using v(d: Decimal[-20,20;0,0;exact]): Integer pure { convert<Integer>(d) }",
+        CheckMode::Linked,
+    );
+    let narrowed = package(
+        "function f using v(d: Decimal[-20,20;0,0;exact]): Int[0,9] pure { convert<Int[0,9]>(d) }",
+        CheckMode::Kernel,
+    );
+    for n in [-1_i64, 0, 5, 9, 10] {
+        let decimal = || Value::Decimal(Decimal::new(Integer::from(n), 0));
+        let result = call(&exact, decimal());
+        assert!(result.losses.is_empty());
+        match result.outcome {
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(value))) => {
+                assert_eq!(value, Integer::from(n));
+            }
+            other => panic!("expected exact integer {n}: {other:?}"),
+        }
+        let result = call(&narrowed, decimal());
+        assert!(result.losses.is_empty());
+        if (0..=9).contains(&n) {
+            match result.outcome {
+                FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(value))) => {
+                    assert_eq!(value, Integer::from(n));
+                }
+                other => panic!("expected narrowed integer {n}: {other:?}"),
+            }
+        } else {
+            match result.outcome {
+                FamilyOutcome::Evaluated(Outcome::Refused(Refusal::IntegerOutOfDomain {
+                    target,
+                })) => {
+                    assert_eq!(target.lower(), &Integer::from(0_i64));
+                    assert_eq!(target.upper(), &Integer::from(9_i64));
+                }
+                other => panic!("expected integer domain refusal for {n}: {other:?}"),
+            }
+        }
+    }
+}
