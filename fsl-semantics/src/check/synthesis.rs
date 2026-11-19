@@ -2,10 +2,11 @@
 //! S3 finite-domain analysis for FR-754 synthesis declarations.
 
 use filament_exact::ValueType;
+use filament_checked::node::NodeKind;
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use filament_semantic_value::location::ExpressionLocation as Location;
 
-use super::ir::{CheckedBody, NodeKind};
+use super::ir::CheckedBody;
 use super::{CheckCause, CheckRefusal, Scope, Signatures, Typer};
 use crate::family::{CheckContext, DiagnosticSink, ScopeStack, StageLimits};
 
