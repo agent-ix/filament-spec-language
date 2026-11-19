@@ -584,7 +584,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         return Err(ProtocolRefusal::fault(
                             "a-weak-attempt-application-is-one-classified-access",
                         )
-                        .into())
+                        .into());
                     }
                 };
                 self.memory.footprint(
@@ -1068,10 +1068,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         }
         if let Some(guard) = activation.guard {
             let parameters = self.slot_parameters(&[self.program.activation_slot, Some(0)])?;
-            for location in self
-                .model
-                .slot_reads(&self.protocol.name, &parameters, guard)?
-            {
+            let protocol = self
+                .protocol
+                .ok_or_else(|| ProtocolRefusal::fault("a-source-activation-has-a-protocol"))?;
+            for location in self.model.slot_reads(&protocol.name, &parameters, guard)? {
                 built.enabling(location);
             }
         }
@@ -1129,11 +1129,14 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         &self,
         slots: &[Option<usize>],
     ) -> Result<Vec<(String, filament_exact::ValueType)>, ProtocolRefusal> {
+        let protocol = self
+            .protocol
+            .ok_or_else(|| ProtocolRefusal::fault("a-source-binder-has-a-protocol"))?;
         slots
             .iter()
             .flatten()
             .map(|slot| {
-                self.protocol
+                protocol
                     .slots
                     .binders
                     .get(*slot)

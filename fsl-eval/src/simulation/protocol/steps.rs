@@ -611,16 +611,43 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 }
             }
         }
-        super::access::classify_enabled_state(
-            &self.model,
-            self.protocol,
-            &self.program,
-            &self.weak_ancestors,
-            &state.model,
-            applications,
-            readers,
-        )
-        .map_err(ExpansionStop::from)
+        let classified = if let Some(protocol) = self.protocol {
+            super::access::classify_enabled_state(
+                &self.model,
+                protocol,
+                &self.program,
+                &self.weak_ancestors,
+                &state.model,
+                applications,
+                readers,
+            )
+        } else {
+            let orderings = self
+                .package_program
+                .as_ref()
+                .map(|package| {
+                    package
+                        .controls
+                        .values()
+                        .filter(|control| {
+                            control.operation
+                                == fsl_package::protocol_view::ControlOperation::Attempt
+                        })
+                        .map(|control| (control.id, control.ordering))
+                        .collect()
+                })
+                .unwrap_or_default();
+            super::access::classify_enabled_package_state(
+                &self.model,
+                &self.program,
+                &self.weak_ancestors,
+                &state.model,
+                applications,
+                readers,
+                &orderings,
+            )
+        };
+        classified.map_err(ExpansionStop::from)
     }
 
     /// The model locations the application `transition` of the attempt
