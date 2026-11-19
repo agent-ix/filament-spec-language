@@ -72,7 +72,6 @@ fn write_request(directory: &Path, request: &Value) -> (u8, Value) {
 #[test]
 #[trace("TC-2102", "FR-752-AC-1")]
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-6")]
-#[ignore = "QSL-2237: model-based test generation and shrinking not implemented yet"]
 fn a_failing_clause_retains_a_one_minimal_replayed_counterexample() {
     let unit = format!(
         "{MODEL_HEADER}invariant Never using v on Config::ConfigVersion at current {{ false }}\n"
@@ -100,7 +99,6 @@ fn a_failing_clause_retains_a_one_minimal_replayed_counterexample() {
 #[test]
 #[trace("TC-2102", "FR-752-AC-2")]
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-5")]
-#[ignore = "QSL-2237: model-based test shrinking not implemented yet"]
 fn every_accepted_shrink_step_is_smaller_and_fails_the_same_clause() {
     let unit = format!(
         "{MODEL_HEADER}invariant Never using v on Config::ConfigVersion at current {{ false }}\n"
@@ -134,7 +132,6 @@ fn every_accepted_shrink_step_is_smaller_and_fails_the_same_clause() {
 #[test]
 #[trace("TC-2102", "FR-752-AC-3")]
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-7")]
-#[ignore = "QSL-2237: model-based testing `tested` evidence not implemented yet"]
 fn a_passing_run_records_tested_and_never_proved() {
     let unit = format!(
         "{MODEL_HEADER}invariant Always using v on Config::ConfigVersion at current {{ true }}\n"
@@ -878,7 +875,6 @@ fn tl_cross_evaluation_agrees_and_timed_clauses_do_not_lower() {
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-8")]
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-9")]
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-10")]
-#[ignore = "QSL-2237: model-based test request rules not implemented yet"]
 fn model_based_test_request_rules() {
     let unit =
         format!("{VALUE_HEADER}predicate Square using v (x: Integer): Boolean {{ x * x >= 0 }}\n");
