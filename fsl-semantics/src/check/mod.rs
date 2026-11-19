@@ -5433,6 +5433,9 @@ impl PackageDeclarations {
                 units.append(table);
             }
         }
+        for clause in &mut checked_finite_hyper {
+            units.append(clause.take_formed_units());
+        }
         for claim in &mut checked_state_graph_claims {
             for table in claim.take_formed_units() {
                 units.append(table);
@@ -9568,6 +9571,23 @@ impl CheckedGraph {
     /// order, each with its `claim` occurrence.
     pub fn finite_hyper_clauses(&self) -> &[hyper_clause::CheckedFiniteHyperClause] {
         &self.finite_hyper_nodes
+    }
+
+    /// FR-898: the checked finite-hyper body as a standalone expression
+    /// owned by this graph, ready for one tuple's field values.
+    pub fn finite_hyper_expression(&self, name: &str) -> Option<CheckedExpression> {
+        let clause = self
+            .finite_hyper_nodes
+            .iter()
+            .find(|clause| clause.name() == name)?;
+        Some(CheckedExpression {
+            graph_identity: self.graph_identity.clone(),
+            parameters: clause.body_parameters().to_vec(),
+            root: clause.typed_body().clone(),
+            slots: clause.body_slots(),
+            formed_units: self.evaluation_units.clone(),
+            effective_limits: self.effective_limits,
+        })
     }
 
     /// FR-180: every admitted `relation` declaration, in source order, with
