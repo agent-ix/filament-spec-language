@@ -17,6 +17,7 @@ use filament_semantic_value::checking::CheckingLimits;
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, PopulationUniverse};
+use fsl_eval::value::S6aRewardEvaluator;
 use fsl_package::CheckedPackage;
 use fsl_replay::ModelCheckLimits;
 use fsl_semantics::check::{CheckRefusal, CheckedProbabilisticClaim, PackageDeclarations};
@@ -437,7 +438,7 @@ impl World {
             Vec::new(),
         )
         .expect("the unit assembles")
-        .check(mode, CheckingLimits::default())?;
+        .check(mode, CheckingLimits::default(), &S6aRewardEvaluator)?;
 
         let header = json!({"identity": model.package});
         let mut snapshots = BTreeMap::new();
