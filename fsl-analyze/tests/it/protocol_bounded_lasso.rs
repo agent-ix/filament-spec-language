@@ -509,11 +509,13 @@ fn duplicate_lose_lasso(case: &Case) -> TemporalCounterexample<ProtocolTransitio
             .find(|(transition, next)| {
                 transition.kind() == kind
                     && (kind != StepKind::Lose
-                        || SubjectSystem::state_key(&system, next).expect("a state key")
+                        || SubjectSystem::state_key(&system, next)
+                            .expect("a state key")
+                            .1
                             == *entry.as_ref().expect("the send establishes the loop entry"))
             })
             .unwrap_or_else(|| panic!("the witness has an enabled {kind:?} step"));
-        let post_state = SubjectSystem::state_key(&system, &next).expect("a state key");
+        let (_, post_state) = SubjectSystem::state_key(&system, &next).expect("a state key");
         if kind == StepKind::Send {
             entry = Some(post_state.clone());
         }
