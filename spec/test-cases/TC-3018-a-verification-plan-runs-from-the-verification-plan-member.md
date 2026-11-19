@@ -25,7 +25,7 @@ FR-1038-AC-2.
 ## Expected Results
 
 - Step 1: `safe` refuted, `tested` tested, `timely` blocked by `safe`,
-  `failed_steps` `["safe"]`, exit 10; then the plan document, exit 0.
+  `failed_steps` `["safe"]`, exit 22; then the plan document, exit 0.
 - Step 2: `Release` runs; `missing-member`, then `missing-name` twice, at
   `/verification_plan/plan`; `wrong-value-kind` at
   `/verification_plan/seed`; each exit 20.

@@ -45,7 +45,7 @@ coordinator when `execute` holds, and write FSpec FR-824's
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-1038-AC-1 | `{"plan": "Release", "execute": true, "initial": "spine-snapshot.json", "seed": 7}` over FR-753-AC-4's unit writes `verification_plan.format` `filament.verification-plan-outcome/v1`, `safe` `refuted`, `tested` with `evidence` `tested`, `timely` `blocked` by `safe`, `failed_steps` `["safe"]` and `inputs.seed` 7, exit `10`; `{"plan": "Release", "emit": true, "execute": false}` writes the plan document with three nodes and one `requires` edge, exit `0`. | Test (TC-3018) |
+| FR-1038-AC-1 | `{"plan": "Release", "execute": true, "initial": "spine-snapshot.json", "seed": 7}` over FR-753-AC-4's unit writes `verification_plan.format` `filament.verification-plan-outcome/v1`, `safe` `refuted`, `tested` with `evidence` `tested`, `timely` `blocked` by `safe`, `failed_steps` `["safe"]` and `inputs.seed` 7, exit `22`, FSpec FR-301's highest-severity code of the refuted and the blocked step; `{"plan": "Release", "emit": true, "execute": false}` writes the plan document with three nodes and one `requires` edge, exit `0`. | Test (TC-3018) |
 | FR-1038-AC-2 | `{}` over the unit's only plan runs `Release`; with a second plan `Other` it refuses `invalid_runtime_input`/`missing-member` at `/verification_plan/plan`; `plan` `Nope` and `plan` `Never` (an invariant) each refuse `missing_declaration`/`missing-name` there; `seed` `"7"` refuses `wrong-value-kind` at `/verification_plan/seed`; each exits `20` with no `verification_plan` outcome. | Test (TC-3018) |
 
 ## Dependencies

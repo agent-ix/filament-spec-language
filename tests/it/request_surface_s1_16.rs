@@ -423,7 +423,7 @@ fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
     );
     assert_eq!(outcome["failed_steps"], json!(["safe"]), "{value}");
     assert_eq!(outcome["inputs"]["seed"], 7, "{value}");
-    assert_eq!(exit, 10, "{value}");
+    assert_eq!(exit, 22, "{value}");
 }
 
 /// FR-1038-AC-2, FSpec FR-824-AC-2/AC-3: the plan is selected by declared

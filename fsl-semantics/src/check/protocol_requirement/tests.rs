@@ -332,9 +332,9 @@ fn a_requirement_whose_clause_reaches_its_protocol_is_a_cycle() {
 
 /// FR-218-AC-16: a temporal requirement binds to the clause's declaration
 /// position and no longer refuses when that clause is emitted.
-#[trace("FR-218-AC-16")]
+#[trace("FR-218-AC-16", "TC-2525")]
 #[test]
-fn an_emitted_requirement_keeps_its_temporal_clause_position() {
+fn requires_temporal_is_reachable() {
     let unit = format!(
         "profile pp = \"filament.protocol.finite-global/v1\";\n{}{}",
         temporal("Due", "true"),
