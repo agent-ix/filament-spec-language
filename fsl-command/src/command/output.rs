@@ -5,8 +5,8 @@ mod types;
 
 use super::{LimitKind, RunCause, RunError, RunResult};
 use crate::formal_source::FormalSource;
-use fsl_foundation::source::SourceReadCause;
 use fsl_foundation::Diagnostic;
+use fsl_foundation::source::SourceReadCause;
 use serde_json::Value;
 
 /// Immutable JSON produced from the typed native result schema.
@@ -608,10 +608,10 @@ fn spine_origin(origin: &filament_semantic_value::location::ExpressionOwner) -> 
 
 #[cfg(all(test, feature = "quire-extraction"))]
 mod extraction_tests {
-    use super::{extraction_regions_for_locus, RunCause};
+    use super::{RunCause, extraction_regions_for_locus};
     use crate::command::ExtractionFailureStage;
     use fsl_foundation::{Source, SourceIdentity};
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     fn verified_map() -> fsl_foundation::source_map::SourceMap {
         let markdown = "# Doc\n\n## Invariants\n\n### valid_clause\n```ix:native\nopaque\n```\n";
