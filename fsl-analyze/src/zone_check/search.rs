@@ -130,6 +130,10 @@ pub struct TimedStateGraphEdge {
     pub to: usize,
     /// The transition identity of the discrete step.
     pub transition: filament_semantic_value::model_transition::ModelTransition,
+    /// The step's index among the source's guarded steps.
+    pub step_index: usize,
+    /// The convex guard part selected for this edge.
+    pub part_index: usize,
 }
 
 /// The finite symbolic graph explored for one timed state-graph item.
@@ -143,6 +147,8 @@ pub struct TimedStateGraph {
     pub initials: Vec<usize>,
     /// Counts for the exploration.
     pub stats: ZoneStats,
+    /// The scale factor shared by the node zones.
+    pub(super) scale: BigInt,
 }
 
 /// A request to EN-6.
@@ -411,7 +417,7 @@ pub fn explore_timed_state_graph(
     let mut edges = Vec::new();
     let graph_edges = run.edges.clone();
     for edge in &graph_edges {
-        let Some((step_index, _part_index)) = edge.step else {
+        let Some((step_index, part_index)) = edge.step else {
             continue;
         };
         let steps = run
@@ -424,15 +430,100 @@ pub fn explore_timed_state_graph(
             from: edge.from,
             to: edge.to,
             transition: step.transition().clone(),
+            step_index,
+            part_index,
         });
     }
-    edges.dedup();
+    edges.dedup_by(|right, left| {
+        right.from == left.from
+            && right.to == left.to
+            && right.transition == left.transition
+    });
     Ok(TimedStateGraph {
         nodes,
         edges,
         initials,
         stats,
+        scale: run.scale,
     })
+}
+
+/// Concretise a path in `graph` to one exact rational delay before each
+/// discrete step. `edges` contains indices into the graph's edge list, in
+/// path order.
+///
+/// # Errors
+///
+/// [`ZoneCheckRefusal`] if the edge sequence is not contiguous or no exact
+/// timed path satisfies its recorded zones and guards.
+pub fn concretise_timed_state_graph_path(
+    subject: &TimedSystem<'_, '_>,
+    graph: &TimedStateGraph,
+    edges: &[usize],
+) -> Result<Vec<fsl_replay::ModelStep>, ZoneCheckRefusal> {
+    if edges.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut stages = Vec::with_capacity(edges.len());
+    let mut last = None;
+    for &edge_index in edges {
+        let edge = graph
+            .edges
+            .get(edge_index)
+            .ok_or(ZoneCheckRefusal::Fault("state-graph-edge-index"))?;
+        if last.is_some_and(|node| node != edge.from) {
+            return Err(ZoneCheckRefusal::Fault("state-graph-path-contiguity"));
+        }
+        let source = graph
+            .nodes
+            .get(edge.from)
+            .ok_or(ZoneCheckRefusal::Fault("state-graph-source-index"))?;
+        let target = graph
+            .nodes
+            .get(edge.to)
+            .ok_or(ZoneCheckRefusal::Fault("state-graph-target-index"))?;
+        let steps = subject
+            .guarded_steps(&source.state)
+            .map_err(|_| ZoneCheckRefusal::Fault("state-graph-guarded-steps"))?;
+        let step = steps
+            .get(edge.step_index)
+            .ok_or(ZoneCheckRefusal::Fault("state-graph-step-index"))?;
+        if step.transition() != &edge.transition {
+            return Err(ZoneCheckRefusal::Fault("state-graph-transition"));
+        }
+        stages.push(super::concretise::Stage {
+            invariants: subject
+                .invariants(&source.state)
+                .map_err(|_| ZoneCheckRefusal::Fault("state-graph-invariants"))?,
+            elapses: subject
+                .elapses(&source.state)
+                .map_err(|_| ZoneCheckRefusal::Fault("state-graph-elapses"))?,
+            target: subject
+                .invariants(step.post())
+                .map_err(|_| ZoneCheckRefusal::Fault("state-graph-target-invariants"))?,
+            step: Some((step.clone(), edge.part_index)),
+            position: Vec::new(),
+            position_resets: Vec::new(),
+            before: Some(source.zone.clone()),
+            piece: Some(target.zone.clone()),
+            silent: false,
+            fixed: None,
+        });
+        last = Some(edge.to);
+    }
+    let target = graph
+        .nodes
+        .get(last.ok_or(ZoneCheckRefusal::Fault("state-graph-path-end"))?)
+        .ok_or(ZoneCheckRefusal::Fault("state-graph-path-end"))?;
+    super::concretise::concretise(
+        subject,
+        subject.places().len(),
+        &stages,
+        &super::concretise::Target::Within(target.zone.clone()),
+        &graph.scale,
+    )
+    .map(|concrete| concrete.prefix)
+    .map_err(|_| ZoneCheckRefusal::Fault("state-graph-path-concretisation"))
 }
 
 /// Why EN-6 does not take the request.
