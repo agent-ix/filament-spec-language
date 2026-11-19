@@ -573,7 +573,11 @@ fn mixed_collection_package() -> CheckedPackage {
     declarations.types =
         TypeEnvironment::new([value_record, record], []).expect("both source records are admitted");
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -788,7 +792,11 @@ fn cold_integer_emission_with_bounds(lower: &str, upper: &str) -> Emission {
     declarations.package_name = "pkg".into();
     declarations.types = TypeEnvironment::new([record], []).expect("owner admits the record type");
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("typed Exact interval checks: {refusals:?}"));
     emit_package(&CheckedPackage::link(graph), whole_unit)
         .expect("genuine checked numeric emission")

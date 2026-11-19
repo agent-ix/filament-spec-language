@@ -24,7 +24,11 @@ fn admitted(declarations: &str) -> Value {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{unit}\n{refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
     assert_eq!(emission.omitted, []);
@@ -86,12 +90,21 @@ fn argument_names(node: &Value) -> Vec<&str> {
 /// the last argument `boundary` `observe-only`; `Advise` is a `recommend`
 /// control with FSpec FR-466's layout; the unmarked clause has the same node
 /// ids and no `boundary` argument.
-#[trace("TC-2991", "FR-383-AC-69", "FSpec-TC-2018", "FSpec-FR-822-AC-4", "FSpec-FR-322-AC-462")]
+#[trace(
+    "TC-2991",
+    "FR-383-AC-69",
+    "FSpec-TC-2018",
+    "FSpec-FR-822-AC-4",
+    "FSpec-FR-322-AC-462"
+)]
 #[ignore = "QSL-2211: S4 emission of observe-only boundaries and recommend is not implemented yet"]
 #[test]
 fn the_package_records_the_observe_boundary() {
     let marked = admitted(&flow("observe "));
-    for path in [&["Flow", "role", "Auditor"][..], &["Flow", "run", "Review"][..]] {
+    for path in [
+        &["Flow", "role", "Auditor"][..],
+        &["Flow", "run", "Review"][..],
+    ] {
         let marked_node = node(&marked, path);
         let arguments = marked_node["body"]["arguments"].as_array().unwrap();
         let last = arguments.last().expect("an argument");
@@ -102,7 +115,10 @@ fn the_package_records_the_observe_boundary() {
         .iter()
         .filter(|node| argument_names(node).contains(&"boundary"))
         .count();
-    assert_eq!(marked_count, 2, "only the two marked nodes carry a boundary");
+    assert_eq!(
+        marked_count, 2,
+        "only the two marked nodes carry a boundary"
+    );
 
     let advise = node(&marked, &["Flow", "run", "Review", "Advise"]);
     assert_eq!(advise["semantic_form"], "control");
@@ -112,7 +128,14 @@ fn the_package_records_the_observe_boundary() {
     );
     assert_eq!(
         argument_names(advise),
-        ["role", "operation", "contracts", "binder", "related", "constraint"]
+        [
+            "role",
+            "operation",
+            "contracts",
+            "binder",
+            "related",
+            "constraint"
+        ]
     );
 
     let plain = admitted(&flow(""));
@@ -120,7 +143,10 @@ fn the_package_records_the_observe_boundary() {
         .iter()
         .all(|node| !argument_names(node).contains(&"boundary")));
     let ids = |wire: &Value| -> Vec<Value> {
-        nodes(wire).iter().map(|node| node["node_id"].clone()).collect()
+        nodes(wire)
+            .iter()
+            .map(|node| node["node_id"].clone())
+            .collect()
     };
     assert_eq!(ids(&marked), ids(&plain));
 }
