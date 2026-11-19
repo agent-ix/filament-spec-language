@@ -16,6 +16,7 @@
 
 use filament_checked::node::CheckedLiteral;
 use filament_exact::{Integer, IntegerInterval, Meter, Rational, Value as KernelValue, ValueType};
+use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
@@ -29,6 +30,7 @@ use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
+use std::cell::RefCell;
 
 use crate::model_operations::{parse_and_build, wire_envelope, wire_field, PACKAGE_IDENTITY};
 
@@ -48,17 +50,22 @@ impl RewardEvaluator for ZeroRewardEvaluator {
     }
 }
 
-struct NegativeRewardEvaluator;
+struct NegativeRewardEvaluator(RefCell<Vec<KernelValue>>);
 
 impl RewardEvaluator for NegativeRewardEvaluator {
     fn evaluate(
         &self,
         _graph: &CheckedGraph,
         _reward: &Reward,
-        _arguments: Vec<KernelValue>,
+        arguments: Vec<KernelValue>,
         _meter: &mut Meter,
     ) -> Result<KernelValue, RewardEvaluationFailure> {
-        Ok(KernelValue::Integer(Integer::from(-1_i64)))
+        let value = arguments[0].clone();
+        self.0.borrow_mut().push(value.clone());
+        Ok(KernelValue::Integer(match self.0.borrow().len() {
+            1 => Integer::from(0_i64),
+            _ => Integer::from(-1_i64),
+        }))
     }
 }
 
@@ -3427,21 +3434,20 @@ fn a_negative_workload_weight_is_refused() {
     ));
 }
 
-/// TC-2061 (FR-185-AC-11): S3, not model admission, refuses a reward that is
-/// negative for some argument vector, naming the reward; `d` ranges over its
-/// support `{1, 3, 12}`, so `d - 3` is negative at `d = 1`.
-#[trace("TC-2061", "FR-185-AC-11")]
-#[trace("FSpec-TC-1560", "FSpec-FR-405-AC-11")]
+/// TC-3027: S3 preserves canonical vector order and stops when its evaluator
+/// reports the first negative reward.
+#[trace("TC-3027", "FR-185-AC-13")]
 #[test]
-fn s3_refuses_a_reward_that_can_be_negative() {
+fn s3_stops_at_the_first_negative_returned_by_the_evaluator() {
     let body = service(None, "reward refund on Server::attempt = d - 3;");
+    let evaluator = NegativeRewardEvaluator(RefCell::new(Vec::new()));
     let refusals = assemble(&body)
-        .check(
-            CheckMode::Linked,
-            CheckingLimits::default(),
-            &NegativeRewardEvaluator,
-        )
+        .check(CheckMode::Linked, CheckingLimits::default(), &evaluator)
         .expect_err("the recording evaluator reports a negative reward");
+    let calls = evaluator.0.into_inner();
+    assert_eq!(calls.len(), 2, "evaluation stops at the first negative");
+    assert_eq!(calls[0], KernelValue::Integer(Integer::from(1_i64)));
+    assert_eq!(calls[1], KernelValue::Integer(Integer::from(3_i64)));
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal: {refusals:?}");
     };
@@ -3451,8 +3457,49 @@ fn s3_refuses_a_reward_that_can_be_negative() {
     assert!(text.contains("refund"), "{text}");
     assert!(text.contains("attempt"), "{text}");
 
-    // Over the support the reward is never negative, so it checks.
+    // The S6a-backed analyzer test verifies the actual expression result.
     checked(&service(None, "reward refund on Server::attempt = d - 1;"));
+}
+
+struct UndefinedRewardEvaluator;
+
+impl RewardEvaluator for UndefinedRewardEvaluator {
+    fn evaluate(
+        &self,
+        _graph: &CheckedGraph,
+        _reward: &Reward,
+        _arguments: Vec<KernelValue>,
+        _meter: &mut Meter,
+    ) -> Result<KernelValue, RewardEvaluationFailure> {
+        Err(RewardEvaluationFailure {
+            diagnostic_code: Code::UndefinedExpression,
+            catalog: CatalogCode::new("undefined_expression", "unproved-nonzero"),
+            fields: vec![("reason", "division-by-zero".to_owned())],
+        })
+    }
+}
+
+/// TC-3027: an undefined S6a result refuses the reward with its original
+/// record and does not become a negative-reward classification.
+#[trace("TC-3027", "FR-185-AC-13")]
+#[test]
+fn s3_preserves_an_undefined_reward_evaluation_record() {
+    let body = service(None, "reward refund on Server::attempt = d - 3;");
+    let refusals = assemble(&body)
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &UndefinedRewardEvaluator,
+        )
+        .expect_err("undefined reward evaluation refuses S3");
+    let [refusal] = refusals.as_slice() else {
+        panic!("one refusal")
+    };
+    assert_eq!(
+        refusal.cause.catalog_code(),
+        Some(CatalogCode::new("undefined_expression", "unproved-nonzero"))
+    );
+    assert!(!format!("{refusal:?}").contains("negative-reward"));
 }
 
 /// TC-2063 (FR-186-AC-7, FR-186-AC-3): under a bounded profile an
