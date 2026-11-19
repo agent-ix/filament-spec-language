@@ -704,7 +704,7 @@ fn a_construct_no_variant_represents_refuses_the_unit() {
 
 #[trace("TC-2214", "FSpec-FR-143-AC-20", "FSpec-FR-986-AC-1")]
 #[test]
-fn null_expression_builds_as_its_own_form() {
+fn null_as_a_primary_builds_a_form() {
     let (_, unit) = build("function f using v(): Boolean pure { null }");
     assert!(matches!(
         function(unit.forms()[0].form()).body.root_node(),

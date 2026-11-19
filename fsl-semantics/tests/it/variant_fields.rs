@@ -1000,11 +1000,11 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
     );
 }
 
-/// An undeclared case of a model variant retains the FR-360 mismatch code;
-/// an undeclared case of a source enum remains an unknown name.
-#[trace("FR-360-AC-5")]
+/// An undeclared case of a model variant has the same missing-name diagnostic
+/// as an undeclared source-enum member.
+#[trace("FR-360-AC-5", "FSpec-FR-141")]
 #[test]
-fn undeclared_variant_cases_name_the_declared_owner_and_keep_source_enum_names_missing() {
+fn an_unknown_member_of_a_model_enum_refuses_missing_name() {
     let refusals = check_refusals(
         "enum Status { Open, Closed }\n\
          function model_case using v(): Config::Tier pure { Config::Tier::Lost }\n\
@@ -1013,16 +1013,13 @@ fn undeclared_variant_cases_name_the_declared_owner_and_keep_source_enum_names_m
 
     let model_case = refusals
         .iter()
-        .find(|refusal| {
-            matches!(
-                &refusal.cause,
-                CheckCause::UndeclaredVariantCase { owner, case }
-                    if owner == "Tier" && case == "Lost"
-            )
-        })
+        .find(|refusal| matches!(&refusal.cause, CheckCause::MissingName(name) if name == "Lost"))
         .expect("the undeclared model variant case is identified");
-    assert_eq!(model_case.cause.code(), fsl_foundation::Code::IllTyped);
-    assert_eq!(model_case.cause.cause(), Some("type-mismatch"));
+    assert_eq!(
+        model_case.cause.code(),
+        fsl_foundation::Code::MissingDeclaration
+    );
+    assert_eq!(model_case.cause.cause(), Some("missing-name"));
     assert!(model_case.location.path().is_empty(), "{model_case:?}");
 
     let source_case = refusals

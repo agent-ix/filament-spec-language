@@ -55,6 +55,31 @@ fn assert_refused(declaration: &str, code: Code, cause: &str) {
     assert_eq!(refusal.cause.cause(), Some(cause), "{refusal:?}");
 }
 
+/// FSpec FR-143-AC-10 (TC-188): an optional record projection has to be
+/// consumed through `present` or `value`; its raw `Option<T>` is not a value
+/// read the source may use directly.
+#[trace("FSpec-TC-188", "FSpec-FR-143-AC-10")]
+#[test]
+fn reading_an_optional_field_as_option_t_is_refused() {
+    assert_refused(
+        "record R { x: Integer?; }\n\
+         function read using v(r: R): Option<Integer> pure { r.x }",
+        Code::IllTyped,
+        "type-mismatch",
+    );
+}
+
+/// FSpec FR-143-AC-10 (TC-188): presence and value operations are the
+/// supported reads of an optional record field.
+#[trace("FSpec-TC-188", "FSpec-FR-143-AC-10")]
+#[test]
+fn reading_with_present_and_value_checks() {
+    assert_checks(
+        "record R { x: Integer?; }\n\
+         function read using v(r: R): Boolean pure { present(r.x) and value(r.x) = 1 }",
+    );
+}
+
 #[trace("TC-1823", "FR-680-AC-4", "FSpec-FR-143-AC-21")]
 #[test]
 fn some_literal_checks_as_an_option_int_result() {
