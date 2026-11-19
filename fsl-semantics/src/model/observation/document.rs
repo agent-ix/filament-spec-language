@@ -4160,7 +4160,9 @@ pub(super) fn admit_parameters(
                 };
                 admitted.push((
                     name.clone(),
-                    Value::Option(filament_exact::OptionValue::none((**payload).clone())),
+                    Value::Option(std::sync::Arc::new(
+                        filament_exact::OptionValue::none((**payload).clone()),
+                    )),
                 ));
                 continue;
             }
