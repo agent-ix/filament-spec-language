@@ -158,7 +158,7 @@ impl CheckedPredicate {
     }
 
     /// The name each evaluation slot was bound under.
-    pub fn slot_names(&self) -> &[String] {
+    pub(crate) fn slot_names(&self) -> &[String] {
         &self.slot_names
     }
 }
@@ -194,7 +194,7 @@ impl CheckedTemporalFormula {
     }
 
     /// Every `holds` condition by its formula node's arena index.
-    pub fn conditions(&self) -> &BTreeMap<usize, CheckedPredicate> {
+    pub(crate) fn conditions(&self) -> &BTreeMap<usize, CheckedPredicate> {
         &self.conditions
     }
 }
@@ -453,6 +453,7 @@ pub enum ClaimActivation {
     /// `on origin`: one claim instance at the first position.
     Origin,
     /// `on each`: one instance for every value of the admitted population.
+    #[non_exhaustive]
     Each {
         /// The activation binder's name.
         binder: String,

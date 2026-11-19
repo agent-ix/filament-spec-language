@@ -12,7 +12,7 @@
 
 use std::collections::{hash_map, BTreeMap};
 
-use filament_exact::{NodeKey, PathSegment, Rational, ValueType};
+use filament_exact::{Identifier, NodeKey, PathSegment, Rational, ValueType};
 use fsl_forms::DeclaredClauseKind;
 
 use super::temporal::{stage_fault, FormulaCondition, FormulaInput};
@@ -608,6 +608,9 @@ impl Lowering<'_> {
     ) -> Result<Statement, CheckRefusal> {
         match (timed, cx.claim.time_unit.clone()) {
             (Some(timed), Some(unit)) => Ok(Statement::quantity(unit, timed)),
+            // FSpec FR-640 rule 7.3: a window over a timed subject is a time
+            // quantity, so a step count there has no spelling.
+            (None, Some(_)) => Err(stage_fault(cx.at, "step-window-on-a-timed-subject")),
             _ => Ok(Statement::integer(
                 self.claim_scalar("integer", cx.at)?,
                 ticks,
@@ -615,11 +618,20 @@ impl Lowering<'_> {
         }
     }
 
-    fn weighting_statement(weighted: bool) -> Statement {
-        Statement::Aggregate(vec![(
+    /// The `weighting` binding of a measure weighted by `weight`. `delay`
+    /// weighting is FR-186 delay weighting (QSL-2551), which has no spelling
+    /// here: a reward that happens to be named `delay` is never written as one.
+    fn weighting_statement(
+        weight: Option<&Identifier>,
+        cx: &StatementCx<'_>,
+    ) -> Result<Statement, CheckRefusal> {
+        if weight.is_some_and(|weight| weight.as_str() == "delay") {
+            return Err(stage_fault(cx.at, "delay-weighting-is-not-emitted"));
+        }
+        Ok(Statement::Aggregate(vec![(
             "kind",
-            Statement::Text(if weighted { "reward" } else { "none" }.into()),
-        )])
+            Statement::Text(if weight.is_some() { "reward" } else { "none" }.into()),
+        )]))
     }
 
     fn fraction_statement(
@@ -635,7 +647,7 @@ impl Lowering<'_> {
             ("window", window),
             (
                 "weighting",
-                Self::weighting_statement(fraction.weight.is_some()),
+                Self::weighting_statement(fraction.weight.as_ref(), cx)?,
             ),
         ]))
     }
@@ -779,7 +791,7 @@ impl Lowering<'_> {
                 Statement::Aggregate(vec![
                     kind("long_run_fraction"),
                     ("predicate", predicate),
-                    ("weighting", Self::weighting_statement(weight.is_some())),
+                    ("weighting", Self::weighting_statement(weight.as_ref(), cx)?),
                     ("bound", bound),
                 ])
             }

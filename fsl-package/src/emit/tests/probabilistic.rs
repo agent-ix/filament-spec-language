@@ -125,6 +125,15 @@ fn identities(package: &CheckedPackage, labels: &[(&str, &str)]) -> Vec<(String,
         .collect()
 }
 
+/// The `probabilistic_claims` rows of `package` as the wire carries them.
+fn raw_claim_rows(package: &CheckedPackage) -> Vec<Value> {
+    let emission = emit_checked(package).expect("a claim-only package emits");
+    wire(&emission)["checked_term_data"]["probabilistic_claims"]
+        .as_array()
+        .expect("the claims are carried")
+        .clone()
+}
+
 /// The emitted `probabilistic_claims` rows, and each `claim` node's form and
 /// occurrences by node id.
 fn emitted_claims(package: &CheckedPackage) -> (Vec<Value>, Vec<(Value, Value)>) {
@@ -257,14 +266,15 @@ fn probabilistic_claim_identity_survives_reordering() {
         });
         assert_eq!(rows, sorted, "rows are in structural order");
         identities.sort_by(|left, right| left.0.cmp(&right.0));
-        (identities, rows)
+        (identities, rows, raw_claim_rows(&package))
     };
-    let (forward, forward_rows) = emit(&[0, 1, 2]);
-    let (reversed, reversed_rows) = emit(&[2, 1, 0]);
-    let (shuffled, _) = emit(&[1, 2, 0]);
+    let (forward, forward_rows, forward_raw) = emit(&[0, 1, 2]);
+    let (reversed, reversed_rows, reversed_raw) = emit(&[2, 1, 0]);
+    let (shuffled, _, _) = emit(&[1, 2, 0]);
     assert_eq!(forward, reversed, "each claim keeps its identity");
     assert_eq!(forward, shuffled, "each claim keeps its identity");
-    assert_eq!(forward_rows, reversed_rows, "the rows are byte-identical");
+    assert_eq!(forward_rows, reversed_rows, "the rows resolve identically");
+    assert_eq!(forward_raw, reversed_raw, "the rows are byte-identical");
     assert_ne!(
         forward[0].1, forward[1].1,
         "distinct names are distinct claims"
@@ -831,6 +841,11 @@ fn a_quantity_valued_random_parameter_reads_back_as_the_s3_record() {
 /// The unit over the `Base`/`Leaf` lineage domain package with `declarations`
 /// appended, and the domain document.
 fn lineage_package(declarations: &str) -> (Vec<u8>, CheckedPackage) {
+    lineage_package_with_profiles("", declarations)
+}
+
+/// [`lineage_package`] with `profiles` declared before the model.
+fn lineage_package_with_profiles(profiles: &str, declarations: &str) -> (Vec<u8>, CheckedPackage) {
     use super::abstraction::fixture;
     let document = crate::emit::tests::wire_bytes(&fixture::lineage_document())
         .expect("the fixture serializes");
@@ -838,6 +853,7 @@ fn lineage_package(declarations: &str) -> (Vec<u8>, CheckedPackage) {
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
+         {profiles}\n\
          model M = {package:?};\n\
          {declarations}\n",
         package = fixture::PACKAGE,
@@ -1101,7 +1117,8 @@ fn emit_wire(package: &CheckedPackage) -> Value {
 /// `under W` binds `W`'s workload node in `scheduler` and holds it as a path
 /// operand; a claim `under every scheduler` binds an empty fairness set; a
 /// changed weight of `Steady` changes the claim under it and no other;
-/// writing the claims and weight lines in another order changes no byte.
+/// writing the claims in another order changes no claim's resolved identity (the
+/// weight-line order is asserted by `a_claim_keeps_its_identity_whichever_order_its_workload_weights_are_written`).
 #[trace("TC-2062", "FR-740-AC-4")]
 #[trace("TC-1288", "FR-498-AC-5")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
@@ -1291,11 +1308,10 @@ fn reward_forms() -> [(&'static str, String, bool); 5] {
     ]
 }
 
-/// TC-1288 (FR-498-AC-6), FSpec FR-640-AC-3 and AC-8: a claim whose form reads
+/// TC-1288 (a part of FR-498-AC-6), FSpec FR-640-AC-3 and AC-8: a claim whose form reads
 /// reward `cost` binds that reward's node in `reward`, a claim that reads none
 /// binds an empty `reward`, and changing the reward's expression changes
 /// exactly the claims that read it.
-#[trace("TC-1288", "FR-498-AC-6")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-8")]
 #[test]
@@ -1400,31 +1416,28 @@ fn a_claim_binds_its_fairness_set() {
 #[test]
 fn the_reader_refuses_a_malformed_claim_body() {
     let package = claims_package(&[STEADY, &claim_under("A", "Steady", HOLDS)]);
-    let emission = emit_checked(&package).expect("the package emits");
-    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
-    let refused = |edit: &dyn Fn(&mut Value)| {
-        let mut wire = wire(&emission);
-        let claim = wire["semantic_graph"]["nodes"]
-            .as_array_mut()
-            .unwrap()
-            .iter_mut()
-            .find(|node| node["semantic_form"] == "probabilistic_claim")
-            .expect("a claim node");
-        edit(&mut claim["body"]);
-        let mut evidence = read_evidence(&emission);
-        evidence
-            .insert_domain_package_document(package_identity(document), document)
-            .expect("a fresh evidence key");
-        read_v2(&jcs(&wire), library(), V2ReadLimits::fixture(), &evidence)
-    };
-    let dropped = refused(&|body| {
+    let dropped = refusal_summary(read_with_body_edit(&package, &|body| {
         body["members"].as_array_mut().unwrap().pop();
-    });
-    assert!(matches!(dropped, Read::Refused(_)), "{dropped:?}");
-    let swapped = refused(&|body| {
+    }));
+    assert_eq!(
+        dropped,
+        (
+            "InvalidPackage".into(),
+            "Some(InvalidValue)".into(),
+            "/semantic_graph/nodes/1/body".into()
+        )
+    );
+    let swapped = refusal_summary(read_with_body_edit(&package, &|body| {
         body["members"].as_array_mut().unwrap().swap(2, 3);
-    });
-    assert!(matches!(swapped, Read::Refused(_)), "{swapped:?}");
+    }));
+    assert_eq!(
+        swapped,
+        (
+            "InvalidPackage".into(),
+            "Some(InvalidValue)".into(),
+            "/semantic_graph/nodes/1/body".into()
+        )
+    );
 }
 
 /// TC-1563 (FSpec FR-640-AC-4): a `workload` node whose weights name an
@@ -2503,7 +2516,7 @@ fn read_with_body_edit(package: &CheckedPackage, edit: &dyn Fn(&mut Value)) -> R
 /// out.
 #[trace("TC-1288", "FR-498-AC-5")]
 #[trace("TC-1288", "FR-498-AC-7")]
-#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-9")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-10")]
 #[test]
 fn a_claim_states_its_form_over_activation_and_confidence_in_body_and_path() {
     let wire = emit_wire(&claims_package(&[
@@ -2545,12 +2558,12 @@ fn a_claim_states_its_form_over_activation_and_confidence_in_body_and_path() {
     assert_eq!(spelled, expected);
 }
 
-/// TC-1288 (FR-498-AC-8), FSpec FR-640-AC-3: a claim's identity moves with
+/// TC-1288 (FR-498-AC-7), FSpec FR-640-AC-3: a claim's identity moves with
 /// each thing it states and with nothing about how it is written: another
 /// threshold, confidence, bound direction or activation is another claim,
 /// while `0.5` and `0.50` and the order of the confidence items change no
 /// segment of the path.
-#[trace("TC-1288", "FR-498-AC-8")]
+#[trace("TC-1288", "FR-498-AC-7")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
 #[test]
 fn a_claim_path_moves_with_what_it_states_and_not_with_how_it_is_written() {
@@ -2607,7 +2620,7 @@ fn a_claim_path_moves_with_what_it_states_and_not_with_how_it_is_written() {
 /// left out the Boolean `true` node, and a claim over another activation is
 /// another claim.
 #[trace("TC-1288", "FR-498-AC-7")]
-#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-9")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-10")]
 #[test]
 fn an_on_each_claim_states_its_trigger_and_guard() {
     let wire = emit_wire(&claims_package(&[
@@ -2655,8 +2668,8 @@ fn an_on_each_claim_states_its_trigger_and_guard() {
 /// FSpec FR-640 Reader rule 7 over bindings 6 to 9: the strict reader refuses
 /// a claim whose probability is out of range, whose exact value has another
 /// type than its position names, whose `over` is no parameter and whose
-/// confidence is incomplete.
-#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-9")]
+/// confidence is incomplete, each at its exact code, cause and pointer.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-11")]
 #[test]
 fn the_reader_refuses_a_claim_statement_that_breaks_rule_7() {
     let package = claims_package(&[
@@ -2664,40 +2677,257 @@ fn the_reader_refuses_a_claim_statement_that_breaks_rule_7() {
         &claim_stated(
             "S",
             "with alpha 0.01, beta 0.01, indifference 0.01",
-            "{ probability >= 0.5 [ always[0,2] holds(true) ] }",
+            "{ probability >= 0.5 [ steps from holds(true) until holds(true) within 10 >= 3 ] }",
         ),
     ]);
-    let wire_text = |term: &Value| term.to_string();
-    let _ = wire_text;
     let verified = read_with_body_edit(&package, &|_| {});
     assert!(matches!(verified, Read::Verified { .. }), "{verified:?}");
-    let literal_edits: [(&str, &dyn Fn(&mut Value)); 4] = [
-        ("probability above one", &|body| {
-            let text = body.to_string().replacen("\"1/2\"", "\"3/2\"", 1);
+    let text_edit = |from: &'static str, to: &'static str| {
+        move |body: &mut Value| {
+            let text = body.to_string().replacen(from, to, 1);
             *body = serde_json::from_str(&text).unwrap();
+        }
+    };
+    let summary = |edit: &dyn Fn(&mut Value)| refusal_summary(read_with_body_edit(&package, edit));
+    let expected =
+        |code: &str, cause: &str, path: &str| (code.to_owned(), cause.to_owned(), path.to_owned());
+    // 7.4: a probability outside (0, 1).
+    assert_eq!(
+        summary(&text_edit("\"1/2\"", "\"3/2\"")),
+        expected(
+            "InvalidPackage",
+            "Some(InvalidValue)",
+            "/semantic_graph/nodes/1/body/members/5/value/members/2/value/members/1/value"
+        ),
+        "a probability above one"
+    );
+    // 7.4: a confidence alpha outside (0, 1). A value of another kind or
+    // type than its position is refused by FR-322's scalar-literal check
+    // before rule 7, so rule 7.3 is reached only by a quantity (see the timed
+    // statement test).
+    assert_eq!(
+        summary(&text_edit("\"1/100\"", "\"3/2\"")),
+        expected(
+            "InvalidPackage",
+            "Some(InvalidValue)",
+            "/semantic_graph/nodes/1/body/members/8/value/members/0/value"
+        ),
+        "an alpha above one"
+    );
+    // 7.5: an `over` that names no parameter.
+    assert_eq!(
+        summary(&|body| {
+            let subject = body["members"][0]["value"].clone();
+            body["members"][6]["value"] = subject;
         }),
-        ("a probability of another kind", &|body| {
-            let text = body.to_string().replacen(
-                "\"value_kind\":\"rational\"",
-                "\"value_kind\":\"integer\"",
-                1,
-            );
-            *body = serde_json::from_str(&text).unwrap();
-        }),
-        ("an unfinished confidence", &|body| {
+        expected(
+            "InvalidModelBinding",
+            "Some(MalformedDeclaration)",
+            "/semantic_graph/nodes/1/body/members/6/value/target"
+        ),
+        "an over that is not a parameter"
+    );
+    // 9: an unfinished confidence.
+    assert_eq!(
+        summary(&|body| {
             let members = body["members"].as_array_mut().unwrap();
-            let confidence = members.last_mut().unwrap();
-            confidence["value"]["members"].as_array_mut().unwrap().pop();
+            members.last_mut().unwrap()["value"]["members"]
+                .as_array_mut()
+                .unwrap()
+                .pop();
         }),
-        ("an unknown form", &|body| {
-            let text = body
-                .to_string()
-                .replacen("\"probability\"", "\"certainty\"", 1);
-            *body = serde_json::from_str(&text).unwrap();
-        }),
+        expected(
+            "InvalidPackage",
+            "Some(InvalidValue)",
+            "/semantic_graph/nodes/1/body/members/8/value"
+        ),
+        "an unfinished confidence"
+    );
+    // An unknown form kind.
+    assert_eq!(
+        summary(&text_edit("\"probability\"", "\"certainty\"")),
+        expected(
+            "InvalidPackage",
+            "Some(InvalidValue)",
+            "/semantic_graph/nodes/1/body/members/5/value/members/0/value"
+        ),
+        "an unknown form"
+    );
+}
+
+/// The code, cause and first locus pointer of a refused read.
+fn refusal_summary(read: Read) -> (String, String, String) {
+    let refusal = super::operation_bodies::refusal_of(read);
+    (
+        format!("{:?}", refusal.code),
+        format!("{:?}", refusal.cause),
+        refusal
+            .loci
+            .first()
+            .and_then(|locus| locus.path.as_ref())
+            .map(|path| path.as_str().to_owned())
+            .unwrap_or_default(),
+    )
+}
+
+/// The ConfigVersion unit over a dense `ms` time source with `declarations`
+/// appended, unchecked: the timed claims of FSpec FR-640 rule 7.3.
+fn timed_claims_source(declarations: &[&str]) -> (Vec<u8>, Vec<u8>) {
+    let document = super::timed_source::package_units_document();
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         profile t = \"filament.temporal.complete/v1\";\n\
+         profile tm = \"filament.temporal.timed/v1\";\n\
+         model Config = {:?};\n\
+         dimension Time;\nunit ms : Time = rational(1, 1);\n\
+         time Config dense unit ms;\n\
+         {STEADY}\n{}\n",
+        config_version_unit::PACKAGE_IDENTITY,
+        declarations.join("\n"),
+    );
+    (document, unit.into_bytes())
+}
+
+fn timed_claims_check(
+    declarations: &[&str],
+) -> (
+    Vec<u8>,
+    Result<CheckedPackage, Vec<fsl_semantics::check::CheckRefusal>>,
+) {
+    let (document, unit) = timed_claims_source(declarations);
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let checked = assemble_with_models(&unit, &packages)
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .map(CheckedPackage::link);
+    (document, checked)
+}
+
+/// FSpec FR-640 rule 7.3 and FR-640-AC-10: over a timed subject the elapsed
+/// and expected-elapsed forms and every window state a time quantity at the
+/// model's unit node, and a quantity reward's bound is a quantity at the
+/// reward's own unit node.
+#[trace("TC-1288", "FR-498-AC-7")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-10")]
+#[test]
+fn a_timed_claim_states_time_quantities_at_the_model_unit() {
+    let claims = [
+        "probabilistic E using tm on Config under Steady on origin \
+         { expected elapsed until holds(true) <= 3 ms }",
+        "probabilistic L using tm on Config under Steady on origin \
+         { probability >= 0.5 [ elapsed from holds(true) until holds(true) within 5 ms >= 1 ms ] }",
+        "probabilistic W using tm on Config under Steady on origin \
+         { probability >= 0.5 [ steps from holds(true) until holds(true) within 5 ms >= 1 ] }",
     ];
-    for (what, edit) in literal_edits {
-        let read = read_with_body_edit(&package, edit);
-        assert!(matches!(read, Read::Refused(_)), "{what}: {read:?}");
+    let (document, checked) = timed_claims_check(&claims);
+    let package = checked.unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    let (wire, read) = emit_and_read(&package, &document);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    let spelled = |name: &str| statement_spelling(&wire, name).join(" ");
+    assert_eq!(
+        spelled("E"),
+        "form kind expected_elapsed until <node> bound direction at_most value quantity <node> 3 over activation kind origin confidence"
+    );
+    assert_eq!(
+        spelled("L"),
+        "form kind probability event kind compare measure kind elapsed from <node> until <node> within quantity <node> 5 bound direction at_least value quantity <node> 1 bound direction at_least value rational 1/2 over activation kind origin confidence"
+    );
+    assert_eq!(
+        spelled("W"),
+        "form kind probability event kind compare measure kind steps from <node> until <node> within quantity <node> 5 bound direction at_least value integer 1 bound direction at_least value rational 1/2 over activation kind origin confidence"
+    );
+}
+
+/// FSpec FR-640 rule 7.3: a step horizon over a timed subject has no
+/// spelling, so lowering refuses it at the claim and emits no package the
+/// strict reader would refuse.
+#[test]
+fn a_step_horizon_over_a_timed_subject_is_refused_at_the_claim() {
+    let (_, checked) =
+        timed_claims_check(
+            &["probabilistic W using tm on Config under Steady on origin \
+         { probability >= 0.5 [ steps from holds(true) until holds(true) within 5 >= 1 ] }"],
+        );
+    match checked {
+        Ok(_) => panic!("a step horizon over a timed subject checks"),
+        Err(refusals) => {
+            let [refusal] = refusals.as_slice() else {
+                panic!("one refusal, got {refusals:?}");
+            };
+            assert!(
+                format!("{refusal:?}").contains("step-window-on-a-timed-subject"),
+                "{refusal:?}"
+            );
+        }
     }
+}
+
+/// FSpec FR-640-AC-10: a quantity reward's bound is a quantity at the
+/// reward's unit node, and `P95`'s path ends as the spec spells it.
+#[trace("TC-1288", "FR-498-AC-7")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-10")]
+#[test]
+fn a_quantity_reward_bound_is_spelled_at_the_reward_unit() {
+    let (document, checked) = timed_claims_check(&[
+        "reward duration on ConfigVersion::attemptUpdate = 2 ms;",
+        "probabilistic P95 using tm on Config under Steady on origin \
+         with alpha 0.01, beta 0.01, indifference 0.01 \
+         { quantile 0.95 of (accumulate duration from holds(true) until holds(true) within 10 ms) <= 5 ms }",
+    ]);
+    let package = checked.unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    let (wire, read) = emit_and_read(&package, &document);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    assert_eq!(
+        statement_spelling(&wire, "P95").join(" "),
+        "form kind quantile level rational 19/20 measure kind accumulate from <node> until <node> within quantity <node> 10 bound direction at_most value quantity <node> 5 over activation kind origin confidence alpha rational 1/100 beta rational 1/100 indifference rational 1/100"
+    );
+}
+
+/// FR-186 delay weighting is QSL-2551: a measure weighted by `delay` is a
+/// located refusal at the claim, never a weighting by a reward that happens
+/// to be named `delay`.
+#[test]
+fn weighting_by_delay_is_refused_even_when_a_reward_is_named_delay() {
+    let (_, checked) = timed_claims_check(&[
+        "reward delay on ConfigVersion::attemptUpdate = 1;",
+        "probabilistic D using tm on Config under Steady on origin \
+         { long_run_fraction holds(true) weighted by delay >= 0.5 }",
+    ]);
+    match checked {
+        Ok(_) => panic!("a delay weighting is written as a reward weighting"),
+        Err(refusals) => assert!(
+            format!("{refusals:?}").contains("delay-weighting-is-not-emitted"),
+            "{refusals:?}"
+        ),
+    }
+}
+
+/// FSpec FR-640-AC-3 and FSL FR-498 reordering: a claim under a workload of
+/// two weight lines keeps its identity whichever order the lines are written
+/// in.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+fn a_claim_keeps_its_identity_whichever_order_its_workload_weights_are_written() {
+    let claim_id = |weights: &str| {
+        let (document, package) = lineage_package_with_profiles(
+            "profile ev = \"filament.temporal.event-position.false-extension/v1\";",
+            &format!(
+                "workload Mixed on M {{ {weights} }}\n\
+             probabilistic C using ev on M under Mixed on origin \
+             {{ probability >= 0.5 [ always[0,2] holds(true) ] }}"
+            ),
+        );
+        let (wire, read) = emit_and_read(&package, &document);
+        assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+        resolved_id(&wire, &claim_named(&wire, "C")["node_id"], 8)
+    };
+    assert_eq!(
+        claim_id("weight Base::op = 1; weight Leaf::step = 3;"),
+        claim_id("weight Leaf::step = 3; weight Base::op = 1;")
+    );
 }
