@@ -102,7 +102,7 @@ fn guarded_int_narrowing_checks_and_lowers_to_numeric_narrow() {
     assert_parameter_narrow(&graph);
 }
 
-#[trace("FR-096", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FR-096", "FSpec-FR-149")]
 #[test]
 fn unguarded_int_narrowing_refuses_unproved_range() {
     assert_unproved("function f using v(q: Int[0,20]): Int[0,9] pure { convert<Int[0,9]>(q) }");
@@ -118,7 +118,7 @@ fn integer_source_under_guard_narrows() {
     assert_unproved("function f using v(n: Integer): Int[0,9] pure { if n >= 0 then convert<Int[0,9]>(n) else 0 }");
 }
 
-#[trace("FR-093", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FSpec-FR-149")]
 #[test]
 fn rational_narrowing_lowers_to_rational_narrow() {
     assert_operation("function f using v(): Rational[0,10;1,10] pure { let x: Rational[-20,20;1,20] = rational(-6,-4) in convert<Rational[0,10;1,10]>(x) }", "filament.op.rational.narrow", CheckMode::Linked);
@@ -127,7 +127,7 @@ fn rational_narrowing_lowers_to_rational_narrow() {
     assert_unproved("function f using v(): Rational[0,10;1,10] pure { let x: Rational[0,20;1,20] = rational(11,1) in convert<Rational[0,10;1,10]>(x) }");
 }
 
-#[trace("FR-093", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FSpec-FR-149")]
 #[test]
 fn decimal_to_integer_is_exact_or_range_narrowing() {
     assert_operation(
@@ -149,7 +149,7 @@ fn decimal_to_integer_is_exact_or_range_narrowing() {
     assert_eq!(errors[0].cause.cause(), Some("operator-ineligible"));
 }
 
-#[trace("FR-093", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FSpec-FR-149")]
 #[test]
 fn range_narrowing_covers_integer_rational_and_decimal_targets() {
     for (source, target, value) in [
@@ -194,7 +194,7 @@ fn range_narrowing_covers_integer_rational_and_decimal_targets() {
     }
 }
 
-#[trace("FR-093", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FSpec-FR-149")]
 #[test]
 fn scale_reduction_remains_rounding_and_exact_widening_remains_exact() {
     assert_operation("function f using v(d: Decimal[0,900;2,2;exact]): Decimal[0,9;0,0;nearest-even] pure { convert<Decimal[0,9;0,0;nearest-even]>(d) }", "filament.op.numeric.convert_rounding", CheckMode::Linked);
@@ -206,7 +206,7 @@ fn scale_reduction_remains_rounding_and_exact_widening_remains_exact() {
     );
 }
 
-#[trace("FR-093", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FSpec-FR-149")]
 #[test]
 fn direct_equality_narrowing_stays_refused_but_a_let_conversion_checks() {
     let errors = check("function f using v(n: Int[0,20], m: Int[0,9]): Boolean pure { if n <= 9 then convert<Int[0,9]>(n) = m else false }", CheckMode::Linked).unwrap_err();
@@ -214,7 +214,7 @@ fn direct_equality_narrowing_stays_refused_but_a_let_conversion_checks() {
     assert_operation("function f using v(n: Int[0,20], m: Int[0,9]): Boolean pure { if n <= 9 then let x = convert<Int[0,9]>(n) in x = m else false }", "filament.op.numeric.narrow", CheckMode::Linked);
 }
 
-#[trace("FR-093", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FSpec-FR-149")]
 #[test]
 fn float_to_integer_narrowing_stays_refused() {
     let errors = check(
@@ -225,7 +225,7 @@ fn float_to_integer_narrowing_stays_refused() {
     assert_eq!(errors[0].cause.code(), Code::IllTyped);
 }
 
-#[trace("FR-096", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FR-096", "FSpec-FR-149")]
 #[test]
 fn historical_narrowing_corpus_now_reports_unproved_range() {
     for source in [

@@ -83,7 +83,7 @@ fn kernel_narrowing_refuses_both_outside_integer_endpoints() {
     }
 }
 
-#[trace("FR-093", "FR-096-AC-8", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FR-096-AC-8", "FSpec-FR-149")]
 #[test]
 fn rational_narrowing_checks_normalized_parts_and_refuses_each_bad_part() {
     let package = package("function f using v(x: Rational[-20,20;1,20]): Rational[0,10;1,10] pure { convert<Rational[0,10;1,10]>(x) }", CheckMode::Kernel);
@@ -112,7 +112,7 @@ fn rational_narrowing_checks_normalized_parts_and_refuses_each_bad_part() {
     }
 }
 
-#[trace("FR-093", "FR-096-AC-8", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FR-096-AC-8", "FSpec-FR-149")]
 #[test]
 fn decimal_narrowing_preserves_values_without_rounding_or_clamping() {
     let package = package("function f using v(d: Decimal[-20,20;0,0;nearest-even]): Decimal[0,9;0,0;nearest-even] pure { convert<Decimal[0,9;0,0;nearest-even]>(d) }", CheckMode::Kernel);
@@ -141,7 +141,7 @@ fn decimal_narrowing_preserves_values_without_rounding_or_clamping() {
     );
 }
 
-#[trace("FR-093", "FR-096-AC-8", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FR-096-AC-8", "FSpec-FR-149")]
 #[test]
 fn rational_to_integer_requires_integrality_without_rounding() {
     let bounded = package(
@@ -178,7 +178,7 @@ fn rational_to_integer_requires_integrality_without_rounding() {
     }
 }
 
-#[trace("FR-093", "FR-096-AC-8", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FR-096-AC-8", "FSpec-FR-149")]
 #[test]
 fn integer_range_narrowing_uses_rational_and_decimal_target_domains() {
     let rational = package(
