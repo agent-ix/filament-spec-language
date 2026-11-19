@@ -819,47 +819,10 @@ fn a_fifo_key_the_reader_compares_is_admitted() {
     }
 }
 
-/// FR-881 admits FIFO-stable bounded and quantity keys, including their
-/// composite forms; their emitted packages must also read back.
+/// FR-881 / FSpec FR-726: equality-stable model-owned variant keys are emitted.
+#[trace("TC-2503", "FR-881", "FSpec-FR-726-AC-2")]
 #[test]
-#[trace("FR-881-AC-2", "FR-880-AC-10", "FSpec-FR-726-AC-2")]
-#[ignore = "QSL-1142: checker/IR FIFO-key parity for bounded, quantity and composite keys is pending"]
-fn a_fifo_key_of_a_bounded_or_quantity_type_is_written() {
-    let cases = [
-        ("Quantity<m>", "m"),
-        ("Option<Int[0, 5]>", "m"),
-        ("Option<Quantity<m>>", "m"),
-        ("Sequence<Int[0, 5]>", "m"),
-        ("Sequence<Quantity<m>>", "m"),
-        ("WithQuantity", "m"),
-        ("WithBounded", "m"),
-        ("WithDecimal", "m"),
-        ("WithRational", "m"),
-        ("WithText", "m"),
-        ("WithQuantity", "m.q"),
-        ("WithBounded", "m.b"),
-        ("WithDecimal", "m.d"),
-        ("WithRational", "m.r"),
-        ("WithText", "m.t"),
-    ];
-    for (carries, key) in cases {
-        let text = keyed_flow(carries, key);
-        let lowered = lower_with(model(), PROFILES, &text);
-        assert!(
-            lowered.ir.is_ok(),
-            "{carries} {key}: {:?}",
-            lowered.ir.err()
-        );
-        assert!(lowered.verified, "{carries} {key}");
-    }
-}
-
-/// FR-881 admits FIFO-stable model-owned variant and record keys over the
-/// FR-360 document. Their packages and unordered carried counterparts read back.
-#[test]
-#[trace("FR-881-AC-2", "FR-880-AC-10", "FSpec-FR-726-AC-2")]
-#[ignore = "QSL-1142: checker/IR FIFO-key parity for model-owned stable keys is pending"]
-fn a_model_owned_fifo_key_is_written_and_a_variant_is_carried() {
+fn model_owned_fifo_keys_are_emitted_and_variant_types_are_carried() {
     use super::variant_types::fixture;
     let document = || {
         crate::emit::tests::wire_bytes(&fixture::with_types(vec![fixture::variant_type(
@@ -1866,11 +1829,10 @@ fn a_channel_carrying_a_bounded_type_is_admitted() {
     }
 }
 
-/// FR-880-AC-10, FSpec FR-726-AC-2: a FIFO key of any FIFO-key-stable type
-/// (a bounded domain, a quantity, a composite of them) is written.
+/// FR-881 / FSpec FR-726-AC-2: bounded, quantity, and record keys without
+/// float leaves are written and admitted by the reader.
 #[test]
-#[trace("TC-2503", "FR-880-AC-10", "FSpec-FR-726-AC-2")]
-#[ignore = "QSL-1142: checker/IR FIFO-key parity for bounded, quantity and composite keys is pending"]
+#[trace("TC-2503", "FR-881", "FSpec-FR-726-AC-2")]
 fn a_fifo_key_stable_key_is_written() {
     for (carries, key) in [
         ("Int[0, 99]", "m"),
@@ -1881,6 +1843,8 @@ fn a_fifo_key_stable_key_is_written() {
         ("WithBounded", "m.b"),
         ("WithQuantity", "m.q"),
         ("WithDecimal", "m"),
+        ("WithRational", "m"),
+        ("WithText", "m"),
         ("WithRational", "m.r"),
         ("WithText", "m.t"),
     ] {
