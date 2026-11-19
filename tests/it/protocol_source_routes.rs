@@ -510,7 +510,7 @@ fn root_wire() -> Value {
     )
     .unwrap();
     json!({"observation":{"authority":"example","identity":"ix://example/parts/data/saga-start"},
-        "subject":{"tag":"object","universe":filament_exact::node_key_to_text(&universe).unwrap(),
+        "subject":{"tag":"object","universe":fsl_foundation::node_wire::node_key_to_text(&universe).unwrap(),
             "type":serde_json::to_string(&json!([{"package":"example/parts","node":"ix://example/parts/Job"}])).unwrap(),
             "object_identity":"j1"}})
 }
