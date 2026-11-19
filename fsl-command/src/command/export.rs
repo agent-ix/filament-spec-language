@@ -5,17 +5,18 @@
 //! `filament.export-outcome/v1` document and, when a file is named and a
 //! package was assembled, the target file.
 
+mod lower;
 mod map;
 mod request;
 
 use super::{
-    FileCounts, RequestOverrides, Result, RunCause, RunLimits, RunResult, check_sources,
-    intake_with_bytes, output::NativeResult, output_file, wire,
+    check_sources, intake_with_bytes, output::NativeResult, output_file, wire, FileCounts,
+    RequestOverrides, Result, RunCause, RunLimits, RunResult,
 };
 use filament_semantic_value::catalog::Category;
 use fsl_replay::{OutcomeDocument, OutcomeStage};
 use request::Request;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 /// FSpec FR-298's disposition of one record, as FR-269 names it.
@@ -81,6 +82,10 @@ pub(super) enum Mapped {
         /// The first obligation the target can state and this build does
         /// not lower.
         unlowered: Option<Unlowered>,
+        /// The `export.work_units` the node charges spent.
+        work: u64,
+        /// The output regions the text writes, one `export.work_units` each.
+        regions_written: u64,
     },
     /// A denied export charge: the setting that stopped it and its bound.
     Incomplete { setting: &'static str, bound: u64 },
@@ -91,6 +96,8 @@ pub(super) enum Mapped {
 pub(super) struct Unlowered {
     pub(super) obligation: String,
     pub(super) construct: String,
+    /// What the build does not lower; empty when the whole construct is not.
+    pub(super) detail: String,
 }
 
 /// The facts of the compiled program the outcome's `package` member names.
@@ -170,6 +177,8 @@ pub(super) fn run_bytes(
             &admitted.package,
             &program.identity,
             &clauses,
+            &[],
+            None,
             &request,
             &request.limits.effective(),
         )?;
@@ -282,18 +291,16 @@ fn unsupported_observer(request: &Request, observer: &str, output: Option<&Path>
     }
     let document = OutcomeDocument::new(fsl_replay::Operation::Export, None, Category::Unsupported)
         .with_export(export.clone())
-        .with_diagnostics(vec![
-            fsl_replay::OutcomeDiagnostic::new(
-                Some("unsupported-requested-capability"),
-                "unsupported_projection",
-                None,
-                reason,
-            )
-            .with_details(Some(serde_json::Map::from_iter([(
-                "path".to_owned(),
-                Value::String(path.to_owned()),
-            )]))),
-        ]);
+        .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+            Some("unsupported-requested-capability"),
+            "unsupported_projection",
+            None,
+            reason,
+        )
+        .with_details(Some(serde_json::Map::from_iter([(
+            "path".to_owned(),
+            Value::String(path.to_owned()),
+        )])))]);
     RunResult {
         exit_code: Category::Unsupported.exit_code(),
         value: NativeResult::export_document(json!({"export": export})),
@@ -399,7 +406,7 @@ fn compile_and_map(
          packages,
          _,
          _libraries,
-         _models,
+         models,
          _inventory,
          failure| {
             let cancel = filament_exact::Cancel::new();
@@ -421,7 +428,6 @@ fn compile_and_map(
                 construct: "checked package".to_owned(),
                 reason: "the package the run compiled is not admitted".to_owned(),
             })?;
-            let _ = &initial;
             let graph = checked.package().graph();
             let clauses: Vec<map::ClauseFact> = graph
                 .state_clauses()
@@ -431,11 +437,13 @@ fn compile_and_map(
                     obligation: (clause.kind() == fsl_forms::StateClauseKind::Invariant)
                         .then(|| clause.identity()),
                     construct: "state/state_clause",
+                    bounded: !clause.population_bounds().is_empty(),
                 })
                 .chain(graph.temporal_clauses().iter().map(|node| map::ClauseFact {
                     name: node.clause().name().to_owned(),
                     obligation: Some(node.identity()),
                     construct: "temporal/temporal_clause",
+                    bounded: false,
                 }))
                 .chain(
                     graph
@@ -445,10 +453,19 @@ fn compile_and_map(
                             name: site.name.clone(),
                             obligation: Some(site.identity.clone()),
                             construct: "temporal/temporal_clause",
+                            bounded: false,
                         }),
                 )
                 .collect();
-            map::run(&admitted, &program.identity, &clauses, request, &effective)
+            map::run(
+                &admitted,
+                &program.identity,
+                &clauses,
+                &models,
+                initial.as_ref(),
+                request,
+                &effective,
+            )
         },
     )?;
     Ok((mapped, program))
@@ -471,14 +488,16 @@ fn finish(
             name_map,
             records,
             unlowered,
+            work,
+            regions_written,
         } => assembled(
             &mut export,
             request,
             program,
             records,
-            text,
-            name_map,
+            (text, name_map),
             unlowered.as_ref(),
+            work.saturating_add(*regions_written),
         )?,
         Mapped::Incomplete { setting, bound } => {
             incomplete(&mut export, setting, *bound);
@@ -540,9 +559,9 @@ fn assembled(
     request: &Request,
     program: &Program,
     records: &[Record],
-    text: &str,
-    name_map: &[Value],
+    (text, name_map): (&str, &[Value]),
     unlowered: Option<&Unlowered>,
+    work: u64,
 ) -> Result<Category> {
     let effective = request.limits.effective();
     export["records"] = json!(records.iter().map(Record::value).collect::<Vec<_>>());
@@ -564,11 +583,20 @@ fn assembled(
         return Err(RunCause::ExportMapper {
             construct: unlowered.construct.clone(),
             reason: format!(
-                "obligation `{}` is representable in {} and this build has no lowering for it",
+                "obligation `{}` is representable in {} and this build has no lowering for it{}",
                 unlowered.obligation,
-                request.target.profile()
+                request.target.profile(),
+                if unlowered.detail.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", unlowered.detail)
+                }
             ),
         });
+    }
+    if work > effective.work_units {
+        incomplete(export, "export.work_units", effective.work_units);
+        return Ok(Category::Incomplete);
     }
     if u64::try_from(text.len()).map_or(true, |length| length > effective.output_bytes) {
         incomplete(export, "export.output_bytes", effective.output_bytes);
