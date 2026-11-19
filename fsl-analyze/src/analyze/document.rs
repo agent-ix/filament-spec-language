@@ -28,7 +28,7 @@ use fsl_route::{CandidateOutcome, EvidenceKind, ItemEvidence, Registry};
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use super::request::ProtocolAnalysisSelection;
 use super::{
@@ -1637,7 +1637,7 @@ pub fn resolve_items(
 mod package_run;
 
 pub use package_run::{
-    PackageRun, PackageRunError, PendingFamily, PendingPackageFamily, settle_package_run,
+    settle_package_run, PackageRun, PackageRunError, PendingFamily, PendingPackageFamily,
 };
 
 /// One requirement item of a run call (FR-395 "Item of the call") with the
@@ -2464,6 +2464,7 @@ fn resolve_schedule_claim(
                     .and_then(|temporal| temporal.limits)
                     .and_then(|limits| limits.max_task_product_work),
                 trace: None,
+                traces: None,
                 recording: None,
                 population: selection.population.clone(),
                 backend_options,
@@ -2608,6 +2609,7 @@ fn resolve_protocol_freedom(
                 max_cases: None,
                 max_task_product_work: None,
                 trace: None,
+                traces: selection.traces.as_ref().map(DocumentSelection::reference),
                 recording: None,
                 population: selection.population.clone(),
                 backend_options,
@@ -3091,6 +3093,7 @@ fn derived_claim(
                 max_cases: None,
                 max_task_product_work: None,
                 trace: None,
+                traces: None,
                 recording: None,
                 population: None,
                 backend_options: BTreeMap::new(),

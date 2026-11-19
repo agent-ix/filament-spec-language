@@ -530,7 +530,7 @@ pub use field_refinement::RefinementObligation;
 /// The premises a [`CheckedChannel`] records exactly as written (FR-218
 /// "Channels"), which its readers match on.
 pub use fsl_forms::{
-    AccessOrdering, ChannelCapacity, ChannelDelivery, ChannelOverflow, LossSelector,
+    AccessOrdering, ChannelCapacity, ChannelDelivery, ChannelOverflow, LossSelector, QuantifierKind,
 };
 pub use hybrid::{
     hybrid_horizon, ArithmeticOp, CaptureIndex, CheckedFunctionRef, CheckedHybridClaim,

@@ -4,10 +4,10 @@
 use filament_exact::{Meter, Value};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::hyper::{
-    FiniteFalseTuple, FiniteHyperOutcome, FiniteQuantifier, FiniteTrace, FiniteTraceClosure,
-    FiniteTracePopulation, FiniteTupleOutcome, evaluate_finite_hyper,
+    evaluate_finite_hyper, FiniteHyperOutcome, FiniteQuantifier, FiniteTrace, FiniteTraceClosure,
+    FiniteTracePopulation, FiniteTupleOutcome,
 };
-use fsl_eval::value::expression::CheckedPackageEvaluation;
+use fsl_eval::value::CheckedPackageEvaluation;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use serde::Deserialize;
 use serde_json::Value as Json;

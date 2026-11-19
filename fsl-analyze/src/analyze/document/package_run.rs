@@ -1160,6 +1160,10 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 max_cases: None,
                 max_task_product_work: None,
                 trace: None,
+                traces: selection
+                    .traces
+                    .as_ref()
+                    .map(super::DocumentSelection::reference),
                 recording: None,
                 population: None,
                 backend_options,
@@ -1351,6 +1355,10 @@ fn options(selection: &ItemSelection, backend_options: BTreeMap<String, String>)
             .and_then(|limits| limits.max_task_product_work),
         trace: selection
             .trace
+            .as_ref()
+            .map(super::DocumentSelection::reference),
+        traces: selection
+            .traces
             .as_ref()
             .map(super::DocumentSelection::reference),
         recording: selection
