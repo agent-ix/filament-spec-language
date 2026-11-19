@@ -218,7 +218,7 @@ fn plan_reference_bound_and_method_applicability_refusals() {
 
     let missing_step = check(
         "verify MissingStep using p {\n\
-           check a claim Reaches method model_check domain Config::ConfigVersion depends [never];\n\
+           check a claim Reaches method model_check domain Config::ConfigVersion depends [unknown_step];\n\
          }",
     )
     .unwrap_or_else(|refusal| panic!("S1 and S2 admit `verify`: {refusal}"));
