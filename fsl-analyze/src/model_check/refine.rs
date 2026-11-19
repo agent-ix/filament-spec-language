@@ -2662,7 +2662,14 @@ impl Run<'_, '_> {
             .nth(class.constraint())
             .ok_or_else(|| fault("a-class-names-a-constraint-of-the-set"))?
             .clone();
-        let failure = if taking {
+        let has_hidden = self
+            .refinement
+            .objects()
+            .iter()
+            .any(|object| !object.hidden.is_empty());
+        let failure = if has_hidden {
+            RefinementFailure::HiddenUnfair { constraint }
+        } else if taking {
             RefinementFailure::AbstractUnfair { constraint }
         } else {
             RefinementFailure::Divergence {
