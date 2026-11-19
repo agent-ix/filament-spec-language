@@ -69,6 +69,20 @@ validated witness reproduces a trace, one `counterexamples` entry.
   `fsl-analyze`, so a provider crate below layer A, such as
   `fsl-hybrid-reference` (FR-1019, ADR-011 layer H), implements it without
   depending on `fsl-analyze`.
+- `HybridProvider` SHALL also have a method
+  `check_options(&self, options: &BTreeMap<String, String>) -> Result<(), OptionRefusal>`,
+  `pub struct OptionRefusal { pub option: String, pub value: String }`,
+  whose default returns `Ok(())`. `fsl-analyze` SHALL call it once per item,
+  after FR-967's unknown-option check and before `solve`, with the item's
+  FSpec FR-331 `options`. A refusal SHALL settle the item `invalid-request`
+  with `invalid_capability`/`invalid-option-value` (FSpec FR-779, FSpec
+  FR-272), payload `request_index`, `backend` (the serving descriptor's
+  backend), `option` and `value` as the refusal names them, and `solve`
+  SHALL NOT be called. The method exists because a provider's value domains
+  (a positive rational step, an integer precision in a range) are not closed
+  sets the descriptor can publish, and a bad value is a defect of the
+  request, not a solver outcome, so it has no `HybridVerdict` arm.
+  FR-1019-AC-7 verifies it through the reference provider.
 - `HybridVerdict` SHALL be the sum of what a hybrid provider can answer,
   one arm per settlement path, so no arm stands in for another:
 
@@ -91,7 +105,9 @@ validated witness reproduces a trace, one `counterexamples` entry.
   the provider's complete counterexample, its kind and trace, as a claim:
   FR-450's exact replay settles it `refuted` when it reproduces, and
   `inconclusive`, `ReplayParity(DisagreementCause::HybridTrace(..))` with
-  that counterexample when it gives `NotReproduced` or `NotExact`. A
+  that counterexample when it gives `NotReproduced`, or `NotExact` without a
+  `validated-witness` FR-751 accepts; with an accepted one a `NotExact`
+  trace settles `refuted` (FR-450 "Settlement"). A
   claimed refutation is never folded into `SolverOutcome::Unknown(trace)`,
   because FR-250 settles that `SolverInconclusive`, and replay parity needs
   the claim. `Unsupported` settles `unsupported` with the diagnostic
@@ -192,8 +208,11 @@ validated witness reproduces a trace, one `counterexamples` entry.
   replay request whose `state_clause` resolves to a hybrid claim to FR-450
   over the recompiled claim and model, and write the FSpec FR-323 `hybrid`
   row: `reproduced-with-evaluated-witness` with the reproduced
-  counterexample, `inconclusive` with the `hybrid-trace` disagreement, or
-  `incomplete` with the `work_units` limit.
+  counterexample, `reproduced-with-validated-witness` with the counterexample
+  when exact replay cannot decide the trace and FR-751 accepts the
+  `validated-witness` the request carries beside it (FR-450 "Settlement"),
+  `inconclusive` with the `hybrid-trace` disagreement, or `incomplete` with
+  the `work_units` limit.
 - `Engine::hybrid(descriptor, provider)` SHALL make an engine from a
   descriptor whose `dynamics` holds `hybrid` and that advertises
   `temporal-satisfaction`. A descriptor that does not is refused with a typed
