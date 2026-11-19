@@ -2588,6 +2588,126 @@ fn a_port_role_on_a_shared_alias_is_its_own_units_packages_port() {
     }
 }
 
+/// FR-103-AC-11 (QSL-2176): a package with a Part, a Port and an Allocation
+/// is admitted as model structure. Intake reads each record with its own
+/// fields, assembly adds no type-environment declaration and refuses none of
+/// them as `UnsupportedModelMember`, and a protocol role binds to the Port.
+#[trace("TC-3013", "FR-103-AC-11")]
+#[test]
+#[ignore = "QSL-2176: model intake admitting systems part, port and allocation records through assembly and checking not implemented yet"]
+fn systems_part_port_allocation_records() {
+    use fsl_semantics::model::domain_package::{DomainPackageRecord, PortDirection};
+
+    const PACKAGE: &str = "test/plant";
+    let id = |name: &str| format!("ix://{PACKAGE}/{name}");
+    let mut document: Value =
+        serde_json::from_slice(&port_document(PACKAGE)).expect("fixture JSON");
+    document["constructs"]
+        .as_array_mut()
+        .expect("constructs")
+        .push(wire_construct(
+            PACKAGE,
+            "allocation",
+            meaning::SYSTEMS_ALLOCATION,
+            serde_json::json!({
+                "fields": "forbidden",
+                "operations": "forbidden",
+                "sourceElement": "required",
+                "targetElement": "required",
+            }),
+        ));
+    document["types"]
+        .as_array_mut()
+        .expect("types")
+        .push(wire_type(
+            &id("PumpAlloc"),
+            serde_json::json!({"module": PACKAGE, "name": "allocation"}),
+            serde_json::json!({
+                "sourceElement": id("PumpOut"),
+                "targetElement": id("SysPump"),
+            }),
+        ));
+    let document = serde_json::to_vec(&document).expect("fixture encoding");
+
+    // Step 1: intake reads each systems record with its own fields.
+    let packages = package_input([document.as_slice()]).expect("the package input admits");
+    let (_, admitted) = admit(PACKAGE, &packages, fsl_foundation::IntakeLimits::default())
+        .expect("the selection admits");
+    let records = read_records(PACKAGE, &admitted).expect("every record reads");
+    let part = records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::Component(part) if part.key == key(PACKAGE, &id("SysPump")) => {
+                Some(part)
+            }
+            _ => None,
+        })
+        .expect("SysPump is a Part record");
+    assert_eq!(part.owning_type, key(PACKAGE, &id("Sys")));
+    assert_eq!(part.value_type, key(PACKAGE, &id("Pump")));
+    let port = records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::Endpoint(port) if port.key == key(PACKAGE, &id("PumpOut")) => {
+                Some(port)
+            }
+            _ => None,
+        })
+        .expect("PumpOut is a Port record");
+    assert_eq!(port.owning_component, key(PACKAGE, &id("SysPump")));
+    assert_eq!(port.value_type, key(PACKAGE, &id("Flow")));
+    assert_eq!(port.direction, Some(PortDirection::Out));
+    let allocation = records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::Allocation(allocation)
+                if allocation.key == key(PACKAGE, &id("PumpAlloc")) =>
+            {
+                Some(allocation)
+            }
+            _ => None,
+        })
+        .expect("PumpAlloc is an Allocation record");
+    assert_eq!(allocation.source_element, key(PACKAGE, &id("PumpOut")));
+    assert_eq!(allocation.target_element, key(PACKAGE, &id("SysPump")));
+
+    // Step 2: the unit assembles and checks, and the role is the Port.
+    let unit = format!(
+        "profile s = \"filament.model.complete/v1\";\n\
+         profile p = \"filament.protocol.finite-global/v1\";\n\
+         model N = {PACKAGE:?};\n\
+         protocol P using p over (c: N::Sys) on origin {{\n\
+         role r on N::PumpOut;\n\
+         run sequence Main {{ }}\n\
+         finish Done as (d: Boolean) {{ true }};\n\
+         }}"
+    );
+    let declarations = crate::model_operations::try_assemble_units(
+        &[("u", unit.as_str())],
+        &[document.as_slice()],
+    )
+    .unwrap_or_else(|refusal| {
+        panic!("systems records assemble with no UnsupportedModelMember: {refusal:?}")
+    });
+    let checked = declarations
+        .with_unwritten_protocols()
+        .check(
+            CheckMode::Linked,
+            filament_semantic_value::checking::CheckingLimits::default(),
+        )
+        .unwrap_or_else(|refusals| panic!("the protocol checks: {refusals:?}"));
+    let protocol = checked
+        .protocols()
+        .iter()
+        .find(|checked| checked.name == "P")
+        .expect("P is checked");
+    let [role] = protocol.roles.as_slice() else {
+        panic!("P has one role: {:?}", protocol.roles);
+    };
+    assert_eq!(role.model_member, Some(key(PACKAGE, &id("PumpOut"))));
+    assert_eq!(role.model_selection.as_deref(), Some(PACKAGE));
+}
+
 /// FSpec FR-144-AC-33's domain-package key case: `M::Ratio` with `scalar`
 /// `rational` and no `constraints` is the unbounded `Rational`, which has no
 /// canonical-key row, so `Map<M::Ratio, Integer>` is `ill_typed`/
