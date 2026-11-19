@@ -11,18 +11,25 @@ use super::{
     read_plugin_inconclusive_cause, unknown_member, wrong_kind,
 };
 use crate::hybrid_replay::{
-    admit, ExactInterval, HybridCounterexample, HybridCounterexampleKind, HybridTrace, TraceBefore,
-    TraceJump, TraceState,
+    admit, ExactInterval, ExactReal, ExpressionSite, HybridCounterexample,
+    HybridCounterexampleKind, HybridTrace, TraceBefore, TraceJump, TraceState, UndefinedCause,
+    UndefinedInstant,
 };
 use crate::proof_result::plugin::PluginResultRefusal;
 use crate::proof_result::InconclusiveCause;
 use filament_exact::Rational;
-use fsl_semantics::check::{CheckedHybridModel, ModeIndex};
+use fsl_semantics::check::wire_id::WireGraph;
+use fsl_semantics::check::{
+    CheckedGraph, CheckedHybridClaim, CheckedHybridModel, HybridTerm, ModeIndex,
+};
+
+use crate::hybrid::{hybrid_counterexample_locus, hybrid_term_at_locus};
 
 /// Read a provider's FR-331 `hybrid-counterexample` for a hybrid claim.
 pub(super) fn read_hybrid_counterexample(
     entry: &Value,
     model: Option<&CheckedHybridModel>,
+    context: Option<(&CheckedGraph, &CheckedHybridClaim, &WireGraph)>,
 ) -> Result<HybridCounterexample, PluginResultRefusal> {
     const BASE: &str = "/counterexample";
     let Value::Object(members) = entry else {
@@ -63,17 +70,24 @@ pub(super) fn read_hybrid_counterexample(
     }
     let kind_pointer = child(BASE, "kind");
     let kind_value = member(fields, "kind", &pointer)?;
-    match kind_value.as_str() {
-        Some("formula") => {}
+    let kind = match kind_value.as_str() {
+        Some("formula") => HybridCounterexampleKind::Formula,
         Some(_) => return Err(invalid(kind_pointer)),
+        None if kind_value.get("type").and_then(Value::as_str) == Some("undefined-evaluation") => {
+            let (graph, claim, wire) = context.ok_or_else(|| invalid(kind_pointer.clone()))?;
+            let checked_claim = graph
+                .hybrid_claims()
+                .iter()
+                .position(|candidate| candidate == claim)
+                .ok_or_else(|| invalid(kind_pointer.clone()))?;
+            read_undefined_kind(kind_value, graph, checked_claim, wire)?
+        }
+        None if kind_value.is_object() => return Err(invalid(kind_pointer)),
         None => return Err(wrong_kind(kind_pointer)),
-    }
+    };
     let trace_pointer = child(BASE, "trace");
     let trace = read_trace(model, member(fields, "trace", &pointer)?, &trace_pointer)?;
-    Ok(HybridCounterexample {
-        kind: HybridCounterexampleKind::Formula,
-        trace,
-    })
+    Ok(HybridCounterexample { kind, trace })
 }
 
 /// A plugin's `inconclusive` `cause` over an item whose claim is a hybrid
@@ -135,6 +149,96 @@ fn object<'a>(
         return Err(unknown_member(child(pointer, extra)));
     }
     Ok(members)
+}
+
+fn read_undefined_kind(
+    value: &Value,
+    graph: &CheckedGraph,
+    claim_index: usize,
+    wire: &WireGraph,
+) -> Result<HybridCounterexampleKind, PluginResultRefusal> {
+    let base = "/kind";
+    let fields = object(value, &["cause", "type", "where"], base)?;
+    if member(fields, "type", base)?.as_str() != Some("undefined-evaluation") {
+        return Err(invalid(child(base, "type")));
+    }
+    let cause_value = member(fields, "cause", base)?;
+    let cause_name = cause_value
+        .as_str()
+        .filter(|text| !text.is_empty())
+        .ok_or_else(|| malformed(cause_value.is_string(), child(base, "cause")))?;
+    let location_value = member(fields, "where", base)?;
+    let location = object(
+        location_value,
+        &["locus", "position", "time"],
+        &child(base, "where"),
+    )?;
+    let position_pointer = child(&child(base, "where"), "position");
+    let position = count_of(
+        member(location, "position", &child(base, "where"))?,
+        false,
+        position_pointer.clone(),
+    )?;
+    let state = usize::try_from(position)
+        .ok()
+        .ok_or_else(|| invalid(position_pointer))?;
+    let time_pointer = child(&child(base, "where"), "time");
+    let time = interval(
+        member(location, "time", &child(base, "where"))?,
+        &time_pointer,
+    )?;
+    if time.lower > time.upper {
+        return Err(invalid(time_pointer));
+    }
+    let locus_pointer = child(&child(base, "where"), "locus");
+    let wire_locus = member(location, "locus", &child(base, "where"))?;
+    let locus = hybrid_counterexample_locus(graph, wire, claim_index, wire_locus)
+        .ok_or_else(|| invalid(locus_pointer.clone()))?;
+    let call = || {
+        let mut path = locus.term.term.clone();
+        if !matches!(
+            hybrid_term_at_locus(graph, claim_index, &locus)?,
+            HybridTerm::Call(..)
+        ) {
+            path.pop()?;
+        }
+        let mut parent = locus.clone();
+        parent.term.term = path;
+        match hybrid_term_at_locus(graph, claim_index, &parent)? {
+            HybridTerm::Call(function, _) => Some((*function, locus.term.term.last().copied())),
+            _ => None,
+        }
+    };
+    let cause = match cause_name {
+        "division-by-zero" => UndefinedCause::DivisionByZero,
+        "outside-capture-range" => match locus.site {
+            ExpressionSite::Capture { capture } => UndefinedCause::OutsideCaptureRange { capture },
+            _ => return Err(invalid(child(base, "cause"))),
+        },
+        "outside-parameter-range" => {
+            let (function, parameter) = call()
+                .and_then(|(function, parameter)| parameter.map(|parameter| (function, parameter)))
+                .ok_or_else(|| invalid(locus_pointer.clone()))?;
+            UndefinedCause::OutsideParameterRange {
+                function,
+                parameter,
+            }
+        }
+        "outside-result-range" => {
+            let (function, _) = call().ok_or_else(|| invalid(locus_pointer.clone()))?;
+            UndefinedCause::OutsideResultRange { function }
+        }
+        _ => return Err(invalid(child(base, "cause"))),
+    };
+    Ok(HybridCounterexampleKind::UndefinedEvaluation {
+        at: Box::new(UndefinedInstant {
+            state,
+            time: ExactReal::Rational(time.lower.clone()),
+            time_interval: Some(time),
+            locus,
+        }),
+        cause,
+    })
 }
 
 /// An FR-331 exact `Rational`, `{numerator, denominator}` in lowest terms.
@@ -270,7 +374,7 @@ fn read_trace(
     value: &Value,
     pointer: &str,
 ) -> Result<HybridTrace, PluginResultRefusal> {
-    let members = object(value, &["delta", "jumps", "loop", "start"], pointer)?;
+    let members = object(value, &["delta", "end", "jumps", "loop", "start"], pointer)?;
     let at = |name: &str| child(pointer, name);
     let Some(jumps) = member(members, "jumps", pointer)?.as_array() else {
         return Err(wrong_kind(at("jumps")));
@@ -289,6 +393,10 @@ fn read_trace(
         loop_to: members
             .get("loop")
             .map(|value| count_of(value, false, at("loop")))
+            .transpose()?,
+        end: members
+            .get("end")
+            .map(|value| before(model, value, &at("end")))
             .transpose()?,
     };
     admit(model, &trace).map_err(|refusal| PluginResultRefusal::Malformed {

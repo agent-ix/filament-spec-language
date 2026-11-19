@@ -44,8 +44,8 @@ use filament_semantic_value::catalog::Category;
 mod replay;
 mod value;
 use value::{
-    Keys, decode_element, encode_element, reference_of, validate_boolean_element_shape,
-    validate_element_shape,
+    decode_element, encode_element, reference_of, validate_boolean_element_shape,
+    validate_element_shape, Keys,
 };
 
 /// Why a [`DisagreementCause`] did not encode or read.
@@ -464,6 +464,8 @@ impl HybridCounterexampleWire {
 struct HybridTraceWire {
     #[serde(skip_serializing_if = "Option::is_none")]
     delta: Option<RationalWire>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end: Option<HybridBeforeWire>,
     jumps: Vec<HybridJumpWire>,
     #[serde(rename = "loop", skip_serializing_if = "Option::is_none")]
     loop_to: Option<u64>,
@@ -565,6 +567,11 @@ impl HybridTraceWire {
             .collect::<Result<_, CauseCodecError>>()?;
         Ok(Self {
             delta: trace.delta.as_ref().map(RationalWire::of),
+            end: trace
+                .end
+                .as_ref()
+                .map(|end| before_wire(end, model))
+                .transpose()?,
             jumps,
             loop_to: trace.loop_to,
             start: state(&trace.start)?,
@@ -590,6 +597,7 @@ impl HybridTraceWire {
                 .collect::<Result<_, CauseCodecError>>()?,
             delta: self.delta.map(RationalWire::read).transpose()?,
             loop_to: self.loop_to,
+            end: self.end.map(|end| read_before(end, model)).transpose()?,
         };
         crate::hybrid_replay::admit(model, &trace)
             .map_err(|_| CauseCodecError::HybridIndex("trace"))?;

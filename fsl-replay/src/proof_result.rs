@@ -47,7 +47,8 @@ pub use plugin::{FslOnlyCause, PluginResultRefusal, ValueFault, read_plugin_caus
 pub(crate) use plugin_read::{child, first_undefined, name_order};
 pub use plugin_read::{
     read_first_party_solver_basis, read_plugin_assignments, read_plugin_basis,
-    read_plugin_certification, read_plugin_hybrid_counterexample, read_plugin_inconclusive_cause,
+    read_plugin_certification, read_plugin_hybrid_counterexample,
+    read_plugin_hybrid_counterexample_over, read_plugin_inconclusive_cause,
     read_plugin_inconclusive_cause_over,
 };
 pub use plugin_replay::{PluginReplayContext, PluginReplayRefusal};

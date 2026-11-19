@@ -51,8 +51,7 @@ fn braking(flow: &str, guard: &str) -> String {
 
 const FLOW: &str = "v' = -a; a' = 0; t' = 1;";
 
-const CLAIMS: &str =
-    "temporal SlowEnough using p over (h: Braking) clock \"model-time\" on origin {\n\
+const CLAIMS: &str = "temporal SlowEnough using p over (h: Braking) clock \"model-time\" on origin {\n\
        always [0, 10] holds(h.v < 30)\n\
      }\n\
      temporal Positive using p over (h: Braking) clock \"model-time\" on origin {\n\
@@ -200,6 +199,7 @@ fn braking_trace(before_time: i64, before_v: i64) -> HybridTrace {
         }],
         delta: None,
         loop_to: None,
+        end: None,
     }
 }
 
@@ -394,6 +394,7 @@ fn the_decisive_instant_decides_formula_or_undefined_evaluation() {
             at: Box::new(UndefinedInstant {
                 state: 0,
                 time: ExactReal::Rational(q(15, 2)),
+                time_interval: None,
                 locus: ExpressionLocus {
                     site: ExpressionSite::ClaimAtom { atom: 0 },
                     term: TermLocus {
@@ -469,6 +470,58 @@ fn the_decisive_instant_decides_formula_or_undefined_evaluation() {
     assert_eq!(
         evaluator.evaluate(call, &over(q(1, 2), q(1, 2))),
         Ok(IValue::Number(Interval::point(q(1, 2))))
+    );
+}
+
+/// FSpec FR-193-AC-23 / FR-450-AC-10: a finite endpoint closes the final
+/// dwell for static and exact replay, and cannot also name a lasso.
+#[trace("TC-1221", "FR-450-AC-10")]
+#[trace("FSpec-TC-373", "FSpec-FR-193-AC-23")]
+#[test]
+fn an_end_cuts_the_last_dwell_and_replays_the_bad_prefix() {
+    let unit = check(&format!(
+        "{}\
+         temporal TooSlow using p over (h: Braking) clock \"model-time\" on origin {{\
+           always [0, 10] holds(h.v > 5)\
+         }}\n",
+        braking("v' = -2; a' = 0; t' = 1;", "v = 0"),
+    ));
+    let trace_with_end = |v: i64| HybridTrace {
+        start: state(0, n(0), &[n(20), n(2), n(0)]),
+        jumps: Vec::new(),
+        delta: None,
+        loop_to: None,
+        end: Some(before(n(8), &[n(v), n(2), n(8)])),
+    };
+    let trace = trace_with_end(4);
+    assert_eq!(
+        static_replay(&unit, claim(&unit, "TooSlow"), &trace),
+        Ok(StaticReplay::Consistent)
+    );
+    assert_eq!(
+        exact_replay(&unit, claim(&unit, "TooSlow"), &trace),
+        Ok(reproduced_formula(&trace))
+    );
+
+    assert_eq!(
+        exact_replay(&unit, claim(&unit, "TooSlow"), &trace_with_end(5)),
+        Ok(ExactReplay::NotReproduced {
+            at: pointer("/end"),
+            check: ExactCheck::Loop,
+        })
+    );
+    assert_eq!(
+        static_replay(&unit, claim(&unit, "TooSlow"), &trace_with_end(25)),
+        Ok(StaticReplay::Inconsistent {
+            at: pointer("/end"),
+            check: StaticCheck::End,
+        })
+    );
+    let mut both = trace;
+    both.loop_to = Some(0);
+    assert_eq!(
+        admit(&unit.hybrid_models()[0], &both).map_err(|error| error.pointer.to_string()),
+        Err("/end".to_owned())
     );
 }
 
@@ -580,6 +633,7 @@ fn bounce_trace(last_x: Rational, loop_to: u64) -> HybridTrace {
         ],
         delta: None,
         loop_to: Some(loop_to),
+        end: None,
     }
 }
 
@@ -682,6 +736,7 @@ fn an_unfair_lasso_with_an_undefined_atom_is_not_reproduced() {
         }],
         delta: None,
         loop_to: Some(0),
+        end: None,
     };
     assert_eq!(
         exact_replay(&graph, claim(&graph, "UndefinedFair"), &trace),
@@ -754,17 +809,17 @@ mod settlement {
     };
     use crate::model_check::limits::ModelCheckLimit;
     use crate::proof_result::{
+        AppliedReduction, Certification, IncompleteCause, InconclusiveCause, PluginResultRefusal,
+        ProofBasis, Proviso, TerminalRecord, TerminalValue, ValueFault,
         read_first_party_solver_basis, read_plugin_hybrid_counterexample,
-        read_plugin_inconclusive_cause_over, AppliedReduction, Certification, IncompleteCause,
-        InconclusiveCause, PluginResultRefusal, ProofBasis, Proviso, TerminalRecord, TerminalValue,
-        ValueFault,
+        read_plugin_inconclusive_cause_over,
     };
     use crate::result::{DisagreementCause, HybridTraceDisagreement};
     use filament_exact::LimitKind;
     use fsl_foundation::{BackendId, RequestIndex};
-    use fsl_semantics::check::wire_id::WireGraph;
     use fsl_semantics::check::VariableIndex;
-    use serde_json::{json, Value};
+    use fsl_semantics::check::wire_id::WireGraph;
+    use serde_json::{Value, json};
     use std::collections::BTreeSet;
 
     fn result(outcome: SolverOutcome) -> SolverResult {
@@ -1615,6 +1670,264 @@ mod settlement {
         assert_eq!(hybrid_locus_wire(&unit, &wire, defined, &past_a_leaf), None);
     }
 
+    /// FR-750-AC-9: the plugin reader decodes the wire locus and retains the
+    /// rational interval claimed for an irrational instant.
+    #[trace("TC-3035", "FR-750-AC-9")]
+    #[test]
+    fn an_undefined_evaluation_counterexample_reads_back_with_its_interval() {
+        use crate::hybrid::hybrid_locus_wire;
+        use crate::proof_result::read_plugin_hybrid_counterexample_over;
+        let unit = braking_unit(FLOW, "v = 0");
+        let text = format!("{HEADER}{FUNCTIONS}{}{CLAIMS}", braking(FLOW, "v = 0"));
+        let package = crate::compile_package(
+            crate::CompileUnit {
+                source: SourceIdentity::new("test", "hybrid-locus-read"),
+                package_name: "fixture".into(),
+                path: "unit.native",
+                bytes: text.as_bytes(),
+            },
+            std::iter::empty::<&[u8]>(),
+            &crate::spine::DependencyInput::default(),
+            crate::StageLimits::default(),
+            crate::ReplayLimits::default(),
+        )
+        .expect("the unit compiles");
+        let wire = WireGraph::of_package_bytes(package.bytes()).expect("the emitted graph");
+        let claim_index = unit
+            .claims
+            .iter()
+            .position(|name| name == "Defined")
+            .expect("the claim");
+        let checked_claim = claim(&unit, "Defined");
+        let Ok(ExactReplay::Reproduced(found)) =
+            exact_replay(&unit, checked_claim, &braking_trace(10, 0))
+        else {
+            panic!("the trace reproduces the undefined evaluation");
+        };
+        let HybridCounterexampleKind::UndefinedEvaluation { at, .. } = &found.kind else {
+            panic!("the kind is undefined-evaluation");
+        };
+        let locus = hybrid_locus_wire(&unit, &wire, claim_index, &at.locus)
+            .expect("the division is a term node of the package");
+        let value = found.to_wire(&unit.hybrid_models()[0], &|_| locus.clone());
+        let read = read_plugin_hybrid_counterexample_over(
+            &json!({"counterexample": value}),
+            &unit,
+            checked_claim,
+            &wire,
+        )
+        .expect("the undefined counterexample reads back against the checked graph");
+        let HybridCounterexampleKind::UndefinedEvaluation { at: read_at, cause } = read.kind else {
+            panic!("read-back preserves the undefined-evaluation kind");
+        };
+        assert_eq!(cause, UndefinedCause::DivisionByZero);
+        assert_eq!(read_at.state, at.state);
+        assert_eq!(read_at.locus, at.locus);
+        assert_eq!(read_at.time_interval, Some(ExactInterval::point(q(15, 2))));
+
+        let mut malformed = value;
+        malformed["kind"]["cause"] = json!("undefined");
+        assert!(matches!(
+            read_plugin_hybrid_counterexample_over(
+                &json!({"counterexample": malformed}),
+                &unit,
+                checked_claim,
+                &wire,
+            ),
+            Err(PluginResultRefusal::Malformed { pointer, cause: ValueFault::InvalidValue })
+                if pointer == "/kind/cause"
+        ));
+
+        let irrational = Poly::new(vec![n(-2), n(0), n(1)])
+            .roots_in(&n(1), &n(2))
+            .into_iter()
+            .next()
+            .expect("sqrt(2) is isolated in (1, 2)");
+        let ExactReal::Root(root) = irrational else {
+            panic!("sqrt(2) is irrational");
+        };
+        let mut irrational = (*found).clone();
+        let HybridCounterexampleKind::UndefinedEvaluation { at, .. } = &mut irrational.kind else {
+            panic!("the kind is undefined-evaluation");
+        };
+        at.time = ExactReal::Root(root.clone());
+        at.time_interval = None;
+        let irrational_wire = irrational.to_wire(&unit.hybrid_models()[0], &|_| locus.clone());
+        assert!(ExactReal::Rational(root.lower().clone()) < ExactReal::Root(root.clone()));
+        assert!(ExactReal::Root(root.clone()) < ExactReal::Rational(root.upper().clone()));
+        let read = read_plugin_hybrid_counterexample_over(
+            &json!({"counterexample": irrational_wire}),
+            &unit,
+            checked_claim,
+            &wire,
+        )
+        .expect("the irrational instant's interval reads back");
+        let HybridCounterexampleKind::UndefinedEvaluation { at, .. } = read.kind else {
+            panic!("read-back preserves the undefined-evaluation kind");
+        };
+        assert_eq!(
+            at.time_interval,
+            Some(ExactInterval {
+                lower: root.lower().clone(),
+                upper: root.upper().clone(),
+            })
+        );
+    }
+
+    /// FR-750-AC-14: the four catalogued undefined causes round-trip, with
+    /// function and capture identities reconstructed from the emitted term.
+    #[trace("TC-3037", "FR-750-AC-14")]
+    #[trace("FSpec-TC-2051", "FSpec-FR-193-AC-26")]
+    #[test]
+    fn the_four_undefined_causes_round_trip_through_wire_read_back() {
+        use crate::hybrid::{hybrid_locus_wire, hybrid_term_at_locus};
+        use crate::proof_result::read_plugin_hybrid_counterexample_over;
+
+        let claims = concat!(
+            "temporal DivisionCase using p over (h: Braking) clock \"model-time\" on origin { ",
+            "always holds(1 / (h.v - 5) != 0) }\n",
+            "temporal ParameterCase using p over (h: Braking) clock \"model-time\" on origin { ",
+            "always holds(drag(120) > 0) }\n",
+            "temporal ResultCase using p over (h: Braking) clock \"model-time\" on origin { ",
+            "always holds(limited(2) > 0) }\n",
+            "temporal CaptureCase using p over (h: Braking) clock \"model-time\" on origin { ",
+            "capture v0: Rational[0, 10; 1, 1] = h.v + 1; always holds(v0 > 0) }\n",
+        );
+        let declarations = format!(
+            "{}\
+             function limited using v(s: Rational[-100, 100; 1, 1]): Rational[-100, 100; 1, 1] pure {{ s }}\n\
+             {}",
+            braking(FLOW, "v = 0"),
+            claims,
+        );
+        let unit = check(&declarations);
+        let source = format!("{HEADER}{FUNCTIONS}{declarations}");
+        let package = crate::compile_package(
+            crate::CompileUnit {
+                source: SourceIdentity::new("test", "hybrid-undefined-causes"),
+                package_name: "fixture".into(),
+                path: "unit.native",
+                bytes: source.as_bytes(),
+            },
+            std::iter::empty::<&[u8]>(),
+            &crate::spine::DependencyInput::default(),
+            crate::StageLimits::default(),
+            crate::ReplayLimits::default(),
+        )
+        .expect("all four undefined expressions compile");
+        let wire = WireGraph::of_package_bytes(package.bytes()).expect("the emitted graph");
+        let cases = [
+            (
+                "DivisionCase",
+                ExpressionLocus {
+                    site: ExpressionSite::ClaimAtom { atom: 0 },
+                    term: TermLocus {
+                        term: vec![0],
+                        body: Vec::new(),
+                    },
+                },
+                UndefinedCause::DivisionByZero,
+            ),
+            (
+                "ParameterCase",
+                ExpressionLocus {
+                    site: ExpressionSite::ClaimAtom { atom: 0 },
+                    term: TermLocus {
+                        term: vec![0],
+                        body: Vec::new(),
+                    },
+                },
+                UndefinedCause::OutsideParameterRange {
+                    function: fsl_semantics::check::CheckedFunctionRef::new(0),
+                    parameter: 0,
+                },
+            ),
+            (
+                "ResultCase",
+                ExpressionLocus {
+                    site: ExpressionSite::ClaimAtom { atom: 0 },
+                    term: TermLocus {
+                        term: vec![0],
+                        body: Vec::new(),
+                    },
+                },
+                UndefinedCause::OutsideResultRange {
+                    function: fsl_semantics::check::CheckedFunctionRef::new(0),
+                },
+            ),
+            (
+                "CaptureCase",
+                ExpressionLocus {
+                    site: ExpressionSite::Capture { capture: 0 },
+                    term: TermLocus::default(),
+                },
+                UndefinedCause::OutsideCaptureRange { capture: 0 },
+            ),
+        ];
+        for (name, locus, expected) in cases {
+            let claim_index = unit
+                .claims
+                .iter()
+                .position(|candidate| candidate == name)
+                .expect("the named claim exists");
+            let checked_claim = claim(&unit, name);
+            let actual_expected = match expected {
+                UndefinedCause::OutsideParameterRange { parameter, .. } => {
+                    let HybridTerm::Call(function, _) =
+                        hybrid_term_at_locus(&unit, claim_index, &locus)
+                            .expect("the parameter locus names its function call")
+                    else {
+                        panic!("the parameter locus names a call");
+                    };
+                    UndefinedCause::OutsideParameterRange {
+                        function: *function,
+                        parameter,
+                    }
+                }
+                UndefinedCause::OutsideResultRange { .. } => {
+                    let HybridTerm::Call(function, _) =
+                        hybrid_term_at_locus(&unit, claim_index, &locus)
+                            .expect("the result locus names its function call")
+                    else {
+                        panic!("the result locus names a call");
+                    };
+                    UndefinedCause::OutsideResultRange {
+                        function: *function,
+                    }
+                }
+                cause => cause,
+            };
+            let locus_wire = hybrid_locus_wire(&unit, &wire, claim_index, &locus)
+                .unwrap_or_else(|| panic!("{name}: the expression has an emitted term node"));
+            let counterexample = HybridCounterexample {
+                kind: HybridCounterexampleKind::UndefinedEvaluation {
+                    at: Box::new(UndefinedInstant {
+                        state: 0,
+                        time: ExactReal::Rational(q(1, 1)),
+                        time_interval: None,
+                        locus: locus.clone(),
+                    }),
+                    cause: expected,
+                },
+                trace: braking_trace(10, 0),
+            };
+            let value = counterexample.to_wire(&unit.hybrid_models()[0], &|_| locus_wire.clone());
+            let read = read_plugin_hybrid_counterexample_over(
+                &json!({"counterexample": value}),
+                &unit,
+                checked_claim,
+                &wire,
+            )
+            .expect("the catalogued cause and locus read back");
+            let HybridCounterexampleKind::UndefinedEvaluation { at, cause } = read.kind else {
+                panic!("read-back retains the undefined-evaluation variant");
+            };
+            assert_eq!(cause, actual_expected, "{name}");
+            assert_eq!(at.locus, locus, "{name}");
+            assert_eq!(at.state, 0, "{name}");
+        }
+    }
+
     /// The graph of the package emitted for `text`, which spells a `Locus`.
     fn emitted_wire(text: &str) -> fsl_semantics::check::wire_id::WireGraph {
         let package = crate::compile_package(
@@ -1645,8 +1958,8 @@ mod settlement {
     #[test]
     fn read_entry_resolves_an_unsupported_entrys_locus_through_the_graph() {
         use crate::hybrid::{
-            hybrid_locus_wire, HybridAnswer, HybridEntryRefusal, HybridVerdict,
-            UnsupportedConstruct,
+            HybridAnswer, HybridEntryRefusal, HybridVerdict, UnsupportedConstruct,
+            hybrid_locus_wire,
         };
         let flow = "v' = -a / (1 + v); a' = 0; t' = 1;";
         let unit = braking_unit(flow, "v = 0");
