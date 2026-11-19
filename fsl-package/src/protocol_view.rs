@@ -244,6 +244,29 @@ pub struct ProtocolView<'p> {
     activation: Vec<CheckedProtocolActivationRow>,
 }
 
+/// One checked control node and its closed, package-read body shape. This is
+/// the package-side execution form: it carries the admitted node identity and
+/// references directly, without borrowing a source `CheckedProtocol`.
+#[derive(Clone, Debug)]
+pub struct ProtocolControlView<'p> {
+    /// The checked package node for this control.
+    pub node: &'p CheckedSemanticNodeV2,
+    /// The closed operator carried by the node.
+    pub operation: ControlOperation,
+    /// The operation-specific structural body.
+    pub body: ControlBody<'p>,
+}
+
+/// The package-native structural form of one protocol declaration.
+#[derive(Clone, Debug)]
+pub struct ProtocolExecutionView<'p> {
+    /// The protocol's clause, role, channel and control topology.
+    pub protocol: ProtocolView<'p>,
+    /// Every control in the `run` tree, in the same order as
+    /// [`ProtocolView::controls`].
+    pub controls: Vec<ProtocolControlView<'p>>,
+}
+
 impl<'p> ProtocolView<'p> {
     /// The `protocol_clause` node.
     pub fn clause(&self) -> &'p CheckedNodeId {
@@ -594,6 +617,43 @@ pub fn protocol_view<'p>(
         terminal,
         scheduling,
         activation,
+    })
+}
+
+/// The package-native execution structure of `protocol`, derived from its
+/// admitted protocol nodes and relations. This accessor is deliberately over
+/// `CheckedPackageV2`: callers do not need, and cannot accidentally supply, a
+/// source `CheckedProtocol`.
+///
+/// # Errors
+///
+/// [`ViewRefusal`] as [`protocol_view`] or [`control_body`].
+pub fn protocol_execution_view<'p>(
+    package: &'p CheckedPackageV2,
+    protocol: &CheckedNodeId,
+) -> Result<ProtocolExecutionView<'p>, ViewRefusal> {
+    let view = protocol_view(package, protocol)?;
+    let nodes: BTreeMap<&CheckedNodeId, &Node> = package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .map(|node| (&node.node_id, node))
+        .collect();
+    let mut controls = Vec::with_capacity(view.controls.len());
+    for id in &view.controls {
+        let node = nodes
+            .get(id)
+            .copied()
+            .ok_or_else(|| missing(view.clause, "run"))?;
+        controls.push(ProtocolControlView {
+            node,
+            operation: control_operation(node)?,
+            body: control_body(node)?,
+        });
+    }
+    Ok(ProtocolExecutionView {
+        protocol: view,
+        controls,
     })
 }
 
@@ -1386,6 +1446,40 @@ pub enum ControlBody<'n> {
         /// The payload binder node.
         binder: &'n CheckedNodeId,
     },
+    /// An `attempt`'s checked package references and memory ordering.
+    Attempt {
+        /// The role that owns the attempt.
+        role: &'n CheckedNodeId,
+        /// The operation anchor selected by the attempt.
+        operation: &'n CheckedNodeId,
+        /// The explicit memory ordering, or `None` when omitted.
+        ordering: Option<fsl_forms::AccessOrdering>,
+        /// The state clauses the attempt contracts, in authored order.
+        contracts: Vec<&'n CheckedNodeId>,
+        /// The attempt result binder.
+        binder: &'n CheckedNodeId,
+        /// The optional constraint expression node.
+        constraint: Option<&'n CheckedNodeId>,
+    },
+    /// An `effect` or domain `event` operation and its enclosing attempt.
+    Effect {
+        /// The attempt this operation affects.
+        attempt: &'n CheckedNodeId,
+        /// The result binder, when the operation declares one.
+        binder: Option<&'n CheckedNodeId>,
+        /// The optional constraint expression node.
+        constraint: Option<&'n CheckedNodeId>,
+    },
+    /// A `check` condition slot.
+    Check {
+        /// The optional constraint expression node.
+        constraint: Option<&'n CheckedNodeId>,
+    },
+    /// A `fence` memory ordering.
+    Fence {
+        /// The fence ordering.
+        ordering: fsl_forms::AccessOrdering,
+    },
     /// Any other control: the operation names it.
     Other(ControlOperation),
 }
@@ -1444,8 +1538,50 @@ pub fn control_body(node: &CheckedSemanticNodeV2) -> Result<ControlBody<'_>, Vie
             of: single(node, "of")?,
             binder: single(node, "binder")?,
         },
+        ControlOperation::Attempt => {
+            ControlBody::Attempt {
+                role: single(node, "role")?,
+                operation: single(node, "operation")?,
+                ordering: optional_ordering(node, "ordering")?,
+                contracts: references(node, "contracts")?,
+                binder: single(node, "binder")?,
+                constraint: Some(single(node, "constraint")?),
+            }
+        }
+        ControlOperation::Effect => ControlBody::Effect {
+            attempt: single(node, "of")?,
+            binder: optional(node, "binder")?
+                .map(|term| reference(term).ok_or_else(|| malformed(&node.node_id, "binder")))
+                .transpose()?,
+            constraint: Some(single(node, "constraint")?),
+        },
+        ControlOperation::Check => ControlBody::Check {
+            constraint: Some(single(node, "constraint")?),
+        },
+        ControlOperation::Fence => ControlBody::Fence {
+            ordering: optional_ordering(node, "ordering")?
+                .ok_or_else(|| missing(&node.node_id, "ordering"))?,
+        },
         other => ControlBody::Other(other),
     })
+}
+
+fn optional_ordering(
+    node: &Node,
+    member: &'static str,
+) -> Result<Option<fsl_forms::AccessOrdering>, ViewRefusal> {
+    optional_text(node, member)?
+        .map(|word| {
+            match word {
+                "relaxed" => Ok(fsl_forms::AccessOrdering::Relaxed),
+                "acquire" => Ok(fsl_forms::AccessOrdering::Acquire),
+                "release" => Ok(fsl_forms::AccessOrdering::Release),
+                "acq_rel" => Ok(fsl_forms::AccessOrdering::AcqRel),
+                "seq_cst" => Ok(fsl_forms::AccessOrdering::SeqCst),
+                _ => Err(malformed(&node.node_id, member)),
+            }
+        })
+        .transpose()
 }
 
 /// Every node the decision facts of the `choice` control `choice` read: the
