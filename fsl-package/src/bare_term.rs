@@ -346,6 +346,147 @@ impl<'p> BarePackage<'p> {
     }
 }
 
+/// One `state`/`state_clause` declaration as a model check reads it (FR-107,
+/// FR-940): its name from its `claim_names` row (FSpec FR-322), its node, the
+/// object type its `self` parameter is over, the operation its anchor names
+/// and the observation its kind reads.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BareStateClauseDeclaration {
+    /// The declared name, from the declaration's `claim_names` row.
+    pub name: String,
+    /// The clause node's key.
+    pub identity: NodeKey,
+    /// The object type the clause constrains: its `self` parameter's type.
+    pub context: filament_exact::EffectiveId,
+    /// The operation a precondition or postcondition is anchored on; `None`
+    /// for an invariant or constraint.
+    pub operation: Option<BareFrameOperation>,
+    /// The observation the clause's kind reads (FR-104).
+    pub observation: fsl_semantics::model::clause_observation::Observation,
+}
+
+impl BarePackage<'_> {
+    /// FR-940: every state clause declaration the package names, one per
+    /// `claim_names` row of a `state`/`state_clause` node, in source order
+    /// (the order of the rows' `declaration_region`s). Charges nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`BareSelectionFailure`]: a witness refusal, or `MalformedNode` for a
+    /// clause node whose body, `self` parameter or anchor does not read.
+    pub fn state_clause_declarations(
+        &self,
+    ) -> Result<Vec<BareStateClauseDeclaration>, BareSelectionFailure> {
+        use filament_contract_model::{CheckedOperationMember, StateClauseKind};
+        use fsl_semantics::model::clause_observation::Observation;
+        let package = self.package();
+        let (_supply, identities) = self.witness()?;
+        let graph = wire_graph(package).map_err(|_| fault("bare-package-has-structural-keys"))?;
+        let nodes: BTreeMap<&CheckedNodeId, &CheckedSemanticNodeV2> = package
+            .resolved_graph()
+            .nodes
+            .iter()
+            .map(|node| (&node.node_id, node))
+            .collect();
+        let object = |node: &CheckedNodeId| {
+            identities
+                .declaration_rows()
+                .find(|row| row.structural_node == *node)
+                .and_then(|row| match &row.exact_identity {
+                    filament_contract_model::SelectedExactIdentity::Object(identity) => {
+                        Some(identity.clone())
+                    }
+                    _ => None,
+                })
+        };
+        let mut rows: Vec<&filament_contract_model::ClaimNameRow> = package
+            .claim_names()
+            .unwrap_or_default()
+            .iter()
+            .filter(|row| {
+                nodes
+                    .get(&row.declaration)
+                    .is_some_and(|node| node.semantic_form.as_ref() == "state_clause")
+            })
+            .collect();
+        rows.sort_by(|left, right| {
+            let at = |row: &filament_contract_model::ClaimNameRow| {
+                (
+                    row.declaration_region.source.authority.clone(),
+                    row.declaration_region.source.identity.clone(),
+                    row.declaration_region.start,
+                )
+            };
+            at(left).cmp(&at(right))
+        });
+        let mut declarations = Vec::with_capacity(rows.len());
+        for row in rows {
+            let node = nodes
+                .get(&row.declaration)
+                .copied()
+                .ok_or_else(|| fault("bare-claim-row-names-a-node"))?;
+            let key = graph
+                .key(&node.node_id)
+                .map_err(|_| fault("bare-package-has-structural-keys"))?;
+            let malformed =
+                || BareSelectionFailure::from(SlotSelectionFailure::MalformedNode(key.clone()));
+            let CheckedTerm::Application {
+                operation,
+                arguments,
+                ..
+            } = &node.body
+            else {
+                return Err(malformed());
+            };
+            let read = operation.read().map_err(|_| malformed())?;
+            let Some(CheckedOperationMember::StateClause { clause: kind }) = read.member else {
+                return Err(malformed());
+            };
+            let observation = match kind {
+                StateClauseKind::Invariant | StateClauseKind::Constraint => Observation::Current,
+                StateClauseKind::Precondition => Observation::Pre,
+                StateClauseKind::Postcondition => Observation::Post,
+            };
+            let [CheckedTerm::Aggregate { members }, CheckedTerm::Reference { target: anchor }, _] =
+                arguments.as_slice()
+            else {
+                return Err(malformed());
+            };
+            let Some(CheckedTerm::Reference { target: receiver }) = members.first() else {
+                return Err(malformed());
+            };
+            let context = nodes
+                .get(receiver)
+                .and_then(|parameter| object(&parameter.semantic_type))
+                .ok_or_else(malformed)?;
+            let anchor = nodes.get(anchor).copied().ok_or_else(malformed)?;
+            let operation = if anchor.semantic_form.as_ref() == "operation_anchor" {
+                let declaring = anchor_member(&anchor.body, "context")
+                    .and_then(crate::protocol_view::reference)
+                    .and_then(object)
+                    .ok_or_else(malformed)?;
+                let operation = anchor_member(&anchor.body, "operation")
+                    .and_then(text)
+                    .ok_or_else(malformed)?;
+                Some(BareFrameOperation {
+                    declaring,
+                    operation: operation.to_owned(),
+                })
+            } else {
+                None
+            };
+            declarations.push(BareStateClauseDeclaration {
+                name: row.name.as_ref().to_owned(),
+                identity: key,
+                context,
+                operation,
+                observation,
+            });
+        }
+        Ok(declarations)
+    }
+}
+
 /// The binding `name` of a `state`/`operation_anchor` node's body (FR-342):
 /// its `context`, `operation` and `frame` members, in wire order.
 fn anchor_member<'t>(term: &'t CheckedTerm, name: &str) -> Option<&'t CheckedTerm> {

@@ -1052,7 +1052,9 @@ fn an_invariant_counterexample_replays_by_the_invariant_rule() {
                 &["c"],
                 UNLIMITED,
             ),
-            item: ModelCheckItem::Invariant { clause },
+            item: ModelCheckItem::Invariant {
+                clause: fsl_replay::InvariantClause::of(clause),
+            },
             max_depth: None,
             limits: ModelCheckLimits::default(),
             reductions: Default::default(),

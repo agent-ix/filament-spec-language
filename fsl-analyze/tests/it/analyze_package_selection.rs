@@ -44,7 +44,6 @@ fn first_diagnostic(run: &Run) -> Value {
 /// route's counterexample and replay.
 #[trace("TC-2410", "FR-850-AC-2")]
 #[test]
-#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn a_package_refutation_equals_the_source_refutation() {
     let body = format!("{}{}{}", bounded(), below_three(), at_most_two());
     let items = json!([{"claim": "AtMostTwo"}]);
@@ -240,7 +239,6 @@ fn an_unknown_claim_over_a_package_settles_unknown_claim() {
 /// refused as not implemented and its items equal the source route's.
 #[trace("TC-2620", "FR-940-AC-1", "FR-940-AC-3")]
 #[test]
-#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn a_package_request_reads_the_source_route_facts_through_the_view() {
     let body = format!("{}{}{}", bounded(), below_three(), at_most_two());
     let items = json!([{"claim": "Bounded"}, {"claim": "BelowThree"}, {"claim": "AtMostTwo"}]);
@@ -290,7 +288,6 @@ fn source_analysis_decides_every_family_over_its_checked_graph() {
 /// evaluators through their package forms with the source route's records.
 #[trace("TC-2958", "FR-940-AC-5")]
 #[test]
-#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn the_package_route_reaches_the_source_checked_evaluators() {
     let body = format!("{}{}{}", bounded(), at_most_two(), not_above_three());
     let items = json!([{"claim": "NotAboveThree"}, {"claim": "AtMostTwo"}]);
@@ -323,7 +320,6 @@ fn the_package_route_reaches_the_source_checked_evaluators() {
 /// item and is never analyzed from source instead.
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
-#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn a_refused_package_never_falls_back_to_source() {
     let families = format!("{}{}{}", bounded(), at_most_two(), not_above_three());
     let all = json!([{"claim": "Bounded"}, {"claim": "AtMostTwo"}, {"claim": "NotAboveThree"}]);
@@ -373,7 +369,6 @@ fn a_refused_package_never_falls_back_to_source() {
 /// handoff with no `equality.json` is admitted with no equality rows.
 #[trace("TC-2966", "FR-850-AC-6")]
 #[test]
-#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn a_foreign_identity_format_refuses_and_an_absent_equality_file_is_admitted() {
     let ws = Workspace::new("package-handoff-identities");
     let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
@@ -405,7 +400,6 @@ fn a_foreign_identity_format_refuses_and_an_absent_equality_file_is_admitted() {
 /// naming `file`.
 #[trace("FSpec-TC-2009", "FSpec-FR-520-AC-7")]
 #[test]
-#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn a_package_selection_names_a_directory_not_a_file() {
     let ws = Workspace::new("package-selection-directory");
     let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));

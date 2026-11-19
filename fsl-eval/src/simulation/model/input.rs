@@ -239,6 +239,7 @@ pub struct PackageModelInput<'p> {
     model_selections: Vec<DomainPackageRef>,
     operations: OperationTable,
     probabilistic: CheckedProbabilisticModel,
+    state_clauses: Vec<StateClauseEntry>,
 }
 
 impl<'p> PackageModelInput<'p> {
@@ -295,6 +296,22 @@ impl<'p> PackageModelInput<'p> {
         let probabilistic = model
             .probabilistic_model(&operations, &nodes)
             .map_err(PendingPackageForm::Probabilistic)?;
+        // FR-940: the state clauses by their `claim_names` rows (FSpec
+        // FR-322), in source order, as the source route lists them.
+        let state_clauses = package
+            .state_clause_declarations()
+            .map_err(PendingPackageForm::World)?
+            .into_iter()
+            .map(|declaration| StateClauseEntry {
+                name: declaration.name,
+                identity: declaration.identity,
+                context: declaration.context,
+                operation: declaration
+                    .operation
+                    .map(|operation| (operation.declaring, operation.operation)),
+                observation: declaration.observation,
+            })
+            .collect();
         Ok(Self {
             package,
             world,
@@ -302,6 +319,7 @@ impl<'p> PackageModelInput<'p> {
             model_selections,
             operations,
             probabilistic,
+            state_clauses,
         })
     }
 
@@ -366,7 +384,7 @@ impl<'p> PackageModelInput<'p> {
             timed_models: &[],
             time_sources: &[],
             probabilistic: &self.probabilistic,
-            state_clauses: Vec::new(),
+            state_clauses: self.state_clauses.clone(),
             terminals: Ok(Vec::new()),
             evaluator: self.package,
             source: None,

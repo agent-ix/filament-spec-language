@@ -253,7 +253,7 @@ pub use model_check::identity::{
     node_occurrence, ClauseIdentity, ClauseRootRefusal, HyperIdentity, StateGraphIdentity,
 };
 pub use model_check::item::{
-    Instance, ItemRefusal, LivenessTranslation, ModelCheckItem, Translation,
+    Instance, InvariantClause, ItemRefusal, LivenessTranslation, ModelCheckItem, Translation,
 };
 pub use model_check::limits::{
     meter_bound, ExactProbLimit, ExactProbLimits, ModelCheckLimit, ModelCheckLimits, ReachedLimit,

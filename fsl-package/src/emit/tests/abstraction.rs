@@ -133,9 +133,9 @@ fn emit_with(bindings: Option<&[AuthoredBinding]>) -> Emitted {
     let graph = package.graph();
     let source = graph.source().clone();
     let emission = emit_package(&package, |location| {
-        graph.region(location).or_else(|| {
-            Some(SourceRegion::new(source.clone(), 0, 1).expect("a nonempty region"))
-        })
+        graph
+            .region(location)
+            .or_else(|| Some(SourceRegion::new(source.clone(), 0, 1).expect("a nonempty region")))
     })
     .expect("the package emits");
     assert_eq!(emission.omitted, []);

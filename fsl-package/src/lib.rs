@@ -84,7 +84,8 @@ pub use bare::{
 pub use bare_slot::{BareSelectionFailure, BareSlot, BareSource};
 #[cfg(feature = "std")]
 pub use bare_term::{
-    BareClauseRefusal, BareClauseTerm, BareFrameOperation, BareStateClause, ClauseBinder,
+    BareClauseRefusal, BareClauseTerm, BareFrameOperation, BareStateClause,
+    BareStateClauseDeclaration, ClauseBinder,
 };
 #[cfg(feature = "std")]
 pub use bare_world::BareWorld;

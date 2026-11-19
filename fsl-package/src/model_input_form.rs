@@ -8,7 +8,7 @@
 
 use filament_contract_model::{
     CheckedNodeId, CheckedNodeKind, CheckedNodeTag, CheckedSemanticNodeV2, CompositeTypeForm,
-    ModelForm, ProbabilisticForm, ScalarTypeForm, TemporalForm,
+    ModelForm, ProbabilisticForm, ScalarTypeForm, StateForm, TemporalForm,
 };
 
 use crate::BarePackage;
@@ -17,7 +17,9 @@ use crate::BarePackage;
 /// yet.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UnreadModelForm {
-    /// A state clause, frame, transition, operation anchor or snapshot.
+    /// A Boolean-field transition or a snapshot. A state clause, frame and
+    /// operation anchor are read: the clause by its `claim_names` row and
+    /// package form, the frame and anchor by theirs (FR-940).
     State,
     /// A timed model, time source, clock place or timed clause.
     TimedModel,
@@ -61,6 +63,9 @@ fn unread(node: &CheckedSemanticNodeV2) -> Option<UnreadModelForm> {
     let kind = CheckedNodeTag::from_wire(&node.node_tag)
         .and_then(|tag| CheckedNodeKind::decode(tag, &node.semantic_form))?;
     match kind {
+        CheckedNodeKind::State(
+            StateForm::StateClause | StateForm::Frame | StateForm::OperationAnchor,
+        ) => None,
         CheckedNodeKind::State(_) => Some(UnreadModelForm::State),
         CheckedNodeKind::TimedModel(_) => Some(UnreadModelForm::TimedModel),
         CheckedNodeKind::Temporal(TemporalForm::Terminal) => Some(UnreadModelForm::Terminal),

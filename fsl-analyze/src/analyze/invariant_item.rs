@@ -67,7 +67,9 @@ pub(super) fn invariant_item<'a>(
         simulation: simulation(binding),
         proof_bounds: form.proof_bounds.clone(),
     };
-    let item = ModelCheckItem::Invariant { clause };
+    let item = ModelCheckItem::Invariant {
+        clause: fsl_replay::InvariantClause::of(clause),
+    };
     let request = ModelCheckRequest {
         temporal_clock_selections: &[],
         subject: subject(binding),
