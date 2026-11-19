@@ -980,6 +980,7 @@ fn assert_values_corpus_counts() {
     }
 }
 
+#[trace("FR-093-AC-59", "FR-680-AC-1")]
 #[test]
 fn corpus_collections() {
     let directory = corpus_root().join("collections");

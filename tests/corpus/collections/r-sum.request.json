@@ -1,0 +1,1 @@
+{"format":"native-run/1","request":{"models":[],"program":{"source":{"file":"r-sum.native","authority":"agent-ix","identity":"test:corpus:r-sum","document":"r-sum","formal_revision":1}},"call":{"function":"f","arguments":[]}}}

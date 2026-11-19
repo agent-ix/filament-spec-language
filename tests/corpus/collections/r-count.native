@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type Total = Integer;
+function f using v(): Integer pure { count<Total>(x in sequence[-1,0,2,3]:x>0) }

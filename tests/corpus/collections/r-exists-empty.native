@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function f using v(s: Sequence<Integer>[0,0]): Boolean pure { exists(x in s:x>0) }
+function main using v(): Boolean pure { f(sequence[]) }
