@@ -969,15 +969,14 @@ fn malformed_hyper_domains_quantifiers_and_matches_refuse_at_the_slot() {
             "state.ready",
             5,
         ),
-        (
-            "hyper Q using h over behaviours forall trace a align skip { } { holds(true) }",
-            "} {",
-            1,
-        ),
     ] {
         refuses_at(declaration, marker, width);
     }
 }
+
+// Pending QSL-2599: the empty align-skip syntax has no settled required oracle.
+// Original input, outside active coverage until that ambiguity is resolved:
+// hyper Q using h over behaviours forall trace a align skip { } { holds(true) }
 
 #[test]
 #[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2")]

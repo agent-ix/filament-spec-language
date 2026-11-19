@@ -142,7 +142,7 @@ fn rejected(source: &str, marker: &str, width: usize) {
 }
 
 #[test]
-#[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2", "FSpec-FR-339-AC-6")]
+#[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2")]
 fn channel_policies_attach_to_their_own_channel_in_source_order() {
     for (ordering, delivery, capacity, overflow) in [
         ("unordered", "unknown", "0", "block"),
@@ -254,7 +254,7 @@ fn dynamic_role_lifetimes_and_observation_keep_the_role_parent() {
 const COMPENSATION: &str = "compensate Restore for Work::Offered as (offer: Offer) by Agent on Ledger::Ticket::restore using t clock \"ticks\" {\n  capture original: Integer = offer.amount;\n  activate first (signal: Signal) when { signal.failed } {\n    capture checkpoint: Integer = original;\n  } within [1, 4];\n  attempts 3 of RetryOffer;\n  retry (beforeState: Before, afterState: After) { beforeState.amount = afterState.amount };\n  commit Work::Posted;\n  recover (restored: State) { restored.clean };\n}";
 
 #[test]
-#[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2", "FSpec-FR-339-AC-6")]
+#[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2")]
 fn compensation_preserves_capture_phases_retry_parameters_and_commit_reference() {
     let source = unit(COMPENSATION, "sequence Work {}");
     let result = admitted(&source);
@@ -382,7 +382,7 @@ fn protocol_requirement_terminal_scheduling_and_run_keep_declaration_order() {
 const AWAIT: &str = "await Arrival after Work::Offered using t clock \"ticks\" within [1, 4] match receive Got via Inbox of Work::Offered as (message: Envelope) { message.ok }; then sequence Accepted {} timeout sequence Expired {}";
 
 #[test]
-#[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2", "FSpec-FR-339-AC-6")]
+#[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2")]
 fn observed_await_keeps_match_and_both_arms_inside_the_await() {
     let control = format!("observe {AWAIT}");
     let source = unit("", &control);
@@ -599,7 +599,7 @@ fn attempt_and_fence_orderings_remain_children_of_their_own_controls() {
 }
 
 #[test]
-#[trace("FSpec-FR-339-AC-4", "FSpec-FR-339-AC-6")]
+#[trace("FSpec-FR-339-AC-4")]
 fn malformed_channel_policies_refuse_at_the_bad_policy_token() {
     for (channel, marker, width) in [
         ("channel Inbox from Agent to Peer carries Envelope ordering unordered delivery unknown capacity symbolic(pool overflow block;", "overflow", 8),
@@ -611,7 +611,7 @@ fn malformed_channel_policies_refuse_at_the_bad_policy_token() {
 }
 
 #[test]
-#[trace("FSpec-FR-339-AC-4", "FSpec-FR-339-AC-6")]
+#[trace("FSpec-FR-339-AC-4")]
 fn malformed_compensation_retry_and_commit_refuse_the_missing_member() {
     for (bad, marker, width) in [
         (
@@ -638,7 +638,7 @@ fn malformed_compensation_retry_and_commit_refuse_the_missing_member() {
 }
 
 #[test]
-#[trace("FSpec-FR-339-AC-4", "FSpec-FR-339-AC-6")]
+#[trace("FSpec-FR-339-AC-4")]
 fn malformed_awaits_refuse_at_the_interval_or_timeout_boundary() {
     let bad = AWAIT.replace("within [1, 4] match", "within [1, 4 match");
     rejected(&unit("", &bad), "match", 5);
@@ -647,7 +647,7 @@ fn malformed_awaits_refuse_at_the_interval_or_timeout_boundary() {
 }
 
 #[test]
-#[trace("FSpec-FR-339-AC-4", "FSpec-FR-339-AC-6")]
+#[trace("FSpec-FR-339-AC-4")]
 fn malformed_parallel_joins_refuse_at_the_branch_count_or_roster_boundary() {
     for (control, marker, width) in [
         ("parallel Fanout { branch A sequence Idle {} } join all [A];", "} join", 1),
@@ -659,7 +659,7 @@ fn malformed_parallel_joins_refuse_at_the_branch_count_or_roster_boundary() {
 }
 
 #[test]
-#[trace("FSpec-FR-339-AC-4", "FSpec-FR-339-AC-6")]
+#[trace("FSpec-FR-339-AC-4")]
 fn malformed_loops_and_fences_refuse_their_own_illegal_keyword() {
     rejected(&unit("", "repeat Drain by Agent visible () max 2 until { true } sequence Again {} exhausted sequence Done {}"), "until", 5);
     rejected(
