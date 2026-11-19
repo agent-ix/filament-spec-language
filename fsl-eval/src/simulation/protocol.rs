@@ -2145,6 +2145,35 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         Ok(verdict(&evaluation.outcome))
     }
 
+    /// Evaluate a protocol expression that yields a value rather than a
+    /// Boolean predicate (FR-390, FR-731).
+    fn evaluate_value_in(
+        &self,
+        body: &fsl_semantics::check::CheckedBody,
+        frame: Vec<Option<Value>>,
+        observation: &Observation,
+    ) -> Result<Result<Value, ClauseOutcome>, ExpansionStop> {
+        let evaluation = self
+            .evaluator
+            .evaluate_protocol_slot(
+                body,
+                frame,
+                &observation.environment,
+                &mut Meter::new(self.model.meter()),
+            )
+            .map_err(|_| broken())?;
+        Ok(match evaluation.outcome {
+            filament_exact::Outcome::Completed(value) => Ok(value),
+            filament_exact::Outcome::Undefined(undefined) => {
+                Err(ClauseOutcome::KernelUndefined(undefined))
+            }
+            filament_exact::Outcome::Refused(refusal) => Err(ClauseOutcome::KernelRefused(refusal)),
+            filament_exact::Outcome::Incomplete(incomplete) => {
+                Err(ClauseOutcome::Incomplete(incomplete))
+            }
+        })
+    }
+
     /// FR-211 and ADR-027 PD-1: the class of `state`. A state with no live
     /// instance is intended; otherwise the protocol's `terminal` member
     /// decides, read through the one clause evaluator.

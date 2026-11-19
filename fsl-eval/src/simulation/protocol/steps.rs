@@ -825,6 +825,60 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         })
     }
 
+    /// Whether every checked relationship premise holds for this candidate
+    /// event binding in the same observed state as its constraint (FR-731).
+    fn related_admits(
+        &self,
+        instance: &Instance,
+        path: &ThreadPath,
+        node: ProtocolNodeId,
+        slot: usize,
+        record: &Value,
+        observed: &ModelSimState,
+        findings: &mut Vec<ModelFinding>,
+    ) -> Result<bool, ExpansionStop> {
+        let Some(clauses) = self.program.related.get(&node) else {
+            return Ok(true);
+        };
+        let text = self.program.text(node)?;
+        let observation = self.model.observation_of(observed)?;
+        for clause in clauses {
+            let mut frame = self.frame(instance, path, node);
+            if let Some(entry) = frame.get_mut(slot) {
+                *entry = Some(record.clone());
+            }
+            let first = self.evaluate_value_in(clause.ends[0], frame.clone(), &observation)?;
+            let second = self.evaluate_value_in(clause.ends[1], frame, &observation)?;
+            let source = match first {
+                Ok(Value::Reference(reference)) => reference,
+                Ok(_) => return Ok(false),
+                Err(outcome) => {
+                    findings.push(undetermined(text, outcome));
+                    return Ok(false);
+                }
+            };
+            let target = match second {
+                Ok(Value::Reference(reference)) => reference,
+                Ok(_) => return Ok(false),
+                Err(outcome) => {
+                    findings.push(undetermined(text, outcome));
+                    return Ok(false);
+                }
+            };
+            let holds = observed.state().extents.iter().any(|extent| {
+                extent.relationship == clause.relationship
+                    && extent
+                        .instances
+                        .iter()
+                        .any(|pair| pair.0 == source && pair.1 == target)
+            });
+            if !holds {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// ST-2: for a domain `event` or `commit` node, one step per record of
     /// its type that satisfies its constraint; the binder is bound and the
     /// model state is unchanged.
@@ -982,6 +1036,17 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         node,
                     },
                     record.constraint,
+                    record.slot,
+                    &value,
+                    &observed,
+                    &mut gathered.findings,
+                )? {
+                    continue;
+                }
+                if !self.related_admits(
+                    instance,
+                    path,
+                    node,
                     record.slot,
                     &value,
                     &observed,
