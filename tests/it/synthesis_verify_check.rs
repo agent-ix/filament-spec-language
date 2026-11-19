@@ -101,7 +101,6 @@ fn a_bounded_synthesis_domain_checks() {
 #[trace("TC-2103", "FR-753-AC-2")]
 #[trace("FSpec-TC-1601", "FSpec-FR-192-AC-10")]
 #[test]
-#[ignore = "QSL-2236: S3 `verify` plan check not implemented yet"]
 fn a_plan_dependency_cycle_refuses_definition_cycle() {
     let refusals = check(
         "verify Loop using p {\n\
@@ -123,7 +122,6 @@ fn a_plan_dependency_cycle_refuses_definition_cycle() {
 /// FR-753-AC-2 (positive half): an acyclic plan over `Reaches` checks.
 #[trace("TC-2103", "FR-753-AC-2")]
 #[test]
-#[ignore = "QSL-2236: S2/S3 `verify` plan not implemented yet"]
 fn an_acyclic_plan_checks() {
     let refusals = check(
         "verify Release using p {\n\

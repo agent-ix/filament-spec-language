@@ -1053,6 +1053,9 @@ struct Unit {
     clock_reading: Vec<ClockReadingDeclaration>,
     /// The task sets and the claims over them in source order (FSL FR-246).
     task_sets: Vec<super::task_set::TaskSetDeclaration>,
+    /// Each `verify` declaration, kept outside the checked package's clause
+    /// graph (FR-753).
+    verification_plans: Vec<fsl_forms::VerificationPlanForm>,
     /// Each state-graph claim's form, in source order, resolved by the
     /// caller into `StateGraphDeclaration`s (FR-165).
     state_graph_claims: Vec<fsl_forms::StateGraphClaimForm>,
@@ -1114,6 +1117,7 @@ impl Unit {
             timed: Vec::new(),
             clock_reading: Vec::new(),
             task_sets: Vec::new(),
+            verification_plans: Vec::new(),
             state_graph_claims: Vec::new(),
         };
         unit.timed.extend(
@@ -1243,6 +1247,7 @@ impl Unit {
                     .probabilistic
                     .push(super::ProbabilisticDeclaration::Claim(claim)),
                 DeclarationForm::StateGraphClaim(claim) => unit.state_graph_claims.push(*claim),
+                DeclarationForm::VerificationPlan(plan) => unit.verification_plans.push(*plan),
                 DeclarationForm::Temporal(clause) => {
                     unit.temporal_clauses
                         .push(super::temporal_clause::TemporalDeclaration {
@@ -1250,7 +1255,7 @@ impl Unit {
                             span,
                         });
                 }
-                DeclarationForm::Synthesis(_) | DeclarationForm::VerificationPlan(_) => {}
+                DeclarationForm::Synthesis(_) => {}
             }
         }
         // The `Clock` type positions were listed first; FR-230's gate reads
@@ -4467,11 +4472,6 @@ impl PackageDeclarations {
                             name: synthesis.name.name.clone(),
                         })
                     }
-                    fsl_forms::DeclarationForm::VerificationPlan(plan) => {
-                        Some(AssemblyCause::VerificationPlanNotChecked {
-                            name: plan.name.name.clone(),
-                        })
-                    }
                     _ => None,
                 }?;
                 Some(AssemblyError {
@@ -6120,6 +6120,7 @@ impl PackageDeclarations {
         package.timed_forms = unit.timed;
         package.clock_reading = unit.clock_reading;
         package.task_set_forms = unit.task_sets;
+        package.verification_plans = unit.verification_plans;
         // FR-451: a declaration is located under its own spaced name.
         declared_type_spans.extend(unit.abstractions.iter().map(|abstraction| {
             (

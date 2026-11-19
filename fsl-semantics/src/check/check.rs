@@ -590,6 +590,10 @@ pub struct PackageDeclarations {
     /// The `taskset`, `schedulable` and `response` forms S2 built, in source
     /// order, for FSL FR-246's S3 check.
     pub task_set_forms: Vec<super::task_set::TaskSetDeclaration>,
+    /// Source forms for verification plans. They are checked against the
+    /// package declarations but do not contribute to the checked clause graph
+    /// or its identity (FR-753).
+    pub verification_plans: Vec<fsl_forms::VerificationPlanForm>,
     /// FR-230, FR-233: the time source of each timed model, which a
     /// `model-time` clause binds (FR-234). The assembler starts this empty;
     /// S3 checks source `time` members into it. A caller that already holds
@@ -863,6 +867,7 @@ impl PackageDeclarations {
             clock_reading: Vec::new(),
             dimension_equivalences: Vec::new(),
             task_set_forms: Vec::new(),
+            verification_plans: Vec::new(),
             time_sources: Vec::new(),
             profile_selections: Vec::new(),
             hyper_clauses: Vec::new(),
