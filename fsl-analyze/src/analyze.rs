@@ -52,9 +52,9 @@ mod timed_item;
 pub(crate) use request::analyze_bound;
 
 pub use request::{
-    analyze, ClaimItem, ClaimRefusal, FiniteHyperItem, HybridItem, ItemForm, ItemOptions,
-    NegotiatedItem, ProbabilisticItem, ProbabilisticLimits, ProvisionRefusal, SourceProvision,
-    TemporalItem,
+    ClaimItem, ClaimRefusal, FiniteHyperItem, HybridItem, ItemForm, ItemOptions, NegotiatedItem,
+    ProbabilisticItem, ProbabilisticLimits, ProvisionRefusal, SourceProvision, TemporalItem,
+    analyze,
 };
 
 use filament_exact::{Cancel, ObjectReference, ScalarLimits};
@@ -84,21 +84,21 @@ use fsl_semantics::model::observation::{
 
 pub use crate::contract_check::contract_item;
 pub use crate::value_check::value_item;
-pub(crate) use clause_item::{replay_protocol_over, ProtocolReplayInputs, ReplayShape};
 pub use clause_item::{
-    ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject, CLAUSE_TRANSCRIPT,
+    CLAUSE_TRANSCRIPT, ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject,
 };
-pub use derived_item::{deadlock_model_item, PackageDeadlockSubject};
-pub(crate) use derived_item::{derived_target, NoLetters};
-pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
+pub(crate) use clause_item::{ProtocolReplayInputs, ReplayShape, replay_protocol_over};
+pub(crate) use derived_item::{NoLetters, derived_target};
+pub use derived_item::{PackageDeadlockSubject, deadlock_model_item};
+pub use exact::{ExactProbabilityEvidence, exact_probabilistic_item};
 #[cfg(feature = "test-support")]
 pub use exact::{exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered};
 pub use invariant_item::{PackageInvariantSubject, PackageItemInputs};
 pub(crate) use items::admission;
 pub use items::{
-    derived_model_item, derived_protocol_item, derived_zone_item, hyper_form_item, model_item,
-    protocol_item, statistical_item, timed_refinement_item, zone_item, DerivedItemMismatch,
-    ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem, TimedRefinementItem,
+    DerivedItemMismatch, ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem,
+    TimedRefinementItem, derived_model_item, derived_protocol_item, derived_zone_item,
+    hyper_form_item, model_item, protocol_item, statistical_item, timed_refinement_item, zone_item,
 };
 pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
 pub use state_graph_item::PackageStateGraphSubject;
@@ -912,13 +912,10 @@ pub(crate) fn refusal_document(
         }
         AdmissionFailure::Fault(fault) => (fault.catalog_code(), fault.category(), None),
     };
-    OutcomeDocument::new(operation, None, category).with_diagnostics(vec![OutcomeDiagnostic::new(
-        Some(catalog.cause()),
-        catalog.code(),
-        None,
-        message,
-    )
-    .with_details(details)])
+    OutcomeDocument::new(operation, None, category).with_diagnostics(vec![
+        OutcomeDiagnostic::new(Some(catalog.cause()), catalog.code(), None, message)
+            .with_details(details),
+    ])
 }
 
 impl AnalyzeOutcome {
@@ -1270,7 +1267,7 @@ impl Payload {
     /// `family`).
     #[must_use]
     pub fn detail(&self) -> serde_json::Map<String, serde_json::Value> {
-        use serde_json::{json, Value};
+        use serde_json::{Value, json};
         let entries: Vec<(&str, Value)> = match self {
             Self::None => Vec::new(),
             Self::Kind(kind) => vec![("kind", json!(kind.to_wire()))],
@@ -2317,9 +2314,9 @@ fn run(
                 return record(terminal(TerminalRecord::hybrid_provider_absent(index)));
             }
             Disposition::Supported(candidate)
-                if engines
-                    .get(candidate.id())
-                    .is_none_or(|engine| engine.hybrid_provider().is_none()) =>
+                if engines.get(candidate.id()).is_none_or(|engine| {
+                    engine.hybrid_provider().is_none() && engine.hybrid_exchange().is_none()
+                }) =>
             {
                 return record(terminal(TerminalRecord::hybrid_tool_unavailable(
                     index,
@@ -2334,7 +2331,7 @@ fn run(
         Disposition::RequiresBound => return disposed(DispositionKind::RequiresBound, diagnostic),
         Disposition::Unsupported => return disposed(DispositionKind::Unsupported, diagnostic),
         Disposition::InvalidRequest => {
-            return disposed(DispositionKind::InvalidRequest, diagnostic)
+            return disposed(DispositionKind::InvalidRequest, diagnostic);
         }
     };
     let backend = candidate.id().clone();
@@ -3063,8 +3060,10 @@ mod tests {
                 panic!("inapplicable pair has its typed family diagnostic");
             };
             assert_eq!(*request_index, record.request_index);
-            assert!(!capability
-                .applies_to_declaration(family.expect("this matrix row has a known family")));
+            assert!(
+                !capability
+                    .applies_to_declaration(family.expect("this matrix row has a known family"))
+            );
             assert_eq!(code.cause(), "inapplicable-kind");
         }
     }
@@ -3368,24 +3367,33 @@ mod tests {
             en7.advertises().collect::<Vec<_>>(),
             [(Capability::Schedulability, Mode::Unbounded)]
         );
-        assert!(registrations
-            .iter()
-            .all(|descriptor| descriptor.origin() == ProviderOrigin::Linked));
-        assert!(en1
-            .advertises()
-            .any(|(kind, _)| kind == Capability::TemporalSatisfaction));
-        assert!(en4
-            .advertises()
-            .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction));
-        assert!(en5
-            .advertises()
-            .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction));
-        assert!(value
-            .advertises()
-            .any(|(kind, _)| kind == Capability::ValueValidity));
-        assert!(contract
-            .advertises()
-            .any(|(kind, _)| kind == Capability::OperationContract));
+        assert!(
+            registrations
+                .iter()
+                .all(|descriptor| descriptor.origin() == ProviderOrigin::Linked)
+        );
+        assert!(
+            en1.advertises()
+                .any(|(kind, _)| kind == Capability::TemporalSatisfaction)
+        );
+        assert!(
+            en4.advertises()
+                .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction)
+        );
+        assert!(
+            en5.advertises()
+                .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction)
+        );
+        assert!(
+            value
+                .advertises()
+                .any(|(kind, _)| kind == Capability::ValueValidity)
+        );
+        assert!(
+            contract
+                .advertises()
+                .any(|(kind, _)| kind == Capability::OperationContract)
+        );
         let mut kinds: Vec<_> = protocol.advertises().map(|(kind, _)| kind).collect();
         kinds.sort_by_key(|kind| kind.to_wire());
         assert_eq!(
