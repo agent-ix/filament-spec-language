@@ -592,10 +592,41 @@ fn reward_node(
     })
 }
 
+/// The emitted `workload` nodes of `nodes`, by the name their `name` binding
+/// carries (a workload name is unique in the package).
+fn workload_nodes_by_name(nodes: &[CheckedSemanticNodeV2]) -> HashMap<&str, &CheckedNodeId> {
+    nodes
+        .iter()
+        .filter(|node| {
+            CheckedNodeTag::from_wire(&node.node_tag) == Some(CheckedNodeTag::Probabilistic)
+                && &*node.semantic_form == "workload"
+        })
+        .filter_map(|node| {
+            let CheckedTerm::Aggregate { members } = &node.body else {
+                return None;
+            };
+            let name = members.iter().find_map(|member| match member {
+                CheckedTerm::Binding { name, value } if &**name == "name" => {
+                    match value.literal_read()?.value {
+                        CheckedLiteralValue::Text(text) => Some(text),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })?;
+            Some((name, &node.node_id))
+        })
+        .collect()
+}
+
 /// FSpec FR-640 "Emission": each claim `under W` resolved to the emitted
 /// `workload` node named `W` (a workload name is unique in the package), in
 /// ascending claim-node order. A claim `under every scheduler` names no
 /// workload and resolves to none.
+///
+/// TEMPORARY (QSL-2441, spec W77): this mapping is in memory only. Neither the claim
+/// node (empty body, FSL FR-498) nor any row carries it on the wire until arch
+/// rules how a claim references its workload and rewards (QSL-2546).
 ///
 /// # Errors
 ///
@@ -605,6 +636,7 @@ pub(super) fn claim_workloads(
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     nodes: &[CheckedSemanticNodeV2],
 ) -> Result<Vec<ClaimWorkload>, EmitRefusal> {
+    let by_name = workload_nodes_by_name(nodes);
     let mut resolved = Vec::new();
     for claim in graph.probabilistic_model().claims() {
         let ProbScheduler::Workload(name) = &claim.scheduler else {
@@ -616,24 +648,16 @@ pub(super) fn claim_workloads(
             .ok_or_else(|| EmitRefusal::UnkeyedProbabilisticClaim {
                 claim: claim.name.clone(),
             })?;
-        let workload = nodes
-            .iter()
-            .filter(|node| {
-                CheckedNodeTag::from_wire(&node.node_tag) == Some(CheckedNodeTag::Probabilistic)
-                    && &*node.semantic_form == "workload"
-            })
-            .find(|node| {
-                member(&node.body, 1)
-                    .and_then(CheckedTerm::literal_read)
-                    .is_some_and(|read| matches!(read.value, CheckedLiteralValue::Text(text) if text == name))
-            })
-            .ok_or_else(|| EmitRefusal::UnresolvedClaimWorkload {
-                claim: claim.name.clone(),
-                workload: name.clone(),
-            })?;
+        let workload =
+            by_name
+                .get(name.as_str())
+                .ok_or_else(|| EmitRefusal::UnresolvedClaimWorkload {
+                    claim: claim.name.clone(),
+                    workload: name.clone(),
+                })?;
         resolved.push(ClaimWorkload {
             claim: claim_id.clone(),
-            workload: workload.node_id.clone(),
+            workload: (*workload).clone(),
         });
     }
     resolved.sort_by(|left, right| left.claim.cmp(&right.claim));

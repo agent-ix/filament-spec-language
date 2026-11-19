@@ -572,7 +572,9 @@ impl EmitRefusal {
 /// A claim `under W` and the `workload` node it resolves to (FSL FR-740,
 /// FSpec FR-640 "Emission"): the workload whose name is `W`. A claim's own
 /// node carries no body (FR-498), so this resolution is where the package
-/// states which workload a claim is checked under.
+/// states which workload a claim is checked under. TEMPORARY (QSL-2441, spec
+/// W77): in memory only, with no wire form until QSL-2546 lands how a claim
+/// references its workload.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClaimWorkload {
     /// The claim's `claim`/`probabilistic_claim` node.

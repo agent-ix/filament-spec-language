@@ -689,7 +689,9 @@ fn assert_equality_reader_outcomes(emission: &Emission, read: Read) {
                 let expected_schedule = match decision["schedule"].as_str() {
                     Some("plan") => filament_semantic_value::declaration::EqualitySchedule::Plan,
                     Some("text") => filament_semantic_value::declaration::EqualitySchedule::Text,
-                    Some("float") => filament_semantic_value::declaration::EqualitySchedule::Float,
+                    Some("float") => {
+                        filament_semantic_value::declaration::EqualitySchedule::Float
+                    }
                     Some("enum") => filament_semantic_value::declaration::EqualitySchedule::Enum,
                     Some("quantity") => {
                         filament_semantic_value::declaration::EqualitySchedule::Quantity
@@ -2024,7 +2026,7 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
                 EmitRefusal::UnkeyedProbabilisticClaim { .. }
                 | EmitRefusal::UnresolvedClaimWorkload { .. },
             ) => {
-                panic!("lowering keys every probabilistic claim and emission resolves its workload")
+                panic!("lowering keys every probabilistic claim")
             }
             Err(EmitRefusal::TimedModelWriterInvariant(_)) => Seen::TimedModelWriterInvariant,
             Err(EmitRefusal::MonitorPlanInvariant(_)) => Seen::MonitorPlanInvariant,
