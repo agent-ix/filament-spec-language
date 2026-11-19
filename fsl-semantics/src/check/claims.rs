@@ -123,6 +123,10 @@ fn operation_role(identity: &str) -> OperationRole {
         OperationRole::Narrow
     } else if IEEE_RELATIONS.contains(&identity) {
         OperationRole::Other
+    } else if identity.starts_with("filament.op.text.to_") {
+        // FR-478 text conversion is runtime partial: malformed text is
+        // undefined, so it carries no value-validity body obligation.
+        OperationRole::Other
     } else if SCALAR_FAMILIES
         .iter()
         .any(|family| identity.starts_with(family))
