@@ -671,25 +671,6 @@ fn every_remaining_unwritten_construct_refuses_typed_and_writes_no_clause() {
             false,
             plain("on origin", "", main, "protocol Flow"),
         ),
-        (
-            C::ChannelCarriesBounded,
-            "QSL-1137",
-            vec![C::ChannelCarriesBounded],
-            false,
-            plain("on origin", &carrying("Int[0, 5]"), main, "true"),
-        ),
-        (
-            C::ChannelCarriesBounded,
-            "QSL-1137",
-            vec![C::ChannelCarriesBounded],
-            false,
-            plain(
-                "on origin",
-                &carrying("Sequence<Boolean>[0, 3]"),
-                main,
-                "true",
-            ),
-        ),
     ];
     let clauses = |graph: &fsl_semantics::check::CheckedGraph| {
         graph
@@ -808,33 +789,15 @@ fn a_channel_carries_every_type_the_reader_admits() {
     }
 }
 
-/// Former producer/reader mismatch cases. FR-880 and FR-881 now require the
-/// bounded carries and stable quantity key to compile; the pinned reader has
-/// not adopted those forms yet.
+/// A quantity FIFO key remains refused until its separate key-stability work
+/// lands (QSL-1142).
 #[test]
-#[ignore = "superseded by FR-880/FR-881; reader 90b90fc7 still rejects the corrected cases"]
-fn a_bounded_carries_and_a_quantity_key_refuse_typed() {
-    let bounded = [
-        "Int[0, 5]",
-        "Text[0, 8; nfc]",
-        "Decimal[-100,100;0,0;nearest-even]",
-        "Rational[-100, 100; 1, 1]",
-        "Float64[nearest-even]",
-        "Sequence<Boolean>[0, 3]",
-    ];
-    let mut cases: Vec<(ProtocolConstruct, String)> = bounded
-        .iter()
-        .map(|carries| {
-            (
-                ProtocolConstruct::ChannelCarriesBounded,
-                carrying_flow(carries, "unordered"),
-            )
-        })
-        .collect();
-    cases.push((
+#[ignore = "blocked: pinned reader has not adopted FR-726 FIFO-key-stable types"]
+fn a_quantity_key_refuses_typed() {
+    let cases = [(
         ProtocolConstruct::ChannelKeyNotEqualityStable,
         carrying_flow("Quantity<m>", "fifo by (m: Quantity<m>) { m }"),
-    ));
+    )];
     for (construct, text) in cases {
         let refusals = checked(&text, false).expect_err(&text);
         assert_eq!(
@@ -853,10 +816,6 @@ fn a_bounded_carries_and_a_quantity_key_refuse_typed() {
             .count();
         assert_eq!(clauses, 0, "{text}");
     }
-    assert_eq!(
-        ProtocolConstruct::ChannelCarriesBounded.tracking(),
-        "QSL-1137"
-    );
     assert_eq!(
         ProtocolConstruct::ChannelKeyNotEqualityStable.tracking(),
         "QSL-1142"
@@ -1944,11 +1903,10 @@ fn a_predicate_function_reading_its_protocol_is_admitted() {
 }
 
 /// FR-880-AC-10, FSpec FR-726-AC-1: a channel that carries a bounded scalar
-/// or a bounded collection is written with its `bounded_domain` node as
-/// `carries`, and the package is admitted.
+/// or bounded Sequence, Set or Bag is written with its `bounded_domain` node
+/// as `carries`, and the package is admitted.
 #[test]
 #[trace("TC-2503", "FR-880-AC-10", "FSpec-FR-726-AC-1")]
-#[ignore = "blocked: locked filament-contract-ir reader 90b90fc7 rejects bounded_domain at channel carries"]
 fn a_channel_carrying_a_bounded_type_is_admitted() {
     for carries in [
         "Int[0, 5]",
@@ -1957,11 +1915,19 @@ fn a_channel_carrying_a_bounded_type_is_admitted() {
         "Rational[-100, 100; 1, 1]",
         "Float64[nearest-even]",
         "Sequence<Boolean>[0, 3]",
+        "Set<Boolean>[0, 3]",
+        "Bag<Boolean>[0, 3]",
     ] {
         let text = carrying_flow(carries, "unordered");
         let lowered = lower_with(model(), PROFILES, &text);
         assert!(lowered.ir.is_ok(), "{carries}: {:?}", lowered.ir.err());
         assert!(lowered.verified, "{carries}");
+        let channels = set(&lowered.wire, "channels");
+        let [channel] = channels[..] else {
+            panic!("one channel");
+        };
+        let carried = target(&lowered.wire, argument(channel, &CHANNEL, "carries"));
+        assert_eq!(carried["semantic_form"], "bounded_domain", "{carries}");
     }
 }
 
