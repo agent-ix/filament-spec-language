@@ -655,3 +655,39 @@ pub(crate) fn check_clock_refusal(
         regions.refusal_region(refusal),
     ))
 }
+
+#[cfg(test)]
+mod replay_clock_tests {
+    use super::*;
+    use filament_contract_model::ClockConfiguration;
+
+    #[test]
+    fn replay_clock_names_are_scoped_to_program_and_dependency_sources() {
+        let program =
+            fsl_foundation::source::provenance::RawSourceRef::new("test", "program").unwrap();
+        let library =
+            fsl_foundation::source::provenance::RawSourceRef::new("test", "library").unwrap();
+        let program_clock = ClockConfiguration::TimestampedEvent {
+            timestamp_unit: "ms".into(),
+        };
+        let dependency_clock = ClockConfiguration::TimestampedEvent {
+            timestamp_unit: "s".into(),
+        };
+        let clocks = RequestClocks::for_replay(
+            ("test".into(), "program".into()),
+            BTreeMap::from([("shared".into(), program_clock.clone())]),
+            BTreeMap::from([("shared".into(), dependency_clock.clone())]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            clocks.get_for_source(&program, "shared"),
+            Some(&program_clock)
+        );
+        assert_eq!(
+            clocks.get_for_source(&library, "shared"),
+            Some(&dependency_clock)
+        );
+        assert_eq!(clocks.get_for_source(&library, "program-only"), None);
+    }
+}
