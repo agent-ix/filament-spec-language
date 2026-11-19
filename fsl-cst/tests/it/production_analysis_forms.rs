@@ -558,8 +558,14 @@ fn expected_reward_and_elapsed_bounds_preserve_full_quantity_expressions() {
 #[test]
 #[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-4")]
 fn malformed_probability_headers_and_form_slots_report_the_token_location() {
+    // `every` is contextual: without `scheduler`, it names a scheduler.
+    let source = unit("probabilistic Q using p on System under every on origin { probability <= 1 [holds(true)] }");
+    let parsed = admitted(&source);
+    let scheduler = node(&parsed, &source, Production::SchedulerClause, "under every");
+    assert!(children(&parsed, &source, scheduler, Production::FairnessItem).is_empty());
+
     for (declaration, marker, width) in [
-        ("probabilistic Q using p on System under every on origin { probability <= 1 [holds(true)] }", "on origin", 2),
+        ("probabilistic Q using p on System under every scheduler fair maybe Model::tick on origin { probability <= 1 [holds(true)] }", "maybe", 5),
         ("probabilistic Q using p on System under policy on origin with gamma 0.1 { probability <= 1 [holds(true)] }", "gamma", 5),
         ("probabilistic Q using p on System under policy on origin with alpha { probability <= 1 [holds(true)] }", "{ probability", 1),
         ("probabilistic Q using p on System under policy on origin { probability < 0.5 [holds(true)] }", "< 0.5", 1),
@@ -776,11 +782,11 @@ fn refinement_fairness_rows_keep_assumption_strength_and_optional_granularity() 
 #[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-4")]
 fn incomplete_refinement_rows_refuse_at_the_missing_role() {
     for (declaration, marker, width) in [
-        ("refinement Map using v abstract Spec concrete Impl { population Spec::rows Impl::rows; }", "Impl::rows", 4),
-        ("refinement Map using v abstract Spec concrete Impl { object Spec::Row from Impl::Row { amount ; } }", "; }", 1),
-        ("refinement Map using v abstract Spec concrete Impl { history Spec::Row.saved Integer = 0 { } }", "Integer =", 7),
-        ("refinement Map using v abstract Spec concrete Impl { step Impl::Row::advance -> ; }", "; }", 1),
-        ("refinement Map using v abstract Spec concrete Impl { assume fair weak each ; }", "; }", 1),
+        ("refinement BrokenProjection using v abstract Spec concrete Impl { population Spec::rows Impl::rows; }", "Impl::rows", 4),
+        ("refinement BrokenProjection using v abstract Spec concrete Impl { object Spec::Row from Impl::Row { amount ; } }", "; }", 1),
+        ("refinement BrokenProjection using v abstract Spec concrete Impl { history Spec::Row.saved Integer = 0 { } }", "Integer =", 7),
+        ("refinement BrokenProjection using v abstract Spec concrete Impl { step Impl::Row::advance -> ; }", "; }", 1),
+        ("refinement BrokenProjection using v abstract Spec concrete Impl { assume fair weak each ; }", "; }", 1),
     ] { refuses_at(declaration, marker, width); }
 }
 
@@ -1016,6 +1022,50 @@ fn synthesis_declarations_keep_grammar_domain_and_predicate_order() {
             children(&parsed, &source, body, Production::Expression),
             [predicate]
         );
+    }
+}
+
+#[test]
+#[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2")]
+#[ignore = "QSL-2235: admitted synthesis objectives are not parsed yet"]
+fn synthesis_objectives_preserve_direction_objective_and_predicate_roles() {
+    for (direction, objective) in [
+        ("minimize", "candidate.cost"),
+        ("maximize", "candidate.score + bonus"),
+    ] {
+        let declaration = format!("synthesis Search using s grammar Candidates::Terms domain Inputs::Rows {direction} {objective} satisfies {{ candidate.ready }};");
+        let source = unit(&declaration);
+        let parsed = admitted(&source);
+        let synthesis = node(
+            &parsed,
+            &source,
+            Production::SynthesisDeclaration,
+            &declaration,
+        );
+        declaration_span(&source, &declaration, synthesis);
+        assert_eq!(
+            children(&parsed, &source, synthesis, Production::QualifiedName),
+            ["Candidates::Terms", "Inputs::Rows"]
+        );
+        let objective_node = node(&parsed, &source, Production::Expression, objective);
+        let start = source.find(&format!("{direction} {objective}")).unwrap() + direction.len() + 1;
+        assert_eq!(
+            objective_node.span(),
+            Span {
+                start,
+                end: start + objective.len()
+            }
+        );
+        let body = node(&parsed, &source, Production::Block, "{ candidate.ready }");
+        assert_eq!(
+            children(&parsed, &source, synthesis, Production::Block),
+            ["{ candidate.ready }"]
+        );
+        assert_eq!(
+            children(&parsed, &source, body, Production::Expression),
+            ["candidate.ready"]
+        );
+        assert!(objective_node.span().end < body.span().start);
     }
 }
 
