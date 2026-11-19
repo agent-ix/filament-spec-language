@@ -565,7 +565,7 @@ impl Plan<'_> {
     /// One Okamoto or SPRT test (FR-189 "Methods"): sample `i` at trace
     /// index `i · m + j`, until the method decides or a budget is reached.
     fn sampled_test<S: BehaviourSampler>(
-        &self,
+        &mut self,
         index: u32,
         subject: &TestSubject,
         sampler: &mut S,
@@ -940,7 +940,19 @@ pub fn check_sampled<S: BehaviourSampler>(
         request,
         sampler,
         cancel,
-        Meter::new(ScalarLimits::default()).with_cancel(cancel.clone()),
+        Meter::new(ScalarLimits {
+            integer_bits: u64::MAX,
+            decimal_digits: u64::MAX,
+            scale_expansion: u64::MAX,
+            text_input_bytes: u64::MAX,
+            text_scalars: u64::MAX,
+            normalized_scalars: u64::MAX,
+            unit_edges: u64::MAX,
+            value_occurrences: u64::MAX,
+            work_units: u64::MAX,
+            result_units: u64::MAX,
+        })
+        .with_cancel(cancel.clone()),
     )
 }
 
@@ -981,7 +993,7 @@ fn check_sampled_with_meter<S: BehaviourSampler>(
     }
     let m = int(i64::from(tests));
     let confidence = request.claim.confidence();
-    let plan = Plan {
+    let mut plan = Plan {
         request,
         cancel,
         tests,

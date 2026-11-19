@@ -3,7 +3,7 @@
 //! one test's `α'`, `β'` and the claim's `ι` (ADR-024 ST-4, ST-5, ST-9), in
 //! exact rationals with every rounding outward, toward undecided.
 
-use filament_exact::{Charge, ChargePoint, Integer, LimitKind, Meter, Rational};
+use filament_exact::{Charge, ChargePoint, Integer, Meter, Rational};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_replay::statistical::{Decision, UndecidedCause};
 use num_bigint::BigInt;
@@ -421,6 +421,7 @@ impl Sprt {
 
 #[cfg(test)]
 mod tests {
+    use filament_exact::{LimitKind, ScalarLimits};
     use ix_trace_rs::trace;
 
     use super::*;
@@ -432,6 +433,21 @@ mod tests {
     fn decimal(digits: &str, scale: u64) -> Rational {
         let value: Integer = digits.parse().expect("decimal digits");
         Rational::from_integer(value).divided_by_power_of_ten(scale)
+    }
+
+    fn meter(work_units: u64) -> Meter {
+        Meter::new(ScalarLimits {
+            integer_bits: u64::MAX,
+            decimal_digits: u64::MAX,
+            scale_expansion: u64::MAX,
+            text_input_bytes: u64::MAX,
+            text_scalars: u64::MAX,
+            normalized_scalars: u64::MAX,
+            unit_edges: u64::MAX,
+            value_occurrences: u64::MAX,
+            work_units,
+            result_units: u64::MAX,
+        })
     }
 
     /// FR-189-AC-16: the exact binomial tails decide strictly more counts
@@ -454,7 +470,7 @@ mod tests {
             (196, Decision::Rejected),
             (184, Decision::Rejected),
         ];
-        let mut meter = Meter::new(filament_exact::ScalarLimits::default());
+        let mut meter = meter(u64::MAX);
         for (held, expected) in cases {
             assert_eq!(
                 clopper_pearson_decision(&bound, held, 231, &alpha, &beta, &mut meter)
@@ -474,7 +490,7 @@ mod tests {
         };
         let alpha = ratio(9, 10);
         let beta = ratio(9, 10);
-        let mut meter = Meter::new(filament_exact::ScalarLimits::default());
+        let mut meter = meter(u64::MAX);
         assert_eq!(
             clopper_pearson_decision(&bound, 3, 6, &alpha, &beta, &mut meter)
                 .expect("binomial tails"),
@@ -488,11 +504,7 @@ mod tests {
     fn clopper_pearson_charges_each_tail_term() {
         let alpha = ratio(1, 100);
         let beta = ratio(1, 100);
-        let limits = filament_exact::ScalarLimits {
-            work_units: 30_160,
-            ..filament_exact::ScalarLimits::default()
-        };
-        let mut meter = Meter::new(limits);
+        let mut meter = meter(30_160);
         let bound = Bound {
             comparison: Comparison::AtLeast,
             threshold: ratio(9, 10),
@@ -511,7 +523,7 @@ mod tests {
     fn clopper_pearson_known_intervals() {
         let alpha = ratio(1, 100);
         let beta = ratio(1, 100);
-        let mut meter = Meter::new(filament_exact::ScalarLimits::default());
+        let mut meter = meter(u64::MAX);
         let (lower, upper) =
             clopper_pearson_interval(219, 231, &alpha, &beta, &mut meter).expect("interval");
         let published_lower = decimal("90351472792271070929", 20);
