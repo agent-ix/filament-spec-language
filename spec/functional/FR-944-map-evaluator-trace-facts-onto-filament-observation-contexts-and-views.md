@@ -17,6 +17,18 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-observation/FR-013
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-264
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-531
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-522
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-966
+    type: depends_on
+  - target: ix://agent-ix/filament-observation/FR-001
+    type: depends_on
+  - target: ix://agent-ix/filament-observation/FR-005
+    type: depends_on
 ---
 # FR-944: Map the evaluator's trace facts onto filament-observation's contexts, selections and views
 
@@ -41,8 +53,41 @@ Every owner module except the interval relation reads a `Context`, and a
 `filament_observation::admit` once, before any owner rule runs, and every
 owner call of that request shares that history. Building the history from the
 trace the evaluator already admitted (FR-106) keeps one admission authority
-for the trace's identities and stamps, so the identity of a position in an
-owner document is the identity FR-502's covered set records.
+for the trace's identities and stamps, so every position in an owner document
+maps back to the identity FR-502's covered set records.
+
+### Decision: every admission selection is derived, none is supplied
+
+The owner's `AdmissionRequest` was designed for a caller that selects its
+package, producer, binding, subject, membership, closure, sources and scope.
+The evaluator has no such caller: a run request names a checked package, a
+clause, a trace and progress, and nothing else. Every member of the admission
+request is therefore derived, deterministically, from three things only: the
+checked package (its identity, revision and canonical bytes), the request's
+trace with its clock profile and cover, and `fsl-eval`'s own crate-constant
+producer bundle. No member is read from the run request as an owner selection
+and no member has a default the caller could change. Two runs over equal
+packages, traces and progress therefore build byte-equal admission requests,
+and every owner-derived identity in them (record, membership, population) is
+computed by the owner's own derivation functions, never spelled by the
+evaluator.
+
+The finite recorded trace is its own population. Its members are exactly its
+positions, its closure is that explicit enumeration, its scope is one
+immutable snapshot of those members, and its one observation source is the
+clock binding. FSL has no separate closure-definition artifact, no producer
+relationship graph and no second source for a trace, so the evaluator does not
+invent one.
+
+### Decision: an owner refusal of the evaluator's request is an internal failure
+
+Because every selection is derived from inputs FSL has already admitted, an
+owner refusal or incomplete outcome of the admission request means the
+evaluator built an inconsistent request. That is an evaluator defect, not a
+fault in the caller's input, so it is reported as an internal failure (exit
+`30`) and never as `invalid_runtime_input`. The two owner maxima a valid trace
+can still exceed (the owner's population and string ceilings) are checked by
+the evaluator before admission and reported as limits.
 
 ### Decision: an uncertain cover is a closed interval in quarter-ticks
 
@@ -86,9 +131,14 @@ reading maps exactly, with no wrapping, saturation or refusal.
 
 ## Inputs
 
-- The admitted trace of one request: each position's identity, stamp and
-  value, the clock binding's name, unit and cover (FR-501), and the checked
-  package's identity and digest.
+- The admitted trace of one request: each position's identity, stamp,
+  interval stamp, order key, arrival watermark and admitted observation
+  document, the clock binding's name, unit, epoch and period, the profile
+  identity and the cover (FR-501, FR-522, FR-966).
+- The checked package's identity, revision and canonical bytes, on the source
+  route and on the bare-package route alike.
+- The clause occurrence: its `temporal_clause` node, occurrence ordinal,
+  activation and `over` parameter.
 - The request's progress assertion and the binding's ledger entry (FR-502).
 - The activation scope, deliveries and origins (FR-524).
 - A superseding or invalidating request's prior results and their inputs
@@ -104,27 +154,15 @@ FR-526's reports, read from them.
 ### History and context
 
 - Before any owner call, the evaluator SHALL admit the request's trace with
-  `filament_observation::admit` as one `AdmissionRequest`:
-  - `package`: the checked package's FR-322 identity, its revision, and the
-    SHA-256 digest of its canonical bytes, format `NATIVE_LINKED_PACKAGE_FORMAT`;
-  - `producer`: one static FSL producer bundle, identity `fsl-eval`, revision
-    the `fsl-eval` crate version;
-  - `binding`: the FR-502 ledger binding (package, clause node, occurrence,
-    clock name, profile identity) spelled as the binding identity, the clock
-    name as `source_identity`, the clause's trigger as `trigger_identity`, the
-    clock unit as `unit`, and `required` true;
-  - `records`: one `AdmittedRecord` per position, in trace order, its identity
-    the position's FR-106 identity, its anchor the position's anchor in the
-    clock family (`EventPosition`, `FixedSample` or `TimestampNanos`), its
-    event time the stamp, its value the position's admitted value, its clock
-    identity the clock name, its clock revision the profile identity and its
-    uncertainty the cover's `u`;
-  - `scope`: the window `[first stamp, last stamp]` of the trace, its required
-    members the trace's positions.
+  `filament_observation::admit` as one `AdmissionRequest` whose every member
+  is derived as "The admission request" below states, and SHALL continue only
+  on `AdmissionOutcome::Available`.
 - The evaluator SHALL keep a side mapping from each record's owner-derived
   identity to its position's FR-106 identity, built at admission, and SHALL
   report every owner answer (FR-501, FR-502, FR-524, FR-526) under the FR-106
-  identities it maps to; no owner document carries an FR-106 identity.
+  identities it maps to. An owner record identity never stands in for an
+  FR-106 identity in a report; the FR-106 document labels reach the owner only
+  inside the record's value, where they keep two positions' records distinct.
 - The tick-to-nanosecond conversion SHALL be exact: a stamp or `u` of `k`
   ticks of a timed unit is `k × s` nanoseconds, where `s` is the unit's
   declared rational factor to the second (FR-230's `time ... unit`) times
@@ -134,17 +172,197 @@ FR-526's reports, read from them.
   nanoseconds, or that exceeds the owner's nanosecond range, SHALL refuse the
   request at stage `admit`, `invalid_runtime_input`/`invalid-value`, naming
   the position, before any owner call.
-- A refusal of `admit` SHALL refuse the request at stage `admit`,
-  `invalid_runtime_input`/`invalid-value`, carrying the owner's error code;
-  it is never ignored.
+- Before deriving any owner identity, the evaluator SHALL compare the trace
+  with the two owner maxima a valid trace can exceed, read from
+  `filament_observation::authority::Limits::owner_max()` and never copied: a
+  trace with more positions than `max_population_entries` SHALL be refused at
+  stage `admit`, `stage_limit_exceeded`/`node-count-exceeded`, `bound` that
+  maximum, `actual` the position count, `setting`
+  `filament_observation::authority::Limits.max_population_entries`; a
+  position whose record value text (below) is longer in UTF-8 bytes than
+  `max_string_bytes` SHALL be refused at stage `admit`,
+  `stage_limit_exceeded`/`input-bytes-exceeded`, `bound` that maximum,
+  `actual` the text's length, `setting`
+  `filament_observation::authority::Limits.max_string_bytes`, naming the
+  position. As for FR-330's reader limits, `setting` names the member of the
+  limits value that bounds it, not an FR-461 dotted setting, because the
+  owner fixes the maximum and a request cannot raise it.
+- An `Err` from an owner derivation the evaluator calls to build the request
+  (`record_identity`, `derive_membership`, `population_identity`), an
+  `Incomplete` or `Refused` outcome of `admit`, and a refusal of the producer
+  bundle's own admission SHALL each end the request as an internal failure:
+  `runtime_invariant`/`established-invariant-broken`, invariant
+  `observation-admission`, carrying the owner's error code, refusal cause or
+  incomplete reasons unchanged, category internal failure, exit `30`, with no
+  outcome reported for the clause. It is never ignored and never reported as
+  `invalid_runtime_input`, because the evaluator, not the caller, selected
+  every member the owner refused.
 - Each owner call SHALL use `Context::new(History::batch(&qualified),
   &authority, &subject, revision, predecessor)` with `authority` the clause
-  occurrence's key as definition identity, the package identity as definition
-  revision and the package digest as definition digest; `subject` the trace
-  window as scope identity and the admitted population identity; `revision`
+  occurrence's key as definition identity, the package revision as definition
+  revision and the package digest as definition digest; `subject` the scope's
+  snapshot identity (the membership rule identity, below) as scope identity,
+  which is the scope identity the owner compares against the qualified scope,
+  and the admitted population identity; `revision`
   1 plus the number of accepted requests already recorded under the binding;
   and `predecessor` the binding's last accepted owner document of the same
   module, or none.
+
+### The package selection
+
+- `package` SHALL be `PackageSelection { format:
+  NATIVE_LINKED_PACKAGE_FORMAT, identity, revision, digest }` with `identity`
+  the checked package's `name` (FSpec FR-322), `digest` the SHA-256 of the
+  package's canonical bytes and `revision` the package revision.
+- A checked package is immutable and has no revision counter, so its
+  revision SHALL be its content revision: `sha256:` followed by the 64
+  lowercase hexadecimal digits of that same SHA-256. Two packages under one
+  `name` are one revision exactly when their canonical bytes are equal.
+- `fsl-package` SHALL give every checked package, on both routes, the
+  accessors `canonical_bytes(&self) -> &[u8]` and `revision(&self) -> &str`:
+  - the bare-package reader (FR-531) SHALL retain the canonical encoding of
+    the package it read (the RFC 8785 encoding of the admitted document,
+    equal to the input bytes when they are canonical) and the revision
+    computed from it, at read time;
+  - a package held in memory from compilation SHALL obtain them by the
+    canonical S4 emit (FR-264), once, and retain them.
+
+  The same package therefore has one revision and one digest on the source
+  route and the bare-package route, and every timed call, from either route,
+  carries both into the admission request and the owner `Context`.
+
+### The producer bundle
+
+- `fsl-eval` SHALL own exactly one static producer bundle, a crate constant
+  built and admitted through `StaticProducerBundle::admit` once per process
+  and shared by every admission request:
+  - `bundleIdentity` `fsl-eval`;
+  - `bundleRevision` `Revision::producer(<fsl-eval crate version>)`, the
+    owner's namespaced revision form;
+  - `interfaceVersion` `1.2.0`, the owner's `PRODUCER_INTERFACE_VERSION`;
+  - no `relationships`;
+  - `configuration` `{configurationIdentity: "fsl-eval/default", digest}`,
+    `digest` the owner's canonical producer-object digest of the one-member
+    object `{"configurationIdentity": "fsl-eval/default"}`, computed by
+    `StaticProducerBundle::canonical_digest_selection()` over a bundle that
+    holds only that member;
+  - `digest` the value `StaticProducerBundle::canonical_digest_selection()`
+    returns for the bundle above.
+- Nothing in a run request selects or changes the bundle. A new `fsl-eval`
+  version is a new bundle revision, so its population and owner document
+  identities differ from an earlier version's, as the owner intends.
+
+### The admission request
+
+Every member below is derived from the checked package, the clause
+occurrence, the trace and its clock profile, and the bundle. `s` is the
+tick-to-nanosecond factor above; `C` is the clock binding's name and `P` the
+profile identity.
+
+- `binding` SHALL be the `ObservationBinding`:
+  - `identity`: the RFC 8785 text of `{"clause": <node_wire text of the
+    temporal_clause node>, "clock": C, "occurrence": "<ordinal>",
+    "package": <package identity>, "profile": P}`, the FR-502 ledger binding;
+  - `source_identity`: `C`;
+  - `schema_identity`: `fsl-eval/trace-position/1`, the form of a record
+    value below;
+  - `signal_identity`: the canonical `node_wire` text of the clause's `over`
+    parameter node, or of the `temporal_clause` node when the clause has no
+    `over` parameter;
+  - `trigger_identity`: the canonical `node_wire` text of the
+    `temporal_clause` node followed by `/activation`, naming the clause's
+    activation (`on each` with its guard, or `on origin`). The per-instance
+    trigger identities of FR-524 are not binding members: they select
+    instances inside one binding, and every record of the binding shares one
+    trigger identity;
+  - `unit`: the clock's declared time unit name, or `position` for an event
+    position clock, which has none;
+  - `subject_kind`: `package`;
+  - `required`: `true`.
+- `expected_subject` SHALL be `QualifiedSubject::new(&bundle,
+  SubjectKind("package"), SubjectIdentity(<package identity bytes>))`: the
+  observed system is the system the checked package describes, and the trace
+  has no other subject.
+- `relationships` and `required_relationships` SHALL be empty, and every
+  record's `causal_relationship_identity` SHALL be absent. A trace carries no
+  producer relationship: an order key is a sequence order of one order
+  authority (FR-501), not a typed relationship, and the bundle declares none.
+- `records` SHALL hold one `AdmittedRecord` per position, in canonical order
+  (FR-501), with:
+  - `binding_identity`, `source_identity`, `schema_identity`,
+    `signal_identity`, `trigger_identity` and `unit` the binding's;
+  - `subject` the expected subject;
+  - `value`: `ValueState::Present { value_type: "fsl-eval/trace-position/1",
+    canonical_value }`, `canonical_value` the RFC 8785 text of
+    `{"interval": I, "observation": D, "order_key": K}`, with `D` the
+    position's admitted FR-106 document as its canonical JSON value, `K`
+    `{"authority": A, "key": k}` or `null`, and `I` the interval stamp
+    `{"earliest": "<n>", "earliest_open": B, "latest": "<n>",
+    "latest_open": B}` or `null`, integers in FR-038's decimal spelling. The
+    value holds every fact of the position that the record's other fields do
+    not, so two positions never share a record identity unless they are one
+    fact, and a superseding request that changes a valuation, an order key or
+    an interval changes that record's identity;
+  - `visibility`: `Internal`, because a position is a snapshot of the
+    assessed system's own state at its own anchor (FR-106);
+  - `anchor`: `EventPosition(t)` for an event position clock,
+    `FixedSample { index: t, epoch_nanos: epoch × s, period_nanos: period × s }`
+    for a fixed-sample clock (FR-522's epoch and period), and
+    `TimestampNanos(t × s)` for a timestamped clock, `t` the nominal stamp;
+  - `event_time_nanos`: `t × s`;
+  - `ingestion_time_nanos`: the arrival watermark `× s` when the position
+    carries one (FR-966); for a position without one, see "Owner requirement:
+    an unrecorded ingestion instant";
+  - `clock_identity` `C`, `clock_revision` `P`;
+  - `clock_uncertainty_nanos`: the cover's `u × s` (`0` under `Exact`); an
+    interval stamp is carried in the value and compared through the
+    quarter-tick intervals below, never through this field;
+  - `identity`: `authority::observation::record_identity(&record,
+    Limits::owner_max())` over the record above.
+- Two positions with one record identity are one fact delivered twice; the
+  evaluator SHALL refuse the request at stage `admit`,
+  `invalid_runtime_input`/`invalid-value`, naming the later position in
+  canonical order, before calling `admit`.
+- `scope` SHALL be the `ScopeSelection`:
+  - `required_member_identities`: the record identities, in ascending byte
+    order. A member's object identity is its record's identity, an opaque
+    content key the owner itself derived, so it is stable across requests
+    for one fact and carries no FR-106 identity;
+  - `members`: one `Member { object_identity: id, record_identity: id,
+    anchor }` per record, in the same order;
+  - `membership_rule_identity`, `membership_digest` and
+    `membership_document`: the identity, digest and bytes
+    `authority::population::derive_membership(&required_member_identities,
+    Limits::owner_max())` returns;
+  - `closure_identity` and `closure_digest`: that membership rule identity
+    and membership digest. The finite trace is closed by enumeration; the
+    explicit-members document is its closure definition. Whether a decision
+    scope is closed or open is a separate assertion (FR-501's scope closure,
+    the activation `OpenClosed` authority below), not this definition;
+  - `kind`: `ScopeKind::Snapshot { snapshot_identity }` with the membership
+    rule identity, one immutable snapshot of exactly those members. A
+    `Window` is not used: the owner admits a window only over a timestamped
+    range, and the trace is the same immutable snapshot under every clock
+    family;
+  - `range`: the half-open range over the anchors, `EventPosition { start:
+    min t, end_exclusive: max t + 1 }`, `FixedSample { start: min t,
+    end_exclusive: max t + 1, epoch_nanos, period_nanos }` or `Timestamp {
+    start_nanos: min t × s, end_nanos: max t × s + 1 }`; a trace with no
+    position is refused before admission (FR-501, FR-966), so the range is
+    never empty;
+  - `observation_sources`, `completeness_dependencies` and
+    `progress_dependencies`: each `[C]`. The trace's one source carries its
+    progress watermark and its completeness assertion (FR-501), and the owner
+    requires exactly the binding's source;
+  - `clock_identity` `C`, `clock_revision` `P`;
+  - `membership_complete`: `true`, because the request carries every on-time
+    position of the trace (a late observation takes no position, FR-966);
+  - `population_identity`: `authority::population::population_identity(&request,
+    Limits::owner_max())` over the request with every other member set.
+- `limits` SHALL be `ResourceLimits { max_records: n, max_members: n,
+  max_relationships: 0, max_required_relationships: 0 }`, `n` the position
+  count: the evaluator's own ceilings already bound the trace, and these
+  exact counts never refuse a request built as above.
 
 ### Partial values and interval order
 
@@ -259,6 +477,32 @@ revision rule, in the one function FR-861's tracked exception names, pinned
 to the rule text above by FR-861-AC-4's agreement test; everything else uses
 the owner.
 
+### Owner requirement: an unrecorded ingestion instant
+
+The owner's `AdmittedRecord` requires an `ingestion_time_nanos` and keeps it
+independent of the event time (filament-observation FR-001). An FSL position
+has an ingestion instant only when it carries an arrival watermark (FR-966);
+a position without one was never stamped on arrival, and any instant the
+evaluator wrote there (its event time, the request's watermark) would be a
+fact the trace does not hold. `filament-observation` SHALL therefore provide,
+as its own requirement amending its FR-001 and FR-004 (filed against the
+owner as a requirement, as FR-013 was):
+
+- `AdmittedRecord.ingestion_time_nanos` SHALL be `Option<i128>`, `None`
+  meaning the ingestion instant was not recorded, never an instant;
+- the FR-288 record identity preimage and the observation document SHALL
+  spell an absent ingestion instant as JSON `null`, under a new record
+  contract and identity version as the owner's own versioning rule requires
+  (filament-observation FR-005, "Owner artifact versioning");
+- `partial::Selection`'s ingestion position SHALL take the same `Option`, and
+  no owner rule SHALL order, compare or classify by an absent ingestion
+  instant.
+
+Until that requirement lands, a record without an arrival watermark carries
+`ingestion_time_nanos` equal to its `event_time_nanos`, and the evaluator
+reads no owner answer that depends on a record's ingestion instant; when it
+lands, the record carries `None`.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -269,11 +513,18 @@ the owner.
 | FR-944-AC-4 | Once filament-observation FR-013 lands, FR-502-AC-2's cases through `completeness::revise` refuse `Complete { through: 60 }`, `Incomplete` and the uncovered position stamped 80, refuse a covered position re-delivered under a different observation identity (`MemberObservationChanged`, FR-502's changed-fingerprint case), accept a successor over its own admitted history with another subject, and accept `Complete { through: 100 }` and `{ through: 140 }`, exactly as FR-502's ledger does. | Test (TC-2624) |
 | FR-944-AC-5 | Under `Bounded { uncertainty: 0 }` and unit `ms`, a request `holds(req)` stamped 1 with interval `(0, 1]` maps to `[1, 4]` and an `ack` stamped 3 with interval `[3, 4)` maps to `[12, 15]`; `within_bound(3, req, ack)` read through `relation_to(ack, req shifted by 12)` is `Indeterminate`, and `holds(req) implies eventually[0,3] holds(ack)` with `W` and `Complete { through: 10 }` gives `Indeterminate { reason: StraddlesBound }`, equal to `ClockCover`'s answer, where the half-tick mapping (`[1, 2]`, `[6, 7]`, shift 6) would read `True`. The same request with the `ack` stamped 2 with interval `[2, 3)`, mapped to `[8, 11]`, gives `Completed(true)`. | Test (TC-2624) |
 | FR-944-AC-6 | With an anchor of interval `[0, 0]` (`[0, 0]` in quarter ticks) under `Counter { uncertainty: 0 }`: for `at_least 2`, reading 2 (`[8, 11]`) is eligible, reading 1 (`[4, 7]`) ineligible, and reading 2 under `Counter { uncertainty: 1 }` (`[4, 15]`) `Indeterminate` with reason `StraddlesBound`; for `at_most 2`, reading 1 is eligible, reading 3 (`[12, 15]`) ineligible and reading 2 `Indeterminate` with reason `StraddlesBound`; a candidate of interval `(1, 2]` (`[5, 8]`) is eligible for `at_least 1`, one of interval `[0, 1)` (`[0, 3]`) is ineligible for `at_least 1` and `Indeterminate` for `at_most 0`; and against an anchor of interval `(0, 1]` (`[1, 4]`) a candidate of interval `[3, 4)` (`[12, 15]`) is `Indeterminate` for `at_most 3` and eligible for `at_least 2`. Each decision equals `ClockCover`'s eligibility, and no owner interval with an unbounded end is formed. | Test (TC-2624) |
+| FR-944-AC-8 | FR-501-AC-13's counter-cover request under `ms` with a position carrying arrival 2, one carrying an order key and one an interval stamp builds an admission request that `admit` returns `Available` for, in which: `package` is `native-linked-package/1`, the package `name`, revision `sha256:<hex>` and digest of the same SHA-256 over `canonical_bytes()`; `producer` is the `fsl-eval` bundle; `binding` has the stated identity text, source `C`, schema `fsl-eval/trace-position/1`, the `over` node's `node_wire` text as signal, the clause node's text plus `/activation` as trigger, unit `ms`, subject kind `package` and `required` true; `expected_subject` is kind `package` with the package identity; both relationship lists are empty; each record's identity equals `record_identity` of the record, its value text is the stated `{"interval", "observation", "order_key"}` object, visibility `Internal`, anchor `TimestampNanos(t × 1000000)`, ingestion `2000000` for the arrival-2 position, uncertainty `1000000`; `required_member_identities` is the sorted record identities and equals the members' object and record identities; membership, closure and snapshot identity are `derive_membership`'s identity and digest; the range is `[min, max + 1)` in nanoseconds; sources and both dependency lists are `[C]`; `membership_complete` is true; `population_identity` equals `population_identity` of the request; limits are the position count and 0. Building it twice gives equal requests; changing one valuation, one order key or one interval changes exactly that record's identity; two positions with equal documents, stamps, keys and intervals refuse at stage `admit`, `invalid_runtime_input`/`invalid-value` at the later position. An event-position clause's request uses `EventPosition` anchors, unit `position` and an `EventPosition` range and is also `Available`. | Test (TC-3036) |
+| FR-944-AC-9 | The `fsl-eval` bundle has identity `fsl-eval`, revision `Revision::producer` of the crate version, interface `1.2.0`, no relationships, configuration `fsl-eval/default` whose digest equals `canonical_digest_selection()` of a bundle holding only `{"configurationIdentity": "fsl-eval/default"}`, and digest equal to its own `canonical_digest_selection()`; it is admitted once per process. An admission request mutated after derivation (the binding's source changed, the population identity changed, one record identity changed), each alone, ends the run `runtime_invariant`/`established-invariant-broken`, invariant `observation-admission`, carrying the owner's refusal cause, exit `30`, and no clause outcome; none is `invalid_runtime_input`. A trace of `max_population_entries + 1` positions refuses at stage `admit`, `stage_limit_exceeded`/`node-count-exceeded`, `bound` the owner maximum, `actual` the count, `setting` `filament_observation::authority::Limits.max_population_entries`, and a position whose value text is one byte over `max_string_bytes` refuses `stage_limit_exceeded`/`input-bytes-exceeded` with `setting` `filament_observation::authority::Limits.max_string_bytes`, both before any owner derivation. | Test (TC-3036) |
+| FR-944-AC-10 | One compiled package evaluated on the source route and, after a canonical emit, read and evaluated on the bare-package route gives equal `canonical_bytes()`, equal `revision()` and equal admission `package` selections and owner `Context` authorities on both routes; the bare reader given the same package as non-canonical JSON (reordered members, extra whitespace) retains the canonical bytes and the same revision; a package differing in one node gives a different revision and digest. | Test (TC-3036) |
 | FR-944-AC-7 | Scaling is exact at the domain's edge: a reading `18446744073709551615` under `Counter { uncertainty: 18446744073709551615 }` maps to `[0, 147573952589676412923]`, reading 0 under the same cover to `[-73786976294838206460, 73786976294838206463]`, and the bounds `9223372036854775807` and `-9223372036854775808` scale to `36893488147419103228` and `-36893488147419103232`; `within_bound` and `definitely_before` over these readings and bounds equal `ClockCover`'s answers. | Test (TC-2624) |
 
 ## Dependencies
 
 - FR-861: one owner for the four rule sets.
 - FR-501, FR-502, FR-524, FR-526: the reports read from the owner's answers.
-- filament-observation FR-007, FR-008, FR-010 and the owner requirement
-  above (filament-observation FR-013).
+- FR-106, FR-522, FR-966: the trace facts each record carries.
+- FR-264, FR-531: the canonical package bytes and revision on both routes.
+- filament-observation FR-001 (admission), FR-004 (owner derivations and
+  maxima), FR-005 (producer bundle), FR-007, FR-008, FR-010, and the owner
+  requirements above (filament-observation FR-013, and the unrecorded
+  ingestion instant).
