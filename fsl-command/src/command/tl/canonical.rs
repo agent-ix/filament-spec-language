@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-931-AC-11/12: canonical atom labels from checked expressions. Source
-//! check nodes and package read projections are normalized to this one arena
-//! before printing, so aliases and source trivia cannot affect labels.
+//! check nodes are normalized to this one arena before printing, so aliases
+//! and source trivia cannot affect labels.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -10,7 +10,6 @@ use filament_checked::node::{
 };
 use filament_exact::{MemberId, MemberOwner, NodeKey, Value, ValueType};
 use filament_semantic_value::declaration::EqualityOperator;
-use fsl_package::{BarePackage, ReaderProtocolProjection};
 use fsl_semantics::check::{CheckedNode, NodeId};
 
 struct ExpressionNode {
@@ -71,54 +70,6 @@ impl CheckedExpression {
         let root = *indices
             .get(&root.id())
             .ok_or_else(|| "checked expression root is retained".to_owned())?;
-        Ok(Self { nodes, root })
-    }
-
-    /// Normalize one package reader projection into the same checked arena.
-    pub(super) fn from_package(projection: &ReaderProtocolProjection) -> Result<Self, String> {
-        let root = projection.root();
-        let mut pending = vec![(root, false)];
-        let mut visited = HashSet::new();
-        let mut postorder = Vec::new();
-        while let Some((index, exiting)) = pending.pop() {
-            if exiting {
-                postorder.push(index);
-                continue;
-            }
-            if !visited.insert(index) {
-                continue;
-            }
-            pending.push((index, true));
-            let children = projection
-                .children(index)
-                .ok_or_else(|| "package expression child is retained".to_owned())?;
-            pending.extend(children.iter().rev().map(|child| (*child, false)));
-        }
-        let indices = postorder
-            .iter()
-            .enumerate()
-            .map(|(index, old)| (*old, index))
-            .collect::<HashMap<_, _>>();
-        let nodes = postorder
-            .iter()
-            .map(|old| {
-                let kind = projection
-                    .kind(*old)
-                    .ok_or_else(|| "package expression node is retained".to_owned())?
-                    .map_ref(
-                        |child| indices.get(child).copied().unwrap_or(usize::MAX),
-                        Clone::clone,
-                    );
-                let value_type = projection
-                    .value_type(*old)
-                    .ok_or_else(|| "package expression type is retained".to_owned())?
-                    .clone();
-                Ok(ExpressionNode { kind, value_type })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        let root = *indices
-            .get(&root)
-            .ok_or_else(|| "package expression root is retained".to_owned())?;
         Ok(Self { nodes, root })
     }
 
@@ -316,59 +267,6 @@ pub(super) fn source_labels(
                 .map(|label| (*atom, label))
         })
         .collect()
-}
-
-/// Resolve package enum references only through identity rows joined by the
-/// admitted package reader.
-pub(super) fn package_rows(
-    package: &BarePackage<'_>,
-) -> Result<CanonicalRows, String> {
-    let identities = package
-        .identities()
-        .ok_or_else(|| "checked package has joined selected identity rows".to_owned())?;
-    let mut rows = CanonicalRows::default();
-    for row in identities.source_enum_rows() {
-        rows.declarations.insert(
-            row.declaration.node_key.clone(),
-            format!(
-                "ix://{}/{}",
-                row.declaration.source_identity,
-                row.declaration
-                    .qualified_declaration
-                    .iter()
-                    .map(AsRef::as_ref)
-                    .collect::<Vec<_>>()
-                    .join("/")
-            ),
-        );
-    }
-    for row in identities.source_record_rows() {
-        rows.declarations.insert(
-            row.record_key.clone(),
-            format!(
-                "ix://{}/{}",
-                row.source_identity,
-                row.qualified_declaration
-                    .iter()
-                    .map(AsRef::as_ref)
-                    .collect::<Vec<_>>()
-                    .join("/")
-            ),
-        );
-    }
-    for row in identities.declaration_rows() {
-        if let filament_contract_model::SelectedExactIdentity::Record(key) = &row.exact_identity {
-            rows.declarations.insert(
-                key.clone(),
-                format!("ix://{}/{}", row.selected_document, row.original_identity),
-            );
-        }
-    }
-    for row in identities.field_rows() {
-        rows.fields
-            .insert(row.member_id.clone(), row.field_original_identity.to_string());
-    }
-    Ok(rows)
 }
 
 fn checked_children(node: CheckedNode<'_>) -> Vec<CheckedNode<'_>> {
