@@ -1002,6 +1002,8 @@ pub(crate) struct FunctionGroup {
 pub(crate) struct Lowered {
     pub(crate) checked_node_keys: BTreeMap<usize, CheckedNodeKeys>,
     pub(crate) graph: SemanticGraph,
+    /// Placeholder identities settled during this lowering pass.
+    pub(crate) settled_placeholders: BTreeMap<PlaceholderId, NodeKey>,
     pub(crate) correspondence: ModelCorrespondence,
     pub(crate) functions: Vec<Option<NodeKey>>,
     /// Each binder's parameter node, by the binding node's location and
@@ -1033,6 +1035,15 @@ pub(crate) struct Lowered {
         BTreeMap<(NodeKey, Location), super::ir::EqualityProducerIdentity>,
     /// Linked dispatch decisions paired with exact lowered call occurrences.
     pub(crate) dispatch_producer_decisions: BTreeMap<(NodeKey, Location), DispatchProducerDecision>,
+}
+
+impl Lowered {
+    pub(crate) fn resolve_node_ref(&self, reference: &NodeRef) -> Option<NodeKey> {
+        match reference {
+            NodeRef::Admitted(key) => Some(key.clone()),
+            NodeRef::Pending(handle) => self.settled_placeholders.get(handle).cloned(),
+        }
+    }
 }
 
 /// Builds and keys the nodes of one package.
@@ -1091,8 +1102,8 @@ pub(crate) struct Lowering<'a> {
     composite_placeholders: HashMap<NodeKey, NodeRef>,
     /// Whether a recursive function group is being lowered.
     functions_open: bool,
-    /// A mixed cycle containing an attempt protocol stays open until its
-    /// clause includes the lowered attempt nodes.
+    /// Attempt protocols stay open until their clauses include the lowered
+    /// attempt nodes and pending references can settle against their keys.
     deferred_mixed_settlement: bool,
     /// The `clock_place` template node of each clock place of the unit's
     /// timed models, which a `presence_read` names (FSpec FR-322
@@ -1104,6 +1115,8 @@ pub(crate) struct Lowering<'a> {
     placeholder_count: u64,
     /// The drafts, by their local handle.
     drafts: BTreeMap<PlaceholderId, Draft>,
+    /// Final keys of placeholders resolved by earlier mixed settlements.
+    settled_placeholders: BTreeMap<PlaceholderId, NodeKey>,
     /// The handle of each draft's content: equal content is one draft.
     draft_index: HashMap<NodeContent, PlaceholderId>,
     /// Occurrences of drafts, recorded once the drafts are keyed.
@@ -2190,6 +2203,7 @@ impl<'a> Lowering<'a> {
             placeholders: BTreeMap::new(),
             placeholder_count: 0,
             drafts: BTreeMap::new(),
+            settled_placeholders: BTreeMap::new(),
             draft_index: HashMap::new(),
             draft_occurrences: Vec::new(),
             binders: BTreeMap::new(),
@@ -2311,6 +2325,7 @@ impl<'a> Lowering<'a> {
         Ok(Lowered {
             checked_node_keys,
             graph: self.graph,
+            settled_placeholders: self.settled_placeholders,
             correspondence: self.correspondence,
             functions: self
                 .functions
@@ -4037,7 +4052,9 @@ impl<'a> Lowering<'a> {
             let node = resolve(&node).map_err(|()| unresolved(&site.binder))?;
             self.record_binder(site, node);
         }
-        self.resolve_checked_node_keys(resolve)
+        self.resolve_checked_node_keys(resolve)?;
+        self.settled_placeholders.extend(resolved);
+        Ok(())
     }
 
     /// Key the recursion group `component` of `drafts`, whose members are

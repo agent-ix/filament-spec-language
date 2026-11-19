@@ -604,7 +604,11 @@ impl Lowering<'_> {
             if placeholder.is_none() {
                 let placeholder = self.placeholder();
                 self.set_protocol_key(index, ProtocolKey::Keyed(placeholder));
+                if !self.unsettled_protocols.contains(&index) {
+                    self.unsettled_protocols.push(index);
+                }
             }
+            self.deferred_mixed_settlement = true;
             return Ok(Vec::new());
         }
         let Some(requirements) = self.required_temporal_keys(protocol, &location)? else {
