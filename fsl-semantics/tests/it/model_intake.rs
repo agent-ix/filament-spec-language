@@ -3186,7 +3186,6 @@ mod float_members {
 
     #[trace("TC-3005", "FR-056-AC-57")]
     #[test]
-    #[ignore = "QSL-2176: rules over a float model field checked under the IEEE profile not implemented yet"]
     fn a_rule_over_a_float_field_checks_with_the_ieee_profile() {
         for clause in [
             "self.reading <= self.limit",
@@ -3214,7 +3213,6 @@ mod float_members {
 
     #[trace("TC-3005", "FR-056-AC-59")]
     #[test]
-    #[ignore = "QSL-2176: float model fields reach the checker, where an exact or unlike operand refuses type-mismatch, not implemented yet"]
     fn a_float_field_against_an_exact_type_is_refused() {
         for clause in [
             "self.a = 0",
