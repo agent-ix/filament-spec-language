@@ -243,7 +243,7 @@ pub(super) fn item<'a>(
                     EngineReport::Refused(Refusal::RequiresFiniteHyperBound { bound, found })
                 }
                 FiniteHyperOutcome::Refuted { false_tuples } => {
-                    let replay_body = |selected: &[&FiniteTrace<Vec<Value>>]| {
+                    let replay_body = |selected: &[&FiniteTrace<FiniteRecord>]| {
                         let max_positions = selected
                             .iter()
                             .map(|trace| trace.records.len())
