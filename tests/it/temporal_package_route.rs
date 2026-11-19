@@ -73,13 +73,63 @@ mod source_journeys {
             .parent()
             .unwrap()
             .join("docs-captures/requests/false-guard-inactive.json");
-        let (exit, outcome, _) = run(&request);
-        assert_eq!(exit, 0, "{outcome}");
-        let item = &outcome["items"][0];
-        assert_eq!(item["clause"], "StopForEachFastStart", "{outcome}");
-        assert_eq!(item["axes"]["activation"], "inactive", "{outcome}");
-        assert_eq!(item["axes"]["execution"], "completed", "{outcome}");
-        assert_eq!(item["axes"]["truth"], Value::Null, "{outcome}");
+        let assert_inactive = |path: &Path| {
+            let (exit, outcome, _) = run(path);
+            assert_eq!(exit, 0, "{outcome}");
+            let item = &outcome["items"][0];
+            assert_eq!(item["clause"], "StopForEachFastStart", "{outcome}");
+            assert_eq!(item["axes"]["activation"], "inactive", "{outcome}");
+            assert_eq!(item["axes"]["execution"], "completed", "{outcome}");
+            assert_eq!(item["axes"]["truth"], Value::Null, "{outcome}");
+        };
+        assert_inactive(&request);
+
+        let input: Value = serde_json::from_slice(&std::fs::read(&request).unwrap()).unwrap();
+        let base = request.parent().unwrap();
+        let read = |file: &Value| std::fs::read(base.join(file.as_str().unwrap())).unwrap();
+        let source = &input["request"]["program"]["source"];
+        let bytes = read(&source["file"]);
+        let model = read(&input["request"]["models"][0]["source"]["file"]);
+        let packages = fsl_semantics::model::intake::package_input([model.as_slice()]).unwrap();
+        let stop = read(&input["request"]["clause"]["observations"]["stop"]);
+        let document: Value = serde_json::from_slice(&stop).unwrap();
+        let label = fsl_semantics::model::observation::DocumentRef {
+            authority: document["identity"]["authority"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+            identity: document["identity"]["identity"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        };
+        let snapshots = [(label.clone(), stop)].into_iter().collect();
+        let over = &input["request"]["clause"]["selection"]["temporal"]["over"]["reference"];
+        let package = crate::temporal_capture_run::package_run(
+            &fsl_replay::spine::ParseRequest {
+                source: &fsl_foundation::SourceIdentity::new(
+                    source["authority"].as_str().unwrap(),
+                    source["identity"].as_str().unwrap(),
+                ),
+                path: source["file"].as_str().unwrap(),
+                bytes: &bytes,
+            },
+            &packages,
+            &snapshots,
+            &fsl_replay::spine::TraceInput::Lasso {
+                prefix: vec![],
+                repeat: vec![label],
+            },
+            Some(&fsl_replay::spine::OverObject {
+                population: over["population"].as_str().unwrap().to_owned(),
+                key: over["key"].as_str().unwrap().to_owned(),
+            }),
+            "StopForEachFastStart",
+        );
+        assert_eq!(package["axes"]["activation"], "inactive", "{package}");
+        assert_eq!(package["axes"]["execution"], "completed", "{package}");
+        assert_eq!(package["axes"]["truth"], Value::Null, "{package}");
+        assert!(package["disposition"].get("truth").is_none(), "{package}");
     }
 
     /// Source, model, observations and request paths are read in place from

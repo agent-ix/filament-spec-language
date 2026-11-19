@@ -371,36 +371,84 @@ const GUARDED: &str = "temporal Guarded using i over (r: Reading) clock \"steps\
     capture beganFast: Boolean = trigger.level > 3; \
     eventually[0,1] holds(r.stopped or not beganFast) }\n";
 
-/// Exercise the same closed lasso through source and a source-free handoff.
+/// Exercise the same closed lasso through source and the library package route.
 fn guarded_routes(level: i64, stopped: bool) -> Vec<Value> {
     let directory = tempfile::tempdir().unwrap();
     let request = run_request(json!({"name": "Guarded", "trace": {
         "lasso": {"prefix": [], "loop": [sample(level, stopped)]}}}));
     let path = write_with(directory.path(), GUARDED, "source.json", &request);
     let source = result(&run_file(&path));
-    let compile = json!({"format": "native-compile/1", "request": {
-        "models": [], "program": program(), "clocks": clocks(),
-        "handoff": {"directory": "handoff", "package_name": "guarded",
-            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}});
-    let compile_path = directory.path().join("compile.json");
-    std::fs::write(&compile_path, serde_json::to_vec(&compile).unwrap()).unwrap();
-    fsl_command::command::compile(&compile_path).expect("guarded capture compiles");
+    let bytes = std::fs::read(directory.path().join("unit.native")).unwrap();
     std::fs::remove_file(directory.path().join("unit.native")).unwrap();
-    let mut package = request;
-    package["request"]
-        .as_object_mut()
+    let package = package_run(
+        &fsl_replay::spine::ParseRequest {
+            source: &fsl_foundation::SourceIdentity::new("agent-ix", "test:temporal-capture"),
+            path: "unit.native",
+            bytes: &bytes,
+        },
+        &Default::default(),
+        &Default::default(),
+        &fsl_replay::spine::TraceInput::Lasso {
+            prefix: vec![],
+            repeat: vec![fsl_replay::spine::sample_position(
+                &sample(level, stopped)["sample"].to_string(),
+            )],
+        },
+        None,
+        "Guarded",
+    );
+    vec![source, package]
+}
+
+/// Run an already checked package with no source provision for evaluation.
+pub(super) fn package_run(
+    unit: &fsl_replay::spine::ParseRequest<'_>,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    snapshots: &fsl_semantics::model::observation::DocumentProvision,
+    trace: &fsl_replay::spine::TraceInput,
+    over: Option<&fsl_replay::spine::OverObject>,
+    name: &str,
+) -> Value {
+    use fsl_replay::spine;
+    let limits = spine::SpineLimits::default();
+    let cancel = filament_exact::Cancel::new();
+    let parsed = spine::parse(unit, limits.source, &cancel)
         .unwrap()
-        .remove("program");
-    package["request"].as_object_mut().unwrap().remove("clocks");
-    package["request"]["package"] = json!({"directory": "handoff"});
-    let package_path = directory.path().join("package-run.json");
-    std::fs::write(&package_path, serde_json::to_vec(&package).unwrap()).unwrap();
-    vec![source, result(&run_file(&package_path))]
+        .into_value();
+    let models = spine::select(&parsed, packages, limits.model, &cancel)
+        .unwrap()
+        .into_value();
+    let checked = spine::check(
+        &parsed,
+        "guarded".to_owned(),
+        &models,
+        &Default::default(),
+        limits,
+        &cancel,
+    )
+    .unwrap()
+    .into_value();
+    let report = spine::run_package_temporal(&spine::PackageTemporalRequest {
+        package: checked.package(),
+        packages,
+        model_limits: limits.model,
+        snapshots,
+        observation_limits: Default::default(),
+        accounting: fsl_semantics::check::SCALAR_LIMITS_UNLIMITED,
+        name,
+        trace,
+        over,
+        ledger: None,
+        sources: &[],
+        authentication: None,
+        cancel: &cancel,
+    });
+    serde_json::from_slice(&spine::write_clause_run_result(&report).unwrap()).unwrap()
 }
 
 /// A closed, complete stop-only lasso has no activation and no truth.
 #[test]
-#[trace("FSpec-FR-093-AC-5", "FR-622-AC-1")]
+#[trace("FSpec-FR-093-AC-5", "FR-622-AC-1", "FR-267-AC-28")]
 fn a_closed_false_guard_capture_scope_is_inactive_on_both_routes() {
     for document in guarded_routes(0, true) {
         assert_eq!(document["axes"]["activation"], "inactive", "{document}");
@@ -419,6 +467,13 @@ fn a_closed_false_guard_capture_scope_is_inactive_on_both_routes() {
             fsl_replay::ActivationAxis::Inactive
         );
         assert_eq!(record.truth(), None);
+        let mut claimed = document;
+        claimed["disposition"]["truth"] = json!(true);
+        assert!(
+            fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&claimed).unwrap())
+                .is_err(),
+            "an inactive result cannot carry truth"
+        );
     }
 }
 

@@ -309,14 +309,17 @@ FSpec FR-352 requires of an evaluate result; no row writes a `refusal`
 member at stage `evaluate`. The `basis` of each row is FR-266's Temporal
 row.
 
-FSpec FR-352 registers the same sixteen kinds with the same members,
+FSpec FR-352 registers the sixteen truth and non-value kinds with the same members,
 categories, bases and outcomes, the categories `pending` and `indeterminate`
 included, so a document this writer produces reads under an FSpec FR-352
-strict reader, and a kind outside the sixteen is unregistered on both sides
-and refused.
+strict reader for those rows. The `inactive` row below represents FSpec
+FR-093-AC-5/6's closed, complete scope with no activation. Registration of
+that additional row in FSpec FR-352 remains required before claiming
+cross-repository strict-reader compatibility for it.
 
 | `kind` | Evaluator result (FR-330) | Members beside `kind` | `category`, `truth`, `basis` | `outcome` |
 | --- | --- | --- | --- | --- |
+| `inactive` | A closed, complete guarded lasso whose every delivery has a false guard (FSpec FR-093-AC-5/6) | none | `success`, absent, `closed-scope` | absent |
 | `holds` | `Completed(true)` | none | `success`, `true`, `closed-scope` | absent |
 | `violated` | `Completed(false)` | `position`, `counterexample` | `violation`, `false`, `closed-scope` | absent |
 | `undefined` | `Undefined` with a kernel or family cause | `position`, `counterexample` | `violation`, `false`, `closed-scope` | `{"kind": "undefined", "reason": R}`, `R` the undefined value's FR-100 reason |
@@ -544,7 +547,7 @@ condition is false; the reader refuses `null` or a default in its place.
 | Declaration key | `node` | FR-056, FR-115 | IR node identity | Restore key node |
 | Clause run | `extraction` | FR-031, FR-267, FSpec FR-352 | Extraction record of an extracted clause body, absent otherwise | Restore record or absence |
 | Disposition | `temporal` | FR-330, FR-267 | Closed temporal disposition, evaluate stage of a Temporal selection only | Restore typed temporal verdict or trace refusal |
-| Temporal | `kind` | FR-267 | One of the sixteen tags of the temporal table | Select verdict variant |
+| Temporal | `kind` | FR-267 | One of the tags of the temporal table | Select verdict variant |
 | Temporal | `deadline` | FR-501 | Unsigned watermark tick | Restore deadline |
 | Temporal | `reason` | FR-501 | Closed indeterminate reason object | Restore reason |
 | Temporal | `guard` | FR-501 | FR-100 outcome `location` form | Restore guard location |
@@ -653,6 +656,7 @@ disposition kinds the document carries are the ones FSpec FR-352 registers.
 | FR-267-AC-25 | Through `command::run`, FR-663-AC-3's run whose snapshot object `child` lacks `parent`, the same run with an unknown member `extra` on `child`, and FR-868-AC-1's runs whose snapshot `model` carries `version` and carries `digest` each write a `native-run-result/2` document at stage `admit` whose `disposition.refusal.locus` has `kind` `document`, the snapshot's labels, its path, the pointer FR-663 or this requirement states (`/model/version` and `/model/digest` for the header runs, with `object` `null` and `member` `version` or `digest`), the header runs keeping `field` `model.version` or `model.digest` beside the locus `member`; `read_native_run_result` accepts each document and restores a refusal with the same `code`, `cause`, `fields` and an equal `document` locus. A healthy run over the same snapshot reads back with no refusal. | Test (TC-3081) |
 | FR-267-AC-26 | The reader refuses AC-25's missing-member document, naming `disposition.refusal.locus`, with `kind` set to `snapshot`, with `kind` removed, with `member` removed, with an added member `line`, with `pointer` set to `child` (not an RFC 6901 pointer), and with `pointer` set to `null`; and refuses a `region` locus carrying `pointer`, an `artifact` locus without `identity`, and an `artifact` locus carrying `digest` beside `identity` and `pointer`; an `artifact` locus `{"kind": "artifact", "identity": {"authority": "agent-ix", "identity": "test:parent"}, "pointer": "/declarations/0"}` reads back equal. The same document with `object` and `member` set to `null` reads. | Test (TC-3081) |
 | FR-267-AC-27 | Through `command::run`, the AC-25 run whose snapshot replaces the payload object of a field of `child` with one whose `kind` is the JSON number `1` refuses `invalid_runtime_input`/`wrong-value-kind` (FR-106 payload check 1) with a `document` locus: the snapshot's labels and path, `pointer` to that `kind` member, `object` `{config_history, child}` and `member` `kind`; it reads back equal. A replay request whose member names no member of its package refuses with a `document` locus whose `pointer` is that request member and whose `member` is its name, never an `artifact` locus; an absent request file keeps a `null` locus. | Test (TC-3081) |
+| FR-267-AC-28 | A closed, complete guarded lasso with every guard false writes `temporal` as `{"kind":"inactive"}`, no disposition `truth` or `outcome`, and axes activation `inactive`, execution `completed` and truth `null`; the reader restores the inactive verdict. Adding disposition truth `true` refuses. | Test |
 | FR-267-AC-29 | A locus `{"kind": "input", "member": "selection.json", "operand": "handoff", "pointer": null}` in AC-25's refused document reads back equal, and so does `{"kind": "input", "member": null, "operand": "handoff", "pointer": null}`; the reader refuses, naming `disposition.refusal.locus`, an `input` locus without `member`, one without `pointer`, one whose `operand` is `null`, one carrying `identity` beside its three members, and one whose `pointer` is `selection` (not an RFC 6901 pointer); a locus whose `kind` is `file` is refused as outside the six rows. | Test (TC-3081) |
 
 ## Dependencies

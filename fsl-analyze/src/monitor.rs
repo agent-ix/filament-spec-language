@@ -118,6 +118,8 @@ pub const DEFAULT_RETAINED_POSITIONS: u64 = 1_048_576;
 /// What a clause run reports (FR-283 Outputs table).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MonitorVerdict {
+    /// A closed, complete trigger scope with no activated obligation.
+    Inactive,
     /// `Completed(false)`: the clause is violated.
     Violated,
     /// An undefined evaluation, settled as a violation.
@@ -955,6 +957,7 @@ pub(crate) fn verdict_of(
     }
     Ok(match disposition {
         D::Temporal(verdict) => match verdict {
+            V::Inactive => MonitorVerdict::Inactive,
             V::Holds => MonitorVerdict::Tested,
             V::Violated { .. } => MonitorVerdict::Violated,
             V::Undefined {
