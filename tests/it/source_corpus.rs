@@ -215,7 +215,8 @@ fn execute_request(
                 Ok(result) => {
                     let value = result.value.as_value().clone();
                     if value.get("format").and_then(Value::as_str) == Some("native-run-result/2") {
-                        let bytes = serde_json::to_vec(&value).map_err(|error| error.to_string())?;
+                        let bytes =
+                            serde_json::to_vec(&value).map_err(|error| error.to_string())?;
                         fsl_replay::spine::read_native_run_result(&bytes).map_err(|error| {
                             format!("{}: invalid native result: {error}", request.display())
                         })?;
