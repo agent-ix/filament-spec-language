@@ -13,8 +13,13 @@ fn domain_document() -> &'static [u8] {
 }
 
 /// `declarations` over the ConfigVersion model, emitted and read back by IR's
-/// strict reader; returns the wire.
-fn admitted(declarations: &str) -> Value {
+/// strict reader; returns both the wire and the admitted package.
+fn admitted_with_package(
+    declarations: &str,
+) -> (
+    Value,
+    std::sync::Arc<filament_contract_model::CheckedPackageV2>,
+) {
     let packages = fsl_semantics::model::intake::package_input([domain_document()]).unwrap();
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
@@ -43,14 +48,16 @@ fn admitted(declarations: &str) -> Value {
             domain_document().to_vec(),
         )
         .expect("a fresh evidence key");
-    crate::checked_v2::read_checked_package_v2(
+    let checked = crate::checked_v2::read_checked_package_v2(
         emission.package.bytes(),
         library(),
         V2ReadLimits::fixture(),
         &evidence,
     )
-    .unwrap_or_else(|failure| panic!("the I2 read admits the package: {failure:?}"));
-    wire
+    .unwrap_or_else(|failure| panic!("the I2 read admits the package: {failure:?}"))
+    .into_value()
+    .admitted;
+    (wire, checked)
 }
 
 fn flow(observe: &str) -> String {
@@ -80,9 +87,9 @@ fn node<'w>(wire: &'w Value, path: &[&str]) -> &'w Value {
 fn argument_names(node: &Value) -> Vec<&str> {
     node["body"]["arguments"]
         .as_array()
-        .expect("arguments")
-        .iter()
-        .map(|argument| argument["name"].as_str().expect("a name"))
+        .into_iter()
+        .flatten()
+        .filter_map(|argument| argument["name"].as_str())
         .collect()
 }
 
@@ -97,10 +104,16 @@ fn argument_names(node: &Value) -> Vec<&str> {
     "FSpec-FR-822-AC-4",
     "FSpec-FR-322-AC-462"
 )]
-#[ignore = "QSL-2211: S4 emission of observe-only boundaries and recommend is not implemented yet"]
 #[test]
 fn the_package_records_the_observe_boundary() {
-    let marked = admitted(&flow("observe "));
+    let (marked, checked_marked) = admitted_with_package(&flow("observe "));
+    let role_id: filament_contract_model::CheckedNodeId =
+        serde_json::from_value(node(&marked, &["Flow", "role", "Auditor"])["node_id"].clone())
+            .expect("the emitted role node has a checked identity");
+    assert_eq!(
+        checked_marked.protocol_role_boundary(&role_id),
+        Some(filament_contract_model::CheckedProtocolBoundary::ObserveOnly)
+    );
     for path in [
         &["Flow", "role", "Auditor"][..],
         &["Flow", "run", "Review"][..],
@@ -138,10 +151,16 @@ fn the_package_records_the_observe_boundary() {
         ]
     );
 
-    let plain = admitted(&flow(""));
-    assert!(nodes(&plain)
-        .iter()
-        .all(|node| !argument_names(node).contains(&"boundary")));
+    let (plain, checked_plain) = admitted_with_package(&flow(""));
+    let plain_role_id: filament_contract_model::CheckedNodeId =
+        serde_json::from_value(node(&plain, &["Flow", "role", "Auditor"])["node_id"].clone())
+            .expect("the unmarked role node has a checked identity");
+    assert_eq!(checked_plain.protocol_role_boundary(&plain_role_id), None);
+    assert!(
+        nodes(&plain)
+            .iter()
+            .all(|node| !argument_names(node).contains(&"boundary"))
+    );
     let ids = |wire: &Value| -> Vec<Value> {
         nodes(wire)
             .iter()
@@ -149,4 +168,31 @@ fn the_package_records_the_observe_boundary() {
             .collect()
     };
     assert_eq!(ids(&marked), ids(&plain));
+
+    let changed_ids = [
+        node(&marked, &["Flow", "role", "Auditor"])["node_id"].to_string(),
+        node(&marked, &["Flow", "run", "Review"])["node_id"].to_string(),
+    ];
+    for (marked_node, plain_node) in nodes(&marked).iter().zip(nodes(&plain)) {
+        assert_eq!(marked_node["node_id"], plain_node["node_id"]);
+        let id = marked_node["node_id"].to_string();
+        if changed_ids.contains(&id) {
+            let mut body = marked_node["body"].clone();
+            let arguments = body["arguments"]
+                .as_array_mut()
+                .expect("the marked body has arguments");
+            let boundary = arguments.pop().expect("the boundary is the last argument");
+            assert_eq!(boundary["name"], "boundary");
+            assert_eq!(boundary["value"]["value"], "observe-only");
+            assert_eq!(
+                body, plain_node["body"],
+                "only the boundary differs at {id}"
+            );
+        } else {
+            assert_eq!(
+                marked_node["body"], plain_node["body"],
+                "unmarked node body is unchanged for {id}"
+            );
+        }
+    }
 }

@@ -11,6 +11,9 @@ const CLOCK: &str = "Clock";
 pub(super) enum Terminal {
     Exact(&'static str),
     Literal(&'static str),
+    /// A contextual word recognized only at the grammar position that uses
+    /// it; unlike `Exact`, it remains available as an ordinary identifier.
+    ContextualWord(&'static str),
     Identifier,
     /// A function or predicate name, or its `using` profile alias: an
     /// identifier, or the one explicitly allowed reserved spelling, that the
@@ -109,6 +112,9 @@ fn selection_rule(production: P) -> Rule {
 
 fn x(value: &'static str) -> Rule {
     Rule::Terminal(Terminal::Exact(value))
+}
+fn contextual(value: &'static str) -> Rule {
+    Rule::Terminal(Terminal::ContextualWord(value))
 }
 fn literal(value: &'static str) -> Rule {
     Rule::Terminal(Terminal::Literal(value))
@@ -1948,6 +1954,7 @@ fn protocol(g: &mut Grammar) {
         P::Role,
         c(vec![
             s(vec![
+                opt(contextual("observe")),
                 x("role"),
                 ident(),
                 x("on"),
@@ -1955,6 +1962,7 @@ fn protocol(g: &mut Grammar) {
                 x(";"),
             ]),
             s(vec![
+                opt(contextual("observe")),
                 x("role"),
                 ident(),
                 x("each"),
@@ -2272,6 +2280,23 @@ fn protocol(g: &mut Grammar) {
     g.insert(
         P::EventNode,
         c(vec![
+            s(vec![
+                contextual("recommend"),
+                ident(),
+                x("by"),
+                ident(),
+                x("on"),
+                r(P::OperationName),
+                x("contracts"),
+                x("["),
+                opt(list(ident)),
+                x("]"),
+                x("as"),
+                bound_parameter(),
+                star(r(P::Related)),
+                r(P::Block),
+                x(";"),
+            ]),
             s(vec![x("send"), ident(), x("via"), ident(), event_tail()]),
             s(vec![
                 x("receive"),
@@ -2340,15 +2365,15 @@ fn protocol(g: &mut Grammar) {
     g.insert(
         P::Control,
         c(vec![
-            r(P::Sequence),
-            r(P::Choice),
-            r(P::Parallel),
-            r(P::Repetition),
-            r(P::AwaitControl),
-            r(P::EventNode),
-            r(P::Check),
-            r(P::Commit),
-            r(P::Fence),
+            s(vec![opt(contextual("observe")), r(P::Sequence)]),
+            s(vec![opt(contextual("observe")), r(P::Choice)]),
+            s(vec![opt(contextual("observe")), r(P::Parallel)]),
+            s(vec![opt(contextual("observe")), r(P::Repetition)]),
+            s(vec![opt(contextual("observe")), r(P::AwaitControl)]),
+            s(vec![opt(contextual("observe")), r(P::EventNode)]),
+            s(vec![opt(contextual("observe")), r(P::Check)]),
+            s(vec![opt(contextual("observe")), r(P::Commit)]),
+            s(vec![opt(contextual("observe")), r(P::Fence)]),
         ]),
     );
     g.insert(

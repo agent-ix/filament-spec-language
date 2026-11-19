@@ -56,8 +56,8 @@ pub use types::{
     BoundAttempt, CausalEdge, CheckedAttempt, CheckedAwait, CheckedControl, CheckedControlTree,
     CheckedJoinPolicy, CheckedOperationNodes, CheckedOutstanding, CheckedOwner, CheckedParallel,
     CheckedProtocol, CheckedProtocolBinderKey, CheckedProtocolExpressionBindings,
-    CheckedProtocolNodeKeys, CheckedRole, CheckedVia, ControlStep, EdgeKind, Port, PortRef,
-    ProtocolNodeId,
+    CheckedProtocolNodeKeys, CheckedRecommendation, CheckedRole, CheckedVia, ControlStep, EdgeKind,
+    Port, PortRef, ProtocolNodeId,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -70,7 +70,7 @@ use super::protocol_requirement::UnitDeclarations;
 use super::refusal::{AliasKind, CheckCause, CheckRefusal, ProtocolAnchorCause};
 use super::state_clause::{AttemptDeclaration, StateClauseDeclaration};
 use super::{Scope, Signatures};
-use anchors::{check_kind, resolve, scope_key, ScopeKey};
+use anchors::{ScopeKey, check_kind, resolve, scope_key};
 use attempts::bind_attempts;
 use binders::shadow_refusals;
 use filament_semantic_value::location::ExpressionOwner as Origin;
@@ -205,6 +205,10 @@ pub fn check(
         None
     };
 
+    if let Some(compiled) = &compiled {
+        refusals.extend(observe_only_refusals(protocol, &resolved, &compiled.tree));
+    }
+
     let Some(compiled) = compiled.filter(|_| refusals.is_empty()) else {
         // FR-113 "Outputs": refusals in source position order. `sort_by_key`
         // is stable, so refusals at equal spans (the up-front duplicate
@@ -242,6 +246,7 @@ pub fn check(
                     })
                     .map(|selection| selection.identity.clone()),
                 replicated: role.replicated.is_some(),
+                observe_only: role.observe_only,
             }
         })
         .collect();
@@ -320,6 +325,7 @@ pub fn check(
             finish,
             resolved_anchors: resolved,
             attempts: Vec::new(),
+            recommendations: Vec::new(),
             obligations: CheckedObligations::default(),
             channels: Vec::new(),
             controls: compiled.tree,
@@ -333,6 +339,128 @@ pub fn check(
         },
         bound_attempts,
     ))
+}
+
+/// FR-218: refuse each state-changing action held by an observe-only control
+/// or performed by an observe-only role, at the action's full declaration.
+fn observe_only_refusals(
+    protocol: &ProtocolDeclarationForm,
+    resolved: &[ProtocolNodeId],
+    controls: &CheckedControlTree,
+) -> Vec<(Span, CheckRefusal)> {
+    use fsl_forms::{AnchorSite, ProtocolNodeKind as K};
+
+    let observed_roles: BTreeSet<&str> = protocol
+        .roles
+        .iter()
+        .filter(|role| role.observe_only)
+        .map(|role| role.name.name.as_str())
+        .collect();
+    let channel_from = |name: &str| {
+        protocol
+            .channels
+            .iter()
+            .find(|channel| channel.name.name == name)
+            .map(|channel| channel.from.name.as_str())
+    };
+    let mut refusals = Vec::new();
+
+    for (index, declaration) in protocol.declarations.iter().enumerate() {
+        let action = match declaration.kind {
+            K::Attempt => Some((
+                "attempt",
+                declaration.role.as_ref().map(|role| role.name.as_str()),
+            )),
+            K::Effect => {
+                let role = protocol
+                    .scoped_anchors
+                    .iter()
+                    .enumerate()
+                    .find(|(_, anchor)| {
+                        anchor.owner == index && anchor.site == AnchorSite::EffectOf
+                    })
+                    .and_then(|(anchor_index, _)| resolved.get(anchor_index))
+                    .and_then(|target| protocol.declarations.get(target.0))
+                    .and_then(|target| target.role.as_ref())
+                    .map(|role| role.name.as_str());
+                Some(("effect", role))
+            }
+            K::Send => Some((
+                "send",
+                declaration
+                    .channel
+                    .as_ref()
+                    .and_then(|channel| channel_from(&channel.name)),
+            )),
+            K::Commit => Some((
+                "commit",
+                declaration.role.as_ref().map(|role| role.name.as_str()),
+            )),
+            K::Event
+                if protocol
+                    .scoped_anchors
+                    .iter()
+                    .any(|anchor| anchor.owner == index && anchor.site == AnchorSite::EventFor) =>
+            {
+                Some((
+                    "event-for",
+                    declaration.role.as_ref().map(|role| role.name.as_str()),
+                ))
+            }
+            K::CompensateTemplate => protocol
+                .compensations
+                .iter()
+                .find(|template| template.name.name == declaration.name.name)
+                .map(|template| ("compensate", Some(template.role.name.as_str()))),
+            _ => None,
+        };
+        let Some((action, role)) = action else {
+            continue;
+        };
+
+        let scope: Vec<&str> = protocol
+            .scope_names(declaration.scope)
+            .into_iter()
+            .map(|name| name.name.as_str())
+            .collect();
+        let control_boundary = controls
+            .controls
+            .iter()
+            .filter(|control| {
+                control.observe_only
+                    && control.path.len() <= scope.len()
+                    && control
+                        .path
+                        .iter()
+                        .map(String::as_str)
+                        .eq(scope[..control.path.len()].iter().copied())
+            })
+            .max_by_key(|control| control.path.len())
+            .map(|control| control.name.clone());
+        let boundary = control_boundary
+            .or_else(|| {
+                declaration
+                    .observe_only
+                    .then(|| declaration.name.name.clone())
+            })
+            .or_else(|| {
+                role.filter(|role| observed_roles.contains(role))
+                    .map(str::to_owned)
+            });
+        let Some(boundary) = boundary else {
+            continue;
+        };
+        let span = declaration.span;
+        refusals.push((
+            span,
+            refusal(ProtocolAnchorCause::ObserveOnlyAction {
+                action,
+                boundary,
+                span,
+            }),
+        ));
+    }
+    refusals
 }
 
 /// FR-218: validate repeat-body progress after the slot checker has proved

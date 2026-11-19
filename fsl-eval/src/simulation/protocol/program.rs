@@ -47,6 +47,17 @@ pub(super) struct Attempt<'a> {
     pub(super) binds: Option<usize>,
 }
 
+/// One checked recommendation's operation call and optional result filter.
+pub(super) struct Recommendation<'a> {
+    pub(super) role: String,
+    pub(super) declaring: EffectiveId,
+    pub(super) operation: String,
+    pub(super) receiver: EffectiveId,
+    pub(super) contracts: std::sync::Arc<BTreeSet<NodeKey>>,
+    pub(super) constraint: Option<&'a CheckedBody>,
+    pub(super) binds: Option<usize>,
+}
+
 /// One `parallel`'s join (ADR-027 ST-6, ST-7).
 pub(super) struct Join {
     pub(super) policy: CheckedJoinPolicy,
@@ -262,6 +273,7 @@ pub(super) struct Program<'a> {
     pub(super) root: ProtocolNodeId,
     pub(super) controls: BTreeMap<ProtocolNodeId, Control>,
     pub(super) attempts: BTreeMap<ProtocolNodeId, Attempt<'a>>,
+    pub(super) recommendations: BTreeMap<ProtocolNodeId, Recommendation<'a>>,
     pub(super) joins: BTreeMap<ProtocolNodeId, Join>,
     pub(super) loops: BTreeMap<ProtocolNodeId, Loop<'a>>,
     /// Each `choice`'s cases, each with its guard, in authored order.
@@ -601,6 +613,31 @@ impl<'a> Program<'a> {
             );
         }
 
+        let mut recommendations = BTreeMap::new();
+        for recommendation in &protocol.recommendations {
+            let node = ProtocolNodeId(recommendation.declaration);
+            let binder = binder_of.get(&node).copied();
+            let binds = binder.filter(|slot| {
+                protocol.slots.binders.get(*slot).is_some_and(|binder| {
+                    recommendation.operation.declaration.result() == Some(&binder.value_type)
+                })
+            });
+            recommendations.insert(
+                node,
+                Recommendation {
+                    role: recommendation.role.clone(),
+                    declaring: recommendation.operation.declaring.clone(),
+                    operation: recommendation.operation.declaration.name().to_owned(),
+                    receiver: recommendation.receiver.clone(),
+                    contracts: std::sync::Arc::new(
+                        recommendation.contracts.iter().cloned().collect(),
+                    ),
+                    constraint: body_of(node),
+                    binds,
+                },
+            );
+        }
+
         let mut joins = BTreeMap::new();
         for parallel in &protocol.parallels {
             let control = controls
@@ -838,6 +875,7 @@ impl<'a> Program<'a> {
             root,
             controls,
             attempts,
+            recommendations,
             joins,
             loops,
             choices,

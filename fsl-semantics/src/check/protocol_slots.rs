@@ -690,6 +690,10 @@ impl Checker<'_, '_> {
                             .find(|channel| channel.name.name == via.name)?;
                         Eligibility::Role(channel.to.name.clone())
                     }
+                    ProtocolNodeKind::Event
+                        if self.protocol.attempts.iter().any(|attempt| {
+                            attempt.declaration == node && attempt.recommendation
+                        }) => Eligibility::Never,
                     ProtocolNodeKind::Attempt | ProtocolNodeKind::Event => {
                         Eligibility::Role(declaration.role.as_ref()?.name.clone())
                     }
@@ -1170,9 +1174,17 @@ pub(crate) fn check(
             // FR-218 "Attempts": any declared type is admitted; a read gets
             // the result only when the type is the operation's result type.
             if let Some(attempt) = attempts.iter().find(|attempt| attempt.declaration == index) {
-                let result = attempt.operation.declaration.result();
-                if result != Some(&pushed.value_type) {
-                    pushed.unreadable = Some(result.cloned());
+                if protocol
+                    .attempts
+                    .iter()
+                    .any(|form| form.declaration == index && form.recommendation)
+                {
+                    pushed.unreadable = Some(None);
+                } else {
+                    let result = attempt.operation.declaration.result();
+                    if result != Some(&pushed.value_type) {
+                        pushed.unreadable = Some(result.cloned());
+                    }
                 }
             }
         }

@@ -3365,6 +3365,8 @@ pub struct ProtocolNodeDeclaration {
     pub kind: ProtocolNodeKind,
     /// The declared name and its span.
     pub name: DeclaredName,
+    /// The construct's complete source span.
+    pub span: Span,
     /// The innermost named control enclosing this declaration; `None` at
     /// the top level.
     pub scope: Option<ScopeId>,
@@ -3378,6 +3380,8 @@ pub struct ProtocolNodeDeclaration {
     /// The role an `attempt`, `event` or `commit` is written `by`; `None`
     /// for every other kind.
     pub role: Option<DeclaredName>,
+    /// Whether this control was introduced by the `observe` prefix.
+    pub observe_only: bool,
 }
 
 /// A binder's syntactic role (FR-113 "Refusals": a record binder, a
@@ -3457,6 +3461,8 @@ pub struct RoleForm {
     /// The population, maximum and lifetime of a replicated `each` role;
     /// `None` for a static `on` role (FR-308 `RoleForm::Replicated`).
     pub replicated: Option<ReplicatedRoleForm>,
+    /// Whether this role was introduced by the `observe` prefix.
+    pub observe_only: bool,
     /// The span of the whole member, `;` included.
     pub span: Span,
 }
@@ -3740,6 +3746,9 @@ pub struct AttemptForm {
     /// The `ordering o` memory order with the span of its text, when
     /// written (FR-220).
     pub ordering: Option<Spanned<crate::protocol_control::AccessOrdering>>,
+    /// True when this operation reference belongs to a side-effect-free
+    /// `recommend` control rather than an `attempt`.
+    pub recommendation: bool,
 }
 
 /// `protocol Name using p over (params) activation { ... run Control

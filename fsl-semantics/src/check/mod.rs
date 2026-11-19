@@ -7683,6 +7683,7 @@ impl PackageDeclarations {
             .zip(checked_protocols.iter_mut())
         {
             let mut attempts = Vec::with_capacity(bindings.len());
+            let mut recommendations = Vec::new();
             for ((bound, lowered_attempt), location) in bindings.iter().zip(lowered).zip(locations)
             {
                 let unkeyable = || {
@@ -7730,6 +7731,26 @@ impl PackageDeclarations {
                     .map(|&index| lowered_clause_keys.get(index).cloned())
                     .collect::<Option<Vec<_>>>()
                     .ok_or_else(unkeyable)?;
+                let form = self
+                    .protocols
+                    .iter()
+                    .find(|protocol| protocol.name.name == checked.name)
+                    .and_then(|protocol| {
+                        protocol.attempts.iter().find(|form| {
+                            form.declaration == bound.declaration && form.recommendation
+                        })
+                    });
+                if let Some(form) = form {
+                    recommendations.push(protocol_clause::CheckedRecommendation {
+                        declaration: bound.declaration,
+                        role: form.role.name.clone(),
+                        operation: bound.operation.clone(),
+                        receiver: bound.receiver.clone(),
+                        anchor,
+                        contracts,
+                    });
+                    continue;
+                }
                 attempts.push(protocol_clause::CheckedAttempt {
                     declaration: bound.declaration,
                     operation: bound.operation.clone(),
@@ -7740,6 +7761,7 @@ impl PackageDeclarations {
                 });
             }
             checked.attempts = attempts;
+            checked.recommendations = recommendations;
         }
         // FR-381 "Compensation registration": each template bound to its
         // operation's one anchor and frame node, with the one frame record

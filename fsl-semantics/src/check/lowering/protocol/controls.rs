@@ -330,7 +330,7 @@ impl Lowering<'_> {
         let entry = checked.slots.entries.get(&node).ok_or_else(unchecked)?;
         let related = self.related_arguments(controls, node, entry, location)?;
 
-        Ok(match control.kind {
+        let mut result = match control.kind {
             ProtocolNodeKind::Sequence => {
                 let children = control
                     .children
@@ -432,6 +432,43 @@ impl Lowering<'_> {
                     ],
                 )
             }
+            ProtocolNodeKind::Event
+                if form.attempts.iter().any(|attempt| {
+                    attempt.declaration == node.0 && attempt.recommendation
+                }) =>
+            {
+                let form = form
+                    .attempts
+                    .iter()
+                    .find(|attempt| attempt.declaration == node.0 && attempt.recommendation)
+                    .ok_or_else(unchecked)?;
+                let nodes = controls
+                    .inputs
+                    .attempts
+                    .iter()
+                    .find(|nodes| nodes.declaration == node.0)
+                    .ok_or_else(unchecked)?;
+                let constraint = self.control_body(controls, node, entry, true, location)?;
+                (
+                    "recommend",
+                    vec![
+                        role(Some(&form.role.name))?,
+                        MemberTerm::bound(
+                            "operation",
+                            LeafTerm::reference(nodes.anchor.clone()),
+                        ),
+                        MemberTerm::binding(
+                            "contracts",
+                            BindingValue::Group(GroupTerm::references(sorted(
+                                nodes.contracts.iter().cloned(),
+                            ))),
+                        ),
+                        binder()?,
+                        related,
+                        MemberTerm::bound("constraint", constraint),
+                    ],
+                )
+            }
             ProtocolNodeKind::Event => {
                 let constraint = self.control_body(controls, node, entry, true, location)?;
                 (
@@ -521,7 +558,14 @@ impl Lowering<'_> {
             | ProtocolNodeKind::Case
             | ProtocolNodeKind::Finish
             | ProtocolNodeKind::CompensateTemplate => return Err(unchecked()),
-        })
+        };
+        if control.observe_only {
+            result.1.push(MemberTerm::bound(
+                "boundary",
+                self.text_literal("observe-only", location)?,
+            ));
+        }
+        Ok(result)
     }
 
     /// The arguments of the `parallel` `control` (FR-466 "Control layouts"):
