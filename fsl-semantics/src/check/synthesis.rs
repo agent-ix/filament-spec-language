@@ -3,6 +3,102 @@
 
 use filament_exact::ValueType;
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
+use filament_semantic_value::location::{
+    ExpressionLocation as Location, ExpressionOwner as Origin,
+};
+
+use super::{CheckCause, CheckRefusal, Scope, Signatures, Typer};
+
+/// Resolve and type-check each source synthesis declaration (FR-754 S3).
+pub(crate) fn check_forms(
+    forms: &[fsl_forms::SynthesisForm],
+    scope: &Scope,
+    signatures: &Signatures,
+) -> Vec<CheckRefusal> {
+    let mut refusals = Vec::new();
+    for form in forms {
+        let location = Location::root(Origin::Expression);
+        let Some(domain) = named_type(scope, &form.domain.name) else {
+            refusals.push(CheckRefusal {
+                location,
+                cause: CheckCause::MissingName(form.domain.name.clone()),
+            });
+            continue;
+        };
+        if named_type(scope, &form.grammar.name).is_none() {
+            refusals.push(CheckRefusal {
+                location,
+                cause: CheckCause::MissingName(form.grammar.name.clone()),
+            });
+            continue;
+        }
+
+        let parameters = vec![(form.name.name.clone(), domain.clone())];
+        if let Err(refusal) = check_expression(
+            scope,
+            signatures,
+            &form.satisfies.expression,
+            &parameters,
+            &ValueType::Boolean,
+        ) {
+            refusals.push(refusal);
+            continue;
+        }
+        if let Some(objective) = &form.objective {
+            if let Err(refusal) = check_expression(
+                scope,
+                signatures,
+                &objective.expression.expression,
+                &parameters,
+                &domain,
+            ) {
+                refusals.push(refusal);
+            }
+        }
+    }
+    refusals
+}
+
+fn named_type(scope: &Scope, name: &str) -> Option<ValueType> {
+    let [value_type] = scope.named_types(None, name) else {
+        return None;
+    };
+    Some(value_type.clone())
+}
+
+fn check_expression(
+    scope: &Scope,
+    signatures: &Signatures,
+    expression: &fsl_forms::Expression,
+    parameters: &[(String, ValueType)],
+    expected: &ValueType,
+) -> Result<(), CheckRefusal> {
+    let location = Location::root(Origin::Expression);
+    let limits = super::CheckingLimits::default();
+    let mut nodes = 0;
+    let typer = Typer::new(
+        scope,
+        signatures,
+        limits,
+        &mut nodes,
+        fsl_forms::ClauseKind::Body,
+    );
+    let mut meter = filament_exact::Meter::new(super::family::SCALAR_LIMITS_UNLIMITED);
+    let mut diagnostics = super::family::DiagnosticSink::default();
+    let mut scopes = super::family::ScopeStack::default();
+    let mut typer = typer.with_context(super::family::CheckContext::new(
+        scope,
+        super::family::StageLimits {
+            input_bytes: limits.input_bytes(),
+            node_count: limits.nodes(),
+        },
+        &mut meter,
+        &mut diagnostics,
+        &mut scopes,
+    ));
+    super::bind_parameters(&mut typer, parameters, &location)?;
+    typer.check_as(expression, expected, &location).map(|_| ())
+}
 
 /// Return the first component of `value_type` whose value set is unbounded.
 /// Composite traversal follows declared field/member order, and recursive

@@ -3128,6 +3128,10 @@ impl PackageDeclarations {
             .select_declared_ieee_profile(&signatures, has_ieee_literal)
             .map_err(|refusal| vec![refusal])?;
         let signatures = Signatures::new(signatures);
+        let synthesis_refusals = synthesis::check_forms(&self.synthesis_forms, &scope, &signatures);
+        if !synthesis_refusals.is_empty() {
+            return Err(synthesis_refusals);
+        }
         let mut seen_operations = std::collections::BTreeSet::new();
         for operation in &scope.dispatch_operations {
             if !seen_operations.insert((operation.receiver_type.clone(), operation.member.clone()))
