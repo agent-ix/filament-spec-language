@@ -120,6 +120,20 @@ fn run_timed(name: &str, claims: &str, items: Value) -> Value {
     analyze(&request).document()
 }
 
+fn run_pta(name: &str, claim: &str) -> Value {
+    let unit = timed_unit(claim)
+        .replace("uniform[1 ms, 2 ms]", "discrete { 1 ms: 1 }");
+    let ws = Workspace::new(name);
+    let request = request_over(
+        &ws,
+        &unit,
+        LINK_MODEL,
+        &[LINK_START.to_vec()],
+        json!({"items": [{"claim": "TimedDelivery", "probabilistic": {"evidence": "exact"}}]}),
+    );
+    analyze(&request).document()
+}
+
 fn run_health_long_run(name: &str, items: Value) -> Value {
     let model =
         crate::prob_world::health("self.healthy = (not fault)", "true: 1, false: 1", false, "");
@@ -256,7 +270,26 @@ fn timed_sampling_from_source() {
         "{item}"
     );
     assert_eq!(
-        item["verdict"]["provenance"]["max_sample_steps"], 1000,
+        item["verdict"]["provenance"]["max_sample_steps"], "1000",
+        "{item}"
+    );
+}
+
+/// FR-741-AC-7: a timed probabilistic source claim uses the exact EN-5
+/// digital-clock product and retains its independently checkable certificate.
+#[test]
+fn pta_from_source() {
+    let claim = "probabilistic TimedDelivery using t on M over (m: M::Msg) under Even on origin \
+         { probability >= rational(95, 100) [ eventually[0 ms, 3 ms] holds(m.delivered) ] }";
+    let document = run_pta("pta-source", claim);
+    let item = &document["items"][0];
+    assert_eq!(label(item), "proved", "{item}");
+    assert_eq!(item["request"]["candidates"]["backends"], json!(["en-5"]));
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    assert_eq!(item["certificate"]["kind"], "exact", "{item}");
+    assert_eq!(
+        item["certificate"]["document"]["objective"]["timed"]["route"],
+        "digital",
         "{item}"
     );
 }
