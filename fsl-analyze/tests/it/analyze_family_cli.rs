@@ -885,7 +885,7 @@ fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
         TerminalValue,
     };
 
-    let declaration = "hyper Saves using e over behaviours (v: V::Vault, w: N::Vault) \
+    let declaration = "hyper Saves using ep over behaviours (v: V::Vault, w: N::Vault) \
          forall trace s of V forall trace n of N \
          { always[0,3] holds(v.l @ s <= w.l @ n) }";
     let world = crate::hyper_world::World::with_second_vaults(
