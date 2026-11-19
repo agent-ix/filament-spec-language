@@ -1192,7 +1192,9 @@ impl OutcomeItem {
                         item.refusal = Some(reason.as_str());
                     }
                     UnavailabilityCause::ProtocolAnalysis(unsupported) => {
-                        item.at = crate::protocol_analysis::node_text(&unsupported.node).ok();
+                        item.at = crate::protocol_analysis::node_text(&unsupported.node)
+                            .ok()
+                            .map(ItemWhere::Text);
                         item.message.clone_from(&unsupported.detail);
                     }
                     UnavailabilityCause::SolverAbsent
