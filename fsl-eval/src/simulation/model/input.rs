@@ -172,6 +172,16 @@ pub struct ModelCheckInput<'a> {
     pub admitted: Option<&'a fsl_package::CheckedPackageV2>,
 }
 
+/// A protocol definition in the form the selected analysis route reads.
+/// Package definitions borrow only the admitted V2 nodes; they do not
+/// reconstruct a source checked graph.
+pub enum ProtocolDefinition<'a> {
+    /// The source route's checked semantic form.
+    Source(&'a CheckedProtocol),
+    /// The package route's typed protocol-node form.
+    Package(fsl_package::protocol_view::ProtocolExecutionView<'a>),
+}
+
 impl<'a> ModelCheckInput<'a> {
     /// The source route's input (FR-531): every table read from the source
     /// package's `CheckedGraph`, and the package itself as the evaluator.
@@ -275,6 +285,15 @@ impl<'a> ModelCheckInput<'a> {
                     )
                 }),
         )
+    }
+
+    /// FR-940: resolve a protocol through this input's selected route, keeping
+    /// source checked forms and package node forms distinct.
+    pub fn protocol_definition(&self, name: &str) -> Option<ProtocolDefinition<'_>> {
+        self.evaluator
+            .protocol(name)
+            .map(ProtocolDefinition::Source)
+            .or_else(|| self.evaluator.package_protocol(name).map(ProtocolDefinition::Package))
     }
 
     /// The packages an admission of this package's observations
@@ -988,6 +1007,16 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
 
     /// The checked protocol `name`.
     fn protocol(&self, name: &str) -> Option<&CheckedProtocol>;
+
+    /// FR-940: the package-native protocol structure read through the
+    /// admitted package view. This is available on the bytes route without
+    /// rebuilding a source `CheckedProtocol`.
+    fn package_protocol(
+        &self,
+        _name: &str,
+    ) -> Option<fsl_package::protocol_view::ProtocolExecutionView<'_>> {
+        None
+    }
 
     /// The admitted node keys of the protocol `name`.
     fn protocol_node_keys(&self, name: &str) -> Option<&CheckedProtocolNodeKeys>;
@@ -1834,6 +1863,15 @@ impl ModelEvaluator for BarePackage<'_> {
 
     fn protocol(&self, _name: &str) -> Option<&CheckedProtocol> {
         None
+    }
+
+    fn package_protocol(
+        &self,
+        name: &str,
+    ) -> Option<fsl_package::protocol_view::ProtocolExecutionView<'_>> {
+        fsl_package::AnalysisView::protocol_execution_named(self, name)
+            .ok()
+            .flatten()
     }
 
     fn protocol_node_keys(&self, _name: &str) -> Option<&CheckedProtocolNodeKeys> {

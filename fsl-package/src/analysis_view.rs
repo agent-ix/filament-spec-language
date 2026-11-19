@@ -90,6 +90,54 @@ pub trait AnalysisView: sealed::Sealed {
         checked_views::activation_relation(self.package())
     }
 
+    /// FR-940: the package-native execution structure of one protocol
+    /// declaration, read from this view's admitted protocol nodes. This is
+    /// independent of any source `CheckedProtocol` retained by an in-process
+    /// compiler.
+    ///
+    /// # Errors
+    ///
+    /// [`protocol_view::ViewRefusal`] when the clause or one of its controls
+    /// lacks a readable package form.
+    fn protocol_execution(
+        &self,
+        protocol: &CheckedNodeId,
+    ) -> Result<crate::protocol_view::ProtocolExecutionView<'_>, crate::protocol_view::ViewRefusal> {
+        crate::protocol_view::protocol_execution_view(self.package(), protocol)
+    }
+
+    /// The package-native execution structure of the one protocol
+    /// declaration whose qualified name is `name`, or `None` when the
+    /// package has no unique declaration by that name.
+    fn protocol_execution_named(
+        &self,
+        name: &str,
+    ) -> Result<Option<crate::protocol_view::ProtocolExecutionView<'_>>, crate::protocol_view::ViewRefusal> {
+        let mut matches = self
+            .package()
+            .resolved_graph()
+            .nodes
+            .iter()
+            .filter(|node| node.semantic_form == "protocol_clause")
+            .filter(|node| {
+                node.declaration.as_ref().is_some_and(|declaration| {
+                    let parts: Vec<&str> = declaration
+                        .qualified_name
+                        .iter()
+                        .map(AsRef::as_ref)
+                        .collect();
+                    parts.join("::") == name || parts.last().copied() == Some(name)
+                })
+            });
+        let Some(node) = matches.next() else {
+            return Ok(None);
+        };
+        if matches.next().is_some() {
+            return Ok(None);
+        }
+        self.protocol_execution(&node.node_id).map(Some)
+    }
+
     /// The temporal subject of the clause node `clause` (FR-515): its
     /// identity, `over`, activation, captures, formula operations, operand
     /// edges and `holds` atoms.

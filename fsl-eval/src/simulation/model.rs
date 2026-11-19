@@ -27,7 +27,8 @@ mod frames;
 mod input;
 pub use input::{
     BodyReads, ModelCheckInput, ModelEvaluator, ModelTerminal, ModelTerminalDeclaration,
-    PackageModelInput, PendingClauseForm, PendingPackageForm, StateClauseEntry, TerminalWhen,
+    PackageModelInput, PendingClauseForm, PendingPackageForm, ProtocolDefinition,
+    StateClauseEntry, TerminalWhen,
 };
 mod operation_coverage;
 pub use operation_coverage::{

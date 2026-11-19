@@ -19,8 +19,8 @@ use crate::protocol_view::{
     attempts_maximum, attempts_over, await_anchor, binder, causal_relation, channel_connection,
     channel_endpoints, channel_ordering, choice_visibility, control_operation, declaration,
     delivery, dependency, fifo_key, locus, operation_identity, owner_model, protocol_view,
-    queue_capacity, queue_channel, queue_overflow, relation_over, selection, source,
-    temporal_binding, AwaitAnchor, AwaitAnchorKind, ChannelOrdering, ChoiceVisibility,
+    protocol_execution_view, queue_capacity, queue_channel, queue_overflow, relation_over,
+    selection, source, temporal_binding, AwaitAnchor, AwaitAnchorKind, ChannelOrdering, ChoiceVisibility,
     ControlOperation, Delivery, FifoKey, LossSelector, Overflow, QueueCapacity, Scheduling,
     ViewRefusal,
 };
@@ -1132,6 +1132,13 @@ fn an_interval_channel_needs_no_temporal_profile_and_reads_no_clock() {
         "the header selects no temporal profile"
     );
     let package = lowered.ir.as_ref().expect("the package is admitted");
+    let execution = protocol_execution_view(package, &clause(package).node_id)
+        .expect("the admitted protocol has an execution view");
+    assert_eq!(execution.protocol.controls().len(), execution.controls.len());
+    for (id, control) in execution.protocol.controls().iter().zip(&execution.controls) {
+        assert_eq!(*id, &control.node.node_id);
+        assert_eq!(control.operation, control_operation(control.node).unwrap());
+    }
     assert_eq!(
         delivery(by_name(package, "Pay")).unwrap(),
         Delivery::Between { lower: 1, upper: 2 }
@@ -1149,6 +1156,44 @@ fn an_interval_channel_needs_no_temporal_profile_and_reads_no_clock() {
             .all(|node| !matches!(&*node.semantic_form, "temporal_clause" | "clock_place")),
         "no temporal clause or clock place node is emitted"
     );
+}
+
+/// The package execution view reads the attempt facts from the admitted
+/// protocol nodes, including the role, operation, contracts and ordering.
+#[trace("FR-519", "TC-1314")]
+#[test]
+fn the_execution_view_reads_attempt_facts_from_package_nodes() {
+    let fixture = fixture_over(&tc134_source());
+    let package = &fixture.admitted;
+    let execution = protocol_execution_view(package, &clause(package).node_id).unwrap();
+    let via_analysis_view = crate::AnalysisView::protocol_execution_named(&fixture.fsl_read, "OrderFlow")
+        .unwrap()
+        .expect("AnalysisView resolves the declared protocol name");
+    assert_eq!(
+        via_analysis_view.protocol.clause(),
+        execution.protocol.clause()
+    );
+    let attempt = execution
+        .controls
+        .iter()
+        .find(|control| control.operation == ControlOperation::Attempt)
+        .expect("the protocol has an attempt");
+    let ControlBody::Attempt {
+        role,
+        operation,
+        ordering,
+        contracts,
+        binder,
+        ..
+    } = &attempt.body
+    else {
+        panic!("an attempt has its checked package form");
+    };
+    assert_eq!(name(package, role), path(&["OrderFlow", "role", "Orders"]));
+    assert!(node(package, operation).semantic_form == "operation_anchor");
+    assert!(!contracts.is_empty());
+    assert!(node(package, binder).semantic_form == "parameter");
+    assert_eq!(*ordering, None);
 }
 
 /// FR-519-AC-5, locus: the package source-map entry of a node; and the clock
