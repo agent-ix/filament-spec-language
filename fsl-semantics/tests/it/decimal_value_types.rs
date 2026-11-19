@@ -454,12 +454,13 @@ fn decimal_policy_defects_refuse_once() {
         true,
     ));
     let mut document = golden();
-    let mut cash = type_mut(&mut document, "Price").clone();
+    let mut cash = type_mut(&mut document, "Soc").clone();
     let object = cash.as_object_mut().expect("Cash");
     object.remove("scalar");
     object.insert("identity".to_owned(), "ix://test/decimal/Cash".into());
     object.insert("displayName".to_owned(), "Cash".into());
-    object.insert("target".to_owned(), "ix://filament/native/Decimal".into());
+    object.insert("target".to_owned(), "ix://test/decimal/Soc".into());
+    object.insert("constraints".to_owned(), json!([]));
     document["types"].as_array_mut().expect("types").push(cash);
     cases.push((
         "policy on a target-bound value type",

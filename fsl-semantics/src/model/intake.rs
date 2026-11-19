@@ -1858,11 +1858,7 @@ fn decimal_value_type_semantic_diagnostic(
     document: &PackageDocument,
     located: &agent_ix_semantic_ir::diag::Located,
 ) -> bool {
-    let policy_diagnostic = matches!(
-        located.code,
-        agent_ix_semantic_ir::rules::DECIMAL_POLICY_MISSING
-            | agent_ix_semantic_ir::rules::DECIMAL_POLICY_CONFLICT
-    );
+    let policy_diagnostic = located.code == agent_ix_semantic_ir::rules::DECIMAL_POLICY_MISSING;
     let operand_diagnostic = located.code == agent_ix_semantic_ir::rules::INVALID_OPERAND
         && located.pointer.contains("/constraints/");
     if !policy_diagnostic && !operand_diagnostic {
@@ -5608,8 +5604,11 @@ fn read_type_node(
         }
         let decimal = if let Some(decimal) = decimal_types.get(node) {
             Some(decimal.clone())
-        } else if let Some(inherited) = decimal_types.get(target) {
-            Some(narrow_decimal_domain(&ctx, at, inherited)?)
+        } else if type_value.get("decimal").is_none() {
+            match decimal_types.get(target) {
+                Some(inherited) => Some(narrow_decimal_domain(&ctx, at, inherited)?),
+                None => None,
+            }
         } else {
             None
         };
