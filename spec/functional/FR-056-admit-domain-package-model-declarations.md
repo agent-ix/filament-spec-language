@@ -780,6 +780,22 @@ makes an empty collection legal, and an `optional` presence wraps the
 multiplicity's own value type in `Option`. A `redefines` names the redefined
 field by its owner and name.
 
+An operation parameter carries presence as a field does. Each
+`Operation.params[i]` entry has the semantic IR field shape, and intake reads
+its required `presence` member under FSpec FR-154 "Operation parameter
+presence": `required` and `optional` map one to one to the admitted
+parameter's presence, and any other value refuses
+`invalid_model_binding`/`malformed-declaration` at the operation node, path
+`Operation.params[i].presence`, naming the value. The type environment gives an
+`optional` parameter `Option<X>`, `X` the type its `typeRef` and multiplicity
+give, so `present(p)` checks and `value(p)` carries the presence obligation
+inside the operation's clauses and body; a `required` parameter is `X`. A
+parameter of option value type with presence `optional` and multiplicity
+`[1, 1]` is the refused `Option<Option<..>>`, at
+`Operation.params[i].presence`. The model states presence on every parameter,
+so intake never drops it: a call may omit only an `optional` parameter (FSpec
+FR-151 "Dispatch rules"), and an invocation likewise (FR-106 check 10).
+
 A `typeRef` under `ix://filament/native/` names a domain native value type,
 including K2's natives above and the FSpec shared-grammar spellings
 `Boolean`, `Integer`, `Rational`, `Decimal`, `Float32`, `Float64` and `Text`.
@@ -1108,6 +1124,7 @@ value or substitutes decimal, rational or host floating point (FSpec FR-148).
 | FR-056-AC-62 | Exporting the AC-60 model writes `a` through FSpec FR-812's binary floating point mapping, a tagged value with its sign, integer significand and exponent, and its `-` as the generated negation; the invariant `self.a != float64(bits: 0x7ff8000000000001)` exports its constant as `[tag \|-> "nan", bits \|-> "7ff8000000000001"]` (FSpec FR-812-AC-8); the export never holds `a` as a rational or decimal value. | Test (TC-3006) |
 | FR-056-AC-63 | A domain package `test/bound` declaring value types `Flag`, `Count`, `Name`, `Reading` and `Sample`, each with `target` `ix://filament/native/Boolean`, `Integer`, `String`, `Float64` and `Float32` respectively, and an object type `Holder` with one field typed by each, is admitted and assembles with no `UnsupportedModelMember` refusal, and the fields' value types are `Boolean`, `Integer`, `String`, `Float64` (binary64, `exact`) and `Float32` (binary32, `exact`); `self.count = 1` and `self.flag = true` check. Value types `Memo`, `Ratio` and `Amount` with `target` `ix://filament/native/Text`, `Rational` and `Decimal` and fields `memo`, `ratio`, `amount` typed by them are admitted with the unit, and the clause `self.memo = self.memo` refuses `ill_typed`/`operator-ineligible` at the `field` projection, naming `Holder` and `Field.typeRef`. | Test (TC-3031) |
 | FR-056-AC-64 | A timed unit whose domain package declares a value type `Watch` with `target` `ix://filament/native/Clock` and a constraint `max` `5` whose `appliesTo` is `Watch`, and an object type `Call` with a field `w` typed `Watch` and an optional field `v` typed `Watch`, checks under `Dense` to the clock places `Call.w` and `Call.v` (guarded by `v`'s presence) with the time invariant `x <= 5` on each, and raises no `UnsupportedModelMember` or `malformed-declaration` refusal. The same package with `Watch`'s constraint keyword `min` refuses `invalid_timed_model`/`time-invariant-shape`; with keyword `maxLength` it refuses `invalid_model_binding`/`malformed-declaration` at the constraint; and an option value type whose `inner` is `Watch` refuses `invalid_model_binding`/`malformed-declaration` at `TypeDefinition.inner`. | Test (TC-3031) |
+| FR-056-AC-65 | Over FSpec TC-2054's `test/refunds` package, intake admits `Order/note` with `firstApprover` `required` and `secondApprover` `optional`, and the type environment gives `firstApprover` `Reference<R::Staff>` and `secondApprover` `Option<Reference<R::Staff>>`. With `secondApprover`'s `presence` `"maybe"`, `null` or absent, intake refuses `invalid_model_binding`/`malformed-declaration` at `Order/note`, path `Operation.params[1].presence`; with `secondApprover` typed by the option value type `OptStaff` and presence `optional` it refuses the same pair at the same path; with `OptStaff` and presence `required` it admits `secondApprover` as `Option<Reference<R::Staff>>`. | Test (TC-3040) |
 
 ### FR-056-AC-17
 
