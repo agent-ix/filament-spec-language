@@ -412,7 +412,6 @@ fn strict_guard_is_certified_over_regions() {
 #[trace("TC-2491", "FR-922-AC-2")]
 #[trace("FSpec-TC-1769", "FSpec-FR-752-AC-2")]
 #[test]
-#[ignore = "QSL-2156: the region MDP and its certificate not implemented yet"]
 fn digital_values_for_a_strict_guard_are_rejected() {
     let world = retx(STRICT, true, "", &every_deadlines());
     let mut doc = document(&settle(&world, "Deadline"));
