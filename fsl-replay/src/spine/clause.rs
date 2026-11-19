@@ -3072,15 +3072,6 @@ fn run_function(
             ))));
         }
     }
-    for (position, (parameter, _)) in selected.parameters.iter().enumerate() {
-        if slots[position].is_none() {
-            return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(
-                RunRefusal::UnboundParameter {
-                    parameter: parameter.clone(),
-                },
-            ))));
-        }
-    }
     let mut environment = environment;
     let mut bound = Vec::with_capacity(selected.parameters.len());
     for (position, (parameter, value_type)) in selected.parameters.iter().enumerate() {
