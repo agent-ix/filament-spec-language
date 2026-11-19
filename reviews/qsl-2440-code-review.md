@@ -71,3 +71,12 @@ form: the `precondition` stand-in is not marked TEMPORARY / QSL-2535 (FND-001). 
 spelling works but depends on `Debug` output and on host recursion (FND-002). The package route
 now silently drops rewards (FND-003). Not mergeable until FND-001 is fixed. FND-002 and FND-003
 should also be fixed in this PR, or FND-003 deferred to a named ticket.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |

@@ -60,3 +60,20 @@ and less than arch ruling (2) asks (FND-003), a narrow Service test that carries
 (FND-004), and an unrecorded partial rebuild of `Reward` (FND-005). All are fixable in this PR
 except the claim-identity clause, which belongs to QSL-2441 and only needs to be stated as
 deferred.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | medium | Regression from the FND-001 fix. The fix round removed `#[trace("TC-2062", "FR-740-AC-3")]` from `workload_weight_order_changes_no_bytes_and_weight_zero_is_emitted`, which is a correct binding: that test drives AC-3's weight-line order and weight-0 clauses. The tag should have come off the reward reorder test instead. The weight-order and weight-0 clauses of FR-740-AC-3 now have no tagged test (the remaining FR-740-AC-3 tags at :1002 and :1096 are the delay tests). Restore the tag | fsl-package/src/emit/tests/probabilistic.rs:831-836 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | `reward_order_changes_no_node_and_the_expression_changes_the_identity` still carries `#[trace("TC-2062", "FR-740-AC-3")]` (probabilistic.rs:1563). The fix removed the tag from the workload test instead (FND-007) |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |
+| FND-005 | fixed | - |
+| FND-006 | fixed | - |

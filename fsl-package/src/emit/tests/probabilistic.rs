@@ -831,6 +831,7 @@ fn a_workload_over_unrelated_types_refuses_with_its_locus_qsl_2444() {
 /// TC-2062 (FR-740-AC-3, FSpec FR-640-AC-3): writing `Steady`'s weight
 /// lines in another order emits byte-identical output, and a workload with a
 /// weight of 0 is emitted with that weight.
+#[trace("TC-2062", "FR-740-AC-3")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
 #[test]
 fn workload_weight_order_changes_no_bytes_and_weight_zero_is_emitted() {
@@ -1560,7 +1561,6 @@ fn a_package_reward_that_breaks_the_reader_rules_is_refused_on_read_back() {
 /// nodes in the same order, and changing the expression changes the reward's
 /// identity. The function's own key holds no content (it ranks equal paths by
 /// lowering order), so the function's id is not asserted to change.
-#[trace("TC-2062", "FR-740-AC-3")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
 #[test]
 fn reward_order_changes_no_node_and_the_expression_changes_the_identity() {
