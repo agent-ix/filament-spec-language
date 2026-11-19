@@ -5,14 +5,18 @@ use std::str::FromStr;
 
 use filament_eval::{Evaluation, FamilyOutcome};
 use filament_exact::{
-    admit_text, IeeeFlag, Integer, Meter, Outcome, Rational, Refusal, RoundingMode, ScalarLimits,
-    TextProfile, TextType, Undefined, Value,
+    admit_text, ChargePoint, IeeeFlag, Integer, Meter, Outcome, Rational, Refusal, RoundingMode,
+    ScalarLimits, TextProfile, TextType, Undefined, Value,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::loss::ValueLoss;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckRefusal, PackageDeclarations};
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::domain_package::{
+    DomainPackage, DomainPackageRef, PackageDimensionRecord, PackageUnitRecord,
+};
 use fsl_semantics::model::intake::SelectedModels;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
@@ -37,20 +41,35 @@ const DECLARATIONS: &str = "\
     unit ms : Time = rational(1, 1000) * s;\n\
     function integer using v(t: Text[0, 64; unicode-scalars]): Integer pure { convert<Integer>(t) }\n\
     function bounded using v(t: Text[0, 64; unicode-scalars]): Int[0, 99] pure { convert<Int[0, 99]>(t) }\n\
+    function decimal_unbounded using v(t: Text[0, 64; unicode-scalars]): Decimal pure { convert<Decimal>(t) }\n\
     function rational using v(t: Text[0, 64; unicode-scalars]): Rational[-9, 9; 1, 9] pure { convert<Rational[-9, 9; 1, 9]>(t) }\n\
+    function rational_unbounded using v(t: Text[0, 64; unicode-scalars]): Rational pure { convert<Rational>(t) }\n\
     function decimal using v(t: Text[0, 64; unicode-scalars]): Decimal[0, 1000; 0, 2; nearest-even] pure { convert<Decimal[0, 1000; 0, 2; nearest-even]>(t) }\n\
     function decimal_exact using v(t: Text[0, 64; unicode-scalars]): Decimal[0, 1000; 0, 2; exact] pure { convert<Decimal[0, 1000; 0, 2; exact]>(t) }\n\
     function float using v(t: Text[0, 64; unicode-scalars]): Float64[nearest-even] pure { convert<Float64[nearest-even]>(t) }\n\
+    function float_zero using v(t: Text[0, 64; unicode-scalars]): Float64[toward-zero] pure { convert<Float64[toward-zero]>(t) }\n\
+    function float_positive using v(t: Text[0, 64; unicode-scalars]): Float64[toward-positive] pure { convert<Float64[toward-positive]>(t) }\n\
+    function float32 using v(t: Text[0, 64; unicode-scalars]): Float32[nearest-even] pure { convert<Float32[nearest-even]>(t) }\n\
+    function float32_zero using v(t: Text[0, 64; unicode-scalars]): Float32[toward-zero] pure { convert<Float32[toward-zero]>(t) }\n\
     function float_exact using v(t: Text[0, 64; unicode-scalars]): Float64 pure { convert<Float64>(t) }\n\
     function quantity using v(t: Text[0, 64; unicode-scalars]): Quantity<ms> pure { convert<Quantity<ms>>(t) }\n\
     function nfkc using v(t: Text[0, 64; nfkc]): Integer pure { convert<Integer>(t) }\n\
     function nfc using v(t: Text[0, 64; nfc]): Integer pure { convert<Integer>(t) }\n\
     function string_integer using v(s: String): Integer pure { convert<Integer>(s) }\n\
+    function string_decimal using v(s: String): Decimal[0, 1000; 0, 2; nearest-even] pure { convert<Decimal[0, 1000; 0, 2; nearest-even]>(s) }\n\
     function string_rational using v(s: String): Rational[-9, 9; 1, 9] pure { convert<Rational[-9, 9; 1, 9]>(s) }\n\
-    function string_float using v(s: String): Float64[nearest-even] pure { convert<Float64[nearest-even]>(s) }\
+    function string_float using v(s: String): Float64[nearest-even] pure { convert<Float64[nearest-even]>(s) }\n\
+    function string_quantity using v(s: String): Quantity<ms> pure { convert<Quantity<ms>>(s) }\
 ";
 
 fn compile(source: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+    compile_with_models(source, SelectedModels::default())
+}
+
+fn compile_with_models(
+    source: &str,
+    selected: SelectedModels,
+) -> Result<CheckedPackage, Vec<CheckRefusal>> {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{source}"
@@ -68,7 +87,7 @@ fn compile(source: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
         parsed.source().reference().clone(),
         "qsl-2241-runtime-tests".to_owned(),
         unit,
-        SelectedModels::default(),
+        selected,
         Vec::new(),
     )
     .expect("the package declarations assemble");
@@ -99,14 +118,33 @@ fn text_value(text: &str, profile: TextProfile) -> Value {
 }
 
 fn call(package: &CheckedPackage, name: &str, value: Value) -> Evaluation {
-    package
+    call_with_meter(package, name, value, LIMITS).0
+}
+
+fn call_with_meter(
+    package: &CheckedPackage,
+    name: &str,
+    value: Value,
+    limits: ScalarLimits,
+) -> (Evaluation, Meter) {
+    let mut meter = Meter::new(limits);
+    let evaluation = package
         .call(
             &QualifiedName::unqualified(name).expect("function name is an identifier"),
             vec![value],
             &ObjectEnvironment::default(),
-            &mut Meter::new(LIMITS),
+            &mut meter,
         )
-        .expect("function evaluation runs")
+        .expect("function evaluation runs");
+    (evaluation, meter)
+}
+
+fn charge_points(meter: &Meter) -> Vec<ChargePoint> {
+    meter
+        .admitted_charges()
+        .iter()
+        .map(|charge| charge.point)
+        .collect()
 }
 
 fn completed(evaluation: &Evaluation) -> &Value {
@@ -126,7 +164,33 @@ fn undefined(evaluation: &Evaluation, reason: Undefined) {
     ));
 }
 
-#[trace("TC-964", "FR-478-AC-1", "FR-478-AC-6", "FR-478-AC-7")]
+fn ieee_flags(evaluation: &Evaluation) -> Vec<IeeeFlag> {
+    evaluation
+        .losses
+        .iter()
+        .find_map(|loss| match &loss.loss {
+            ValueLoss::IeeeFlags(flags) => Some(flags.iter().collect()),
+            ValueLoss::Decimal(_) | ValueLoss::IeeeExact(_) => None,
+        })
+        .unwrap_or_default()
+}
+
+fn assert_incomplete_at(evaluation: &Evaluation, expected: ChargePoint) {
+    let FamilyOutcome::Evaluated(Outcome::Incomplete(record)) = &evaluation.outcome else {
+        panic!(
+            "expected incomplete at {expected:?}, got {:?}",
+            evaluation.outcome
+        );
+    };
+    assert_eq!(record.charge_point, expected);
+}
+
+#[trace(
+    "FSpec-TC-964",
+    "FSpec-FR-478-AC-1",
+    "FSpec-FR-478-AC-6",
+    "FSpec-FR-478-AC-7"
+)]
 #[test]
 fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     let package = package();
@@ -147,6 +211,30 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
         assert_eq!(completed(&evaluation), &Value::Integer(expected));
     }
 
+    let negative_bounded = call(
+        &package,
+        "bounded",
+        text_value("-1", TextProfile::UnicodeScalars),
+    );
+    assert!(matches!(
+        negative_bounded.outcome,
+        FamilyOutcome::Evaluated(Outcome::Refused(Refusal::IntegerOutOfDomain { .. }))
+    ));
+
+    for (text, coefficient, scale) in [("1.50", 150, 2), ("-0.5", -5, 1), ("3", 3, 0)] {
+        let decimal = call(
+            &package,
+            "decimal_unbounded",
+            text_value(text, TextProfile::UnicodeScalars),
+        );
+        assert!(matches!(
+            completed(&decimal),
+            Value::Decimal(value)
+                if value.representation().coefficient() == &Integer::from(coefficient)
+                    && value.representation().scale() == scale
+        ));
+    }
+
     let rational = call(
         &package,
         "rational",
@@ -155,6 +243,15 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     assert_eq!(
         completed(&rational),
         &Value::Rational(Rational::new(Integer::from(1_i64), Integer::from(2_i64)).unwrap())
+    );
+    let unbounded_rational = call(
+        &package,
+        "rational_unbounded",
+        text_value("6/4", TextProfile::UnicodeScalars),
+    );
+    assert_eq!(
+        completed(&unbounded_rational),
+        &Value::Rational(Rational::new(Integer::from(3_i64), Integer::from(2_i64)).unwrap())
     );
 
     let decimal = call(
@@ -235,7 +332,188 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     ));
 }
 
-#[trace("TC-964", "FR-478-AC-2", "FR-478-AC-7", "FR-478-AC-11")]
+#[trace(
+    "FSpec-TC-964",
+    "FSpec-FR-478-AC-5",
+    "FSpec-FR-478-AC-6",
+    "FSpec-FR-478-AC-9",
+    "FSpec-FR-478-AC-11"
+)]
+#[test]
+fn conversion_charges_input_then_target_work_and_stops_on_denial() {
+    let package = package();
+    let (integer, meter) = call_with_meter(
+        &package,
+        "integer",
+        text_value("42", TextProfile::UnicodeScalars),
+        LIMITS,
+    );
+    assert_eq!(completed(&integer), &Value::Integer(Integer::from(42_i64)));
+    assert_eq!(
+        charge_points(&meter),
+        [
+            ChargePoint::FunctionCall,
+            ChargePoint::TextInputBytes,
+            ChargePoint::TextDecodeScalars
+        ]
+    );
+
+    let (rounded, meter) = call_with_meter(
+        &package,
+        "decimal",
+        text_value("1.555", TextProfile::UnicodeScalars),
+        LIMITS,
+    );
+    assert!(matches!(
+        meter.admitted_charges().last(),
+        Some(charge)
+            if charge.point == ChargePoint::DecimalRounding
+                && charge.integer_bits == Some(11)
+                && charge.decimal_digits == Some(4)
+    ));
+    assert_eq!(
+        charge_points(&meter),
+        [
+            ChargePoint::FunctionCall,
+            ChargePoint::TextInputBytes,
+            ChargePoint::TextDecodeScalars,
+            ChargePoint::DecimalRounding
+        ]
+    );
+    assert!(matches!(completed(&rounded), Value::Decimal(_)));
+
+    let (strict, meter) = call_with_meter(
+        &package,
+        "decimal_exact",
+        text_value("1.555", TextProfile::UnicodeScalars),
+        LIMITS,
+    );
+    assert!(matches!(
+        strict.outcome,
+        FamilyOutcome::Evaluated(Outcome::Refused(Refusal::InexactDecimal { .. }))
+    ));
+    assert_eq!(
+        charge_points(&meter),
+        [
+            ChargePoint::FunctionCall,
+            ChargePoint::TextInputBytes,
+            ChargePoint::TextDecodeScalars
+        ],
+        "strict exact refuses before the decimal.rounding charge"
+    );
+
+    let (rounded_float, meter) = call_with_meter(
+        &package,
+        "float",
+        text_value("0.1", TextProfile::UnicodeScalars),
+        LIMITS,
+    );
+    assert_eq!(
+        charge_points(&meter),
+        [
+            ChargePoint::FunctionCall,
+            ChargePoint::TextInputBytes,
+            ChargePoint::TextDecodeScalars,
+            ChargePoint::IeeeRound
+        ]
+    );
+    assert_eq!(
+        meter
+            .admitted_charges()
+            .last()
+            .and_then(|charge| charge.integer_bits),
+        Some(64)
+    );
+    assert!(matches!(completed(&rounded_float), Value::Float(_)));
+    let (infinity, meter) = call_with_meter(
+        &package,
+        "float",
+        text_value("inf", TextProfile::UnicodeScalars),
+        LIMITS,
+    );
+    assert!(matches!(completed(&infinity), Value::Float(_)));
+    assert_eq!(
+        charge_points(&meter),
+        [
+            ChargePoint::FunctionCall,
+            ChargePoint::TextInputBytes,
+            ChargePoint::TextDecodeScalars
+        ],
+        "infinity does not charge ieee.round"
+    );
+
+    let (string_float, meter) = call_with_meter(
+        &package,
+        "string_float",
+        Value::String("0.1".to_owned()),
+        LIMITS,
+    );
+    assert!(matches!(completed(&string_float), Value::Float(_)));
+    assert_eq!(
+        charge_points(&meter),
+        [
+            ChargePoint::FunctionCall,
+            ChargePoint::TextInputBytes,
+            ChargePoint::TextDecodeScalars,
+            ChargePoint::IeeeRound
+        ]
+    );
+    assert!(meter.admitted_charges().iter().all(|charge| !matches!(
+        charge.point,
+        ChargePoint::TextNormalizeInput | ChargePoint::TextNormalizeOutput
+    )));
+
+    for (name, value, limits, denied) in [
+        (
+            "integer",
+            text_value("42", TextProfile::UnicodeScalars),
+            ScalarLimits {
+                text_input_bytes: 0,
+                ..LIMITS
+            },
+            ChargePoint::TextInputBytes,
+        ),
+        (
+            "decimal",
+            text_value("1.555", TextProfile::UnicodeScalars),
+            ScalarLimits {
+                decimal_digits: 3,
+                ..LIMITS
+            },
+            ChargePoint::DecimalRounding,
+        ),
+        (
+            "float",
+            text_value("0.1", TextProfile::UnicodeScalars),
+            ScalarLimits {
+                integer_bits: 63,
+                ..LIMITS
+            },
+            ChargePoint::IeeeRound,
+        ),
+    ] {
+        let (evaluation, meter) = call_with_meter(&package, name, value, limits);
+        assert_incomplete_at(&evaluation, denied);
+        assert_eq!(
+            charge_points(&meter).last().copied(),
+            Some(match denied {
+                ChargePoint::TextInputBytes => ChargePoint::FunctionCall,
+                ChargePoint::DecimalRounding | ChargePoint::IeeeRound => {
+                    ChargePoint::TextDecodeScalars
+                }
+                _ => unreachable!("the expected denial point is explicit"),
+            }),
+            "a denied charge is not recorded as admitted"
+        );
+    }
+}
+
+#[trace(
+    "FSpec-TC-964",
+    "FSpec-FR-478-AC-2",
+    "FSpec-FR-478-AC-7",
+    "FSpec-FR-478-AC-11"
+)]
 #[test]
 fn malformed_numeric_text_is_undefined_and_profile_normalization_is_used() {
     let package = package();
@@ -280,10 +558,29 @@ fn malformed_numeric_text_is_undefined_and_profile_normalization_is_used() {
     assert!(matches!(
         completed(&call(
             &package,
+            "string_decimal",
+            Value::String("1.50".to_owned()),
+        )),
+        Value::Decimal(value)
+            if value.representation().coefficient() == &Integer::from(150_i64)
+                && value.representation().scale() == 2
+    ));
+    assert!(matches!(
+        completed(&call(
+            &package,
             "string_float",
             Value::String("0.1".to_owned()),
         )),
         Value::Float(value) if value.bits() == 0x3fb9_9999_9999_999a
+    ));
+    assert!(matches!(
+        completed(&call(
+            &package,
+            "string_quantity",
+            Value::String("3 ms".to_owned()),
+        )),
+        Value::Quantity(value)
+            if value.magnitude() == &Rational::from_integer(Integer::from(3_i64))
     ));
     undefined(
         &call(&package, "string_float", Value::String("５".to_owned())),
@@ -313,7 +610,12 @@ fn malformed_numeric_text_is_undefined_and_profile_normalization_is_used() {
     }
 }
 
-#[trace("TC-964", "FR-478-AC-1", "FR-478-AC-7", "FR-478-AC-10")]
+#[trace(
+    "FSpec-TC-964",
+    "FSpec-FR-478-AC-1",
+    "FSpec-FR-478-AC-7",
+    "FSpec-FR-478-AC-10"
+)]
 #[test]
 fn range_and_quantity_unit_outcomes_are_typed() {
     let package = package();
@@ -369,7 +671,65 @@ fn range_and_quantity_unit_outcomes_are_typed() {
     }
 }
 
-#[trace("TC-964", "FR-478-AC-8", "FR-478-AC-9")]
+#[trace("FSpec-TC-964", "FSpec-FR-478-AC-10")]
+#[test]
+fn a_domain_package_quantity_uses_its_short_unit_name() {
+    let time = filament_checked::key::DeclarationKey::fixture("dimension/Time");
+    let ms = filament_checked::key::DeclarationKey::fixture("unit/ms");
+    let mut model = DomainPackage::new(
+        DomainPackageRef {
+            identity: "acme/rpc".to_owned(),
+        },
+        vec![],
+    );
+    model.dimensions.push(PackageDimensionRecord {
+        key: time.clone(),
+        name: "Time".to_owned(),
+        base: true,
+        terms: vec![],
+    });
+    model.units.push(PackageUnitRecord {
+        key: ms,
+        name: "ms".to_owned(),
+        dimension: time,
+        target: None,
+        scale: "1".to_owned(),
+        offset: "0".to_owned(),
+    });
+    let selected = SelectedModels::fixture(
+        "M",
+        fsl_foundation::Span { start: 0, end: 1 },
+        model,
+        ModelNormalizationLimits::UNLIMITED,
+    )
+    .expect("the domain package units admit");
+    let package = compile_with_models(
+        "model M = \"acme/rpc\";\n\
+         function package_quantity using v(t: Text[0, 64; unicode-scalars]): Quantity<M::ms> pure { convert<Quantity<M::ms>>(t) }",
+        selected,
+    )
+    .unwrap_or_else(|refusals| panic!("package unit conversion checks: {refusals:?}"));
+    let short_name = call(
+        &package,
+        "package_quantity",
+        text_value("3 ms", TextProfile::UnicodeScalars),
+    );
+    assert!(matches!(
+        completed(&short_name),
+        Value::Quantity(value)
+            if value.magnitude() == &Rational::from_integer(Integer::from(3_i64))
+    ));
+    undefined(
+        &call(
+            &package,
+            "package_quantity",
+            text_value("3 M::ms", TextProfile::UnicodeScalars),
+        ),
+        Undefined::MalformedNumber,
+    );
+}
+
+#[trace("FSpec-TC-964", "FSpec-FR-478-AC-8", "FSpec-FR-478-AC-9")]
 #[test]
 fn finite_ieee_text_rounds_once_to_the_target_width() {
     let package = package();
@@ -385,6 +745,7 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
         evaluation.losses.as_slice(),
         [loss] if matches!(loss.loss, ValueLoss::IeeeFlags(flags) if flags.contains(IeeeFlag::Inexact))
     ));
+    assert_eq!(ieee_flags(&evaluation), [IeeeFlag::Inexact]);
     let evaluation = call(
         &package,
         "float",
@@ -412,6 +773,70 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
             evaluation.outcome
         );
     }
+    let overflow = call(
+        &package,
+        "float",
+        text_value("1e309", TextProfile::UnicodeScalars),
+    );
+    assert!(matches!(
+        completed(&overflow),
+        Value::Float(value) if value.bits() == 0x7ff0_0000_0000_0000
+    ));
+    assert_eq!(
+        ieee_flags(&overflow),
+        [IeeeFlag::Overflow, IeeeFlag::Inexact]
+    );
+    let underflow = call(
+        &package,
+        "float",
+        text_value("1e-400", TextProfile::UnicodeScalars),
+    );
+    assert!(matches!(
+        completed(&underflow),
+        Value::Float(value) if value.bits() == 0
+    ));
+    assert_eq!(
+        ieee_flags(&underflow),
+        [IeeeFlag::Underflow, IeeeFlag::Inexact]
+    );
+    let toward_zero_overflow = call(
+        &package,
+        "float_zero",
+        text_value("1e309", TextProfile::UnicodeScalars),
+    );
+    assert!(matches!(
+        completed(&toward_zero_overflow),
+        Value::Float(value) if value.bits() == 0x7fef_ffff_ffff_ffff
+    ));
+    assert_eq!(
+        ieee_flags(&toward_zero_overflow),
+        [IeeeFlag::Overflow, IeeeFlag::Inexact]
+    );
+    let toward_positive_underflow = call(
+        &package,
+        "float_positive",
+        text_value("1e-400", TextProfile::UnicodeScalars),
+    );
+    assert!(matches!(
+        completed(&toward_positive_underflow),
+        Value::Float(value) if value.bits() == 1
+    ));
+    assert_eq!(
+        ieee_flags(&toward_positive_underflow),
+        [IeeeFlag::Underflow, IeeeFlag::Inexact]
+    );
+    for (name, bits) in [("float32", 0x3dcc_cccd), ("float32_zero", 0x3dcc_cccc)] {
+        let result = call(
+            &package,
+            name,
+            text_value("0.1", TextProfile::UnicodeScalars),
+        );
+        assert!(matches!(
+            completed(&result),
+            Value::Float(value) if value.bits() == bits
+        ));
+        assert_eq!(ieee_flags(&result), [IeeeFlag::Inexact], "{name}");
+    }
     let exact_finite = call(
         &package,
         "float_exact",
@@ -427,7 +852,22 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
     );
     assert!(matches!(
         exact_inexact.outcome,
-        FamilyOutcome::Evaluated(Outcome::Refused(Refusal::IeeeNotExact { .. }))
+        FamilyOutcome::Evaluated(Outcome::Refused(Refusal::IeeeNotExact {
+            would_be,
+            ..
+        })) if would_be.iter().collect::<Vec<_>>() == [IeeeFlag::Inexact]
+    ));
+    let exact_overflow = call(
+        &package,
+        "float_exact",
+        text_value("1e309", TextProfile::UnicodeScalars),
+    );
+    assert!(matches!(
+        exact_overflow.outcome,
+        FamilyOutcome::Evaluated(Outcome::Refused(Refusal::IeeeNotExact {
+            would_be,
+            ..
+        })) if would_be.iter().collect::<Vec<_>>() == [IeeeFlag::Overflow, IeeeFlag::Inexact]
     ));
     for text in [
         "1E3", "1e+3", "1e03", "1e-0", ".5", "5.", "1e", "Infinity", "NaN", "-nan", "+inf", "0x1p3",
