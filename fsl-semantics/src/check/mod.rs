@@ -200,6 +200,7 @@ mod state_model;
 mod step_simulation;
 mod sum_case;
 mod synthesis;
+pub use synthesis::CheckedSynthesisClaim;
 mod task_set;
 mod temporal_clause;
 mod terminal;
@@ -1055,6 +1056,8 @@ pub struct CheckedGraph {
     step_relations: Vec<hyper_clause::CheckedModelRelation>,
     /// FR-165: every checked state-graph claim, in declaration order.
     state_graph_claims: Vec<CheckedStateGraphClaim>,
+    /// FR-1036: source names and declaration spans for emitted synthesis claims.
+    synthesis_claims: Vec<CheckedSynthesisClaim>,
     /// FR-447: every checked hybrid model, in declaration order.
     hybrid_models: Vec<CheckedHybridModel>,
     /// FR-447: every checked hybrid claim, in declaration order.
@@ -1208,6 +1211,7 @@ impl DebugWith for CheckedGraph {
             hyper_nodes,
             step_relations,
             state_graph_claims,
+            synthesis_claims,
             hybrid_models,
             hybrid_claims,
             hybrid_claim_sites,
@@ -1344,6 +1348,7 @@ impl DebugWith for CheckedGraph {
             .field("hyper_nodes", &hyper_nodes)
             .field("step_relations", &Seq(step_relations, table))
             .field("state_graph_claims", &state_graph_claims)
+            .field("synthesis_claims", &synthesis_claims)
             .field("hybrid_models", &hybrid_models)
             .field("hybrid_claims", &hybrid_claims)
             .field("hybrid_claim_sites", &hybrid_claim_sites)
@@ -8302,6 +8307,17 @@ impl PackageDeclarations {
             hyper_nodes,
             step_relations: Vec::new(),
             state_graph_claims: state_graph_nodes,
+            synthesis_claims: checked_syntheses
+                .iter()
+                .zip(&lowered_syntheses)
+                .map(|(checked, node)| {
+                    CheckedSynthesisClaim::new(
+                        node.clone(),
+                        checked.form.name.name.clone(),
+                        checked.form.span,
+                    )
+                })
+                .collect(),
             hybrid_models: checked_hybrid_models,
             hybrid_claims: checked_hybrid_claim_list,
             hybrid_claim_sites,
@@ -9645,6 +9661,12 @@ impl CheckedGraph {
     /// FR-165: every checked state-graph claim, in declaration order.
     pub fn state_graph_claims(&self) -> &[CheckedStateGraphClaim] {
         &self.state_graph_claims
+    }
+
+    /// FR-1036: each checked synthesis declaration's authored name, whole
+    /// source span and emitted node identity.
+    pub fn synthesis_claims(&self) -> &[CheckedSynthesisClaim] {
+        &self.synthesis_claims
     }
 
     /// FR-447: every checked hybrid model, in declaration order.

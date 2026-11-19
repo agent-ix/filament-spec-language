@@ -9,6 +9,42 @@ use super::ir::CheckedBody;
 use super::{CheckCause, CheckRefusal, Scope, Signatures, Typer};
 use crate::family::{CheckContext, DiagnosticSink, ScopeStack, StageLimits};
 
+/// The checked source identity needed to name an emitted synthesis claim.
+///
+/// The package writer uses the authored name and complete declaration span
+/// rather than reconstructing either from the graph node.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckedSynthesisClaim {
+    node: filament_exact::NodeKey,
+    name: String,
+    span: fsl_foundation::Span,
+}
+
+impl CheckedSynthesisClaim {
+    pub(crate) fn new(
+        node: filament_exact::NodeKey,
+        name: String,
+        span: fsl_foundation::Span,
+    ) -> Self {
+        Self { node, name, span }
+    }
+
+    /// The structural node emitted for this declaration.
+    pub fn node(&self) -> &filament_exact::NodeKey {
+        &self.node
+    }
+
+    /// The authored synthesis declaration name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The complete authored declaration span.
+    pub fn span(&self) -> fsl_foundation::Span {
+        self.span
+    }
+}
+
 /// One synthesis declaration after its names and expressions pass S3.
 #[derive(Debug)]
 pub(crate) struct CheckedSynthesis {
