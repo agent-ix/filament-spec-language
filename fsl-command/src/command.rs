@@ -15,6 +15,7 @@ pub use package_run::PreparedPackageRun;
 mod replay;
 mod requirements;
 mod settle;
+mod synthesis;
 mod tl;
 mod wire;
 
