@@ -1,3 +1,4 @@
 language "ix:native" edition "1-draft";
 profile t = "filament.temporal.complete/v1";
 function f using t(c: Clock): Boolean pure { true }
+function retained using t(): Boolean pure { true }
