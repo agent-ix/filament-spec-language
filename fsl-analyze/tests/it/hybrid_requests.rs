@@ -903,7 +903,7 @@ fn a_process_unsupported_entry_settles_a_located_expression_form() {
     assert_eq!(detail["mode"], "Moving", "{item}");
     assert_eq!(detail["variable"], "v", "{item}");
     assert!(detail["backend"].is_string(), "{item}");
-    assert!(detail["locus"]["node"].is_string(), "{item}");
+    assert!(detail["locus"]["node"].is_object(), "{item}");
     assert!(item.get("counterexample").is_none(), "{item}");
     assert!(item.get("replay").is_none(), "{item}");
 }
