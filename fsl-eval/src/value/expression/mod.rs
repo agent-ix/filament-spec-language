@@ -316,7 +316,7 @@ impl fsl_semantics::check::RewardEvaluator for S6aRewardEvaluator {
                 ))
             }
             FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause)) => {
-                let Some(record) = refusal_record(cause.as_ref(), |_| None) else {
+                let Some(record) = refusal_record(cause.as_ref(), None) else {
                     return Err(failure(
                         Code::RuntimeInvariant,
                         CatalogCode::new("runtime_invariant", "established-invariant-broken"),
