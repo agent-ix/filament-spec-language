@@ -73,7 +73,9 @@ type for consumers such as #217's function-application exemplar.
 ## Behavior
 
 - The result's `arm` member SHALL be a sum of `Witness`, `Input`, observed-
-  temporal and `ProtocolAssumption` results; each arm SHALL carry its own `settlement`, and
+  temporal and `ProtocolAssumption` results, and a hybrid result for a
+  replay target that names a hybrid claim, which settles by FR-450 and is
+  written as FSpec FR-323's `hybrid` row (FR-750); each arm SHALL carry its own `settlement`, and
   no shared, arm-agnostic Boolean or flag SHALL represent agreement across
   the arms.
 - Agreement on the `Witness` arm SHALL settle `reproduced-with-evaluated-witness`.
