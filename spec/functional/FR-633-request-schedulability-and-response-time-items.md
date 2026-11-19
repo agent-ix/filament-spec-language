@@ -54,7 +54,9 @@ recomputed independently (FR-248).
 - **Recomputation.** Evidence the independent recomputation does not
   reproduce settles `inconclusive` `replay-parity` (FR-248).
 - **Refusals.** A schedulability item settled `Supported` on any engine but
-  EN-7 settles as FR-281 rule 4 states.
+  EN-7 settles as FR-281 rule 4 states, except that a `schedulable` claim
+  over a task set with a checked `release` also has EN-6 as a candidate and
+  runs on it when the item selects `backend` `en-6` (FR-249).
 
 ## Acceptance Criteria
 

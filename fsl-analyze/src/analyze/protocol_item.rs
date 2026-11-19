@@ -50,7 +50,10 @@ const DEADLOCK_TRANSCRIPT: &str = "<<<assertion|model_check|deadlock|>>>";
 /// The object `over` binds, as the model's population key and object key; the
 /// population's declaration key is the universe's when the request supplied
 /// one, else the key its identity spells.
-fn over_instance(binding: &SubjectBinding<'_>, over: &(String, String)) -> ModelInstance {
+pub(super) fn over_instance(
+    binding: &SubjectBinding<'_>,
+    over: &(String, String),
+) -> ModelInstance {
     let (population, key) = over;
     let declaration = binding
         .universes
@@ -90,7 +93,7 @@ fn simulation<'a>(
     }
 }
 
-fn subject_of<'a>(
+pub(super) fn subject_of<'a>(
     package: &'a CheckedPackage,
     input: &ModelCheckInput<'a>,
     binding: &SubjectBinding<'a>,

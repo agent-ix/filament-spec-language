@@ -24,9 +24,11 @@ relationships:
 
 FSL SHALL settle a reduction a request selects for a hyper item by
 ADR-023 §5's row for the item's form (ADR-023 PH-1 to PH-6): a row that reads
-"no" settles it V-6 `ReductionNotPreserving`, and a row that reads "yes"
-settles it V-8 `unsupported-requested-capability`, since EN-1 builds no such
-reduction for a hyper product. The S3 check SHALL detect, on every HP-2 and HP-6 clause, the universal variables
+"no" settles it V-6 `ReductionNotPreserving`. A row that reads "yes" is
+executed by EN-1 when the item meets the hyper reduction eligibility rule
+below, and the run reports `HoldsReduced` when it proves the clause; a
+"yes" row on an item the rule does not admit settles V-8
+`unsupported-requested-capability`. The S3 check SHALL detect, on every HP-2 and HP-6 clause, the universal variables
 that can be swapped without changing the clause (ADR-023 CS-1). EN-1 SHALL
 store one product state per orbit of the resulting copy group for an HP-2
 clause whose swapped variables carry no fairness (CS-2, CS-3). No
@@ -66,12 +68,11 @@ swap.
 - A state constraint SHALL be refused for HP-3 (ADR-023 PH-6).
 - Key symmetry SHALL be refused for a clause over two subjects, and for an
   HP-2 clause with an `each` fairness constraint (ADR-023 PH-2, PH-3).
-- Where the table reads "yes", the reduction preserves the verdict, but EN-1
-  builds the quotient of a hyper product by the copy group alone: it does not
-  construct the diagonal action of a key symmetry (ADR-023 PH-2) and does not
-  apply a state constraint to a hyper product. A selection of either SHALL
-  settle the item V-8 `unsupported-requested-capability` before any
-  expansion, naming the reduction.
+- Where the table reads "yes", the reduction preserves the verdict. EN-1
+  SHALL execute it when the item meets the hyper reduction eligibility rule
+  ("Key symmetry and state constraints" below), and SHALL otherwise settle
+  the item V-8 `unsupported-requested-capability` before any expansion,
+  naming the reduction.
 - A selected reduction SHALL NOT be ignored.
 - When several reductions are selected, the first whose row reads "no", in
   the order key symmetry, partial order, state constraint, SHALL decide;
@@ -79,7 +80,73 @@ swap.
 - An HP-6 clause is read by the same rows (ADR-023 PH-4): partial-order
   reduction settles `ReductionNotPreserving` naming `PartialOrder` and the
   form `ProjectionAligned`, and key symmetry over one subject or a state
-  constraint, which read "yes", settle V-8.
+  constraint, which read "yes", settle V-8, since the eligibility rule
+  admits HP-2 items only.
+
+### Key symmetry and state constraints
+
+**Hyper reduction eligibility rule.** A selected reduction whose row reads
+"yes" is eligible exactly when the item is an HP-2 clause (FR-176's
+lockstep product) and:
+
+- for a key symmetry, every variable ranges over one subject and every
+  fairness constraint is `whole` (ADR-023 PH-2), since the diagonal action
+  needs one key universe and `each` fairness is read per key;
+- for a state constraint, nothing more: over any number of subjects and
+  under `whole` or `each` fairness the product is still the lockstep
+  product, and a constraint cuts component states without renaming any key
+  (ADR-023 PH-3 "as PH-2").
+
+EN-1 SHALL execute an eligible reduction, and SHALL settle every other
+"yes" selection V-8 `unsupported-requested-capability` before any
+expansion, naming the reduction. The ineligible "yes" cells are:
+
+- key symmetry on an HP-1 step relation (PH-1), an HP-3 clause (PH-6) and an
+  HP-6 clause (PH-4), and a state constraint on an HP-1 step relation (PH-1)
+  and an HP-6 clause (PH-4).
+
+The reason is the state each form stores. EN-1's canonicaliser and its
+constraint pruning act on a product state that is a tuple of component
+states, one per variable, advanced in lockstep, and one automaton state.
+An HP-1 relation stores no product (FR-179 evaluates transition tuples), an
+HP-3 product state holds a witness set whose diagonal image is a renamed
+and re-sorted set (FR-177), and an HP-6 product advances its components
+separately on skipped steps under a bad-prefix monitor (FR-178), so none of
+them is a state those two operations are defined on. A selection is still
+never ignored on them.
+
+On an eligible item:
+
+- **Key symmetry.** EN-1 SHALL apply the selected symmetry declaration's
+  group with the diagonal action (ADR-021 SYM-6): one permutation applied
+  to the keys of every component of a product state, under the stabiliser
+  of the clause's object parameters, which ADR-021 admits and checks as for
+  a single-model run (its initial-state closure refuses
+  `SymmetryBroken{population, cause}`, V-6). The run's group SHALL be the
+  product of that diagonal group and the copy group EN-1 swaps by, which
+  commute, since one renames keys in every slot and the other exchanges
+  slots; the canonical form of a product state is the least-key member of
+  its orbit under that product group, as "Canonicalisation" states. Whole
+  fairness is invariant under a key permutation, because it constrains
+  every instance of its operation alike.
+- **State constraint.** EN-1 SHALL check the selected constraint on every
+  component state of every product state it creates and SHALL store no
+  successor any of whose components violates it, recording each such
+  product state's predecessor as a boundary state (ADR-021 SC-2).
+- **Outcomes.** A run that finds no violation and no fair accepting cycle
+  SHALL return FR-126's `HoldsReduced{reductions}`: `reductions` lists, in
+  the order symmetry then copy-swap, `Symmetry{groups, orbit, stabiliser}`
+  for an applied key symmetry and `CopySwap{classes}` for the copy-swap
+  classes swapped; a state constraint adds no member. Under a state
+  constraint, a run that reached a boundary state SHALL instead return
+  `ConstraintReached{boundary_states}`, which settles V-6 (FR-160), because
+  a cut state may hide a violation. FR-160 maps `HoldsReduced` with a
+  symmetry member to `Proved{basis: Reduced{reductions}, certification:
+  Uncertified}`, and one with only a constraint and copy-swap or nothing to
+  its rows for those reductions. A `Violated` outcome on the reduced product
+  is real (PH-2 "lasso real"), is concretised as "Counterexamples and
+  verdicts" states with the diagonal permutation tracked beside the copy
+  permutation, and names no reduction.
 
 ### Copy-swap detection (S3)
 
@@ -160,7 +227,8 @@ swap.
 | FR-174-AC-4 | With partial-order reduction selected, `NonInterference` settles `ReductionNotPreserving` before any expansion; with a state constraint selected, `Opaque` settles `ReductionNotPreserving`; with key symmetry selected over `SavesPower`'s two subjects, it settles `ReductionNotPreserving`. | Test (TC-599) |
 | FR-174-AC-5 | A clause with the body `always holds(v.l @ a = v.l @ b)`, the `match` conjunct `a.step.op = b.step.op` and `fair weak V::Vault::reset` on both `a` and `b`, over a vault whose `step` flips `l` and whose `reset` is enabled at `l = 1` and keeps it, from `a = (0, 0)` and `b = (0, 1)`, has the copy group `[[a, b]]` and is stored whole: 4 product states, the unreduced count, no reduction named, and `Violated` with a counterexample that replays fair. With the fairness on `a` and `b` and a second class `c`, `d` without any, the outcome names `CopySwap{[[c, d]]}` alone. | Test (TC-599) |
 | FR-174-AC-6 | The clause with the body `always holds(v.l @ a = 0) and always holds(v.l @ b = 0)` over the secure vault has the copy group `[[a, b]]` and is stored whole with no reduction named, since its swap exchanges two acceptance sets. The body `eventually holds(v.l @ a = 1) and eventually holds(v.l @ b = 1)` over a vault whose `step` toggles `l`, from the initial states `(0, 0)` and `(0, 1)`, has a negation with no acceptance set, which its swap fixes, and is stored as 5 states against the unreduced 8. A clause with one class whose swap passes and one whose exchange fails is stored whole with no reduction named. | Test (TC-599) |
-| FR-174-AC-7 | With key symmetry selected over one subject, `NonInterference` (whole fairness) and `Opaque` each settle V-8 `Unsupported` naming the symmetry; with a state constraint selected, `NonInterference` settles V-8 naming the constraint; each before any expansion. With key symmetry selected over one subject and `fair each` constraints on `NonInterference`, it settles `ReductionNotPreserving`. With no selection, `NonInterference` over the secure vault holds with the reduction `CopySwap`. With key symmetry and a state constraint both selected on `NonInterference`, the item settles V-8 naming the symmetry; with partial-order reduction and key symmetry both selected on `Opaque`, it settles `ReductionNotPreserving` naming partial-order reduction. | Test (TC-599) |
+| FR-174-AC-7 | Over the secure vault with the two vaults `v` and `w`, `NonInterference` (whole fairness) with the key symmetry of `vaults` `[[v, w]]` selected returns `HoldsReduced` whose `reductions` are `Symmetry{..}` with orbit `[v, w]` then `CopySwap{[[a, b]]}`, and stores fewer product states than the same run with no selection, which also holds; over the leaky vault the same selection returns `Violated` with a counterexample that replays and names no reduction. With the state constraint `Low` (`self.l <= 1`, met by every reachable state) selected, the secure `NonInterference` returns `HoldsReduced{[CopySwap{[[a, b]]}]}`; with `Zero` (`self.l = 0`) selected it returns `ConstraintReached` with its boundary states; with key symmetry and `Low` both selected it returns `HoldsReduced` naming `Symmetry` then `CopySwap`. The constraint is eligible on every HP-2 item: with `Low` selected, `SavesPower` over two subjects and `NonInterference` with `fair each` constraints each run under the constraint, settle neither V-8 nor `ReductionNotPreserving`, and give the verdict of the same run with no selection. With key symmetry selected over one subject, `Opaque` (HP-3, ineligible) settles V-8 `Unsupported` naming the symmetry before any expansion. With key symmetry selected and `fair each` constraints on `NonInterference`, it settles `ReductionNotPreserving`. With no selection, `NonInterference` over the secure vault holds with the reduction `CopySwap`. With partial-order reduction and key symmetry both selected on `Opaque`, it settles `ReductionNotPreserving` naming partial-order reduction. | Test (TC-599, TC-3011) |
+
 | FR-174-AC-8 | The `align skip` clause of FR-178-AC-1 has the copy group `[[a, b]]`, is stored as the 18 states of its projected product with no reduction named; with partial-order reduction selected it settles `ReductionNotPreserving{PartialOrder, ProjectionAligned}`, and with key symmetry selected over its one subject it settles V-8 `Unsupported`. | Test (TC-599) |
 
 ## Dependencies

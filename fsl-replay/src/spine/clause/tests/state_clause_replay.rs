@@ -227,15 +227,60 @@ fn case_with(
     source: ReplaySource,
     adjust: impl FnOnce(&mut ReplayRequestWire, &mut (NodeKey, OccurrenceKey)),
 ) -> Case {
-    case_targeting(
+    case_targeting_with_witness(
         unit,
         clause,
         documents,
         source,
         clause_target(clause),
         clause_target(clause),
+        None,
         adjust,
     )
+}
+
+fn case_with_comparison_witness(
+    unit: Unit,
+    clause: &str,
+    documents: Documents,
+    source: ReplaySource,
+) -> Case {
+    let witness = comparison_witness(clause, &documents);
+    case_targeting_with_witness(
+        unit,
+        clause,
+        documents,
+        source,
+        clause_target(clause),
+        clause_target(clause),
+        Some(witness),
+        |_, _| {},
+    )
+}
+
+/// Returns FR-265's comparison record for the same clause-run selection and
+/// documents carried by a replay case.
+fn comparison_witness(clause: &str, documents: &Documents) -> crate::SeparatingWitnessRecord {
+    let selection = ClauseSelection {
+        name: clause.to_owned(),
+        input: documents.observation.clone(),
+    };
+    let mut request = config_version_request(ClauseRunSelection::Clause(selection));
+    let invocation = match &documents.observation {
+        ClauseSelectionInput::Invocation { invocation } => Some(invocation),
+        _ => None,
+    };
+    for (reference, bytes) in &documents.bytes {
+        if invocation == Some(reference) {
+            request.invocations.insert(reference.clone(), bytes.clone());
+        } else {
+            request.snapshots.insert(reference.clone(), bytes.clone());
+        }
+    }
+    run_clause(request)
+        .expect("the comparison fixture reports")
+        .witness
+        .expect("the decisive comparison has a witness record")
 }
 
 /// [`case_with`] with the request's replay target and the envelope's given
@@ -249,6 +294,28 @@ fn case_targeting(
     envelope_target: ReplayTarget,
     adjust: impl FnOnce(&mut ReplayRequestWire, &mut (NodeKey, OccurrenceKey)),
 ) -> Case {
+    case_targeting_with_witness(
+        unit,
+        clause,
+        documents,
+        source,
+        request_target,
+        envelope_target,
+        None,
+        adjust,
+    )
+}
+
+fn case_targeting_with_witness(
+    unit: Unit,
+    clause: &str,
+    documents: Documents,
+    source: ReplaySource,
+    request_target: ReplayTarget,
+    envelope_target: ReplayTarget,
+    witness: Option<crate::SeparatingWitnessRecord>,
+    adjust: impl FnOnce(&mut ReplayRequestWire, &mut (NodeKey, OccurrenceKey)),
+) -> Case {
     let mut identity = clause_identity(&unit, clause);
     let mut wire = request(
         &unit.bytes,
@@ -259,7 +326,7 @@ fn case_targeting(
     adjust(&mut wire, &mut identity);
     let payload = StateClauseCounterexample {
         observation: documents.observation.clone(),
-        witness: None,
+        witness,
     };
     let (clause_node, occurrence_key) = identity;
     let envelope = WitnessEnvelope::reconstruct(
@@ -301,11 +368,9 @@ fn without(wire: &mut ReplayRequestWire, reference: &DocumentRef) {
     super::frame_replay::withhold(wire, reference);
 }
 
-/// Replays `case` and checks it reproduced with an evaluated witness, whose
-/// FR-351 record decides by `false` at index 0, with an empty value path and
-/// no trace position, and that the result keeps the source identity, the
-/// clause, the envelope's identities and every document
-/// admission read.
+/// Replays `case` and checks it reproduced with an evaluated witness and
+/// keeps the source identity, clause, envelope identities and documents
+/// admitted during replay.
 fn assert_reproduces_keeping_identities(case: Case, clause: &str) -> StateClauseReplayResult {
     let _unit_bytes = case.unit.bytes.clone();
     let (node, occurrence) = (
@@ -321,13 +386,11 @@ fn assert_reproduces_keeping_identities(case: Case, clause: &str) -> StateClause
     let arm = witness_arm(&result);
     assert_eq!(
         arm.settlement(),
-        WitnessSettlement::ReproducedWithEvaluatedWitness
+        WitnessSettlement::ReproducedWithEvaluatedWitness,
+        "{arm:?}"
     );
     assert_eq!(arm.category(), Category::Violation);
     assert_eq!(arm.value(), Some(EvaluatedValue::Boolean(false)));
-    // FR-122-AC-1, FR-268-AC-4: neither clause reaches a decisive
-    // occurrence (FR-265), so the result carries no FSpec FR-351 record.
-    assert!(arm.record().is_none());
     assert_eq!(result.source().identity(), IDENTITY);
     assert_eq!(result.clause().to_string(), clause);
     assert_eq!(result.clause_node().clone(), node);
@@ -342,27 +405,33 @@ fn assert_reproduces_keeping_identities(case: Case, clause: &str) -> StateClause
 #[trace("TC-517", "FR-122-AC-1", "FSpec-V1-EXPR-020")]
 #[test]
 fn a_violated_postcondition_reproduces_keeping_its_identities() {
+    let documents = changed_version();
+    let expected = comparison_witness("VersionUnchanged", &documents);
     let result = assert_reproduces_keeping_identities(
-        case(config_version_unit(), "VersionUnchanged", changed_version()),
+        case_with_comparison_witness(
+            config_version_unit(),
+            "VersionUnchanged",
+            documents,
+            witness_source(),
+        ),
         "VersionUnchanged",
     );
+    assert_eq!(witness_arm(&result).record(), Some(&expected));
     assert_eq!(result.documents().len(), 3);
 }
 
-/// TC-517 step 1 (FR-122-AC-1): the same payload on an `Input`-arm envelope
-/// reproduces without a witness, holding `false` and no FR-351 record (the
-/// `Input` arm has no record member).
+/// FR-268-AC-1: the same payload and comparison record on an `Input`-arm
+/// envelope reproduces without a witness record in the result.
 #[trace("TC-517", "FR-122-AC-1")]
 #[test]
 fn an_input_arm_envelope_reproduces_without_a_witness() {
     let documents = changed_version();
     let read = documents.read.clone();
-    let case = case_with(
+    let case = case_with_comparison_witness(
         config_version_unit(),
         "VersionUnchanged",
         documents,
         ReplaySource::Input(Vec::new()),
-        |_, _| {},
     );
     let _unit_bytes = case.unit.bytes.clone();
     let (node, occurrence) = clause_identity(&case.unit, "VersionUnchanged");
@@ -384,10 +453,18 @@ fn an_input_arm_envelope_reproduces_without_a_witness() {
 #[trace("TC-517", "FR-122-AC-1", "FSpec-V1-EXPR-018")]
 #[test]
 fn a_violated_invariant_reproduces_keeping_its_snapshot() {
+    let documents = violating_parent();
+    let expected = comparison_witness("ParentOrder", &documents);
     let result = assert_reproduces_keeping_identities(
-        case(config_version_unit(), "ParentOrder", violating_parent()),
+        case_with_comparison_witness(
+            config_version_unit(),
+            "ParentOrder",
+            documents,
+            witness_source(),
+        ),
         "ParentOrder",
     );
+    assert_eq!(witness_arm(&result).record(), Some(&expected));
     assert_eq!(result.documents().len(), 1);
 }
 
@@ -1094,10 +1171,18 @@ fn an_out_of_range_pre_state_value_still_refuses() {
 #[trace("TC-517", "FR-122-AC-7")]
 #[test]
 fn an_in_range_post_state_reports_no_range_violation() {
+    let documents = changed_version();
+    let expected = comparison_witness("VersionUnchanged", &documents);
     let result = assert_reproduces_keeping_identities(
-        case(config_version_unit(), "VersionUnchanged", changed_version()),
+        case_with_comparison_witness(
+            config_version_unit(),
+            "VersionUnchanged",
+            documents,
+            witness_source(),
+        ),
         "VersionUnchanged",
     );
+    assert_eq!(witness_arm(&result).record(), Some(&expected));
     assert!(result.range_violations().is_empty());
     let holding = replay(case(
         config_version_unit(),

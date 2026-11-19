@@ -80,6 +80,7 @@ mod result;
 mod scalar;
 pub mod source_inventory;
 pub mod spine;
+mod spine_eval_api;
 pub mod statistical;
 mod supplied_limits;
 mod target;

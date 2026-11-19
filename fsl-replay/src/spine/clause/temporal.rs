@@ -500,11 +500,11 @@ pub struct TimestampedWindow {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LateInputs {
     /// Each observation's interval stamp, when it has one.
-    pub intervals: Vec<Option<fsl_eval::temporal::StampInterval>>,
+    pub intervals: Vec<Option<crate::spine_eval_api::SpineEvalStampInterval>>,
     /// Each observation's arrival watermark, when it states one.
     pub arrivals: Vec<Option<u64>>,
     /// The late-data cutoff, when one is selected.
-    pub cutoff: Option<fsl_eval::temporal::LateCutoff>,
+    pub cutoff: Option<crate::spine_eval_api::SpineEvalLateCutoff>,
     /// The late observations a superseding repair admits, by observation
     /// identity (FR-526).
     pub admit_late: Vec<String>,

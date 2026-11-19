@@ -733,6 +733,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 recording: None,
                 population: None,
                 backend_options,
+                protocol_analysis: None,
             },
             form: Some(ItemForm::Temporal(form)),
         };
@@ -766,6 +767,7 @@ fn options(selection: &ItemSelection, backend_options: BTreeMap<String, String>)
             .map(super::DocumentSelection::reference),
         population: selection.population.clone(),
         backend_options,
+        protocol_analysis: None,
     }
 }
 

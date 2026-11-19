@@ -128,6 +128,35 @@ pub fn projection_item<'a>(
     )
 }
 
+/// Like [`projection_item`], owning the admitted package for request-path
+/// callers that emit and admit it during the analysis operation.
+pub(crate) fn projection_item_owned<'a>(
+    index: RequestIndex,
+    package: Box<CheckedPackageV2>,
+    request: ProjectionRequest,
+) -> AnalyzeItem<'a> {
+    AnalyzeItem::new(
+        index,
+        Capability::LocalProjection,
+        Some(DeclarationFamily::Protocol),
+        Mode::Unbounded,
+        BACKEND_ID,
+        move |_| match project(&package, request) {
+            Ok(result) => found(ProtocolAnalysisArtifact::Projection(Box::new(result))),
+            Err(ProjectionRefusal::Missing(_)) => invalid("missing-member"),
+            Err(ProjectionRefusal::InvalidProfile(_) | ProjectionRefusal::UnknownRole(_)) => {
+                invalid("invalid-value")
+            }
+            Err(
+                ProjectionRefusal::View(_)
+                | ProjectionRefusal::Premises(_)
+                | ProjectionRefusal::Inconsistent(_)
+                | ProjectionRefusal::Structure(_),
+            ) => fault(),
+        },
+    )
+}
+
 /// The `realizability` item at `index` that decides `package`'s protocol as
 /// `request` asks (FR-571). Refusals settle as for [`projection_item`]; a
 /// run limit or the evaluation meter that stops the arena is the result's
@@ -150,6 +179,40 @@ pub fn realizability_item<'a>(
                 invalid("invalid-value")
             }
             // FSpec FR-785-AC-3: a refused capacity binding.
+            Err(RealizabilityRefusal::Protocol(ProtocolRefusal::Capacity(refusal))) => {
+                invalid(refusal.cause())
+            }
+            Err(
+                RealizabilityRefusal::View(_)
+                | RealizabilityRefusal::Premises(_)
+                | RealizabilityRefusal::Admission(_)
+                | RealizabilityRefusal::Protocol(_)
+                | RealizabilityRefusal::UnnamedNode(_)
+                | RealizabilityRefusal::Stopped(_),
+            ) => fault(),
+        },
+    )
+}
+
+/// Like [`realizability_item`], owning the admitted package for request-path
+/// callers that emit and admit it during the analysis operation.
+pub(crate) fn realizability_item_owned<'a>(
+    index: RequestIndex,
+    package: Box<CheckedPackageV2>,
+    request: RealizabilityRequest<'a>,
+) -> AnalyzeItem<'a> {
+    AnalyzeItem::new(
+        index,
+        Capability::Realizability,
+        Some(DeclarationFamily::Protocol),
+        Mode::Unbounded,
+        BACKEND_ID,
+        move |_| match realize(&package, request) {
+            Ok(result) => found(ProtocolAnalysisArtifact::Realizability(Box::new(result))),
+            Err(RealizabilityRefusal::Missing(_)) => invalid("missing-member"),
+            Err(RealizabilityRefusal::InvalidProfile(_) | RealizabilityRefusal::PremiseFact(_)) => {
+                invalid("invalid-value")
+            }
             Err(RealizabilityRefusal::Protocol(ProtocolRefusal::Capacity(refusal))) => {
                 invalid(refusal.cause())
             }

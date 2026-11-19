@@ -484,7 +484,7 @@ pub struct TemporalValuation {
     pub clause: fsl_semantics::check::CheckedTemporalClause,
     /// The valuation over the supplied trace; `None` when the trace is an
     /// empty finite trace, which asks for the clause alone.
-    pub positions: Option<fsl_eval::temporal::ObservedValuation>,
+    pub positions: Option<crate::spine_eval_api::SpineEvalObservedValuation>,
     /// FR-931 `cross_evaluate.initial`: the valuation of every (instance,
     /// behaviour) closed trace of the model subject a snapshot builds;
     /// `None` for a supplied trace.
@@ -1789,7 +1789,7 @@ pub struct ProgramBatchOutcome {
 /// Evaluation results of one admitted value-invariant selection.
 pub struct ValueInvariantsBatchOutcome {
     /// The ordered evaluation result for each reached invariant/value pair.
-    pub evaluation: fsl_eval::value::ValueInvariantEvaluation,
+    pub evaluation: crate::spine_eval_api::SpineEvalValueInvariantEvaluation,
     /// FR-106 admission usage for this selection.
     pub admission_usage: fsl_semantics::model::observation::AdmissionUsage,
 }

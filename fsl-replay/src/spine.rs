@@ -58,7 +58,13 @@ pub(crate) use clocks::ClockLocator;
 pub use clocks::{InvalidClock, RequestClocks};
 /// FR-527's TL mapping table and the native valuation a TL cross-evaluation
 /// reads (FR-757, FR-931), for the command adapter's correspondence stage.
-pub use fsl_eval::temporal::{AtomReading, ObservedValuation, TemporalOutcome};
+pub use crate::spine_eval_api::{
+    SpineEvalAtomReading as AtomReading, SpineEvalLateCutoff as LateCutoff,
+    SpineEvalObservedValuation as ObservedValuation,
+    SpineEvalStampInterval as StampInterval, SpineEvalTemporalOutcome as TemporalOutcome,
+    SpineEvalTemporalRefusal as TemporalRefusal,
+    SpineEvalValueInvariantEvaluation as ValueInvariantEvaluation,
+};
 pub use fsl_package::checked_views::{
     support_of as tl_support_of, Closure as TlClosure, Support as TlSupport, Target as TlTarget,
     Unmatched as TlUnmatched,
