@@ -10,7 +10,7 @@ use super::protocol_reference::{clause_argument, node_by_id, node_of, not_emitte
 use super::reachability::{lower_package, lower_with, model_node, Lowered};
 use super::*;
 use filament_semantic_value::checking::CheckMode;
-use fsl_semantics::check::{CheckRefusal, ProtocolConstruct};
+use fsl_semantics::check::{CheckCause, CheckRefusal, ProtocolAnchorCause, ProtocolConstruct};
 
 pub(super) const PROFILES: &str = "profile p = \"filament.protocol.finite-global/v1\";\n\
                          profile e = \"filament.temporal.timed/v1\";\n";
@@ -1880,6 +1880,42 @@ fn an_unstable_fifo_key_refuses_at_the_key() {
             "{text}"
         );
         assert_eq!(refusal.cause.cause(), Some("operator-ineligible"), "{text}");
+        if carries == "WithFloat" {
+            let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+                panic!("a protocol anchor cause: {refusal:?}");
+            };
+            let ProtocolAnchorCause::KeyEquality {
+                channel,
+                operator,
+                key_text,
+                key_type,
+                span,
+            } = cause.as_ref()
+            else {
+                panic!("a FIFO-key-stable diagnostic: {cause:?}");
+            };
+            assert_eq!(channel, "C");
+            assert_eq!(operator, "=");
+            assert_eq!(key_text, "m");
+            let filament_exact::ValueType::Composite(declaration) = key_type.as_ref() else {
+                panic!("the retained FIFO key type is composite: {key_type:?}");
+            };
+            assert_eq!(declaration.package(), "pkg");
+            assert_eq!(
+                declaration.path(),
+                vec![filament_exact::PathSegment::Text("WithFloat".to_owned())]
+            );
+            assert_eq!(declaration.ordinal(), 0);
+            let key_start = text.rfind("{ m }").expect("the FIFO key") + 2;
+            assert_eq!(
+                *span,
+                fsl_foundation::Span {
+                    start: key_start,
+                    end: key_start + 1,
+                }
+            );
+            assert_eq!(&text[span.start..span.end], "m");
+        }
     }
 }
 
