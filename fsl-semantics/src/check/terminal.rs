@@ -110,6 +110,7 @@ pub enum TerminalDeclaration {
 #[derive(Debug)]
 pub struct CheckedTerminal {
     pub(crate) model: String,
+    pub(crate) package: String,
     pub(crate) name: Option<String>,
     pub(crate) declaration: TerminalDeclaration,
     /// The `claim` occurrence `[node, "claim", ordinal]` of the declaration's
@@ -122,6 +123,12 @@ impl CheckedTerminal {
     /// The model alias.
     pub fn model(&self) -> &str {
         &self.model
+    }
+
+    /// The identity of the domain package the model alias selects: the key
+    /// the declarations are ordered by on both routes (FR-940).
+    pub fn package(&self) -> &str {
+        &self.package
     }
 
     /// The declared name; `None` when the model declares none.
@@ -279,8 +286,8 @@ impl TerminalNode {
     }
 }
 
-/// FR-411 "Deadlock-freedom verdict join": each selected model alias's
-/// terminal node key, or `None` for a model with no declaration.
+/// FR-411 "Deadlock-freedom verdict join": each selected model's, by selection
+/// identity, terminal node key, or `None` for a model with no declaration.
 ///
 /// The node key carries the declaration's mode, model and predicate and not
 /// its written name, so two packages that differ only in a model's
@@ -289,15 +296,35 @@ impl TerminalNode {
 /// the keys the request was written under with those a run, a certificate
 /// check or a replay read.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct TerminalKeys(BTreeMap<String, Option<NodeKey>>);
+pub struct TerminalKeys(BTreeMap<(String, usize), NodeKey>);
+
+/// A declaration's key in a [`TerminalKeys`]: the model's selection identity
+/// and the declaration's ordinal among that identity's declarations (FR-411):
+/// the order of their aliases on the source route, of their terminal rows on
+/// the package route. A package holds one declaration per identity today, at
+/// ordinal 0.
+fn terminal_name((identity, ordinal): &(String, usize)) -> String {
+    if *ordinal == 0 {
+        identity.clone()
+    } else {
+        format!("{identity}#{ordinal}")
+    }
+}
 
 impl TerminalKeys {
-    /// The first model alias, in ascending order, whose declaration differs
+    /// The keys of `declarations`, each a model selection identity with its
+    /// terminal node key: how the package route, which records no alias,
+    /// names the declarations a run reads (FR-411, FR-940).
+    pub fn of(declarations: impl IntoIterator<Item = ((String, usize), NodeKey)>) -> Self {
+        Self(declarations.into_iter().collect())
+    }
+
+    /// The first model selection identity, in ascending order, whose declaration differs
     /// between `self`, the declarations a request was written under, and
-    /// `read`, the declarations a run, check or replay read. An alias one
+    /// `read`, the declarations a run, check or replay read. An identity one
     /// side does not list has no declaration there.
     pub fn mismatch(&self, read: &Self) -> Option<TerminalMismatch> {
-        let key = |keys: &Self, model: &str| keys.0.get(model).cloned().flatten();
+        let key = |keys: &Self, model: &(String, usize)| keys.0.get(model).cloned();
         self.0
             .keys()
             .chain(read.0.keys())
@@ -307,7 +334,7 @@ impl TerminalKeys {
                 let requested = key(self, model);
                 let recompiled = key(read, model);
                 (requested != recompiled).then(|| TerminalMismatch {
-                    model: model.clone(),
+                    model: terminal_name(model),
                     requested,
                     recompiled,
                 })
@@ -315,12 +342,13 @@ impl TerminalKeys {
     }
 }
 
-/// A model alias whose terminal declaration differs between a request and
-/// what a run, check or replay read (FR-411 "Deadlock-freedom verdict
+/// A model, by selection identity, whose terminal declaration differs between a
+/// request and what a run, check or replay read (FR-411 "Deadlock-freedom verdict
 /// join"): `stale_dependency`/`content-mismatch`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TerminalMismatch {
-    /// The model alias.
+    /// The model's selection identity, with `#` and the declaration's ordinal
+    /// when it is not the identity's first.
     pub model: String,
     /// The terminal node key the request was written under; `None` for no
     /// declaration.
@@ -350,16 +378,16 @@ impl CheckedGraph {
     /// terminal node key, the node its declaration's `claim` occurrence
     /// names, or `None` for a model with no declaration.
     pub fn terminal_keys(&self) -> TerminalKeys {
+        let mut ordinals = BTreeMap::<&str, usize>::new();
         TerminalKeys(
             self.terminals()
                 .iter()
-                .map(|terminal| {
-                    (
-                        terminal.model().to_owned(),
-                        terminal
-                            .occurrence()
-                            .map(|occurrence| occurrence.node().clone()),
-                    )
+                .filter_map(|terminal| {
+                    let node = terminal.occurrence()?.node().clone();
+                    let ordinal = ordinals.entry(terminal.package()).or_default();
+                    let key = (terminal.package().to_owned(), *ordinal);
+                    *ordinal += 1;
+                    Some((key, node))
                 })
                 .collect(),
         )
@@ -375,4 +403,12 @@ impl CheckedGraph {
             .filter_map(|node| TerminalNode::of(node.key(), node.body()))
             .collect()
     }
+}
+
+/// The `TypeDeclaration` owner name the `when` predicate of the `terminal`
+/// declaration at `index` is located under, on either route: `index` is the
+/// declaration's index among the unit's `terminal` declarations, in source
+/// order (FR-411, FR-940).
+pub fn terminal_predicate_site(index: usize) -> String {
+    super::lowering::terminal_site(index, super::lowering::TerminalSite::Predicate)
 }

@@ -1213,8 +1213,9 @@ mod tests {
         .expect_err("unknown capability labels are refused")
     }
 
-    /// FR-489-AC-1/2/4/5: the production snapshot contains exactly the real
-    /// EN-1, EN-4, EN-5 and EN-6 registrations and the two witness arms.
+    /// FR-489-AC-1/2/4/5: the production snapshot contains exactly the
+    /// descriptors owned by EN-1, EN-4, EN-5, EN-6, EN-7, value-checker,
+    /// contract-checker and protocol-analysis from `Engines::fsl()`.
     #[trace("TC-1272", "FR-489-AC-1", "FR-489-AC-2", "FR-489-AC-4", "FR-489-AC-5")]
     #[test]
     fn production_snapshot_contains_only_linked_engine_registrations() {

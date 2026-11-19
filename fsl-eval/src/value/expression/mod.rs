@@ -41,7 +41,8 @@ pub(crate) use evaluate::reader_source::{
     ProjectedClause,
 };
 pub(crate) use bare::{
-    evaluate_state_graph_predicate as evaluate_bare_state_graph_predicate, StateGraphOver,
+    evaluate_state_graph_predicate as evaluate_bare_state_graph_predicate,
+    evaluate_terminal_predicate as evaluate_bare_terminal_predicate, StateGraphOver,
 };
 pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations};
 use evaluate::Machine;
