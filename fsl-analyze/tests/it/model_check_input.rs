@@ -133,7 +133,6 @@ fn terminal_classes(
 /// terminal row and classifies every reachable state as the source route does
 /// for `terminal any`, `terminal when` over `self`, and no declaration.
 #[trace("TC-2958", "FR-940-AC-6")]
-#[trace("TC-487", "FR-060-AC-6")]
 #[test]
 fn a_package_route_input_reads_a_terminal_declaration_as_the_source_does() {
     use fsl_eval::simulation::model::TerminalClass;
@@ -566,31 +565,144 @@ fn deadlock_parity(world: &crate::model_world::World, settles: &str) -> String {
     format!("{:?}", source_replay.settlement)
 }
 
+/// The Counter world under `body`, with one clause and one counter at 0.
+fn counter_with(body: &str) -> crate::model_world::World {
+    use crate::model_world::{counter, Clause, World, INFINITE};
+    World::new(
+        counter(),
+        body,
+        INFINITE,
+        &[Clause {
+            activation: "on each (q: M::Counter)",
+            formula: "always holds(c.value <= 3)",
+        }],
+        &[("c", serde_json::json!({"value": {"integer": "0"}}))],
+    )
+}
+
 /// FR-411 "Deadlock-freedom verdict join", FR-940: a derived deadlock-freedom
-/// item over the Counter unit with `terminal any`, and one with `terminal
-/// when { self.value = 3 }`, is not refused `TerminalDeclaration` on the
-/// package route: the declarations are keyed by their model's selection
-/// identity on both routes, and the item settles, and replays, equal on
-/// both.
-#[trace("TC-1142", "FR-411-AC-5")]
+/// item over the Counter unit with `terminal when { self.value = 3 }` is not
+/// refused `TerminalDeclaration` on the package route: the declarations are
+/// keyed by their model's selection identity on both routes, and the item
+/// settles, and replays, equal on both.
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 fn a_package_route_deadlock_item_joins_a_terminal_declaration_as_the_source_does() {
-    use crate::model_world::{counter, Clause, World, INFINITE};
     // With `terminal any` there is no derived item (FR-411), so the item is
     // written over the `when` declaration; `terminal any` joins by its keys
     // (the terminal-class parity test above).
-    for terminal in ["terminal Done using v on M when { self.value = 3 };\n"] {
-        let world = World::new(
-            counter(),
-            &format!("{CONTRACT}{terminal}"),
-            INFINITE,
-            &[Clause {
-                activation: "on each (q: M::Counter)",
-                formula: "always holds(c.value <= 3)",
-            }],
-            &[("c", serde_json::json!({"value": {"integer": "0"}}))],
-        );
-        deadlock_parity(&world, "Proved");
-    }
+    let world = counter_with(&format!(
+        "{CONTRACT}terminal Done using v on M when {{ self.value = 3 }};\n"
+    ));
+    deadlock_parity(&world, "Proved");
+}
+
+/// FR-411-AC-5 (package route): for a derived deadlock-freedom item written
+/// over the `when` package, an EN-1 run over the package route's no-declaration
+/// package is refused `TerminalDeclaration` (`stale_dependency`/
+/// `content-mismatch`), naming the model's selection identity, the `when`
+/// terminal node key and none; over the `when` package itself the join admits.
+#[trace("TC-1142", "FR-411-AC-5")]
+#[test]
+fn a_package_route_run_over_another_terminal_declaration_is_refused_as_the_source_is() {
+    use fsl_analyze::analyze::{
+        derived_model_item, AnalyzeLimits, PackageDeadlockSubject, TemporalItem,
+    };
+    use fsl_analyze::analyze::DerivedItemMismatch;
+    use fsl_route::request::{DerivedLimits, ItemKind};
+
+    let when = counter_with(&format!(
+        "{CONTRACT}terminal Done using v on M when {{ self.value = 3 }};\n"
+    ));
+    let none = counter_with(CONTRACT);
+    let written = crate::derived_request::written(
+        &when.subject(&["c"], UNLIMITED),
+        &DerivedLimits::default(),
+    );
+    let derived = &written.items()[1];
+    assert_eq!(derived.item_kind(), Some(ItemKind::DeadlockFreedom));
+    let obligation = written.obligation(derived.index()).expect("its obligation");
+    let form = TemporalItem {
+        item_kind: ItemKind::DeadlockFreedom,
+        ..TemporalItem::default()
+    };
+    let join = |world: &crate::model_world::World| {
+        let handoff = world.handoff();
+        let bare = handoff.bare();
+        let input = PackageModelInput::of(
+            &bare,
+            world.binding(&["c"]).packages,
+            ModelNormalizationLimits::default(),
+        )
+        .expect("the package route reads the unit");
+        let item = PackageDeadlockSubject::new(
+            &input,
+            &handoff.bytes,
+            handoff.supply(),
+            world.binding(&["c"]),
+            AnalyzeLimits::unbounded(),
+            derived.occurrence(),
+            &form,
+        )
+        .model_item();
+        derived_model_item(derived, obligation, item).err()
+    };
+    assert_eq!(join(&when), None, "the written package joins");
+    let when_keys = when.package.graph().terminal_keys();
+    let refused = join(&none);
+    let Some(DerivedItemMismatch::TerminalDeclaration { mismatch, .. }) = refused else {
+        panic!("a run over the no-declaration package is refused: {refused:?}");
+    };
+    assert_eq!(mismatch.model, "test/counter");
+    assert_eq!(mismatch.recompiled, None);
+    assert_eq!(
+        when_keys.mismatch(&none.package.graph().terminal_keys()),
+        Some(mismatch),
+        "the package route names what the source route names"
+    );
+}
+
+/// FR-411, FR-940: the package route finds the `terminal when` declaration
+/// whose predicate is at a locus, as the source route does: the locus of the
+/// source predicate's body names the same model, by selection identity, on
+/// both routes, and a locus of no terminal names none. This is the lookup the
+/// state-graph replay of an undefined terminal predicate resolves its locus
+/// through.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn a_package_route_finds_the_terminal_whose_predicate_is_at_a_locus() {
+    let model = document(false);
+    let body = format!("{CONTRACT}terminal Done using v on M when {{ self.value = 3 }};\n");
+    let (package, _) = package_with_clauses(&model, &body, &[]);
+    let documents = Documents::new(model);
+    let handoff = handoff(&package, &documents);
+    let bare = bare(&handoff);
+    let input = PackageModelInput::of(
+        &bare,
+        &documents.packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the package route reads the terminal");
+    let terminals = fsl_package::resolve_terminals(&package).expect("the terminals resolve");
+    let [terminal] = terminals.as_slice() else {
+        panic!("one terminal: {terminals:?}");
+    };
+    let fsl_package::PackageTerminalDeclaration::When(predicate) = terminal.declaration else {
+        panic!("a `when` declaration");
+    };
+    let locus = predicate.body().location().clone();
+    let source = ModelCheckInput::source(&package);
+    let over_bytes = input.input();
+    let from_source = source.terminal_at(&locus).expect("resolves");
+    let from_bytes = over_bytes.terminal_at(&locus).expect("resolves");
+    assert_eq!(from_bytes, from_source);
+    let found = from_bytes.expect("the locus names the terminal");
+    assert_eq!(found.identity(), "test/counter");
+    assert_eq!(found.label(), "test/counter", "the package route has no alias");
+    assert_eq!(source.terminal_at(&locus).unwrap().unwrap().label(), "M");
+    let elsewhere = filament_semantic_value::location::ExpressionLocation::root(
+        filament_semantic_value::location::ExpressionOwner::Expression,
+    );
+    assert_eq!(over_bytes.terminal_at(&elsewhere).expect("resolves"), None);
+    assert_eq!(source.terminal_at(&elsewhere).expect("resolves"), None);
 }

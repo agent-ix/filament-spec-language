@@ -1373,48 +1373,22 @@ impl Loci<'_> {
         }
     }
 
-    /// The model of the `terminal when` predicate whose body is at `locus`:
-    /// the source alias on the source route, the package identity on the
-    /// package route (FR-940).
+    /// The model of the `terminal when` predicate whose body is at `locus`,
+    /// by selection identity, on either route (FR-940).
     fn terminal_at(
         self,
         locus: &filament_semantic_value::location::ExpressionLocation,
     ) -> Result<Option<fsl_eval::simulation::model::TerminalModel>, ReplayRefusal> {
-        match self {
+        let source;
+        let input = match self {
             Self::Source(package) => {
-                let terminals = fsl_package::resolve_terminals(package)
-                    .map_err(|_| fault("state-graph-undefined-terminal-resolution"))?;
-                Ok(terminals.iter().find_map(|terminal| {
-                    let fsl_package::PackageTerminalDeclaration::When(predicate) =
-                        terminal.declaration
-                    else {
-                        return None;
-                    };
-                    (predicate.body().location() == locus).then(|| {
-                        fsl_eval::simulation::model::TerminalModel::new(
-                            terminal.package,
-                            terminal.model,
-                        )
-                    })
-                }))
+                source = fsl_eval::simulation::model::ModelCheckInput::source(package);
+                &source
             }
-            Self::Package(input) => {
-                let lent = input.input();
-                let terminals = lent
-                    .terminals
-                    .map_err(|_| fault("state-graph-undefined-terminal-resolution"))?;
-                Ok(terminals.iter().find_map(|terminal| {
-                    let fsl_eval::simulation::model::ModelTerminalDeclaration::When(
-                        fsl_eval::simulation::model::TerminalWhen::Package(predicate),
-                    ) = terminal.declaration
-                    else {
-                        return None;
-                    };
-                    let projection = predicate.projection();
-                    (projection.location(projection.root()) == Some(locus))
-                        .then(|| terminal.model.clone())
-                }))
-            }
-        }
+            Self::Package(input) => &input.input(),
+        };
+        input
+            .terminal_at(locus)
+            .map_err(|_| fault("state-graph-undefined-terminal-resolution"))
     }
 }

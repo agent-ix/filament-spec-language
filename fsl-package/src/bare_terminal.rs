@@ -104,7 +104,20 @@ impl BarePackage<'_> {
                         .is_ok_and(|node| node == model_key)
                 })
                 .ok_or_else(|| fault("terminal-model-type"))?;
-            let model = context.original().package().to_owned();
+            // The selection that owns the type names the model, as the source
+            // route's `model.selection().identity` does; a model with no
+            // population falls back to the selection that declares the type.
+            let model = match self.selection_of_object(&context) {
+                Some(identity) => identity.to_owned(),
+                None => {
+                    let declaring = context.original().package();
+                    self.model_selections()
+                        .into_iter()
+                        .find(|selection| selection.identity == declaring)
+                        .map(|selection| selection.identity)
+                        .ok_or_else(|| fault("terminal-model-selection"))?
+                }
+            };
             let declaration = match &row.declaration {
                 filament_contract_model::TerminalDeclaration::Any => BareTerminalDeclaration::Any,
                 filament_contract_model::TerminalDeclaration::When {

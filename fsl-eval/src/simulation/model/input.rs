@@ -216,6 +216,34 @@ impl<'a> ModelCheckInput<'a> {
         }
     }
 
+    /// FR-411, FR-940: the model of the `terminal when` predicate whose body
+    /// is at `locus`, on either route: the source route's checked body, the
+    /// package route's projection of the condition node, both located under
+    /// the declaration's `terminal N predicate` site.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalResolveRefusal`] when the terminal nodes did not resolve.
+    pub fn terminal_at(
+        &self,
+        locus: &filament_semantic_value::location::ExpressionLocation,
+    ) -> Result<Option<super::TerminalModel>, TerminalResolveRefusal> {
+        let terminals = self.terminals.as_ref().map_err(Clone::clone)?;
+        Ok(terminals.iter().find_map(|terminal| {
+            let ModelTerminalDeclaration::When(when) = terminal.declaration else {
+                return None;
+            };
+            let at = match when {
+                TerminalWhen::Source(predicate) => Some(predicate.body().location()),
+                TerminalWhen::Package(predicate) => {
+                    let projection = predicate.projection();
+                    projection.location(projection.root())
+                }
+            };
+            (at == Some(locus)).then(|| terminal.model.clone())
+        }))
+    }
+
     /// FR-411 "Deadlock-freedom verdict join": each declared terminal's node
     /// key, by its model's selection identity, on either route.
     pub fn terminal_keys(&self) -> fsl_semantics::check::TerminalKeys {

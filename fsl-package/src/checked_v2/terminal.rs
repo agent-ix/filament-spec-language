@@ -167,7 +167,7 @@ pub fn read_terminal(
 /// checked predicate is the one the node's occurrence names.
 #[derive(Clone, Debug)]
 pub struct PackageTerminal<'p> {
-    /// The model alias the declaration is on.
+    /// The model alias the declaration is on, a display label.
     pub model: &'p str,
     /// The identity of the domain package the model selects.
     pub package: &'p str,
@@ -206,7 +206,8 @@ pub enum TerminalResolveRefusal {
 /// The `terminal` declarations of `package`, resolved through the
 /// `temporal`/`terminal` nodes of its checked graph (FR-411, FSpec FR-476:
 /// the node is the only carrier of the declaration). A declaration is
-/// present exactly when the graph holds its node, in model-alias order, and
+/// present exactly when the graph holds its node, ordered by the model
+/// selection's identity then alias (FR-940), and
 /// its mode is the node's. A `when` declaration's predicate is the checked
 /// body the node's `claim` occurrence names, because a checked body cannot
 /// be rebuilt from the wire.

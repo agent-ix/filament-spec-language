@@ -30,6 +30,7 @@ mod bare;
 mod bare_slot;
 #[cfg(feature = "std")]
 mod bare_state_graph;
+#[cfg(feature = "std")]
 mod bare_terminal;
 #[cfg(feature = "std")]
 mod bare_term;

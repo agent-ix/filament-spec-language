@@ -286,8 +286,8 @@ impl TerminalNode {
     }
 }
 
-/// FR-411 "Deadlock-freedom verdict join": each selected model alias's
-/// terminal node key, or `None` for a model with no declaration.
+/// FR-411 "Deadlock-freedom verdict join": each selected model's, by selection
+/// identity, terminal node key, or `None` for a model with no declaration.
 ///
 /// The node key carries the declaration's mode, model and predicate and not
 /// its written name, so two packages that differ only in a model's
@@ -329,12 +329,12 @@ impl TerminalKeys {
     }
 }
 
-/// A model alias whose terminal declaration differs between a request and
-/// what a run, check or replay read (FR-411 "Deadlock-freedom verdict
+/// A model, by selection identity, whose terminal declaration differs between a
+/// request and what a run, check or replay read (FR-411 "Deadlock-freedom verdict
 /// join"): `stale_dependency`/`content-mismatch`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TerminalMismatch {
-    /// The model alias.
+    /// The model's selection identity.
     pub model: String,
     /// The terminal node key the request was written under; `None` for no
     /// declaration.

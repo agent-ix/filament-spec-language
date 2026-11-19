@@ -3991,13 +3991,22 @@ impl PackageDeclarations {
             if *kind == AliasKind::Model
                 && !terminals.iter().any(|terminal| terminal.model == *alias)
             {
+                let Some(package) = models
+                    .iter()
+                    .find(|model| model.alias() == Some(alias.as_str()))
+                    .map(|model| model.selection().identity.clone())
+                else {
+                    refusals.push(CheckRefusal {
+                        location: Location::root(Origin::Expression),
+                        cause: CheckCause::InternalFault(Box::new(
+                            KeyFault::MissingAdmittedModel(alias.clone()),
+                        )),
+                    });
+                    return Err(refusals);
+                };
                 terminals.push(CheckedTerminal {
                     model: alias.clone(),
-                    package: models
-                        .iter()
-                        .find(|model| model.alias() == Some(alias.as_str()))
-                        .map(|model| model.selection().identity.clone())
-                        .unwrap_or_default(),
+                    package,
                     name: None,
                     declaration: TerminalDeclaration::None,
                     occurrence: None,

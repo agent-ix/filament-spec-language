@@ -148,6 +148,19 @@ impl<'p> BarePackage<'p> {
         Some((declaration, members.as_slice()))
     }
 
+    /// The identity of the model selection whose population has `object` as a
+    /// member type: the selection that owns the type, which a declaration of
+    /// the model is named by on the package route (FR-940). `None` when no
+    /// selected population ranges over it.
+    pub fn selection_of_object(&self, object: &EffectiveId) -> Option<&str> {
+        self.populations
+            .as_ref()
+            .ok()?
+            .values()
+            .find(|(_, members)| members.contains(object))
+            .map(|(declaration, _)| declaration.package.as_str())
+    }
+
     /// The selected object declarations, or `Err` when their projection or
     /// the catalog was refused (FR-533 "Observation admission", step 3).
     pub(crate) fn object_declarations(
