@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const FLOOR_HALF: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
@@ -221,11 +221,47 @@ fn package_export_without_source_package_refuses_before_package_read() {
 #[trace("TC-3019", "FR-1039-AC-4")]
 fn package_export_with_malformed_source_package_refuses_before_package_read() {
     let directory = tempfile::tempdir().unwrap();
-    for source_package in [
-        json!(null),
-        json!("not-an-object"),
-        json!({"identity": 42, "version": "7"}),
-        json!({"identity": "recorded:package-run-unit", "version": false}),
+    for (source_package, cause, path) in [
+        (
+            json!(null),
+            "wrong-value-kind",
+            "/request/package/source_package",
+        ),
+        (
+            json!("not-an-object"),
+            "wrong-value-kind",
+            "/request/package/source_package",
+        ),
+        (
+            json!({"identity": 42, "version": "7"}),
+            "wrong-value-kind",
+            "/request/package/source_package/identity",
+        ),
+        (
+            json!({"identity": "recorded:package-run-unit", "version": false}),
+            "wrong-value-kind",
+            "/request/package/source_package/version",
+        ),
+        (
+            json!({"identity": "recorded:package-run-unit"}),
+            "missing-member",
+            "/request/package/source_package/version",
+        ),
+        (
+            json!({"identity": "", "version": "7"}),
+            "invalid-value",
+            "/request/package/source_package/identity",
+        ),
+        (
+            json!({"identity": "recorded:package-run-unit", "version": ""}),
+            "invalid-value",
+            "/request/package/source_package/version",
+        ),
+        (
+            json!({"identity": "recorded:package-run-unit", "version": "7", "digest": "sha256:abc"}),
+            "unknown-member",
+            "/request/package/source_package/digest",
+        ),
     ] {
         let (exit, value) = run(
             directory.path(),
@@ -236,8 +272,8 @@ fn package_export_with_malformed_source_package_refuses_before_package_read() {
         );
         assert_eq!(exit, 20, "{value}");
         assert_eq!(value["stage"], "request", "{value}");
-        names(&value, "wrong-value-kind");
-        names(&value, "/request/package/source_package");
+        names(&value, cause);
+        names(&value, path);
         assert!(!value.to_string().contains("absent.json"), "{value}");
     }
 }
@@ -274,39 +310,42 @@ fn package_call_snapshot_is_admitted_by_the_v2_package_owner() {
 }
 
 /// FR-931-AC-11/12: source TL atoms use one precedence-aware printer over
-/// checked expressions, and enum literals use the declaration's alias-free
-/// identity rather than the authored enum alias.
+/// checked expressions, retain the `holds(...)` wrapper, and use alias-free
+/// declaration identities for calls and enum literals.
 #[test]
 #[trace("FR-931-AC-11", "FR-931-AC-12")]
 fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
     let directory = tempfile::tempdir().unwrap();
-    let unit = "language \"ix:native\" edition \"1-draft\";\n\
-        profile inf = \"filament.temporal.infinite-trace/v1\";\n\
-        enum Status { RED, BLUE }\n\
-        temporal Arithmetic using inf over (x: Integer) clock \"model-steps\" on origin { always holds(-(x + 2) > 0) }\n\
-        temporal EnumCase using inf over (x: Status) clock \"model-steps\" on origin { always holds(x = Status::RED or x = Status::BLUE and true) }\n";
-    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
-
-    let run_clause = |clause: &str| {
-        run(
-            directory.path(),
-            json!({"models": [], "program": {"source": source("unit.native")},
-                "tl_lowering": {"clause": clause}}),
-        )
-    };
-    let (exit, value) = run_clause("Arithmetic");
-    assert_eq!(exit, 0, "{value}");
-    assert_eq!(
-        value["tl_lowering"]["atoms"]["p0"],
-        "- (x + 2) > 0",
-        "{value}"
+    let mut unit = config_version_spine::unit_text();
+    unit.push_str(
+        "profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         enum Mode { On, Off }\n\
+         function positive using v(n: Int[0, 1000]): Boolean pure { n > 0 }\n\
+         temporal Canonical using inf over (x: Config::ConfigVersion) clock \"model-steps\" on origin { always holds(if positive(x.versionNumber) then contains(set[1, 2], 1) else Mode::On = Mode::On) }\n",
     );
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    std::fs::write(
+        directory.path().join("model.semantic-ir.json"),
+        config_version_spine::DOMAIN_PACKAGE,
+    )
+    .unwrap();
 
-    let (exit, value) = run_clause("EnumCase");
+    let (exit, value) = run(
+        directory.path(),
+        json!({"models": [{"format": "semantic-ir/2.0.0", "source": {
+            "file": "model.semantic-ir.json", "authority": "agent-ix",
+            "identity": "example/config-version", "document": "ConfigVersion",
+            "formal_revision": 1}}],
+            "program": {"source": source("unit.native")},
+            "tl_lowering": {"clause": "Canonical"}}),
+    );
     assert_eq!(exit, 0, "{value}");
+    let atom = value["tl_lowering"]["atoms"]["p0"]
+        .as_str()
+        .expect("the atom has canonical checked text");
     assert_eq!(
-        value["tl_lowering"]["atoms"]["p0"],
-        "x = ix://test:package-run:unit.native/Status::RED or x = ix://test:package-run:unit.native/Status::BLUE and true",
+        atom,
+        "holds(if ix://test:package-run:unit.native/positive(x.versionNumber) then contains(set[1, 2], 1) else ix://test:package-run:unit.native/Mode::On = ix://test:package-run:unit.native/Mode::On)",
         "{value}"
     );
 }

@@ -16,16 +16,16 @@ use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, Identifier, MemberId, Meter, ScalarLimits, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
+use fsl_foundation::SourceIdentity;
 use fsl_foundation::source::Source;
 use fsl_foundation::source_map::NativeLanguage;
-use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{CheckedGraph, CheckedStateClause};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::{
-    admit_current_snapshot, admit_frame_invocation, admit_observations, population_universe_for,
     AdmissionFailure, AdmissionRecord, AdmittedInvocation, AdmittedObservations, ClauseFacts,
     ClauseSelection, ClauseSelectionInput, DocumentRef, FrameFacts, FrameWitness,
-    ObservationLimits, OperationFacts, Provisions,
+    ObservationLimits, OperationFacts, Provisions, admit_current_snapshot, admit_frame_invocation,
+    admit_observations, population_universe_for,
 };
 
 mod clause_state;
@@ -39,19 +39,19 @@ mod temporal;
 mod trace_refusal;
 mod trace_subject;
 pub use clause_state::{
-    assertion_json, assertion_of, incomplete_json, incomplete_of, pending_report, AdmittedPosition,
-    AdmittedValue, Advance, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal, ClauseState,
-    ClauseTraceKind, CLAUSE_STATE_FORMAT,
+    AdmittedPosition, AdmittedValue, Advance, CLAUSE_STATE_FORMAT, ClauseLimits, ClauseMark,
+    ClauseOpen, ClauseRefusal, ClauseState, ClauseTraceKind, assertion_json, assertion_of,
+    incomplete_json, incomplete_of, pending_report,
 };
 pub(crate) use correction::run_correction;
 pub use correction::{
-    read_evidence_ledger, settle_correction, settle_run_correction, CorrectionRecord,
-    CorrectionRefusal, EvidenceLedgerFile, EvidenceLedgerReadError, RunRelation,
-    EVIDENCE_LEDGER_FORMAT,
+    CorrectionRecord, CorrectionRefusal, EVIDENCE_LEDGER_FORMAT, EvidenceLedgerFile,
+    EvidenceLedgerReadError, RunRelation, read_evidence_ledger, settle_correction,
+    settle_run_correction,
 };
-pub use ledger_wire::{read_ledger, write_ledger, LedgerReadError};
+pub use ledger_wire::{LedgerReadError, read_ledger, write_ledger};
 pub use package_authentication::{
-    authenticate_emission, AuthenticationFailure, PackageAuthentication, PackagesStage,
+    AuthenticationFailure, PackageAuthentication, PackagesStage, authenticate_emission,
 };
 pub use progress::{
     ContradictedDimension, LedgerBinding, ObservedPosition, ProgressAssertion, ProgressClosure,
@@ -60,24 +60,24 @@ pub use progress::{
 };
 use temporal::TemporalRun;
 pub use temporal::{
-    admit_progress, authenticate_package_trace, clause_trace_binding, name_clause_atom,
-    run_package_temporal, run_package_temporal_bounded, sample_position, AdmittedLate,
-    FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport,
-    LateEntry, LateInputs, OverObject, PackageTemporalRequest, ProgressRefusal,
-    TemporalAuthentication, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
-    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, DEFAULT_MODEL_MAX_CANDIDATES,
+    AdmittedLate, DEFAULT_MODEL_MAX_CANDIDATES, FiniteWindowAssessment, FiniteWindowPremises,
+    FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs, OverObject,
+    PackageTemporalRequest, ProgressRefusal, TemporalAuthentication, TimestampedCover,
+    TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey, TimestampedWindow,
+    TraceBinding, TraceInput, admit_progress, authenticate_package_trace, clause_trace_binding,
+    name_clause_atom, run_package_temporal, run_package_temporal_bounded, sample_position,
 };
-pub(crate) use temporal::{trace_refusal, verdict, SAMPLE_AUTHORITY};
-pub use trace_refusal::{TraceRefusal, REASONS as TRACE_REFUSAL_REASONS};
+pub(crate) use temporal::{SAMPLE_AUTHORITY, trace_refusal, verdict};
+pub use trace_refusal::{REASONS as TRACE_REFUSAL_REASONS, TraceRefusal};
 pub use trace_subject::{
-    run_package_trace_subject, run_trace_subject_clause, PackageTraceSubjectRequest,
-    TraceSubjectClauseRequest,
+    PackageTraceSubjectRequest, TraceSubjectClauseRequest, run_package_trace_subject,
+    run_trace_subject_clause,
 };
 
-use super::call::{
-    convert_call_failure, convert_outcome, run_compiled as run_call_compiled, select, CallSources,
-};
 pub use super::call::{CallOutcome, CallValue, RunRefusal};
+use super::call::{
+    CallSources, convert_call_failure, convert_outcome, run_compiled as run_call_compiled, select,
+};
 use super::lifecycle as front_end;
 use super::{CompileRefusal, DependencyInput, RequestClocks, SpineLimits};
 use crate::proof_result::SettlementBasis;
@@ -494,6 +494,8 @@ pub struct TemporalValuation {
     pub canonical_declarations: BTreeMap<filament_exact::NodeKey, String>,
     /// Alias-free member spellings referenced by the checked conditions.
     pub canonical_fields: BTreeMap<MemberId, String>,
+    /// Alias-free identities of local functions called by checked conditions.
+    pub canonical_functions: BTreeMap<usize, String>,
     /// The valuation over the supplied trace; `None` when the trace is an
     /// empty finite trace, which asks for the clause alone, or a lasso beside a
     /// profile that does not read one.
@@ -534,17 +536,63 @@ impl TemporalValuation {
         let canonical_fields = graph
             .selected_exact_field_rows()
             .iter()
-            .map(|row| (row.member_id.clone(), row.field_original_identity.to_string()))
+            .map(|row| {
+                (
+                    row.member_id.clone(),
+                    row.field_original_identity.to_string(),
+                )
+            })
             .collect();
+        let canonical_functions = canonical_condition_functions(graph, &checked_conditions);
         Self {
             clause: clause.clone(),
             checked_conditions,
             canonical_declarations,
             canonical_fields,
+            canonical_functions,
             positions,
             behaviours,
         }
     }
+}
+
+fn canonical_condition_functions(
+    graph: &CheckedGraph,
+    conditions: &[(
+        fsl_semantics::check::FormulaNodeId,
+        fsl_semantics::check::CheckedBody,
+    )],
+) -> BTreeMap<usize, String> {
+    let mut functions = BTreeMap::new();
+    for (_, body) in conditions {
+        let mut pending = vec![body.root()];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node.id()) {
+                continue;
+            }
+            if let NodeKind::Call { function, .. } = node.kind() {
+                if let Some(identity) = graph.function_identity_at(*function) {
+                    if let Some(declaration) = graph.resolve_declaration(identity) {
+                        functions.insert(
+                            *function,
+                            format!("ix://{}/{}", declaration.package, declaration.node),
+                        );
+                    }
+                }
+            }
+            let mut children = Vec::new();
+            let _ = node.kind().map_ref(
+                |child| {
+                    children.push(*child);
+                    ()
+                },
+                Clone::clone,
+            );
+            pending.extend(children.into_iter().map(|child| node.at(child)));
+        }
+    }
+    functions
 }
 
 fn canonical_condition_declarations(

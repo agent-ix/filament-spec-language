@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use filament_checked::node::{
     Arithmetic, CheckedLiteral, Connective, IntegerDivisionOperator, NodeKind,
 };
-use filament_exact::{MemberId, MemberOwner, NodeKey, Value, ValueType};
+use filament_exact::{CollectionKind, MemberId, MemberOwner, NodeKey, Value, ValueType};
 use filament_semantic_value::declaration::EqualityOperator;
 use fsl_semantics::check::{CheckedNode, NodeId};
 
@@ -21,6 +21,7 @@ struct ExpressionNode {
 pub(super) struct CanonicalRows {
     declarations: BTreeMap<NodeKey, String>,
     fields: BTreeMap<MemberId, String>,
+    functions: BTreeMap<usize, String>,
 }
 
 /// A checked expression arena with children remapped to its own indices.
@@ -107,33 +108,90 @@ impl CheckedExpression {
                 ),
                 NodeKind::Attribute {
                     reference, field, ..
+                } => (
+                    format!(
+                        "{}.{}",
+                        child(*reference)?,
+                        field_text(
+                            &rows.fields,
+                            MemberOwner::Effective(field.owner.clone()),
+                            &field.name,
+                        )?
+                    ),
+                    9,
+                ),
+                NodeKind::Field { operand, field, .. } => (
+                    format!(
+                        "{}.{}",
+                        child(*operand)?,
+                        field_text(
+                            &rows.fields,
+                            MemberOwner::Node(field.declaration()),
+                            field.name(),
+                        )?
+                    ),
+                    9,
+                ),
+                NodeKind::If {
+                    condition,
+                    then,
+                    otherwise,
+                } => (
+                    format!(
+                        "if {} then {} else {}",
+                        child(*condition)?,
+                        child(*then)?,
+                        child(*otherwise)?
+                    ),
+                    1,
+                ),
+                NodeKind::Contains(collection, value) => (
+                    format!("contains({}, {})", child(*collection)?, child(*value)?),
+                    10,
+                ),
+                NodeKind::Collection {
+                    collection_type,
+                    elements,
                 } => {
-                    (
-                        format!(
-                            "{}.{}",
-                            child(*reference)?,
-                            field_text(
-                                &rows.fields,
-                                MemberOwner::Effective(field.owner.clone()),
-                                &field.name,
-                            )?
-                        ),
-                        9,
-                    )
+                    let constructor = match collection_type.kind() {
+                        CollectionKind::Sequence => "sequence",
+                        CollectionKind::Set => "set",
+                        CollectionKind::Bag => "bag",
+                        CollectionKind::OrderedSet => "ordered_set",
+                    };
+                    let elements = elements
+                        .iter()
+                        .map(|element| child(*element))
+                        .collect::<Result<Vec<_>, _>>()?
+                        .join(", ");
+                    (format!("{constructor}[{elements}]"), 10)
                 }
-                NodeKind::Field { operand, field, .. } => {
-                    (
-                        format!(
-                            "{}.{}",
-                            child(*operand)?,
-                            field_text(
-                                &rows.fields,
-                                MemberOwner::Node(field.declaration()),
-                                field.name(),
-                            )?
-                        ),
-                        9,
-                    )
+                NodeKind::Call {
+                    function,
+                    arguments,
+                } => {
+                    let function = rows.functions.get(function).ok_or_else(|| {
+                        "checked call has a canonical declaration identity".to_owned()
+                    })?;
+                    let arguments = arguments
+                        .iter()
+                        .map(|argument| child(*argument))
+                        .collect::<Result<Vec<_>, _>>()?
+                        .join(", ");
+                    (format!("{function}({arguments})"), 10)
+                }
+                NodeKind::ImportedCall {
+                    callee, arguments, ..
+                } => {
+                    let function = rows.declarations.get(callee).ok_or_else(|| {
+                        "imported call has a canonical declaration identity".to_owned()
+                    })?;
+                    let arguments = arguments
+                        .iter()
+                        .map(|argument| child(*argument))
+                        .collect::<Result<Vec<_>, _>>()?
+                        .join(", ");
+                    (format!("{function}({arguments})"), 10)
                 }
                 NodeKind::Order(operator, _, left, right) => binary(
                     child(*left)?,
@@ -204,7 +262,9 @@ impl CheckedExpression {
                     )
                 }
                 NodeKind::Not(operand) => unary("not", child(*operand)?, child_prec(*operand)?, 8),
-                NodeKind::Negate(operand) => unary("- ", child(*operand)?, child_prec(*operand)?, 8),
+                NodeKind::Negate(operand) => {
+                    unary("- ", child(*operand)?, child_prec(*operand)?, 8)
+                }
                 NodeKind::Size(operand) => (format!("size({})", child(*operand)?), 10),
                 NodeKind::PopulationObjects { population } => (declaration_text(population), 10),
                 NodeKind::NamedPopulation { population, .. } => (declaration_text(population), 10),
@@ -255,16 +315,15 @@ pub(super) fn source_labels(
     let rows = CanonicalRows {
         declarations: valuation.canonical_declarations.clone(),
         fields: valuation.canonical_fields.clone(),
+        functions: valuation.canonical_functions.clone(),
     };
     valuation
         .checked_conditions
         .iter()
         .map(|(atom, body)| {
             CheckedExpression::from_source(body.root())
-                .and_then(|expression| {
-                    expression.render(&binders, &rows)
-                })
-                .map(|label| (*atom, label))
+                .and_then(|expression| expression.render(&binders, &rows))
+                .map(|label| (*atom, format!("holds({label})")))
         })
         .collect()
 }
@@ -349,8 +408,8 @@ fn field_text(
         .map_err(|_| "checked field has a nonempty member identity".to_owned())?;
     fields
         .get(&identity)
-        .cloned()
-        .ok_or_else(|| "field has an alias-free identity row".to_owned())
+        .ok_or_else(|| "field has a selected exact identity row".to_owned())?;
+    Ok(name.to_owned())
 }
 
 fn literal_text(value: &Value, declarations: &BTreeMap<NodeKey, String>) -> Result<String, String> {

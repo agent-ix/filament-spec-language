@@ -9,13 +9,13 @@ mod map;
 mod request;
 
 use super::{
-    check_sources, intake_with_bytes, output::NativeResult, output_file, wire, FileCounts,
-    RequestOverrides, Result, RunCause, RunLimits, RunResult,
+    FileCounts, RequestOverrides, Result, RunCause, RunLimits, RunResult, check_sources,
+    intake_with_bytes, output::NativeResult, output_file, wire,
 };
 use filament_semantic_value::catalog::Category;
 use fsl_replay::{OutcomeDocument, OutcomeStage};
 use request::Request;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 /// FSpec FR-298's disposition of one record, as FR-269 names it.
@@ -186,36 +186,69 @@ pub(super) fn run_bytes(
 /// beside a checked package. Checked-package/v2 does not retain the source's
 /// formal revision, so this route never derives it from package bytes.
 fn source_package(value: &Value) -> Result<Program> {
-    let missing = || RunCause::ExportRequest {
-        path: "/request/package/source_package".to_owned(),
-        cause: "missing-member",
-        reason: "export over a checked package requires source_package".to_owned(),
-    };
-    let wrong_kind = || RunCause::ExportRequest {
-        path: "/request/package/source_package".to_owned(),
-        cause: "wrong-value-kind",
-        reason: "expected an object with nonempty identity and version strings".to_owned(),
+    let refuse = |path: &str, cause, reason: &str| RunCause::ExportRequest {
+        path: path.to_owned(),
+        cause,
+        reason: reason.to_owned(),
     };
     let Some(package) = value.as_object() else {
-        return Err(wrong_kind());
+        return Err(refuse(
+            "/request/package",
+            "wrong-value-kind",
+            "expected an object",
+        ));
     };
     let Some(source) = package.get("source_package") else {
-        return Err(missing());
+        return Err(refuse(
+            "/request/package/source_package",
+            "missing-member",
+            "export over a checked package requires source_package",
+        ));
     };
     let Some(source) = source.as_object() else {
-        return Err(wrong_kind());
+        return Err(refuse(
+            "/request/package/source_package",
+            "wrong-value-kind",
+            "expected an object",
+        ));
     };
-    if source.len() != 2 {
-        return Err(wrong_kind());
+    if let Some(unknown) = source
+        .keys()
+        .find(|key| !matches!(key.as_str(), "identity" | "version"))
+    {
+        return Err(refuse(
+            &format!("/request/package/source_package/{unknown}"),
+            "unknown-member",
+            "unknown source_package member",
+        ));
     }
-    let (Some(identity), Some(version)) = (
-        source.get("identity").and_then(Value::as_str),
-        source.get("version").and_then(Value::as_str),
-    ) else {
-        return Err(wrong_kind());
+    let identity_path = "/request/package/source_package/identity";
+    let identity = source
+        .get("identity")
+        .ok_or_else(|| refuse(identity_path, "missing-member", "required member is absent"))?;
+    let Some(identity) = identity.as_str() else {
+        return Err(refuse(
+            identity_path,
+            "wrong-value-kind",
+            "expected a string",
+        ));
     };
-    if identity.is_empty() || version.is_empty() {
-        return Err(wrong_kind());
+    if identity.is_empty() {
+        return Err(refuse(identity_path, "invalid-value", "must not be empty"));
+    }
+    let version_path = "/request/package/source_package/version";
+    let version = source
+        .get("version")
+        .ok_or_else(|| refuse(version_path, "missing-member", "required member is absent"))?;
+    let Some(version) = version.as_str() else {
+        return Err(refuse(
+            version_path,
+            "wrong-value-kind",
+            "expected a string",
+        ));
+    };
+    if version.is_empty() {
+        return Err(refuse(version_path, "invalid-value", "must not be empty"));
     }
     Ok(Program {
         identity: identity.to_owned(),
@@ -249,16 +282,18 @@ fn unsupported_observer(request: &Request, observer: &str, output: Option<&Path>
     }
     let document = OutcomeDocument::new(fsl_replay::Operation::Export, None, Category::Unsupported)
         .with_export(export.clone())
-        .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
-            Some("unsupported-requested-capability"),
-            "unsupported_projection",
-            None,
-            reason,
-        )
-        .with_details(Some(serde_json::Map::from_iter([(
-            "path".to_owned(),
-            Value::String(path.to_owned()),
-        )])))]);
+        .with_diagnostics(vec![
+            fsl_replay::OutcomeDiagnostic::new(
+                Some("unsupported-requested-capability"),
+                "unsupported_projection",
+                None,
+                reason,
+            )
+            .with_details(Some(serde_json::Map::from_iter([(
+                "path".to_owned(),
+                Value::String(path.to_owned()),
+            )]))),
+        ]);
     RunResult {
         exit_code: Category::Unsupported.exit_code(),
         value: NativeResult::export_document(json!({"export": export})),
