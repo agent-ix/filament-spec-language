@@ -1246,6 +1246,12 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         None
     }
 
+    /// FR-390: the exact binder identities read by an admitted package
+    /// protocol slot, in its evaluator-defined order.
+    fn package_protocol_slot_binders(&self, _slot: &ProtocolSlot) -> Option<Vec<NodeKey>> {
+        None
+    }
+
     /// FR-531: the exact identity row for one admitted package node.
     fn package_node_key(&self, _node: &CheckedNodeId) -> Option<NodeKey> {
         None
@@ -2143,6 +2149,23 @@ impl ModelEvaluator for BarePackage<'_> {
             member: member.to_owned(),
             index,
         })
+    }
+
+    fn package_protocol_slot_binders(&self, slot: &ProtocolSlot) -> Option<Vec<NodeKey>> {
+        let selected = self
+            .select_protocol_slot(&fsl_package::ProtocolSlotDescriptor::new(
+                slot.node.clone(),
+                slot.member.clone(),
+                slot.index,
+            ))
+            .ok()?;
+        Some(
+            selected
+                .sources()
+                .iter()
+                .map(|source| source.binder().clone())
+                .collect(),
+        )
     }
 
     fn package_node_key(&self, node: &CheckedNodeId) -> Option<NodeKey> {
