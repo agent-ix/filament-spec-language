@@ -289,8 +289,26 @@ fn duplicate_then_effect(
     None
 }
 
+fn bound_reference_ids(
+    graph: &fsl_eval::simulation::protocol::Reachable<Sc>,
+    kind: StepKind,
+) -> std::collections::BTreeSet<String> {
+    graph
+        .states
+        .iter()
+        .flat_map(|state| &state.steps)
+        .filter(|(transition, _)| transition.kind() == kind)
+        .filter_map(|(transition, _)| match transition.binder_record() {
+            Some(filament_exact::Value::Reference(reference)) => {
+                Some(reference.object().as_str().to_owned())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 #[test]
-#[trace("TC-2023", "FR-731-AC-1")]
+#[trace("FR-731-AC-1")]
 fn a_related_by_clause_limits_protocol_event_bindings_to_its_relationship_instance() {
     let source = r#"
 language "ix:native" edition "1-draft";
@@ -307,39 +325,64 @@ protocol Purchase using P over (view: M::Node) on origin {
 }
 "#;
     let graph = reachable_with_relation(source, true);
-    let paid: std::collections::BTreeSet<_> = graph
-        .states
-        .iter()
-        .flat_map(|state| &state.steps)
-        .filter(|(transition, _)| transition.kind() == StepKind::Event)
-        .filter_map(|(transition, _)| match transition.binder_record() {
-            Some(filament_exact::Value::Reference(reference)) => {
-                Some(reference.object().as_str().to_owned())
-            }
-            _ => None,
-        })
-        .collect();
+    let paid = bound_reference_ids(&graph, StepKind::Event);
     assert_eq!(paid, ["node-2".to_owned()].into_iter().collect());
 
     let uncorrelated_source = source.replace(" related by Owns (paid, view)", "");
     let graph = reachable_with_nodes(&uncorrelated_source, true, false);
-    let paid: std::collections::BTreeSet<_> = graph
-        .states
-        .iter()
-        .flat_map(|state| &state.steps)
-        .filter(|(transition, _)| transition.kind() == StepKind::Event)
-        .filter_map(|(transition, _)| match transition.binder_record() {
-            Some(filament_exact::Value::Reference(reference)) => {
-                Some(reference.object().as_str().to_owned())
-            }
-            _ => None,
-        })
-        .collect();
+    let paid = bound_reference_ids(&graph, StepKind::Event);
     assert_eq!(
         paid,
         ["node-1".to_owned(), "node-2".to_owned()]
             .into_iter()
             .collect()
+    );
+}
+
+#[test]
+#[trace("TC-2023", "FR-731-AC-1")]
+fn related_by_filters_send_and_receive_candidates() {
+    let source = r#"
+language "ix:native" edition "1-draft";
+profile P = "filament.protocol.finite-global/v1";
+model M = "test/orders";
+protocol Purchase using P over (view: M::Node) on origin {
+  role Buyer on M::Node;
+  role Seller on M::Node;
+  relationship Owns = M::owns;
+  channel Pay from Buyer to Seller carries M::Node
+      ordering unordered delivery at-least-once capacity 2 overflow block;
+  run sequence Main {
+    send Sent via Pay as (sent: M::Node) { true };
+    receive Got via Pay of Main::Sent as (got: M::Node) { true };
+  }
+  finish Closed as (closed: M::Flag) { true };
+}
+"#;
+    let correlated_send = source.replace(
+        "as (sent: M::Node) { true }",
+        "as (sent: M::Node) related by Owns (sent, view) { true }",
+    );
+    let sends = reachable_with_relation(&correlated_send, true);
+    assert_eq!(
+        bound_reference_ids(&sends, StepKind::Send),
+        ["node-2".to_owned()].into_iter().collect()
+    );
+
+    let correlated_receive = source.replace(
+        "as (got: M::Node) { true }",
+        "as (got: M::Node) related by Owns (got, view) { true }",
+    );
+    let receives = reachable_with_relation(&correlated_receive, true);
+    assert_eq!(
+        bound_reference_ids(&receives, StepKind::Send),
+        ["node-1".to_owned(), "node-2".to_owned()]
+            .into_iter()
+            .collect()
+    );
+    assert_eq!(
+        bound_reference_ids(&receives, StepKind::Receive),
+        ["node-2".to_owned()].into_iter().collect()
     );
 }
 
