@@ -40,10 +40,10 @@ fn world(claim: &str) -> World {
             deletes: false,
         }],
         body: format!(
-            "bound B on M::coins [1]\\n\\
-             post Flipped using v on M::Coin::flip {{ self.v = b }}\\n\\
-             random Coin::flip(b) ~ {{ 0: 1, 1: 1 }};\\n\\
-             workload Even on M {{ weight Coin::flip = 1; }}\\n{claim}"
+            "bound B on M::coins [1]\n\
+             post Flipped using v on M::Coin::flip {{ self.v = b }}\n\
+             random Coin::flip(b) ~ {{ 0: 1, 1: 1 }};\n\
+             workload Even on M {{ weight Coin::flip = 1; }}\n{claim}"
         ),
         initial: serde_json::json!({"v": {"integer": "0"}}),
     })
