@@ -629,6 +629,64 @@ fn original_compensation_has_an_accepting_template_and_zero_attempt_refusal() {
     refusal(directory.path(), &zero, "ill_typed", "type-mismatch");
 }
 
+/// FR-892-AC-1 (TC-2525): the original Boolean-result compensation source
+/// emits a handoff that Contract IR strictly admits.
+#[test]
+#[trace("FR-892-AC-1", "FR-381-AC-7", "TC-2525")]
+fn original_boolean_result_compensation_handoff_is_strictly_admitted() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = corpus("original/compensation.native");
+    let source = std::fs::read_to_string(&file).unwrap();
+    assert!(source.contains("as (reserved: Boolean)"));
+
+    let handoff = handoff(directory.path(), &file);
+    assert!(
+        handoff
+            .admitted()
+            .resolved_graph()
+            .nodes
+            .iter()
+            .any(|node| &*node.semantic_form == "compensation"),
+        "the strict reader admits the original compensation handoff"
+    );
+}
+
+/// FR-892-AC-1 (TC-2525): the corpus await's matching timestamped-event
+/// request clock is carried into its admitted temporal binding.
+#[test]
+#[trace("FR-892-AC-1", "TC-2525")]
+fn original_await_uses_its_timestamped_event_request_clock() {
+    let request = corpus("staged/await.request.json");
+    let output =
+        command::compile_outcome(&request).expect("the configured original await compiles");
+    let bytes = output.package_bytes();
+    let _admitted = crate::emit_checked_v2::read_back(bytes, &[]);
+    let wire: Value = serde_json::from_slice(bytes).expect("the emitted package is JSON");
+    let nodes = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic nodes");
+    let awaited = nodes
+        .iter()
+        .find(|node| {
+            node["semantic_form"] == "control"
+                && node["body"]["operation"]["member"]["operator"] == "await"
+        })
+        .expect("the original await control node");
+    let bindings = wire["temporal_bindings"]
+        .as_array()
+        .expect("temporal bindings");
+    let await_bindings = bindings
+        .iter()
+        .filter(|row| row["declaration"] == awaited["node_id"])
+        .collect::<Vec<_>>();
+    assert_eq!(await_bindings.len(), 1, "the await has one clock binding");
+    assert_eq!(await_bindings[0]["clock_name"], "timer");
+    assert_eq!(
+        await_bindings[0]["clock"],
+        json!({"kind": "timestamped_event", "timestamp_unit": "s"})
+    );
+}
+
 #[test]
 #[trace("FR-575-AC-1", "FR-575-AC-2")]
 fn original_symbolic_capacity_is_admitted_and_projection_names_the_capacity() {
