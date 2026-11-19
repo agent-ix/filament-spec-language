@@ -1460,7 +1460,7 @@ fn check_message_one(first: &CheckRefusal) -> String {
                 ProtocolAnchorCause::ObserveOnlyAction {
                     action, boundary, ..
                 } => format!(
-                    "{message}: `{action}` changes state behind the observe-only boundary `{boundary}`"
+                    "{message}: `{action}` changes state behind observe-only boundary `{boundary}`"
                 ),
                 ProtocolAnchorCause::Missing { segment, .. } => {
                     format!("{message}: `{segment}`")
