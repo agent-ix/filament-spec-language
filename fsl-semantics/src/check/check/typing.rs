@@ -3887,7 +3887,7 @@ impl<'a> Typer<'a> {
         shape: CollectionShape,
         location: &Location,
     ) -> Option<Node> {
-        let ValueType::Composite(declaration) = &receiver.value_type else {
+        let ValueType::Composite(declaration) = receiver.value_type.clone() else {
             return None;
         };
         let bound = match shape.max {
@@ -3912,7 +3912,7 @@ impl<'a> Typer<'a> {
         Some(node(
             NodeKind::Field {
                 operand: self.push(receiver),
-                field: RecordField::new(declaration.clone(), field),
+                field: RecordField::new(declaration, field),
                 optional: false,
             },
             value_type,
