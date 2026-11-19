@@ -76,9 +76,14 @@ Use ADR-027 §7's `Fill` unit (universe `{c}`, `c.v = 0`).
     2, overflow `block`, delivery `[3,3]`, in `parallel P { branch s send
     Snd via ch; branch r receive Rcv via ch of Snd } join all`, take the
     `count` 3 step, `receive`, then the continuation step. In `parallel P {
-    branch a sequence { send Snd via ch; attempt A }; branch b attempt B }
-    join all`, take `fork`, `send`, then `attempt(A)`. Read `queues` and
-    `bounds` after each step.
+    branch a sequence { send Snd via ch; attempt A }; branch b receive Rcv
+    via ch of Snd } join all`, take `fork`, `send`, `receive`, `attempt(A)`,
+    and on a second path `fork`, `send`, `attempt(A)`, `receive`. Read
+    `queues` and `bounds` after each step.
+15. Reused branch path: on a channel of capacity 2, run `repeat maximum 2 {
+    parallel P { branch a send Snd via ch; branch b attempt B } join all }`,
+    then `receive R1 via ch of Snd; receive R2 via ch of Snd`; read each
+    `send`'s message identity and the queue before the receives.
 
 Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
 
@@ -140,6 +145,14 @@ Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
   deliveries 0 and 1, leaves count 1 pending, `next-delivery` 2 and no
   `message-ordinal` for `Snd`; the continuation appends delivery 2 of the
   same message (ordinal 0), then `next-delivery` 3 and `message-ordinal` 1.
-  `message-ordinal` 1 for `Snd` on `a`'s path while `a` rests at `A`, absent
-  after `attempt(A)` completes `a`. The step fails if the continuation takes
-  ordinal 1, reuses an index, or the ordinal outlives `a`.
+  `message-ordinal` 1 for `Snd` on `a`'s path while `a` rests at `A`; on
+  the first path absent after `attempt(A)`, no copy being queued; on the
+  second path present after `attempt(A)` while the copy is queued and
+  absent after `receive`. The step fails if the continuation takes ordinal
+  1, reuses an index, or the ordinal outlives both `a` and its queued
+  copies.
+- Step 15: both iterations' `a` has path `(0, P, a, 0)`; the first message
+  (ordinal 0) is still queued at the second `send`, which takes ordinal 1;
+  the queue holds two entries of two different messages. The step fails if
+  the ordinal is dropped when `a` completes, giving both messages ordinal
+  0.
