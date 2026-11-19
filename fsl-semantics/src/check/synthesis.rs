@@ -259,8 +259,10 @@ mod tests {
     use filament_semantic_value::declaration::{
         CompositeDeclaration, CompositeShape, FieldDeclaration, UnionMemberDeclaration,
     };
+    use ix_trace_rs::trace;
 
     #[test]
+    #[trace("TC-2104", "FR-754-AC-2")]
     fn bounded_scalar_domains_are_finite_and_integer_is_not() {
         let types = TypeEnvironment::default();
         assert_eq!(first_unbounded_component(&types, &ValueType::Boolean), None);
@@ -271,6 +273,7 @@ mod tests {
     }
 
     #[test]
+    #[trace("TC-2104", "FR-754-AC-2")]
     fn reports_unbounded_record_component_and_recursive_union() {
         let record_key = key("Record");
         let recursive_key = key("Recursive");

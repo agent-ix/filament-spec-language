@@ -245,7 +245,7 @@ pub(super) fn search_integer_outcome(
         declaration,
         "",
         result.visited,
-        max_work,
+        result.visited,
         max_candidates,
         max_work,
     );
@@ -305,6 +305,7 @@ mod tests {
         DEFAULT_MAX_WORK,
     };
     use filament_exact::{Integer, IntegerInterval};
+    use ix_trace_rs::trace;
     use serde_json::Value;
 
     fn digit_domain() -> IntegerInterval {
@@ -312,6 +313,7 @@ mod tests {
     }
 
     #[test]
+    #[trace("TC-2104", "FR-754-AC-3")]
     fn visits_values_through_the_first_satisfying_integer() {
         let result = search_integer_domain(&digit_domain(), SearchLimits::default(), |value| {
             value == &Integer::from(7_i64)
@@ -324,6 +326,7 @@ mod tests {
     }
 
     #[test]
+    #[trace("TC-2104", "FR-754-AC-3")]
     fn exhausts_a_finite_integer_domain_before_reporting_no_candidate() {
         let result = search_integer_domain(&digit_domain(), SearchLimits::default(), |_| false);
         assert_eq!(result.disposition, SearchDisposition::NoCandidate);
@@ -331,6 +334,7 @@ mod tests {
     }
 
     #[test]
+    #[trace("TC-2104", "FR-754-AC-3")]
     fn request_limits_stop_before_evaluating_the_next_value() {
         let result = search_integer_domain(
             &digit_domain(),
@@ -351,6 +355,7 @@ mod tests {
     }
 
     #[test]
+    #[trace("TC-2104", "FR-754-AC-3")]
     fn search_outcome_carries_typed_candidate_and_limit_cause() {
         let (candidate, exit) = super::search_integer_outcome(
             "pkg",
@@ -369,6 +374,7 @@ mod tests {
             serde_json::json!({"type": "integer", "value": "7"})
         );
         assert_eq!(candidate["check"], "validated");
+        assert_eq!(candidate["explored"]["work"], 8);
         assert_eq!(candidate["lineage"]["index"], 7);
         assert_eq!(candidate["lineage"]["symmetry"], "identity");
 
@@ -388,6 +394,7 @@ mod tests {
         let limited = limited.into_value();
         assert_eq!(limited["status"], "incomplete");
         assert_eq!(limited["explored"]["visited"], 3);
+        assert_eq!(limited["explored"]["work"], 3);
         assert_eq!(
             limited["cause"],
             serde_json::json!({
@@ -398,6 +405,8 @@ mod tests {
     }
 
     #[test]
+    #[trace("TC-3017", "FR-1037-AC-1")]
+    #[trace("FSpec-FR-823-AC-1")]
     fn candidate_outcome_serializes_every_fr823_member() {
         let outcome = SynthesisOutcomeDocument::new(
             "pkg",
