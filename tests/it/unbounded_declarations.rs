@@ -142,6 +142,7 @@ fn config_graph(declaration: &str) -> CheckedGraph {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("{declaration}: {refusals:?}"))
 }

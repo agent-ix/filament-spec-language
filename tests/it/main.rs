@@ -41,6 +41,9 @@ pub(crate) mod negotiation;
 #[path = "../support/mod.rs"]
 pub(crate) mod support;
 
+#[path = "../../fsl-semantics/tests/support/reward_evaluator.rs"]
+mod reward_evaluator;
+
 mod abstraction_relation_inert;
 mod architecture_fixture_spine;
 mod call_replay_context_items;
