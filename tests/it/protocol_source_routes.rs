@@ -66,7 +66,7 @@ fn refusal(directory: &Path, file: &Path, code: &str, cause: &str) {
 }
 
 #[test]
-#[trace("FR-218", "FR-219", "FR-220", "FR-224", "FR-884")]
+#[trace("FR-218-AC-11", "FR-218-AC-24", "FR-884-AC-2")]
 fn original_protocol_declarations_communications_and_refusals() {
     let directory = tempfile::tempdir().unwrap();
     let original = std::fs::read_to_string(corpus("original/exchange.native")).unwrap();
@@ -93,7 +93,7 @@ fn original_protocol_declarations_communications_and_refusals() {
 }
 
 #[test]
-#[trace("FR-218", "FR-219", "FR-220")]
+#[trace("FR-218-AC-12", "FR-218-AC-13", "FR-218-AC-28", "FR-381-AC-4")]
 fn authoritative_parts_saga_protocol_constructs_compile_from_their_own_repository() {
     let directory = tempfile::tempdir().unwrap();
     for file in [
@@ -109,7 +109,7 @@ fn authoritative_parts_saga_protocol_constructs_compile_from_their_own_repositor
 }
 
 #[test]
-#[trace("FR-218", "FR-220", "FR-224", "FR-226")]
+#[trace("FR-218-AC-5", "FR-218-AC-11", "FR-218-AC-24")]
 fn authoritative_parts_saga_rejects_invalid_protocols_at_the_right_boundary() {
     let directory = tempfile::tempdir().unwrap();
     for (file, code, cause) in [
@@ -169,7 +169,7 @@ fn authoritative_request(path: &Path) -> Value {
 }
 
 #[test]
-#[trace("FR-330", "FR-52")]
+#[trace("FR-109-AC-1")]
 fn parts_saga_observations_distinguish_tracked_untracked_and_third_rework() {
     let directory = tempfile::tempdir().unwrap();
     for (name, exit, result) in [
@@ -291,7 +291,7 @@ fn project(
 }
 
 #[test]
-#[trace("FR-570", "FR-574", "FR-575")]
+#[trace("FR-570-AC-1", "FR-570-AC-2")]
 fn source_projection_preserves_send_receive_direction_and_local_order() {
     use fsl_replay::protocol_analysis::{AnalysisOutcome, LocalEventKind};
     let directory = tempfile::tempdir().unwrap();
@@ -313,25 +313,66 @@ fn source_projection_preserves_send_receive_direction_and_local_order() {
         let AnalysisOutcome::Proved(witness) = outcome.outcome else {
             panic!("{role}: expected a proved projection: {outcome:?}");
         };
-        let events = &witness.local_graph.events;
-        assert_eq!(events.len(), 2, "{role}: {witness:?}");
+        let node = |name: &str| {
+            package
+                .admitted()
+                .resolved_graph()
+                .nodes
+                .iter()
+                .find(|node| {
+                    let key = serde_json::to_value(&node.node_id).unwrap();
+                    key["path"]
+                        .as_array()
+                        .is_some_and(|path| path.last() == Some(&json!(name)))
+                })
+                .unwrap_or_else(|| panic!("source declaration {name}"))
+        };
+        let (first, second, peer) = if sends {
+            ("Sent", "Next", "Receiver")
+        } else {
+            ("Seen", "Delivered", "Sender")
+        };
+        let mapped = |name| {
+            let port = fsl_package::protocol_view::PortRef {
+                node: node(name).node_id.clone(),
+                port: fsl_package::protocol_view::Port::Enter,
+            };
+            *witness
+                .correspondence
+                .0
+                .get(&port)
+                .unwrap_or_else(|| panic!("{role}: missing source event {name}"))
+        };
+        let (first, second) = (mapped(first), mapped(second));
+        assert_ne!(
+            first, second,
+            "distinct source events require distinct local events"
+        );
+        assert_eq!(witness.local_graph.events.len(), 2, "{role}: {witness:?}");
         assert_eq!(
             witness.local_graph.edges,
-            vec![(events[0].id.clone(), events[1].id.clone())],
+            vec![(first, second)],
             "{role}: {witness:?}"
         );
-        for event in events {
-            if sends {
-                assert!(
-                    matches!(event.kind, LocalEventKind::Send { .. }),
-                    "{event:?}"
-                );
+        for id in [first, second] {
+            let event = witness
+                .local_graph
+                .events
+                .iter()
+                .find(|event| event.id == id)
+                .expect("mapped local event");
+            let expected = if sends {
+                LocalEventKind::Send {
+                    peer: node(peer).node_id.clone(),
+                    message_type: node("Note").node_id.clone(),
+                }
             } else {
-                assert!(
-                    matches!(event.kind, LocalEventKind::Receive { .. }),
-                    "{event:?}"
-                );
-            }
+                LocalEventKind::Receive {
+                    peer: node(peer).node_id.clone(),
+                    message_type: node("Note").node_id.clone(),
+                }
+            };
+            assert_eq!(event.kind, expected, "{role}: {event:?}");
         }
         assert_eq!(witness.correspondence.0.len(), 2, "{role}: {witness:?}");
     }
@@ -352,7 +393,7 @@ fn analysis_request(file: &Path) -> Value {
 }
 
 #[test]
-#[trace("FR-636", "FR-330")]
+#[trace("FR-636-AC-1")]
 fn public_source_analysis_distinguishes_consumed_and_stranded_messages() {
     let directory = tempfile::tempdir().unwrap();
     let original = std::fs::read_to_string(corpus("original/exchange.native")).unwrap();
@@ -389,7 +430,7 @@ fn public_source_analysis_distinguishes_consumed_and_stranded_messages() {
 }
 
 #[test]
-#[trace("FR-225", "FR-226", "FR-227", "FR-230")]
+#[trace("FR-218-AC-5", "FR-218-AC-19", "FR-218-AC-33", "FR-218-AC-40")]
 fn original_choice_parallel_and_repeat_have_positive_negative_and_zero_bound_controls() {
     let directory = tempfile::tempdir().unwrap();
     let original = std::fs::read_to_string(corpus("original/exchange.native")).unwrap();
@@ -427,7 +468,7 @@ fn original_choice_parallel_and_repeat_have_positive_negative_and_zero_bound_con
 }
 
 #[test]
-#[trace("FR-575", "FR-570")]
+#[trace("FR-575-AC-1")]
 fn source_projection_names_each_construct_outside_bounded_static() {
     use fsl_replay::protocol_analysis::AnalysisOutcome;
     for (file, role, slug) in [
@@ -477,7 +518,7 @@ fn source_projection_names_each_construct_outside_bounded_static() {
 }
 
 #[test]
-#[trace("FR-570", "FR-574")]
+#[trace("FR-570-AC-4", "FR-570-AC-5")]
 fn source_projection_refutes_a_choice_hidden_from_the_target() {
     use fsl_replay::protocol_analysis::AnalysisOutcome;
     let directory = tempfile::tempdir().unwrap();
@@ -513,7 +554,7 @@ fn root_wire() -> Value {
 }
 
 #[test]
-#[trace("FR-570", "FR-571", "FR-636", "FR-574")]
+#[trace("FR-636-AC-2", "FR-636-AC-5")]
 fn public_source_projection_realizability_and_deadlock_agree_on_bounded_static_programs() {
     let directory = tempfile::tempdir().unwrap();
     for (file, protocol, roles) in [
@@ -573,7 +614,7 @@ fn public_source_projection_realizability_and_deadlock_agree_on_bounded_static_p
 }
 
 #[test]
-#[trace("FR-233", "FR-575", "FR-570")]
+#[trace("FR-381-AC-7")]
 fn original_compensation_has_an_accepting_template_and_zero_attempt_refusal() {
     let directory = tempfile::tempdir().unwrap();
     let file = corpus("original/compensation.native");
@@ -589,7 +630,7 @@ fn original_compensation_has_an_accepting_template_and_zero_attempt_refusal() {
 }
 
 #[test]
-#[trace("FR-575", "FR-785")]
+#[trace("FR-575-AC-1", "FR-575-AC-2")]
 fn original_symbolic_capacity_is_admitted_and_projection_names_the_capacity() {
     use fsl_replay::protocol_analysis::AnalysisOutcome;
     let directory = tempfile::tempdir().unwrap();
@@ -610,23 +651,25 @@ fn original_symbolic_capacity_is_admitted_and_projection_names_the_capacity() {
 }
 
 #[test]
-#[trace("FR-218")]
-fn parts_saga_attempt_views_cannot_be_read_as_boolean_operation_results() {
+#[trace("FR-218-AC-44")]
+fn original_attempt_result_read_requires_the_operation_result_type() {
     let directory = tempfile::tempdir().unwrap();
-    for file in [
-        "part-flow-untimed.fsl",
-        "part-flow.fsl",
-        "inspection.fsl",
-        "protocols/steps/steps-all-kinds.fsl",
-        "protocols/control-flow/control-parallel-all.fsl",
-        "protocols/control-flow/control-parallel-any-cancel.fsl",
-        "protocols/control-flow/control-repeat-progress.fsl",
-    ] {
-        refusal(
-            directory.path(),
-            &saga().join("rules").join(file),
-            "ill_typed",
-            "type-mismatch",
-        );
-    }
+    let control = corpus("original/attempt-result.native");
+    let request = |file: &Path| {
+        json!({"format":"native-compile/1","request":{
+        "models":[],"program":{"source":source(file)}}})
+    };
+    let accepted = command::compile_outcome(&write(directory.path(), &request(&control)))
+        .expect("a Boolean operation result can be read through its Boolean binder");
+    assert!(!accepted.package_bytes().is_empty());
+    let wrong = directory.path().join("wrong-result.native");
+    let text = std::fs::read_to_string(control).unwrap();
+    std::fs::write(&wrong, text.replace("result: Boolean", "result: Integer")).unwrap();
+    let error = match command::compile_outcome(&write(directory.path(), &request(&wrong))) {
+        Ok(_) => panic!("a mismatched Integer binder must not expose a Boolean operation result"),
+        Err(error) => error,
+    };
+    let artifact = error.artifact_value().unwrap();
+    assert_eq!(artifact["code"], "ill_typed", "{artifact}");
+    assert_eq!(artifact["cause"], "type-mismatch", "{artifact}");
 }
