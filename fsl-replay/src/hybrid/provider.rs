@@ -54,7 +54,6 @@ pub struct HybridAnswer {
 /// What a hybrid provider can answer, one arm per settlement path, so no arm
 /// stands in for another (FR-750).
 #[derive(Clone, Debug, PartialEq)]
-#[allow(clippy::large_enum_variant)] // a verdict is built once per item and moved, never collected
 pub enum HybridVerdict {
     /// Proved, inconclusive or incomplete: settled by FR-250's map.
     Solved(SolverResult),
@@ -62,7 +61,7 @@ pub enum HybridVerdict {
     /// claimed refutation is never folded into [`SolverOutcome::Unknown`],
     /// which FR-250 settles `solver-inconclusive`, because replay parity
     /// needs the claim.
-    Refuted(HybridCounterexample),
+    Refuted(Box<HybridCounterexample>),
     /// A construct outside the provider's class.
     Unsupported(UnsupportedConstruct),
 }
@@ -252,10 +251,10 @@ impl HybridAnswer {
                     .and_then(|index| counterexamples.get(index))
                     .ok_or_else(|| malformed(ValueFault::InvalidValue))?;
                 let named = serde_json::json!({ "counterexample": found });
-                HybridVerdict::Refuted(
+                HybridVerdict::Refuted(Box::new(
                     read_plugin_hybrid_counterexample(&named, Some(model))
                         .map_err(HybridEntryRefusal::Entry)?,
-                )
+                ))
             }
             other => return Err(HybridEntryRefusal::NotRead(other.to_owned())),
         };

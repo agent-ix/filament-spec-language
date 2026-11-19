@@ -1459,10 +1459,10 @@ mod settlement {
         assert_eq!(
             HybridAnswer::read_entry(&refuted(0), &counterexamples, model),
             Ok(HybridAnswer {
-                verdict: HybridVerdict::Refuted(HybridCounterexample {
+                verdict: HybridVerdict::Refuted(Box::new(HybridCounterexample {
                     kind: HybridCounterexampleKind::Formula,
                     trace: braking_trace(10, 0),
-                }),
+                })),
                 certificate: None,
             })
         );

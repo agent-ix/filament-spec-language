@@ -99,7 +99,7 @@ pub(super) fn hybrid_item<'a>(
                 let settled = match answer.verdict {
                     HybridVerdict::Solved(result) => result.settle(graph, checked, &mut meter),
                     HybridVerdict::Refuted(claimed) => HybridSettlement::from_provider_counterexample(
-                        graph, checked, claimed, &mut meter,
+                        graph, checked, *claimed, &mut meter,
                     ),
                     HybridVerdict::Unsupported(construct) => {
                         return unsupported_construct(

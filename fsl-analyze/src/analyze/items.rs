@@ -1207,6 +1207,7 @@ mod tests {
             Refusal::RequiresBound
             | Refusal::NotStatistical
             | Refusal::NotEmitted
+            | Refusal::UnsupportedConstruct(_)
             | Refusal::Incomplete(_) => None,
         }
     }
