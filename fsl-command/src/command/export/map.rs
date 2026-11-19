@@ -1,0 +1,281 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FSpec FR-811 classification and FR-814 name mangling. An obligation whose
+//! dependency closure holds a construct the target cannot state is
+//! `unrepresented`, with one `target-unrepresentable` cause per such node. An
+//! obligation the target can state is lowered by FR-812 and FR-813; this
+//! build lowers none, so it stops the export as a mapper failure after the
+//! floor is decided and writes no package.
+
+use super::super::{Result, RunCause};
+use super::request::{EffectiveLimits, Request, Target};
+use super::{Disposition, Mapped, Record, Unlowered};
+use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
+use filament_exact::NodeKey;
+use fsl_semantics::check::wire_id::WireGraph;
+use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// One authored clause of the program an obligation name may resolve to.
+pub(super) struct ClauseFact {
+    pub(super) name: String,
+    /// The clause's node when it is an obligation (an invariant or a
+    /// temporal clause); `None` for a precondition, postcondition or
+    /// constraint (FR-651 `refused`: not an obligation).
+    pub(super) obligation: Option<NodeKey>,
+    /// The `node_tag`/`semantic_form` of an obligation's clause node.
+    pub(super) construct: &'static str,
+}
+
+/// FSpec FR-814's injective mangling of one authored name under `prefix`:
+/// `_` becomes `__`, `::` becomes `_N_`, any other scalar outside ASCII
+/// letters and digits becomes `_uXX_` (uppercase hexadecimal).
+pub(super) fn mangle(prefix: &str, name: &str) -> String {
+    let mut out = String::from(prefix);
+    let mut chars = name.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '_' => out.push_str("__"),
+            ':' if chars.peek() == Some(&':') => {
+                chars.next();
+                out.push_str("_N_");
+            }
+            c if c.is_ascii_alphanumeric() => out.push(c),
+            c => out.push_str(&format!("_u{:X}_", u32::from(c))),
+        }
+    }
+    out
+}
+
+/// The module name of a package identity.
+pub(super) fn module_name(identity: &str) -> String {
+    mangle("M_", identity)
+}
+
+fn internal(reason: &str) -> RunCause {
+    RunCause::ExportMapper {
+        construct: "checked package".to_owned(),
+        reason: reason.to_owned(),
+    }
+}
+
+/// The export's FR-255 charges: one node and one work unit per node of the
+/// dependency closures read.
+struct Meter<'a> {
+    limits: &'a EffectiveLimits,
+    nodes: u64,
+    work: u64,
+}
+
+impl Meter<'_> {
+    /// Charge one node; the denied setting and its bound when a limit is hit.
+    fn charge(&mut self) -> std::result::Result<(), (&'static str, u64)> {
+        self.nodes = self.nodes.saturating_add(1);
+        self.work = self.work.saturating_add(1);
+        if self.nodes > self.limits.nodes {
+            return Err(("export.nodes", self.limits.nodes));
+        }
+        if self.work > self.limits.work_units {
+            return Err(("export.work_units", self.limits.work_units));
+        }
+        Ok(())
+    }
+}
+
+/// The package as the classification reads it.
+struct Graph<'a> {
+    package: &'a CheckedPackageV2,
+    by_key: BTreeMap<NodeKey, usize>,
+    by_id: BTreeMap<String, usize>,
+}
+
+impl<'a> Graph<'a> {
+    fn new(package: &'a CheckedPackageV2) -> Result<Self> {
+        let nodes = &package.resolved_graph().nodes;
+        let wire = WireGraph::new(nodes.iter().map(|node| &node.node_id))
+            .map_err(|_| internal("the package's node identities do not rebuild"))?;
+        let mut by_key = BTreeMap::new();
+        let mut by_id = BTreeMap::new();
+        for (position, node) in nodes.iter().enumerate() {
+            let key = wire
+                .key(&node.node_id)
+                .map_err(|_| internal("a package node has no structural key"))?;
+            by_key.insert(key, position);
+            let id = serde_json::to_value(&node.node_id)
+                .and_then(|id| serde_json::to_string(&id))
+                .map_err(|_| internal("a package node id does not serialize"))?;
+            by_id.insert(id, position);
+        }
+        Ok(Self {
+            package,
+            by_key,
+            by_id,
+        })
+    }
+
+    fn node(&self, position: usize) -> &filament_contract_model::CheckedSemanticNodeV2 {
+        &self.package.resolved_graph().nodes[position]
+    }
+
+    fn position(&self, id: &CheckedNodeId) -> Option<usize> {
+        serde_json::to_value(id)
+            .and_then(|id| serde_json::to_string(&id))
+            .ok()
+            .and_then(|id| self.by_id.get(&id).copied())
+    }
+
+    /// The nodes reachable from `root` through dependencies, root included.
+    fn closure(&self, root: usize) -> BTreeSet<usize> {
+        let mut seen = BTreeSet::new();
+        let mut pending = vec![root];
+        while let Some(position) = pending.pop() {
+            if seen.insert(position) {
+                let node = self.node(position);
+                pending.extend(
+                    node.dependencies
+                        .iter()
+                        .chain(std::iter::once(&node.semantic_type))
+                        .filter_map(|id| self.position(id)),
+                );
+            }
+        }
+        seen
+    }
+
+    /// The flow-equation nodes (each mode's `rates`) of the hybrid modes in
+    /// `closure`, once each, in node order.
+    fn flows(&self, closure: &BTreeSet<usize>) -> Result<BTreeSet<usize>> {
+        let mut flows = BTreeSet::new();
+        for &position in closure {
+            let node = self.node(position);
+            if &*node.node_tag != "hybrid" || &*node.semantic_form != "hybrid_mode" {
+                continue;
+            }
+            let body = serde_json::to_value(&node.body)
+                .map_err(|_| internal("a hybrid mode does not serialize"))?;
+            let rates = body["members"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|member| member["name"] == "rates")
+                .and_then(|member| member["value"]["members"].as_array())
+                .ok_or_else(|| internal("a hybrid mode has no rates"))?;
+            for rate in rates {
+                let id = serde_json::to_string(&rate["target"])
+                    .map_err(|_| internal("a rate does not serialize"))?;
+                flows.insert(
+                    *self
+                        .by_id
+                        .get(&id)
+                        .ok_or_else(|| internal("a rate names no package node"))?,
+                );
+            }
+        }
+        Ok(flows)
+    }
+
+    /// The FSpec FR-811 cause for the unrepresentable node at `position`.
+    fn cause(&self, target: Target, position: usize) -> Result<Value> {
+        let node = self.node(position);
+        let id = fsl_replay::protocol_analysis::node_text(&node.node_id)
+            .map_err(|_| internal("a package node id does not spell"))?;
+        let locus = self
+            .package
+            .source_map()
+            .iter()
+            .filter(|entry| entry.node_id == node.node_id)
+            .find_map(|entry| entry.regions.first())
+            .and_then(|region| serde_json::to_value(region).ok())
+            .map_or(Value::Null, |mut region| {
+                region["kind"] = json!("region");
+                region
+            });
+        Ok(json!({
+            "kind": "target-unrepresentable",
+            "target": target.family(),
+            "construct": format!("{}/{}", node.node_tag, node.semantic_form),
+            "node": id,
+            "locus": locus,
+        }))
+    }
+}
+
+/// Classify the requested obligations and, when none stops the export,
+/// assemble the module of the obligations the target can state.
+///
+/// # Errors
+///
+/// A mapper failure when the package does not read as the mapper expects.
+pub(super) fn run(
+    package: &CheckedPackageV2,
+    identity: &str,
+    clauses: &[ClauseFact],
+    request: &Request,
+    effective: &EffectiveLimits,
+) -> Result<Mapped> {
+    let graph = Graph::new(package)?;
+    let mut meter = Meter {
+        limits: effective,
+        nodes: 0,
+        work: 0,
+    };
+    let mut charged = BTreeSet::new();
+    let mut records = Vec::with_capacity(request.obligations.len());
+    let mut unlowered = None;
+    for name in &request.obligations {
+        let Some((clause, key)) = clauses
+            .iter()
+            .find(|clause| &clause.name == name)
+            .and_then(|clause| clause.obligation.as_ref().map(|key| (clause, key)))
+        else {
+            records.push(Record {
+                obligation: name.clone(),
+                disposition: Disposition::Refused,
+                conditions: Vec::new(),
+                causes: vec![json!({"kind": "not-an-obligation", "name": name})],
+                regions: Vec::new(),
+            });
+            continue;
+        };
+        let root = *graph
+            .by_key
+            .get(key)
+            .ok_or_else(|| internal("an obligation's clause is not a node of the package"))?;
+        let closure = graph.closure(root);
+        for &position in &closure {
+            if charged.insert(position) {
+                if let Err((setting, bound)) = meter.charge() {
+                    return Ok(Mapped::Incomplete { setting, bound });
+                }
+            }
+        }
+        let flows = graph.flows(&closure)?;
+        if flows.is_empty() {
+            unlowered.get_or_insert_with(|| Unlowered {
+                obligation: name.clone(),
+                construct: clause.construct.to_owned(),
+            });
+            continue;
+        }
+        records.push(Record {
+            obligation: name.clone(),
+            disposition: Disposition::Unrepresented,
+            conditions: Vec::new(),
+            causes: flows
+                .into_iter()
+                .map(|position| graph.cause(request.target, position))
+                .collect::<Result<_>>()?,
+            regions: Vec::new(),
+        });
+    }
+    let module = module_name(identity);
+    let text = match request.target {
+        Target::Tla => format!("---- MODULE {module} ----\n====\n"),
+        Target::Lean => format!("namespace {module}\nend {module}\n"),
+    };
+    Ok(Mapped::Assembled {
+        text,
+        name_map: Vec::new(),
+        records,
+        unlowered,
+    })
+}

@@ -26,6 +26,11 @@ impl NativeResult {
         Self(document)
     }
 
+    /// The `export` run result: FSpec FR-817's outcome as the `export` member.
+    pub(super) fn export_document(document: Value) -> Self {
+        Self(document)
+    }
+
     /// The FR-621 `analyze` document, written by `fsl-analyze`.
     pub(super) fn analyze_document(document: Value) -> Self {
         Self(document)
@@ -197,6 +202,17 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 },
             },
         ),
+        RunCause::ExportMapper { .. } | RunCause::ExportOutput { .. } => (
+            types::Stage::Spine(fsl_replay::spine::SpineStage::Emit),
+            types::Details::None,
+        ),
+        RunCause::ExportRequest { path, .. } => (
+            types::Stage::Request,
+            types::Details::Object(serde_json::Map::from_iter([(
+                "path".to_owned(),
+                Value::String(path.clone()),
+            )])),
+        ),
         RunCause::ClauseRequest { .. }
         | RunCause::ClocksGivenTwice
         | RunCause::OutputGivenTwice
@@ -366,6 +382,8 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 }
                 _ => None,
             },
+            RunCause::ExportRequest { cause, .. } => Some(*cause),
+            RunCause::ExportOutput { .. } => Some("output-failure"),
             RunCause::TemporalCorrection(_) => Some("invalid-value"),
             RunCause::TlCorrespondence { .. } | RunCause::IntegerDivisionLaw { .. } => {
                 Some("unsupported-selection")

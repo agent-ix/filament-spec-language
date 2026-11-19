@@ -119,6 +119,8 @@ pub enum Operation {
     Inspect,
     /// `render`.
     Render,
+    /// `export`.
+    Export,
 }
 
 /// An ADR-011 stage, the last one an operation reached.
@@ -2120,10 +2122,20 @@ pub enum ExecuteResult {
 enum OutcomeResult {
     Execute(ExecuteResult),
     Parsed(ParsedOutcome),
+    Exported(ExportedOutcome),
     Replayed(ReplayedOutcome),
     #[cfg(feature = "test-support")]
     Raw(serde_json::Value),
 }
+
+/// FR-286 "Export outcomes": the `exported` result holding the FSpec FR-817
+/// export outcome document as the run outcome's `export` member carries it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct ExportedOutcome {
+    kind: &'static str,
+    export: serde_json::Value,
+}
+
 
 /// A replay outcome's `replayed` result: each entry is the row of the FSpec
 /// FR-323 `results` document, unchanged and in row order (FR-286).
@@ -2360,6 +2372,17 @@ impl OutcomeDocument {
             self.native_fences = None;
         }
         self.items = items;
+        self
+    }
+
+    /// This `export` document carrying FSpec FR-817's outcome `export` as its
+    /// `exported` result (FR-286 "Export outcomes").
+    #[must_use]
+    pub fn with_export(mut self, export: serde_json::Value) -> Self {
+        self.result = Some(OutcomeResult::Exported(ExportedOutcome {
+            kind: "exported",
+            export,
+        }));
         self
     }
 
