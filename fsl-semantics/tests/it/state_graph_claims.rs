@@ -20,8 +20,9 @@ use ix_trace_rs::trace;
 use serde_json::json;
 
 use crate::model_operations::{
-    admit_and_assemble_with_body, attempt_update_modifies_version_number, config_unit_with_body,
-    config_version_document, tc464_integer_argument_source,
+    admit_and_assemble_with_body, admit_and_assemble_with_profiles,
+    attempt_update_modifies_version_number, config_unit_with_body, config_version_document,
+    tc464_integer_argument_source,
 };
 
 /// A structural node key for a fixture, distinct per `tag`.
@@ -207,6 +208,29 @@ fn unique_path_checks_to_the_unique_path_form() {
     assert_eq!(from, reference("c.versionNumber = 0"));
     assert_eq!(to, reference("c.versionNumber = 2"));
     assert_ne!(from, to);
+}
+
+/// FR-165-AC-7: the `filament.temporal.complete/v1` header layer is
+/// state-bearing, so a state-graph claim may use it while its predicates are
+/// checked under the unit's value profile.
+#[trace("TC-1545", "FR-165-AC-7")]
+#[test]
+fn a_claim_accepts_the_temporal_complete_header_layer_as_its_value_profile() {
+    let body =
+        "possible ReachesTwo using tc over (c: Config::ConfigVersion) { c.versionNumber = 2 }\n";
+    let declarations = admit_and_assemble_with_profiles(
+        &document(),
+        "profile tc = \"filament.temporal.complete/v1\";\n",
+        body,
+    )
+    .expect("the unit assembles");
+    let graph = declarations
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect("the temporal-complete header layer is state-bearing");
+    assert!(matches!(
+        claim(&graph, "ReachesTwo").form(),
+        StateGraphForm::Possible { .. }
+    ));
 }
 
 /// TC-590, the form part of FR-165 (instances and node identity are deferred): `possible P` and `always possible P` over one `P` record

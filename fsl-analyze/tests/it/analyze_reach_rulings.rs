@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
     analyze, below_three, bounded, counter_request, counter_snapshot, label, request_over,
-    staying_counter_request, Workspace,
+    staying_counter_request, Workspace, HANDOFF,
 };
 use crate::counter::{document, unit_text, CONTRACT};
 
@@ -148,6 +148,38 @@ fn dividing_counter_request(ws: &Workspace, body: &str, items: Value) -> std::pa
     )
 }
 
+/// Compile the request's program under Kernel mode and select the resulting
+/// checked-package handoff from an analyze request, preserving its model and
+/// snapshot members.
+fn kernel_package_request(ws: &Workspace, body: &str, items: Value) -> std::path::PathBuf {
+    let request_path = dividing_counter_request(ws, body, items);
+    let envelope: Value =
+        serde_json::from_slice(&std::fs::read(&request_path).expect("the analyze request exists"))
+            .expect("the analyze request is JSON");
+    let request = envelope["request"].clone();
+    let compile = json!({"format": "native-compile/1", "request": {
+        "models": request["models"],
+        "program": request["program"],
+        "check_mode": "kernel",
+        "handoff": {"directory": HANDOFF, "package_name": "analyze-unit",
+            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}
+    }});
+    let compile_path = ws.write("compile.json", compile.to_string().as_bytes());
+    let bytes = fsl_command::command::compile(&compile_path).expect("the Kernel program compiles");
+    let handed_off = std::fs::read(ws.path(&format!("{HANDOFF}/checked-package.json")))
+        .expect("the handoff holds its package");
+    assert_eq!(handed_off, bytes, "the handoff holds the compiled package");
+
+    let mut selected = request;
+    selected
+        .as_object_mut()
+        .expect("an analyze request object")
+        .remove("program");
+    selected["package"] = json!({"directory": HANDOFF});
+    let document = json!({"format": "native-analyze/1", "request": selected});
+    ws.write("analyze-package.json", document.to_string().as_bytes())
+}
+
 /// FR-628-AC-4's instance half and FR-628-AC-5: the proof's evidence names
 /// its instance by counter `a`'s key in typed canonical form; under
 /// `max_states` 2 a witnessed `possible` claim settles `inconclusive`
@@ -209,18 +241,20 @@ fn state_graph_instance_keys_and_budget_stops() {
 #[trace("TC-2291", "FR-628-AC-4")]
 #[trace("TC-2291", "FR-628-AC-5")]
 #[test]
-#[ignore = "QSL-2296 (from QSL-2125): the `Ratio` target calls the Kernel-checked `r` (FR-628-AC-4, FR-952); a Kernel-checked function body reached by analyze and its undefined arm are not implemented yet"]
 fn state_graph_evidence_keys_loci_and_budget_stops() {
     let body = "function r using v(x: Integer): Integer pure { 1 div x }\n\
                 possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n\
                 possible Ratio using v over (c: M::Counter) { r(3 - c.value) = 1 }\n\
                 always possible BackToZero using v over (c: M::Counter) { c.value = 0 }\n";
     let ws = Workspace::new("rulings-evidence");
-    let run = analyze(&dividing_counter_request(
-        &ws,
-        body,
-        json!([{"claim": "ReachThree"}, {"claim": "Ratio"}]),
-    ));
+    let run = analyze(
+        &kernel_package_request(
+            &ws,
+            body,
+            json!([{"claim": "ReachThree"}, {"claim": "Ratio"}]),
+        )
+        .expect("the Kernel package request is written"),
+    );
     let proved = run.item(0);
     assert_eq!(label(&proved), "proved", "{proved}");
     let instance = find(&proved, "instance").expect("the evidence names its instance");
@@ -240,12 +274,15 @@ fn state_graph_evidence_keys_loci_and_budget_stops() {
 
     let ws = Workspace::new("rulings-budget");
     let limited = json!({"limits": {"max_states": 2}});
-    let run = analyze(&dividing_counter_request(
-        &ws,
-        body,
-        json!([{"claim": "ReachThree", "temporal": limited.clone()},
+    let run = analyze(
+        &kernel_package_request(
+            &ws,
+            body,
+            json!([{"claim": "ReachThree", "temporal": limited.clone()},
             {"claim": "BackToZero", "temporal": limited}]),
-    ));
+        )
+        .expect("the Kernel package request is written"),
+    );
     let witnessed = run.item(0);
     assert_eq!(label(&witnessed), "inconclusive", "{witnessed}");
     assert!(
