@@ -121,6 +121,39 @@ fn a_package_only_call_runs_under_the_recorded_law_without_source() {
     names(&value, "program");
 }
 
+/// FR-100 "Request-file preparation for the driver": preparing a package
+/// request performs no call, and the prepared package call runs to the same
+/// value as `run`.
+#[test]
+#[trace("TC-3019", "FR-100-AC-22")]
+fn a_prepared_package_call_runs_through_its_executor() {
+    let directory = tempfile::tempdir().unwrap();
+    compile(directory.path(), FLOOR_HALF);
+    let path = directory.path().join("request.json");
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&json!({"format": "native-run/1", "request": {"models": [],
+            "package": {"file": "package.json"},
+            "call": {"function": "half", "arguments": []}}}))
+        .unwrap(),
+    )
+    .unwrap();
+    let prepared =
+        fsl_command::command::prepare_run(&path, fsl_command::command::RunLimits::default())
+            .unwrap_or_else(|error| panic!("the package request prepares: {error}"));
+    let fsl_command::command::PreparedRun::Package(prepared) = prepared else {
+        panic!("a package request prepares a package call");
+    };
+    let result = fsl_command::command::execute_package_run(*prepared).expect("the call runs");
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        result.value.as_value()["outcome"]["value"],
+        json!({"integer": "-4"}),
+        "{}",
+        result.value
+    );
+}
+
 /// FR-945-AC-2: a function the package does not declare refuses
 /// `missing_declaration` at stage `call`.
 #[test]

@@ -17,13 +17,13 @@ mod tl;
 mod wire;
 
 pub use analyze::{
-    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
-    analyze_with_providers_and_limits, prepare_analyze,
+    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
+    prepare_analyze, AnalyzeInput, PreparedAnalyze,
 };
 pub use flow::{analyze_flow_report, FlowAnalyzeError};
 pub use monitor::{monitor, MonitorEvent, MonitorProviders, MonitorSummary};
 pub use output::NativeResult;
-pub use tl::{AtomMapping, TlRecord, record as tl_record};
+pub use tl::{record as tl_record, AtomMapping, TlRecord};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -1111,7 +1111,9 @@ impl RunCause {
             Self::MonitorCancelled => filament_semantic_value::catalog::Category::Incomplete,
             Self::ReplayBytes { cause, .. } => cause.category(),
             Self::Replay(failure) => failure.outcome.category(),
-            Self::ReplayOutput { .. } => filament_semantic_value::catalog::Category::InternalFailure,
+            Self::ReplayOutput { .. } => {
+                filament_semantic_value::catalog::Category::InternalFailure
+            }
             _ => self.code().category(),
         }
     }
@@ -2555,7 +2557,16 @@ fn complete_sources(
         limits,
         None,
         None,
-        |_intake, checked, selections, points, packages, _, libraries, models, inventory, failure| {
+        |_intake,
+         checked,
+         selections,
+         points,
+         packages,
+         _,
+         libraries,
+         models,
+         inventory,
+         failure| {
             let cancel = filament_exact::Cancel::new();
             let result = fsl_replay::spine::package_with_temporal_selections(
                 &checked,
@@ -3532,6 +3543,20 @@ pub fn execute_tl_lowering(
 ) -> std::result::Result<RunResult, Box<RunError>> {
     let sources = prepared.sources.clone();
     execute_lowering(prepared).map_err(|cause| Box::new(RunError { cause, sources }))
+}
+
+/// Execute a prepared FR-1039 package call and retain the standard run error
+/// envelope used by the command API.
+///
+/// Request and dependent-file limits are enforced while constructing the
+/// `PreparedPackageRun` through [`prepare_run`] or
+/// [`prepare_run_with_overrides`]; this function executes only that admitted
+/// package.
+pub fn execute_package_run(
+    prepared: PreparedPackageRun,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    let sources = prepared.sources();
+    package_run::execute(prepared).map_err(|cause| Box::new(RunError { cause, sources }))
 }
 
 fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {

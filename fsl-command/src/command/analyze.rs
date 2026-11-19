@@ -19,9 +19,8 @@ use fsl_semantics::model::observation::DocumentProvision;
 
 use super::settle::Settle;
 use super::{
-    check_sources, intake_with_bytes, request, request_integer_division,
-    require_complete_edition, wire, FileCounts, FormalSource, NativeResult, Result, RunCause,
-    RunError, RunLimits, RunResult,
+    check_sources, intake_with_bytes, request, request_integer_division, require_complete_edition,
+    wire, FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
 };
 
 fn invalid(member: &str, reason: impl Into<String>) -> RunCause {

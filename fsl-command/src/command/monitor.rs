@@ -29,9 +29,8 @@ use serde_json::{json, Value};
 
 use super::settle::Settle;
 use super::{
-    check_sources, intake_with_bytes, request, request_integer_division,
-    require_complete_edition, wire, FileCounts, NativeResult, Result, RunCause, RunError,
-    RunLimits, RunResult,
+    check_sources, intake_with_bytes, request, request_integer_division, require_complete_edition,
+    wire, FileCounts, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
 };
 
 /// The format of one event.
