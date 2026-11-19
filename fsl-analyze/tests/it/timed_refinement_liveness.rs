@@ -265,16 +265,18 @@ fn hidden_timed_world(values: &[bool], strength: &str, invariant: bool) -> Refin
          pre MSend using v on M::Call::send {{ not self.inflight }}\n\
          post MSent using v on M::Call::send {{ self.inflight }}\n\
          pre MPoll using v on M::Call::poll {{ not self.inflight }}\n\
-         post MPolled using v on M::Call::poll {{ self.x = 0 ms }}\n\
-         ensure fair {strength} A::Call::send;\n"
+         post MPolled using v on M::Call::poll {{ self.x = 0 ms }}\n"
     );
     let wait = invariant
         .then_some("time invariant Wait when { not self.inflight } { self.x <= 0 ms }\n")
         .unwrap_or_default();
     let body = refinement("self.inflight").replace(
         "step M::Call::send -> A::Call::send(self);",
-        "step M::Call::send -> A::Call::send(self);\n\
-         step M::Call::poll -> stutter;",
+        &format!(
+            "step M::Call::send -> A::Call::send(self);\n\
+             step M::Call::poll -> stutter;\n\
+             ensure fair {strength} A::Call::send;"
+        ),
     );
     refining(
         &abstract_document,
