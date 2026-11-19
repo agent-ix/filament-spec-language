@@ -4392,7 +4392,8 @@ fn violated_undefined_and_insufficient_data_items_carry_their_record_members() {
     assert_eq!(undefined["counterexample"]["trace_position"], 2);
     assert_eq!(undefined["cause"]["kind"], "undefined-evaluation");
     assert_eq!(undefined["cause"]["where"], "position 2");
-    assert_eq!(undefined["cause"]["code"], "division-by-zero");
+    assert_eq!(undefined["cause"]["cause"], "division-by-zero");
+    assert!(undefined["cause"].get("code").is_none());
     assert!(undefined.get("witness").is_none());
 
     let insufficient = synthetic_report(ClauseDisposition::Temporal(TemporalVerdict::Undefined {

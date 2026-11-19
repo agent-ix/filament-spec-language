@@ -41,15 +41,28 @@ use super::{malformed, present, spelled, CauseCodecError};
 mod tests {
     use super::*;
     use filament_semantic_value::checking::CheckMode;
-    use filament_semantic_value::declaration::EnvironmentFailure;
+    use filament_semantic_value::declaration::{EnvironmentFailure, FieldDeclaration};
     use ix_trace_rs::trace;
 
     fn package() -> CheckedPackage {
-        let declarations = fsl_semantics::check::PackageDeclarations::new(
+        let mut declarations = fsl_semantics::check::PackageDeclarations::new(
             fsl_semantics::check::fixture_source(),
             "fixture",
             fsl_foundation::IdentityLimits::default(),
         );
+        declarations.types = TypeEnvironment::new(
+            [CompositeDeclaration::new(
+                crate::fixture_node(1),
+                "StringHolder",
+                CompositeShape::Record(vec![FieldDeclaration::new(
+                    "value",
+                    ValueType::String,
+                    Presence::Required,
+                )]),
+            )],
+            [],
+        )
+        .expect("the String holder type is valid");
         CheckedPackage::link(
             declarations
                 .check(
@@ -57,7 +70,7 @@ mod tests {
                     filament_semantic_value::checking::CheckingLimits::default(),
                     &fsl_eval::value::S6aRewardEvaluator,
                 )
-                .expect("the empty fixture package checks"),
+                .expect("the String holder package checks"),
         )
     }
 
