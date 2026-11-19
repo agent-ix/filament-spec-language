@@ -931,7 +931,7 @@ fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
         instance: &instance,
         letters: &letters,
         matcher: &matcher,
-        meter: crate::hyper_world::UNLIMITED,
+        meter: crate::counter::UNLIMITED,
         max_witness_set: limits.max_witness_set,
         cancel: &cancel,
     };
