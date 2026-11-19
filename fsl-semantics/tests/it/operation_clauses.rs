@@ -204,7 +204,10 @@ fn value_of_an_optional_parameter_without_a_presence_guard_refuses_unproved_pres
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal, got {refusals:?}");
     };
-    assert_eq!(refusal.cause.code(), fsl_foundation::diagnostic::Code::UndefinedExpression);
+    assert_eq!(
+        refusal.cause.code(),
+        fsl_foundation::diagnostic::Code::UndefinedExpression
+    );
     assert_eq!(refusal.cause.cause(), Some("unproved-presence"));
     assert_eq!(refusal.location.path(), vec![0, 0]);
 }
@@ -219,7 +222,10 @@ fn deref_over_an_optional_parameter_refuses_type_mismatch() {
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal, got {refusals:?}");
     };
-    assert_eq!(refusal.cause.code(), fsl_foundation::diagnostic::Code::IllTyped);
+    assert_eq!(
+        refusal.cause.code(),
+        fsl_foundation::diagnostic::Code::IllTyped
+    );
     assert_eq!(refusal.cause.cause(), Some("type-mismatch"));
     assert_eq!(refusal.location.path(), vec![0]);
 }
