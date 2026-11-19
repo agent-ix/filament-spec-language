@@ -57,8 +57,8 @@ fn native_collection_string_bytes_and_json_members_keep_their_payloads() {
 fn decimal_slot() -> ValueType {
     ValueType::Decimal(
         DecimalType::new(
-            Integer::from(0),
-            Integer::from(10000),
+            Integer::from(0_i64),
+            Integer::from(10000_i64),
             2,
             2,
             RoundingMode::Exact,
@@ -135,7 +135,11 @@ fn native_collection_numeric_payload_defects_name_the_member() {
 }
 
 fn admitted(object: serde_json::Value, slot: ValueType) -> Result<Value, AdmissionRecord> {
-    let raw = snapshot(&object.to_string());
+    admitted_source(&object.to_string(), slot)
+}
+
+fn admitted_source(source: &str, slot: ValueType) -> Result<Value, AdmissionRecord> {
+    let raw = snapshot(source);
     let types = TypeEnvironment::default();
     let mut references = References {
         views: &[],
@@ -219,8 +223,8 @@ fn native_collection_decimal_retains_ordered_spelling_and_checks_value_membershi
     let Value::Decimal(value) = value else {
         panic!("decimal")
     };
-    assert_eq!(value.coefficient().to_string(), "150");
-    assert_eq!(value.scale(), 2);
+    assert_eq!(value.representation().coefficient().to_string(), "150");
+    assert_eq!(value.representation().scale(), 2);
     assert!(admitted(decimal("1000", "3"), decimal_slot()).is_ok());
     for (coefficient, scale) in [("1", "3"), ("10001", "2"), ("-1", "0")] {
         let refusal = admitted(decimal(coefficient, scale), decimal_slot()).unwrap_err();
@@ -249,7 +253,44 @@ fn native_collection_decimal_retains_ordered_spelling_and_checks_value_membershi
         panic!("decimal")
     };
     assert_eq!(
-        (first.coefficient().to_string(), first.scale()),
+        (
+            first.representation().coefficient().to_string(),
+            first.representation().scale()
+        ),
+        ("15".to_owned(), 1)
+    );
+}
+
+#[trace("TC-1171", "FR-106-AC-53", "FR-106-AC-60")]
+#[test]
+fn native_collection_options_admit_and_normalize_nested_decimals() {
+    let slot = collection(
+        CollectionKind::Set,
+        ValueType::Option(std::sync::Arc::new(decimal_slot())),
+    );
+    let value = admitted(json!({"set":[{"present":{"kind":"decimal","coefficient":"150","scale":"2"}},{"absent":{}}]}),slot).unwrap();
+    let Value::Collection(value) = value else {
+        panic!("set")
+    };
+    assert_eq!(value.elements().len(), 2);
+    let present = value
+        .elements()
+        .iter()
+        .find_map(|element| {
+            let Value::Option(option) = element else {
+                panic!("option")
+            };
+            option.payload()
+        })
+        .expect("present option");
+    let Value::Decimal(decimal) = present else {
+        panic!("decimal")
+    };
+    assert_eq!(
+        (
+            decimal.representation().coefficient().to_string(),
+            decimal.representation().scale()
+        ),
         ("15".to_owned(), 1)
     );
 }
@@ -261,7 +302,7 @@ fn native_collection_float_bits_preserve_zero_sign_and_nan_payload() {
         (
             IeeeWidth::Binary32,
             "float32",
-            ["00000000", "80000000", "7fc00001", "7fc00002"],
+            ["00000000", "80000000", "7fc00001", "7fc00002", "7f800001"],
         ),
         (
             IeeeWidth::Binary64,
@@ -271,25 +312,216 @@ fn native_collection_float_bits_preserve_zero_sign_and_nan_payload() {
                 "8000000000000000",
                 "7ff8000000000001",
                 "7ff8000000000002",
+                "7ff0000000000001",
             ],
         ),
     ] {
         let slot = ValueType::Float(FloatType::exact(width));
         let values = bits.map(|bits| json!({"kind":tag,"bits":bits}));
-        let value = admitted(
-            json!({"set":values}),
-            collection(CollectionKind::Set, slot.clone()),
+        for (object, bits) in values.iter().zip(bits) {
+            let value = admitted(object.clone(), slot.clone()).unwrap();
+            let Value::Float(value) = value else {
+                panic!("float")
+            };
+            assert_eq!(value.bits(), u64::from_str_radix(bits, 16).unwrap());
+            assert_eq!(value.width(), width);
+        }
+        for (kind, tag) in [
+            (CollectionKind::Set, "set"),
+            (CollectionKind::OrderedSet, "ordered-set"),
+        ] {
+            let value = admitted(json!({tag:values}), collection(kind, slot.clone())).unwrap();
+            let Value::Collection(value) = value else {
+                panic!("collection")
+            };
+            assert_eq!(value.elements().len(), 5);
+            let refusal = admitted(
+                json!({tag:[values[2],values[2]]}),
+                collection(kind, slot.clone()),
+            )
+            .unwrap_err();
+            assert_eq!(refusal.catalog.cause(), "duplicate-member");
+            assert_eq!(refusal.path, [PathStep::Index(1)]);
+        }
+        let bag = admitted(
+            json!({"bag":[values[2],values[2]]}),
+            collection(CollectionKind::Bag, slot.clone()),
         )
         .unwrap();
-        let Value::Collection(value) = value else {
-            panic!("collection")
+        let Value::Collection(bag) = bag else {
+            panic!("bag")
         };
-        assert_eq!(value.elements().len(), 4);
+        assert_eq!(bag.elements().len(), 2);
+        let nested = collection(
+            CollectionKind::Set,
+            ValueType::Option(std::sync::Arc::new(slot)),
+        );
         let refusal = admitted(
-            json!({"set":[values[2],values[2]]}),
-            collection(CollectionKind::Set, slot),
+            json!({"set":[{"present":values[2]},{"present":values[2]}]}),
+            nested,
         )
         .unwrap_err();
         assert_eq!(refusal.catalog.cause(), "duplicate-member");
+    }
+}
+
+#[trace("TC-1171", "FR-106-AC-53", "FR-106-AC-57")]
+#[test]
+fn native_collection_frame_identity_uses_decimal_value_and_float_bits() {
+    let decimal = |coefficient: &str, scale: &str| {
+        snapshot(&json!({"kind":"decimal","coefficient":coefficient,"scale":scale}).to_string())
+    };
+    assert!(decimal("150", "2").equals_by(&decimal("15", "1"), Some(&decimal_slot()), &|_, _| None));
+    assert!(!decimal("150", "2").equals_by(
+        &decimal("151", "2"),
+        Some(&decimal_slot()),
+        &|_, _| None
+    ));
+    for (first, second, equal) in [
+        ("0000000000000000", "8000000000000000", false),
+        ("7ff8000000000001", "7ff8000000000002", false),
+        ("7ff8000000000001", "7ff8000000000001", true),
+    ] {
+        let float = |bits: &str| snapshot(&json!({"kind":"float64","bits":bits}).to_string());
+        assert_eq!(
+            float(first).equals_by(&float(second), None, &|_, _| None),
+            equal
+        );
+    }
+}
+
+#[trace("TC-1231", "FR-106-AC-61")]
+#[test]
+fn native_collection_bytes_and_json_reject_noncanonical_or_mistyped_payloads() {
+    for (slot, value, cause) in [
+        (
+            ValueType::Bytes,
+            json!({"kind":"bytes","text":"00FF"}),
+            "invalid-value",
+        ),
+        (
+            ValueType::JsonObject,
+            json!({"kind":"json_object","text":"{\"a\": 1}"}),
+            "invalid-value",
+        ),
+        (
+            ValueType::Bytes,
+            json!({"kind":"json_object","text":"{}"}),
+            "wrong-value-kind",
+        ),
+        (
+            ValueType::JsonObject,
+            json!({"kind":"bytes","text":"00ff"}),
+            "wrong-value-kind",
+        ),
+        (
+            ValueType::Bytes,
+            json!({"kind":"string","text":"00ff"}),
+            "wrong-value-kind",
+        ),
+        (
+            ValueType::JsonObject,
+            json!({"kind":"string","text":"{}"}),
+            "wrong-value-kind",
+        ),
+        (
+            ValueType::Bytes,
+            json!({"kind":"bytes","text":1}),
+            "wrong-value-kind",
+        ),
+        (
+            ValueType::JsonObject,
+            json!({"kind":"json_object","text":1}),
+            "wrong-value-kind",
+        ),
+        (
+            ValueType::Bytes,
+            json!({"kind":"bytes","text":"00ff","extra":1}),
+            "unknown-member",
+        ),
+        (
+            ValueType::JsonObject,
+            json!({"kind":"json_object","text":"{}","extra":1}),
+            "unknown-member",
+        ),
+    ] {
+        let record = admitted(value.clone(), slot.clone()).unwrap_err();
+        assert_eq!(record.catalog.code(), Code::InvalidRuntimeInput.as_str());
+        assert_eq!(record.catalog.cause(), cause, "{value}");
+        let record = admitted(
+            json!({"set":[value]}),
+            collection(CollectionKind::Set, slot),
+        )
+        .unwrap_err();
+        assert_eq!(record.catalog.cause(), cause);
+        assert_eq!(record.path, [PathStep::Index(0)]);
+    }
+}
+
+#[trace(
+    "TC-1171",
+    "FR-106-AC-54",
+    "FR-106-AC-56",
+    "FR-106-AC-58",
+    "FR-106-AC-60"
+)]
+#[trace("FSpec-FR-144-AC-18", "FSpec-FR-144-AC-20")]
+#[test]
+fn native_collection_bounds_and_element_validation_precede_duplicates() {
+    for (slot, value) in [
+        (
+            decimal_slot(),
+            json!({"kind":"decimal","coefficient":"150","scale":"2"}),
+        ),
+        (
+            rational_slot(),
+            json!({"kind":"rational","numerator":"1","denominator":"2"}),
+        ),
+        (
+            ValueType::Float(FloatType::exact(IeeeWidth::Binary64)),
+            json!({"kind":"float64","bits":"0000000000000000"}),
+        ),
+        (ValueType::String, json!({"kind":"string","text":"a"})),
+    ] {
+        let slot = collection(CollectionKind::Set, slot);
+        let bad = json!({"kind":"string","text":1});
+        let record = admitted(
+            json!({"set":[value.clone(),value,bad.clone()]}),
+            slot.clone(),
+        )
+        .unwrap_err();
+        assert_eq!(record.catalog.cause(), "wrong-value-kind");
+        assert_eq!(record.path, [PathStep::Index(2)]);
+        let record = admitted(json!({"set":vec![bad;7]}), slot).unwrap_err();
+        assert_eq!(record.catalog.code(), Code::CardinalityOutOfBound.as_str());
+        assert_eq!(record.catalog.cause(), "above-maximum");
+        assert!(record.path.is_empty());
+    }
+}
+
+#[trace("TC-1171", "FR-106-AC-66", "FR-106-AC-68", "FR-106-AC-69")]
+#[test]
+fn native_collection_envelopes_keep_document_order_and_nested_paths() {
+    let slot = collection(CollectionKind::Set, ValueType::Integer);
+    for (source, cause, member) in [
+        (r#"{"set":1,"z":0,"a":0}"#, "unknown-member", "z"),
+        (r#"{"z":0,"set":[],"a":0}"#, "unknown-member", "z"),
+        (r#"{"set":1}"#, "wrong-value-kind", "set"),
+        (r#"{"unrecognized":1}"#, "missing-member", "set"),
+    ] {
+        let record = admitted_source(source, slot.clone()).unwrap_err();
+        assert_eq!(record.catalog.cause(), cause);
+        assert_eq!(
+            record.fields.get("member").map(String::as_str),
+            Some(member)
+        );
+        let wrapped = format!(r#"{{"sequence":[{{"present":{source}}}]}}"#);
+        let nested = collection(
+            CollectionKind::Sequence,
+            ValueType::Option(std::sync::Arc::new(slot.clone())),
+        );
+        let record = admitted_source(&wrapped, nested).unwrap_err();
+        assert_eq!(record.catalog.cause(), cause);
+        assert_eq!(record.path, [PathStep::Index(0), PathStep::OptionValue]);
     }
 }

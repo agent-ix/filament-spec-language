@@ -2717,7 +2717,7 @@ fn native_collection_quantity_spellings_share_a_member() {
             .as_array_mut()
             .unwrap()
             .iter_mut()
-            .find(|item| item["name"] == "Item")
+            .find(|item| item["displayName"] == "Item")
             .unwrap()["fields"]
             .as_array_mut()
             .unwrap();
@@ -2745,6 +2745,178 @@ fn native_collection_quantity_spellings_share_a_member() {
                 elements.iter().map(magnitude_of).collect::<Vec<_>>(),
                 ["1/2", "1/2"]
             );
+        }
+    }
+}
+
+/// TC-1171 step 10: the native tag carries the portable kind and elements.
+#[trace("TC-1171", "FR-106-AC-66", "FR-106-AC-68", "FR-106-AC-69")]
+#[trace("FSpec-FR-144-AC-16")]
+#[test]
+fn native_collection_document_members_follow_the_declared_kind() {
+    let replay = collection_replay();
+    for (field, value, cause, member) in [
+        ("ids", json!({}), "missing-member", Some("set")),
+        (
+            "ids",
+            json!({"type":"set","elements":[]}),
+            "missing-member",
+            Some("set"),
+        ),
+        (
+            "ids",
+            json!({"bag":[],"sequence":[]}),
+            "missing-member",
+            Some("set"),
+        ),
+        (
+            "ids",
+            json!({"set":[],"extra":1}),
+            "unknown-member",
+            Some("extra"),
+        ),
+        (
+            "counts",
+            json!({"bag":[],"set":[]}),
+            "unknown-member",
+            Some("set"),
+        ),
+        (
+            "order",
+            json!({"ordered-set":1}),
+            "wrong-value-kind",
+            Some("ordered-set"),
+        ),
+        ("ids", json!([]), "wrong-value-kind", None),
+        ("ids", json!({"bag":[]}), "wrong-value-kind", None),
+    ] {
+        let mut parameters = retag_parameters();
+        parameters[field] = value.clone();
+        for record in [
+            record_of(replay.admit(
+                &with(collection_fields(), field, value.clone()),
+                ObservationLimits::default(),
+            )),
+            record_of(replay.invoke(
+                "retag",
+                Selected::Postcondition,
+                parameters,
+                json!({"set":[]}),
+                ObservationLimits::default(),
+            )),
+        ] {
+            assert_eq!(
+                record.catalog.code(),
+                Code::InvalidRuntimeInput.as_str(),
+                "{value}"
+            );
+            assert_eq!(record.catalog.cause(), cause, "{value}");
+            assert_eq!(
+                record.fields.get("field").map(String::as_str),
+                Some(field),
+                "{value}"
+            );
+            assert_eq!(
+                record.fields.get("member").map(String::as_str),
+                member,
+                "{value}"
+            );
+            assert!(record.path.is_empty(), "{value}: {:?}", record.path);
+        }
+    }
+    // A non-object element is still an entry for the bound check. Its
+    // kind cannot hide the collection's excessive occurrence count.
+    let oversized = record_of(replay.admit(
+        &with(
+            collection_fields(),
+            "counts",
+            json!({"bag":[false,false,false,false,false]}),
+        ),
+        ObservationLimits::default(),
+    ));
+    assert_eq!(
+        oversized.catalog.code(),
+        Code::CardinalityOutOfBound.as_str()
+    );
+    assert_eq!(oversized.catalog.cause(), "above-maximum");
+    let invalid = record_of(replay.admit(
+        &with(
+            collection_fields(),
+            "counts",
+            json!({"bag":[integer("1"),false]}),
+        ),
+        ObservationLimits::default(),
+    ));
+    assert_eq!(invalid.catalog.cause(), "wrong-value-kind");
+    assert_eq!(invalid.path, [PathStep::Index(1)]);
+}
+
+/// A native Duration is the quantity over the compiling unit's seconds.
+#[trace("TC-1231", "FR-106-AC-61")]
+#[test]
+fn native_collection_duration_uses_the_declared_second() {
+    let mut document = fixture::quantity_document();
+    let fields = document["types"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|item| item["displayName"] == "Item")
+        .unwrap()["fields"]
+        .as_array_mut()
+        .unwrap();
+    let reach = fields
+        .iter_mut()
+        .find(|field| field["name"] == "reach")
+        .unwrap();
+    reach["typeRef"] = json!("ix://filament/native/Duration");
+    let span = json!({"kind":"quantity","unit":"s","magnitude":ratio("3","2")});
+    let base = with(quantity_fields(), "reach", span.clone());
+    let replay = replay_with(
+        document.clone(),
+        base.clone(),
+        "dimension Time; unit s : Time = rational(1, 1);",
+    );
+    let closure = replay.admit(&base, ObservationLimits::default()).unwrap();
+    assert_eq!(magnitude_of(&replay.value(&closure, "reach")), "3/2");
+    for (ordered, unique, tag) in [
+        (false, true, "set"),
+        (false, false, "bag"),
+        (true, true, "ordered-set"),
+    ] {
+        let mut collection_document = document.clone();
+        let fields = collection_document["types"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|item| item["displayName"] == "Item")
+            .unwrap()["fields"]
+            .as_array_mut()
+            .unwrap();
+        fields
+            .iter_mut()
+            .find(|field| field["name"] == "reach")
+            .unwrap()["multiplicity"] =
+            json!({"lower":0,"upper":3,"ordered":ordered,"unique":unique});
+        let base = with(quantity_fields(), "reach", json!({tag:[]}));
+        let replay = replay_with(
+            collection_document,
+            base.clone(),
+            "dimension Time; unit s : Time = rational(1, 1);",
+        );
+        let single = with(base.clone(), "reach", json!({tag:[span]}));
+        let closure = replay.admit(&single, ObservationLimits::default()).unwrap();
+        let members = elements_of(&replay.value(&closure, "reach"));
+        assert_eq!(members.len(), 1);
+        assert_eq!(magnitude_of(&members[0]), "3/2");
+        let repeated = with(base, "reach", json!({tag:[span,span]}));
+        let result = replay.admit(&repeated, ObservationLimits::default());
+        if unique {
+            let record = record_of(result);
+            assert_eq!(record.catalog.cause(), "duplicate-member");
+            assert_eq!(record.path, [PathStep::Index(1)]);
+        } else {
+            let closure = result.unwrap();
+            assert_eq!(elements_of(&replay.value(&closure, "reach")).len(), 2);
         }
     }
 }

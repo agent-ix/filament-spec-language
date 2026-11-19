@@ -2656,6 +2656,12 @@ fn model_value_type(
             NativeValueType::Integer => ValueType::Integer,
             NativeValueType::Uuid => ValueType::Uuid,
             NativeValueType::Timestamp => ValueType::Timestamp,
+            NativeValueType::Duration => ValueType::Quantity(
+                units
+                    .get("s")
+                    .ok_or_else(|| Unmapped::QuantityName("s".to_owned()))?
+                    .clone(),
+            ),
             NativeValueType::Bytes => ValueType::Bytes,
             NativeValueType::JsonObject => ValueType::JsonObject,
             NativeValueType::Float32 => {

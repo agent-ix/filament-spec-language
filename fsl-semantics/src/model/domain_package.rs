@@ -297,6 +297,8 @@ pub enum NativeValueType {
     String,
     /// `Timestamp`.
     Timestamp,
+    /// `Duration`, the quantity over the compiling unit's `s`.
+    Duration,
     /// `Bytes`.
     Bytes,
     /// `JsonObject`.
@@ -317,6 +319,7 @@ impl NativeValueType {
             Self::Text => "Text",
             Self::String => "String",
             Self::Timestamp => "Timestamp",
+            Self::Duration => "Duration",
             Self::Bytes => "Bytes",
             Self::JsonObject => "JsonObject",
         }
@@ -339,6 +342,7 @@ impl std::str::FromStr for NativeValueType {
             "Text" => Ok(Self::Text),
             "String" => Ok(Self::String),
             "Timestamp" => Ok(Self::Timestamp),
+            "Duration" => Ok(Self::Duration),
             "Bytes" => Ok(Self::Bytes),
             "JsonObject" => Ok(Self::JsonObject),
             _ => Err(()),

@@ -72,12 +72,14 @@ impl ValueEncoder {
     /// does not write: an enum member of no variant type, a record of no
     /// selected record value type, or a reference, which needs the
     /// population only a snapshot knows. The encoder writes exactly the forms
-    /// admission reads back from a value: a Boolean, an integer, a Text, a
+    /// admission reads back from a value: a Boolean, an integer, a Decimal,
+    /// a Rational, a Float, a Text, a
     /// variant, a record, an `Option` and a `Sequence`, `Set`, `Bag` or
     /// `OrderedSet` of them.
     ///
     /// Every value inside the element of a `Set` or `Bag` is written in its
-    /// canonical encoding (FR-106 "Set, bag and ordered-set values"): a Text
+    /// canonical encoding (FR-106 "Set, bag and ordered-set values"): a Decimal
+    /// by its normalized coefficient and scale, a Text
     /// by its retained sequence under its profile, the FR-141 compared form,
     /// so that equal elements write identically. A Text elsewhere keeps the
     /// payload it was admitted with. [`SnapshotValue::to_json`] then orders a
@@ -120,6 +122,47 @@ impl ValueEncoder {
                 Work::Read(Value::Integer(held), _) => {
                     done.push(SnapshotValue::integer(held.to_string()));
                 }
+                Work::Read(Value::Decimal(held), canonical) => {
+                    let representation = if canonical {
+                        held.normalized()
+                    } else {
+                        held.representation()
+                    };
+                    done.push(SnapshotValue::native(
+                        RawNativeKind::Known(NativeKind::Decimal),
+                        vec![
+                            (
+                                "coefficient".to_owned(),
+                                Some(representation.coefficient().to_string()),
+                            ),
+                            ("scale".to_owned(), Some(representation.scale().to_string())),
+                        ],
+                    ));
+                }
+                Work::Read(Value::Float(held), _) => {
+                    let (kind, bits) = match held.width() {
+                        filament_exact::IeeeWidth::Binary32 => {
+                            (NativeKind::Float32, format!("{:08x}", held.bits()))
+                        }
+                        filament_exact::IeeeWidth::Binary64 => {
+                            (NativeKind::Float64, format!("{:016x}", held.bits()))
+                        }
+                    };
+                    done.push(SnapshotValue::native(
+                        RawNativeKind::Known(kind),
+                        vec![("bits".to_owned(), Some(bits))],
+                    ));
+                }
+                Work::Read(Value::Rational(held), _) => done.push(SnapshotValue::native(
+                    RawNativeKind::Known(NativeKind::Rational),
+                    vec![
+                        ("numerator".to_owned(), Some(held.numerator().to_string())),
+                        (
+                            "denominator".to_owned(),
+                            Some(held.denominator().to_string()),
+                        ),
+                    ],
+                )),
                 Work::Read(Value::Text(held), canonical) => {
                     let written = if canonical {
                         held.retained()
@@ -206,6 +249,9 @@ impl SnapshotValue {
         let mut built: Vec<Option<Json>> = Vec::with_capacity(self.nodes.len());
         for node in &self.nodes {
             let value = match node {
+                RawNode::NonObject | RawNode::ObjectMembers(_) => {
+                    return Err(fault("value-envelope-is-admitted"))
+                }
                 RawNode::Boolean(held) => json!({"boolean": held}),
                 RawNode::Integer(spelling) => json!({"integer": spelling}),
                 RawNode::Native(native) => {
@@ -317,4 +363,64 @@ fn native_json(native: &super::NativeObject) -> serde_json::Value {
         object.insert(name.clone(), native_json(nested));
     }
     Json::Object(object)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use filament_exact::{CollectionType, Decimal, DecimalType, Integer, RoundingMode, ValueType};
+    use ix_trace_rs::trace;
+    use serde_json::json;
+
+    #[trace("TC-1171", "FR-106-AC-53", "FR-106-AC-55", "FR-106-AC-57")]
+    #[test]
+    fn native_collection_encoder_keeps_scalar_spelling_and_canonicalizes_nested_elements() {
+        let encoder = ValueEncoder {
+            variants: BTreeMap::new(),
+            records: BTreeMap::new(),
+            types: TypeEnvironment::default(),
+        };
+        let decimal = Value::Decimal(Decimal::new(Integer::from(150_i64), 2));
+        assert_eq!(
+            encoder.encode(&decimal).unwrap().to_json().unwrap(),
+            json!({"kind":"decimal","coefficient":"150","scale":"2"})
+        );
+        let slot = ValueType::Decimal(
+            DecimalType::new(
+                Integer::from(0_i64),
+                Integer::from(10000_i64),
+                2,
+                2,
+                RoundingMode::Exact,
+            )
+            .unwrap(),
+        );
+        let sequence = CollectionType::new(CollectionKind::Sequence, slot, None);
+        let inner = filament_exact::from_admitted(sequence.clone(), vec![decimal]);
+        let bag = CollectionType::new(CollectionKind::Bag, ValueType::collection(sequence), None);
+        let value = filament_exact::from_admitted(bag, vec![inner]);
+        assert_eq!(
+            encoder.encode(&value).unwrap().to_json().unwrap(),
+            json!({"bag":[{"sequence":[{"kind":"decimal","coefficient":"15","scale":"1"}]}]})
+        );
+        for (value, expected) in [
+            (
+                Value::Float(filament_exact::IeeeValue::binary32(0x8000_0000)),
+                json!({"kind":"float32","bits":"80000000"}),
+            ),
+            (
+                Value::Float(filament_exact::IeeeValue::binary64(0x7ff8_0000_0000_0001)),
+                json!({"kind":"float64","bits":"7ff8000000000001"}),
+            ),
+            (
+                Value::Rational(
+                    filament_exact::Rational::new(Integer::from(2_i64), Integer::from(4_i64))
+                        .unwrap(),
+                ),
+                json!({"kind":"rational","numerator":"1","denominator":"2"}),
+            ),
+        ] {
+            assert_eq!(encoder.encode(&value).unwrap().to_json().unwrap(), expected);
+        }
+    }
 }
