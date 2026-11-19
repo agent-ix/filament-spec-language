@@ -32,6 +32,7 @@ mod fairness;
 mod footprint;
 mod identity;
 mod memory;
+mod package_program;
 mod program;
 mod ra;
 mod race;
@@ -93,6 +94,9 @@ pub use identity::{
 pub use memory::{
     Access, CarriedKey, Chosen, FootprintStep, GatedStep, MemoryBranch, MemoryChoice, MemoryModel,
     MemoryStep, MemoryStepId, Read, ReadChoice, Sc, ScComponent, SharedCell, Written,
+};
+pub use package_program::{
+    PackageControl, PackageProgramRefusal, PackageProtocolProgram, PackageRole,
 };
 use program::{Program, Rest};
 pub use ra::{CarriedView, Ra, RaComponent};
