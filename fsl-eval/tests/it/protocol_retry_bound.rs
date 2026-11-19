@@ -2,7 +2,7 @@
 //! FR-520-AC-4 / TC-1315 row 5: compensation attempt bounds at the engine.
 
 use filament_semantic_value::checking::CheckMode;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::num::NonZeroUsize;
 
 use filament_exact::ScalarLimits;
@@ -373,39 +373,46 @@ fn registration_status<'a>(
     }
 }
 
-/// Follow the fixture's fixed forward path and return its recovery-step
-/// successors. This visits only the prefix needed by the assertion; it does
-/// not enumerate the protocol's reachable graph.
+/// Find the first recovery step in a bounded breadth-first walk. This visits
+/// only the prefix needed by the assertion and stops after 256 unique states.
 fn recovery_cend_successors(
     system: &ProtocolSystem<'_, Sc>,
 ) -> Option<(
     Vec<serde_json::Value>,
     Vec<(ProtocolTransition, ProtocolState<Sc>)>,
 )> {
-    use fsl_eval::simulation::TransitionSystem;
+    use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 
-    let mut state = system.initial().into_iter().next()?;
-    let mut prefix = Vec::new();
-    for kind in [StepKind::Attempt, StepKind::Event, StepKind::CAttempt] {
+    const MAX_STATES: usize = 256;
+    let initial = system.initial().into_iter().next()?;
+    let mut queue = VecDeque::from([(initial, Vec::new())]);
+    let mut visited = BTreeSet::new();
+    while let Some((state, prefix)) = queue.pop_front() {
+        let (key, _) = SubjectSystem::state_key(system, &state).ok()?;
+        if !visited.insert(key) {
+            continue;
+        }
+        if visited.len() > MAX_STATES {
+            return None;
+        }
         let expansion = system.successors(&state).ok()?;
-        let (transition, next) = expansion
+        let cends: Vec<_> = expansion
             .successors
-            .into_iter()
-            .find(|(transition, _)| transition.kind() == kind)?;
-        prefix.push(fsl_eval::simulation::protocol::transition_json(
-            &transition,
-        )?);
-        state = next;
-    }
-    let expansion = system.successors(&state).ok()?;
-    Some((
-        prefix,
-        expansion
-            .successors
-            .into_iter()
+            .iter()
             .filter(|(transition, _)| transition.kind() == StepKind::CEnd)
-            .collect(),
-    ))
+            .cloned()
+            .collect();
+        if !cends.is_empty() {
+            return Some((prefix, cends));
+        }
+        for (transition, next) in expansion.successors {
+            let identity = fsl_eval::simulation::protocol::transition_json(&transition)?;
+            let mut path = prefix.clone();
+            path.push(identity);
+            queue.push_back((next, path));
+        }
+    }
+    None
 }
 
 fn replay_transition_path(
