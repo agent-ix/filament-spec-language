@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
-use filament_exact::ScalarLimits;
+use filament_exact::{ScalarLimits, Value};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::model_subject::{ModelInstance, ModelSubject, ProtocolSubject, RoleBinding};
 use fsl_eval::simulation::model::{
@@ -62,6 +62,18 @@ model M = "test/orders";
 protocol Lookup using P over (view: M::Node) on origin {
   capture found: Option<M::Node> = lookup<M::Node>(M::nodes, view) absent empty;
   capture missing: Option<M::Node> = lookup<M::Node>(M::otherNodes, view) absent empty;
+  role Observer on M::Node;
+  run sequence Main { }
+  finish Closed as (closed: M::Flag) { true };
+}
+"#;
+
+const LOOKUP_UNDEFINED_SOURCE: &str = r#"
+language "ix:native" edition "1-draft";
+profile P = "filament.protocol.finite-global/v1";
+model M = "test/orders";
+protocol LookupUndefined using P over (view: M::Node) on origin {
+  capture missing: M::Node = lookup<M::Node>(M::otherNodes, view) absent undefined;
   role Observer on M::Node;
   run sequence Main { }
   finish Closed as (closed: M::Flag) { true };
@@ -294,6 +306,113 @@ fn lookup_in_a_protocol_capture_matches_present_and_empty_absent_results() {
     assert_eq!(captures["entries"][1]["key"], json!("missing"));
     assert_eq!(captures["entries"][1]["value"]["type"], json!("option"));
     assert!(captures["entries"][1]["value"]["value"].is_null());
+}
+
+/// Provenance: QSL-2216.
+#[trace("TC-2507", "FR-883-AC-2")]
+#[test]
+fn an_undefined_missing_lookup_in_a_protocol_capture_keeps_absent_key() {
+    let (package, packages) = package(LOOKUP_UNDEFINED_SOURCE);
+    let population = filament_checked::key::DeclarationKey {
+        package: tc1070::model::PACKAGE.to_owned(),
+        node: tc1070::model::id("nodes"),
+    };
+    let other_population = filament_checked::key::DeclarationKey {
+        package: tc1070::model::PACKAGE.to_owned(),
+        node: tc1070::model::id("otherNodes"),
+    };
+    let snapshot = serde_json::to_vec(&json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority":"test", "identity":"qsl-2216-undefined"},
+        "observation": "current",
+        "model": {"identity": tc1070::model::PACKAGE},
+        "anchor": {"kind":"initialization", "name":"start"},
+        "populations": [
+            {
+                "population": tc1070::model::id("nodes"),
+                "complete": true,
+                "objects": [{"key":"node-1", "type":tc1070::model::id("Node"), "fields":{"total":{"integer":"5"}}}]
+            },
+            {
+                "population": tc1070::model::id("otherNodes"),
+                "complete": true,
+                "objects": []
+            }
+        ]
+    }))
+    .expect("snapshot serializes");
+    let initial = document_reference(&snapshot).expect("snapshot has identity");
+    let snapshots: DocumentProvision = BTreeMap::from([(initial.clone(), snapshot)]);
+    let request = ModelSimulationRequest {
+        emit: fsl_package::EmitLimits::fixture(),
+        input: fsl_eval::simulation::model::ModelCheckInput::source(&package),
+        packages: &packages,
+        normalization: ModelNormalizationLimits::default(),
+        snapshots: &snapshots,
+        initial: vec![initial],
+        universes: vec![
+            PopulationUniverse {
+                population,
+                keys: vec!["node-1".to_owned()],
+            },
+            PopulationUniverse {
+                population: other_population,
+                keys: Vec::new(),
+            },
+        ],
+        observation: ObservationLimits::default(),
+        expansion: ExpansionLimits {
+            max_candidates: 100_000,
+        },
+        meter: METER,
+    };
+    let model = ModelSystem::new(request).expect("model subject built");
+    let over = ModelInstance {
+        population: filament_checked::key::DeclarationKey {
+            package: tc1070::model::PACKAGE.to_owned(),
+            node: tc1070::model::id("nodes"),
+        },
+        key: "node-1".to_owned(),
+    };
+    let reference = model
+        .bound_reference(tc1070::model::id("Node"), &over)
+        .expect("the selected model declares node-1");
+    let observation = model
+        .observe(model.initial_states()[0].state())
+        .expect("initial state is observable");
+    let protocol = package
+        .graph()
+        .protocol("LookupUndefined")
+        .expect("protocol checked");
+    let capture = protocol
+        .obligations
+        .captures
+        .iter()
+        .find(|capture| capture.name == "missing")
+        .expect("missing lookup capture checked");
+    let evaluation = fsl_eval::value::evaluate_protocol_slot(
+        &package,
+        &capture.initializer,
+        vec![Some(Value::Reference(reference))],
+        observation.environment(),
+        &mut filament_exact::Meter::new(METER),
+    )
+    .expect("protocol capture evaluation completes with its semantic outcome");
+    match evaluation.outcome {
+        fsl_eval::FamilyOutcome::FamilyEvaluated(fsl_eval::FamilyResult::Undefined(cause)) => {
+            let record = cause.undefined_record();
+            assert_eq!(
+                record.reason,
+                filament_semantic_value::catalog::UndefinedReason::AbsentKey
+            );
+            assert_eq!(record.fields.get("key").map(String::as_str), Some("node-1"));
+            assert_eq!(
+                record.fields.get("binding").map(String::as_str),
+                Some(tc1070::model::id("otherNodes").to_string().as_str())
+            );
+        }
+        other => panic!("expected absent-key undefined outcome, got {other:?}"),
+    }
 }
 
 /// Provenance: QSL-2216.
