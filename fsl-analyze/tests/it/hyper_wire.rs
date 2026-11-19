@@ -87,7 +87,9 @@ fn analyze_hyper_holds_with_a_checked_product_certificate() {
 #[trace("TC-2958", "FR-940")]
 #[test]
 fn a_package_hyper_item_refuses_without_falling_back_to_source() {
-    use crate::analyze_cli_support::{counter_request, package_selection, request_members};
+    use crate::analyze_cli_support::{
+        counter_request, package_selection, request_members, HANDOFF,
+    };
     let body = "hyper Equal using t0 over behaviours (c: M::Counter) \
         forall trace a of M forall trace b of M { always holds(c.value @ a <= 3 and c.value @ b <= 3) }";
     let ws = Workspace::new("hyper-wire-package-pending");
@@ -96,9 +98,11 @@ fn a_package_hyper_item_refuses_without_falling_back_to_source() {
     assert_eq!(source.exit, 0, "{}", source.document());
     assert_eq!(label(&source.item(0)), "proved");
     let (members, _) = package_selection(&ws, &request_members(Some(items)));
-    // If the package route tries to recompile source, this malformed unit
-    // would produce a syntax refusal rather than the missing-form refusal.
+    // Neither the original source nor the handoff's retained source can be
+    // recompiled to conceal the package evaluator's missing form.
     ws.write("program.fsl", b"not a native unit");
+    std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
+        .expect("remove only the fixture's retained source files");
     let path = ws.write(
         "analyze-package.json",
         json!({"format": "native-analyze/1", "request": members})
