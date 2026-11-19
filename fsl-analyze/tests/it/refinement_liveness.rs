@@ -366,6 +366,26 @@ fn a_strong_abstract_fairness_constraint_refutes_a_loop_that_never_takes_it() {
     assert_eq!(outcome.liveness, None);
 }
 
+/// FR-899-AC-4 (TC-2537): concrete strong fairness removes the otherwise
+/// abstract-unfair loop, so the liveness inclusion holds.
+#[trace("TC-2537", "FR-899-AC-4")]
+#[test]
+fn concrete_strong_fairness_removes_the_unfair_refinement_loop() {
+    let unit = probe(
+        ["", "self.a = 0", "", ""],
+        ["", "self.a = 0", ""],
+        &[(0, 0)],
+    );
+    let assume_flip_a = "assume fair weak each Impl::Pair::flipA;";
+    let assume_strong_flip_b = "assume fair strong each Impl::Pair::flipB;";
+    let ensure_strong_flip_b = "ensure fair strong whole Spec::Pair::flipB;";
+    holds(&check_aux(&unit.world(&probe_refinement(&[
+        assume_flip_a,
+        assume_strong_flip_b,
+        ensure_strong_flip_b,
+    ]))));
+}
+
 /// FR-143 Second phase (TC-548): the classes are taken in `F_A`'s source
 /// order, so of two violated constraints the first written is the one named.
 #[trace("TC-548")]
