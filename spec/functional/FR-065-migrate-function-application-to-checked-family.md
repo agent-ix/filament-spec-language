@@ -112,7 +112,9 @@ When the S3 typer checks a call `name(arguments)`:
   argument's type node is the parameter's type node (Contract IR FR-347
   "Function-call arguments"); FR-093 lowers that conversion to
   `filament.op.numeric.convert`. An argument whose type is already the
-  parameter's takes no conversion.
+  parameter's takes no conversion. A union-member construction's payload
+  arguments widen by this same rule against the member's declared payload
+  types (FR-317).
 - `Application` SHALL build the call node with that function's declared
   result type.
 - If `name` names a declared tuple type, `Application` SHALL resolve the call
