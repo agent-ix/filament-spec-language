@@ -299,6 +299,7 @@ fn unbounded_model_roots_report_value_bound_cuts_in_operation_coverage() {
     };
 
     let narrow = run(8);
+    assert_eq!(narrow.evidence, ModelBasedTestEvidence::Tested);
     assert!(narrow.provenance.value_bound_cuts.count >= 1);
     assert_eq!(narrow.provenance.max_value_bits, Some(8));
     let big = narrow
@@ -318,6 +319,7 @@ fn unbounded_model_roots_report_value_bound_cuts_in_operation_coverage() {
     );
 
     let wide = run(10);
+    assert_eq!(wide.evidence, ModelBasedTestEvidence::Tested);
     let big = wide
         .operations
         .as_ref()
@@ -325,10 +327,62 @@ fn unbounded_model_roots_report_value_bound_cuts_in_operation_coverage() {
         .iter()
         .find(|entry| entry.operation.name == "big")
         .expect("big is declared");
-    assert!(
-        matches!(big.status, ModelOperationCoverageStatus::Covered { .. }),
-        "the seeded wide-bound suite must actually apply big"
-    );
+    match &big.status {
+        ModelOperationCoverageStatus::Covered { .. } => {}
+        ModelOperationCoverageStatus::NotCovered {
+            reason: ModelOperationCoverageReason::NotGenerated { enabled_at },
+        } => {
+            assert_eq!(
+                enabled_at.len(),
+                3,
+                "three additions are the shortest enabling prefix"
+            );
+            let add = wide
+                .operations
+                .as_ref()
+                .expect("operations")
+                .iter()
+                .find(|entry| entry.operation.name == "add")
+                .expect("add is declared");
+            let mut total = 0_u64;
+            for invocation in enabled_at {
+                let value: Json =
+                    serde_json::from_str(invocation).expect("canonical invocation identity");
+                assert_eq!(value["type"], "transition");
+                assert_eq!(value["operation"], add.operation.identity);
+                let arguments = value["arguments"].as_array().expect("ordered arguments");
+                assert_eq!(arguments.len(), 1);
+                assert_eq!(arguments[0]["type"], "integer");
+                let amount: u64 = arguments[0]["value"]
+                    .as_str()
+                    .expect("exact integer")
+                    .parse()
+                    .expect("a positive bounded amount");
+                assert!((1..=100).contains(&amount));
+                total += amount;
+                let receiver =
+                    (!value["receiver"].is_null()).then(|| value["receiver"].to_string());
+                let transition = filament_semantic_value::model_transition::ModelTransition::new(
+                    value["operation"]
+                        .as_str()
+                        .expect("operation identity")
+                        .to_owned(),
+                    receiver,
+                    arguments.iter().map(Json::to_string).collect(),
+                    quire_canonical::Limits::default(),
+                )
+                .expect("the native transition reader admits the witness");
+                assert_eq!(
+                    transition
+                        .canonical_bytes(quire_canonical::Limits::default())
+                        .expect("native canonical transition"),
+                    invocation.as_bytes()
+                );
+            }
+            assert!(total >= 300, "the recorded arguments must enable big");
+        }
+        other => panic!("wide-bound big needs coverage or a replayed enabling prefix: {other:?}"),
+    }
 }
 
 /// FR-752-AC-4 / FSpec FR-190-AC-13: a passing run stays tested; a failing

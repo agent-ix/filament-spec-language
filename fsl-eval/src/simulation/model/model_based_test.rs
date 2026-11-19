@@ -7,13 +7,14 @@ use std::ops::Deref;
 use filament_eval::{CallFailure, FamilyOutcome, FamilyResult};
 use filament_exact::{Integer, IntegerInterval, Meter, NodeKey, Outcome, Value, ValueType};
 use filament_semantic_value::catalog::Category;
+use filament_semantic_value::model_transition::ModelTransition;
 use fsl_foundation::selection::DefinitionRef;
 use fsl_semantics::check::{CallableFunction, TemporalClauseNode};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use crate::simulation::order::Expanded;
 use crate::simulation::{
-    EncodingRefusal, Limits, TransitionSystem,
+    EncodingRefusal, Limits,
     expansion::{ExpansionLimit, ExpansionStop},
     trace::{Step, Trace},
 };
@@ -3205,8 +3206,8 @@ fn operation_reachability(
 ) -> Result<Vec<(String, ModelOperationCoverageReason)>, ModelBasedTestError> {
     struct Pending {
         state: super::ModelSimState,
-        path: Vec<String>,
-        depth: usize,
+        initial: crate::simulation::StateKey,
+        steps: Vec<Step<ModelTransition>>,
     }
 
     let operations = system.operations();
@@ -3214,8 +3215,8 @@ fn operation_reachability(
     let mut visited = HashMap::<Vec<u8>, usize>::new();
     let mut queue = VecDeque::new();
     let mut stopped = None;
-    for initial in system.initial() {
-        let (key, _) = system.state_key(&initial)?;
+    for initial in ordered_initial_states(system)? {
+        let (key, _) = system.state_key(&initial.state)?;
         if visited.contains_key(&key) {
             continue;
         }
@@ -3228,21 +3229,25 @@ fn operation_reachability(
         }
         visited.insert(key, 0);
         queue.push_back(Pending {
-            state: initial,
-            path: Vec::new(),
-            depth: 0,
+            state: initial.state,
+            initial: initial.key,
+            steps: Vec::new(),
         });
     }
 
     let mut transitions = 0_usize;
     while let Some(current) = queue.pop_front() {
-        if current.depth >= max_depth {
+        if current.steps.len() >= max_depth {
             queue.push_front(current);
             break;
         }
-        let expansion = match system.successors(&current.state) {
-            Ok(expansion) => expansion,
-            Err(stop) => match stop.limit {
+        let successors = match crate::simulation::order::expand(
+            system,
+            &current.state,
+            super::identity_limits(),
+        )? {
+            Expanded::Successors { successors, .. } => successors,
+            Expanded::Stopped(stop) => match stop.limit {
                 Some(ExpansionLimit::MaxCandidates) => {
                     stopped = Some((
                         ModelOperationCoverageLimit::Candidates,
@@ -3255,9 +3260,9 @@ fn operation_reachability(
                 }
             },
         };
-        let mut successors = expansion.successors;
-        successors.sort_by(|left, right| left.0.cmp(&right.0));
-        for (transition, state) in successors {
+        let mut previous = None;
+        let mut ordinal = 0_usize;
+        for successor in successors {
             if transitions >= limits.max_transitions {
                 stopped = Some((
                     ModelOperationCoverageLimit::Transitions,
@@ -3266,15 +3271,22 @@ fn operation_reachability(
                 break;
             }
             transitions = transitions.saturating_add(1);
-            enabled
-                .entry(transition.operation().to_owned())
-                .or_insert_with(|| current.path.clone());
+            ordinal = if previous.as_ref() == Some(&successor.transition) {
+                ordinal.saturating_add(1)
+            } else {
+                0
+            };
+            previous = Some(successor.transition.clone());
+            if !enabled.contains_key(successor.transition.operation()) {
+                let prefix = replayed_invocation_prefix(system, &current.initial, &current.steps)?;
+                enabled.insert(successor.transition.operation().to_owned(), prefix);
+            }
             if enabled.len() == operations.len() {
                 queue.clear();
                 break;
             }
-            let (key, _) = system.state_key(&state)?;
-            let depth = current.depth.saturating_add(1);
+            let (key, _) = system.state_key(&successor.state)?;
+            let depth = current.steps.len().saturating_add(1);
             if visited.contains_key(&key) {
                 continue;
             }
@@ -3286,9 +3298,17 @@ fn operation_reachability(
                 break;
             }
             visited.insert(key, depth);
-            let mut path = current.path.clone();
-            path.push(transition.operation().to_owned());
-            queue.push_back(Pending { state, path, depth });
+            let mut steps = current.steps.clone();
+            steps.push(Step {
+                transition: successor.transition,
+                ordinal,
+                key: successor.key,
+            });
+            queue.push_back(Pending {
+                state: successor.state,
+                initial: current.initial.clone(),
+                steps,
+            });
         }
         if stopped.is_some() {
             break;
@@ -3324,4 +3344,20 @@ fn operation_reachability(
             (identity.to_owned(), reason)
         })
         .collect())
+}
+
+fn replayed_invocation_prefix(
+    system: &ModelSystem<'_>,
+    initial: &crate::simulation::StateKey,
+    steps: &[Step<ModelTransition>],
+) -> Result<Vec<String>, ModelBasedTestError> {
+    super::rebuild_model_trace(system, initial, steps, None, None)?
+        .ok_or(ModelBasedTestError::Coverage)?;
+    steps
+        .iter()
+        .map(|step| {
+            let bytes = system.transition_key(&step.transition)?;
+            String::from_utf8(bytes).map_err(|_| ModelBasedTestError::Coverage)
+        })
+        .collect()
 }

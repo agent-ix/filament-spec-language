@@ -70,7 +70,8 @@ pub enum ModelOperationCoverageReason {
     /// operation. The path is the shortest invocation prefix to that state.
     NotGenerated {
         /// Shortest invocation prefix from an initial state to an enabling
-        /// state, in operation identity form.
+        /// state. Each entry is a canonical FR-181 transition identity text,
+        /// retaining the receiver and arguments as well as the operation.
         enabled_at: Vec<String>,
     },
     /// Exploration stopped before deciding operation reachability.
