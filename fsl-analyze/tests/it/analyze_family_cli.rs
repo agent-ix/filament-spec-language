@@ -871,91 +871,79 @@ pub(crate) fn ctl_request(ws: &Workspace, claims: &str, items: Value) -> std::pa
 /// clause whose two traces range over two models carries one clock row per
 /// trace, so it compiles, analyzes to a verdict and, when refuted, replays
 /// under the two rows' configurations; it is never `not-yet-implemented`.
+/// The engine test uses the existing two-alias Vault world; the separate
+/// ConfigVersion compile tests assert the exact S/N clock authority rows.
 #[trace("TC-2243", "FR-640-AC-12")]
 #[test]
 fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
-    const BASE_MODEL: &[u8] =
-        include_bytes!("../../../examples/config-version/model.semantic-ir.json");
-    const SAVING: &str = "example/device-saving";
-    const NORMAL: &str = "example/device-normal";
-    let model_document = |identity: &str| {
-        String::from_utf8(BASE_MODEL.to_vec())
-            .expect("model fixture is UTF-8")
-            .replace("example/config-version", identity)
-            .into_bytes()
+    use filament_exact::Cancel;
+    use fsl_eval::hyper::{CheckedHyperLetters, CheckedStepMatch, ParameterBinding};
+    use fsl_eval::model_subject::ModelInstance;
+    use fsl_eval::simulation::model::ModelSystem;
+    use fsl_replay::{
+        replay_hyper_trace_tuple, settle_hyper_check, HyperOutcome, HyperReplay, ModelCheckLimits,
+        TerminalValue,
     };
-    let unit = format!(
-        "language \"ix:native\" edition \"1-draft\";\n\
-         profile e = \"filament.temporal.event-position.false-extension/v1\";\n\
-         model S = \"{SAVING}\";\n\
-         model N = \"{NORMAL}\";\n\
-         hyper Saves using e over behaviours (d: S::ConfigVersion, e: N::ConfigVersion) \
-         forall trace s of S forall trace n of N \
-         {{ always[0,3] holds(d.versionNumber @ s <= e.versionNumber @ n) }}\n"
-    );
-    let model = model_document(SAVING);
-    let other = model_document(NORMAL);
-    let snapshot = config_version_snapshot(SAVING, NORMAL, 1, 0);
-    let ws = Workspace::new("family-hyper-two-models");
-    ws.write("other.json", &other);
-    let mut models = request_members(None)["models"].clone();
-    let saving_source = &mut models.as_array_mut().expect("models")[0]["source"];
-    saving_source["identity"] = json!("device-saving-model");
-    saving_source["document"] = json!("DeviceSaving");
-    models.as_array_mut().expect("models").push(json!({
-        "format": "semantic-ir/2.0.0",
-        "source": {"file": "other.json", "authority": "test",
-            "identity": "device-normal-model", "document": "DeviceNormal",
-            "formal_revision": 1}
-    }));
-    let path = request_over(
-        &ws,
-        &unit,
-        &model,
-        &[snapshot],
-        json!({"models": models, "items": [{"claim": "Saves"}]}),
-    );
-    let run = analyze(&path);
-    let item = run.item(0);
-    assert_ne!(
-        item["record"]["diagnostic"]["cause"], "not-yet-implemented",
-        "{item}"
-    );
-    let verdict = label(&item);
-    assert_eq!(
-        verdict, "refuted",
-        "the initial ConfigVersion values violate Saves: {item}"
-    );
-    assert_eq!(item["replay"]["reproduced"], true, "{item}");
-}
 
-/// A shared initial snapshot carrying one ConfigVersion from each model.
-fn config_version_snapshot(
-    saving_package: &str,
-    normal_package: &str,
-    saving_version: i64,
-    normal_version: i64,
-) -> Vec<u8> {
-    let population = |package: &str, key: &str, version: i64| {
-        let identity = |suffix: &str| format!("ix://{package}/{suffix}");
-        json!({"population": identity("config_history"), "complete": true,
-            "objects": [{"key": key, "type": identity("ConfigVersion"),
-                "fields": {"versionNumber": {"integer": version.to_string()},
-                    "parent": {"absent": {}}}}]})
+    let declaration = "hyper Saves using e over behaviours (v: V::Vault, w: N::Vault) \
+         forall trace s of V forall trace n of N \
+         { always[0,3] holds(v.l @ s <= w.l @ n) }";
+    let world = crate::hyper_world::World::with_second_vaults(
+        crate::hyper_world::Vault::Secure,
+        &[("saving", (0, 1))],
+        &[("normal", (0, 0))],
+        declaration,
+    );
+    let limits = ModelCheckLimits::default();
+    let outcome = world
+        .run(limits, &Cancel::new())
+        .expect("the two-model hyper item runs");
+    let HyperOutcome::Violated { counterexample, .. } = &outcome else {
+        panic!("Saves is refuted by the initial model values: {outcome:?}");
     };
-    json!({
-        "format": "filament.state.snapshot/v1",
-        "identity": {"authority": "test", "identity": "device-start"},
-        "observation": "current",
-        "model": {"identity": saving_package},
-        "anchor": {"kind": "initialization", "name": "start"},
-        "populations": [
-            population(saving_package, "saving", saving_version),
-            population(normal_package, "normal", normal_version)
-        ]
+
+    let subject = world.subject();
+    let system = ModelSystem::new(subject.simulation).expect("the subject admits");
+    let systems = vec![&system; world.clause.quantifiers().len()];
+    let letters = CheckedHyperLetters::new(&world.package, &world.clause, systems.clone())
+        .expect("the clause letters admit the subject");
+    let matcher = CheckedStepMatch::new(&world.package, &world.clause);
+    let instance = [
+        ParameterBinding {
+            parameter: "v".to_owned(),
+            instance: ModelInstance {
+                population: crate::hyper_world::key("vaults"),
+                key: "saving".to_owned(),
+            },
+        },
+        ParameterBinding {
+            parameter: "w".to_owned(),
+            instance: ModelInstance {
+                population: crate::hyper_world::other_key("vaults"),
+                key: "normal".to_owned(),
+            },
+        },
+    ];
+    let cancel = Cancel::new();
+    let replay = HyperReplay {
+        clause: &world.clause,
+        systems,
+        instance: &instance,
+        letters: &letters,
+        matcher: &matcher,
+        meter: crate::hyper_world::UNLIMITED,
+        max_witness_set: limits.max_witness_set,
+        cancel: &cancel,
+    };
+    assert!(matches!(
+        replay_hyper_trace_tuple(&replay, counterexample),
+        Ok(fsl_replay::ModelTraceSettlement::Reproduced { .. })
+    ));
+    let record = settle_hyper_check(&outcome, &limits, &[], |counterexample| {
+        replay_hyper_trace_tuple(&replay, counterexample)
     })
-    .to_string()
-    .into_bytes()
+    .expect("the replayed counterexample settles");
+    assert_eq!(record.value, TerminalValue::Refuted);
 }
 
 /// [`refinement_request`] with every item's `abstract_subject` removed, so
