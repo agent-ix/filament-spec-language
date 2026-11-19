@@ -1,0 +1,14 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+object Switch {
+  enabled: Boolean;
+  population switches;
+  operation choose(bit: Boolean): Boolean;
+  operation clear(): Boolean;
+}
+random Switch::choose(bit) ~ { true: 3, false: 1 };
+workload Input on Switch {
+  weight Switch::choose = 1;
+  weight Switch::clear = rational(-1, 1);
+}
+reward effort on Switch::choose = 2;

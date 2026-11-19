@@ -1,0 +1,10 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile ev = "filament.temporal.event-position.false-extension/v1";
+profile inf = "filament.temporal.infinite-trace/v1";
+model Systems = "example/architecture";
+random Systems::Service::call(ok) ~ { true: 3, false: 1 };
+workload Traffic on Systems { weight Systems::Service::call = 1; }
+probabilistic Available using ev on Systems over (service: Systems::Service) under Traffic on origin {
+  probability >= 0.5 [ always[0,1] holds(service.up) ]
+}
