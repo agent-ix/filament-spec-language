@@ -96,8 +96,8 @@ Use ADR-027 §7's `Fill` unit (universe `{c}`, `c.v = 0`).
     `event(Paid)` through FR-217 and read its `event` identities.
 18. FR-205-AC-17: repeat step 17's key reads and EN-1 run (`max_depth` 8)
     for the effect item holding `filament::protocol::effect(Charge::Paid)`,
-    and offer step 17's lasso for it; then run the variant that reads
-    `effect` of a node `Other` that `Charge` never reaches.
+    and offer step 17's lasso for it; then run FR-205-AC-17's `Charge3` variant, whose clause reads
+    `effect(Charge3::Other)`.
 
 Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
 
@@ -185,4 +185,4 @@ Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
   message and delivery read sets are empty; three different cycle keys;
   `inconclusive` `BoundReached{depth: 8}`, never `proved`; the lasso refuses
   `invalid_runtime_input`/`invalid-value` as a loop that does not close. The
-  `Other` variant settles `Holds`.
+  `Charge3` variant settles `Holds` (`proved`).

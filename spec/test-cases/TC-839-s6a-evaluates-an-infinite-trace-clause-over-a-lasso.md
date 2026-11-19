@@ -48,8 +48,8 @@ Scope: FR-329-AC-1 to FR-329-AC-5 and FR-329-AC-8 to FR-329-AC-11.
    adversarial`. Repeat both with loop closure compared by `ProtocolKey`
    (an adverse build of the closure test).
 9. FR-329-AC-11: evaluate step 8's lasso, against
-   both packages, for a clause holding `filament::protocol::delivery(Echo::Rcv)`,
-   and again for one holding `filament::protocol::message(Echo::Rcv)` only.
+   both packages, for FR-329-AC-11's delivery clause,
+   and again for its message clause.
 
 Tag the tests `#[trace("TC-839", "FR-329-AC-n")]`.
 

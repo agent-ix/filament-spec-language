@@ -74,6 +74,7 @@ that show it, or `pending`.
 | Window, one per `await` and compensation | the observed match or attempt falls within its `within` window by the recording's readings of the declaration's clock, the FR-640 configuration naming which clock that is |
 | Compensation, one per registration | registration only after the forward effect and never after the commit; attempts within `attempts n`; each outcome in FR-893's partition |
 | Requirement, one per `requires temporal` clause | the clause holds over the recording read as its trace subject (FR-283) |
+| Identity claim, one per obligation instance of each temporal clause of the package that holds a step identity read (FSpec FR-828) of this protocol | the clause holds over the recording, each observation a position and each read taking the identities the observation's FSpec FR-051 bindings name, each obligation instance bound to one protocol instance by its FSpec FR-287 key (FR-894 "Step identity reads"); `violated` at the first observation where it fails |
 | Closure, one per protocol instance | `finish` is observed and the closure record is `closed` with every required premise (FSpec FR-059-AC-5) |
 
 **Causal order and misorder.** The recording's causal order is the
