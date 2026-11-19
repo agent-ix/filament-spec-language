@@ -206,3 +206,173 @@ fn parts_saga_observations_distinguish_tracked_untracked_and_third_rework() {
         );
     }
 }
+
+fn assessed_root() -> fsl_replay::protocol_analysis::AssessedRootDraft {
+    use filament_exact::{
+        EffectiveId, NodeKey, ObjectId, ObjectReference, OriginalDeclarationKey, PathSegment,
+        UniverseId,
+    };
+    fsl_replay::protocol_analysis::AssessedRootDraft {
+        observation: Some(fsl_replay::ObservationIdentity {
+            authority: "example".into(),
+            identity: "ix://example/parts/data/saga-start".into(),
+        }),
+        object: Some(ObjectReference::new(
+            UniverseId::new(
+                NodeKey::new(
+                    "example/parts",
+                    vec![
+                        PathSegment::Text("model".into()),
+                        PathSegment::Text("object_type".into()),
+                        PathSegment::Text("ix://example/parts/Job".into()),
+                    ],
+                    0,
+                )
+                .unwrap(),
+            ),
+            EffectiveId::new(
+                None,
+                OriginalDeclarationKey::new("example/parts", "ix://example/parts/Job"),
+            ),
+            ObjectId::new("j1").unwrap(),
+        )),
+    }
+}
+
+fn handoff(directory: &Path, file: &Path) -> fsl_command::checked_handoff::CompiledHandoff {
+    use fsl_command::checked_handoff::{self, CheckedHandoffRequest, Corpus};
+    let output = directory.join("handoff");
+    checked_handoff::write(
+        &CheckedHandoffRequest {
+            emit: fsl_command::emit_checked_v2::Request {
+                source: file.to_path_buf(),
+                package_name: "protocol-corpus".into(),
+                models: vec![saga().join("model/parts-saga.semantic-ir.json")],
+                libraries: Vec::new(),
+                execution_points: None,
+                temporal_selections: Vec::new(),
+                out: None,
+            },
+            corpus: Corpus::None,
+            native_join: fsl_package::NativeJoinLimits::new(1 << 28, 1 << 24),
+        },
+        &output,
+    )
+    .expect("source protocol handoff");
+    checked_handoff::compile(&output).expect("read and compile the real handoff")
+}
+
+fn project(
+    handoff: &fsl_command::checked_handoff::CompiledHandoff,
+    role: &str,
+) -> fsl_analyze::protocol_analysis::ProjectionOutcome {
+    use fsl_replay::protocol_analysis::{ProjectionBoundsDraft, RunBudget};
+    let package = handoff.admitted();
+    let protocol = package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| node.semantic_form == "protocol_clause")
+        .expect("source protocol");
+    let role = package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| {
+            node.declaration.as_ref().is_some_and(|declaration| {
+                declaration
+                    .qualified_name
+                    .last()
+                    .is_some_and(|name| name.as_ref() == role)
+            })
+        })
+        .expect("source role");
+    fsl_analyze::protocol_analysis::project(
+        package,
+        fsl_analyze::protocol_analysis::ProjectionRequest {
+            protocol: protocol.node_id.clone(),
+            definition_key: Some("Exchange".into()),
+            role: role.node_id.clone(),
+            profile: Some("bounded-static".into()),
+            bounds: Some(ProjectionBoundsDraft {
+                max_depth: Some(64),
+            }),
+            assessed_root: Some(assessed_root()),
+            budget: RunBudget::default(),
+        },
+    )
+    .expect("well-formed source projection request")
+}
+
+#[test]
+#[trace("FR-570", "FR-574", "FR-575")]
+fn source_projection_preserves_send_receive_direction_and_local_order() {
+    use fsl_replay::protocol_analysis::{AnalysisOutcome, LocalEventKind};
+    let directory = tempfile::tempdir().unwrap();
+    let package = handoff(directory.path(), &corpus("original/exchange.native"));
+    for (role, sends) in [("Sender", true), ("Receiver", false)] {
+        let outcome = project(&package, role);
+        let AnalysisOutcome::Proved(witness) = outcome.outcome else {
+            panic!("{role}: expected a proved projection: {outcome:?}");
+        };
+        assert_eq!(witness.local_graph.events.len(), 1, "{role}: {witness:?}");
+        assert!(witness.local_graph.edges.is_empty(), "{role}: {witness:?}");
+        let kind = &witness.local_graph.events[0].kind;
+        if sends {
+            assert!(matches!(kind, LocalEventKind::Send { .. }), "{kind:?}");
+        } else {
+            assert!(matches!(kind, LocalEventKind::Receive { .. }), "{kind:?}");
+        }
+        assert_eq!(witness.correspondence.0.len(), 1, "{role}: {witness:?}");
+    }
+}
+
+fn analysis_request(file: &Path) -> Value {
+    let mut request = compile_request(file);
+    request["format"] = json!("native-analyze/1");
+    request["request"]["documents"] = json!([{"file":saga().join("data/saga-start.json")}]);
+    let binding = json!({"type":"model-binding","selection":"example/parts"});
+    request["request"]["subject"] = json!({"protocol":{"protocol":"Exchange",
+        "over":{"reference":{"population":"ix://example/parts/jobs","key":"j1"}},
+        "roles":{"Sender":binding,"Receiver":binding}}});
+    request["request"]["items"] = json!([{"claim":"Exchange","kind":"global-conformance",
+        "temporal":{"item_kind":"deadlock-freedom"}}]);
+    request
+}
+
+#[test]
+#[trace("FR-636", "FR-330")]
+fn public_source_analysis_distinguishes_consumed_and_stranded_messages() {
+    let directory = tempfile::tempdir().unwrap();
+    let original = std::fs::read_to_string(corpus("original/exchange.native")).unwrap();
+    let stranded = directory.path().join("stranded.native");
+    std::fs::write(
+        &stranded,
+        original.replace(
+            "receive Seen via Queue of Sent as (got: Note) { true };",
+            "",
+        ),
+    )
+    .unwrap();
+    for (file, expected) in [
+        (corpus("original/exchange.native"), "proved"),
+        (stranded, "refuted"),
+    ] {
+        let output = command::analyze(
+            &write(directory.path(), &analysis_request(&file)),
+            &crate::negotiation::Fr290,
+            &Cancel::new(),
+        )
+        .expect("a protocol analysis settles");
+        let item = &output.value.as_value()["items"][0];
+        assert_eq!(item["record"]["result"], expected, "{item}");
+        assert_eq!(
+            output.exit_code,
+            if expected == "proved" { 0 } else { 10 },
+            "{item}"
+        );
+        if expected == "refuted" {
+            assert!(item.get("counterexample").is_some(), "{item}");
+        }
+    }
+}
