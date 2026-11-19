@@ -855,3 +855,166 @@ fn separated_reference_keys_refuse_at_the_complete_string_token() {
         refused(&expression(value), "\"r\"", 3);
     }
 }
+
+#[test]
+#[trace("FSpec-FR-339-AC-1")]
+fn clock_types_and_unannotated_let_bindings_keep_their_declared_contexts() {
+    let source =
+        unit("type Timer = Clock; function inspect(): Integer pure { let saved = 7 in saved }");
+    let parsed = accepted(&source);
+    let alias = one(
+        &source,
+        &parsed,
+        Production::AliasDeclaration,
+        "type Timer = Clock;",
+    );
+    assert_eq!(
+        children(&source, &parsed, alias, Production::TypeReference),
+        ["Clock"]
+    );
+    let binding = one(
+        &source,
+        &parsed,
+        Production::Expression,
+        "let saved = 7 in saved",
+    );
+    assert!(children(&source, &parsed, binding, Production::TypeReference).is_empty());
+    assert_eq!(
+        children(&source, &parsed, binding, Production::Expression),
+        ["7", "saved"]
+    );
+}
+
+#[test]
+#[trace("FSpec-FR-339-AC-1")]
+fn graph_boolean_and_unbounded_unary_forms_keep_their_precedence() {
+    let predicate = "a or b and not c implies d";
+    let declaration = format!("always possible Reach using v {{ {predicate} }}");
+    let source = unit(&declaration);
+    let parsed = accepted(&source);
+    let claim = one(&source, &parsed, Production::StateGraphClaim, &declaration);
+    assert!(children(&source, &parsed, claim, Production::StateGraphPredicate).is_empty());
+    let implication = one(
+        &source,
+        &parsed,
+        Production::StateGraphImplication,
+        predicate,
+    );
+    assert_eq!(
+        children(
+            &source,
+            &parsed,
+            implication,
+            Production::StateGraphDisjunction
+        ),
+        ["a or b and not c"]
+    );
+    assert_eq!(
+        children(
+            &source,
+            &parsed,
+            implication,
+            Production::StateGraphImplication
+        ),
+        ["d"]
+    );
+    let disjunction = one(
+        &source,
+        &parsed,
+        Production::StateGraphDisjunction,
+        "a or b and not c",
+    );
+    assert_eq!(
+        children(
+            &source,
+            &parsed,
+            disjunction,
+            Production::StateGraphConjunction
+        ),
+        ["a", "b and not c"]
+    );
+    for operator in ["eventually", "always", "once", "historically"] {
+        let predicate = format!("{operator} (s.ready or s.done)");
+        let source = unit(&format!("possible Reach using v {{ {predicate} }}"));
+        let parsed = accepted(&source);
+        let unary = one(&source, &parsed, Production::StateGraphUnary, &predicate);
+        assert_eq!(
+            children(&source, &parsed, unary, Production::StateGraphUnary),
+            ["(s.ready or s.done)"]
+        );
+        assert!(children(&source, &parsed, unary, Production::Interval).is_empty());
+    }
+}
+
+#[test]
+#[trace("FSpec-FR-339-AC-1")]
+fn minimal_hybrid_guarantee_and_composition_bodies_keep_only_authored_members() {
+    let mode = "mode Rest invariant { true } flow { x' = 0; }";
+    let declaration = format!("hybrid Motion using v {{ {mode} }}");
+    let source = unit(&declaration);
+    let parsed = accepted(&source);
+    let hybrid = one(
+        &source,
+        &parsed,
+        Production::HybridDeclaration,
+        &declaration,
+    );
+    assert_eq!(
+        children(&source, &parsed, hybrid, Production::HybridMode),
+        [mode]
+    );
+    let mode = one(&source, &parsed, Production::HybridMode, mode);
+    assert_eq!(
+        children(&source, &parsed, mode, Production::Block),
+        ["{ true }"]
+    );
+    let declaration = "guarantee Runs of Progress using Native { initial to \"crate::initial\"; }";
+    let source = unit(declaration);
+    let parsed = accepted(&source);
+    let guarantee = one(
+        &source,
+        &parsed,
+        Production::GuaranteeDeclaration,
+        declaration,
+    );
+    assert_eq!(
+        children(&source, &parsed, guarantee, Production::GuaranteeInitial),
+        ["initial to \"crate::initial\";"]
+    );
+    assert!(children(&source, &parsed, guarantee, Production::GuaranteeProgress).is_empty());
+    assert!(children(
+        &source,
+        &parsed,
+        guarantee,
+        Production::GuaranteeEnvironment
+    )
+    .is_empty());
+    let declaration = "compose Combined rule interface { component First from P using Native; component Second from Q using Other; }";
+    let source = unit(declaration);
+    let parsed = accepted(&source);
+    let composition = one(
+        &source,
+        &parsed,
+        Production::CompositionDeclaration,
+        declaration,
+    );
+    assert_eq!(
+        children(
+            &source,
+            &parsed,
+            composition,
+            Production::CompositionComponent
+        ),
+        [
+            "component First from P using Native;",
+            "component Second from Q using Other;"
+        ]
+    );
+    assert!(children(
+        &source,
+        &parsed,
+        composition,
+        Production::CompositionGuarantee
+    )
+    .is_empty());
+}
