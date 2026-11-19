@@ -6,10 +6,10 @@
 //! through the driver binary (`$FSL_BIN`).
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, counter_request, counter_request_with, label, request_members, request_over, Workspace,
+    Workspace, analyze, counter_request, counter_request_with, label, request_members, request_over,
 };
 
 /// The two items' results, in request order.
@@ -358,7 +358,7 @@ fn a_nested_reference_row_checks_and_proves() {
 #[test]
 #[ignore = "QSL-2128: hyperproperty items are not reachable through fsl analyze yet"]
 fn non_interference_proves_and_refutes() {
-    use crate::hyper_world::{non_interference, request_files, Vault};
+    use crate::hyper_world::{Vault, non_interference, request_files};
     for (vault, expected) in [(Vault::Secure, "proved"), (Vault::Leaky, "refuted")] {
         let (unit, model, snapshot) = request_files(vault, false, (1, 0), &non_interference(""));
         let ws = Workspace::new(&format!("family-hyper-{expected}"));
@@ -386,7 +386,7 @@ fn non_interference_proves_and_refutes() {
 #[test]
 #[ignore = "QSL-2248: a hyper clause with no object parameter is checked but not emitted"]
 fn an_object_free_hyper_clause_is_analyzed() {
-    use crate::hyper_world::{request_files, Vault};
+    use crate::hyper_world::{Vault, request_files};
     let declaration = "hyper Whole using inf over behaviours () \
                        forall trace a of V forall trace b of V { always holds(true) }";
     let (unit, model, snapshot) = request_files(Vault::Secure, false, (1, 0), declaration);
@@ -410,7 +410,7 @@ pub(crate) fn rpc_unit(t: u32, claim: &str) -> String {
 /// `self.x {timeout} {t} ms`: ADR-026 section 11's strict-guard variant is
 /// `("> 3", ">")`.
 pub(crate) fn rpc_unit_with(t: u32, reply: &str, timeout: &str, claim: &str) -> String {
-    use crate::timed_world::{unit_text, DENSE, PACKAGE};
+    use crate::timed_world::{DENSE, PACKAGE, unit_text};
     let body = format!(
         "{DENSE}\
          pre SendIdle using v on M::Call::send {{ self.phase = 0 }}\n\
@@ -562,13 +562,15 @@ fn an_item_naming_a_registered_provider_settles_on_it() {
     assert!(registry.contains(&json!(provider)));
     assert!(registry.contains(&json!("en-1")) && registry.contains(&json!("en-7")));
     // FR-635 "Outputs": each entry carries its backend's FSpec FR-331 tool.
-    assert!(run.document()["registry"]
-        .as_array()
-        .expect("registry")
-        .iter()
-        .all(|entry| entry["tool"]["name"]
-            .as_str()
-            .is_some_and(|name| !name.is_empty())));
+    assert!(
+        run.document()["registry"]
+            .as_array()
+            .expect("registry")
+            .iter()
+            .all(|entry| entry["tool"]["name"]
+                .as_str()
+                .is_some_and(|name| !name.is_empty()))
+    );
     assert_eq!(label(&run.item(1)), "proved");
 }
 
@@ -873,7 +875,6 @@ pub(crate) fn ctl_request(ws: &Workspace, claims: &str, items: Value) -> std::pa
 /// under the two rows' configurations; it is never `not-yet-implemented`.
 #[trace("TC-2243", "FR-640-AC-12")]
 #[test]
-#[ignore = "QSL-2277: a hyper clause over two models under event-position is refused not-yet-implemented"]
 fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
     let declaration = "hyper Saves using e over behaviours (v: V::Vault, w: N::Vault) \
                        forall trace a of V forall trace b of N \
