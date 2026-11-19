@@ -76,7 +76,8 @@ pub use expression::bare_evaluate_selected_protocol_slot;
 pub use expression::collection_write::{Provenance, WrittenCollection};
 pub use expression::post_targets::{PostTarget, PostTargets};
 pub(crate) use expression::{
-    bare_post_targets, evaluate_bare_state_graph_predicate, projection_atom_reads,
+    bare_post_targets, evaluate_bare_state_graph_predicate, evaluate_bare_terminal_predicate,
+    projection_atom_reads,
     source_post_targets, StateGraphOver,
 };
 pub(crate) use expression::evaluate_over_admitted_environment;

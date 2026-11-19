@@ -165,10 +165,17 @@ pub fn read_terminal(
 /// One `terminal` declaration of a checked package as the package's emitted
 /// node gives it: the mode comes from the node, and a `when` declaration's
 /// checked predicate is the one the node's occurrence names.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct PackageTerminal<'p> {
-    /// The model alias the declaration is on.
+    /// The model alias the declaration is on, a display label.
     pub model: &'p str,
+    /// The identity of the domain package the model selects.
+    pub package: &'p str,
+    /// The declaration's `temporal`/`terminal` node.
+    pub node: filament_exact::NodeKey,
+    /// The declaration's ordinal among the declarations of models selecting
+    /// the same identity, in alias order (FR-411).
+    pub ordinal: usize,
     /// The declared name.
     pub name: &'p str,
     /// The declaration.
@@ -202,7 +209,8 @@ pub enum TerminalResolveRefusal {
 /// The `terminal` declarations of `package`, resolved through the
 /// `temporal`/`terminal` nodes of its checked graph (FR-411, FSpec FR-476:
 /// the node is the only carrier of the declaration). A declaration is
-/// present exactly when the graph holds its node, in model-alias order, and
+/// present exactly when the graph holds its node, ordered by the model
+/// selection's identity then alias (FR-940), and
 /// its mode is the node's. A `when` declaration's predicate is the checked
 /// body the node's `claim` occurrence names, because a checked body cannot
 /// be rebuilt from the wire.
@@ -240,9 +248,23 @@ pub fn resolve_terminals(
         }
         resolved.push(PackageTerminal {
             model: checked.model(),
+            package: checked.package(),
+            ordinal: 0,
+            node: found
+                .map(|node| node.node.clone())
+                .ok_or_else(|| disagrees(checked.model()))?,
             name: checked.name().unwrap_or("terminal"),
             declaration,
         });
+    }
+    // FR-940: both routes order the declarations by the model selection's
+    // identity, so the first undefined or intended one is the same.
+    resolved.sort_by(|left, right| (left.package, left.model).cmp(&(right.package, right.model)));
+    let mut ordinals = std::collections::BTreeMap::<&str, usize>::new();
+    for terminal in &mut resolved {
+        let ordinal = ordinals.entry(terminal.package).or_default();
+        terminal.ordinal = *ordinal;
+        *ordinal += 1;
     }
     if let Some(orphan) = nodes.iter().find(|node| !claimed.contains(&node.node)) {
         return Err(disagrees(&orphan.node.to_string()));

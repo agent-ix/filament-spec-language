@@ -2192,7 +2192,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     Verdict::Undecided(outcome) => {
                         if let Some(cause) = outcome.undefined_cause() {
                             TerminalClass::Undefined {
-                                model: self.protocol.name.clone(),
+                                model: super::model::TerminalModel::named(self.protocol.name.clone()),
                                 cause,
                             }
                         } else if let ClauseOutcome::Incomplete(incomplete) = outcome {
@@ -2205,7 +2205,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                             });
                         } else {
                             TerminalClass::Undecided {
-                                model: self.protocol.name.clone(),
+                                model: super::model::TerminalModel::named(self.protocol.name.clone()),
                             }
                         }
                     }

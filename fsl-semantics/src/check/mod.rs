@@ -237,7 +237,7 @@ pub use refinement::{
 pub use terminal::{
     CheckedTerminal, CheckedTerminalPredicate, TerminalClauseDeclaration, TerminalClauseKind,
     TerminalDeclaration, TerminalKeys, TerminalMismatch, TerminalMode, TerminalNode,
-    TerminalRefusal,
+    TerminalRefusal, terminal_predicate_site,
 };
 mod type_form;
 mod type_invariant;
@@ -3971,6 +3971,7 @@ impl PackageDeclarations {
                     nodes_used = used;
                     terminals.push(CheckedTerminal {
                         model: terminal.model.clone(),
+                        package: terminal.package.clone(),
                         name: Some(terminal.name.clone()),
                         declaration,
                         occurrence: None,
@@ -3990,8 +3991,22 @@ impl PackageDeclarations {
             if *kind == AliasKind::Model
                 && !terminals.iter().any(|terminal| terminal.model == *alias)
             {
+                let Some(package) = models
+                    .iter()
+                    .find(|model| model.alias() == Some(alias.as_str()))
+                    .map(|model| model.selection().identity.clone())
+                else {
+                    refusals.push(CheckRefusal {
+                        location: Location::root(Origin::Expression),
+                        cause: CheckCause::InternalFault(Box::new(
+                            KeyFault::MissingAdmittedModel(alias.clone()),
+                        )),
+                    });
+                    return Err(refusals);
+                };
                 terminals.push(CheckedTerminal {
                     model: alias.clone(),
+                    package,
                     name: None,
                     declaration: TerminalDeclaration::None,
                     occurrence: None,

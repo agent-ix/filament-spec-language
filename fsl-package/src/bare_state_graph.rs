@@ -77,7 +77,7 @@ impl<'p> BarePackage<'p> {
         Ok(Parts { root, row, node })
     }
 
-    fn node_by_key(
+    pub(crate) fn node_by_key(
         &self,
         key: &NodeKey,
     ) -> Result<Option<&'p CheckedSemanticNodeV2>, BareSelectionFailure> {

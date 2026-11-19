@@ -870,7 +870,7 @@ pub fn replay_model_trace_from_package(
         return Ok(ModelTraceReplayResult {
             settlement,
             hints,
-            terminals: TerminalKeys::default(),
+            terminals: input.input().terminal_keys(),
         });
     }
     let clause = input
@@ -922,7 +922,7 @@ pub fn replay_model_trace_from_package(
     Ok(ModelTraceReplayResult {
         settlement,
         hints,
-        terminals: TerminalKeys::default(),
+        terminals: input.input().terminal_keys(),
     })
 }
 
