@@ -3204,6 +3204,23 @@ pub(crate) fn node_value_type(
     {
         return collection_node_type(index, id);
     }
+    if index
+        .node(id)
+        .and_then(|node| index.node(&node.semantic_type))
+        .is_some_and(|node| {
+            matches!(
+                index.admitted.node_kind(&node.node_id),
+                Some(filament_contract_model::CheckedNodeKind::CompositeType(
+                    filament_contract_model::CompositeTypeForm::Sequence
+                        | filament_contract_model::CompositeTypeForm::Set
+                        | filament_contract_model::CompositeTypeForm::Bag
+                        | filament_contract_model::CompositeTypeForm::OrderedSet
+                ))
+            )
+        })
+    {
+        return collection_node_type(index, id);
+    }
     let unresolved = matches!(
         error.code,
         Code::UnsupportedExactType | Code::UnresolvedSelectedDeclaration
@@ -3324,8 +3341,8 @@ fn bound_member(body: &CheckedTerm, wanted: &str) -> Option<u64> {
     })
 }
 
-/// The exact type of a node whose semantic type is a cardinality-bounded
-/// collection. IR's projection reads a collection only as a record member, so
+/// The exact type of a node whose semantic type is a collection, optionally
+/// cardinality-bounded. IR's projection reads a collection only as a record member, so
 /// the join is FSL's: the bounds node gives the cardinality, the collection
 /// type node the kind and its element, and the element is typed by a node of
 /// the package that has it as semantic type (IR's own projection of that node).
@@ -3334,14 +3351,29 @@ fn collection_node_type(
     index: &TypeReader<'_>,
     id: &CheckedNodeId,
 ) -> Result<ValueType, TypeError> {
-    let bounds = index
+    let semantic_type = index
         .node(id)
         .and_then(|node| index.node(&node.semantic_type))
-        .ok_or_else(|| fault("reader-collection-bounds-node-is-admitted"))?;
-    let collection = index
-        .node(&bounds.semantic_type)
-        .filter(|node| node.node_tag.as_ref() == "composite_type")
         .ok_or_else(|| fault("reader-collection-type-node-is-admitted"))?;
+    let (collection, bound) = if semantic_type.node_tag.as_ref() == "bounded_domain"
+        && semantic_type.semantic_form.as_ref() == "collection_bounds"
+    {
+        let (Some(minimum), Some(maximum)) = (
+            bound_member(&semantic_type.body, "min"),
+            bound_member(&semantic_type.body, "max"),
+        ) else {
+            return Err(fault("reader-collection-bounds-are-integers").into());
+        };
+        let bound = filament_exact::CardinalityBound::new(minimum, maximum)
+            .map_err(|_| fault("reader-collection-bounds-are-ordered"))?;
+        let collection = index
+            .node(&semantic_type.semantic_type)
+            .filter(|node| node.node_tag.as_ref() == "composite_type")
+            .ok_or_else(|| fault("reader-collection-type-node-is-admitted"))?;
+        (collection, Some(bound))
+    } else {
+        (semantic_type, None)
+    };
     let kind = match collection.semantic_form.as_ref() {
         "sequence" => filament_exact::CollectionKind::Sequence,
         "set" => filament_exact::CollectionKind::Set,
@@ -3349,14 +3381,6 @@ fn collection_node_type(
         "ordered_set" => filament_exact::CollectionKind::OrderedSet,
         _ => return Err(TypeError::Unsupported),
     };
-    let (Some(minimum), Some(maximum)) = (
-        bound_member(&bounds.body, "min"),
-        bound_member(&bounds.body, "max"),
-    ) else {
-        return Err(fault("reader-collection-bounds-are-integers").into());
-    };
-    let bound = filament_exact::CardinalityBound::new(minimum, maximum)
-        .map_err(|_| fault("reader-collection-bounds-are-ordered"))?;
     let element = match &collection.body {
         CheckedTerm::Aggregate { members } => match members.as_slice() {
             [CheckedTerm::Reference { target }] => target,
@@ -3371,9 +3395,7 @@ fn collection_node_type(
         .ok_or(TypeError::Unsupported)?;
     let element = node_value_type(index, &witness.node_id)?;
     Ok(ValueType::collection(filament_exact::CollectionType::new(
-        kind,
-        element,
-        Some(bound),
+        kind, element, bound,
     )))
 }
 
