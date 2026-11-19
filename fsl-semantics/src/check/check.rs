@@ -2666,7 +2666,6 @@ fn node(kind: NodeKind<NodeId>, value_type: ValueType, location: &Location) -> N
         value_type,
         location: location.clone(),
         equality_producer: None,
-        ordering_part: false,
         field_population: None,
         equality_range_context: None,
     }
@@ -2825,7 +2824,6 @@ impl Typer<'_> {
                         value_type: required.clone(),
                         location,
                         equality_producer: None,
-                        ordering_part: false,
                         field_population: None,
                         equality_range_context: None,
                     });
@@ -2862,7 +2860,6 @@ impl Typer<'_> {
                     value_type: required.clone(),
                     location,
                     equality_producer: None,
-                    ordering_part: false,
                     field_population: None,
                     equality_range_context: None,
                 })
@@ -2879,7 +2876,6 @@ impl Typer<'_> {
                     value_type: required.clone(),
                     location,
                     equality_producer: None,
-                    ordering_part: false,
                     field_population: None,
                     equality_range_context: None,
                 })
@@ -4123,11 +4119,7 @@ impl<'a> Typer<'a> {
             OrderingOperator::GreaterOrEqual => (right, left, false),
         };
         let boolean = |this: &mut Self, kind| this.push(node(kind, ValueType::Boolean, location));
-        let part = |this: &mut Self, kind| {
-            let mut part = node(kind, ValueType::Boolean, location);
-            part.ordering_part = true;
-            this.push(part)
-        };
+        let part = |this: &mut Self, kind| this.push(node(kind, ValueType::Boolean, location));
         let lesser_ordinary = part(self, NodeKind::IeeeNumericEquality(lesser, lesser));
         let greater_ordinary = part(self, NodeKind::IeeeNumericEquality(greater, greater));
         let both_ordinary = boolean(
@@ -5251,7 +5243,6 @@ impl<'a> Typer<'a> {
                     value_type: required.clone(),
                     location,
                     equality_producer: None,
-                    ordering_part: false,
                     field_population: None,
                     equality_range_context: None,
                 });

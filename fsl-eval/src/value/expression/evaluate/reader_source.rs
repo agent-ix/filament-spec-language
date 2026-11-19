@@ -57,10 +57,6 @@ impl<'arena> NodeSource<'arena> for ReaderNode<'arena> {
         self.projection.location(self.index)
     }
 
-    fn is_ordering_part(self) -> bool {
-        false
-    }
-
     fn occurrence(self) -> Option<OccurrenceKey> {
         self.projection.occurrence(self.index).cloned()
     }

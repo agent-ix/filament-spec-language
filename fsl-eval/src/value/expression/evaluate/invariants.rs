@@ -1864,7 +1864,7 @@ fn stack_extraction_and_frame_producers_report_their_own_invariants() {
         m.step(Task::Branch(root.root()))
     });
     probe!("evaluation-connective-node-expected", m, [], {
-        m.step(Task::Short(root.root()))
+        m.step(Task::Short(root.root(), None))
     });
     for root in [
         body(|_| NodeKind::Literal(CheckedLiteral(Value::Boolean(true)))),

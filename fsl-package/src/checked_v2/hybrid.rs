@@ -346,6 +346,51 @@ fn is_text(text: &str, expected: &str) -> bool {
     text == expected
 }
 
+/// The `Float32`/`Float64` type with a rounding mode that the
+/// `bounded_domain/float_rounding` node `id` declares (FR-397), as the exact
+/// type its parameters and results carry.
+///
+/// # Errors
+///
+/// A named FR-390 fault where the admitted node is not a float-rounding
+/// domain, binds no catalogued `rounding` mode, or has a semantic type other
+/// than `Float32` or `Float64`.
+pub(crate) fn float_rounding_type(
+    package: &CheckedPackageV2,
+    id: &CheckedNodeId,
+) -> Result<ValueType, InternalFault> {
+    let fault = |invariant| InternalFault::new("FR-390", invariant);
+    let node = package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| &node.node_id == id)
+        .ok_or_else(|| fault("reader-float-rounding-node-is-admitted"))?;
+    if !matches!(
+        package.node_kind(id),
+        Some(CheckedNodeKind::BoundedDomain(
+            BoundedDomainForm::FloatRounding
+        ))
+    ) {
+        return Err(fault(
+            "reader-float-rounding-node-is-a-float-rounding-domain",
+        ));
+    }
+    let rounding = package
+        .term(id)
+        .and_then(|body| bound(body, "rounding").ok())
+        .and_then(|mode| text(mode).ok())
+        .ok_or_else(|| fault("reader-float-rounding-binds-a-rounding-mode"))?;
+    let rounding = RoundingMode::from_code(rounding)
+        .ok_or_else(|| fault("reader-float-rounding-mode-is-catalogued"))?;
+    let width = match package.node_kind(&node.semantic_type) {
+        Some(CheckedNodeKind::ScalarType(ScalarTypeForm::Float32)) => IeeeWidth::Binary32,
+        Some(CheckedNodeKind::ScalarType(ScalarTypeForm::Float64)) => IeeeWidth::Binary64,
+        _ => return Err(fault("reader-float-rounding-type-is-a-float")),
+    };
+    Ok(ValueType::Float(FloatType::new(width, rounding)))
+}
+
 // ---------------------------------------------------------- body navigation
 
 /// The members of the aggregate `term`.
