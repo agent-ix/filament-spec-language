@@ -495,9 +495,10 @@ pub fn concretise_timed_state_graph_path(
             invariants: subject
                 .invariants(&source.state)
                 .map_err(|_| ZoneCheckRefusal::Fault("state-graph-invariants"))?,
-            elapses: subject
-                .elapses(&source.state)
-                .map_err(|_| ZoneCheckRefusal::Fault("state-graph-elapses"))?,
+            elapses: subject.tick_period().is_none()
+                && !subject
+                    .is_urgent(&source.state)
+                    .map_err(|_| ZoneCheckRefusal::Fault("state-graph-elapses"))?,
             target: subject
                 .invariants(step.post())
                 .map_err(|_| ZoneCheckRefusal::Fault("state-graph-target-invariants"))?,
