@@ -65,7 +65,7 @@ a two-job preemption scenario, a mixed-criticality task with distinct
    destination) and the three-cycle finite `loop` in place of the witness.
 9. Analyze `SOnce` over the `Once` model of FR-249-AC-11 with `backend`
    `en-6`, replay its counterexample, then replay it with the stutter delay
-   0, and replay the original record against the unguarded `OnceAgain`
+   0, and replay the original record against the unguarded `OnceAgain` (`sporadic 1 ms`)
    variant. Analyze the `OnceLocked` variant and its FR-417 time-lock item.
 10. Rerun the FR-249-AC-9 claim of TC-3008 with
     `temporal.limits.max_task_product_work` set to the full run's expansion
