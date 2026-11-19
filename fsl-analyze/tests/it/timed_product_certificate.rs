@@ -6,19 +6,19 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::analyze::{
-    AnalyzeRecord, Engines, analyze_items, exact_probabilistic_item,
-    exact_probabilistic_item_tampered,
+    analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered, AnalyzeRecord,
+    Engines,
 };
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    CertificateRule, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
-    InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule,
-    ProbabilityDocumentError, ProofBasis, TerminalValue, check_probability_certificate_document,
+    check_probability_certificate_document, CertificateRule, ExactProbabilityCertificate,
+    ExactProbabilityCertificateCheck, InconclusiveCause, ProbabilityCertificateLocus,
+    ProbabilityCertificateRule, ProbabilityDocumentError, ProofBasis, TerminalValue,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::long_run_certificate::limits;
 use crate::timed_world::{self, World};
@@ -441,11 +441,9 @@ fn strict_mean_time_is_certified_over_boundary_regions() {
     assert_eq!(proved_value(&record), ratio(20, 9));
     let doc = document(&record);
     assert_eq!(doc["objective"]["timed"]["form"], "expected-elapsed");
-    assert!(
-        doc["values"][0]["state"]
-            .to_string()
-            .contains("boundary-region")
-    );
+    assert!(doc["values"][0]["state"]
+        .to_string()
+        .contains("boundary-region"));
     assert!(accepted(&world, "MeanTime", &doc));
 }
 
