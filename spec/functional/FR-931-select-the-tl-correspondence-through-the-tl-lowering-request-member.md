@@ -306,7 +306,52 @@ shared grammar's "Precedence and bindings" (lowest to highest: `let`/`if`/
   an argument list, a quantifier body, a bracket or a record field value is
   a delimited position that adds no parentheses of its own.
 
-**Names.** A local binder or parameter prints as its declared name; a field,
+**Binders.** Every binder a printed expression introduces (a `case` arm's
+payload binder, a `let` binder, a query, quantifier, `count` or `sum`
+binder, a `fold` or `reduce` accumulator or element binder) and every read
+of one prints as the binder's **declared name**: the source identifier the
+author bound, which the checked package already records as the `name` of
+the binder's `value`/`parameter` node (FSpec FR-322, FSpec FR-440 "Arm
+binder"). The name therefore lives in the checked record, not in the
+printer: a checked binding site carries, beside each slot it binds, that
+slot's declared name (FR-400 "Canonical read projections"), the source
+checker filling it from the source identifier and the package reader from
+the parameter node's `name`, so both routes hand the printer the same
+names. The printer never generates, renumbers or alpha-normalises a name,
+for three reasons. The name is part of the binder's package identity (a
+parameter node id derives from its name, level and type), so renaming a
+binder changes the package and should change the label with it. A
+generated spelling such as a level number is an identifier the author may
+already use, so it could capture a read on re-parse. And the label is meant
+to be read beside the source it came from.
+
+The printer resolves each local read through the binding sites that
+enclose it, innermost first, and never through one slot-to-name table for
+the whole expression, because sibling `case` arms start from the same
+binder level (FSpec FR-440 "Binder levels") and so reuse a slot under
+different names. Printed this way, the binders keep their scopes:
+re-parsing the atom text binds every local read to the same binding site
+it was printed from, so every binder gets back its name, its level and
+its type, and so its parameter node id. FSL refuses a binder that shadows
+another visible binding (FSpec shared grammar, "lexical binders ... cannot
+shadow"), so a checked expression contains no shadowed name and the
+printed text needs no renaming to stay unambiguous. The grammar has no
+wildcard pattern: `_` is an ordinary identifier, so an arm written
+`Rect(_, h)` binds a binder named `_` and prints `Rect(_, h)`. A checked
+binder always has a declared name, because every binding production binds
+an `ident` and the checker introduces no unnamed binder into an expression.
+
+A `case` prints as `case`, its scrutinee, then one arm per member of the
+scrutinee's union **in member declaration order**, the order the checked
+node keeps whatever order the source arms were written in (FSpec FR-440
+"Case node"). Each arm prints as the bare member name, then the
+parenthesised binder names in payload position order (none, and no
+parentheses, for a nullary member), `: `, the arm body and `;`. The member
+name is bare because an arm resolves against the scrutinee's union
+(FSpec FR-146), so the bare name is unambiguous and holds no alias.
+
+**Names.** A local binder or parameter prints as its declared name
+("Binders" above); a field,
 operation or relationship-end member as its member name. A declaration (a
 function, a type, a population, a model declaration) prints as its
 **declaration key**, the alias-free identity text the checked package
@@ -372,6 +417,7 @@ field order; a reference literal as `Q#"key"`.
 | FR-931-AC-10 | A `lasso` trace beside `"correspondence": "mltl.closed-trace/v1"`, and a `finite` trace or the `initial` form beside `"correspondence": "mltl.infinite-trace/v1"`, each refuse `invalid-request` at stage `request`, exit 20, naming `tl_lowering.cross_evaluate.trace` (or `tl_lowering.cross_evaluate.initial`), before the unit is compiled; `C` with no named correspondence and a `finite` trace refuses the same way after classification; a lasso with an empty loop refuses as FR-329 refuses it; the infinite-trace `C` with a weak fairness constraint over an observed lasso settles `MissingFairnessPremise`, exit 21, with no `cross_evaluation`; none of the refusals writes a result document. Through the `fsl-command` library entry, FR-757-AC-2's mis-mapped atom table (`p0` mapped to the negated leaf) over `C` and the lasso of AC-9 gives exactly one `correspondence-loss` fault, naming `C`, trace 0, position 1, native `false` and `tl` `true`, exit 30, and the faithful table agrees. | Test (TC-3023) |
 | FR-931-AC-11 | Over the `Low` fixture written `on origin { always [0, 3] holds( ( c.versionNumber<=2 ) ) }`, the `atoms` entry of `p0` is exactly `holds(c.versionNumber <= 2)`, the same bytes as for FR-931-AC-1's spelling. Over a variant whose `c` also has Boolean fields `a`, `b`, `p`, `q`, Integer fields `x`, `y` and a Text field `name`, a leaf written `holds(not(c.a=c.b) and ((c.x+1)-(c.y-2))>=0 implies c.p implies c.q)` prints `holds(not (c.a = c.b) and c.x + 1 - (c.y - 2) >= 0 implies c.p implies c.q)`, and a leaf written `holds(c.name = "a\u0041\t")` prints `holds(c.name = "aA\t")`; and the same requests over the unit's checked package selected as `package` (FR-1039) give byte-equal `atoms`, with the source file removed. | Test (TC-2601) |
 | FR-931-AC-12 | Over the `Low` unit with the ConfigVersion model `example/config-version` selected under the alias `Config`, with a source enumeration `enum Mode { On, Off }` declared by the unit (its `SourceOwner` identity `I`) and a state read `c.mode: Mode`, the leaves `holds(c.mode = Mode::On)` and `holds(size(allInstances<Config::ConfigVersion>(Config::P)) >= 1)` (`P` the model's population of `ConfigVersion`) give the atom texts `holds(c.mode = ix://I/Mode::On)` and `holds(size(allInstances<ix://example/config-version/ConfigVersion>(ix://example/config-version/P)) >= 1)`; the same unit with the alias renamed to `K` throughout gives byte-equal `atoms`, and so does each unit's checked package selected as `package` (FR-1039) with the source removed. | Test (TC-2601) |
+| FR-931-AC-13 | Over the `Low` unit with a source union `union Shape { Circle(Integer), Rect(Integer, Integer), Empty }` declared by the unit (its `SourceOwner` identity `I`), the leaf written `holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })` has the atom text `holds(case ix://I/Shape::Rect(c.versionNumber, 2) { Circle(r): r <= 2; Rect(w, h): w + h <= 4; Empty: true; })`, arms in member declaration order and binders under their declared names; the leaf `holds(let k = c.versionNumber in case Shape::Rect(k, 1) { Circle(r): r <= k; Rect(_, h): case Shape::Circle(h) { Circle(x): x + k <= 4; Rect(a, b): false; Empty: true; }; Empty: true; })` prints `holds(let k = c.versionNumber in case ix://I/Shape::Rect(k, 1) { Circle(r): r <= k; Rect(_, h): case ix://I/Shape::Circle(h) { Circle(x): x + k <= 4; Rect(a, b): false; Empty: true; }; Empty: true; })`, with `_` printed as an ordinary binder; the first leaf with `w` renamed to `width` throughout prints `Rect(width, h): width + h <= 4`, so the atom texts differ; and each unit's checked package selected as `package` (FR-1039) with the source removed gives byte-equal `atoms`. | Test (TC-3039) |
 
 ## Dependencies
 
@@ -382,3 +428,5 @@ field order; a reference literal as `Q#"key"`.
 - `tl-mltl` FR-031 (the infinite-trace evaluator `mltl.infinite-trace/v1`
   names, with its closed-past-before-origin reading).
 - FSpec FR-095 (correspondence contract).
+- FR-400 (binder names on the checked read projections), FSpec FR-440 (arm
+  binder names and levels in the checked package).
