@@ -297,16 +297,29 @@ fn a_hidden_field_with_an_always_enabled_abstract_write_refutes_a_peek_loop() {
 /// suffices for inclusion.
 #[trace("TC-2536", "FR-899-AC-2")]
 #[test]
-fn one_fair_hidden_candidate_run_is_sufficient() {
+fn the_non_taking_candidate_is_hidden_and_a_fair_write_candidate_holds() {
     let unit = Unit::registers(&["r"], &["r"], AuxShape::Peeker);
     let refinement = hidden_register_history().replace(
         "step Impl::Register::write -> Spec::Register::write(self, x);",
         "step Impl::Register::write -> Spec::Register::write(self, x);\n\
          step Impl::Register::peek -> stutter;",
     );
-    // `peek` supplies a concrete transition whose candidate omits the
-    // abstract write; a fair candidate that takes the mapped write remains.
-    holds(&check_aux(&unit.world(&refinement)));
+    // The non-taking peek loop cannot stand in for a fair candidate that
+    // takes the abstract write.
+    let non_taking = lasso(check_aux(&unit.world(&refinement)));
+    assert!(matches!(
+        non_taking.refinement,
+        Some(RefinementFailure::HiddenUnfair { .. })
+    ));
+
+    // Once the concrete write is weakly fair, the mapped candidate taking
+    // the abstract write suffices even though peek remains a stuttering path.
+    let fair_write = refinement.replace(
+        "step Impl::Register::write -> Spec::Register::write(self, x);",
+        "assume fair weak Impl::Register::write;\n\
+         step Impl::Register::write -> Spec::Register::write(self, x);",
+    );
+    holds(&check_aux(&unit.world(&fair_write)));
 }
 
 /// `Probe` over the concrete guards `concrete` (`flipA`, `flipB`, `setA`,
