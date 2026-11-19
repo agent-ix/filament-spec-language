@@ -148,8 +148,12 @@ struct CandidateNode {
 
 /// Abstract operations enabled at one hidden-field candidate state.
 struct CandidateEnabled {
+    /// Candidate identity: a model state key, or a protocol configuration key.
     key: Vec<u8>,
+    /// The underlying abstract model state used for operation enabledness.
+    state_key: Vec<u8>,
     state: ModelSimState,
+    protocol: Option<fsl_replay::ProtocolCandidate>,
     transitions: Vec<ModelTransition>,
 }
 
@@ -2444,7 +2448,32 @@ impl Run<'_, '_> {
             self.poll()?;
             let mut here = Vec::new();
             let mut candidate_enabled = Vec::new();
-            for candidate in &node.position.abstract_states {
+            let candidates = if let Some(protocol) = self.abstract_protocol {
+                node.position
+                    .abstract_protocol_states
+                    .iter()
+                    .map(|candidate| {
+                        let state = protocol.model_state(candidate).ok_or_else(|| {
+                            fault("a-protocol-candidate-has-an-abstract-model-state")
+                        })?;
+                        let (key, _) = Self::encoding(protocol.state_key(candidate))?;
+                        let (state_key, _) =
+                            Self::encoding(self.abstract_system.state_key_of(state))?;
+                        Ok((key, state_key, state.clone(), Some(candidate.clone())))
+                    })
+                    .collect::<Result<Vec<_>, End>>()?
+            } else {
+                node.position
+                    .abstract_states
+                    .iter()
+                    .map(|candidate| {
+                        let (key, _) =
+                            Self::encoding(self.abstract_system.state_key_of(candidate))?;
+                        Ok((key.clone(), key, candidate.clone(), None))
+                    })
+                    .collect::<Result<Vec<_>, End>>()?
+            };
+            for (key, state_key, candidate, protocol_candidate) in candidates {
                 if transitions >= self.limits.limits.max_transitions {
                     return Err(Self::stopped(
                         ModelCheckLimit::MaxTransitions,
@@ -2453,7 +2482,7 @@ impl Run<'_, '_> {
                 }
                 let expansion = self
                     .abstract_system
-                    .expand_state(candidate)
+                    .expand_state(&candidate)
                     .map_err(|stop| self.expansion_stop(stop))?;
                 transitions = transitions.saturating_add(expansion.successors.len());
                 if expansion
@@ -2470,11 +2499,12 @@ impl Run<'_, '_> {
                     .into_iter()
                     .map(|(transition, _)| transition)
                     .collect::<Vec<_>>();
-                let (key, _) = Self::encoding(self.abstract_system.state_key_of(candidate))?;
                 here.extend(candidate_transitions.iter().cloned());
                 candidate_enabled.push(CandidateEnabled {
                     key,
-                    state: candidate.clone(),
+                    state_key,
+                    state: candidate,
+                    protocol: protocol_candidate,
                     transitions: candidate_transitions,
                 });
             }
@@ -2531,11 +2561,12 @@ impl Run<'_, '_> {
             .collect();
         let constraints =
             fairness_constraints(self.concrete, &concrete_fairness, &transitions, identity)?;
-        if self
-            .refinement
-            .objects()
-            .iter()
-            .any(|object| !object.hidden.is_empty())
+        if self.abstract_protocol.is_some()
+            || self
+                .refinement
+                .objects()
+                .iter()
+                .any(|object| !object.hidden.is_empty())
         {
             return self.hidden_candidate_liveness(
                 &candidate_enabled,
@@ -2861,46 +2892,88 @@ impl Run<'_, '_> {
                 }
             }
             Taken::Protocol(transitions) => {
+                let protocol = self
+                    .abstract_protocol
+                    .ok_or_else(|| fault("a-protocol-edge-has-a-protocol-system"))?;
                 for candidate in source_candidates {
-                    for transition in transitions {
+                    let Some(protocol_candidate) = &candidate.protocol else {
+                        return Err(fault("a-protocol-edge-has-a-protocol-source-candidate").into());
+                    };
+                    let expansion = protocol
+                        .successors(protocol_candidate)
+                        .map_err(|stop| self.expansion_stop(stop))?;
+                    self.charge_summary_work(expansion.successors.len())?;
+                    for (transition, post) in expansion.successors {
+                        if !transitions.contains(&transition) {
+                            continue;
+                        }
+                        let (post_key, _) = Self::encoding(protocol.state_key(&post))?;
+                        let Some(target) = target_candidates
+                            .iter()
+                            .find(|target| target.key == post_key)
+                        else {
+                            continue;
+                        };
                         let labels = self.protocol_candidate_path_labels(
                             &candidate.state,
-                            std::slice::from_ref(transition),
+                            std::slice::from_ref(&transition),
                             classes,
                         )?;
-                        self.insert_protocol_candidate_endpoints(
-                            &mut relation,
-                            candidate,
-                            target_candidates,
-                            labels,
-                        )?;
+                        for (state, label) in labels {
+                            let (state_key, _) =
+                                Self::encoding(self.abstract_system.state_key_of(&state))?;
+                            if state_key == target.state_key {
+                                insert_relation_label(
+                                    &mut relation,
+                                    (candidate.key.clone(), target.key.clone()),
+                                    label,
+                                );
+                            }
+                        }
                     }
                 }
             }
             Taken::ProtocolTraces(traces) => {
                 for candidate in source_candidates {
+                    if candidate.protocol.is_none() {
+                        return Err(
+                            fault("a-protocol-trace-has-a-protocol-source-candidate").into()
+                        );
+                    }
                     let paths = traces
                         .iter()
-                        .filter(|trace| {
-                            self.abstract_protocol.is_some_and(|protocol| {
-                                protocol.model_state(&trace.start).is_some_and(|state| {
-                                    self.abstract_system
-                                        .state_key_of(state)
-                                        .is_ok_and(|(key, _)| key == candidate.key)
-                                })
-                            })
+                        .filter(|trace| trace.start_key == candidate.key)
+                        .map(|trace| {
+                            (
+                                trace
+                                    .candidate_keys
+                                    .last()
+                                    .cloned()
+                                    .unwrap_or_else(|| trace.start_key.clone()),
+                                trace.transitions.clone(),
+                            )
                         })
-                        .map(|trace| trace.transitions.clone())
                         .collect::<Vec<_>>();
-                    for path in paths {
+                    for (post_key, path) in paths {
+                        let Some(target) = target_candidates
+                            .iter()
+                            .find(|target| target.key == post_key)
+                        else {
+                            continue;
+                        };
                         let labels =
                             self.protocol_candidate_path_labels(&candidate.state, &path, classes)?;
-                        self.insert_protocol_candidate_endpoints(
-                            &mut relation,
-                            candidate,
-                            target_candidates,
-                            labels,
-                        )?;
+                        for (state, label) in labels {
+                            let (state_key, _) =
+                                Self::encoding(self.abstract_system.state_key_of(&state))?;
+                            if state_key == target.state_key {
+                                insert_relation_label(
+                                    &mut relation,
+                                    (candidate.key.clone(), target.key.clone()),
+                                    label,
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -2917,6 +2990,36 @@ impl Run<'_, '_> {
         path: &[fsl_eval::simulation::protocol::ProtocolTransition],
         classes: &[AbstractClass],
     ) -> Result<Vec<(ModelSimState, FairLabel)>, End> {
+        if path.is_empty() {
+            let expansion = self
+                .abstract_system
+                .expand_state(initial)
+                .map_err(|stop| self.expansion_stop(stop))?;
+            self.transitions = self.transitions.saturating_add(expansion.successors.len());
+            if self.transitions > self.limits.limits.max_transitions {
+                return Err(Self::stopped(
+                    ModelCheckLimit::MaxTransitions,
+                    widen(self.limits.limits.max_transitions),
+                ));
+            }
+            let enabled = expansion
+                .successors
+                .iter()
+                .map(|(transition, _)| transition.clone())
+                .collect::<Vec<_>>();
+            let label = classes
+                .iter()
+                .map(|class| {
+                    let is_enabled = class.is_enabled_in(&enabled);
+                    FairMark {
+                        taken: false,
+                        enabled_somewhere: is_enabled,
+                        enabled_everywhere: is_enabled,
+                    }
+                })
+                .collect();
+            return Ok(vec![(initial.clone(), label)]);
+        }
         let mut current = vec![(initial.clone(), neutral_label(classes.len()))];
         for protocol_step in path {
             self.poll()?;
@@ -2980,22 +3083,6 @@ impl Run<'_, '_> {
             current = next;
         }
         Ok(current)
-    }
-
-    fn insert_protocol_candidate_endpoints(
-        &self,
-        relation: &mut CandidateRelation,
-        source: &CandidateEnabled,
-        targets: &[CandidateEnabled],
-        endpoints: Vec<(ModelSimState, FairLabel)>,
-    ) -> Result<(), End> {
-        for (state, label) in endpoints {
-            let (key, _) = Self::encoding(self.abstract_system.state_key_of(&state))?;
-            if targets.iter().any(|target| target.key == key) {
-                insert_relation_label(relation, (source.key.clone(), key), label);
-            }
-        }
-        Ok(())
     }
 
     fn idempotent_power(&mut self, relation: &CandidateRelation) -> Result<CandidateRelation, End> {
@@ -3336,6 +3423,8 @@ impl Run<'_, '_> {
             .any(|object| !object.hidden.is_empty());
         let failure = if has_hidden {
             RefinementFailure::HiddenUnfair { constraint }
+        } else if self.abstract_protocol.is_some() {
+            RefinementFailure::AbstractUnfair { constraint }
         } else if taking {
             RefinementFailure::AbstractUnfair { constraint }
         } else {
