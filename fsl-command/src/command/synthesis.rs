@@ -340,7 +340,6 @@ fn integer_value(value: &Integer) -> Value {
     serde_json::json!({"type": "integer", "value": value.to_string()})
 }
 
-#[derive(Clone, Debug)]
 struct Selection {
     declaration: Option<String>,
     limits: SearchLimits,
