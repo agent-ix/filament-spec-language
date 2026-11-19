@@ -21,7 +21,8 @@ fn run_items(
         {"file": "start.json"},
         {"file": "population.json", "identity": {"authority": "test", "identity": POPULATION}}
     ]);
-    let path = counter_request_with(ws, &source, request);
+    let path = counter_request_with(ws, "", request);
+    ws.write("program.fsl", source.as_bytes());
     ws.write("population.json", traces.to_string().as_bytes());
     let run = analyze(&path);
     assert!(
@@ -32,12 +33,20 @@ fn run_items(
     run
 }
 
-fn request(ws: &Workspace, clause: &str, traces: Value) -> crate::analyze_cli_support::Run {
-    let source = format!(
-        "record Obs {{ inp: Int[0, 3]; out: Int[0, 3]; }}\n\
-         profile ep = \"filament.temporal.event-position.false-extension/v1\";\n\
-         {clause}\n"
+fn unit(body: &str) -> String {
+    let header = crate::counter::unit_text("");
+    let header = header.replace(
+        "model M = \"test/counter\";\n",
+        "profile ep = \"filament.temporal.event-position.false-extension/v1\";\n\
+         model M = \"test/counter\";\n",
     );
+    format!("{header}{}{body}\n", crate::counter::CONTRACT)
+}
+
+fn request(ws: &Workspace, clause: &str, traces: Value) -> crate::analyze_cli_support::Run {
+    let source = unit(&format!(
+        "record Obs {{ inp: Int[0, 3]; out: Int[0, 3]; }}\n{clause}"
+    ));
     run_items(
         ws,
         &source,
@@ -124,11 +133,9 @@ fn quantifier_order_open_prefix_and_population_bound_settle() {
          hyper ExistsForall using ep over t in Obs bounded 3 \
          exists trace b forall trace a { a.out = b.inp }";
     let ws = Workspace::new("finite-hyper-prefix-order");
-    let source = format!(
-        "record Obs {{ inp: Int[0, 3]; out: Int[0, 3]; }}\n\
-         profile ep = \"filament.temporal.event-position.false-extension/v1\";\n\
-         {clauses}\n"
-    );
+    let source = unit(&format!(
+        "record Obs {{ inp: Int[0, 3]; out: Int[0, 3]; }}\n{clauses}"
+    ));
     let items = json!([
         {"claim": "ForallExists", "kind": "temporal-satisfaction", "traces": {"authority": "test", "identity": POPULATION}},
         {"claim": "ExistsForall", "kind": "temporal-satisfaction", "traces": {"authority": "test", "identity": POPULATION}}
