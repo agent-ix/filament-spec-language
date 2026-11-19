@@ -31,6 +31,7 @@ mod child_composite;
 mod clock_places;
 mod collection_index;
 mod complete_value_lock;
+mod decimal_value_types;
 mod diagnostic_messages;
 #[cfg(feature = "test-support")]
 mod dimension_equivalence;
