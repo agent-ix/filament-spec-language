@@ -13,11 +13,13 @@
 //! atom.
 
 use std::cell::Cell;
+use std::collections::BTreeSet;
 
 use filament_exact::Meter;
 use fsl_eval::model_subject::ModelLetters;
 use fsl_eval::simulation::model::ExpansionLimits;
 use fsl_eval::simulation::protocol::{ProtocolTransition, StepKind};
+use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_eval::temporal::{
     evaluate_at, AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
     TemporalRefusal, TemporalTrace,
@@ -25,9 +27,10 @@ use fsl_eval::temporal::{
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
-    replay_protocol_trace_with_temporal_selections, DisagreementCause, ModelCheckOutcome,
-    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject,
-    ModelTraceValue, ProtocolTraceSubject, ReplayLimits, ReplayRefusal, TemporalCounterexample,
+    replay_protocol_trace_with_temporal_selections, CounterexampleKind, DisagreementCause, Lasso,
+    ModelCheckOutcome, ModelStep, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement,
+    ModelTraceSubject, ModelTraceValue, ProtocolTraceSubject, ReplayLimits, ReplayRefusal,
+    TemporalCounterexample,
 };
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
@@ -35,7 +38,7 @@ use ix_trace_rs::trace;
 use crate::counter::UNLIMITED;
 use crate::fill::{attempt, contracts, document, instance, protocol, universe};
 use crate::model_settle::{envelope_at, request};
-use crate::protocol_counted_steps::{claim, lossy_channel, Case, CellV};
+use crate::protocol_counted_steps::{claim, Case, CellV};
 
 /// A `repeat` around a `parallel` of two empty branches: the loop is `fork`
 /// then `join`.
@@ -65,7 +68,12 @@ fn replay(
     let node = &case.checked.graph().temporal_clauses()[0];
     let clause_node = node.identity().clone();
     let occurrence = OccurrenceKey::new(clause_node.clone(), node.claim().clone());
-    let subject = case.subject("P");
+    let protocol = if case.checked.graph().protocol("Echo").is_some() {
+        "Echo"
+    } else {
+        "P"
+    };
+    let subject = case.subject(protocol);
     replay_protocol_trace_with_temporal_selections(
         request(
             &case.checked,
@@ -83,7 +91,7 @@ fn replay(
                     max_candidates: 1_000_000,
                 },
             },
-            protocol: "P".to_owned(),
+            protocol: protocol.to_owned(),
             over: instance("c"),
             roles: subject.roles,
             capacities: Vec::new(),
@@ -104,7 +112,12 @@ fn refutation(
     case: &Case,
     letters: &dyn ModelLetters,
 ) -> TemporalCounterexample<ProtocolTransition> {
-    match case.check("P", letters) {
+    let protocol = if case.checked.graph().protocol("Echo").is_some() {
+        "Echo"
+    } else {
+        "P"
+    };
+    match case.check(protocol, letters) {
         ModelCheckOutcome::Violated { counterexample, .. } => counterexample.as_ref().clone(),
         other => panic!("expected a violation, got {:?}", other.stats()),
     }
@@ -457,14 +470,13 @@ fn assert_unfair_with_default_fairness(
 /// every position `eventually[1,1] holds(p)` is `Completed(false)` at
 /// position 0.
 ///
-/// The lasso is `lossy_channel`'s: the stem is the counted `send`, the loop
-/// is the uncounted `duplicate` and `lose`, and the thread resting before `A`
-/// is enabled throughout.
+/// Echo sends once and rests at Rcv. Its concrete duplicate/lose loop
+/// advances delivery identity and closes only in the unread cycle key.
 #[trace("TC-839", "FR-329-AC-10")]
 #[test]
 fn an_unfair_zero_counted_lasso_refuses_naming_the_scheduler_constraint() {
-    let adversarial = lossy_channel("scheduling adversarial;");
-    let payload = refutation(&adversarial, &CellV(is_one));
+    let adversarial = echo("scheduling adversarial;", "eventually[1,1] holds(k.v = 1)");
+    let payload = echo_lasso(&adversarial);
     let lasso = payload.lasso.expect("a lasso");
     assert!(payload.fairness.is_empty(), "no scheduler constraint");
     assert!(payload.prefix[lasso.entry..]
@@ -480,25 +492,517 @@ fn an_unfair_zero_counted_lasso_refuses_naming_the_scheduler_constraint() {
 
     // The same lasso against the default scheduler: the first replay names
     // the set the package recompiles, the second carries it.
-    let default = lossy_window("");
+    let default = echo("", "eventually[1,1] holds(k.v = 1)");
     assert_unfair_with_default_fairness(&default, &payload);
 
     // Against the adversarial package it is fair; `p` false throughout, the
     // distance-1 window holds no `p`.
-    let window = lossy_window("scheduling adversarial;");
-    assert_reproduced_at(replay(&window, &CellV(is_one), &payload), 0);
+    assert_reproduced_at(replay(&adversarial, &CellV(is_one), &payload), 0);
 }
 
-/// `lossy_channel`'s package with the claim `eventually[1,1] holds(k.v = 1)`.
-fn lossy_window(scheduling: &str) -> Case {
+fn echo(scheduling: &str, formula: &str) -> Case {
+    Case::new(&(echo_body(scheduling) + &claim(formula)))
+}
+
+fn echo_infinite(scheduling: &str, formula: &str) -> Case {
+    let clause = claim(formula).replace("using tb over", "using t0 over");
+    Case::new(&(echo_body(scheduling) + &clause))
+}
+
+const ECHO_RUN: &str = "sequence Main { send Snd via ch as (s: Boolean) { s }; \
+                       receive Rcv via ch of Snd as (r: Boolean) { r }; }";
+
+fn echo_body(scheduling: &str) -> String {
     let members = format!(
         "channel ch from w to w carries Boolean ordering fifo by (m: Boolean) \
                    {{ true }} delivery unknown capacity 2 overflow block; {scheduling}"
     );
-    let run = format!(
-        "sequence Main {{ send S1 via ch as (s1: Boolean) {{ s1 }}; {} }}",
-        attempt("A", "inc", "IncPre, IncPost", "a", "true")
+    contracts("self.v <= 1") + &protocol("Echo", &members, ECHO_RUN, "d")
+}
+
+/// Build the witness from enabled concrete transitions, without model search.
+fn echo_lasso(case: &Case) -> TemporalCounterexample<ProtocolTransition> {
+    let system = crate::fill::sc_system(&case.subject("Echo"));
+    let mut state = system.initial().remove(0);
+    let mut prefix = Vec::new();
+    let mut entry = None;
+    for kind in [StepKind::Send, StepKind::Duplicate, StepKind::Lose] {
+        let (transition, next) = system
+            .successors(&state)
+            .expect("expansion")
+            .successors
+            .into_iter()
+            .find(|(step, _)| step.kind() == kind)
+            .expect("enabled Echo step");
+        let post_state = system.canonical_state_key(&next).expect("concrete key");
+        if kind == StepKind::Send {
+            entry = Some(next.clone());
+        }
+        prefix.push(ModelStep {
+            transition,
+            post_state,
+            delay: None,
+        });
+        state = next;
+    }
+    let entry = entry.expect("send entry");
+    assert_ne!(
+        system.canonical_state_key(&entry).unwrap(),
+        system.canonical_state_key(&state).unwrap()
     );
-    let unit = contracts("self.v <= 1") + &protocol("P", &members, &run, "d");
-    Case::new(&(unit + &claim("eventually[1,1] holds(k.v = 1)")))
+    assert_eq!(
+        system.cycle_key(&entry, &BTreeSet::new()).unwrap(),
+        system.cycle_key(&state, &BTreeSet::new()).unwrap()
+    );
+    TemporalCounterexample {
+        initial_state: 0,
+        prefix,
+        over_binding: Some(instance("c")),
+        fairness: Vec::new(),
+        kind: CounterexampleKind::Formula,
+        lasso: Some(Lasso {
+            entry: 1,
+            terminal_stutter: false,
+        }),
+        blocked: Vec::new(),
+        refinement: None,
+        final_delay: None,
+    }
+}
+
+/// The explicit read-set seam is exercised here because the checked language
+/// currently has no delivery-index-reading obligation form.
+#[trace("TC-650", "FR-205-AC-10", "FR-205-AC-11")]
+#[test]
+fn echo_cycle_keys_preserve_read_delivery_labels_and_pair_unread_steps() {
+    let case = echo_infinite("scheduling adversarial;", "always holds(k.v = 0)");
+    let system = crate::fill::sc_system(&case.subject("Echo"));
+    let step = |state: &fsl_eval::simulation::protocol::ProtocolState<
+        fsl_eval::simulation::protocol::Sc,
+    >,
+                kind| {
+        system
+            .successors(state)
+            .unwrap()
+            .successors
+            .into_iter()
+            .find(|(transition, _)| transition.kind() == kind)
+            .expect("enabled step")
+    };
+    let (_, s1) = step(&system.initial()[0], StepKind::Send);
+    let (duplicate, both) = step(&s1, StepKind::Duplicate);
+    assert_eq!(duplicate.delivery().unwrap().index(), 1);
+    let losses: Vec<_> = system
+        .successors(&both)
+        .unwrap()
+        .successors
+        .into_iter()
+        .filter(|(transition, _)| transition.kind() == StepKind::Lose)
+        .collect();
+    assert_eq!(losses.len(), 2);
+    let s2 = &losses[0].1; // remove original delivery 0
+    let s3 = &losses[1].1; // remove duplicate delivery 1
+    let raw: BTreeSet<_> = [&s1, s2, s3]
+        .into_iter()
+        .map(|state| system.canonical_state_key(state).unwrap())
+        .collect();
+    assert_eq!(raw.len(), 3);
+    let unread = BTreeSet::new();
+    for state in [&s1, s2, s3] {
+        assert_eq!(
+            system.cycle_key(state, &unread).unwrap(),
+            system.canonical_state_key(&s1).unwrap()
+        );
+        assert_eq!(crate::fill::v(state.model(), "c"), 0);
+    }
+    let (next_duplicate, _) = step(s2, StepKind::Duplicate);
+    assert_eq!(
+        next_duplicate.delivery().unwrap().index(),
+        2,
+        "concrete indices are never reused"
+    );
+    let reads = BTreeSet::from(["Echo::ch".to_owned()]);
+    for state in [&s1, s2, s3] {
+        assert_eq!(
+            system.cycle_key(state, &reads).unwrap(),
+            system.canonical_state_key(state).unwrap()
+        );
+    }
+    assert_ne!(
+        system.cycle_key(&s1, &reads).unwrap(),
+        system.cycle_key(s2, &reads).unwrap()
+    );
+
+    let left = system.successors(&s1).unwrap().successors;
+    let right = system.successors(s2).unwrap().successors;
+    assert_eq!(left.len(), right.len());
+    assert_eq!(left.len(), 3, "duplicate, lose and receive");
+    for (transition, post) in &left {
+        let (paired, paired_post) = right
+            .iter()
+            .find(|(candidate, _)| candidate.kind() == transition.kind())
+            .unwrap();
+        assert_eq!(transition.node(), paired.node());
+        assert_eq!(transition.counts(), paired.counts());
+        match (transition.binder_record(), paired.binder_record()) {
+            (
+                Some(filament_exact::Value::Boolean(left)),
+                Some(filament_exact::Value::Boolean(right)),
+            ) => assert_eq!(left, right),
+            (None, None) => assert_ne!(transition.kind(), StepKind::Receive),
+            records => panic!("paired Echo steps bind different payloads: {records:?}"),
+        }
+        assert_eq!(
+            system.cycle_key(post, &unread).unwrap(),
+            system.cycle_key(paired_post, &unread).unwrap()
+        );
+        assert_eq!(
+            crate::fill::v(post.model(), "c"),
+            crate::fill::v(paired_post.model(), "c")
+        );
+    }
+
+    let reading_system = system.with_cycle_keys(reads);
+    assert_ne!(
+        reading_system.loop_state_key(&s1).unwrap(),
+        reading_system.loop_state_key(s2).unwrap()
+    );
+    let explored = fsl_analyze::model_check::retain(
+        &reading_system,
+        fsl_eval::simulation::Limits::default(),
+        fsl_foundation::IdentityLimits::default(),
+        Some(8),
+        || false,
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            explored.outcome,
+            fsl_eval::simulation::Outcome::BoundReached { depth: 8, .. }
+        ),
+        "{:?}",
+        explored.outcome
+    );
+}
+
+#[trace("TC-650", "TC-525", "FR-205-AC-10", "FR-338-AC-26")]
+#[test]
+fn echo_unread_claim_has_a_finite_checked_cycle_closure() {
+    use fsl_replay::{
+        check_protocol_closure, ModelCheckItem, ModelCheckLimits, ProofCertificate,
+        ProtocolCertificateRequest, TemporalCertificateCheck,
+    };
+    let case = echo_infinite("scheduling adversarial;", "always holds(k.v = 0)");
+    let outcome = case.check("Echo", &CellV(is_zero));
+    let ModelCheckOutcome::Holds {
+        certificate: ProofCertificate::Closure(certificate),
+        stats,
+    } = outcome
+    else {
+        panic!("expected a finite closure: {outcome:?}");
+    };
+    assert!(
+        stats.product_states < 100,
+        "the unread delivery history is finite: {stats:?}"
+    );
+    let request = ProtocolCertificateRequest {
+        temporal_clock_selections: &case.temporal_clock_selections,
+        subject: case.subject("Echo"),
+        item: ModelCheckItem::Clause {
+            clause: case.clause(),
+            letters: &CellV(is_zero),
+        },
+        max_store_buffer: None,
+        max_messages: None,
+        max_live_instances: None,
+    };
+    let check = |certificate: &fsl_replay::ClosureCertificate| {
+        check_protocol_closure(
+            &request,
+            certificate,
+            &ModelCheckLimits::default(),
+            &filament_exact::Cancel::new(),
+        )
+        .unwrap()
+    };
+    assert_eq!(check(&certificate), TemporalCertificateCheck::Accepted);
+    let payload = echo_lasso(&case);
+    let canonical = &payload.prefix[0].post_state;
+    let concrete = &payload.prefix[2].post_state;
+    let mut incorrect = certificate.clone();
+    let mut replaced = 0;
+    for state in &mut incorrect.states {
+        if state.model_state == *canonical {
+            state.model_state = concrete.clone();
+            replaced += 1;
+        }
+    }
+    assert!(replaced > 0, "the certificate contains the cycle entry");
+    assert!(
+        matches!(check(&incorrect), TemporalCertificateCheck::Rejected(ref rejection)
+        if rejection.rule == fsl_replay::CertificateRule::SuccessorMissing),
+        "{:?}",
+        check(&incorrect)
+    );
+}
+
+#[trace("TC-839", "FR-329-AC-10", "FR-217-AC-7")]
+#[test]
+fn echo_en1_counterexample_replays_with_concrete_delivery_indices() {
+    let case = echo("scheduling adversarial;", "eventually[1,1] holds(k.v = 1)");
+    let payload = refutation(&case, &CellV(is_one));
+    assert_reproduced_at(replay(&case, &CellV(is_one), &payload), 2);
+}
+
+#[trace("TC-650", "FR-205-AC-13")]
+#[test]
+fn echo_infinite_trace_search_and_component_certificate_use_cycle_keys() {
+    let original = echo_infinite("scheduling adversarial;", "always holds(k.v = 0)");
+    let body = original
+        .body
+        .replace("using tb over", "using t0 over")
+        .replace("always holds(k.v = 0)", "always eventually holds(k.v = 0)");
+    let case = Case::new(&body);
+    let outcome = case.check("Echo", &CellV(is_zero));
+    let ModelCheckOutcome::Holds { certificate, stats } = outcome else {
+        panic!("the TP-4 claim holds on the finite quotient: {outcome:?}");
+    };
+    assert!(stats.product_states < 100, "{stats:?}");
+    assert!(
+        matches!(certificate, fsl_replay::ProofCertificate::Component(_)),
+        "{certificate:?}"
+    );
+    let request = fsl_replay::ProtocolCertificateRequest {
+        temporal_clock_selections: &case.temporal_clock_selections,
+        subject: case.subject("Echo"),
+        item: fsl_replay::ModelCheckItem::Clause {
+            clause: case.clause(),
+            letters: &CellV(is_zero),
+        },
+        max_store_buffer: None,
+        max_messages: None,
+        max_live_instances: None,
+    };
+    let fsl_replay::ProofCertificate::Component(certificate) = certificate else {
+        unreachable!()
+    };
+    assert_eq!(
+        fsl_replay::check_protocol_components(
+            &request,
+            &certificate,
+            &fsl_replay::ModelCheckLimits::default(),
+            &filament_exact::Cancel::new()
+        )
+        .unwrap(),
+        fsl_replay::TemporalCertificateCheck::Accepted
+    );
+    let failing = Case::new(&body.replace(
+        "always eventually holds(k.v = 0)",
+        "eventually holds(k.v = 1)",
+    ));
+    let payload = refutation(&failing, &CellV(is_one));
+    assert!(
+        payload.lasso.is_some(),
+        "the infinite-trace refutation is a lasso"
+    );
+    assert_reproduced_at(replay(&failing, &CellV(is_one), &payload), 0);
+}
+
+#[trace("TC-650", "FR-205-AC-10", "FR-205-AC-13")]
+#[test]
+fn echo_cycle_edges_lift_to_never_reused_concrete_delivery_indices() {
+    let case = echo("scheduling adversarial;", "eventually[1,1] holds(k.v = 1)");
+    let raw = crate::fill::sc_system(&case.subject("Echo"));
+    let canonical = crate::fill::sc_system(&case.subject("Echo")).with_cycle_keys(BTreeSet::new());
+    let mut payload = echo_lasso(&case);
+    payload.prefix.truncate(1);
+    let (_, mut concrete) = raw
+        .successors(&raw.initial()[0])
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(step, _)| step.kind() == StepKind::Send)
+        .unwrap();
+    let entry = concrete.clone();
+    for expected in [1, 2, 3] {
+        let (duplicate, both) = canonical
+            .successors(&entry)
+            .unwrap()
+            .successors
+            .into_iter()
+            .find(|(step, _)| step.kind() == StepKind::Duplicate)
+            .unwrap();
+        let (lose, closed) = canonical
+            .successors(&both)
+            .unwrap()
+            .successors
+            .into_iter()
+            .find(|(step, _)| step.kind() == StepKind::Lose)
+            .unwrap();
+        for (step, target) in [(&duplicate, &both), (&lose, &closed)] {
+            let (actual, next) =
+                SubjectSystem::concrete_cycle_step(&canonical, &concrete, step, target)
+                    .unwrap()
+                    .expect("the canonical edge lifts");
+            if actual.kind() == StepKind::Duplicate {
+                assert_eq!(actual.delivery().unwrap().index(), expected);
+            }
+            payload.prefix.push(ModelStep {
+                transition: actual,
+                post_state: raw.canonical_state_key(&next).unwrap(),
+                delay: None,
+            });
+            concrete = next;
+        }
+    }
+    assert_ne!(
+        payload.prefix.first().unwrap().post_state,
+        payload.prefix.last().unwrap().post_state
+    );
+    assert_reproduced_at(replay(&case, &CellV(is_one), &payload), 0);
+    let mut stale = payload.clone();
+    stale.prefix[3].transition = stale.prefix[1].transition.clone();
+    let error = replay(&case, &CellV(is_one), &stale)
+        .expect_err("a reused duplicate identity is not enabled");
+    assert_eq!(error.code(), Code::InvalidRuntimeInput);
+    assert_eq!(error.cause(), Some("invalid-value"));
+    assert!(
+        matches!(error, ReplayRefusal::ModelTrace(ref refusal)
+        if matches!(refusal.as_ref(), ModelTraceRefusal::ProtocolNotEnabled { step: 3, .. })),
+        "{error:?}"
+    );
+}
+
+#[trace("TC-650", "FR-205-AC-11")]
+#[test]
+fn echo_unordered_cycle_keys_renumber_nonconsecutive_copies() {
+    let original = echo_infinite("scheduling adversarial;", "always holds(k.v = 0)");
+    let case = Case::new(&original.body.replace(
+        "ordering fifo by (m: Boolean) { true }",
+        "ordering unordered",
+    ));
+    assert!(matches!(
+        case.checked.graph().protocol("Echo").unwrap().channels[0].ordering,
+        fsl_semantics::check::CheckedOrdering::Unordered
+    ));
+    let system = crate::fill::sc_system(&case.subject("Echo"));
+    let take = |state: &fsl_eval::simulation::protocol::ProtocolState<
+        fsl_eval::simulation::protocol::Sc,
+    >,
+                kind,
+                indices: &[u64]| {
+        system
+            .successors(state)
+            .unwrap()
+            .successors
+            .into_iter()
+            .find(|(step, next)| {
+                step.kind() == kind
+                    && queue_delivery_indices(&system.canonical_state_key(next).unwrap()) == indices
+            })
+            .expect("the required concrete queue is reachable")
+            .1
+    };
+    let s0 = system.initial().remove(0);
+    let s1 = take(&s0, StepKind::Send, &[0]);
+    let both = take(&s1, StepKind::Duplicate, &[0, 1]);
+    let one = take(&both, StepKind::Lose, &[1]);
+    let both = take(&one, StepKind::Duplicate, &[1, 2]);
+    let one = take(&both, StepKind::Lose, &[1]);
+    let both = take(&one, StepKind::Duplicate, &[1, 3]);
+    let normalized = system
+        .delivery_canonical_state(&both, &BTreeSet::new())
+        .unwrap();
+    assert_eq!(
+        queue_delivery_indices(&system.canonical_state_key(&normalized).unwrap()),
+        [0, 1]
+    );
+    let expected = take(&s1, StepKind::Duplicate, &[0, 1]);
+    assert_eq!(
+        system.canonical_state_key(&normalized).unwrap(),
+        system.canonical_state_key(&expected).unwrap(),
+        "the next-delivery bound is 2 too"
+    );
+}
+
+#[trace("TC-650", "FR-205-AC-10")]
+#[test]
+fn echo_pending_interval_send_keeps_its_delivery_labels_and_bound() {
+    let original = echo_infinite("scheduling adversarial;", "always holds(k.v = 0)");
+    // The interval-send rule needs a concurrent receiver to free capacity.
+    // This is the same pending-send shape as protocol_delivery_interval.
+    let concurrent = "parallel Main { \
+        branch sending send Snd via ch as (s: Boolean) { s }; \
+        branch receiving receive Rcv via ch of sending::Snd as (r: Boolean) { r }; \
+        } join all [sending, receiving];";
+    let case = Case::new(
+        &original
+            .body
+            .replace("delivery unknown", "delivery [3,3]")
+            .replace(ECHO_RUN, concurrent),
+    );
+    let system = crate::fill::sc_system(&case.subject("Echo"));
+    let (_, forked) = system
+        .successors(&system.initial()[0])
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(step, _)| step.kind() == StepKind::Fork)
+        .expect("fork sender and receiver");
+    let (_, pending) = system
+        .successors(&forked)
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(step, _)| step.kind() == StepKind::Send)
+        .expect("partial send fills capacity 2");
+    assert_eq!(
+        queue_delivery_indices(&system.canonical_state_key(&pending).unwrap()),
+        [0, 1]
+    );
+    let (_, received) = system
+        .successors(&pending)
+        .unwrap()
+        .successors
+        .into_iter()
+        .find(|(step, next)| {
+            step.kind() == StepKind::Receive
+                && queue_delivery_indices(&system.canonical_state_key(next).unwrap()) == [1]
+        })
+        .expect("receive original while the interval send is pending");
+    for state in [&pending, &received] {
+        assert_eq!(
+            system.cycle_key(state, &BTreeSet::new()).unwrap(),
+            system.canonical_state_key(state).unwrap(),
+            "pending sends retain labels and their next-delivery counter"
+        );
+    }
+}
+
+fn queue_delivery_indices(key: &fsl_eval::simulation::StateKey) -> Vec<u64> {
+    fn collect(value: &serde_json::Value, indices: &mut Vec<u64>) {
+        match value {
+            serde_json::Value::Object(members) => {
+                if members.get("type").and_then(|value| value.as_str()) == Some("queue-entry") {
+                    indices.push(members["delivery"].as_str().unwrap().parse().unwrap());
+                } else {
+                    for value in members.values() {
+                        collect(value, indices);
+                    }
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    collect(value, indices);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut indices = Vec::new();
+    collect(
+        &serde_json::from_slice(key.as_bytes()).unwrap(),
+        &mut indices,
+    );
+    indices
 }

@@ -422,7 +422,8 @@ fn check_protocol(
         SubjectMemory::Sc => {
             let system = ProtocolSystem::new(model, subject, Sc)
                 .map_err(ClosureRefusal::Protocol)?
-                .with_max_live_instances(live_instances);
+                .with_max_live_instances(live_instances)
+                .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),
@@ -443,7 +444,8 @@ fn check_protocol(
             };
             let system = ProtocolSystem::new(model, subject, tso)
                 .map_err(ClosureRefusal::Protocol)?
-                .with_max_live_instances(live_instances);
+                .with_max_live_instances(live_instances)
+                .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),
@@ -464,7 +466,8 @@ fn check_protocol(
             };
             let system = ProtocolSystem::new(model, subject, ra)
                 .map_err(ClosureRefusal::Protocol)?
-                .with_max_live_instances(live_instances);
+                .with_max_live_instances(live_instances)
+                .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),

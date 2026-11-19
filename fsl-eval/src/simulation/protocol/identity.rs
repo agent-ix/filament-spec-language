@@ -888,6 +888,24 @@ pub(crate) struct VisibilityRead {
 }
 
 impl ProtocolTransition {
+    /// Map the delivery labels in an identity; reporting metadata stays concrete.
+    pub(super) fn relabel_deliveries(
+        &self,
+        entries: &[(Enc, Enc)],
+        relabel: impl FnOnce(&DeliveryIdentity) -> DeliveryIdentity,
+    ) -> Self {
+        let mut renamed = self.clone();
+        if let Members::Channel { entry, .. } = &mut renamed.members {
+            if let Some((_, canonical)) = entries.iter().find(|(concrete, _)| concrete == entry) {
+                *entry = canonical.clone();
+            }
+        }
+        if let Some(delivery) = &self.delivery {
+            renamed.delivery = Some(relabel(delivery));
+        }
+        renamed
+    }
+
     /// `fork(node)` by `thread`.
     pub fn fork(thread: ThreadPath, node: impl Into<String>) -> Self {
         Self::control(StepKind::Fork, thread, node.into())
