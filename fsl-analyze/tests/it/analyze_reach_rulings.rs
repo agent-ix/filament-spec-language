@@ -247,14 +247,11 @@ fn state_graph_evidence_keys_loci_and_budget_stops() {
                 possible Ratio using v over (c: M::Counter) { r(3 - c.value) = 1 }\n\
                 always possible BackToZero using v over (c: M::Counter) { c.value = 0 }\n";
     let ws = Workspace::new("rulings-evidence");
-    let run = analyze(
-        &kernel_package_request(
-            &ws,
-            body,
-            json!([{"claim": "ReachThree"}, {"claim": "Ratio"}]),
-        )
-        .expect("the Kernel package request is written"),
-    );
+    let run = analyze(&kernel_package_request(
+        &ws,
+        body,
+        json!([{"claim": "ReachThree"}, {"claim": "Ratio"}]),
+    ));
     let proved = run.item(0);
     assert_eq!(label(&proved), "proved", "{proved}");
     let instance = find(&proved, "instance").expect("the evidence names its instance");
@@ -274,15 +271,12 @@ fn state_graph_evidence_keys_loci_and_budget_stops() {
 
     let ws = Workspace::new("rulings-budget");
     let limited = json!({"limits": {"max_states": 2}});
-    let run = analyze(
-        &kernel_package_request(
-            &ws,
-            body,
-            json!([{"claim": "ReachThree", "temporal": limited.clone()},
+    let run = analyze(&kernel_package_request(
+        &ws,
+        body,
+        json!([{"claim": "ReachThree", "temporal": limited.clone()},
             {"claim": "BackToZero", "temporal": limited}]),
-        )
-        .expect("the Kernel package request is written"),
-    );
+    ));
     let witnessed = run.item(0);
     assert_eq!(label(&witnessed), "inconclusive", "{witnessed}");
     assert!(
