@@ -2066,8 +2066,17 @@ impl<'n> filament_walk::Walk for IntervalWalk<'_, '_, '_, 'n> {
         };
         let leaf = match node.kind() {
             NodeKind::Arithmetic(operator, left, right) => {
-                children.push(node.at(*left));
-                children.push(node.at(*right));
+                let term = definedness.term_paths(node, facts).is_some();
+                let operand = |id| {
+                    let operand = node.at(id);
+                    if term {
+                        Definedness::through_conversion(operand)
+                    } else {
+                        operand
+                    }
+                };
+                children.push(operand(*left));
+                children.push(operand(*right));
                 let bound = match operator {
                     Arithmetic::Subtract => {
                         definedness.difference_interval(node.at(*left), node.at(*right), facts)
@@ -2083,12 +2092,6 @@ impl<'n> filament_walk::Walk for IntervalWalk<'_, '_, '_, 'n> {
             NodeKind::Negate(operand) => {
                 children.push(node.at(*operand));
                 return ControlFlow::Continue(IntervalFrame::Negate);
-            }
-            NodeKind::ConvertScalar(_, operand)
-                if is_integer(node) && is_integer(node.at(*operand)) =>
-            {
-                children.push(node.at(*operand));
-                return ControlFlow::Continue(IntervalFrame::Done);
             }
             NodeKind::Literal(CheckedLiteral(Value::Integer(value))) => Interval::point(value),
             NodeKind::Coerce(_, target) => Interval::of_domain(target),
