@@ -15,7 +15,7 @@ use fsl_package::protocol_view::{
 
 use super::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
 use crate::simulation::model::{ModelCheckInput, ModelEvaluator, ProtocolDefinition};
-use crate::value::{ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply};
+use crate::value::{ProtocolSlot, ProtocolSlotEvaluation, ProtocolSuppliedValue, ProtocolSupply};
 
 /// One admitted package control in the normalized execution tree.
 #[derive(Clone, Debug)]
@@ -473,6 +473,33 @@ impl<'a> PackageProtocolProgram<'a> {
         self.evaluator
             .evaluate_package_protocol_slot(slot, supply, meter)
             .map(Some)
+    }
+
+    /// Build a package evaluator supply from the protocol's admitted binder
+    /// nodes. Values stay keyed by package node identity until the evaluator
+    /// checks them against the selected slot.
+    pub fn supply<'obs>(
+        &self,
+        binders: impl IntoIterator<Item = (fsl_package::CheckedNodeId, ProtocolSuppliedValue)>,
+        observation: Option<
+            &'obs filament_semantic_value::admission::ObservationAdmission<
+                fsl_package::AdmittedProtocolObservation<'obs>,
+            >,
+        >,
+    ) -> Result<ProtocolSupply<'obs>, PackageProgramRefusal> {
+        let binders = binders
+            .into_iter()
+            .map(|(node, value)| {
+                self.evaluator
+                    .package_node_key(&node)
+                    .map(|key| (key, value))
+                    .ok_or(PackageProgramRefusal::MissingIdentity(node))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ProtocolSupply {
+            binders,
+            observation,
+        })
     }
 
     /// The outermost `parallel` whose memory model governs `control`, if the
