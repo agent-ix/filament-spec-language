@@ -790,9 +790,9 @@ impl Lowering<'_> {
     }
 
     /// A `choice`'s or `repeat`'s `visible` entries as the set of their
-    /// nodes (FR-466 "Decision facts"), each lowered over the binders
-    /// readable at the control's entry. An entry that lowers to no node, a
-    /// bare literal, is refused before this.
+    /// nodes (FR-466 "Decision facts"), each lowered over the binder set
+    /// established for its checked decision slot. An entry that lowers to no
+    /// node, a bare literal, is refused before this.
     fn visible_entries(
         &mut self,
         controls: &Controls<'_, '_>,
