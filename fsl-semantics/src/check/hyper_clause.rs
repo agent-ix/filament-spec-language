@@ -475,6 +475,8 @@ pub struct CheckedFiniteHyperClause {
     body: fsl_forms::Expression,
     body_spans: ExpressionSpans,
     typed_body: super::ir::CheckedBody,
+    body_slots: usize,
+    body_formed_units: filament_semantic_value::quantity::UnitTable,
     body_parameters: Vec<(String, ValueType)>,
     identity: Option<NodeKey>,
     occurrence: Option<OccurrenceKey>,
@@ -528,6 +530,22 @@ impl CheckedFiniteHyperClause {
     /// The claim occurrence after S4 assembly.
     pub fn occurrence(&self) -> Option<&OccurrenceKey> {
         self.occurrence.as_ref()
+    }
+
+    pub(crate) fn typed_body(&self) -> &super::ir::CheckedBody {
+        &self.typed_body
+    }
+
+    pub(crate) fn body_slots(&self) -> usize {
+        self.body_slots
+    }
+
+    pub(crate) fn body_parameters(&self) -> &[(String, ValueType)] {
+        &self.body_parameters
+    }
+
+    pub(crate) fn take_formed_units(&mut self) -> filament_semantic_value::quantity::UnitTable {
+        std::mem::take(&mut self.body_formed_units)
     }
 
     pub(crate) fn assembled_at(mut self, identity: NodeKey, occurrence: OccurrenceKey) -> Self {
@@ -1564,7 +1582,7 @@ fn check_finite(
     let body_location = Location::root(Origin::TypeDeclaration {
         name: format!("finite hyper {} body", form.name.name),
     });
-    let typed_body = Typer::new(
+    let mut typer = Typer::new(
         scope,
         declarations.signatures,
         declarations.checking_limits,
@@ -1573,19 +1591,22 @@ fn check_finite(
     )
     .with_cancel(declarations.cancel)
     .with_context(cx.reborrow(scope))
-    .with_hyper(hyper_typing)
-    .check_as(&form.body.expression, &ValueType::Boolean, &body_location)
-    .map_err(|refusal| {
-        body_refusal(
-            refusal,
-            &form.body.expression,
-            &form.body.spans,
-            &BTreeMap::new(),
-            &BTreeMap::new(),
-            scope,
-        )
-        .into_failure()
-    })?;
+    .with_hyper(hyper_typing);
+    let typed_body = typer
+        .check_as(&form.body.expression, &ValueType::Boolean, &body_location)
+        .map_err(|refusal| {
+            body_refusal(
+                refusal,
+                &form.body.expression,
+                &form.body.spans,
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                scope,
+            )
+            .into_failure()
+        })?;
+    let body_slots = typer.slots();
+    let body_formed_units = typer.into_formed_units();
     declarations.nodes_used.set(nodes_used);
     Ok(CheckedFiniteHyperClause {
         name: form.name.name.clone(),
@@ -1597,6 +1618,8 @@ fn check_finite(
         body: form.body.expression.clone(),
         body_spans: form.body.spans.clone(),
         typed_body,
+        body_slots,
+        body_formed_units,
         body_parameters,
         identity: None,
         occurrence: None,
