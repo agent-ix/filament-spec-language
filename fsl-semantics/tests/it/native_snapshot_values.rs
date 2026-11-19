@@ -2702,6 +2702,53 @@ fn a_quantity_admits_a_rational_or_a_decimal_magnitude_as_one_value() {
     ));
 }
 
+/// Native collection equality uses the admitted quantity magnitude.
+#[trace("TC-1171", "FR-106-AC-59")]
+#[trace("FSpec-FR-144-AC-17", "FSpec-FR-144-AC-18")]
+#[test]
+fn native_collection_quantity_spellings_share_a_member() {
+    for (ordered, unique, tag) in [
+        (false, true, "set"),
+        (false, false, "bag"),
+        (true, true, "ordered-set"),
+    ] {
+        let mut document = fixture::quantity_document();
+        let fields = document["types"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|item| item["name"] == "Item")
+            .unwrap()["fields"]
+            .as_array_mut()
+            .unwrap();
+        let reach = fields
+            .iter_mut()
+            .find(|field| field["name"] == "reach")
+            .unwrap();
+        reach["multiplicity"] = json!({"lower":0,"upper":3,"ordered":ordered,"unique":unique});
+        let base = with(quantity_fields(), "reach", json!({tag:[]}));
+        let replay = replay_with(document,base.clone(),"dimension Time; unit s : Time = rational(1, 1); unit ms : Time = rational(1, 1000) * s;");
+        let supplied = with(
+            base,
+            "reach",
+            json!({tag:[ms(ratio("3","6")),ms(half_as_decimal())]}),
+        );
+        let result = replay.admit(&supplied, ObservationLimits::default());
+        if unique {
+            let record = record_of(result);
+            assert_eq!(record.catalog.cause(), "duplicate-member");
+            assert_eq!(record.path, [PathStep::Index(1)]);
+        } else {
+            let closure = result.unwrap();
+            let elements = elements_of(&replay.value(&closure, "reach"));
+            assert_eq!(
+                elements.iter().map(magnitude_of).collect::<Vec<_>>(),
+                ["1/2", "1/2"]
+            );
+        }
+    }
+}
+
 /// Part of FR-106-AC-59 (TC-1171): a post `reach` that is the other spelling
 /// of the pre magnitude is no change and holds without a grant, while a post
 /// magnitude of `2`/`3` violates the frame with `unauthorized-change` naming
