@@ -650,19 +650,6 @@ fn every_remaining_unwritten_construct_refuses_typed_and_writes_no_clause() {
         )
     };
     let main = "sequence Main { }";
-    let carrying = |carries: &str| {
-        format!(
-            "{SELLER}\n{}",
-            channel(
-                "C",
-                ("Buyer", "Seller"),
-                "unordered",
-                "unknown",
-                "capacity 4 overflow block"
-            )
-            .replace("Boolean", carries)
-        )
-    };
     let cases = [(
         C::ProtocolReferenceInBody,
         "QSL-1121g",
@@ -1925,7 +1912,7 @@ fn a_channel_carrying_a_bounded_type_is_admitted() {
             panic!("one channel");
         };
         let carried = target(&lowered.wire, argument(channel, &CHANNEL, "carries"));
-        assert_eq!(carried["semantic_form"], "bounded_domain", "{carries}");
+        assert_eq!(carried["node_tag"], "bounded_domain", "{carries}");
     }
 }
 
