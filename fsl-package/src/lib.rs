@@ -76,6 +76,8 @@ mod protocol_selection;
 #[cfg(feature = "std")]
 pub mod protocol_view;
 #[cfg(feature = "std")]
+pub mod verification_plan;
+#[cfg(feature = "std")]
 mod reader_protocol_projection;
 mod wire_form;
 
@@ -165,6 +167,14 @@ pub use protocol_occurrence_key::{
     OccurrenceKeyError, ProtocolOccurrenceKey, WorkflowInstanceIdentity,
 };
 pub use protocol_selection::{ProtocolSlotDescriptor, SlotSelectionFailure};
+#[cfg(feature = "std")]
+pub use verification_plan::{
+    emit_verification_plans, read_verification_plan, VerificationPlan, VerificationPlanEdge,
+    VerificationPlanClaim, VerificationPlanDeclarationKey, VerificationPlanIdentity,
+    VerificationPlanMethod, VerificationPlanNode, VerificationPlanNodeIdentity,
+    VerificationPlanPathSegment, VerificationPlanRefusal, VerificationPlanSource,
+    VerificationPlanSourceLocation, VERIFICATION_PLAN_FORMAT,
+};
 #[cfg(feature = "std")]
 pub use reader_protocol_projection::{
     MissingLocation, ReaderProtocolFunction, ReaderProtocolParameter, ReaderProtocolProjection,

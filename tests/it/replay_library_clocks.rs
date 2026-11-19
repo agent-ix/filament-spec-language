@@ -5,10 +5,11 @@
 //! holds an unused entry or holds an entry of the wrong kind.
 use crate::command_harness::compile_file;
 use fsl_foundation::SourceIdentity;
+use fsl_package::{ClockSelectionCause, EmitRefusal};
 use fsl_replay::{
-    call_site, replay, DependencyEntryWire, DependencyInput, QualifiedName, ReplayLimits,
-    ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource, RequestTargetWire,
-    StateEnvironment, SuppliedLibrary,
+    call_site, replay, CompileRefusal, DependencyEntryWire, DependencyInput, QualifiedName,
+    ReplayLimits, ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource,
+    RequestTargetWire, StateEnvironment, SuppliedLibrary,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -22,7 +23,7 @@ const LIBRARY: &str = "test/plant";
 const PROGRAM: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
      import \"test/plant\" as P;\n\
-     function entry using v(): Boolean pure { P::flag() }\n";
+     function entry using v(): Boolean pure { true }\n";
 const LIBRARY_HEAD: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
      profile w = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
@@ -35,8 +36,9 @@ const SHARED: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
      profile w = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
      import \"test/plant\" as P;\n\
-     function entry using v(): Boolean pure { P::flag() }\n\
-     temporal Early using w over (r: P::Reading) clock \"lib-ms\" \
+     record ProgramReading { level: Int[0, 9]; }\n\
+     function entry using v(): Boolean pure { true }\n\
+     temporal Early using w over (r: ProgramReading) clock \"lib-ms\" \
      on origin { eventually[0,2] holds(r.level > 0) }\n";
 
 fn source(file: &str, identity: &str) -> Value {
@@ -142,23 +144,35 @@ fn request(package: &Value, program: &str) -> ReplayRequestWire {
     }
 }
 
-fn refused(package: &Value, program: &str, cause: &str, pointer: &str) {
+fn clock_selection_cause(refusal: &CompileRefusal) -> Option<ClockSelectionCause> {
+    match refusal {
+        CompileRefusal::Dependency { refusal, .. } => clock_selection_cause(refusal),
+        CompileRefusal::Emit(EmitRefusal::ClockSelection(refusal), _) => Some(refusal.cause),
+        _ => None,
+    }
+}
+
+fn refused(
+    package: &Value,
+    program: &str,
+    cause: ClockSelectionCause,
+    pointer: &str,
+) {
     let refusal = replay(request(package, program), ReplayLimits::default())
         .expect_err("the recorded clocks do not serve the library");
-    assert!(
-        matches!(refusal, ReplayRefusal::Recompile { .. }),
-        "{refusal:?}"
-    );
-    assert!(format!("{refusal:?}").contains(cause), "{refusal:?}");
-    assert_eq!(refusal.pointer().as_deref(), Some(pointer), "{refusal:?}");
-    if cause == "missing-clock-selection" {
+    let (refusal, actual_pointer) = match refusal {
+        ReplayRefusal::Recompile { refusal, pointer } => (refusal, pointer),
+        other => panic!("a compile refusal: {other:?}"),
+    };
+    assert_eq!(clock_selection_cause(&refusal), Some(cause), "{refusal:?}");
+    assert_eq!(actual_pointer.as_deref(), Some(pointer), "{refusal:?}");
+    if cause == ClockSelectionCause::MissingClockSelection {
         assert!(format!("{refusal:?}").contains(LIBRARY), "{refusal:?}");
     }
 }
 
 #[trace("TC-2213", "FR-640-AC-11", "FSpec-TC-1662", "FSpec-FR-323-AC-38")]
 #[test]
-#[ignore = "QSL-2274: replay does not read library clock selections from the proving package yet"]
 fn replay_recovers_a_library_only_clock_from_the_proving_package() {
     let directory = tempfile::tempdir().unwrap();
     let package: Value =
@@ -186,7 +200,7 @@ fn replay_recovers_a_library_only_clock_from_the_proving_package() {
     refused(
         &missing,
         PROGRAM,
-        "missing-clock-selection",
+        ClockSelectionCause::MissingClockSelection,
         "/package/lock/dependency_clock_selections",
     );
 
@@ -199,7 +213,7 @@ fn replay_recovers_a_library_only_clock_from_the_proving_package() {
     refused(
         &spare,
         PROGRAM,
-        "unused-clock-selection",
+        ClockSelectionCause::UnusedClockSelection,
         "/package/lock/dependency_clock_selections/1",
     );
 
@@ -210,7 +224,7 @@ fn replay_recovers_a_library_only_clock_from_the_proving_package() {
     refused(
         &wrong,
         PROGRAM,
-        "clock-kind-mismatch",
+        ClockSelectionCause::ClockKindMismatch,
         "/package/lock/dependency_clock_selections/0/clock/kind",
     );
 
@@ -226,7 +240,7 @@ fn replay_recovers_a_library_only_clock_from_the_proving_package() {
     refused(
         &shared,
         SHARED,
-        "missing-clock-selection",
+        ClockSelectionCause::MissingClockSelection,
         "/package/lock/dependency_clock_selections",
     );
 }

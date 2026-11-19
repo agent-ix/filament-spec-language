@@ -16,7 +16,8 @@ use filament_contract_model::{
     CheckedAbstractionFrame, CheckedAbstractionObject, CheckedAbstractionParameter,
     CheckedAbstractionPopulation, CheckedArtifactRef, CheckedCapability,
     CheckedCapabilityDisposition, CheckedComponentClause, CheckedCompositionComponent,
-    CheckedCompositionPremise, CheckedDeclaration, CheckedDependencySelection,
+    CheckedCompositionPremise, CheckedDeclaration, CheckedDependencyClockSelection,
+    CheckedDependencySelection,
     CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEffectiveId, CheckedEnvironmentEntry,
     CheckedEnvironmentSupplies, CheckedFairnessGranularity, CheckedFairnessKind,
     CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification, CheckedGuaranteeMeasure,
@@ -4870,6 +4871,33 @@ fn dependency_selections(package: &CheckedPackage) -> Vec<CheckedDependencySelec
         .collect()
 }
 
+/// The caller-selected clocks used by this package's dependency closure, in
+/// ascending byte order of clock name.
+fn dependency_clock_selections(
+    package: &CheckedPackage,
+) -> Option<Vec<CheckedDependencyClockSelection>> {
+    let mut selections = BTreeMap::new();
+    let mut pending: Vec<_> = package.dependencies().values().map(AsRef::as_ref).collect();
+    while let Some(dependency) = pending.pop() {
+        if let Some(emission) = dependency.remembered_emission() {
+            for binding in emission.temporal_rows().bindings() {
+                if !is_model_binding_name(&binding.clock_name) {
+                    selections
+                        .entry(binding.clock_name.clone())
+                        .or_insert_with(|| binding.clock.clone());
+                }
+            }
+        }
+        pending.extend(dependency.dependencies().values().map(AsRef::as_ref));
+    }
+    (!selections.is_empty()).then(|| {
+        selections
+            .into_iter()
+            .map(|(clock_name, clock)| CheckedDependencyClockSelection { clock_name, clock })
+            .collect()
+    })
+}
+
 fn encoding(error: impl std::fmt::Display) -> EmitRefusal {
     EmitRefusal::Encoding {
         reason: error.to_string(),
@@ -7068,7 +7096,7 @@ fn emit_package_inner(
         required_features: vec![root.into()],
         dependency_selections: dependency_selections(package),
         refinement_internals: None,
-        dependency_clock_selections: None,
+        dependency_clock_selections: dependency_clock_selections(package),
     };
     let inspection_source_map = inspection_source_map(ids, &source_map)?;
     let emitted_node_ids = write_index_segments(

@@ -27,8 +27,9 @@ search for variable demand and mixed-criticality changes, time-divergent miss
 evidence, and release admission. This replaces the former
 `Unsupported(StopwatchRequired)` expectation.
 
-Scope: FR-249-AC-1 to FR-249-AC-6, FR-249-AC-11, FR-249-AC-12,
-FR-237-AC-7, FR-237-AC-8, FR-239-AC-6,
+Scope: FR-249-AC-1 to FR-249-AC-6, FR-249-AC-11 to FR-249-AC-16,
+FR-237-AC-7 to FR-237-AC-9, FSpec FR-364-AC-21, FSpec FR-364-AC-22 (its
+`queue_growth` cycle case), FR-239-AC-6,
 FR-235-AC-6, FR-128-AC-9, and FR-230-AC-7.
 
 ## Test Procedure
@@ -72,6 +73,17 @@ a two-job preemption scenario, a mixed-criticality task with distinct
     count at the miss node plus one (FR-249-AC-12).
 11. Replay the FR-249-AC-9 counterexample with `loop` emptied through the
     `ModelTrace` entry (FR-237-AC-8).
+12. Check FR-249-AC-13's `mode` declarations over `C` and `MC` (FSpec
+    FR-419-AC-14): the recorded switch, the unknown task set, the unknown
+    operation, the repeated declaration and `mode MC lo`.
+13. Analyze `MCFp` with `backend` `en-6` (FR-249-AC-14), replay its
+    counterexample through `ModelTrace`, then replay each FSpec FR-364-AC-21
+    tamper, a `queue_growth` witness whose cycle holds the `go_hi` entry
+    (FSpec FR-364-AC-22), the record against the package without the `mode`
+    declaration and the record with a `mode` member added (FR-237-AC-9).
+    Rerun with the source operations declared in reverse order.
+14. Analyze `MCEarly` and `MCNone` (FR-249-AC-15).
+15. Parse, build and format FR-249-AC-16's sources.
 
 Tag executable tests with the criterion IDs in scope, for example
 `#[trace("TC-704", "FR-249-AC-3")]`; a schema-only task-search check is not
@@ -116,3 +128,26 @@ evidence that the runtime provider implements the search semantics.
   entry, never `refuted`.
 - Step 11: refused `malformed_wire` at `/loop` before any exploration; the
   admitted-endpoint arm is not run.
+- Step 12: the switch is recorded in source order beside the releases;
+  `missing-name` naming `Nope`, then `C::nope`; `duplicate-declaration` at the
+  second; `invalid_syntax`/`unexpected-token` at `lo`.
+- Step 13: refuted with the miss of `h` job 0 at 10 (demand 3, deadline 10,
+  service 2), the exhaustion `preempt` at 2 with null `source_transition`,
+  exactly two `budget-change` steps at 12 directly after `go_hi` (`h` job 0
+  then job 1, `budget_delta` 1, delay 0, `source_transition` `go_hi`), a loop
+  of elapsed 10 with no `budget-change`, and `reproduced`. Each tamper
+  refuses `invalid_runtime_input`/`invalid-value` at its FSpec FR-364-AC-21
+  pointer, the cycle at `/queue_growth/cycle/<i>`, the package without
+  `mode` at `/prefix/10/post_state` (and, with that key rewritten to `LO`, at
+  the first `budget-change` step's `/transition`), the `mode`
+  member `malformed_wire` at its pointer. The reverse-order run reports the
+  same miss and the same two `budget-change` steps.
+- Step 14: `MCEarly` settles `incomplete` with `task_search`, with no
+  `deadline-miss` edge and one `budget-change` of `h` job 0 after each `go_hi`
+  edge; `MCNone` has no `budget-change` and refutes at `h` job 0's miss at 10
+  with a `queue_growth` growth block of one `h` job (`allowance` 2,
+  `remaining` 1, `preempted`), `iteration_shift` 1, `elapsed` 10.
+- Step 15: one `ModeSwitchDeclaration` and `ModeSwitchForm`, the hybrid
+  modes and the field `hi` unaffected; each malformed source refuses at its
+  stated token; the formatted text is `mode MC hi on C::go_hi;`, formatting
+  is idempotent, and both sources compile to equal packages.

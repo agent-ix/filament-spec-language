@@ -90,6 +90,10 @@ refutation.
   the existing model-trace payload. The replay settles reproduced only when
   that contract accepts the task-derived steps and the required continuation.
   FSL SHALL not define another derived-step identity or divergence witness.
+  The rebuilt product includes the package's checked mode-switch
+  declarations. Replay derives the criticality mode and allowance phases from
+  them and from the replayed steps (FSpec FR-364), and never reads them from
+  the counterexample.
 - **Lasso.** Replay SHALL check the loop's closure (FR-236) and that its
   total delay is positive, refusing `invalid_runtime_input`/`invalid-value`
   otherwise. It SHALL check fairness over time (FR-232) and refuse an
@@ -148,6 +152,7 @@ refutation.
 | FR-237-AC-6 | Over a `Lock` model (one object with `phase: {A, B}` and a clock `x` never reset; `go` moves `A` to `B` with no guard; `time invariant when phase = B { x <= 1 ms }`; `ping`, enabled in `B`, changes no data field), the counterexample `go` after delay 0 to `always holds(c.phase = A)` settles `inconclusive`, `ReplayParity`, because the replayed state `(B, x = 0)` has no time-divergent continuation; over the variant in which `ping` resets `x`, the same counterexample settles `reproduced-with-evaluated-witness`; with an exploration limit of one state it settles V-7. | Test (TC-692) |
 | FR-237-AC-7 | The existing `ModelTrace` replay entry rebuilds an FR-249 task product and passes its model-trace payload to the FSpec FR-364 reader; an accepted task-derived miss yields the existing FR-072 ModelTrace result, while a rejected payload does not reproduce. No `TaskAutomatonTrace` result arm or parallel FSL trace wire is emitted. | Test (TC-704) |
 | FR-237-AC-8 | The FR-249-AC-9 counterexample with `loop` emptied is refused `malformed_wire` at `/loop` before any exploration, and is never settled by the admitted-endpoint arm, although its last state reaches a positive-delay cycle. | Test (TC-704) |
+| FR-237-AC-9 | The FR-249-AC-14 counterexample replays through `ModelTrace` to `reproduced`. Re-admitted against the same package with the `mode` declaration removed, it refuses `invalid_runtime_input`/`invalid-value` at the `go_hi` step's `/post_state` (`/prefix/10/post_state`), because the recomputed post-state key is in `LO`; with that step's key also rewritten to the `LO` key, it refuses at the first `budget-change` step's `/transition`. With `"mode": "hi"` added to that step, it refuses `malformed_wire` at `/prefix/<i>/mode`, and added to its `transition`, at `/prefix/<i>/transition/mode`. | Test (TC-704) |
 
 ## Dependencies
 

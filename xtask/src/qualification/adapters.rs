@@ -307,7 +307,7 @@ fn partition(category: Category) -> Partition {
 
 fn compile_refusal(refusal: &fsl_replay::ReplayRefusal) -> Result<Execution, Failure> {
     let diagnostic = match refusal {
-        fsl_replay::ReplayRefusal::Recompile(refusal) => {
+        fsl_replay::ReplayRefusal::Recompile { refusal, .. } => {
             fsl_replay::OutcomeDiagnostic::from_compile_refusal(refusal)
         }
         fsl_replay::ReplayRefusal::RecompileWithProtocolResults { refusal, .. } => {
@@ -323,7 +323,7 @@ fn compile_refusal(refusal: &fsl_replay::ReplayRefusal) -> Result<Execution, Fai
     let mut actual =
         serde_json::to_value(diagnostic).map_err(|error| Failure::decode("", error.to_string()))?;
     let fields = match refusal {
-        fsl_replay::ReplayRefusal::Recompile(refusal)
+        fsl_replay::ReplayRefusal::Recompile { refusal, .. }
         | fsl_replay::ReplayRefusal::RecompileWithProtocolResults { refusal, .. } => {
             refusal.fields()
         }

@@ -54,8 +54,18 @@ check the construction against FSpec FR-143's construction rule (ADR-012
   - With more than one candidate, the checker SHALL refuse
     `ambiguous_declaration`/`ambiguous-name` at `q::m`, naming every
     candidate.
-  - With no candidate, the checker SHALL refuse exactly as an unresolved
-    name is refused.
+  - When `q` resolves to exactly one enum, ordered enum, union or model
+    variant type `T` that declares no member `m`, the checker SHALL refuse
+    `ill_typed`/`type-mismatch` at `q::m`, naming both `T` and `m`.
+    The qualifier names a type, so the reference is a value of `T` that `T`
+    cannot hold. This is the refusal FR-360 gives an undeclared case of a
+    model variant type and this requirement gives an undeclared union member
+    (FSpec TC-262 U04, ADR-012), so an unknown member reports one code and
+    tag whichever kind of type its qualifier names. A `case` arm pattern is
+    not such a reference: FR-318 resolves arm heads, and an arm naming no
+    member of the scrutinee's union stays FR-318's `unknown-member`.
+  - With no candidate and no type `q`, the checker SHALL refuse exactly as an
+    unresolved name is refused, `missing_declaration`/`missing-name`.
 - Every unqualified name SHALL resolve exactly as it does without unions,
   except a bare enum member, below.
 - **Bare enum members.** An enum member is written qualified, `E::m` (for an
@@ -112,6 +122,7 @@ check the construction against FSpec FR-143's construction rule (ADR-012
 | FR-317-AC-3 | In source, when a union `q` declares `m` and an import alias `q` exports `m`, `q::m` refuses `ambiguous_declaration`/`ambiguous-name` naming both candidates, and with the union `q` alone `q::m` resolves to its member. A unit declaring two types named `q` (two unions, or a union and an enum) is refused by the assembler at the second declaration as `ambiguous_declaration`/`ambiguous-name`, so one unit cannot reach the member resolver with two types named `q`; an import contributes only its alias qualifier, never a type, so no import supplies a second type named `q`. The resolver's own ambiguity property is tested on hand-built scopes: when a union `q` and an enum `q` both declare `m`, and when two unions named `q` both declare `m`, `q::m` refuses `ambiguous_declaration`/`ambiguous-name` naming every candidate; when two unions named `q` exist and only one declares `m`, `q::m` resolves to that union's member. An enum member `Kind::Empty` and a tuple constructor `Pair(1, 2)` resolve as they did before unions existed. | Test (TC-820) |
 | FR-317-AC-4 | `Shape::Rect(2, 3)` checks as a union construction inside a state clause body and inside a `decreases` measure, each under its own clause kind, and `Shape::Rect(1)` refuses `ill_typed`/`type-mismatch` in both. | Test (TC-819) |
 | FR-317-AC-5 | Over ADR-022 §7.2's `Game` (`phase: Phase`, the unordered enum `{Start, Mid, Won, Lost}` of the domain package selected as `G`), `from (x.phase != Lost) { x.phase = Won }` and `from (x.phase != G::Phase::Lost) { x.phase = G::Phase::Won }` check to equal claims and emit one node id; `Lost != x.phase` checks the same as `x.phase != Lost`. `x.phase = Draw` (no such case) refuses `missing_declaration`/`missing-name` at `Draw`; `Lost = Won` (no typed operand) refuses `missing_declaration`/`missing-name` twice, at `Lost` and then at `Won`; `x.phase < Mid` refuses `ill_typed`/`operator-ineligible` at the comparison, once, with no `missing-name`; `let Lost = 1 in x.phase != Lost` refuses `ambiguous_declaration`/`ambiguous-name` at the `Lost` of the comparison, naming the `let` binder and `G::Phase::Lost`. In a unit with `ordered enum Level { Low, Mid, High }` and `function AtLeastMid using v(l: Level): Boolean pure { l >= Mid }`, the body checks equal to `l >= Level::Mid` with one node id, `Mid <= l` checks the same as `l >= Mid`, and `l > Top` refuses `missing_declaration`/`missing-name` at `Top`. | Test (TC-819) |
+| FR-317-AC-6 | In a unit declaring `enum Status { Open, Closed }` and `ordered enum Level { Low, Mid, High }`, `Status::Pending = Status::Open` refuses `ill_typed`/`type-mismatch` at `Status::Pending`, naming `Status` and `Pending`, and `Level::Top` at a `Level` slot refuses the same way naming `Level` and `Top`; each has the code and tag of the undeclared model variant case `Config::Tier::Lost` (FR-360-AC-5) and of `Shape::Square(1)` (AC-2), and neither is `missing-name`. `Nope::Open`, whose qualifier names no type, alias or declaration, refuses `missing_declaration`/`missing-name`. | Test (TC-3051) |
 
 ## Dependencies
 

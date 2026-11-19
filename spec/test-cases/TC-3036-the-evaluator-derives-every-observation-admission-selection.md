@@ -12,11 +12,11 @@ relationships:
 
 Verify that `fsl-eval` builds the filament-observation admission request from
 the checked package, the clause occurrence, the trace with its clock profile
-and its own crate-constant producer bundle alone, that the owner admits it,
+and the caller-owned producer bundle passed to it alone, that the owner admits it,
 that an owner refusal of that request is an internal failure and an owner
 maximum a limit, and that the package selection and its in-memory digest
 are equal on the source and bare-package routes. Scope: FR-944-AC-8,
-FR-944-AC-9, FR-944-AC-10, FR-944-AC-11, FR-944-AC-12, FR-944-AC-13 and
+FR-944-AC-9, FR-944-AC-10, FR-944-AC-11, FR-944-AC-12, FR-944-AC-13, FR-944-AC-15 and
 the relabelling case of FR-944-AC-4.
 
 ## Test Procedure
@@ -28,7 +28,12 @@ the relabelling case of FR-944-AC-4.
    observation equal to the first in content, stamp, key, interval and
    arrival under another FR-106 identity; inspect a position without an
    arrival. Build the request for an event-position clause.
-2. Inspect the `fsl-eval` producer bundle and admit it twice in one process;
+2. Build the `fsl-eval` producer bundle with its constructor, admit it once as
+   the caller, pass it by reference to two runs and compare their requests'
+   producer selections; scan `fsl-eval`'s shipped source, and a fixture source holding
+   `static B: OnceLock<AdmittedStaticBundle>`, for a static, lazy,
+   thread-local or locked holder of `StaticProducerBundle` or
+   `AdmittedStaticBundle`;
    mutate a derived request (the binding source, the population identity, one
    record identity), each alone, before `admit` and run it through the
    evaluator; run a trace of `max_population_entries + 1` positions and a
@@ -69,8 +74,9 @@ the relabelling case of FR-944-AC-4.
   its event time as ingestion (interim rule) and no report carries it; the
   event-position request uses `EventPosition` anchors and range, owner unit
   `position/4`, and is `Available`.
-- Step 2: the bundle members and digests equal FR-944-AC-9's and it is
-  admitted once; each mutation ends `runtime_invariant`/
+- Step 2: the bundle members and digests equal FR-944-AC-9's; each request's
+  `producer` is a clone equal to the passed bundle; the scan finds no holder
+  in `fsl-eval` and reports the fixture's line; each mutation ends `runtime_invariant`/
   `established-invariant-broken`, invariant `observation-admission`, with the
   owner's refusal cause, exit `30`, no clause outcome; the two over-maximum
   traces refuse `stage_limit_exceeded` with `node-count-exceeded` and

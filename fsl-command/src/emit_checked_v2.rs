@@ -422,7 +422,7 @@ fn formal_identity(path: &Path) -> Result<filament_contract_model::SourceIdentit
 /// The refusal a failed stage becomes.
 fn refusal(failure: spine::FrontEndFailure) -> Error {
     Error::Producer(Box::new(match spine::refusal_or_fault(failure) {
-        Ok(refusal) => ReplayRefusal::Recompile(refusal),
+        Ok(refusal) => ReplayRefusal::Recompile { refusal, pointer: None },
         Err(fault) => ReplayRefusal::Fault(fault),
     }))
 }
