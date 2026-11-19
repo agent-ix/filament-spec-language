@@ -2129,7 +2129,10 @@ mod tests {
                 "bad",
             )]);
         let text = text_of(&with_diagnostic, &RenderSources::from_sources([]));
-        assert!(text.contains("<no-source>: ill_typed: bad\n"), "{text}");
+        assert!(
+            text.starts_with("prove: success (exit 0)\n<no-source>: ill_typed: bad\n"),
+            "{text}"
+        );
         assert!(
             text.contains("item 0: proved (success) trusted\n"),
             "{text}"
