@@ -948,12 +948,6 @@ pub enum ProtocolConstruct {
     /// cannot name a relationship yet, so the clause `relationships` set is
     /// unproved against IR's reader: QSL-1141.
     Relationships,
-    /// A `channel` that carries a bounded scalar or collection
-    /// (`Int[a, b]`, `Text`, `Decimal`, `Rational`, `Float`, a bounded
-    /// `Sequence`/`Set`/`Bag`; FR-465 "Channel"). Each lowers to a
-    /// `bounded_domain` node, which IR's reader
-    /// does not admit as `carries`: QSL-1137.
-    ChannelCarriesBounded,
     /// A FIFO `channel` whose key type IR's reader does not take as
     /// equality-stable (FR-465 "Channel"): the key's type is, or contains
     /// through an option, a collection or a record field, a bounded domain,
@@ -990,7 +984,6 @@ impl ProtocolConstruct {
             Self::Control(_) => "QSL-1126",
             Self::ReferenceCycle => "QSL-844",
             Self::ReferenceToAttemptProtocol | Self::ProtocolReferenceInBody => "QSL-1121g",
-            Self::ChannelCarriesBounded => "QSL-1137",
             Self::Relationships => "QSL-1141",
             Self::ChannelKeyNotEqualityStable => "QSL-1142",
             Self::PostTestRepeat | Self::RepeatDecisionReadsBody => "STD-539",

@@ -235,14 +235,6 @@ impl ProtocolInput<'_> {
         let form = self.form;
         let slots = &self.checked.slots;
         let mut unemitted = Vec::new();
-        if self
-            .checked
-            .channels
-            .iter()
-            .any(|channel| bounded_carries(&channel.carries))
-        {
-            unemitted.push(ProtocolConstruct::ChannelCarriesBounded);
-        }
         let mut kinds: Vec<ProtocolNodeKind> = Vec::new();
         for control in &self.checked.controls.controls {
             // A `branch` and a `case` are held by the `parallel` and the
@@ -446,37 +438,6 @@ impl ProtocolInput<'_> {
         requirements.sort_unstable();
         requirements.dedup();
         (functions, protocols, requirements)
-    }
-}
-
-/// Whether `carries` lowers to a `bounded_domain` node, which IR's reader
-/// does not admit as a channel's `carries`. An `option` is a `composite_type`
-/// whatever its payload; a quantity is a `scalar_type` and a nominal enum a
-/// `value` node, both of which the reader admits.
-fn bounded_carries(carries: &ValueType) -> bool {
-    match carries {
-        ValueType::Int(_)
-        | ValueType::Rational(_)
-        | ValueType::Decimal(_)
-        | ValueType::Float(_)
-        | ValueType::Text(_) => true,
-        ValueType::Collection(collection) => collection.bound().is_some(),
-        ValueType::Map(map) => map.bound().is_some(),
-        ValueType::Boolean
-        | ValueType::Integer
-        | ValueType::String
-        | ValueType::Uuid
-        | ValueType::Timestamp
-        | ValueType::Bytes
-        | ValueType::JsonObject
-        | ValueType::Reference(_)
-        | ValueType::Composite(_)
-        | ValueType::Option(_)
-        | ValueType::Enum(_)
-        | ValueType::Quantity(_)
-        | ValueType::BoundedQuantity(_)
-        | ValueType::CarriedQuantity(_)
-        | ValueType::Population(_) => false,
     }
 }
 
@@ -2600,33 +2561,5 @@ mod requirement_key_tests {
         assert!(matches!(resolved, Ok(None)), "{resolved:?}");
         let resolved = resolve_temporal_requirement_keys([(1, "A")], &keys, &refused, &location());
         assert!(matches!(resolved, Ok(Some(found)) if found == [one.clone()]));
-    }
-}
-
-#[cfg(test)]
-mod bounded_carries_tests {
-    use super::*;
-
-    fn map(bound: Option<(u64, u64)>) -> ValueType {
-        ValueType::Map(std::sync::Arc::new(
-            filament_exact::MapType::new(
-                ValueType::String,
-                ValueType::Boolean,
-                bound.map(|(lower, upper)| {
-                    filament_exact::CardinalityBound::new(lower, upper).expect("a bound")
-                }),
-            )
-            .expect("a leaf key"),
-        ))
-    }
-
-    /// A bounded map lowers to a `bounded_domain` (FR-092-AC-28), which IR's
-    /// reader does not admit as a channel's `carries`; an unbounded map is the
-    /// `map` composite alone.
-    #[ix_trace_rs::trace("FR-092-AC-28", "TC-1021")]
-    #[test]
-    fn a_bounded_map_carries_a_bounded_domain_and_an_unbounded_one_does_not() {
-        assert!(bounded_carries(&map(Some((1, 4)))));
-        assert!(!bounded_carries(&map(None)));
     }
 }
