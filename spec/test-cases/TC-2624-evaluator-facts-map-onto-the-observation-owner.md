@@ -13,7 +13,8 @@ relationships:
 Verify the quarter-tick interval mapping, its doubly-open strictness, the
 one-sided eligibility comparisons and its exactness at the domain edge, trace admission,
 partial facts, activation and repair mapping, and the completeness revision
-rule. Scope: FR-944-AC-1 to FR-944-AC-7.
+rule, and the separate optional activation history. Scope: FR-944-AC-1 to
+FR-944-AC-7 and FR-944-AC-14.
 
 ## Test Procedure
 
@@ -24,6 +25,7 @@ rule. Scope: FR-944-AC-1 to FR-944-AC-7.
 5. Map FR-944-AC-5's request `(0, 1]` and acks `[3, 4)` and `[2, 3)` to quarter ticks, read `within_bound(3, ...)` through `relation_to`, and run `holds(req) implies eventually[0,3] holds(ack)` over each.
 6. Decide FR-944-AC-6's `at_least` and `at_most` cases on the scaled difference's endpoints and compare each with `ClockCover`'s eligibility.
 7. Map FR-944-AC-7's maximal readings and uncertainty and its extreme bounds, and compare `within_bound` and `definitely_before` with `ClockCover`'s.
+8. Build FR-944-AC-14's activation requests (no instance closed, open, incomplete, `Missing`, `Refused`; one instance without and with captures `a` and `b` beside a false-guard delivery; two instances with equal captures), admit each, and derive each scope's activation over the activation `Context`, recording every `derive` call's binding identity.
 
 Test: `fsl-eval/tests/it/observation_owner.rs`.
 
@@ -36,3 +38,4 @@ Test: `fsl-eval/tests/it/observation_owner.rs`.
 - Step 5: intervals `[1, 4]`, `[12, 15]` and `[8, 11]`; `Indeterminate` and `Indeterminate { reason: StraddlesBound }` for `[3, 4)`, `Completed(true)` for `[2, 3)`.
 - Step 6: each eligible, ineligible and `Indeterminate` (`StraddlesBound`) decision FR-944-AC-6 states, equal to `ClockCover`'s; no unbounded owner interval.
 - Step 7: the exact endpoints and scaled bounds FR-944-AC-7 states, and equal answers.
+- Step 8: `Inactive`, `Unknown(open)` twice, `Unknown(missing)`, `Unknown(refused)` with no refusal; the records, capture identities and order FR-944-AC-14 states; distinct identities for equal captures; the trace binding still `required`; no `derive` over the trace binding's identity.
