@@ -69,7 +69,7 @@ pub fn candidate_lasso_has_fair_run(
     let mut vertices = BTreeMap::<(usize, Vec<u8>), Vertex>::new();
     for (position, candidates) in positions.iter().enumerate() {
         for candidate in candidates {
-            let vertex = graph.add_vertex(candidate.enabled.iter().copied().collect());
+            let vertex = graph.add_vertex(candidate.enabled.iter().copied());
             vertices.insert((position, candidate.key.clone()), vertex);
         }
     }
