@@ -1,0 +1,26 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+model Factory = "example/parts";
+record Note { ok: Boolean; }
+protocol HiddenChoice using p over (job: Factory::Job) on origin {
+  role Source on Factory::PlanningService;
+  role Picker on Factory::MachiningStation;
+  role Target on Factory::AssemblyStation;
+  channel Decision from Source to Picker carries Note
+    ordering unordered delivery exactly-once-premise capacity 1 overflow block;
+  channel Notice from Picker to Target carries Note
+    ordering unordered delivery exactly-once-premise capacity 1 overflow block;
+  run sequence Main {
+    send Asked via Decision as (asked: Note) { true };
+    receive Chosen via Decision of Asked as (decision: Note) { true };
+    choice Pick by Picker visible (decision.ok) {
+      case yes when { decision.ok } sequence Yes {
+        send Announced via Notice as (notice: Note) { true };
+        receive Learned via Notice of Announced as (seen: Note) { true };
+      }
+      case no when { not decision.ok } sequence No {}
+    }
+  }
+  finish Done as (done: Boolean) { true };
+}
