@@ -616,7 +616,11 @@ pub(super) fn checked_package(
     } else {
         assembled
     };
-    assembled.check(CheckMode::Linked, CheckingLimits::default())
+    assembled.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    )
 }
 
 /// FR-092-AC-18, FR-383: every construct whose node is still not written
