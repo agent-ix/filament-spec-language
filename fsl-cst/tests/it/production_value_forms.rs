@@ -425,7 +425,7 @@ fn malformed_builtin_arities_and_case_binders_refuse_at_the_incomplete_slot() {
 fn reference_literal_separators_and_nonstring_keys_refuse_at_the_exact_token() {
     for (formula, marker, width) in [
         ("Store::Row #\"r\"", "#", 1),
-        ("Store::Row/*gap*/#\"r\"", "#", 1),
+        ("Store::Row //gap\n#\"r\"", "#", 1),
         ("Store::Row#1", "1", 1),
         ("Store::Row#\"a\"#\"b\"", "#\"b\"", 1),
     ] {
@@ -851,7 +851,7 @@ fn qualified_zero_argument_calls_keep_target_and_empty_arguments() {
 #[trace("FSpec-FR-339-AC-4")]
 #[ignore = "QSL-2621: a gap after reference # reports a zero-width key locus"]
 fn separated_reference_keys_refuse_at_the_complete_string_token() {
-    for value in ["Store::Row# \"r\"", "Store::Row#/*gap*/\"r\""] {
+    for value in ["Store::Row# \"r\"", "Store::Row#//gap\n\"r\""] {
         refused(&expression(value), "\"r\"", 3);
     }
 }
