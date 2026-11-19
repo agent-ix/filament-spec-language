@@ -680,7 +680,8 @@ mod tests {
             };
             assert!(matches!(
                 &refusal.cause,
-                CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+                CheckCause::StateModel(model)
+                    if model.cause == CheckCause::IllTyped(IllTypedCause::TypeMismatch)
             ), "arity {arity} was refused as {:?}", refusal.cause);
         }
     }
