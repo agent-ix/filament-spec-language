@@ -2,8 +2,6 @@
 //! Public API tests for the unreduced graph core and the model checker.
 
 mod analysis_view;
-#[path = "../../../tests/support/published_fspec.rs"]
-pub(crate) mod published_fspec;
 mod analyze;
 mod analyze_cli;
 mod analyze_cli_support;
@@ -113,6 +111,8 @@ mod protocol_system;
 mod provider_external_contract;
 mod provider_request_seam;
 mod provision_contract;
+#[path = "../../../tests/support/published_fspec.rs"]
+pub(crate) mod published_fspec;
 mod quotient;
 mod race_freedom;
 mod rc11_oracle;
@@ -155,6 +155,7 @@ mod state_graph;
 mod state_graph_certificate;
 mod state_graph_settle;
 mod state_probabilistic_replay;
+mod statistical_coverage;
 mod statistical_manifest;
 mod statistical_model;
 mod statistical_witness_replay;
