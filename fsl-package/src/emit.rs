@@ -8903,7 +8903,7 @@ fn temporal_binding_rows(
                     format!(
                         "bounded temporal rule `{}` trace `{}`",
                         hyper.name(),
-                        quantifier.alias
+                        quantifier.alias.as_str()
                     ),
                 ));
                 continue;
