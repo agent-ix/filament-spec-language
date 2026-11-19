@@ -339,13 +339,24 @@ fn a_bounded_clause_refuses_a_lasso_that_is_not_zero_counted() {
 /// step (FR-217-AC-7): the `touch` loop's lasso, found for the same package
 /// under the infinite-trace profile, replayed against the bounded clause
 /// gives no value.
-#[trace("TC-839", "FR-329-AC-9")]
+#[trace("TC-839", "TC-662", "FR-329-AC-9", "FR-217-AC-7")]
 #[test]
 fn replaying_a_counted_protocol_lasso_under_a_bounded_clause_gives_no_value() {
     let infinite = counted_loop(true);
     let payload = refutation(&infinite, &CellV(is_one));
-    assert!(payload.lasso.is_some());
-    assert!(payload.prefix.iter().any(|step| step.transition.counts()));
+    let lasso = payload.lasso.expect("a lasso");
+    assert_eq!(
+        payload.prefix[lasso.entry..]
+            .iter()
+            .filter(|step| step.transition.counts())
+            .count(),
+        1,
+        "exactly one loop step counts"
+    );
+    assert!(
+        !payload.fairness.is_empty(),
+        "the loop meets the default scheduler constraints"
+    );
 
     let bounded = counted_loop(false);
     // The bounded clause carries the package's scheduler set as the lasso does.
@@ -354,6 +365,89 @@ fn replaying_a_counted_protocol_lasso_under_a_bounded_clause_gives_no_value() {
         ModelTraceSettlement::Inconclusive(DisagreementCause::NoValue { .. }) => {}
         other => panic!("expected no value, got {other:?}"),
     }
+}
+
+/// A counted touch loop can starve an enabled sibling under adversarial
+/// scheduling. Bounded replay has no value when fair, but checks the default
+/// package's scheduler constraints before evaluating the bounded clause.
+#[trace("TC-839", "TC-662", "FR-329-AC-9", "FR-217-AC-7")]
+#[test]
+fn replaying_a_counted_protocol_lasso_refuses_an_unfair_scheduler_loop() {
+    let case = |infinite: bool, scheduling: &str| {
+        let run = format!(
+            "parallel Both {{ branch spinning repeat Loop by w visible () while {{ true }} {} \
+             branch waiting {} }} join all [spinning, waiting];",
+            attempt("T", "touch", "TouchPre", "t", "true"),
+            attempt("A", "inc", "IncPre, IncPost", "a", "true")
+        );
+        let unit = contracts("self.v <= 1") + &protocol("P", scheduling, &run, "d");
+        let formula = if infinite {
+            "temporal Claim using t0 over (k: M::Cell) clock \"model-steps\" on origin \
+             { always eventually holds(k.v = 1) }\n"
+                .to_owned()
+        } else {
+            claim("eventually[0,1] holds(k.v = 1)")
+        };
+        Case::new(&(unit + &formula))
+    };
+    let infinite = case(true, "scheduling adversarial;");
+    let payload = refutation(&infinite, &CellV(is_one));
+    let lasso = payload.lasso.expect("a lasso");
+    assert_eq!(
+        payload.prefix[lasso.entry..]
+            .iter()
+            .filter(|step| step.transition.counts())
+            .count(),
+        1,
+        "the loop takes one touch while the sibling waits"
+    );
+    let bounded = case(false, "scheduling adversarial;");
+    let result = replay(&bounded, &CellV(is_one), &payload).expect("the fair lasso replays");
+    assert!(
+        matches!(
+            result.settlement,
+            ModelTraceSettlement::Inconclusive(DisagreementCause::NoValue { .. })
+        ),
+        "a fair counted loop has no bounded truth value: {:?}",
+        result.settlement
+    );
+
+    let default = case(false, "");
+    assert_unfair_with_default_fairness(&default, &payload);
+}
+
+/// Carry the default package's fairness set, then require an unfairness refusal
+/// naming one of its scheduler constraints rather than a bounded no-value result.
+fn assert_unfair_with_default_fairness(
+    default: &Case,
+    payload: &TemporalCounterexample<ProtocolTransition>,
+) {
+    let stale = replay(default, &CellV(is_one), payload);
+    let Err(ReplayRefusal::ModelTrace(stale)) = stale else {
+        panic!("expected a fairness set refusal, got {stale:?}");
+    };
+    let ModelTraceRefusal::ProtocolFairnessSet { recompiled, .. } = *stale else {
+        panic!("expected a fairness set refusal, got {stale:?}");
+    };
+    assert!(!recompiled.is_empty());
+    let mut carried = payload.clone();
+    carried.fairness.clone_from(&recompiled);
+    let unfair = replay(default, &CellV(is_one), &carried);
+    let Err(error) = unfair else {
+        panic!("expected an unfair lasso, got {unfair:?}");
+    };
+    let ReplayRefusal::ModelTrace(refusal) = &error else {
+        panic!("expected a model-trace refusal, got {error:?}");
+    };
+    let ModelTraceRefusal::UnfairProtocolLasso { constraint } = refusal.as_ref() else {
+        panic!("expected an unfair protocol lasso, got {refusal:?}");
+    };
+    assert!(
+        recompiled.contains(constraint),
+        "the named constraint is one of the package's: {constraint:?}"
+    );
+    assert_eq!(error.code(), Code::InvalidRuntimeInput);
+    assert_eq!(error.cause(), Some("invalid-value"));
 }
 
 /// FR-329-AC-10: under a bounded profile, a zero-counted protocol lasso that
@@ -376,51 +470,35 @@ fn an_unfair_zero_counted_lasso_refuses_naming_the_scheduler_constraint() {
     assert!(payload.prefix[lasso.entry..]
         .iter()
         .all(|step| !step.transition.counts()));
+    assert_eq!(
+        payload.prefix[lasso.entry..]
+            .iter()
+            .map(|step| step.transition.kind())
+            .collect::<Vec<_>>(),
+        [StepKind::Duplicate, StepKind::Lose]
+    );
 
     // The same lasso against the default scheduler: the first replay names
     // the set the package recompiles, the second carries it.
-    let default = lossy_channel("");
-    let stale = replay(&default, &CellV(is_one), &payload);
-    let Err(ReplayRefusal::ModelTrace(stale)) = stale else {
-        panic!("expected a fairness set refusal, got {stale:?}");
-    };
-    let ModelTraceRefusal::ProtocolFairnessSet { recompiled, .. } = *stale else {
-        panic!("expected a fairness set refusal, got {stale:?}");
-    };
-    assert!(!recompiled.is_empty());
-    let mut carried = payload.clone();
-    carried.fairness.clone_from(&recompiled);
-    let unfair = replay(&default, &CellV(is_one), &carried);
-    let Err(error) = unfair else {
-        panic!("expected an unfair lasso, got {unfair:?}");
-    };
-    let ReplayRefusal::ModelTrace(refusal) = &error else {
-        panic!("expected a model-trace refusal, got {error:?}");
-    };
-    let ModelTraceRefusal::UnfairProtocolLasso { constraint } = refusal.as_ref() else {
-        panic!("expected an unfair protocol lasso, got {refusal:?}");
-    };
-    assert!(
-        recompiled.contains(constraint),
-        "the named constraint is one of the package's: {constraint:?}"
-    );
-    assert_eq!(error.code(), Code::InvalidRuntimeInput);
-    assert_eq!(error.cause(), Some("invalid-value"));
+    let default = lossy_window("");
+    assert_unfair_with_default_fairness(&default, &payload);
 
     // Against the adversarial package it is fair; `p` false throughout, the
     // distance-1 window holds no `p`.
-    let window = adversarial_window();
+    let window = lossy_window("scheduling adversarial;");
     assert_reproduced_at(replay(&window, &CellV(is_one), &payload), 0);
 }
 
 /// `lossy_channel`'s package with the claim `eventually[1,1] holds(k.v = 1)`.
-fn adversarial_window() -> Case {
-    let members = "channel ch from w to w carries Boolean ordering fifo by (m: Boolean) \
-                   { true } delivery unknown capacity 2 overflow block; scheduling adversarial;";
+fn lossy_window(scheduling: &str) -> Case {
+    let members = format!(
+        "channel ch from w to w carries Boolean ordering fifo by (m: Boolean) \
+                   {{ true }} delivery unknown capacity 2 overflow block; {scheduling}"
+    );
     let run = format!(
         "sequence Main {{ send S1 via ch as (s1: Boolean) {{ s1 }}; {} }}",
         attempt("A", "inc", "IncPre, IncPost", "a", "true")
     );
-    let unit = contracts("self.v <= 1") + &protocol("P", members, &run, "d");
+    let unit = contracts("self.v <= 1") + &protocol("P", &members, &run, "d");
     Case::new(&(unit + &claim("eventually[1,1] holds(k.v = 1)")))
 }
