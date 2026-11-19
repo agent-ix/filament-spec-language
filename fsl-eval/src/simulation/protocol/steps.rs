@@ -1039,7 +1039,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     },
                     record.constraint,
                     record.slot,
-                    Some(&value),
+                    &value,
                     &observed,
                     &mut gathered.findings,
                 )? {
