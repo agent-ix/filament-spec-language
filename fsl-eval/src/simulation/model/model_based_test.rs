@@ -2531,10 +2531,13 @@ fn first_partition_attempt(
             return build_partition_trace(
                 system,
                 clause,
-                initial.key,
-                Vec::new(),
-                Vec::new(),
-                initial.state,
+                PartitionPath {
+                    initial: initial.key,
+                    steps: Vec::new(),
+                    findings: Vec::new(),
+                    state: initial.state,
+                    depth: 0,
+                },
                 Some(attempted),
                 partition,
             )
@@ -2544,6 +2547,11 @@ fn first_partition_attempt(
     Ok(PathSearch::Unreachable { bounds: Vec::new() })
 }
 
+type PartitionAttempt<'a> =
+    &'a dyn Fn(
+        &ModelSimState,
+    ) -> Option<filament_semantic_value::model_transition::ModelTransition>;
+
 fn shortest_partition_path(
     system: &ModelSystem<'_>,
     clause: &NodeKey,
@@ -2551,11 +2559,7 @@ fn shortest_partition_path(
     max_depth: usize,
     limits: Limits,
     target: impl Fn(&ModelSimState) -> bool,
-    attempt: Option<
-        &dyn Fn(
-            &ModelSimState,
-        ) -> Option<filament_semantic_value::model_transition::ModelTransition>,
-    >,
+    attempt: Option<PartitionAttempt<'_>>,
 ) -> Result<PathSearch, ModelBasedTestError> {
     let view = super::ModelRunView::new(system, Some(clause.clone()));
     let initial = ordered_initial_states(system)?;
@@ -2606,17 +2610,8 @@ fn shortest_partition_path(
                 Err(error) => return Err(ModelBasedTestError::Key(error)),
             };
         if target(&current.state) {
-            return build_partition_trace(
-                system,
-                clause,
-                current.initial,
-                current.steps,
-                current.findings,
-                current.state,
-                None,
-                partition,
-            )
-            .map(PathSearch::Found);
+            return build_partition_trace(system, clause, current, None, partition)
+                .map(PathSearch::Found);
         }
         if let Some(attempt) = attempt {
             if let Some(attempted) = attempt(&current.state) {
@@ -2644,10 +2639,13 @@ fn shortest_partition_path(
                     return build_partition_trace(
                         system,
                         clause,
-                        current.initial,
-                        steps,
-                        current.findings,
-                        successor.state.clone(),
+                        PartitionPath {
+                            initial: current.initial,
+                            steps,
+                            findings: current.findings,
+                            state: successor.state.clone(),
+                            depth: current.depth.saturating_add(1),
+                        },
                         None,
                         partition,
                     )
@@ -2707,10 +2705,13 @@ fn shortest_partition_path(
         return build_partition_trace(
             system,
             clause,
-            initial,
-            steps,
-            findings,
-            state,
+            PartitionPath {
+                initial,
+                depth: steps.len(),
+                steps,
+                findings,
+                state,
+            },
             Some(attempted),
             partition,
         )
@@ -2721,10 +2722,13 @@ fn shortest_partition_path(
             return build_partition_trace(
                 system,
                 clause,
-                initial,
-                Vec::new(),
-                Vec::new(),
-                state,
+                PartitionPath {
+                    initial,
+                    steps: Vec::new(),
+                    findings: Vec::new(),
+                    state,
+                    depth: 0,
+                },
                 Some(attempted),
                 partition,
             )
@@ -2748,13 +2752,17 @@ fn ordered_initial_states(
 fn build_partition_trace(
     system: &ModelSystem<'_>,
     clause: &NodeKey,
-    initial: crate::simulation::StateKey,
-    steps: Vec<Step<filament_semantic_value::model_transition::ModelTransition>>,
-    mut findings: Vec<crate::simulation::expansion::StateFindings<ModelFinding>>,
-    final_state: ModelSimState,
+    path: PartitionPath,
     attempted: Option<filament_semantic_value::model_transition::ModelTransition>,
     partition: &ModelBoundaryPartition,
 ) -> Result<ModelTrace, ModelBasedTestError> {
+    let PartitionPath {
+        initial,
+        steps,
+        mut findings,
+        state: final_state,
+        ..
+    } = path;
     let view = super::ModelRunView::new(system, Some(clause.clone()));
     let Expanded::Successors {
         findings: final_findings,

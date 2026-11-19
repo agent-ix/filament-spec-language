@@ -1123,12 +1123,16 @@ fn normalized_scalar_alphabet(
     }))
 }
 
+type DecomposedCounts = Vec<Vec<Integer>>;
+type ComposedCounts = Vec<Vec<Vec<Integer>>>;
+type CountCache<T> = OnceLock<Mutex<BTreeMap<usize, Arc<T>>>>;
+
 fn nfd_suffix_counts(
     profile: filament_exact::TextProfile,
     max: u64,
-) -> Option<Arc<Vec<Vec<Integer>>>> {
-    static NFD: OnceLock<Mutex<BTreeMap<usize, Arc<Vec<Vec<Integer>>>>>> = OnceLock::new();
-    static NFKD: OnceLock<Mutex<BTreeMap<usize, Arc<Vec<Vec<Integer>>>>>> = OnceLock::new();
+) -> Option<Arc<DecomposedCounts>> {
+    static NFD: CountCache<DecomposedCounts> = OnceLock::new();
+    static NFKD: CountCache<DecomposedCounts> = OnceLock::new();
     let cache = match profile {
         filament_exact::TextProfile::Nfd => &NFD,
         filament_exact::TextProfile::Nfkd => &NFKD,
@@ -1285,9 +1289,9 @@ fn composed_pair_exists(tables: &ComposedTextTables, starter: usize, following: 
 fn composed_suffix_counts(
     profile: filament_exact::TextProfile,
     max: u64,
-) -> Option<Arc<Vec<Vec<Vec<Integer>>>>> {
-    static NFC: OnceLock<Mutex<BTreeMap<usize, Arc<Vec<Vec<Vec<Integer>>>>>>> = OnceLock::new();
-    static NFKC: OnceLock<Mutex<BTreeMap<usize, Arc<Vec<Vec<Vec<Integer>>>>>>> = OnceLock::new();
+) -> Option<Arc<ComposedCounts>> {
+    static NFC: CountCache<ComposedCounts> = OnceLock::new();
+    static NFKC: CountCache<ComposedCounts> = OnceLock::new();
     let cache = match profile {
         filament_exact::TextProfile::Nfc => &NFC,
         filament_exact::TextProfile::Nfkc => &NFKC,
@@ -1309,8 +1313,8 @@ fn composed_suffix_counts(
     let states = tables.starters.len() + 1;
     let mut counts =
         vec![vec![vec![Integer::zero(); tables.ccc_values.len()]; states]; max.saturating_add(1)];
-    for starter in 0..states {
-        counts[0][starter].fill(Integer::one());
+    for starter in &mut counts[0] {
+        starter.fill(Integer::one());
     }
     for remaining in 1..=max {
         let mut zero_total = Integer::zero();

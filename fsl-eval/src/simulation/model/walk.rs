@@ -308,7 +308,15 @@ pub(super) fn expand_state(
     state: &ModelSimState,
     enforcement: Option<&Enforcement<'_>>,
 ) -> Result<Expansion<ModelTransition, ModelSimState, ModelFinding>, ExpansionStop> {
-    expand(system, state, enforcement, None, None, None, None, None)
+    expand(
+        system,
+        state,
+        enforcement,
+        None,
+        ExpansionSelection::default(),
+        None,
+        None,
+    )
 }
 
 /// Expand a state while testing one selected operation clause independently
@@ -318,7 +326,18 @@ pub(super) fn expand_state_omitting_clause(
     state: &ModelSimState,
     clause: &filament_exact::NodeKey,
 ) -> Result<Expansion<ModelTransition, ModelSimState, ModelFinding>, ExpansionStop> {
-    expand(system, state, None, None, None, None, None, Some(clause))
+    expand(
+        system,
+        state,
+        None,
+        None,
+        ExpansionSelection {
+            omitted_clause: Some(clause),
+            ..ExpansionSelection::default()
+        },
+        None,
+        None,
+    )
 }
 
 /// [`expand_state`] with no footprint enforcement, also returning every
@@ -337,8 +356,10 @@ pub(super) fn expand_enabled<'s>(
         state,
         None,
         Some(&mut enabled),
-        post_presence,
-        None,
+        ExpansionSelection {
+            post_presence,
+            ..ExpansionSelection::default()
+        },
         None,
         None,
     )?;
@@ -356,9 +377,8 @@ pub(super) fn expand_enabled_with_cancel<'s>(
         state,
         None,
         Some(&mut enabled),
-        None,
+        ExpansionSelection::default(),
         Some(cancel),
-        None,
         None,
     )?;
     Ok((expansion, enabled))
@@ -376,12 +396,17 @@ pub(super) fn expand_enabled_with_key_policy<'s>(
         state,
         None,
         Some(&mut enabled),
-        None,
+        ExpansionSelection::default(),
         Some(cancel),
         Some(key_policy),
-        None,
     )?;
     Ok((expansion, enabled))
+}
+
+#[derive(Default)]
+struct ExpansionSelection<'s> {
+    post_presence: Option<PostPresence<'s>>,
+    omitted_clause: Option<&'s filament_exact::NodeKey>,
 }
 
 fn expand<'s>(
@@ -389,10 +414,9 @@ fn expand<'s>(
     state: &'s ModelSimState,
     enforcement: Option<&'s Enforcement<'s>>,
     mut enabled: Option<&mut Vec<frames::EnabledVector>>,
-    post_presence: Option<PostPresence<'s>>,
+    selection: ExpansionSelection<'s>,
     cancel: Option<&filament_exact::Cancel>,
     key_policy: Option<&'s dyn super::key_budget::KeyPolicy>,
-    omitted_clause: Option<&filament_exact::NodeKey>,
 ) -> Result<Expansion<ModelTransition, ModelSimState, ModelFinding>, ExpansionStop> {
     // FR-120: every expansion entry point runs the bound check first, so an
     // expansion never meets a granted field with no finite domain.
@@ -403,7 +427,7 @@ fn expand<'s>(
     let mut walk = walk_of(system, state, enforcement)?;
     walk.cancel = cancel.cloned();
     walk.key_policy = key_policy;
-    walk.post_presence = post_presence;
+    walk.post_presence = selection.post_presence;
     let mut budget = system.budget();
     budget.cancel = cancel.cloned();
 
@@ -416,7 +440,7 @@ fn expand<'s>(
         };
         for application in applications {
             let clauses = walk.selected(row, application, |identity| {
-                omitted_clause != Some(&identity)
+                selection.omitted_clause != Some(&identity)
             });
             frames::apply(
                 &walk,
