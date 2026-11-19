@@ -1064,6 +1064,8 @@ pub struct ProtocolSystem<'a, M: MemoryModel> {
     /// An explicit delivery read set for cycle exploration; `None` keeps
     /// the concrete transition system used by execution and replay.
     delivery_reads: Option<BTreeSet<String>>,
+    /// An explicit message identity read set for cycle exploration.
+    message_reads: Option<BTreeSet<String>>,
     /// The model governing each `parallel`: its outermost `parallel`'s
     /// resolved model (FR-219, ADR-025 MM-3).
     governing: BTreeMap<fsl_semantics::check::ProtocolNodeId, fsl_foundation::MemoryModelName>,
@@ -1268,6 +1270,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             memory,
             channel_message_bound: None,
             delivery_reads: None,
+            message_reads: None,
             governing,
             weak_ancestors,
             weak_parallel_paths,
@@ -2291,9 +2294,11 @@ impl<M: MemoryModel> SubjectSystem for ProtocolSystem<'_, M> {
         &self,
         state: &Self::State,
     ) -> Result<crate::simulation::StateKey, EncodingRefusal> {
-        // Checked temporal atoms currently have no delivery-index read form.
-        self.cycle_key(
+        // Checked temporal atoms currently have no message- or delivery-index
+        // read form; keep the explicit seams for future checked-item reads.
+        self.cycle_key_with_reads(
             state,
+            self.message_reads.as_ref().unwrap_or(&BTreeSet::new()),
             self.delivery_reads.as_ref().unwrap_or(&BTreeSet::new()),
         )
     }

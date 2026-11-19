@@ -478,6 +478,32 @@ fn an_unfair_zero_counted_lasso_refuses_naming_the_scheduler_constraint() {
     let adversarial = echo("scheduling adversarial;", "eventually[1,1] holds(k.v = 1)");
     let payload = echo_lasso(&adversarial);
     let lasso = payload.lasso.expect("a lasso");
+    let entry = &payload.prefix[lasso.entry - 1].post_state;
+    let concrete_last = &payload.prefix.last().expect("loop post-state").post_state;
+    assert_ne!(
+        entry, concrete_last,
+        "the concrete ProtocolKey comparison must reject this loop before fairness"
+    );
+    let protocol = crate::fill::sc_system(&adversarial.subject("Echo"));
+    let mut concrete = protocol.initial().remove(0);
+    let mut states = Vec::new();
+    for kind in [StepKind::Send, StepKind::Duplicate, StepKind::Lose] {
+        let (_, next) = protocol
+            .successors(&concrete)
+            .expect("expansion")
+            .successors
+            .into_iter()
+            .find(|(step, _)| step.kind() == kind)
+            .expect("enabled Echo step");
+        states.push(next.clone());
+        concrete = next;
+    }
+    let identity_read = BTreeSet::from(["Echo::ch".to_owned()]);
+    assert_ne!(
+        protocol.cycle_key(&states[0], &identity_read).unwrap(),
+        protocol.cycle_key(&states[2], &identity_read).unwrap(),
+        "the adverse identity-reading closure rejects before scheduler fairness"
+    );
     assert!(payload.fairness.is_empty(), "no scheduler constraint");
     assert!(payload.prefix[lasso.entry..]
         .iter()
