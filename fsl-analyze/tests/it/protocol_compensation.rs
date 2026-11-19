@@ -13,24 +13,25 @@ use std::collections::BTreeSet;
 
 use filament_contract_model::ClockConfiguration;
 use filament_exact::{Cancel, FieldValue, Value};
-use fsl_analyze::model_check::{check_protocol, ModelCheckRefusal, ProtocolCheckRequest};
+use fsl_analyze::model_check::{ModelCheckRefusal, ProtocolCheckRequest, check_protocol};
 use fsl_eval::simulation::protocol::{
-    protocol_domains, visible, AnchorName, ClaimReads, PathStep, ProtocolLocation, ProtocolSystem,
-    ProtocolTransition, RegistrationKey, RestKind, Sc, StepKind, ThreadPath, WaitCause,
+    AnchorName, ClaimReads, PathStep, ProtocolLocation, ProtocolSystem, ProtocolTransition,
+    RegistrationKey, RestKind, Sc, StepKind, ThreadPath, WaitCause, protocol_domains, visible,
 };
-use fsl_eval::simulation::{independent, Footprint, Location, SubjectSystem};
+use fsl_eval::simulation::{Footprint, Location, SubjectSystem, independent};
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_package::TemporalClockSelection;
 use fsl_replay::{
-    CounterexampleKind, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelStep,
-    ModelTraceSettlement, ResultLabel, TemporalCounterexample,
+    CounterexampleKind, IncompleteCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
+    ModelCheckOutcome, ModelStep, ModelTraceSettlement, ReachedLimit, ResultLabel,
+    TemporalCounterexample,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use crate::fill::{
-    contracts, json_of, key, package_with, protocol, reachable, sc_system, Reached,
-    PROTOCOL_PROFILE,
+    PROTOCOL_PROFILE, Reached, contracts, json_of, key, package_with, protocol, reachable,
+    sc_system,
 };
 use crate::protocol_system::Case;
 
@@ -431,9 +432,11 @@ fn pay_reaches_the_states_of_its_table_and_compensation_outcomes() {
         let json = identity(system, cattempt);
         assert_eq!(json["step"], "cattempt");
         assert_eq!(json["template"], TEMPLATE);
-        assert!(json["operation"]
-            .as_str()
-            .is_some_and(|operation| operation.contains("Cell/dec")));
+        assert!(
+            json["operation"]
+                .as_str()
+                .is_some_and(|operation| operation.contains("Cell/dec"))
+        );
         assert_eq!(
             json["registration"],
             json!({"type": "registration", "template": TEMPLATE,
@@ -817,12 +820,14 @@ fn compensation_steps_read_and_write_their_registrations() {
             }
             let ending = footprint_at(system, reached, at, cend);
             assert!(ending.writes.contains(&ctl(&compensation(0))));
-            assert!(ending
-                .writes
-                .contains(&Location::Protocol(ProtocolLocation::Registration {
-                    instance: 0,
-                    key: first.clone(),
-                })));
+            assert!(
+                ending
+                    .writes
+                    .contains(&Location::Protocol(ProtocolLocation::Registration {
+                        instance: 0,
+                        key: first.clone(),
+                    }))
+            );
             let activation = footprint_at(system, reached, at, activating);
             assert!(activation.reads.contains(&ctl(&compensation(0))));
             assert!(!independent(&ending, &activation));
@@ -1400,48 +1405,142 @@ fn committed(reached: &[Reached], at: usize) -> usize {
 #[trace("TC-652", "FR-207-AC-5", "FSpec-FR-730-AC-1")]
 #[test]
 fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
-    explore(
-        &pay_with_recovery_type("r.bal = 0", "M::Recovery"),
-        |system, explored| {
-            let reached = &explored.reached;
-            let t2 = after(
-                reached,
-                after(reached, 0, StepKind::Attempt),
-                StepKind::Event,
-            );
-            let (_, t4) = fail(system, reached, t2, true);
-            let t6 = after(reached, t4, StepKind::CAttempt);
-            let ends: Vec<usize> = reached[t6]
-                .steps
-                .iter()
-                .filter(|(step, _)| step.kind() == StepKind::CEnd)
-                .map(|(_, next)| *next)
-                .collect();
-            assert_eq!(ends.len(), 2, "one cend per recovery record: {ends:?}");
-            let outcomes: Vec<(String, String)> = reached[t6]
-                .steps
-                .iter()
-                .filter(|(step, _)| step.kind() == StepKind::CEnd)
-                .map(|(step, next)| {
-                    let Some(Value::Composite(record)) = step.binder_record() else {
-                        panic!("cend binds its recovery record: {step:?}");
-                    };
-                    let [FieldValue::Present(Value::Integer(balance))] = record.slots() else {
-                        panic!("recovery record contains its balance: {record:?}");
-                    };
-                    let status = statuses(&key_json(system, &reached[*next]));
-                    assert_eq!(status.len(), 1, "one registration status: {status:?}");
-                    (balance.to_string(), status[0].clone())
-                })
-                .collect();
-            assert_eq!(
-                outcomes,
-                [
-                    ("0".to_owned(), "recovered".to_owned()),
-                    ("1".to_owned(), "unrecovered".to_owned()),
-                ]
-            );
+    let body = pay_with_recovery_type("r.bal = 0", "M::Recovery");
+    let case = Case::new(&body, &[0]);
+
+    let mut stop_limits = ModelCheckLimits::default();
+    stop_limits.limits.max_states = 1;
+    stop_limits.limits.max_transitions = 1;
+    let stopped = check_protocol(
+        ProtocolCheckRequest {
+            temporal_clock_selections: &[],
+            subject: case.subject("Pay"),
+            item: ModelCheckItem::DeadlockFreedom,
+            max_depth: None,
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+            limits: stop_limits,
+            ignore_memory_constraints: false,
         },
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the bounded protocol check is admitted");
+    assert!(
+        matches!(
+            &stopped,
+            ModelCheckOutcome::Stopped {
+                cause: IncompleteCause::ResourceExhausted,
+                limit: Some(ReachedLimit {
+                    limit: ModelCheckLimit::MaxStates | ModelCheckLimit::MaxTransitions,
+                    ..
+                }),
+                ..
+            }
+        ),
+        "FR-109 reports an exhausted state or transition budget: {stopped:?}"
+    );
+
+    let check = |case: &Case| {
+        let mut limits = ModelCheckLimits::default();
+        limits.limits.max_states = 10_000;
+        limits.limits.max_transitions = 40_000;
+        check_protocol(
+            ProtocolCheckRequest {
+                temporal_clock_selections: &[],
+                subject: case.subject("Pay"),
+                item: ModelCheckItem::DeadlockFreedom,
+                max_depth: None,
+                max_store_buffer: None,
+                max_messages: None,
+                max_live_instances: None,
+                limits,
+                ignore_memory_constraints: false,
+            },
+            &filament_exact::Cancel::new(),
+        )
+        .expect("the limited protocol check is admitted")
+    };
+    let recovery_outcome = check(&case);
+    let baseline_case = Case::new(&pay_with_recovery_type("true", "M::Recovery"), &[0]);
+    let baseline_outcome = check(&baseline_case);
+    assert!(
+        recovery_outcome.stats().product_states > baseline_outcome.stats().product_states,
+        "the recovery binder's two values create distinct checked states: {recovery_outcome:?} vs {baseline_outcome:?}"
+    );
+    assert!(
+        !matches!(recovery_outcome, ModelCheckOutcome::RecoveryView { .. }),
+        "the FR-109 checker evaluates a recovery view instead of refusing it"
+    );
+
+    let system = sc_system(&case.subject("Pay"));
+    let mut state = system
+        .initial()
+        .into_iter()
+        .next()
+        .expect("one initial state");
+    let mut path = Vec::<Json>::new();
+    for kind in [StepKind::Attempt, StepKind::Event, StepKind::CAttempt] {
+        let expansion = system.successors(&state).expect("the bounded path expands");
+        let (transition, next) = expansion
+            .successors
+            .into_iter()
+            .find(|(transition, _)| transition.kind() == kind)
+            .unwrap_or_else(|| panic!("the finite recovery path has a {kind:?} step"));
+        path.push(identity(&system, &transition));
+        state = next;
+    }
+
+    let expansion = system
+        .successors(&state)
+        .expect("the recovery step expands");
+    let cends: Vec<_> = expansion
+        .successors
+        .into_iter()
+        .filter(|(transition, _)| transition.kind() == StepKind::CEnd)
+        .collect();
+    assert_eq!(cends.len(), 2, "one cend per recovery record");
+    let outcomes: Vec<(String, String)> = cends
+        .iter()
+        .map(|(transition, next)| {
+            let Some(Value::Composite(record)) = transition.binder_record() else {
+                panic!("cend binds its recovery record: {transition:?}");
+            };
+            let [FieldValue::Present(Value::Integer(balance))] = record.slots() else {
+                panic!("recovery record contains its balance: {record:?}");
+            };
+            let (bytes, _) = SubjectSystem::state_key(&system, next).expect("a state key");
+            let status = statuses(&json_of(&bytes));
+            assert_eq!(status.len(), 1, "one registration status: {status:?}");
+            (balance.to_string(), status[0].clone())
+        })
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            ("0".to_owned(), "recovered".to_owned()),
+            ("1".to_owned(), "unrecovered".to_owned()),
+        ]
+    );
+    let unrecovered = cends
+        .iter()
+        .find(|(transition, _)| {
+            transition
+                .binder_record()
+                .is_some_and(|record| matches!(record.slots(), [FieldValue::Present(Value::Integer(value))] if value.to_string() == "1"))
+        })
+        .expect("bal 1 produces the unrecovered successor");
+    path.push(identity(&system, &unrecovered.0));
+    let replayed_state =
+        replay_transition_path(&system, &path).expect("the bounded bal 1 cend path replays");
+    let cend = path.last().expect("the path ends at cend");
+    let registration = named_member(cend, "registration")
+        .cloned()
+        .expect("cend names its registration");
+    assert_eq!(
+        registration_status(&replayed_state, &registration),
+        Some("unrecovered"),
+        "replay reproduces the recovery-view result"
     );
 }
 

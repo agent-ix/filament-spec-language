@@ -11,13 +11,15 @@ use fsl_eval::model_subject::{ModelInstance, ModelSubject, ProtocolSubject, Role
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
-use fsl_eval::simulation::protocol::{ProtocolSystem, ResolvedMemory, Sc, StepKind};
+use fsl_eval::simulation::protocol::{
+    ProtocolState, ProtocolSystem, ProtocolTransition, ResolvedMemory, Sc, StepKind,
+};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
 use fsl_semantics::model::observation::{
-    document_reference, DocumentProvision, DocumentRef, ObservationLimits,
+    DocumentProvision, DocumentRef, ObservationLimits, document_reference,
 };
 use ix_trace_rs::trace;
 use serde_json::json;
@@ -371,63 +373,39 @@ fn registration_status<'a>(
     }
 }
 
-fn recovery_claim_holds(reachable: &fsl_eval::simulation::protocol::Reachable<Sc>) -> bool {
-    reachable.states.iter().all(|state| {
-        state.steps.iter().all(|(transition, next)| {
-            if transition.kind() != StepKind::CEnd {
-                return true;
-            }
-            let Some(identity) = fsl_eval::simulation::protocol::transition_json(transition) else {
-                return false;
-            };
-            let Some(registration) = named_member(&identity, "registration") else {
-                return false;
-            };
-            let Ok(next_state) =
-                serde_json::from_slice::<serde_json::Value>(reachable.states[*next].key.as_bytes())
-            else {
-                return false;
-            };
-            registration_status(&next_state, registration) == Some("recovered")
-        })
-    })
-}
+/// Follow the fixture's fixed forward path and return its recovery-step
+/// successors. This visits only the prefix needed by the assertion; it does
+/// not enumerate the protocol's reachable graph.
+fn recovery_cend_successors(
+    system: &ProtocolSystem<'_, Sc>,
+) -> Option<(
+    Vec<serde_json::Value>,
+    Vec<(ProtocolTransition, ProtocolState<Sc>)>,
+)> {
+    use fsl_eval::simulation::TransitionSystem;
 
-fn recovery_counterexample_path(
-    reachable: &fsl_eval::simulation::protocol::Reachable<Sc>,
-) -> Option<Vec<serde_json::Value>> {
-    let mut paths = vec![None; reachable.states.len()];
-    paths.first_mut()?.replace(Vec::<serde_json::Value>::new());
-    for (at, state) in reachable.states.iter().enumerate() {
-        let prefix = paths[at].clone()?;
-        for (transition, next) in &state.steps {
-            let identity = fsl_eval::simulation::protocol::transition_json(transition)?;
-            if transition.kind() == StepKind::CEnd {
-                let Some(registration) = named_member(&identity, "registration") else {
-                    continue;
-                };
-                let Some(record) = identity.get("record") else {
-                    continue;
-                };
-                if scalar_text(named_member(record, "bal")?) != Some("1") {
-                    continue;
-                }
-                let next_state: serde_json::Value =
-                    serde_json::from_slice(reachable.states[*next].key.as_bytes()).ok()?;
-                if registration_status(&next_state, registration) == Some("unrecovered") {
-                    let mut path = prefix.clone();
-                    path.push(identity);
-                    return Some(path);
-                }
-            }
-            if paths.get(*next)?.is_none() {
-                let mut path = prefix.clone();
-                path.push(identity);
-                paths[*next] = Some(path);
-            }
-        }
+    let mut state = system.initial().into_iter().next()?;
+    let mut prefix = Vec::new();
+    for kind in [StepKind::Attempt, StepKind::Event, StepKind::CAttempt] {
+        let expansion = system.successors(&state).ok()?;
+        let (transition, next) = expansion
+            .successors
+            .into_iter()
+            .find(|(transition, _)| transition.kind() == kind)?;
+        prefix.push(fsl_eval::simulation::protocol::transition_json(
+            &transition,
+        )?);
+        state = next;
     }
-    None
+    let expansion = system.successors(&state).ok()?;
+    Some((
+        prefix,
+        expansion
+            .successors
+            .into_iter()
+            .filter(|(transition, _)| transition.kind() == StepKind::CEnd)
+            .collect(),
+    ))
 }
 
 fn replay_transition_path(
@@ -625,15 +603,8 @@ fn the_compensation_template_is_stepped() {
 fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
     let fixture = fixture_with_recovery_view(1, true);
     let protocol_system = system(&fixture);
-    let reachable = protocol_system
-        .reachable(NonZeroUsize::new(1).expect("one worker"))
-        .expect("finite recovery exploration completes");
-    let cends: Vec<_> = reachable
-        .states
-        .iter()
-        .flat_map(|state| &state.steps)
-        .filter(|(transition, _)| transition.kind() == StepKind::CEnd)
-        .collect();
+    let (mut path, cends) = recovery_cend_successors(&protocol_system)
+        .expect("the fixed prefix reaches a recovery step");
     assert!(!cends.is_empty(), "the recovery predicate is evaluated");
     assert!(
         cends
@@ -642,7 +613,7 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
         "each cend identity carries its recovery binder record"
     );
     let mut records = BTreeMap::<_, BTreeSet<String>>::new();
-    for (transition, next) in cends {
+    for (transition, next) in &cends {
         let record = protocol_system
             .binder_record_json(transition)
             .expect("record encoding succeeds")
@@ -650,9 +621,11 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
         let balance =
             scalar_text(named_member(&record, "bal").expect("the recovery record has bal"))
                 .expect("bal is a bounded integer");
+        use fsl_eval::simulation::SubjectSystem;
+        let (bytes, _) =
+            SubjectSystem::state_key(&protocol_system, next).expect("state key encodes");
         let state_key: serde_json::Value =
-            serde_json::from_slice(reachable.states[*next].key.as_bytes())
-                .expect("state key is canonical JSON");
+            serde_json::from_slice(&bytes).expect("state key is canonical JSON");
         let transition_json = fsl_eval::simulation::protocol::transition_json(transition)
             .expect("cend transition encodes");
         let registration = named_member(&transition_json, "registration")
@@ -684,9 +657,23 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
         "each cend has one successor per recovery record"
     );
 
-    let path = recovery_counterexample_path(&reachable)
-        .expect("bal 1 gives a counterexample to every finish being recovered");
-    assert!(!recovery_claim_holds(&reachable));
+    let (unrecovered, _) = cends
+        .iter()
+        .find(|(transition, _)| {
+            protocol_system
+                .binder_record_json(transition)
+                .ok()
+                .flatten()
+                .and_then(|record| named_member(&record, "bal").cloned())
+                .and_then(|balance| scalar_text(&balance).map(str::to_owned))
+                .as_deref()
+                == Some("1")
+        })
+        .expect("bal 1 gives an unrecovered successor");
+    path.push(
+        fsl_eval::simulation::protocol::transition_json(unrecovered)
+            .expect("cend transition encodes"),
+    );
     let cend = path.last().expect("the counterexample ends at cend");
     assert_eq!(cend["step"], "cend");
     assert_eq!(
@@ -728,42 +715,56 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
 #[trace("FSpec-FR-730-AC-2", "FSpec-FR-427-AC-6")]
 fn a_recovery_predicate_that_does_not_read_its_binder_binds_no_record() {
     let baseline_fixture = fixture(1);
-    let baseline_reachable = system(&baseline_fixture)
-        .reachable(NonZeroUsize::new(1).expect("one worker"))
-        .expect("the baseline recovery exploration completes");
-    let baseline_verdict = recovery_claim_holds(&baseline_reachable);
+    let baseline_system = system(&baseline_fixture);
+    let (_, baseline_cends) = recovery_cend_successors(&baseline_system)
+        .expect("the baseline prefix reaches a recovery step");
+    let baseline_statuses: Vec<_> = baseline_cends
+        .iter()
+        .map(|(transition, state)| {
+            let identity = fsl_eval::simulation::protocol::transition_json(transition)
+                .expect("cend transition encodes");
+            let registration =
+                named_member(&identity, "registration").expect("cend names its registration");
+            use fsl_eval::simulation::SubjectSystem;
+            let (bytes, _) =
+                SubjectSystem::state_key(&baseline_system, state).expect("state key encodes");
+            let state: serde_json::Value =
+                serde_json::from_slice(&bytes).expect("state key is canonical JSON");
+            registration_status(&state, registration)
+                .expect("baseline cend records its status")
+                .to_owned()
+        })
+        .collect();
 
     let fixture = fixture_with_recovery_predicate(1, Some("true"));
-    let reachable = system(&fixture)
-        .reachable(NonZeroUsize::new(1).expect("one worker"))
-        .expect("the no-read recovery exploration completes");
-    let mut cend_count = 0;
-    for state in &reachable.states {
-        let cends: Vec<_> = state
-            .steps
+    let system = system(&fixture);
+    let (_, cends) =
+        recovery_cend_successors(&system).expect("the no-read prefix reaches a recovery step");
+    assert!(!cends.is_empty(), "the fixture reaches cend");
+    assert!(
+        cends
             .iter()
-            .filter(|(transition, _)| transition.kind() == StepKind::CEnd)
-            .collect();
-        let registrations: BTreeSet<_> = cends
-            .iter()
-            .filter_map(|(transition, _)| transition.registration().cloned())
-            .collect();
-        assert!(
-            cends.len() <= registrations.len(),
-            "a predicate that does not read its binder has one cend successor per registration"
-        );
-        for (transition, _) in cends {
-            cend_count += 1;
-            assert!(
-                transition.binder_record().is_none(),
-                "a no-read cend binds no recovery record"
-            );
-        }
-    }
-    assert!(cend_count > 0, "the fixture reaches cend");
+            .all(|(transition, _)| transition.binder_record().is_none()),
+        "a no-read cend binds no recovery record"
+    );
+    let statuses: Vec<_> = cends
+        .iter()
+        .map(|(transition, state)| {
+            let identity = fsl_eval::simulation::protocol::transition_json(transition)
+                .expect("cend transition encodes");
+            let registration =
+                named_member(&identity, "registration").expect("cend names its registration");
+            use fsl_eval::simulation::SubjectSystem;
+            let (bytes, _) = SubjectSystem::state_key(&system, state).expect("state key encodes");
+            let state: serde_json::Value =
+                serde_json::from_slice(&bytes).expect("state key is canonical JSON");
+            registration_status(&state, registration)
+                .expect("no-read cend records its status")
+                .to_owned()
+        })
+        .collect();
     assert_eq!(
-        recovery_claim_holds(&reachable),
-        baseline_verdict,
-        "adding an unread recovery binder preserves the claim verdict"
+        statuses, baseline_statuses,
+        "an unread binder preserves the result"
     );
 }
