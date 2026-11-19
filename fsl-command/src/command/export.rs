@@ -9,13 +9,13 @@ mod map;
 mod request;
 
 use super::{
-    check_sources, intake_with_bytes, output::NativeResult, output_file, wire, FileCounts,
-    RequestOverrides, Result, RunCause, RunLimits, RunResult,
+    FileCounts, RequestOverrides, Result, RunCause, RunLimits, RunResult, check_sources,
+    intake_with_bytes, output::NativeResult, output_file, wire,
 };
 use filament_semantic_value::catalog::Category;
 use fsl_replay::{OutcomeDocument, OutcomeStage};
 use request::Request;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 /// FSpec FR-298's disposition of one record, as FR-269 names it.
@@ -122,6 +122,7 @@ pub(super) fn run_bytes(
     let Some(member) = body.remove("export") else {
         return Ok(None);
     };
+    let package_selection = body.get("package").cloned();
     let given = overrides
         .limits
         .map(|limits| limits.export)
@@ -137,6 +138,7 @@ pub(super) fn run_bytes(
         }
     }
     let output = target_path(directory, &request, overrides)?;
+    let package_program = package_selection.as_ref().map(source_package).transpose()?;
     if let Some(observer) = &request.observer {
         return Ok(Some(unsupported_observer(
             &request,
@@ -144,11 +146,114 @@ pub(super) fn run_bytes(
             output.as_deref(),
         )));
     }
+    if let (Some(_), Some(program)) = (&package_selection, package_program) {
+        document["format"] = json!(fsl_foundation::wire_format::WireFormat::RunRequest.as_str());
+        let package_request_bytes = serde_json::to_vec(&document).map_err(RunCause::Output)?;
+        let package_request: wire::Request = super::request(&package_request_bytes)?;
+        super::package_run::validate_request(&package_request)?;
+        let Some(package) = package_request.package.as_ref() else {
+            return Err(RunCause::ExportRequest {
+                path: "/request/package".to_owned(),
+                cause: "wrong-value-kind",
+                reason: "the package selection is not an object".to_owned(),
+            });
+        };
+        let admitted = super::package_run::admit(
+            directory,
+            &package_request,
+            package,
+            limits.dependent_bytes,
+            None,
+        )?;
+        let clauses = map::package_clauses(&admitted.package)?;
+        let mapped = map::run(
+            &admitted.package,
+            &program.identity,
+            &clauses,
+            &request,
+            &request.limits.effective(),
+        )?;
+        return finish(&request, &mapped, &program, output.as_deref());
+    }
     document["format"] = json!(fsl_foundation::wire_format::WireFormat::CompileRequest.as_str());
     let compile = serde_json::to_vec(&document).map_err(RunCause::Output)?;
     let compile: wire::CompileRequest = super::request(&compile)?;
     let mapped = compile_and_map(directory, &compile, &request, limits, overrides)?;
     finish(&request, &mapped.0, &mapped.1, output.as_deref())
+}
+
+/// Read the exact source identity/version pair an export request supplies
+/// beside a checked package. Checked-package/v2 does not retain the source's
+/// formal revision, so this route never derives it from package bytes.
+fn source_package(value: &Value) -> Result<Program> {
+    let refuse = |path: &str, cause, reason: &str| RunCause::ExportRequest {
+        path: path.to_owned(),
+        cause,
+        reason: reason.to_owned(),
+    };
+    let Some(package) = value.as_object() else {
+        return Err(refuse(
+            "/request/package",
+            "wrong-value-kind",
+            "expected an object",
+        ));
+    };
+    let Some(source) = package.get("source_package") else {
+        return Err(refuse(
+            "/request/package/source_package",
+            "missing-member",
+            "export over a checked package requires source_package",
+        ));
+    };
+    let Some(source) = source.as_object() else {
+        return Err(refuse(
+            "/request/package/source_package",
+            "wrong-value-kind",
+            "expected an object",
+        ));
+    };
+    if let Some(unknown) = source
+        .keys()
+        .find(|key| !matches!(key.as_str(), "identity" | "version"))
+    {
+        return Err(refuse(
+            &format!("/request/package/source_package/{unknown}"),
+            "unknown-member",
+            "unknown source_package member",
+        ));
+    }
+    let identity_path = "/request/package/source_package/identity";
+    let identity = source
+        .get("identity")
+        .ok_or_else(|| refuse(identity_path, "missing-member", "required member is absent"))?;
+    let Some(identity) = identity.as_str() else {
+        return Err(refuse(
+            identity_path,
+            "wrong-value-kind",
+            "expected a string",
+        ));
+    };
+    if identity.is_empty() {
+        return Err(refuse(identity_path, "invalid-value", "must not be empty"));
+    }
+    let version_path = "/request/package/source_package/version";
+    let version = source
+        .get("version")
+        .ok_or_else(|| refuse(version_path, "missing-member", "required member is absent"))?;
+    let Some(version) = version.as_str() else {
+        return Err(refuse(
+            version_path,
+            "wrong-value-kind",
+            "expected a string",
+        ));
+    };
+    if version.is_empty() {
+        return Err(refuse(version_path, "invalid-value", "must not be empty"));
+    }
+    Ok(Program {
+        identity: identity.to_owned(),
+        version: version.to_owned(),
+    })
 }
 
 /// A valid `observer` this build cannot run (FSpec FR-817): `unsupported`,
@@ -177,16 +282,18 @@ fn unsupported_observer(request: &Request, observer: &str, output: Option<&Path>
     }
     let document = OutcomeDocument::new(fsl_replay::Operation::Export, None, Category::Unsupported)
         .with_export(export.clone())
-        .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
-            Some("unsupported-requested-capability"),
-            "unsupported_projection",
-            None,
-            reason,
-        )
-        .with_details(Some(serde_json::Map::from_iter([(
-            "path".to_owned(),
-            Value::String(path.to_owned()),
-        )])))]);
+        .with_diagnostics(vec![
+            fsl_replay::OutcomeDiagnostic::new(
+                Some("unsupported-requested-capability"),
+                "unsupported_projection",
+                None,
+                reason,
+            )
+            .with_details(Some(serde_json::Map::from_iter([(
+                "path".to_owned(),
+                Value::String(path.to_owned()),
+            )]))),
+        ]);
     RunResult {
         exit_code: Category::Unsupported.exit_code(),
         value: NativeResult::export_document(json!({"export": export})),
