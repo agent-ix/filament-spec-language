@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use filament_exact::{Incomplete, ScalarLimits, Value, compare_keys};
+use filament_exact::{compare_keys, Incomplete, ScalarLimits, Value};
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
@@ -34,8 +34,8 @@ use filament_semantic_value::catalog::Category;
 use fsl_foundation::source::provenance::SourceRegion;
 pub use wire::CauseCodecError;
 pub(crate) use wire::{
-    DecisiveWire, ProtocolWitnessWire, RecordWire, decode_state_value, encode_state_value,
-    validate_state_element,
+    decode_state_value, encode_state_value, validate_state_element, DecisiveWire,
+    ProtocolWitnessWire, RecordWire,
 };
 
 /// Serialize FR-207's canonical runtime value path for command result
@@ -1161,6 +1161,86 @@ pub enum ReplayResult {
     ModelGraph(crate::model_check::graph_settle::GraphReplayResult),
     /// A protocol analysis counterexample replay (ADR-036 PA-20).
     ProtocolAnalysis(crate::protocol_analysis::ProtocolReplayResult),
+    /// A hybrid counterexample replay of a claim selected by `state_clause`
+    /// (FSpec FR-323-AC-47).
+    Hybrid(HybridReplayResult),
+}
+
+/// The settled FR-323 `hybrid` replay row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HybridReplayResult {
+    /// The hybrid replay's settlement and its typed evidence.
+    pub settlement: HybridReplaySettlement,
+    /// The corresponding FR-331 counterexample wire object, when this row
+    /// either reproduced or disagreed with a supplied counterexample.
+    pub(crate) counterexample_wire: Option<serde_json::Value>,
+}
+
+impl HybridReplayResult {
+    pub(crate) fn measured_bytes(&self) -> usize {
+        let wire_bytes = self
+            .counterexample_wire
+            .as_ref()
+            .map_or(0, |counterexample| counterexample.to_string().len());
+        let replay_bytes = match &self.settlement {
+            HybridReplaySettlement::Reproduced { replay, .. } => {
+                static_replay_bytes(&replay.static_outcome)
+            }
+            HybridReplaySettlement::Inconclusive { replay, .. } => {
+                static_replay_bytes(&replay.static_outcome)
+                    + replay.exact.as_ref().map_or(0, exact_replay_bytes)
+            }
+            HybridReplaySettlement::Incomplete { work_units } => work_units.to_string().len(),
+        };
+        wire_bytes + replay_bytes
+    }
+}
+
+fn static_replay_bytes(replay: &crate::StaticReplay) -> usize {
+    match replay {
+        crate::StaticReplay::Consistent => 0,
+        crate::StaticReplay::Inconsistent { at, .. } => at.to_string().len(),
+    }
+}
+
+fn exact_replay_bytes(replay: &crate::ExactRecord) -> usize {
+    match replay {
+        crate::ExactRecord::NotExact => 0,
+        crate::ExactRecord::NotReproduced { at, .. } => at.to_string().len(),
+    }
+}
+
+/// A hybrid replay's three possible settlements.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum HybridReplaySettlement {
+    /// The trace exactly reproduced the claim violation.
+    Reproduced {
+        /// Static and exact checks, including the reproduced counterexample.
+        replay: HybridReplayRecord,
+        /// The replayed counterexample (its kind is the replay's own).
+        counterexample: Box<crate::HybridCounterexample>,
+    },
+    /// The trace was admitted but did not reproduce the claimed violation.
+    Inconclusive {
+        /// Static and exact replay results.
+        replay: crate::ReplayRecord,
+        /// The request's counterexample and exact-replay disagreement.
+        disagreement: crate::result::HybridTraceDisagreement,
+    },
+    /// Replay exhausted the request's `work_units` budget.
+    Incomplete {
+        /// The configured `accounting.work_units` bound.
+        work_units: u64,
+    },
+}
+
+/// The successful hybrid replay's static and exact outcomes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HybridReplayRecord {
+    /// The static replay outcome.
+    pub static_outcome: crate::StaticReplay,
+    /// The exact replay reproduced the trace.
+    pub exact_reproduced: bool,
 }
 
 impl ReplayResult {
@@ -1170,7 +1250,7 @@ impl ReplayResult {
             Self::Witness(result) => result.limit(),
             Self::Input(result) => result.limit(),
             Self::ObservedTemporal(result) => result.limit(),
-            Self::ModelGraph(_) | Self::ProtocolAnalysis(_) => None,
+            Self::ModelGraph(_) | Self::ProtocolAnalysis(_) | Self::Hybrid(_) => None,
         }
     }
 
@@ -1184,6 +1264,7 @@ impl ReplayResult {
             Self::ObservedTemporal(result) => Self::ObservedTemporal(result.with_limit(limit)),
             Self::ModelGraph(result) => Self::ModelGraph(result),
             Self::ProtocolAnalysis(result) => Self::ProtocolAnalysis(result),
+            Self::Hybrid(result) => Self::Hybrid(result),
         }
     }
 
@@ -1194,7 +1275,7 @@ impl ReplayResult {
             Self::Witness(result) => result.pre_call_limit(),
             Self::Input(result) => result.pre_call_limit(),
             Self::ObservedTemporal(_) => None,
-            Self::ModelGraph(_) | Self::ProtocolAnalysis(_) => None,
+            Self::ModelGraph(_) | Self::ProtocolAnalysis(_) | Self::Hybrid(_) => None,
         }
     }
 
@@ -1208,6 +1289,7 @@ impl ReplayResult {
             Self::ModelGraph(result) => Self::ModelGraph(result),
             Self::ProtocolAnalysis(result) => Self::ProtocolAnalysis(result),
             Self::ObservedTemporal(result) => Self::ObservedTemporal(result),
+            Self::Hybrid(result) => Self::Hybrid(result),
         }
     }
 
@@ -1229,6 +1311,11 @@ impl ReplayResult {
                 }
             },
             Self::ProtocolAnalysis(result) => result.category(),
+            Self::Hybrid(result) => match result.settlement {
+                HybridReplaySettlement::Reproduced { .. } => Category::Success,
+                HybridReplaySettlement::Inconclusive { .. } => Category::Inconclusive,
+                HybridReplaySettlement::Incomplete { .. } => Category::Incomplete,
+            },
         }
     }
 
@@ -1245,6 +1332,7 @@ impl ReplayResult {
                 }
                 _ => None,
             },
+            Self::Hybrid(_) => None,
         }
     }
 
@@ -1255,6 +1343,18 @@ impl ReplayResult {
             Self::Input(result) => result.charges(),
             Self::ObservedTemporal(result) => result.charges(),
             Self::ModelGraph(_) | Self::ProtocolAnalysis(_) => ScalarLimits {
+                integer_bits: 0,
+                decimal_digits: 0,
+                scale_expansion: 0,
+                text_input_bytes: 0,
+                text_scalars: 0,
+                normalized_scalars: 0,
+                unit_edges: 0,
+                value_occurrences: 0,
+                work_units: 0,
+                result_units: 0,
+            },
+            Self::Hybrid(_) => ScalarLimits {
                 integer_bits: 0,
                 decimal_digits: 0,
                 scale_expansion: 0,
@@ -1308,6 +1408,7 @@ pub(crate) fn measured_encoded_bytes(result: &ReplayResult) -> usize {
         ReplayResult::ObservedTemporal(arm) => arm.measured_bytes(),
         ReplayResult::ModelGraph(arm) => std::mem::size_of_val(arm),
         ReplayResult::ProtocolAnalysis(arm) => std::mem::size_of_val(arm),
+        ReplayResult::Hybrid(arm) => arm.measured_bytes(),
     };
     arm_bytes
         + result
@@ -1786,9 +1887,9 @@ mod tests {
     fn tc_192_function_exemplar_reuses_the_four_types_with_none_new() {
         use crate::identity::QualifiedName;
         use crate::proof_result::{
-            BackendProviderSource, TerminalRecord, TerminalValue, read_backend_provider_envelope,
+            read_backend_provider_envelope, BackendProviderSource, TerminalRecord, TerminalValue,
         };
-        use crate::witness::{NoPayload, Witness, WitnessEnvelope, WitnessPacket, origin};
+        use crate::witness::{origin, NoPayload, Witness, WitnessEnvelope, WitnessPacket};
         use filament_exact::Identifier;
         use fsl_foundation::source::provenance::OccurrenceKey;
 

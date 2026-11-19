@@ -19,8 +19,11 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use filament_exact::{Integer, Rational, ScalarLimits};
 use fsl_analyze::analyze::Engine;
 use fsl_analyze::provider::{HybridAnswer, HybridProvider, HybridSolveRequest};
+use fsl_foundation::SourceIdentity;
+use fsl_semantics::check::ModeIndex;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -382,6 +385,94 @@ pub(crate) fn refuted_entry(trace: Value) -> Value {
             "trace": trace}]})
 }
 
+fn exact(value: i64) -> Rational {
+    Rational::from_integer(Integer::from(value))
+}
+
+fn point_counterexample() -> fsl_replay::HybridCounterexample {
+    point_counterexample_with_acceleration(2, 10)
+}
+
+fn point_counterexample_with_acceleration(
+    acceleration: i64,
+    transition_time: i64,
+) -> fsl_replay::HybridCounterexample {
+    use fsl_replay::{
+        ExactInterval, HybridCounterexample, HybridCounterexampleKind, HybridTrace, TraceBefore,
+        TraceJump, TraceState,
+    };
+    let interval = |value| ExactInterval::point(exact(value));
+    let state = |mode, time, v| TraceState {
+        mode: ModeIndex::new(mode),
+        time: interval(time),
+        enclosure: vec![interval(v), interval(acceleration)],
+    };
+    HybridCounterexample {
+        kind: HybridCounterexampleKind::Formula,
+        trace: HybridTrace {
+            start: state(0, 0, 20),
+            jumps: vec![TraceJump {
+                transition: 0,
+                before: Some(TraceBefore {
+                    time: interval(transition_time),
+                    enclosure: vec![interval(0), interval(acceleration)],
+                }),
+                state: state(1, transition_time, 0),
+            }],
+            delta: None,
+            loop_to: None,
+        },
+    }
+}
+
+fn hybrid_replay_request(
+    unit: &str,
+    counterexample: fsl_replay::HybridCounterexample,
+) -> fsl_replay::ReplayRequestWire {
+    let source = SourceIdentity::new("agent-ix", "hybrid-replay");
+    let compiled = fsl_replay::compile_package(
+        fsl_replay::CompileUnit {
+            source: source.clone(),
+            package_name: "hybrid-package".to_owned(),
+            path: "hybrid.native",
+            bytes: unit.as_bytes(),
+        },
+        [],
+        &fsl_replay::DependencyInput::default(),
+        fsl_replay::StageLimits::default(),
+        fsl_replay::ReplayLimits::default(),
+    )
+    .expect("the hybrid unit compiles");
+    fsl_replay::ReplayRequestWire {
+        package: fsl_replay::ReplayPackage::read(
+            compiled.bytes(),
+            fsl_replay::ReplayLimits::default().input_bytes,
+        )
+        .expect("the emitted package is a replay package"),
+        profile_selections: Vec::new(),
+        dependencies: Vec::new(),
+        replay_target: fsl_replay::RequestTargetWire::state_clause(
+            fsl_replay::QualifiedName::new(vec![filament_exact::Identifier::new("TooSlow")
+                .expect("the claim name is an identifier")])
+            .expect("the claim name is qualified"),
+        ),
+        source: fsl_replay::ReplaySource::Hybrid(Box::new(counterexample)),
+        obligation_identity: crate::fixture_ids::obligation_identity(),
+        backend: "hybrid-fixture".to_owned(),
+        state_environment: fsl_replay::StateEnvironment::new(Vec::new()),
+        accounting_limits: ScalarLimits {
+            work_units: 1_000,
+            ..crate::counter::UNLIMITED
+        },
+        stage_limits: std::collections::BTreeMap::new(),
+        supplied_limits: None,
+        object_environment: None,
+        declared_domains: Vec::new(),
+        byte_provision: vec![(source.authority, source.identity, unit.as_bytes().to_vec())],
+        documents: Vec::new(),
+    }
+}
+
 /// FR-750-AC-5: a process provider composed for a clause request returns a
 /// point trace; one that replays settles `refuted`, one that does not
 /// `inconclusive`, `replay-parity`.
@@ -725,9 +816,64 @@ fn an_undefined_evaluation_counterexample_reads_back() {
 /// `inconclusive` with the `hybrid-trace` disagreement.
 #[test]
 #[trace("TC-3035", "FR-750-AC-10")]
-#[ignore = "QSL-2530: FR-098's hybrid replay row is not implemented yet"]
 fn a_refuted_hybrid_item_replays_through_fr_098() {
-    todo!("QSL-2530: FR-098 hybrid row");
+    let request = hybrid_replay_request(&braking_pair(), point_counterexample());
+    let result = fsl_replay::replay(request, fsl_replay::ReplayLimits::default())
+        .expect("the hybrid counterexample replays");
+    let fsl_replay::ReplayResult::Hybrid(row) = &result else {
+        panic!("FR-323 dispatches the hybrid source to the hybrid arm: {result:?}");
+    };
+    assert_eq!(
+        result.category(),
+        filament_semantic_value::catalog::Category::Success
+    );
+    let wire: Value = serde_json::from_str(
+        &result
+            .to_function_json()
+            .expect("the hybrid result serializes"),
+    )
+    .expect("the result row is JSON");
+    assert_eq!(wire["arm"], "hybrid");
+    assert_eq!(wire["settlement"], "reproduced-with-evaluated-witness");
+    assert_eq!(wire["category"], "success");
+    assert_eq!(wire["replay"]["exact"]["outcome"], "reproduced");
+    assert_eq!(wire["counterexample"]["kind"], "formula");
+    assert!(matches!(
+        row.settlement,
+        fsl_replay::HybridReplaySettlement::Reproduced { .. }
+    ));
+
+    // With acceleration 1, the same path reaches Stopped only at t=20.
+    // `TooSlow` holds throughout [0, 10], so exact replay must report that
+    // the provider's refuted trace does not reproduce the claim violation.
+    let non_reproducing = fsl_replay::replay(
+        hybrid_replay_request(&braking_pair(), point_counterexample_with_acceleration(1, 20)),
+        fsl_replay::ReplayLimits::default(),
+    )
+    .expect("a valid trace that does not violate TooSlow settles as a row");
+    let non_reproducing_wire: Value = serde_json::from_str(
+        &non_reproducing
+            .to_function_json()
+            .expect("the inconclusive hybrid result serializes"),
+    )
+    .expect("the result row is JSON");
+    assert_eq!(
+        non_reproducing.category(),
+        filament_semantic_value::catalog::Category::Inconclusive
+    );
+    assert_eq!(non_reproducing_wire["settlement"], "inconclusive");
+    assert_eq!(
+        non_reproducing_wire["replay"]["exact"]["outcome"],
+        "not-reproduced"
+    );
+    assert_eq!(
+        non_reproducing_wire["disagreement"]["cause"],
+        "hybrid-trace"
+    );
+    assert_eq!(
+        non_reproducing_wire["disagreement"]["disagreement"]["type"],
+        "not-reproduced"
+    );
 }
 
 /// FR-750-AC-11 (process half): a process `failed` `tool-failure` entry is
@@ -765,9 +911,24 @@ fn exact_replay_decides_activation_state_and_nondeterministic_reset_claims() {
 /// the three package faults.
 #[test]
 #[trace("TC-3037", "FR-750-AC-12")]
-#[ignore = "QSL-2530: FR-098's hybrid replay path is not implemented yet"]
 fn a_replay_request_settles_each_hybrid_refusal_by_its_row() {
-    todo!("QSL-2530: replay path of FR-750 'Replay refusals'");
+    let unit = braking_pair();
+    let mut invalid = point_counterexample();
+    invalid.trace.loop_to = Some(1);
+    let error = fsl_replay::replay(
+        hybrid_replay_request(&unit, invalid),
+        fsl_replay::ReplayLimits::default(),
+    )
+    .expect_err("a malformed caller trace refuses before a result row");
+    assert_eq!(error.code(), fsl_foundation::Code::InvalidRuntimeInput);
+    assert_eq!(error.cause(), Some("invalid-value"));
+    assert_eq!(error.pointer().as_deref(), Some("/loop"));
+    let fsl_replay::ReplayRefusal::HybridTrace(trace) = error else {
+        panic!("the FR-193 trace refusal has its typed FR-098 mapping: {error}");
+    };
+    assert_eq!(trace.pointer.to_string(), "/loop");
+    assert_eq!(trace.code(), "invalid_result");
+    assert_eq!(trace.cause(), "invalid-value");
 }
 
 /// FR-750-AC-14 (wire half): `to_wire` writes the four undefined causes and

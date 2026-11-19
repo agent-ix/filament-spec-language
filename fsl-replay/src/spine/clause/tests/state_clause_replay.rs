@@ -360,6 +360,7 @@ pub(super) fn witness_arm(result: &StateClauseReplayResult) -> &crate::WitnessAr
         ReplayResult::ObservedTemporal(arm) => panic!("expected the witness arm, got {arm:?}"),
         ReplayResult::ModelGraph(arm) => panic!("expected the witness arm, got {arm:?}"),
         ReplayResult::ProtocolAnalysis(_) => panic!("a protocol analysis arm"),
+        ReplayResult::Hybrid(_) => panic!("a hybrid arm"),
     }
 }
 
@@ -1231,6 +1232,9 @@ fn a_range_violation_settles_even_when_the_clause_completes_no_value() {
             }
             ReplayResult::ProtocolAnalysis(_) => {
                 panic!("state-clause replay returned a protocol analysis result")
+            }
+            ReplayResult::Hybrid(_) => {
+                panic!("state-clause replay returned a hybrid result")
             }
         };
         assert!(reproduced);

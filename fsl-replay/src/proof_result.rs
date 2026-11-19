@@ -1596,7 +1596,8 @@ impl TerminalRecord {
             ReplayResult::Input(_)
             | ReplayResult::ObservedTemporal(_)
             | ReplayResult::ModelGraph(_)
-            | ReplayResult::ProtocolAnalysis(_) => {
+            | ReplayResult::ProtocolAnalysis(_)
+            | ReplayResult::Hybrid(_) => {
                 return Err(TerminalRecordRefusal::ReplayLacksWitness);
             }
         }

@@ -17,11 +17,125 @@ use crate::result::wire::{CauseCodecError, CauseWire};
 use crate::spine::{replay_locus_wire, replay_outcome_wire};
 use crate::ReachedLimit;
 use crate::{
-    ObservedTemporalKind, ObservedTemporalResult, ObservedTemporalSettlement, ReplayResult,
+    HybridReplayResult, HybridReplaySettlement, ObservedTemporalKind, ObservedTemporalResult,
+    ObservedTemporalSettlement, ReplayResult,
 };
 
 const REPRODUCED: &str = "reproduced-with-evaluated-witness";
 const INCONCLUSIVE: &str = "inconclusive";
+
+#[derive(Serialize)]
+struct HybridWire {
+    arm: &'static str,
+    settlement: &'static str,
+    category: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    replay: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    counterexample: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disagreement: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<HybridLimitWire>,
+}
+
+#[derive(Serialize)]
+struct HybridLimitWire {
+    limit: &'static str,
+    value: String,
+    setting: &'static str,
+}
+
+fn static_wire(outcome: &crate::StaticReplay) -> Value {
+    match outcome {
+        crate::StaticReplay::Consistent => serde_json::json!({"outcome": "consistent"}),
+        crate::StaticReplay::Inconsistent { at, check } => serde_json::json!({
+            "outcome": "inconsistent",
+            "at": at.to_string(),
+            "check": check.number(),
+        }),
+    }
+}
+
+fn exact_wire(outcome: &crate::ExactRecord) -> Value {
+    match outcome {
+        crate::ExactRecord::NotExact => serde_json::json!({"outcome": "not-exact"}),
+        crate::ExactRecord::NotReproduced { at, check } => serde_json::json!({
+            "outcome": "not-reproduced",
+            "at": at.to_string(),
+            "check": check.number(),
+        }),
+    }
+}
+
+/// The FR-323 `hybrid` result row.
+pub(super) fn hybrid(result: &HybridReplayResult) -> Result<String, CauseCodecError> {
+    let (settlement, replay, counterexample, disagreement, limit) = match &result.settlement {
+        HybridReplaySettlement::Reproduced {
+            replay,
+            counterexample: _,
+        } => (
+            "reproduced-with-evaluated-witness",
+            Some(serde_json::json!({
+                "static": static_wire(&replay.static_outcome),
+                "exact": {"outcome": "reproduced"},
+            })),
+            result.counterexample_wire.clone(),
+            None,
+            None,
+        ),
+        HybridReplaySettlement::Inconclusive {
+            replay,
+            disagreement,
+        } => {
+            let disagreement_type = match disagreement {
+                crate::HybridTraceDisagreement::NotReproduced { .. } => "not-reproduced",
+                crate::HybridTraceDisagreement::NotExact { .. } => "not-exact",
+            };
+            (
+                INCONCLUSIVE,
+                Some(serde_json::json!({
+                    "static": static_wire(&replay.static_outcome),
+                    "exact": replay.exact.as_ref().map(exact_wire),
+                })),
+                None,
+                Some(serde_json::json!({
+                    "cause": "hybrid-trace",
+                    "disagreement": {
+                        "type": disagreement_type,
+                        "counterexample": result.counterexample_wire.clone().unwrap_or(Value::Null),
+                    }
+                })),
+                None,
+            )
+        }
+        HybridReplaySettlement::Incomplete { work_units } => (
+            "incomplete",
+            None,
+            None,
+            None,
+            Some(HybridLimitWire {
+                limit: "work_units",
+                value: work_units.to_string(),
+                setting: "accounting.work_units",
+            }),
+        ),
+    };
+    let row = HybridWire {
+        arm: "hybrid",
+        settlement,
+        category: match &result.settlement {
+            HybridReplaySettlement::Reproduced { .. } => "success",
+            HybridReplaySettlement::Inconclusive { .. } => "inconclusive",
+            HybridReplaySettlement::Incomplete { .. } => "incomplete",
+        },
+        replay,
+        counterexample,
+        disagreement,
+        limit,
+    };
+    Ok(serde_json::to_string(&row)?)
+}
 
 #[derive(Serialize)]
 struct ObservedWire {

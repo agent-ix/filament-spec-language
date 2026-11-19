@@ -197,6 +197,7 @@ fn assert_reproduced(result: Result<ReplayResult, ReplayRefusal>) -> ReplayResul
         ReplayResult::ObservedTemporal(_) => panic!("composite replay returned a temporal arm"),
         ReplayResult::ModelGraph(_) => panic!("composite replay returned a state-graph arm"),
         ReplayResult::ProtocolAnalysis(_) => panic!("a protocol analysis arm"),
+        ReplayResult::Hybrid(_) => panic!("a hybrid arm"),
     }
     assert_eq!(result.category(), Category::Violation);
     result

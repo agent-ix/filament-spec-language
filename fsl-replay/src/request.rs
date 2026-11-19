@@ -355,8 +355,8 @@ impl ReplayRequest {
     pub fn over(&self) -> Option<&ReplayOverBinding> {
         self.over.as_ref()
     }
-    /// The replay source: a witness transcript, canonical inputs, or an
-    /// observed temporal counterexample envelope (FR-331).
+    /// The replay source: a witness transcript, canonical inputs, or a typed
+    /// observed-temporal or hybrid counterexample (FR-331).
     pub fn source(&self) -> &ReplaySource {
         &self.source
     }
@@ -452,8 +452,8 @@ pub struct ReplayRequestWire {
     /// The replay target: the FSpec FR-323 target members, exactly one of
     /// which a decodable request carries.
     pub replay_target: RequestTargetWire,
-    /// The replay source: a witness transcript, canonical inputs, or an
-    /// observed temporal counterexample envelope (FR-331).
+    /// The replay source: a witness transcript, canonical inputs, or a typed
+    /// observed-temporal or hybrid counterexample (FR-331).
     pub source: ReplaySource,
     /// The obligation this request replays.
     pub obligation_identity: ObligationIdentity,
@@ -886,6 +886,15 @@ impl ReplayRequest {
         } else {
             let over = wire.replay_target.over.clone();
             let replay_target = decode_target(std::mem::take(&mut wire.replay_target))?;
+            if matches!(wire.source, ReplaySource::Hybrid(_))
+                && (replay_target.member() != TargetMember::StateClause
+                    || replay_target.occurrence_key().is_some()
+                    || over.is_some())
+            {
+                return Err(ReplayRequestRefusal::UnexpectedModelGraphTarget {
+                    member: Some(replay_target.member()),
+                });
+            }
             if over.is_some() && replay_target.member() != TargetMember::StateClause {
                 return Err(ReplayRequestRefusal::UnexpectedOverBinding);
             }
@@ -1915,6 +1924,7 @@ mod tests {
             ReplaySource::ObservedTemporal(_) => panic!("expected the Input arm"),
             ReplaySource::ModelGraph(_) => panic!("expected the Input arm"),
             ReplaySource::ProtocolAnalysis(_) => panic!("expected the Input arm"),
+            ReplaySource::Hybrid(_) => panic!("expected the Input arm"),
         }
     }
 }

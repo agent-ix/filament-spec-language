@@ -215,6 +215,45 @@ fn static_subject_after_recompile(wire: ReplayRequestWire) -> crate::spine::Stat
     checked
 }
 
+/// FR-750-AC-12 (runtime-invariant rows): impossible checked-package faults
+/// stay internal failures, with the invariant selected by their refusal row.
+#[trace("TC-3037", "FR-750-AC-12")]
+#[test]
+fn hybrid_runtime_invariant_rows_map_to_exit_30() {
+    use crate::hybrid_replay::{ExactGap, ExpansionGap, HybridReplayRefusal};
+    use fsl_semantics::check::{CheckedFunctionRef, HybridModelIndex};
+
+    let cases = [
+        (
+            HybridReplayRefusal::UnknownModel(HybridModelIndex::new(3)),
+            "hybrid-claim-model",
+        ),
+        (
+            HybridReplayRefusal::Expansion(ExpansionGap::UnreachableFunction(
+                CheckedFunctionRef::new(2),
+            )),
+            "hybrid-call-expansion",
+        ),
+        (
+            HybridReplayRefusal::Exact(ExactGap::IllKindedTerm),
+            "hybrid-term-kind",
+        ),
+    ];
+    for (hybrid, invariant) in cases {
+        let replay: Result<crate::ReplayResult, ReplayRefusal> =
+            Err(hybrid_runtime_refusal(hybrid));
+        let Err(error) = replay else {
+            panic!("a checked-package fault returns no replay row");
+        };
+        assert_eq!(error.code(), Code::RuntimeInvariant);
+        assert_eq!(error.code().category().exit_code(), 30);
+        let ReplayRefusal::Fault(fault) = error else {
+            panic!("a checked-package fault maps to an internal failure");
+        };
+        assert_eq!(fault.invariant(), invariant);
+    }
+}
+
 #[trace("FR-510-AC-2", "TC-1305")]
 #[test]
 fn static_subject_is_stable_across_replay_runtime_variants() {

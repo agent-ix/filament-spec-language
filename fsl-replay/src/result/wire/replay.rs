@@ -69,6 +69,7 @@ impl ReplayResult {
             Self::ObservedTemporal(result) => return arms::observed(self, result),
             Self::ModelGraph(result) => return arms::model_graph(self, result),
             Self::ProtocolAnalysis(result) => return arms::protocol_analysis(self, result),
+            Self::Hybrid(result) => return arms::hybrid(result),
         };
         let wire = ReplayWire {
             arm,
