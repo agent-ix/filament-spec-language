@@ -4204,15 +4204,6 @@ impl PackageDeclarations {
                 check_one_refinement!(index, refinement, &[], false);
             }
         }
-        // FR-218: a second reference to one protocol in the unit refuses at
-        // the second: the function bodies in declaration order, then the
-        // state clauses.
-        refusals.extend(protocol_reference::repeated(
-            drafts
-                .iter()
-                .map(|(_, body, _)| &body.body)
-                .chain(typed_clauses.iter().map(|clause| &clause.body)),
-        ));
         let deferred: Vec<CheckRefusal> = protocol_refinements
             .iter()
             .flat_map(|(_, pending)| pending.refusals().iter().cloned())

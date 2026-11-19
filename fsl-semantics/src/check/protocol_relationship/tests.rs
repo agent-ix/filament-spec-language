@@ -593,7 +593,6 @@ fn unwritten(text: &str) -> Vec<ProtocolConstruct> {
         .map(|refusal| match &refusal.cause {
             CheckCause::ProtocolReference(cause) => match cause.as_ref() {
                 ProtocolReferenceCause::NotEmitted { construct } => *construct,
-                ProtocolReferenceCause::Repeated { .. } => panic!("{refusal:?}"),
             },
             other => panic!("{text}: only NotEmitted refusals, got {other:?}"),
         })
