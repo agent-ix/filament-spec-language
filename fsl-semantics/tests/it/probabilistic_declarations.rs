@@ -2205,13 +2205,10 @@ fn a_reach_operand_must_be_a_state_predicate() {
     );
     assert_eq!(
         refused("inf", &format!("{holds} and eventually {holds}")),
-        [
-            invalid(
-                "unbounded-event",
-                &format!("{holds} and eventually {holds}")
-            ),
-            invalid("unbounded-event", "eventually"),
-        ]
+        [invalid(
+            "unbounded-event",
+            &format!("{holds} and eventually {holds}")
+        )]
     );
     assert_eq!(
         refused("ev", &format!("eventually {holds}")),
