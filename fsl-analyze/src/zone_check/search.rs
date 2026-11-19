@@ -42,7 +42,7 @@ use fsl_eval::simulation::{NotSimulated, Permutation, RequiresBound, SymmetryGro
 use fsl_eval::temporal::AtomReading;
 use fsl_foundation::ReductionKind;
 use fsl_replay::{
-    AppliedReduction, CounterexampleKind, Lasso, ReductionCause, SymmetryBrokenCause,
+    AppliedReduction, CounterexampleKind, Lasso, NonZeno, ReductionCause, SymmetryBrokenCause,
     SymmetryRefusal, TemporalCounterexample, TimedPoint, UndefinedEvaluation, UndefinedLocus,
     UndefinedSite,
 };
@@ -319,6 +319,9 @@ pub enum ZoneCheckOutcome<S> {
     Violated {
         /// The counterexample.
         counterexample: Box<TemporalCounterexample>,
+        /// FR-235's liveness-product premise; absent for finite-prefix
+        /// counterexamples and non-liveness items.
+        non_zeno: Option<NonZeno>,
         /// The run's counts.
         stats: ZoneStats,
     },
@@ -326,6 +329,8 @@ pub enum ZoneCheckOutcome<S> {
     Undecided {
         /// Why.
         cause: ZoneUndecided,
+        /// `Refuted` when a liveness-product item has no admitted behavior.
+        non_zeno: Option<NonZeno>,
         /// The run's counts.
         stats: ZoneStats,
     },
@@ -539,6 +544,7 @@ pub fn check_timed_model<S: Clone>(
         run.live = live;
         run.group = plan.group.clone();
         run.reduced = symmetric;
+        let liveness_product = matches!(&run.judged, Judged::Liveness(_));
         let searched = match run.search() {
             Ok(searched) => searched,
             Err(Halt::Outcome(searched)) => *searched,
@@ -561,16 +567,25 @@ pub fn check_timed_model<S: Clone>(
                 counterexample,
                 stats,
             } => {
+                let non_zeno = (liveness_product
+                    && matches!(&counterexample.kind, CounterexampleKind::Formula)
+                    && counterexample.lasso.is_some())
+                .then_some(NonZeno::Checked);
                 return Ok(ZoneCheckOutcome::Violated {
                     counterexample,
+                    non_zeno,
                     stats: total.plus(stats),
-                })
+                });
             }
             Searched::Undecided { cause, stats } => {
+                let non_zeno = (liveness_product
+                    && matches!(&cause, ZoneUndecided::NoAdmittedBehaviour))
+                .then_some(NonZeno::Refuted);
                 return Ok(ZoneCheckOutcome::Undecided {
                     cause,
+                    non_zeno,
                     stats: total.plus(stats),
-                })
+                });
             }
             Searched::Stopped { cause, stats } => {
                 return Ok(ZoneCheckOutcome::Stopped {

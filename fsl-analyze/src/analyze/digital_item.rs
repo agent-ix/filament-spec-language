@@ -127,8 +127,12 @@ pub(super) fn digital_clause_item<'a>(
                     },
                     smt_encoding: form.smt_encoding.unwrap_or_default(),
                 };
-                let record =
-                    settle_model_check(&outcome, &form.limits, &certificate, cancel, |payload| {
+                let record = settle_model_check(
+                    &outcome.outcome,
+                    &form.limits,
+                    &certificate,
+                    cancel,
+                    |payload| {
                         replay_over(
                             &inputs,
                             ReplayShape {
@@ -144,13 +148,14 @@ pub(super) fn digital_clause_item<'a>(
                             payload,
                             &letters,
                         )
-                    });
+                    },
+                );
                 let over = record
                     .counterexample
                     .as_ref()
                     .and_then(|found| found.over_binding.as_ref())
                     .and_then(|instance| letters.instance_reference(instance));
-                EngineReport::Clause(Box::new(record), over)
+                EngineReport::Clause(Box::new(record), over, outcome.non_zeno)
             },
         )
         .claimed(key.clone()),

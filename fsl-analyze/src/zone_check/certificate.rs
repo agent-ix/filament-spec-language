@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_exact::Integer;
 use fsl_replay::{
     CertEdge, CertNode, CertificateItem, Components, DivergenceWitness, DivergentTarget, LuBounds,
-    Zone, ZoneCertificate,
+    NonZeno, Zone, ZoneCertificate,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use num_bigint::BigInt;
@@ -57,6 +57,7 @@ pub(super) struct Proof {
     pub(super) edges: Vec<CertEdge>,
     pub(super) initials: Vec<usize>,
     pub(super) components: Option<Components>,
+    pub(super) non_zeno: Option<NonZeno>,
     pub(super) divergence: Option<Vec<DivergenceWitness>>,
     pub(super) admitted: DivergenceWitness,
 }
@@ -75,6 +76,7 @@ impl Proof {
             edges: self.edges,
             initials: self.initials,
             components: self.components,
+            non_zeno: self.non_zeno,
             divergence: self.divergence,
             admitted: self.admitted,
             refinement: None,
@@ -196,6 +198,7 @@ impl Run<'_, '_, '_> {
             edges,
             initials: roots.to_vec(),
             components: None,
+            non_zeno: None,
             divergence,
             admitted: witnessed,
         })

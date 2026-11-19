@@ -3428,6 +3428,9 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
             }),
         );
     }
+    if let Some(non_zeno) = detail.as_ref().and_then(|detail| detail.non_zeno) {
+        record.insert("non_zeno".to_owned(), json!(non_zeno.as_str()));
+    }
     // FSpec FR-439: the record states the memory budget the run used and
     // whether it reached it.
     let memory_bound = detail
