@@ -1018,6 +1018,30 @@ fn replay_abstract_timed_failure(
                 )));
             }
             clocks = selected.reset(&clocks);
+        } else if let Taken::CandidateSteps(steps) = *taken {
+            let mut selected = None;
+            'candidates: for candidate in &prior.abstract_states {
+                let state = systems
+                    .abstract_system
+                    .pre_state(candidate.clone(), systems.abstract_system.declared_anchor());
+                for abstract_step in timed
+                    .guarded_steps(&state)
+                    .map_err(|_| fault("timed-abstract-guard"))?
+                {
+                    if steps.iter().any(|step| {
+                        step.transition
+                            .as_ref()
+                            .is_some_and(|transition| transition == abstract_step.transition())
+                    }) {
+                        selected = Some(abstract_step);
+                        break 'candidates;
+                    }
+                }
+            }
+            let Some(selected) = selected else {
+                return Ok(None);
+            };
+            prefix.push(selected);
         }
         prior = *post;
         mapped.extend(prior.abstract_states.first().cloned());
@@ -1485,17 +1509,16 @@ fn replay_lasso(
             }
         }
     }
-    let identities: Vec<ModelTransition> = enabled
-        .iter()
-        .flatten()
-        .chain(loop_taken.iter().flat_map(|taken| match taken {
-            Taken::Abstract(transitions) => transitions.as_slice(),
-            Taken::Stutter => &[],
-            Taken::Protocol(_) => &[],
-            Taken::ProtocolTraces(_) => &[],
-        }))
-        .cloned()
-        .collect();
+    let mut identities: Vec<ModelTransition> = enabled.iter().flatten().cloned().collect();
+    for taken in loop_taken {
+        match taken {
+            Taken::Abstract(transitions) => identities.extend(transitions.iter().cloned()),
+            Taken::CandidateSteps(steps) => {
+                identities.extend(steps.iter().filter_map(|step| step.transition.clone()))
+            }
+            Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) => {}
+        }
+    }
     let abstract_fairness: Vec<_> = refinement.abstract_operation_fairness().cloned().collect();
     let classes = abstract_classes(&systems.abstract_system, &abstract_fairness, &identities)
         .map_err(ReplayRefusal::Fault)?;
@@ -1511,7 +1534,11 @@ fn replay_lasso(
             FairnessKind::Strong => enabled.iter().any(|here| class.is_enabled_in(here)),
         }
     });
-    let divergent = loop_taken.iter().all(|taken| *taken == Taken::Stutter);
+    let divergent = loop_taken.iter().all(|taken| match taken {
+        Taken::Stutter => true,
+        Taken::CandidateSteps(steps) => steps.iter().all(|step| step.transition.is_none()),
+        Taken::Abstract(_) | Taken::Protocol(_) | Taken::ProtocolTraces(_) => false,
+    });
     Ok(match (payload.refinement.as_ref(), violated, divergent) {
         (Some(RefinementFailure::Divergence { .. }), true, true)
             if constraint.kind() == FairnessKind::Weak =>

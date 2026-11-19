@@ -324,8 +324,9 @@ fn the_non_taking_candidate_is_hidden_and_a_fair_write_candidate_holds() {
     assert!(
         certificate.successors.iter().flatten().any(|edge| {
             edge.transition.is_some()
-                && matches!(&edge.taken, Taken::Abstract(transitions)
-                    if transitions.iter().any(|transition| transition.operation() == abstract_write))
+                && matches!(&edge.taken, Taken::CandidateSteps(steps)
+                    if steps.iter().filter_map(|step| step.transition.as_ref())
+                        .any(|transition| transition.operation() == abstract_write))
         }),
         "the candidate set includes a run taking the abstract write"
     );

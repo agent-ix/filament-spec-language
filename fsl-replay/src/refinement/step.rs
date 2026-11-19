@@ -33,7 +33,8 @@ use crate::model_check::counterexample::{
 };
 use crate::model_check::limits::{ModelCheckLimit, ReachedLimit};
 use crate::refinement::failure::{
-    ProtocolTrace, RefinementFailure, StepRejection, StepResult, StepVerdict, Taken, Undetermined,
+    CandidateStep, ProtocolTrace, RefinementFailure, StepRejection, StepResult, StepVerdict, Taken,
+    Undetermined,
 };
 use crate::refinement::history::{advance, has_update, initial_history, HistoryValues};
 use crate::refinement::map::{
@@ -388,11 +389,18 @@ pub fn check_protocol_step(
             abstract_successors: model_result.abstract_successors,
         };
     }
-    let Taken::Abstract(accepted) = *taken else {
-        return StepResult {
-            verdict: fault("a-model-operation-row-yields-model-transitions"),
-            abstract_successors: model_result.abstract_successors,
-        };
+    let accepted = match *taken {
+        Taken::Abstract(accepted) => accepted,
+        Taken::CandidateSteps(steps) => steps
+            .into_iter()
+            .filter_map(|step| step.transition)
+            .collect(),
+        _ => {
+            return StepResult {
+                verdict: fault("a-model-operation-row-yields-model-transitions"),
+                abstract_successors: model_result.abstract_successors,
+            }
+        }
     };
     let visible_key =
         match abstract_system.state_key_of(&visible_part(refinement, &post.abstract_states[0])) {
@@ -556,7 +564,7 @@ fn check_protocol_any_step(
         Vec::new()
     };
     match taken {
-        Taken::Abstract(_) | Taken::Stutter => {}
+        Taken::Abstract(_) | Taken::CandidateSteps(_) | Taken::Stutter => {}
         Taken::Protocol(_) | Taken::ProtocolTraces(_) => {
             return StepResult {
                 verdict: fault("any-row-is-decided-before-protocol-matching"),
@@ -1322,14 +1330,32 @@ fn decide_step(
         )
     };
     let Some(row) = row else {
+        let taken = if hidden {
+            match candidate_stutters(abstract_system, &pre.abstract_states) {
+                Ok(steps) => Taken::CandidateSteps(steps),
+                Err(verdict) => return verdict,
+            }
+        } else {
+            Taken::Stutter
+        };
         return stutter(step, stuttered, || {
-            pass_with_states(Taken::Stutter, pre.abstract_states.clone())
+            pass_with_states(taken, pre.abstract_states.clone())
         });
     };
     match &row.target {
-        StepTarget::Stutter => stutter(step, stuttered, || {
-            pass_with_states(Taken::Stutter, pre.abstract_states.clone())
-        }),
+        StepTarget::Stutter => {
+            let taken = if hidden {
+                match candidate_stutters(abstract_system, &pre.abstract_states) {
+                    Ok(steps) => Taken::CandidateSteps(steps),
+                    Err(verdict) => return verdict,
+                }
+            } else {
+                Taken::Stutter
+            };
+            stutter(step, stuttered, || {
+                pass_with_states(taken, pre.abstract_states.clone())
+            })
+        }
         StepTarget::Any => {
             if stuttered && !hidden {
                 return pass_with_states(Taken::Stutter, pre.abstract_states.clone());
@@ -1343,6 +1369,13 @@ fn decide_step(
                 Vec::new()
             };
             let mut matched = Vec::new();
+            let mut candidate_steps = Vec::new();
+            if hidden && stuttered {
+                candidate_steps = match candidate_stutters(abstract_system, &pre.abstract_states) {
+                    Ok(steps) => steps,
+                    Err(verdict) => return verdict,
+                };
+            }
             let mut undecided = false;
             let mapped_keys: Vec<fsl_eval::simulation::StateKey> =
                 match completions(abstract_system, &mapped) {
@@ -1367,6 +1400,22 @@ fn decide_step(
                     match abstract_system.state_key_of(&visible) {
                         Ok((key, _)) if key == after_key => {
                             matched.push(transition.clone());
+                            if hidden {
+                                let Ok((pre_key, _)) = abstract_system.state_key_of(candidate)
+                                else {
+                                    return fault("candidate-state-encodes");
+                                };
+                                let Ok((post_key, _)) =
+                                    abstract_system.state_key_of(successor.state())
+                                else {
+                                    return fault("candidate-state-encodes");
+                                };
+                                candidate_steps.push(CandidateStep {
+                                    pre_state: pre_key,
+                                    transition: Some(transition.clone()),
+                                    post_state: post_key,
+                                });
+                            }
                             next.push(successor.state().clone());
                         }
                         Ok(_) => {}
@@ -1402,7 +1451,14 @@ fn decide_step(
                 Err(verdict) => return verdict,
             };
             if stuttered {
-                return pass_with_states(Taken::Stutter, next);
+                return if hidden {
+                    pass_with_states(Taken::CandidateSteps(candidate_steps), next)
+                } else {
+                    pass_with_states(Taken::Stutter, next)
+                };
+            }
+            if hidden {
+                return pass_with_states(Taken::CandidateSteps(candidate_steps), next);
             }
             match canonical(abstract_system, matched) {
                 Ok(matched) => pass_with_states(Taken::Abstract(matched), next),
@@ -1452,6 +1508,25 @@ fn stutter(
             position: step.position,
         })
     }
+}
+
+fn candidate_stutters(
+    abstract_system: &ModelSystem<'_>,
+    candidates: &[ModelState],
+) -> Result<Vec<CandidateStep>, StepVerdict> {
+    candidates
+        .iter()
+        .map(|candidate| {
+            let (key, _) = abstract_system
+                .state_key_of(candidate)
+                .map_err(|_| fault("candidate-state-encodes"))?;
+            Ok(CandidateStep {
+                pre_state: key.clone(),
+                transition: None,
+                post_state: key,
+            })
+        })
+        .collect()
 }
 
 /// The step row of the operation `transition` applies (FR-136).
@@ -2111,6 +2186,7 @@ fn judge_operation(
     };
     let mut next = Vec::new();
     let mut accepted = Vec::new();
+    let mut candidate_steps = Vec::new();
     let mut rejected = Vec::new();
     let mut undecided = false;
     let mut order = 0_usize;
@@ -2136,6 +2212,19 @@ fn judge_operation(
                 match found.judgement {
                     Judgement::Accepted => {
                         next.push(post.clone());
+                        if !mapped.hidden.is_empty() {
+                            let Ok((pre_key, _)) = abstract_system.state_key_of(before) else {
+                                return fault("candidate-state-encodes");
+                            };
+                            let Ok((post_key, _)) = abstract_system.state_key_of(post) else {
+                                return fault("candidate-state-encodes");
+                            };
+                            candidate_steps.push(CandidateStep {
+                                pre_state: pre_key,
+                                transition: Some(found.transition.clone()),
+                                post_state: post_key,
+                            });
+                        }
                         accepted.push(found.transition);
                     }
                     Judgement::Undecided(_) => undecided = true,
@@ -2160,7 +2249,17 @@ fn judge_operation(
             (Ok(taken), Ok(next)) => (taken, next),
             (Err(verdict), _) | (_, Err(verdict)) => return verdict,
         };
-        return passes(Taken::Abstract(taken), next);
+        return if mapped.hidden.is_empty() {
+            passes(Taken::Abstract(taken), next)
+        } else {
+            candidate_steps.sort_by(|left, right| {
+                left.pre_state
+                    .cmp(&right.pre_state)
+                    .then_with(|| left.post_state.cmp(&right.post_state))
+            });
+            candidate_steps.dedup();
+            passes(Taken::CandidateSteps(candidate_steps), next)
+        };
     }
     if undecided {
         return StepVerdict::Undetermined(Undetermined::UndecidedSuccessor);
