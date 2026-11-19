@@ -115,9 +115,26 @@ mod source_journeys {
                     "ix://example/rover/data/u2-still-driving"
                 );
                 assert_eq!(witness["trace_position"], 0, "{document}");
+                assert_eq!(items[0]["decisive"]["position"], 0, "{document}");
+                assert_eq!(
+                    items[0]["decisive"]["element"]["value"], false,
+                    "{document}"
+                );
             }
             if case == "keeps-sampling" {
-                assert_eq!(items[0]["cause"], "missing-fairness-premise", "{document}");
+                assert_eq!(
+                    items[0]["cause"]["kind"], "missing-fairness-premise",
+                    "{document}"
+                );
+                assert_eq!(
+                    items[0]["cause"]["code"], "unsupported_projection",
+                    "{document}"
+                );
+            }
+            if case == "in-time-small-budget" {
+                assert_eq!(items[0]["cause"]["kind"], "limit-reached", "{document}");
+                assert_eq!(items[0]["cause"]["field"], "work_units", "{document}");
+                assert_eq!(items[0]["cause"]["bound"], "5", "{document}");
             }
         }
         let output = compile_file(&root.join("requests/timed-safe-stop-compiles.json"));
