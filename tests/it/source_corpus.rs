@@ -1004,6 +1004,14 @@ fn corpus_collections() {
     println!("{report}");
 }
 
+#[test]
+#[trace("FR-650-AC-1", "FR-650-AC-3", "FR-650-AC-11")]
+fn corpus_collection_call_values() {
+    let directory = corpus_root().join("collections/calls");
+    let report = run_directory(&directory).unwrap_or_else(|error| panic!("{error}"));
+    println!("{report}");
+}
+
 #[trace("FR-106", "FR-107", "FR-312-AC-1")]
 #[test]
 fn corpus_operations() {

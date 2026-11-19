@@ -33,12 +33,12 @@ use filament_checked::node::{
     Arithmetic, CaseArm, CheckedLiteral, Connective, IntegerDivisionOperator, NodeKind,
     OrderedKind, RecordField, RecordSlot, Visit,
 };
-use std::collections::{hash_map, BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, hash_map};
 use std::fmt;
 use std::ops::ControlFlow;
 
 use fsl_foundation::source::node_table::{
-    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
+    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
 };
 
 use filament_exact::{
@@ -94,40 +94,40 @@ mod timed_clause;
 
 pub(crate) use extension::ExtensionFormInput;
 pub(crate) use hybrid::{
-    hybrid_location, hybrid_site, HybridClaimInput, HybridModelInput, HybridSite,
+    HybridClaimInput, HybridModelInput, HybridSite, hybrid_location, hybrid_site,
 };
 pub(crate) use hyper::{
-    finish_step_relation, HyperClauseInput, LoweredStepRelation, StepRelationInput,
+    HyperClauseInput, LoweredStepRelation, StepRelationInput, finish_step_relation,
 };
 pub(crate) use model::ParentSlotFailure;
-pub(crate) use model::{
-    bound_origin, clock_type_identity, equivalence_origin, model_declaration_key, quantity_origin,
-    record_node_key, strictly_below, QuantityKind, SourceClockLayout, SourceClockPlace,
-};
 pub use model::{
-    collection_kind, model_root_key, AdmittedModel, CollectionShape, ForeignView, ModelClause,
-    PlaceRow, PlaceStep, SelectedModelEnumDeclaration, SelectedModelEnumMember,
-    SelectedOperationMember,
+    AdmittedModel, CollectionShape, ForeignView, ModelClause, PlaceRow, PlaceStep,
+    SelectedModelEnumDeclaration, SelectedModelEnumMember, SelectedOperationMember,
+    collection_kind, model_root_key,
+};
+pub(crate) use model::{
+    QuantityKind, SourceClockLayout, SourceClockPlace, bound_origin, clock_type_identity,
+    equivalence_origin, model_declaration_key, quantity_origin, record_node_key, strictly_below,
 };
 pub(crate) use model::{model_node_content, population_node_content};
 pub(crate) use protocol::{
-    compensation_origin, declaration_origin, protocol_location, AttemptNodes, CompensationNodes,
-    ProtocolInput,
+    AttemptNodes, CompensationNodes, ProtocolInput, compensation_origin, declaration_origin,
+    protocol_location,
 };
-pub use protocol::{protocol_site, ProtocolSite, RelatedSide};
+pub use protocol::{ProtocolSite, RelatedSide, protocol_site};
 pub(crate) use state::{
+    AnchorInput, AttemptInput, LoweredAttempt, LoweredClause, OperationBinding, StateClauseInput,
     protocol_attempt_operation_location, protocol_attempt_operation_site,
     state_clause_name_location, state_clause_name_site, state_operation_location,
-    state_operation_site, AnchorInput, AttemptInput, LoweredAttempt, LoweredClause,
-    OperationBinding, StateClauseInput,
+    state_operation_site,
 };
 pub(crate) use state_graph::StateGraphClaimInput;
 pub(crate) use state_transition::TransitionClause;
 pub(crate) use temporal::{
-    temporal_location, temporal_site, AggregatePart, LoweredTemporalClause, TemporalClauseInput,
-    TemporalSite,
+    AggregatePart, LoweredTemporalClause, TemporalClauseInput, TemporalSite, temporal_location,
+    temporal_site,
 };
-pub(crate) use terminal::{terminal_location, terminal_site, TerminalInput, TerminalSite};
+pub(crate) use terminal::{TerminalInput, TerminalSite, terminal_location, terminal_site};
 pub(crate) use timed_clause::TimedClauseInput;
 
 /// A node's place in its recursion group (FR-092 "Recursion groups"): the
@@ -1002,6 +1002,8 @@ pub(crate) struct FunctionGroup {
 pub(crate) struct Lowered {
     pub(crate) checked_node_keys: BTreeMap<usize, CheckedNodeKeys>,
     pub(crate) graph: SemanticGraph,
+    /// Placeholder identities settled during this lowering pass.
+    pub(crate) settled_placeholders: BTreeMap<PlaceholderId, NodeKey>,
     pub(crate) correspondence: ModelCorrespondence,
     pub(crate) functions: Vec<Option<NodeKey>>,
     /// Each binder's parameter node, by the binding node's location and
@@ -1033,6 +1035,15 @@ pub(crate) struct Lowered {
         BTreeMap<(NodeKey, Location), super::ir::EqualityProducerIdentity>,
     /// Linked dispatch decisions paired with exact lowered call occurrences.
     pub(crate) dispatch_producer_decisions: BTreeMap<(NodeKey, Location), DispatchProducerDecision>,
+}
+
+impl Lowered {
+    pub(crate) fn resolve_node_ref(&self, reference: &NodeRef) -> Option<NodeKey> {
+        match reference {
+            NodeRef::Admitted(key) => Some(key.clone()),
+            NodeRef::Pending(handle) => self.settled_placeholders.get(handle).cloned(),
+        }
+    }
 }
 
 /// Builds and keys the nodes of one package.
@@ -1091,8 +1102,8 @@ pub(crate) struct Lowering<'a> {
     composite_placeholders: HashMap<NodeKey, NodeRef>,
     /// Whether a recursive function group is being lowered.
     functions_open: bool,
-    /// A mixed cycle containing an attempt protocol stays open until its
-    /// clause includes the lowered attempt nodes.
+    /// Attempt protocols stay open until their clauses include the lowered
+    /// attempt nodes and pending references can settle against their keys.
     deferred_mixed_settlement: bool,
     /// The `clock_place` template node of each clock place of the unit's
     /// timed models, which a `presence_read` names (FSpec FR-322
@@ -1104,6 +1115,8 @@ pub(crate) struct Lowering<'a> {
     placeholder_count: u64,
     /// The drafts, by their local handle.
     drafts: BTreeMap<PlaceholderId, Draft>,
+    /// Final keys of placeholders resolved by earlier mixed settlements.
+    settled_placeholders: BTreeMap<PlaceholderId, NodeKey>,
     /// The handle of each draft's content: equal content is one draft.
     draft_index: HashMap<NodeContent, PlaceholderId>,
     /// Occurrences of drafts, recorded once the drafts are keyed.
@@ -1237,11 +1250,11 @@ fn carrier_rounding(carried: &filament_exact::CarriedQuantityType) -> filament_e
 #[ix_trace_rs::string_edge]
 fn variant_type_identity(path: &[filament_exact::PathSegment]) -> Option<&String> {
     match path {
-        [filament_exact::PathSegment::Text(kind), filament_exact::PathSegment::Text(form), filament_exact::PathSegment::Text(identity)]
-            if kind == "model" && form == "variant_type" =>
-        {
-            Some(identity)
-        }
+        [
+            filament_exact::PathSegment::Text(kind),
+            filament_exact::PathSegment::Text(form),
+            filament_exact::PathSegment::Text(identity),
+        ] if kind == "model" && form == "variant_type" => Some(identity),
         _ => None,
     }
 }
@@ -2190,6 +2203,7 @@ impl<'a> Lowering<'a> {
             placeholders: BTreeMap::new(),
             placeholder_count: 0,
             drafts: BTreeMap::new(),
+            settled_placeholders: BTreeMap::new(),
             draft_index: HashMap::new(),
             draft_occurrences: Vec::new(),
             binders: BTreeMap::new(),
@@ -2311,6 +2325,7 @@ impl<'a> Lowering<'a> {
         Ok(Lowered {
             checked_node_keys,
             graph: self.graph,
+            settled_placeholders: self.settled_placeholders,
             correspondence: self.correspondence,
             functions: self
                 .functions
@@ -4037,7 +4052,9 @@ impl<'a> Lowering<'a> {
             let node = resolve(&node).map_err(|()| unresolved(&site.binder))?;
             self.record_binder(site, node);
         }
-        self.resolve_checked_node_keys(resolve)
+        self.resolve_checked_node_keys(resolve)?;
+        self.settled_placeholders.extend(resolved);
+        Ok(())
     }
 
     /// Key the recursion group `component` of `drafts`, whose members are
@@ -5154,10 +5171,8 @@ impl<'a> Lowering<'a> {
                 field,
                 case,
             } => {
-                let mut path = vec![PlaceStep::Field(field.name.clone())];
-                path.extend(case.clone().map(PlaceStep::Union));
                 let place = self
-                    .timed_place(field.owner.clone(), &path)
+                    .timed_place_presence(field.owner.clone(), &field.name, case.as_deref())
                     .ok_or_else(|| {
                         refuse(
                             node.location(),

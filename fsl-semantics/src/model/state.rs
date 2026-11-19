@@ -506,6 +506,28 @@ impl StateModel {
         orders
     }
 
+    /// Each model tuple's authored positions mapped to its data slots.
+    /// Clock positions have no data slot, including aliases of Clock.
+    pub fn tuple_data_positions(&self) -> BTreeMap<filament_exact::NodeKey, Vec<Option<usize>>> {
+        let mut positions = BTreeMap::new();
+        for view in &self.views {
+            let records = &view.view.domain_package().records;
+            for record in records {
+                let DomainPackageRecord::TupleValueType(tuple) = record else {
+                    continue;
+                };
+                let Ok(Some(node)) = crate::check::record_node_key(record) else {
+                    continue;
+                };
+                positions.insert(
+                    node,
+                    crate::model::domain_package::tuple_data_projection(records, &tuple.key),
+                );
+            }
+        }
+        positions
+    }
+
     /// The [`Observation`] of `state`, named `identity`: the object
     /// environment of every object with every field value, and every listed
     /// population complete.

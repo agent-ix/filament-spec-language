@@ -80,9 +80,7 @@ const DENSE: &str = "time Config dense unit ms;\n";
 /// data reads and writes; `self.u = self.t` refuses
 /// `clock-read-outside-constraint` at `self.t`, and a `Timer` literal in a
 /// `let` refuses `clock-write` at the literal. The checked `Timer` record
-/// lists `n` only. The three objects' clocks are `fsl-eval`'s. Not
-/// covered: the tuple field `p: (Clock, Int)`, which a package cannot
-/// declare (STD-493 item 16).
+/// lists `n` only. The three objects' clocks are `fsl-eval`'s.
 #[trace("TC-685")]
 #[test]
 fn a_package_record_holds_its_clock_as_a_place_of_its_object() {
@@ -3084,11 +3082,8 @@ fn clock_tuple_and_union_document() -> Vec<u8> {
         serde_json::from_slice(&rpc_document_with(&["x"], false)).expect("JSON");
     let (slot, phase) = (package("Slot"), package("Phase"));
     let origin = |identity: &str| {
-        json!({"generated": {
-            "generatorIdentity": identity,
-            "generatorVersion": "1.0.0",
-            "inputIdentities": [identity],
-        }})
+        json!({"source": {"sourceIdentity": identity, "path": "clock-members.fspec",
+            "startLine": 1, "startColumn": 1}})
     };
     let types = document["types"].as_array_mut().expect("types");
     types.push(wire_type(
@@ -3155,14 +3150,14 @@ fn clock_tuple_and_union_document() -> Vec<u8> {
 #[trace("FSpec-TC-1361", "FSpec-FR-415-AC-28")]
 #[trace("FSpec-TC-1361", "FSpec-FR-322-AC-399")]
 #[test]
-#[ignore = "QSL-2251: Clock tuple positions and union case payloads as clock places not implemented yet"]
 fn a_clock_tuple_position_and_union_case_are_clock_places() {
     let document = clock_tuple_and_union_document();
     let body = format!(
         "{UNITS}{DENSE}\
          pre Armed using v on Config::Call::bump {{ present(self.p.Armed) and value(self.p.Armed) >= 1 ms }}\n\
          pre Slotted using v on Config::Call::reply {{ self.s[0] >= 2 ms }}\n\
-         post Arm using v on Config::Call::bump {{ self.p = Phase::Armed(0 ms) }}\n"
+         pre Data using v on Config::Call::reply {{ self.s[1] >= 0 }}\n\
+         post Arm using v on Config::Call::bump {{ self.p = Config::Phase::Armed(0 ms) }}\n"
     );
     let graph = check(&document, &body).expect("clock tuple and union places check");
     let model = timed(&graph);
@@ -3170,8 +3165,9 @@ fn a_clock_tuple_position_and_union_case_are_clock_places() {
         .clock_fields()
         .map(|(_, field)| field.name().to_owned())
         .collect();
-    assert!(names.iter().any(|name| name == "s"), "{names:?}");
-    assert!(names.iter().any(|name| name == "p"), "{names:?}");
+    assert!(names.iter().any(|name| name == "s.0"), "{names:?}");
+    assert!(names.iter().any(|name| name == "p.Armed"), "{names:?}");
+    assert!(model.clock_fields().all(|(_, field)| !field.presence_bit()));
     assert_eq!(
         model
             .resets()
@@ -3194,6 +3190,13 @@ fn a_clock_tuple_position_and_union_case_are_clock_places() {
     );
     assert_eq!(
         presence("invariant Same using v on Config::Call at current { self.p = self.p }\n"),
+        [(
+            Code::InvalidTimedModel,
+            Some("clock-read-outside-constraint")
+        )]
+    );
+    assert_eq!(
+        presence("invariant Same using v on Config::Call at current { self.s = self.s }\n"),
         [(
             Code::InvalidTimedModel,
             Some("clock-read-outside-constraint")

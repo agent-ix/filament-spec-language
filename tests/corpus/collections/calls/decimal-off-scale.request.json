@@ -1,0 +1,1 @@
+{"format":"native-run/1","request":{"models":[],"program":{"source":{"file":"decimal-off-scale.native","authority":"agent-ix","identity":"test:collections:calls:decimal-off-scale","document":"decimal-off-scale","formal_revision":1}},"call":{"function":"f","arguments":[{"parameter":"a","value":{"kind":"decimal","coefficient":"1","scale":"3"}}]}}}

@@ -13,7 +13,7 @@ use super::{Disposition, Mapped, Record, Unlowered};
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
 use filament_exact::NodeKey;
 use fsl_semantics::check::wire_id::WireGraph;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// One authored clause of the program an obligation name may resolve to.
@@ -25,6 +25,63 @@ pub(super) struct ClauseFact {
     pub(super) obligation: Option<NodeKey>,
     /// The `node_tag`/`semantic_form` of an obligation's clause node.
     pub(super) construct: &'static str,
+}
+
+/// Resolve export obligations from the admitted V2 package's name rows.
+/// No source program is read or compiled on this route.
+pub(super) fn package_clauses(package: &CheckedPackageV2) -> Result<Vec<ClauseFact>> {
+    let nodes = &package.resolved_graph().nodes;
+    let wire = WireGraph::new(nodes.iter().map(|node| &node.node_id))
+        .map_err(|_| internal("the package's node identities do not rebuild"))?;
+    let mut clauses = Vec::new();
+    // `None` means the admitted optional carrier was absent. Strict V2
+    // admission rejects a claim-bearing node whose required name row is
+    // missing, so it denotes a package with no declarations in that table.
+    for row in package.claim_names().unwrap_or_default() {
+        let node = nodes
+            .iter()
+            .find(|node| node.node_id == row.declaration)
+            .ok_or_else(|| internal("a claim name has no package node"))?;
+        let key = wire
+            .key(&row.declaration)
+            .map_err(|_| internal("a claim name has no structural key"))?
+            .clone();
+        let kind = package.node_kind(&row.declaration);
+        let (obligation, construct) = match kind {
+            Some(filament_contract_model::CheckedNodeKind::State(
+                filament_contract_model::StateForm::StateClause,
+            )) => {
+                let body = serde_json::to_value(&node.body)
+                    .map_err(|_| internal("a state clause does not serialize"))?;
+                let invariant = body
+                    .pointer("/operation/member/clause")
+                    .and_then(Value::as_str)
+                    == Some("invariant");
+                (invariant.then_some(key), "state/state_clause")
+            }
+            Some(filament_contract_model::CheckedNodeKind::Claim(
+                filament_contract_model::ClaimForm::Hyperproperty,
+            )) => (Some(key), "temporal/temporal_clause"),
+            _ => (None, "claim"),
+        };
+        clauses.push(ClauseFact {
+            name: row.name.to_string(),
+            obligation,
+            construct,
+        });
+    }
+    for row in package.temporal_clause_names().unwrap_or_default() {
+        let key = wire
+            .key(&row.declaration)
+            .map_err(|_| internal("a temporal claim name has no structural key"))?
+            .clone();
+        clauses.push(ClauseFact {
+            name: row.name.to_string(),
+            obligation: Some(key),
+            construct: "temporal/temporal_clause",
+        });
+    }
+    Ok(clauses)
 }
 
 /// FSpec FR-814's injective mangling of one authored name under `prefix`:

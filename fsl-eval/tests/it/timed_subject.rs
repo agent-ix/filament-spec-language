@@ -17,18 +17,18 @@ use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
-    check_model_bounds, BehaviourReading, ClockValuation, ExpansionLimits, ModelSimulationRequest,
-    ModelSystem, MoveRefusal, PopulationUniverse, TimedBehaviour, TimedState, TimedStop,
-    TimedSystem,
+    BehaviourReading, ClockValuation, ExpansionLimits, ModelSimulationRequest, ModelSystem,
+    MoveRefusal, PopulationUniverse, TimedBehaviour, TimedState, TimedStop, TimedSystem,
+    check_model_bounds,
 };
-use fsl_eval::simulation::{NotSimulated, BOUND_POSITIONS};
+use fsl_eval::simulation::{BOUND_POSITIONS, NotSimulated};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
 use ix_trace_rs::trace;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 const PACKAGE: &str = "test/rpc";
 
@@ -432,10 +432,12 @@ fn rpc_delays_and_steps_read_exact_clock_values() {
     let [initial] = &timed.initial()[..] else {
         panic!("one initial state");
     };
-    assert!(timed
-        .delay(initial, &exact(7, 1))
-        .expect("decided")
-        .is_some());
+    assert!(
+        timed
+            .delay(initial, &exact(7, 1))
+            .expect("decided")
+            .is_some()
+    );
 
     let mut behaviour = TimedBehaviour::new(initial.clone());
     let send = transition(&timed, &behaviour, "send");
@@ -443,14 +445,18 @@ fn rpc_delays_and_steps_read_exact_clock_values() {
         .advance(&timed, &exact(0, 1), &send)
         .expect("send at 0");
     let waiting = behaviour.last().state().clone();
-    assert!(timed
-        .delay(&waiting, &exact(3, 1))
-        .expect("decided")
-        .is_some());
-    assert!(timed
-        .delay(&waiting, &exact(3001, 1000))
-        .expect("decided")
-        .is_none());
+    assert!(
+        timed
+            .delay(&waiting, &exact(3, 1))
+            .expect("decided")
+            .is_some()
+    );
+    assert!(
+        timed
+            .delay(&waiting, &exact(3001, 1000))
+            .expect("decided")
+            .is_none()
+    );
     let reply = transition(&timed, &behaviour, "reply");
     let enabled_after = |delay: Rational| {
         let delayed = timed
@@ -876,14 +882,18 @@ fn an_urgent_state_admits_no_positive_delay() {
         .expect("send at 0");
     let waiting = behaviour.last().state().clone();
     assert!(timed.is_urgent(waiting.discrete()).expect("decided"));
-    assert!(timed
-        .delay(&waiting, &exact(1, 1000))
-        .expect("decided")
-        .is_none());
-    assert!(timed
-        .delay(&waiting, &exact(0, 1))
-        .expect("decided")
-        .is_some());
+    assert!(
+        timed
+            .delay(&waiting, &exact(1, 1000))
+            .expect("decided")
+            .is_none()
+    );
+    assert!(
+        timed
+            .delay(&waiting, &exact(0, 1))
+            .expect("decided")
+            .is_some()
+    );
 
     // Without urgency `reply` comes after a delay of 1 and reaches the
     // quiescent `Replied` state.
@@ -895,19 +905,23 @@ fn an_urgent_state_admits_no_positive_delay() {
     behaviour
         .advance(&timed, &exact(0, 1), &send)
         .expect("send");
-    assert!(!timed
-        .is_quiescent(behaviour.last().state().discrete())
-        .expect("decided"));
+    assert!(
+        !timed
+            .is_quiescent(behaviour.last().state().discrete())
+            .expect("decided")
+    );
     let reply = transition(&timed, &behaviour, "reply");
     behaviour
         .advance(&timed, &exact(1, 1), &reply)
         .expect("reply");
     let replied = behaviour.last().state();
     assert!(timed.is_quiescent(replied.discrete()).expect("decided"));
-    assert!(timed
-        .delay(replied, &exact(100, 1))
-        .expect("decided")
-        .is_some());
+    assert!(
+        timed
+            .delay(replied, &exact(100, 1))
+            .expect("decided")
+            .is_some()
+    );
 }
 
 /// Part of FR-231-AC-2 (TC-686): a behaviour of `Rpc` that ends at the
@@ -921,7 +935,7 @@ fn an_urgent_state_admits_no_positive_delay() {
 fn a_quiescent_end_reads_as_an_idle_tail() {
     use fsl_eval::model_subject::ModelInstance;
     use fsl_eval::simulation::model::BehaviourLetters;
-    use fsl_eval::temporal::{evaluate_timed_at, TemporalOutcome, TemporalPosition};
+    use fsl_eval::temporal::{TemporalOutcome, TemporalPosition, evaluate_timed_at};
 
     let world = world_with(
         "profile tt = \"filament.temporal.timed/v1\";\n",
@@ -995,7 +1009,7 @@ fn a_quiescent_end_reads_as_an_idle_tail() {
 fn under_event_position_the_execution_closes_at_its_last_position() {
     use fsl_eval::model_subject::ModelInstance;
     use fsl_eval::simulation::model::BehaviourLetters;
-    use fsl_eval::temporal::{evaluate_at, TemporalOutcome, TemporalPosition, TemporalTrace};
+    use fsl_eval::temporal::{TemporalOutcome, TemporalPosition, TemporalTrace, evaluate_at};
 
     let world = world_with(
         "profile ep = \"filament.temporal.event-position.false-extension/v1\";\n",
@@ -1090,10 +1104,12 @@ fn a_tick_source_stamps_positions_by_tick_count() {
     let system = system(&world);
     let timed = TimedSystem::new(&system, "M").expect("a timed subject");
     let mut behaviour = TimedBehaviour::new(timed.initial().remove(0));
-    assert!(timed
-        .delay(behaviour.last().state(), &exact(1, 1))
-        .expect("decided")
-        .is_none());
+    assert!(
+        timed
+            .delay(behaviour.last().state(), &exact(1, 1))
+            .expect("decided")
+            .is_none()
+    );
     for name in ["work", "tick", "work", "tick"] {
         let step = transition(&timed, &behaviour, name);
         behaviour
@@ -1156,11 +1172,13 @@ fn every_object_holds_its_own_clock_of_every_clock_field() {
         huge
     );
     let initial = timed.initial().remove(0);
-    assert!(initial
-        .clocks()
-        .values()
-        .iter()
-        .all(|value| value == &exact(0, 1)));
+    assert!(
+        initial
+            .clocks()
+            .values()
+            .iter()
+            .all(|value| value == &exact(0, 1))
+    );
 }
 
 /// Part of FR-231-AC-4 (TC-686): `always holds(not c.late)` reads the same
@@ -1175,7 +1193,7 @@ fn a_claim_reads_alike_with_and_without_time_stamps() {
     use fsl_eval::model_subject::ModelInstance;
     use fsl_eval::simulation::model::BehaviourLetters;
     use fsl_eval::temporal::{
-        evaluate_at, evaluate_timed_at, TemporalOutcome, TemporalPosition, TemporalTrace,
+        TemporalOutcome, TemporalPosition, TemporalTrace, evaluate_at, evaluate_timed_at,
     };
 
     let instance = ModelInstance {
@@ -1235,9 +1253,11 @@ fn a_claim_reads_alike_with_and_without_time_stamps() {
         " clock \"model-steps\"",
     );
     assert_eq!(with_time, without_time);
-    assert!(with_time
-        .iter()
-        .all(|reading| reading == &TemporalOutcome::Holds));
+    assert!(
+        with_time
+            .iter()
+            .all(|reading| reading == &TemporalOutcome::Holds)
+    );
 }
 
 /// FSpec FR-181 "Timed subjects" (TC-686): a clock of an object a step makes
@@ -1369,10 +1389,12 @@ fn a_stall_that_only_pings_is_a_non_local_time_lock() {
         .delay(&initial, &exact(1, 1))
         .expect("decided")
         .expect("admissible");
-    assert!(timed
-        .delay(&stuck, &exact(1, 1000))
-        .expect("decided")
-        .is_none());
+    assert!(
+        timed
+            .delay(&stuck, &exact(1, 1000))
+            .expect("decided")
+            .is_none()
+    );
     assert_eq!(timed.steps(&stuck).expect("decided").len(), 1);
     assert_eq!(
         timed.time_lock(&stuck, 64).expect("decided"),
@@ -1663,11 +1685,12 @@ fn a_record_holding_state_steps() {
     };
     for (step, post) in &steps {
         assert!(step.operation().contains("Call/send\""));
-        assert!(post
-            .clocks()
-            .values()
-            .iter()
-            .all(|value| value == &exact(2, 1)));
+        assert!(
+            post.clocks()
+                .values()
+                .iter()
+                .all(|value| value == &exact(2, 1))
+        );
         let (filament_exact::Value::Composite(before), filament_exact::Value::Composite(after)) =
             (t_of(&later), t_of(post))
         else {
@@ -2013,11 +2036,12 @@ fn every_slot_of_a_record_sequence_holds_its_own_clocks() {
         .expect("a collection-holding state steps");
     assert!(!steps.is_empty());
     for (_, post) in &steps {
-        assert!(post
-            .clocks()
-            .values()
-            .iter()
-            .all(|value| value == &exact(2, 1)));
+        assert!(
+            post.clocks()
+                .values()
+                .iter()
+                .all(|value| value == &exact(2, 1))
+        );
         timed.state_key(post).expect("a state_key");
     }
 }
@@ -2736,14 +2760,18 @@ fn a_max_constraint_on_a_clock_alias_bounds_the_live_places() {
             ("ts.[slot].x".to_owned(), vec![0]),
         ]
     );
-    assert!(timed
-        .delay(initial, &exact(3, 1))
-        .expect("decided")
-        .is_some());
-    assert!(timed
-        .delay(initial, &exact(4, 1))
-        .expect("decided")
-        .is_none());
+    assert!(
+        timed
+            .delay(initial, &exact(3, 1))
+            .expect("decided")
+            .is_some()
+    );
+    assert!(
+        timed
+            .delay(initial, &exact(4, 1))
+            .expect("decided")
+            .is_none()
+    );
     let past = TimedState::new(
         initial.discrete().clone(),
         initial.clocks().delayed(&exact(4, 1)),
@@ -3049,10 +3077,12 @@ fn cells_document(
             Some("tick") => tick,
             _ => continue,
         };
-        operation["frame"]["modifies"] = json!(granted
-            .iter()
-            .map(|field| ident(&format!("Call/{field}")))
-            .collect::<Vec<_>>());
+        operation["frame"]["modifies"] = json!(
+            granted
+                .iter()
+                .map(|field| ident(&format!("Call/{field}")))
+                .collect::<Vec<_>>()
+        );
     }
     let constructs = document["constructs"].as_array_mut().expect("constructs");
     constructs.push(json!({
@@ -3214,9 +3244,11 @@ fn a_record_of_finite_components_is_a_finite_domain() {
             .all(|value| value.contains("Boolean(false)")),
         "{values:#?}"
     );
-    assert!(values[3..]
-        .iter()
-        .all(|value| value.contains("Boolean(true)")));
+    assert!(
+        values[3..]
+            .iter()
+            .all(|value| value.contains("Boolean(true)"))
+    );
     assert_eq!(counts("w").len(), 18);
     assert_eq!(counts("r1").len(), 12);
     let colors = counts("col");
@@ -3823,9 +3855,9 @@ fn a_candidate_slot_keeps_its_matched_clock_or_is_fresh() {
 #[trace("TC-1270")]
 #[test]
 fn exploration_reaches_every_value_of_a_bounded_clock_collection() {
-    use fsl_eval::simulation::model::explore_model;
     use fsl_eval::simulation::Limits;
     use fsl_eval::simulation::Outcome;
+    use fsl_eval::simulation::model::explore_model;
 
     let world = world_holding(
         cells_document(
@@ -4310,9 +4342,10 @@ fn a_granted_record_keeps_its_clocks_unless_reset() {
     let kept = clocks_after("");
     // 4 values of `t`, 1 of `sw`, 8 of `mx`: one successor each.
     assert_eq!(kept.len(), 32);
-    assert!(kept
-        .iter()
-        .all(|(_, clocks)| clocks.iter().all(|(_, value)| *value == exact(5, 1))));
+    assert!(
+        kept.iter()
+            .all(|(_, clocks)| clocks.iter().all(|(_, value)| *value == exact(5, 1)))
+    );
 }
 
 /// FR-120-AC-25 (TC-1270), the model-variant union: a granted `choice:
@@ -4383,6 +4416,519 @@ fn a_model_variant_union_is_finite_by_its_payloads() {
         panic!("an Integer payload is unbounded");
     };
     assert_eq!(format!("{:?}", bound.domains).matches("Node {").count(), 1);
+}
+
+fn clock_fixture_key(name: &str) -> DeclarationKey {
+    DeclarationKey {
+        package: PACKAGE.to_owned(),
+        node: ident(name),
+    }
+}
+
+fn clock_composite(world: &World, name: &str) -> filament_exact::NodeKey {
+    world
+        .package
+        .graph()
+        .scope()
+        .types()
+        .composites()
+        .find(|declaration| declaration.name() == format!("M::{name}"))
+        .expect("the selected composite")
+        .key()
+}
+
+fn clock_case(world: &World, case: &str) -> filament_exact::Value {
+    use filament_semantic_value::declaration::CompositeShape;
+    let types = world.package.graph().scope().types();
+    let declaration = types
+        .composite(clock_composite(world, "ClockChoice"))
+        .expect("union");
+    let CompositeShape::Union(members) = declaration.shape() else {
+        panic!("union shape");
+    };
+    let member = members
+        .iter()
+        .find(|member| member.identifier() == case)
+        .expect("case");
+    filament_exact::union(
+        member.positions(),
+        member.member().expect("sealed case").clone(),
+        Vec::new(),
+    )
+    .expect("the case has no data payload")
+}
+
+fn clock_fixture_state(
+    world: &World,
+    held: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    extra: Vec<(&str, filament_exact::Value)>,
+) -> TimedState {
+    use filament_exact::{FieldValue, Value};
+    use fsl_semantics::model::state::{ModelState, StateObject};
+    let types = world.package.graph().scope().types();
+    let timer = types
+        .record(
+            clock_composite(world, "Timer"),
+            vec![(
+                "n",
+                FieldValue::Present(Value::Integer(Integer::from(0_i64))),
+            )],
+        )
+        .expect("admitted timer data");
+    let idle = clock_case(world, "Idle");
+    let choice = idle.clone();
+    let wrap = types
+        .record(
+            clock_composite(world, "Wrapper"),
+            vec![("choice", FieldValue::Present(idle.clone()))],
+        )
+        .expect("required Wrapper field");
+    let nested = types
+        .tuple(clock_composite(world, "NestedSlot"), vec![idle])
+        .expect("required NestedSlot field");
+    let mut fields = BTreeMap::from([
+        (
+            clock_fixture_key("Call/phase"),
+            Value::Integer(Integer::from(0_i64)),
+        ),
+        (clock_fixture_key("Call/inflight"), Value::Boolean(false)),
+        (clock_fixture_key("Call/late"), Value::Boolean(false)),
+        (clock_fixture_key("Call/t"), timer),
+        (clock_fixture_key("Call/choice"), choice),
+        (clock_fixture_key("Call/wrap"), wrap),
+        (clock_fixture_key("Call/nested"), nested),
+    ]);
+    for (name, value) in extra {
+        fields.insert(clock_fixture_key(&format!("Call/{name}")), value);
+    }
+    let state = ModelState {
+        populations: BTreeMap::from([(
+            clock_fixture_key("calls"),
+            BTreeMap::from([(
+                "c".to_owned(),
+                StateObject {
+                    type_identity: clock_fixture_key("Call"),
+                    fields,
+                },
+            )]),
+        )]),
+        extents: Vec::new(),
+    };
+    TimedState::new(
+        held.pre_state(state, held.declared_anchor()),
+        ClockValuation::new(vec![exact(0, 1); timed.places().len()]),
+    )
+}
+
+fn clock_members_document(alias: bool) -> Vec<u8> {
+    let choice = ident("ClockChoice");
+    let case_origin = json!({"source": {"sourceIdentity": ident("spec"),
+        "path": "clock-members.fspec", "startLine": 1, "startColumn": 1}});
+    let clock = CLOCK.to_owned();
+    let mut types = vec![
+        wire_type(
+            &choice,
+            "mode",
+            json!({"variants": [
+                {"identity": ident("variant/ClockChoice-Armed"), "name": "Armed", "payloadType": clock, "origin": case_origin},
+                {"identity": ident("variant/ClockChoice-Idle"), "name": "Idle", "origin": case_origin}
+            ]}),
+        ),
+        record_type("Wrapper", &[("choice", &choice, false)]),
+        wire_type(
+            &ident("Slot"),
+            "tuple",
+            json!({"positions": [
+                {"identity": ident("Slot/p0"), "typeRef": clock, "origin": origin(&ident("Slot/p0"))},
+                {"identity": ident("Slot/p1"), "typeRef": choice, "origin": origin(&ident("Slot/p1"))}
+            ]}),
+        ),
+        wire_type(
+            &ident("NestedSlot"),
+            "tuple",
+            json!({"positions": [
+                {"identity": ident("NestedSlot/p0"), "typeRef": choice, "origin": origin(&ident("NestedSlot/p0"))}
+            ]}),
+        ),
+    ];
+    if alias {
+        let mut clock_alias = wire_type(&ident("ClockAlias"), "unused", json!({"target": CLOCK}));
+        clock_alias["kind"] = json!("alias");
+        types.push(clock_alias);
+    }
+    let mut fields = vec![
+        ("choice", choice, None),
+        ("wrap", ident("Wrapper"), None),
+        ("slot", ident("Slot"), None),
+        ("nested", ident("NestedSlot"), None),
+    ];
+    if alias {
+        fields.push(("aliased", ident("ClockAlias"), None));
+    }
+    let mut document: Json = serde_json::from_slice(&cells_document(
+        types,
+        fields,
+        &["choice", "wrap", "slot", "nested"],
+        &["choice", "wrap", "slot", "nested"],
+    ))
+    .expect("JSON");
+    document["constructs"].as_array_mut().expect("constructs").push(json!({
+        "kind": {"module": PACKAGE, "name": "tuple"}, "moduleVersion": "1.0.0",
+        "construct": {"identity": "value", "shape": "tuple", "members": {"positions": "required"}, "meaning": meaning::TUPLE_VALUE_TYPE}
+    }));
+    for operation in document["types"][1]["operations"]
+        .as_array_mut()
+        .expect("operations")
+    {
+        if operation["name"] != "work" && operation["name"] != "tick" {
+            operation["frame"]["modifies"] = json!([]);
+        } else {
+            operation["frame"]["modifies"] =
+                json!([ident("Call/choice"), ident("Call/wrap"), ident("Call/slot")]);
+        }
+    }
+    serde_json::to_vec(&document).expect("JSON")
+}
+
+/// Direct, aliased and nested union clock places guard, reset and drop together.
+#[trace("TC-1860", "FR-230-AC-63", "FSpec-FR-415-AC-28", "FSpec-FR-322-AC-475")]
+#[test]
+fn a_model_union_clock_is_live_only_in_its_active_case() {
+    use filament_exact::FieldValue;
+    for alias in [false, true] {
+        let body = "pre Ready using v on M::Call::reply { present(self.choice.Armed) and value(self.choice.Armed) >= 1 ms and present(self.wrap.choice.Armed) and value(self.wrap.choice.Armed) >= 1 ms and present(self.slot[1].Armed) and value(self.slot[1].Armed) >= 1 ms and present(self.nested[0].Armed) and value(self.nested[0].Armed) >= 1 ms }\n\
+            post Arm using v on M::Call::work { self.choice = M::ClockChoice::Armed(0 ms) and self.wrap.choice = M::ClockChoice::Armed(0 ms) and self.slot[1] = M::ClockChoice::Armed(0 ms) }\n\
+            post Drop using v on M::Call::tick { self.choice = M::ClockChoice::Idle and self.wrap.choice = M::ClockChoice::Idle and self.slot[1] = M::ClockChoice::Idle }\n";
+        let world = world_of(
+            clock_members_document(alias),
+            "",
+            &only(&["work", "tick", "reply"], body),
+            json!([]),
+        );
+        let held = system(&world);
+        let timed = TimedSystem::new(&held, "M").expect("nested clock places check");
+        let types = world.package.graph().scope().types();
+        let idle_case = clock_case(&world, "Idle");
+        let wrap = types
+            .record(
+                clock_composite(&world, "Wrapper"),
+                vec![("choice", FieldValue::Present(idle_case.clone()))],
+            )
+            .expect("wrapper data");
+        let slot = types
+            .tuple(clock_composite(&world, "Slot"), vec![idle_case.clone()])
+            .expect("tuple data excludes Clock");
+        let nested = types
+            .tuple(
+                clock_composite(&world, "NestedSlot"),
+                vec![clock_case(&world, "Armed")],
+            )
+            .expect("nested tuple data");
+        let idle = clock_fixture_state(
+            &world,
+            &held,
+            &timed,
+            vec![
+                ("choice", idle_case),
+                ("wrap", wrap),
+                ("slot", slot),
+                ("nested", nested),
+            ],
+        );
+        let idle = TimedState::new(idle.discrete().clone(), idle.clocks().delayed(&exact(5, 1)));
+        let offered = |state: &TimedState| timed.steps(state).expect("the state steps");
+        assert!(
+            offered(&idle)
+                .iter()
+                .all(|(step, _)| !step.operation().contains("Call/reply\"")),
+            "inactive cases cannot enable the guarded operation"
+        );
+        assert_eq!(
+            timed.live_clocks(idle.discrete()),
+            if alias { 6 } else { 5 }
+        );
+        if alias {
+            let alias_place = timed
+                .places()
+                .iter()
+                .find(|place| {
+                    timed
+                        .model()
+                        .clock(place.clock())
+                        .is_some_and(|clock| clock.name() == "aliased")
+                })
+                .expect("the aliased clock place");
+            assert!(timed.live(alias_place, idle.discrete()));
+        }
+        let armed_steps: Vec<_> = offered(&idle)
+            .into_iter()
+            .filter(|(step, _)| step.operation().contains("Call/work\""))
+            .collect();
+        let [(arm, armed)] = armed_steps.as_slice() else {
+            panic!("one activation successor");
+        };
+        assert_eq!(arm.resets().len(), 3);
+        assert_eq!(
+            timed.live_clocks(armed.discrete()),
+            if alias { 9 } else { 8 }
+        );
+        for (index, place) in timed.places().iter().enumerate() {
+            if timed
+                .model()
+                .clock(place.clock())
+                .is_some_and(|clock| clock.name().ends_with("Armed"))
+            {
+                assert!(timed.live(place, armed.discrete()));
+                let clock = timed.model().clock(place.clock()).expect("clock");
+                let expected = if clock.name().starts_with("nested") {
+                    exact(5, 1)
+                } else {
+                    exact(0, 1)
+                };
+                assert_eq!(armed.clocks().get(index), Some(&expected));
+            }
+        }
+        assert!(
+            offered(armed)
+                .iter()
+                .all(|(step, _)| !step.operation().contains("Call/reply\"")),
+            "activation resets the deadline"
+        );
+        let due = TimedState::new(
+            armed.discrete().clone(),
+            armed.clocks().delayed(&exact(1, 1)),
+        );
+        assert!(
+            offered(&due)
+                .iter()
+                .any(|(step, _)| step.operation().contains("Call/reply\""))
+        );
+        let drops: Vec<_> = offered(&due)
+            .into_iter()
+            .filter(|(step, _)| step.operation().contains("Call/tick\""))
+            .collect();
+        let [(drop, dropped)] = drops.as_slice() else {
+            panic!("one drop successor");
+        };
+        assert!(drop.resets().is_empty());
+        assert_eq!(
+            timed.live_clocks(dropped.discrete()),
+            if alias { 6 } else { 5 }
+        );
+        assert!(
+            offered(dropped)
+                .iter()
+                .all(|(step, _)| !step.operation().contains("Call/reply\""))
+        );
+    }
+}
+
+/// The data index after a Clock tuple position projects its data slot at run time.
+#[trace("TC-1860", "FR-230-AC-63", "FSpec-FR-415-AC-28")]
+#[test]
+fn a_model_tuple_clock_keeps_the_authored_data_position_at_run_time() {
+    use filament_semantic_value::declaration::CompositeShape;
+    let slot = ident("Slot");
+    let tuple = wire_type(
+        &slot,
+        "tuple",
+        json!({"positions": [
+            {"identity": format!("{slot}/p0"), "typeRef": "ix://filament/native/Clock", "origin": origin(&slot)},
+            {"identity": format!("{slot}/p1"), "typeRef": ident("Int1"), "origin": origin(&slot)}
+        ]}),
+    );
+    let mut document: Json = serde_json::from_slice(&cells_document(
+        vec![tuple],
+        vec![("slot", slot, None)],
+        &[],
+        &[],
+    ))
+    .expect("JSON");
+    document["constructs"].as_array_mut().expect("constructs").push(json!({
+        "kind": {"module": PACKAGE, "name": "tuple"}, "moduleVersion": "1.0.0",
+        "construct": {"identity": "value", "shape": "tuple", "members": {"positions": "required"},
+            "meaning": meaning::TUPLE_VALUE_TYPE}
+    }));
+    let world = world_of(
+        serde_json::to_vec(&document).expect("JSON"),
+        "",
+        &only(
+            &["work"],
+            "pre Data using v on M::Call::work { self.slot[1] = 1 }\n",
+        ),
+        json!([]),
+    );
+    let held = system(&world);
+    let timed = TimedSystem::new(&held, "M").expect("a timed model");
+    let tuple = world
+        .package
+        .graph()
+        .scope()
+        .types()
+        .composites()
+        .find(|ty| ty.name() == "M::Slot")
+        .expect("the model tuple");
+    let CompositeShape::Tuple(shape) = tuple.shape() else {
+        panic!("tuple shape");
+    };
+    assert_eq!(shape.len(), 1, "the Clock position holds no data");
+    let value = world
+        .package
+        .graph()
+        .scope()
+        .types()
+        .tuple(
+            tuple.key(),
+            vec![filament_exact::Value::Integer(Integer::from(1_i64))],
+        )
+        .expect("the typed data part");
+    let state = clock_fixture_state(&world, &held, &timed, vec![("slot", value)]);
+    assert_eq!(
+        timed
+            .steps(&state)
+            .expect("the authored data projection runs")
+            .len(),
+        1
+    );
+    assert!(timed.places().iter().any(|place| {
+        timed
+            .model()
+            .clock(place.clock())
+            .is_some_and(|clock| clock.name() == "slot.0")
+            && timed.live(place, state.discrete())
+    }));
+    let zero = world
+        .package
+        .graph()
+        .scope()
+        .types()
+        .tuple(
+            tuple.key(),
+            vec![filament_exact::Value::Integer(Integer::from(0_i64))],
+        )
+        .expect("zero data");
+    let zero = clock_fixture_state(&world, &held, &timed, vec![("slot", zero)]);
+    assert!(
+        timed
+            .steps(&zero)
+            .expect("the data guard is checked")
+            .is_empty()
+    );
+}
+
+/// A nonterminal tuple position reaches every collection clock after a removed Clock slot.
+#[trace("TC-1860", "FR-230-AC-63", "FSpec-FR-322-AC-399")]
+#[test]
+fn a_model_tuple_clock_traverses_a_nonterminal_collection_and_counts_its_budget() {
+    use filament_exact::{FieldValue, Value, ValueType};
+    let mut document: Json = serde_json::from_slice(&clock_members_document(false)).expect("JSON");
+    let mut holder = record_type("Holder", &[("timers", &ident("Timer"), false)]);
+    holder["fields"][0]["multiplicity"] =
+        json!({"lower": 0, "upper": 2, "ordered": true, "unique": false});
+    let types = document["types"].as_array_mut().expect("types");
+    types.push(holder);
+    let slot = types
+        .iter_mut()
+        .find(|ty| ty["identity"] == ident("Slot"))
+        .expect("Slot");
+    slot["positions"][1]["typeRef"] = json!(ident("Holder"));
+    slot["positions"].as_array_mut().expect("positions").push(json!({"identity": ident("Slot/p2"), "typeRef": ident("Int1"), "origin": origin(&ident("Slot/p2"))}));
+    for operation in types[1]["operations"].as_array_mut().expect("operations") {
+        operation["frame"]["modifies"] = json!([]);
+    }
+    let world = world_of(
+        serde_json::to_vec(&document).expect("JSON"),
+        "",
+        &only(
+            &["work"],
+            "pre Data using v on M::Call::work { self.slot[2] = 1 }\n",
+        ),
+        json!([]),
+    );
+    let held = system(&world);
+    let types = world.package.graph().scope().types();
+    let timer = types
+        .record(
+            clock_composite(&world, "Timer"),
+            vec![(
+                "n",
+                FieldValue::Present(Value::Integer(Integer::from(0_i64))),
+            )],
+        )
+        .expect("Timer");
+    let holder_type = types
+        .composite(clock_composite(&world, "Holder"))
+        .expect("Holder");
+    let filament_semantic_value::declaration::CompositeShape::Record(fields) = holder_type.shape()
+    else {
+        panic!("record");
+    };
+    let ValueType::Collection(collection) = fields[0].value_type() else {
+        panic!("Timer collection");
+    };
+    let timers =
+        filament_exact::from_admitted(collection.as_ref().clone(), vec![timer.clone(), timer]);
+    let holder = types
+        .record(
+            holder_type.key(),
+            vec![("timers", FieldValue::Present(timers))],
+        )
+        .expect("typed Holder");
+    let slot = types
+        .tuple(
+            clock_composite(&world, "Slot"),
+            vec![holder, Value::Integer(Integer::from(1_i64))],
+        )
+        .expect("Clock is absent from the data tuple");
+    let idle = clock_case(&world, "Idle");
+    let wrapper = types
+        .record(
+            clock_composite(&world, "Wrapper"),
+            vec![("choice", FieldValue::Present(idle.clone()))],
+        )
+        .expect("Wrapper");
+    for max_clocks in [7, 8] {
+        let timed = TimedSystem::with_max_clocks(
+            &held,
+            "M",
+            std::num::NonZeroU64::new(max_clocks).expect("positive"),
+        )
+        .expect("a bounded collection path");
+        let state = clock_fixture_state(
+            &world,
+            &held,
+            &timed,
+            vec![
+                ("choice", idle.clone()),
+                ("wrap", wrapper.clone()),
+                ("slot", slot.clone()),
+            ],
+        );
+        assert_eq!(timed.live_clocks(state.discrete()), 8);
+        assert_eq!(
+            timed
+                .places()
+                .iter()
+                .filter(|place| timed.live(place, state.discrete()))
+                .count(),
+            8
+        );
+        if max_clocks == 7 {
+            assert_eq!(
+                timed.steps(&state).err(),
+                Some(TimedStop::MaxClocks { max_clocks })
+            );
+        } else {
+            assert_eq!(
+                timed
+                    .steps(&state)
+                    .expect("all tuple collection clocks fit")
+                    .len(),
+                1
+            );
+        }
+    }
 }
 
 /// FR-120-AC-26 (TC-1270) with the STD-508 ruling on collections of bare
@@ -4496,10 +5042,12 @@ fn clock_operation_document(
 ) -> Vec<u8> {
     let mut document: Json = serde_json::from_slice(&rpc_document(true)).expect("JSON");
     let fields = |names: &[&str]| {
-        json!(names
-            .iter()
-            .map(|field| ident(&format!("Call/{field}")))
-            .collect::<Vec<_>>())
+        json!(
+            names
+                .iter()
+                .map(|field| ident(&format!("Call/{field}")))
+                .collect::<Vec<_>>()
+        )
     };
     for operation in document["types"][1]["operations"]
         .as_array_mut()
@@ -5344,10 +5892,12 @@ fn an_option_clock_has_a_presence_bit() {
     assert_model_key_fields_are_unique(&key(present));
     assert_eq!(timed.live_clocks(absent.discrete()), 1);
     assert_eq!(timed.live_clocks(present.discrete()), 2);
-    assert!(timed
-        .invariants(absent.discrete())
-        .expect("decided")
-        .is_empty());
+    assert!(
+        timed
+            .invariants(absent.discrete())
+            .expect("decided")
+            .is_empty()
+    );
     assert_eq!(
         timed.invariants(present.discrete()).expect("decided").len(),
         1
@@ -6046,10 +6596,12 @@ fn a_predicate_naming_the_population_reads_the_state_once() {
         let system = system_over(&world, &two);
         let timed = TimedSystem::new(&system, "M").expect("a timed subject");
         let state = timed.initial().remove(0);
-        assert!(timed
-            .delay(&state, &exact(1, 1))
-            .expect("decided")
-            .is_some());
+        assert!(
+            timed
+                .delay(&state, &exact(1, 1))
+                .expect("decided")
+                .is_some()
+        );
     }
 
     // `CallsExist` makes the state urgent; with `c2.late` false it does not.

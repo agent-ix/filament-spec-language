@@ -1509,6 +1509,7 @@ pub(crate) fn clause_records(
     claims: &[ClauseClaim],
     form: &StateClauseDeclaration,
     lowered: &LoweredClause,
+    clause_key: &NodeKey,
     claim: &Origin,
     types: &TypeEnvironment,
     position_limit: u64,
@@ -1565,7 +1566,7 @@ pub(crate) fn clause_records(
                     record
                 };
                 keyed.push(KeyedClaim {
-                    node: lowered.key.clone(),
+                    node: clause_key.clone(),
                     origin: claim.clone(),
                     record,
                 });

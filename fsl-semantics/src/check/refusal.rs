@@ -896,15 +896,6 @@ pub enum JoinFault {
 /// `IllTyped` like any other name.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ProtocolReferenceCause {
-    /// A second reference to a target already referred to in the unit: the
-    /// carrier is keyed by its body alone and IR admits one `expression`
-    /// occurrence per carrier, so two references to one target cannot both
-    /// be written. `unsupported_construct`/`expression-form`, at the second
-    /// reference.
-    Repeated {
-        /// The first reference to the same target.
-        first: Location,
-    },
     /// A protocol, or a reference to it, that names a construct whose
     /// FR-464, FR-465 or FR-466 node FSL does not write yet, while a protocol
     /// profile is selected: the protocol would otherwise be written without
@@ -993,33 +984,21 @@ impl ProtocolConstruct {
 }
 
 impl ProtocolReferenceCause {
-    /// The first reference to the same target, for a repeated reference.
-    pub fn first(&self) -> Option<&Location> {
-        match self {
-            Self::Repeated { first } => Some(first),
-            Self::NotEmitted { .. } => None,
-        }
-    }
-
     /// The construct no node is written for, for a protocol that names one.
     pub fn construct(&self) -> Option<ProtocolConstruct> {
         match self {
-            Self::Repeated { .. } => None,
             Self::NotEmitted { construct } => Some(*construct),
         }
     }
 
     /// This cause's catalog code.
     pub fn code(&self) -> Code {
-        match self {
-            Self::Repeated { .. } | Self::NotEmitted { .. } => Code::UnsupportedConstruct,
-        }
+        Code::UnsupportedConstruct
     }
 
     /// This cause's catalog tag.
     pub fn tag(&self) -> &'static str {
         match self {
-            Self::Repeated { .. } => "expression-form",
             Self::NotEmitted { .. } => "not-yet-implemented",
         }
     }
