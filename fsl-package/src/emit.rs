@@ -7071,8 +7071,14 @@ fn emit_package_inner(
         names: temporal_clause_names,
         keyed: temporal_binding_rows,
         refs: temporal_clause_refs,
-    } = temporal_binding_rows(graph, &emitted_node_ids, &nodes, temporal_selections)?;
-    let claim_names = claim_name_rows(graph, &emitted_node_ids)?;
+    } = temporal_binding_rows(
+        graph,
+        &emitted_node_ids,
+        &nodes,
+        &source_map,
+        temporal_selections,
+    )?;
+    let claim_names = claim_name_rows(graph, &emitted_node_ids, &source_map)?;
     let equality_producer_identity_rows = equality_producer_emission_rows_excluding(
         graph,
         &emitted_node_ids,
@@ -8351,6 +8357,7 @@ fn validate_temporal_clock(
 fn claim_name_rows(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
+    source_map: &[CheckedSourceMapEntry],
 ) -> Result<Vec<filament_contract_model::ClaimNameRow>, EmitRefusal> {
     let mut sites: Vec<(&OccurrenceKey, &str, fsl_foundation::Span)> = Vec::new();
     let mut owned: Vec<(OccurrenceKey, &str, fsl_foundation::Span)> = Vec::new();
@@ -8387,27 +8394,24 @@ fn claim_name_rows(
         }
     }
     let mut rows = Vec::with_capacity(sites.len() + owned.len());
-    for (occurrence, name, span) in sites
-        .into_iter()
-        .chain(owned.iter().map(|(occurrence, name, span)| (occurrence, *name, *span)))
-    {
+    for (occurrence, name, span) in sites.into_iter().chain(
+        owned
+            .iter()
+            .map(|(occurrence, name, span)| (occurrence, *name, *span)),
+    ) {
         let Some(declaration) = emitted_node_ids.get(occurrence.node()).cloned() else {
             continue;
         };
+        let occurrence = CheckedOccurrence {
+            role: occurrence_role(occurrence.node(), occurrence.origin())?,
+            ordinal: occurrence.origin().ordinal(),
+        };
         rows.push(filament_contract_model::ClaimNameRow {
+            declaration_region: declaration_region(source_map, &declaration, &occurrence, span)?,
             declaration,
-            occurrence: CheckedOccurrence {
-                role: occurrence_role(occurrence.node(), occurrence.origin())?,
-                ordinal: occurrence.origin().ordinal(),
-            },
+            occurrence,
             name: name.into(),
             qualified_name: vec![name.into()],
-            declaration_region: declaration_region(
-                graph,
-                occurrence.node().clone(),
-                occurrence.origin(),
-                span,
-            )?,
         });
     }
     rows.sort_by(|left, right| {
@@ -8423,22 +8427,34 @@ fn claim_name_rows(
 /// regions"): the whole declaration's span, under the source of the
 /// occurrence's own `source_map` region.
 fn declaration_region(
-    graph: &CheckedGraph,
-    node: NodeKey,
-    origin: &filament_exact::Origin,
+    source_map: &[CheckedSourceMapEntry],
+    declaration: &CheckedNodeId,
+    occurrence: &CheckedOccurrence,
     span: fsl_foundation::Span,
 ) -> Result<CheckedSourceRegion, EmitRefusal> {
-    let location = graph
-        .occurrence(node, origin)
-        .ok_or(EmitRefusal::SourceMapInvariant)?;
-    let region = graph
-        .region(location)
+    let source = source_map
+        .iter()
+        .find(|entry| {
+            entry.node_id == *declaration
+                && entry.role == occurrence.role
+                && entry.ordinal == occurrence.ordinal
+        })
+        .and_then(|entry| entry.regions.first())
+        .map(|region| region.source.clone())
         .ok_or(EmitRefusal::SourceMapInvariant)?;
     Ok(CheckedSourceRegion {
-        source: source_artifact(region.source()),
-        start: span.start as u64,
-        end: span.end as u64,
+        source,
+        start: u64::try_from(span.start).map_err(encoding)?,
+        end: u64::try_from(span.end).map_err(encoding)?,
     })
+}
+
+/// The `claim` occurrence `ordinal`.
+fn claim_occurrence(ordinal: u64) -> CheckedOccurrence {
+    CheckedOccurrence {
+        role: CheckedOccurrenceRole::Claim,
+        ordinal,
+    }
 }
 
 /// The temporal rows one emission writes.
@@ -8453,6 +8469,7 @@ fn temporal_binding_rows(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     nodes: &[CheckedSemanticNodeV2],
+    source_map: &[CheckedSourceMapEntry],
     selections: &[TemporalClockSelection],
 ) -> Result<WrittenTemporalRows, EmitRefusal> {
     use fsl_semantics::check::TemporalProfile;
@@ -8483,14 +8500,20 @@ fn temporal_binding_rows(
     let mut keyed = TemporalBindingRows::default();
     let mut names = Vec::new();
     for site in graph.hybrid_claim_sites() {
+        let declaration = emitted_node_ids
+            .get(&site.identity)
+            .cloned()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
         names.push(filament_contract_model::TemporalClauseName {
-            declaration: emitted_node_ids
-                .get(&site.identity)
-                .cloned()
-                .ok_or(EmitRefusal::SourceMapInvariant)?,
+            declaration_region: declaration_region(
+                source_map,
+                &declaration,
+                &claim_occurrence(site.claim.ordinal()),
+                site.span,
+            )?,
+            declaration,
             occurrence: site.claim.ordinal(),
             name: site.name.as_str().into(),
-            declaration_region: declaration_region(graph, site.identity.clone(), &site.claim, site.span)?,
         });
     }
     let mut refs = Vec::new();
@@ -8513,15 +8536,15 @@ fn temporal_binding_rows(
             clause: position,
         });
         names.push(filament_contract_model::TemporalClauseName {
+            declaration_region: declaration_region(
+                source_map,
+                &declaration,
+                &claim_occurrence(temporal.claim().ordinal()),
+                clause.span(),
+            )?,
             declaration,
             occurrence: temporal.claim().ordinal(),
             name: clause.name().into(),
-            declaration_region: declaration_region(
-                graph,
-                temporal.identity(),
-                temporal.claim(),
-                clause.span(),
-            )?,
         });
         // A timed clause over a record trace subject binds its clock role
         // through a `timed` configuration (FR-640, FR-933); over a model it
@@ -8597,19 +8620,20 @@ fn temporal_binding_rows(
             .assembled_occurrence()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
         let wrapper = hyper_wrapper(graph, occurrence.node())?;
+        let declaration = emitted_node_ids
+            .get(&wrapper)
+            .cloned()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
         names.push(filament_contract_model::TemporalClauseName {
-            declaration: emitted_node_ids
-                .get(&wrapper)
-                .cloned()
-                .ok_or(EmitRefusal::SourceMapInvariant)?,
-            occurrence: occurrence.origin().ordinal(),
-            name: hyper.name().into(),
             declaration_region: declaration_region(
-                graph,
-                occurrence.node().clone(),
-                &occurrence.origin(),
+                source_map,
+                &declaration,
+                &claim_occurrence(occurrence.origin().ordinal()),
                 hyper.span(),
             )?,
+            declaration,
+            occurrence: occurrence.origin().ordinal(),
+            name: hyper.name().into(),
         });
         let profile = hyper.profile();
         if !matches!(

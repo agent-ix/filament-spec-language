@@ -1124,7 +1124,6 @@ fn each_clause_pairs_with_its_own_clock_row_over_the_bytes_only_route() {
 #[trace("FSpec-TC-2015", "FSpec-FR-322-AC-460")]
 #[trace("FSpec-TC-2015", "FSpec-FR-322-AC-461")]
 #[test]
-#[ignore = "QSL-2425: the clause name rows' declaration_region and the package-route clause span are not implemented yet"]
 fn clause_name_rows_carry_the_whole_declaration_region() {
     for kind in KINDS {
         let source_path = handoff_request(kind, Corpus::None).emit.source;
