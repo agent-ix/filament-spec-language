@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-056-AC-43 / FR-505-AC-6 (TC-897 step 8, TC-1300): bare native Text,
-//! Rational and Decimal members are admitted with no checked type and refused
-//! where used.
+//! FR-056-AC-43 / FR-505-AC-6 (TC-897 step 8, TC-1300): bare native Text and
+//! Rational members have no checked type; policy-bearing Decimal members are
+//! typed from their FCD decimal policy.
 
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
@@ -183,14 +183,14 @@ fn a_package_of_bare_native_members_is_admitted_by_a_unit_naming_none() {
     assert!(assembled(&note_document(false), "").is_ok());
 }
 
-/// FR-056-AC-43 (TC-897 step 8): each use of a bare native field refuses
+/// FR-056-AC-43 (TC-897 step 8): the bare Text field refuses
 /// `ill_typed`/`operator-ineligible` at the projection, naming the owner and
-/// `Field.typeRef`; `count` is still checked.
+/// `Field.typeRef`; policy-bearing Decimal fields and `count` are checked.
 #[trace("TC-897")]
 #[test]
 fn a_clause_using_a_bare_native_field_refuses_at_the_projection() {
     let document = note_document(false);
-    for member in ["memo", "ratio", "amount", "amounts"] {
+    for member in ["memo"] {
         assert_eq!(
             untyped(
                 &document,
@@ -198,6 +198,16 @@ fn a_clause_using_a_bare_native_field_refuses_at_the_projection() {
             ),
             expect("ConfigVersion", member, "Field.typeRef"),
             "{member}"
+        );
+    }
+    for member in ["ratio", "amount", "amounts"] {
+        assert!(
+            assembled(
+                &document,
+                &invariant(&format!("self.{member} = self.{member}"))
+            )
+            .is_ok(),
+            "{member} is typed as Decimal by its policy-bearing member"
         );
     }
     assert!(assembled(&document, &invariant("self.count = self.count")).is_ok());

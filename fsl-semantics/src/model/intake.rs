@@ -1449,10 +1449,9 @@ fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<Model
         // subtype case for FSL's typed process binder and normalizer.
         .filter(|located| !process_subtype_identity_schema_diagnostic(document, located))
         // FR-505 extends value-type/v1 with the exact Rational scalar,
-        // constraints and unit member. The pinned shared validator predates
-        // those three contract members; FSL's reader below owns their full
-        // validation and this filter suppresses only its corresponding
-        // closed-vocabulary diagnostics.
+        // constraints and unit member. The Decimal reader also owns the
+        // `unit` refusal on scalar Decimal subjects; suppress only the
+        // corresponding closed-vocabulary diagnostic.
         .filter(|located| !rational_value_type_schema_diagnostic(document, located))
         // The upstream validator also emits generic supertype diagnostics for
         // process cross-meaning edges and cycles, and for record, event and
@@ -1771,8 +1770,9 @@ fn process_subtype_identity_schema_diagnostic(
     empty_identity || missing_identity
 }
 
-/// Whether a shared semantic-IR schema diagnostic is exactly one of the
-/// value-type/v1 Rational fields and constraint keywords defined by FR-505.
+/// Whether a shared semantic-IR schema diagnostic is one of the
+/// value-type/v1 Rational fields and constraint keywords defined by FR-505,
+/// or the Decimal `unit` member whose first-defect rule belongs to FR-056.
 /// All operand, identity, unit-reference and cross-node diagnostics remain
 /// owned by the shared validator or FSL's ordinary typed reader.
 #[ix_trace_rs::string_edge]
@@ -1801,7 +1801,8 @@ fn rational_value_type_schema_diagnostic(
     else {
         return false;
     };
-    if type_value.get("scalar").and_then(Value::as_str) != Some("rational") {
+    let scalar = type_value.get("scalar").and_then(Value::as_str);
+    if !matches!(scalar, Some("rational" | "decimal")) {
         return false;
     }
     let Ok(kind) = NodeCtx::new(type_value, "$").kind_key() else {
@@ -1816,6 +1817,9 @@ fn rational_value_type_schema_diagnostic(
         != Some(meaning::VALUE_TYPE)
     {
         return false;
+    }
+    if scalar == Some("decimal") {
+        return member == "unit";
     }
     match member {
         "scalar" | "unit" => true,

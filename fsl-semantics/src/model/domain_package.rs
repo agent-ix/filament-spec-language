@@ -509,9 +509,9 @@ pub struct MapTypeRecord {
     pub upper: Option<u64>,
 }
 
-/// A package `alias` of a clock, a unit, or an `Option<T>` value type (FCD's
-/// core kind `alias`, FCD #315 / #333): the type its `target` names, under its
-/// own name (FSL FR-230 "Clocks and resets", FR-230-AC-17; FSpec FR-154).
+/// A package `alias` of a clock, a unit, an `Option<T>` value type, or a
+/// policy-bearing Decimal type (FCD's core kind `alias`): the type its
+/// `target` names, under its own name (FSL FR-230, FR-056; FSpec FR-154).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AliasTypeRecord {
     /// This type's own original declaration key.
