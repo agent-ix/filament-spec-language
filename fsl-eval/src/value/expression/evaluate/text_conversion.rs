@@ -4,14 +4,14 @@
 use std::str::FromStr;
 
 use filament_exact::{
-    evaluate_decimal, exact_to_ieee, Charge, ChargePoint, Decimal, DecimalOperation, DecimalType,
-    FloatType, IeeeFlags, IeeeValue, IeeeWidth, Integer, LimitKind, Meter, Quantity, Rational,
-    RationalDomain, Refusal, RoundingMode, ScalarLimits, Undefined, Value, ValueType,
+    Charge, ChargePoint, Decimal, DecimalOperation, DecimalType, FloatType, IeeeFlags, IeeeValue,
+    IeeeWidth, Integer, LimitKind, Meter, Quantity, Rational, Refusal, RoundingMode, ScalarLimits,
+    Undefined, Value, ValueType, evaluate_decimal, exact_to_ieee,
 };
 use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::loss::ValueLoss;
 use filament_semantic_value::quantity::{UnitScope, UnitTable};
-use filament_semantic_value::stop::{outcome_into_stop, Stop};
+use filament_semantic_value::stop::{Stop, outcome_into_stop};
 
 /// Convert one admitted `Text` or `String` value to its checked numeric target.
 pub(super) fn convert(

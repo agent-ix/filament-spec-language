@@ -5,8 +5,8 @@ use std::str::FromStr;
 
 use filament_eval::{Evaluation, FamilyOutcome};
 use filament_exact::{
-    admit_text, ChargePoint, IeeeFlag, Integer, Meter, Outcome, Rational, Refusal, RoundingMode,
-    ScalarLimits, TextProfile, TextType, Undefined, Value,
+    ChargePoint, IeeeFlag, Integer, Meter, Outcome, Rational, Refusal, RoundingMode, ScalarLimits,
+    TextProfile, TextType, Undefined, Value, admit_text,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::loss::ValueLoss;
@@ -19,7 +19,7 @@ use fsl_semantics::model::domain_package::{
 };
 use fsl_semantics::model::intake::SelectedModels;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
+use fsl_semantics::value::{DefinitionRole, admit_ieee_profile};
 use ix_trace_rs::trace;
 
 const LIMITS: ScalarLimits = ScalarLimits {
@@ -96,7 +96,11 @@ fn compile_with_models(
             .expect("the IEEE profile is admitted"),
     );
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .map(CheckedPackage::link)
 }
 
@@ -157,6 +161,20 @@ fn completed(evaluation: &Evaluation) -> &Value {
     value
 }
 
+fn assert_integer(evaluation: &Evaluation, expected: Integer) {
+    let Value::Integer(value) = completed(evaluation) else {
+        panic!("expected integer, got {:?}", evaluation.outcome);
+    };
+    assert_eq!(value, &expected);
+}
+
+fn assert_rational(evaluation: &Evaluation, expected: Rational) {
+    let Value::Rational(value) = completed(evaluation) else {
+        panic!("expected rational, got {:?}", evaluation.outcome);
+    };
+    assert_eq!(value, &expected);
+}
+
 fn undefined(evaluation: &Evaluation, reason: Undefined) {
     assert!(matches!(
         &evaluation.outcome,
@@ -208,7 +226,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
             "integer",
             text_value(text, TextProfile::UnicodeScalars),
         );
-        assert_eq!(completed(&evaluation), &Value::Integer(expected));
+        assert_integer(&evaluation, expected);
     }
 
     let negative_bounded = call(
@@ -240,18 +258,18 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
         "rational",
         text_value("2/4", TextProfile::UnicodeScalars),
     );
-    assert_eq!(
-        completed(&rational),
-        &Value::Rational(Rational::new(Integer::from(1_i64), Integer::from(2_i64)).unwrap())
+    assert_rational(
+        &rational,
+        Rational::new(Integer::from(1_i64), Integer::from(2_i64)).unwrap(),
     );
     let unbounded_rational = call(
         &package,
         "rational_unbounded",
         text_value("6/4", TextProfile::UnicodeScalars),
     );
-    assert_eq!(
-        completed(&unbounded_rational),
-        &Value::Rational(Rational::new(Integer::from(3_i64), Integer::from(2_i64)).unwrap())
+    assert_rational(
+        &unbounded_rational,
+        Rational::new(Integer::from(3_i64), Integer::from(2_i64)).unwrap(),
     );
 
     let decimal = call(
@@ -348,7 +366,7 @@ fn conversion_charges_input_then_target_work_and_stops_on_denial() {
         text_value("42", TextProfile::UnicodeScalars),
         LIMITS,
     );
-    assert_eq!(completed(&integer), &Value::Integer(Integer::from(42_i64)));
+    assert_integer(&integer, Integer::from(42_i64));
     assert_eq!(
         charge_points(&meter),
         [
@@ -527,9 +545,9 @@ fn malformed_numeric_text_is_undefined_and_profile_normalization_is_used() {
             Undefined::MalformedNumber,
         );
     }
-    assert_eq!(
-        completed(&call(&package, "nfkc", text_value("５", TextProfile::Nfkc),)),
-        &Value::Integer(Integer::from(5_i64))
+    assert_integer(
+        &call(&package, "nfkc", text_value("５", TextProfile::Nfkc)),
+        Integer::from(5_i64),
     );
     undefined(
         &call(&package, "nfc", text_value("５", TextProfile::Nfc)),
@@ -539,13 +557,9 @@ fn malformed_numeric_text_is_undefined_and_profile_normalization_is_used() {
         &call(&package, "string_integer", Value::String("５".to_owned())),
         Undefined::MalformedNumber,
     );
-    assert_eq!(
-        completed(&call(
-            &package,
-            "string_integer",
-            Value::String("42".to_owned()),
-        )),
-        &Value::Integer(Integer::from(42_i64))
+    assert_integer(
+        &call(&package, "string_integer", Value::String("42".to_owned())),
+        Integer::from(42_i64),
     );
     assert!(matches!(
         completed(&call(
