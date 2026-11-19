@@ -469,10 +469,6 @@ pub use proof_result::{
     StatedMemoryBound, StatisticalRequestRefusal, SymmetryBrokenCause, SymmetryRefusal,
     TerminalRecord, TerminalRecordRefusal, TerminalValue, ToolFailure, TransferReason,
     UnavailabilityCause, ValueCheckUnsupported, ValueFault, WeakAccessFailure,
-    read_backend_provider_envelope, read_first_party_solver_basis, read_plugin_assignments,
-    read_plugin_basis, read_plugin_cause_kind, read_plugin_certification,
-    read_plugin_hybrid_counterexample, read_plugin_inconclusive_cause,
-    read_plugin_inconclusive_cause_over,
 };
 // The inputs `call_site` takes and the typed operation name it and FR-115
 // select by. They are defined in `spine` because the spine compile reads
