@@ -1,0 +1,13 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile ev = "filament.temporal.event-position.false-extension/v1";
+profile inf = "filament.temporal.infinite-trace/v1";
+model Network = "test/link";
+pre PendingA using v on Network::Msg::send_a { not self.delivered and self.attempts < 2 }
+post OutcomeA using v on Network::Msg::send_a { self.delivered = (not lost) and self.attempts - pre(self.attempts) = 1 }
+pre PendingB using v on Network::Msg::send_b { not self.delivered and self.attempts < 2 }
+post OutcomeB using v on Network::Msg::send_b { self.delivered = (not lost) and self.attempts - pre(self.attempts) = 1 }
+terminal Finished using v on Network when { self.delivered or self.attempts = 2 };
+probabilistic Available using ev on Network over (packet: Network::Msg) under every scheduler on origin {
+ quantile 0.75 of (steps from holds(not packet.delivered) until holds(packet.delivered) within 2) <= 2
+}
