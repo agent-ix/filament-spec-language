@@ -285,6 +285,10 @@ mod source_journeys {
             "NextDerived",
             json!({"finite": ["unbound-observation"]}),
         );
+        let mut request: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        request["request"]["clause"]["selection"]["temporal"]["over"] =
+            json!({"reference": {"population": "test:temporal-corpus", "key": "reading"}});
+        std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
         let error = fsl_command::command::run(&path, &crate::negotiation::Fr290)
             .expect_err("an observation key must resolve before evaluation");
         assert_eq!(error.category().exit_code(), 20, "{error}");
