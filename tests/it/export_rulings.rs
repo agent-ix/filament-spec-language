@@ -447,6 +447,7 @@ fn a_malformed_export_member_refuses_with_its_code_and_cause() {
 
 #[test]
 #[trace("TC-3020", "FR-1015-AC-10")]
+#[trace("FSpec-TC-2040", "FSpec-FR-817-AC-13")]
 #[ignore = "QSL-1979: an observer the build cannot run refused unsupported_projection/unsupported-requested-capability, exit 21, is not implemented yet"]
 fn an_observer_the_build_cannot_run_is_unsupported() {
     let mut member = tla(json!(["SlowEnough"]));
@@ -463,6 +464,18 @@ fn an_observer_the_build_cannot_run_is_unsupported() {
     assert!(!value.to_string().contains("invalid-request"), "{value}");
     assert!(value["export"].get("target_text").is_none(), "{value}");
     assert!(value["export"].get("package").is_none(), "{value}");
+    let mut limited = member_with_observer();
+    limited["limits"] = json!({"export.nodes": 1});
+    let (exit, value) = export(BRAKING, false, limited);
+    assert_eq!(exit, 21, "{value}");
+    names(&value, "unsupported-requested-capability");
+}
+
+fn member_with_observer() -> Value {
+    let mut member = tla(json!(["SlowEnough"]));
+    member["minimum_fidelity"] = json!("any");
+    member["observer"] = json!("tlc");
+    member
 }
 
 #[test]

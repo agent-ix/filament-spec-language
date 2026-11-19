@@ -240,7 +240,6 @@ fn assembly_limit(cause: &AssemblyCause) -> Option<ReachedLimit> {
         | AssemblyCause::ImportedTypeName { .. }
         | AssemblyCause::AmbiguousTypeName { .. }
         | AssemblyCause::IllFormedBounds(_)
-        | AssemblyCause::FloatingType { .. }
         | AssemblyCause::AliasCycle { .. }
         | AssemblyCause::UndeclaredAlias { .. }
         | AssemblyCause::DuplicateAlias { .. }

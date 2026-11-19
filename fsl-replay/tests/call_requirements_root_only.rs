@@ -47,6 +47,7 @@ fn run(source: &str, cancel: &Cancel) -> Result<fsl_replay::RunWithRequirements,
         accounting: accounting(),
         supplied: SuppliedLimits::default(),
         backend: filament_eval::ExecutionBackendChoice::Interpreter,
+        live_occurrences: fsl_replay::spine::DEFAULT_LIVE_OCCURRENCES,
     };
     run_with_requirements(&fsl_replay::RequirementsRun {
         source: SourceIdentity::new("a", "u"),

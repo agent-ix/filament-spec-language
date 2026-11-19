@@ -513,9 +513,43 @@ fn a_liveness_record_states_its_non_zeno_premise() {
             "non_zeno: Some(Refuted)",
         ),
         (crate::zone_search::rpc(4), "non_zeno: None"),
+        (crate::zone_search::ticker(false), "non_zeno: None"),
     ];
     for (world, expected) in cases {
         let record = settled_non_zeno(&world);
         assert!(record.contains(expected), "{expected}: {record}");
+    }
+}
+
+/// FR-245-AC-10: a liveness-product proof's certificate states its
+/// `non_zeno`, and the core checker accepts the value it recomputes. The
+/// swapped, removed and unexpected values are rejected `NonZenoMismatch`
+/// at `CertificateMember{non_zeno}`; that half needs the certificate field
+/// this stub names.
+#[trace("TC-3021", "FR-245-AC-10")]
+#[trace("FSpec-TC-2041", "FSpec-FR-418-AC-15")]
+#[test]
+#[ignore = "QSL-2450: ZoneCertificate::non_zeno and the checker's NonZenoMismatch rule are not implemented yet"]
+fn a_liveness_certificate_states_its_non_zeno() {
+    for (world, expected) in [
+        (response(4, ""), "non_zeno: Some(NotRequired)"),
+        (rpc_reply_loop(), "non_zeno: Some(Assumed)"),
+    ] {
+        let ZoneCheckOutcome::Holds { certificate, .. } = decide(&world) else {
+            panic!("a proof");
+        };
+        let stated = format!("{certificate:?}");
+        assert!(stated.contains(expected), "{expected}: {stated}");
+        let verdict = crate::zone_search::check(
+            &world,
+            &certificate,
+            fsl_replay::CertificateCheckLimits::default(),
+        )
+        .expect("the check runs");
+        assert_eq!(
+            verdict,
+            fsl_replay::ZoneCertificateVerdict::Accepted,
+            "{verdict:?}"
+        );
     }
 }

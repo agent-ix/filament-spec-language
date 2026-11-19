@@ -226,7 +226,7 @@ pub use call::{
     default_accounting, run, run_with_profile_catalog,
     run_with_profile_catalog_and_integer_division, Call, CallArgument, CallIncomplete, CallLocus,
     CallOutcome, CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument,
-    DEFAULT_WORK_UNITS,
+    DEFAULT_LIVE_OCCURRENCES, DEFAULT_WORK_UNITS,
 };
 pub(crate) use call::{run_reading, run_reading_with_integer_division};
 #[cfg(test)]
@@ -1026,7 +1026,6 @@ fn assembly_message(refusal: &AssemblyRefusal) -> String {
             format!("`{name}` names more than one candidate")
         }
         AssemblyCause::IllFormedBounds(_) => "a type's declared bounds are ill-formed".to_owned(),
-        AssemblyCause::FloatingType { .. } => "a floating type is not admitted".to_owned(),
         AssemblyCause::AliasCycle { edges } => format!(
             "the alias `{}` reaches itself",
             edges.first().map_or("", |(alias, _)| alias.as_str())

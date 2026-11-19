@@ -15,7 +15,7 @@ Verify the structured refusal codes of malformed export members, the `unsupporte
 ## Test Procedure
 
 1. Export the counter with `obligations` `[]`, without `obligations`, and with `minimum_fidelity` `7`.
-2. Export `SlowEnough` over `Braking` under `any` with `observer` `tlc` and an `output` path, then without `observer`.
+2. Export `SlowEnough` over `Braking` under `any` with `observer` `tlc` and an `output` path, then with `export.nodes` 1 added, then without `observer`.
 3. Export the counter under `export.work_units` 1, then under `export.nodes` 1 and `export.work_units` 1.
 4. Over the spine unit with invariants `Low` and `High`, find the least `export.nodes` for `["Low"]`, `["High"]` and `["Low", "High"]`.
 5. Export `SlowEnough` over `Braking` under `any` and read each cause's `node` and `locus`.
@@ -23,7 +23,7 @@ Verify the structured refusal codes of malformed export members, the `unsupporte
 ## Expected Results
 
 - Step 1: `code` `invalid_runtime_input` with `cause` `invalid-value`, `missing-member` and `wrong-value-kind`, at their `/request/export` paths, exit 20; no `invalid-request`.
-- Step 2: `unsupported_projection`/`unsupported-requested-capability` naming `tlc`, exit 21, no text, package or file; then `assembled`, exit 0.
+- Step 2: `unsupported_projection`/`unsupported-requested-capability` naming `tlc`, exit 21, no text, package or file; the same with `export.nodes` 1, not `incomplete`; then `assembled`, exit 0.
 - Step 3: `incomplete`, `records` `[]`, `cause` `limit-reached` with `work_units`, 1 and `export.work_units`, exit 22; then `nodes`, 1 and `export.nodes`.
 - Step 4: the pair's value is less than the sum of the singles and at least their maximum.
 - Step 5: each `node` is a canonical node-id string of the package, equal to the matching `name_map` entry's; each `locus` is `null` or a region with `start < end`.

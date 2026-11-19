@@ -462,6 +462,7 @@ fn run_execute(
         accounting,
         supplied: Default::default(),
         backend: choice,
+        live_occurrences: fsl_replay::spine::DEFAULT_LIVE_OCCURRENCES,
     };
     let result = run_with_backends(
         SourceIdentity::new(parameters.source_authority, parameters.source_identity),
