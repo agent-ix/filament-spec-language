@@ -121,7 +121,7 @@ pub(crate) fn key(suffix: &str) -> DeclarationKey {
 }
 
 /// The declaration `suffix` of the second model.
-fn other_key(suffix: &str) -> DeclarationKey {
+pub(crate) fn other_key(suffix: &str) -> DeclarationKey {
     DeclarationKey {
         package: OTHER.to_owned(),
         node: format!("ix://{OTHER}/{suffix}"),

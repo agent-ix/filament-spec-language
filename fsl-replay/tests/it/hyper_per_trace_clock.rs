@@ -147,7 +147,7 @@ fn a_two_model_event_position_hyper_clause_emits_rows_and_replays_its_verdict() 
     ];
     let counterexample = HyperCounterexample {
         kind: HyperCounterexampleKind::Lockstep { loop_entry: 0 },
-        instance: instance.to_vec(),
+        instance: vec![("d".to_owned(), "v".to_owned()), ("e".to_owned(), "m".to_owned())],
         traces: vec![
             trace("s", "V", step(&system_s)),
             trace("n", "N", step(&system_n)),
