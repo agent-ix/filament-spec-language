@@ -1397,7 +1397,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
     /// operation authority throughout execution.
     pub fn new_package(
         model: ModelSystem<'a>,
-        subject: &ProtocolSubject<'a>,
+        subject: &'a ProtocolSubject<'a>,
         memory: M,
     ) -> Result<Self, ProtocolRefusal> {
         let input = &subject.model.simulation.input;
@@ -2501,7 +2501,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         let result = package
             .evaluate_finish(&supply, &mut Meter::new(self.model.meter()))
             .map_err(|_| broken())?;
-        result.map(package_slot_verdict).transpose()
+        result
+            .map(|evaluation| package_slot_verdict(Some(evaluation)))
+            .transpose()
     }
 
     /// FR-211 and ADR-027 PD-1: the class of `state`. A state with no live

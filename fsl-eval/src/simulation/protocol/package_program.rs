@@ -161,7 +161,7 @@ impl<'a> PackageProtocolProgram<'a> {
     /// Build the package-native protocol program from the selected route's
     /// model-check input and memory bindings.
     pub fn new(
-        input: &ModelCheckInput<'a>,
+        input: &'a ModelCheckInput<'a>,
         name: &str,
         selection: &[MemorySelection],
     ) -> Result<Self, PackageProgramRefusal> {
@@ -312,14 +312,15 @@ impl<'a> PackageProtocolProgram<'a> {
                     binder,
                     ..
                 } => {
-                    let anchor = input
-                        .evaluator
-                        .package_node_key(operation)
-                        .ok_or_else(|| PackageProgramRefusal::MissingIdentity(operation.clone()))?;
+                    let anchor = input.evaluator.package_node_key(operation).ok_or_else(|| {
+                        PackageProgramRefusal::MissingIdentity((*operation).clone())
+                    })?;
                     let (operation_declaring, operation_name) = input
                         .evaluator
                         .package_protocol_operation(operation)
-                        .ok_or_else(|| PackageProgramRefusal::MissingIdentity(operation.clone()))?;
+                        .ok_or_else(|| {
+                            PackageProgramRefusal::MissingIdentity((*operation).clone())
+                        })?;
                     let operation_node = package_nodes.get(*operation).ok_or_else(|| {
                         PackageProgramRefusal::MissingIdentity((*operation).clone())
                     })?;

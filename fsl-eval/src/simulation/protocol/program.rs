@@ -494,7 +494,7 @@ impl<'a> Program<'a> {
     /// The structure of `protocol`, or the refusal of a construct this
     /// system does not step.
     pub(super) fn new(
-        _model: &ModelSystem<'_>,
+        model: &ModelSystem<'_>,
         protocol: &'a CheckedProtocol,
         capacities: &Capacities,
     ) -> Result<Self, ProtocolRefusal> {
@@ -974,7 +974,7 @@ impl<'a> Program<'a> {
     /// source `CheckedBody` fields; callers evaluate them through the package
     /// evaluator.
     pub(super) fn new_package(
-        model: &ModelSystem<'_>,
+        _model: &ModelSystem<'_>,
         package: &super::PackageProtocolProgram<'_>,
     ) -> Result<Self, ProtocolRefusal> {
         let mut controls = BTreeMap::new();
