@@ -199,7 +199,8 @@ impl<'a> ModelCheckInput<'a> {
                 terminals
                     .into_iter()
                     .map(|terminal| ModelTerminal {
-                        model: super::TerminalModel::new(terminal.package, terminal.model),
+                        model: super::TerminalModel::new(terminal.package, terminal.model)
+                            .with_ordinal(terminal.ordinal),
                         node: terminal.node.clone(),
                         declaration: match terminal.declaration {
                             PackageTerminalDeclaration::Any => ModelTerminalDeclaration::Any,
@@ -255,8 +256,11 @@ impl<'a> ModelCheckInput<'a> {
                 .iter()
                 .map(|terminal| {
                     (
-                        terminal.model.identity().to_owned(),
-                        Some(terminal.node.clone()),
+                        (
+                            terminal.model.identity().to_owned(),
+                            terminal.model.ordinal(),
+                        ),
+                        terminal.node.clone(),
                     )
                 }),
         )
@@ -612,7 +616,8 @@ impl<'p> PackageModelInput<'p> {
                 .terminals
                 .iter()
                 .map(|terminal| ModelTerminal {
-                    model: super::TerminalModel::named(terminal.model.clone()),
+                    model: super::TerminalModel::new(terminal.model.clone(), terminal.model.clone())
+                        .with_ordinal(terminal.ordinal),
                     node: terminal.node.clone(),
                     declaration: match &terminal.declaration {
                         fsl_package::BareTerminalDeclaration::Any => ModelTerminalDeclaration::Any,

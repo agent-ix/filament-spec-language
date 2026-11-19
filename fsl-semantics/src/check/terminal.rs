@@ -296,13 +296,26 @@ impl TerminalNode {
 /// the keys the request was written under with those a run, a certificate
 /// check or a replay read.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct TerminalKeys(BTreeMap<String, Option<NodeKey>>);
+pub struct TerminalKeys(BTreeMap<(String, usize), NodeKey>);
+
+/// A declaration's key in a [`TerminalKeys`]: the model's selection identity
+/// and the declaration's ordinal among that identity's declarations (FR-411):
+/// the order of their aliases on the source route, of their terminal rows on
+/// the package route. A package holds one declaration per identity today, at
+/// ordinal 0.
+fn terminal_name((identity, ordinal): &(String, usize)) -> String {
+    if *ordinal == 0 {
+        identity.clone()
+    } else {
+        format!("{identity}#{ordinal}")
+    }
+}
 
 impl TerminalKeys {
     /// The keys of `declarations`, each a model selection identity with its
     /// terminal node key: how the package route, which records no alias,
     /// names the declarations a run reads (FR-411, FR-940).
-    pub fn of(declarations: impl IntoIterator<Item = (String, Option<NodeKey>)>) -> Self {
+    pub fn of(declarations: impl IntoIterator<Item = ((String, usize), NodeKey)>) -> Self {
         Self(declarations.into_iter().collect())
     }
 
@@ -311,7 +324,7 @@ impl TerminalKeys {
     /// `read`, the declarations a run, check or replay read. An identity one
     /// side does not list has no declaration there.
     pub fn mismatch(&self, read: &Self) -> Option<TerminalMismatch> {
-        let key = |keys: &Self, model: &str| keys.0.get(model).cloned().flatten();
+        let key = |keys: &Self, model: &(String, usize)| keys.0.get(model).cloned();
         self.0
             .keys()
             .chain(read.0.keys())
@@ -321,7 +334,7 @@ impl TerminalKeys {
                 let requested = key(self, model);
                 let recompiled = key(read, model);
                 (requested != recompiled).then(|| TerminalMismatch {
-                    model: model.clone(),
+                    model: terminal_name(model),
                     requested,
                     recompiled,
                 })
@@ -334,7 +347,8 @@ impl TerminalKeys {
 /// join"): `stale_dependency`/`content-mismatch`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TerminalMismatch {
-    /// The model's selection identity.
+    /// The model's selection identity, with `#` and the declaration's ordinal
+    /// when it is not the identity's first.
     pub model: String,
     /// The terminal node key the request was written under; `None` for no
     /// declaration.
@@ -364,16 +378,16 @@ impl CheckedGraph {
     /// terminal node key, the node its declaration's `claim` occurrence
     /// names, or `None` for a model with no declaration.
     pub fn terminal_keys(&self) -> TerminalKeys {
+        let mut ordinals = BTreeMap::<&str, usize>::new();
         TerminalKeys(
             self.terminals()
                 .iter()
-                .map(|terminal| {
-                    (
-                        terminal.package().to_owned(),
-                        terminal
-                            .occurrence()
-                            .map(|occurrence| occurrence.node().clone()),
-                    )
+                .filter_map(|terminal| {
+                    let node = terminal.occurrence()?.node().clone();
+                    let ordinal = ordinals.entry(terminal.package()).or_default();
+                    let key = (terminal.package().to_owned(), *ordinal);
+                    *ordinal += 1;
+                    Some((key, node))
                 })
                 .collect(),
         )

@@ -21,12 +21,14 @@ use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::temporal::UndefinedCause;
 
 /// The model a `terminal` declaration is on, named by its selection
-/// identity, the key both routes compare by (FR-940). The label is the name
+/// identity and its ordinal among that identity's declarations, the key both
+/// routes compare by (FR-940). The label is the name
 /// a user reads: the source alias on the source route, the identity on the
 /// package route, which records no alias.
 #[derive(Clone, Eq)]
 pub struct TerminalModel {
     identity: String,
+    ordinal: usize,
     label: String,
 }
 
@@ -35,6 +37,7 @@ impl TerminalModel {
     pub fn new(identity: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
             identity: identity.into(),
+            ordinal: 0,
             label: label.into(),
         }
     }
@@ -44,8 +47,22 @@ impl TerminalModel {
         let name = name.into();
         Self {
             identity: name.clone(),
+            ordinal: 0,
             label: name,
         }
+    }
+
+    /// This declaration as the `ordinal`th of the identity's declarations
+    /// (FR-411): the order of the aliases that select the identity on the
+    /// source route, of the terminal rows on the package route.
+    pub fn with_ordinal(mut self, ordinal: usize) -> Self {
+        self.ordinal = ordinal;
+        self
+    }
+
+    /// The declaration's ordinal among its identity's declarations.
+    pub fn ordinal(&self) -> usize {
+        self.ordinal
     }
 
     /// The selection identity, the comparison key.
@@ -65,19 +82,21 @@ impl std::fmt::Debug for TerminalModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("TerminalModel")
             .field(&self.identity)
+            .field(&self.ordinal)
             .finish()
     }
 }
 
 impl PartialEq for TerminalModel {
     fn eq(&self, other: &Self) -> bool {
-        self.identity == other.identity
+        self.identity == other.identity && self.ordinal == other.ordinal
     }
 }
 
 impl std::hash::Hash for TerminalModel {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.identity.hash(state);
+        self.ordinal.hash(state);
     }
 }
 

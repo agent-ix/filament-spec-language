@@ -173,6 +173,9 @@ pub struct PackageTerminal<'p> {
     pub package: &'p str,
     /// The declaration's `temporal`/`terminal` node.
     pub node: filament_exact::NodeKey,
+    /// The declaration's ordinal among the declarations of models selecting
+    /// the same identity, in alias order (FR-411).
+    pub ordinal: usize,
     /// The declared name.
     pub name: &'p str,
     /// The declaration.
@@ -246,6 +249,7 @@ pub fn resolve_terminals(
         resolved.push(PackageTerminal {
             model: checked.model(),
             package: checked.package(),
+            ordinal: 0,
             node: found
                 .map(|node| node.node.clone())
                 .ok_or_else(|| disagrees(checked.model()))?,
@@ -256,6 +260,12 @@ pub fn resolve_terminals(
     // FR-940: both routes order the declarations by the model selection's
     // identity, so the first undefined or intended one is the same.
     resolved.sort_by(|left, right| (left.package, left.model).cmp(&(right.package, right.model)));
+    let mut ordinals = std::collections::BTreeMap::<&str, usize>::new();
+    for terminal in &mut resolved {
+        let ordinal = ordinals.entry(terminal.package).or_default();
+        terminal.ordinal = *ordinal;
+        *ordinal += 1;
+    }
     if let Some(orphan) = nodes.iter().find(|node| !claimed.contains(&node.node)) {
         return Err(disagrees(&orphan.node.to_string()));
     }

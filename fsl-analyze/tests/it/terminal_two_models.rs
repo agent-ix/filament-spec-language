@@ -383,3 +383,78 @@ fn an_undefined_terminal_of_two_models_runs_and_replays_as_on_the_source_route()
     );
     assert!(world.text.contains("model N"));
 }
+
+/// The Counter unit selecting `test/counter` as `M` and as `N`, with `body`.
+fn two_aliases(body: &str) -> (CheckedPackage, fsl_semantics::model::intake::PackageInput) {
+    use crate::counter::{document, unit_text_in, PACKAGE};
+    let doc = document(false);
+    let text = unit_text_in(PACKAGE, body).replace(
+        "model M = \"test/counter\";",
+        "model M = \"test/counter\";\nmodel N = \"test/counter\";",
+    );
+    let documents: [&[u8]; 1] = [&doc];
+    let graph = declarations(&documents, &text)
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("{text}: the unit checks: {refusals:?}"));
+    (
+        CheckedPackage::link(graph),
+        package_input(documents.iter().copied()).unwrap(),
+    )
+}
+
+/// FR-411 "Deadlock-freedom verdict join", FR-124: two aliases that select one
+/// package identity each declare a terminal. The source route keys the two
+/// declarations by (identity, ordinal), so neither replaces the other, and a
+/// request written under both is refused `TerminalDeclaration` over a package
+/// that carries only the first. A package cannot hold both today: emission
+/// writes two terminal nodes on the one model node and the strict reader
+/// refuses them `ambiguous-name` (the several-terminals-per-model-node rule is
+/// W80 / QSL-2558).
+#[trace("TC-1142", "FR-411-AC-5")]
+#[test]
+fn two_aliases_of_one_identity_keep_their_terminals_apart() {
+    let when = "terminal Done using v on M when { self.value = 3 };\n";
+    let any = "terminal Halt using v on N any;\n";
+    let (both, packages) = two_aliases(&format!("{when}{any}"));
+    let (only_first, _) = two_aliases(when);
+    let (only_second, _) = two_aliases(any);
+
+    let keys = both.graph().terminal_keys();
+    let first = only_first.graph().terminal_keys();
+    let second = only_second.graph().terminal_keys();
+    assert_ne!(keys, first, "the second alias's declaration is not dropped");
+    assert_ne!(keys, second, "the first alias's declaration is not dropped");
+    let refused = keys
+        .mismatch(&first)
+        .expect("the second declaration is missing");
+    assert_eq!(refused.model, "test/counter#1");
+    assert!(refused.requested.is_some());
+    assert_eq!(refused.recompiled, None);
+    assert_eq!(
+        keys.mismatch(&second)
+            .expect("the first declaration is missing")
+            .model,
+        "test/counter",
+        "the ordinals count the identity's declarations in alias order"
+    );
+    assert_eq!(
+        fsl_eval::simulation::model::ModelCheckInput::source(&both).terminal_keys(),
+        keys,
+        "the run's input keys its declarations as the graph does"
+    );
+
+    let emission = fsl_package::emit_checked(&both, EmitLimits::fixture()).expect("emits");
+    let admitted = fsl_package::admit_checked_package(
+        emission.package().bytes(),
+        &packages,
+        V2ReadLimits::fixture(),
+    );
+    assert!(
+        format!("{:?}", admitted.err()).contains("ambiguous-name"),
+        "a package cannot carry two terminal nodes on one model node"
+    );
+}
