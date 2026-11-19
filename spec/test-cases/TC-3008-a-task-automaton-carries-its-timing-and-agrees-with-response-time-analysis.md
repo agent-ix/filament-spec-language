@@ -44,7 +44,10 @@ with `t3` work 4; each task bound by `release S.τ on M::o;`. Every task has
    `queue_growth` and replay through the FR-237 `ModelTrace` entry. Replay
    each variant: the miss step's `deadline` 11; its `demand` 3; `deadline`
    11 on every `t3` job 0 step; `deadline` 81 on the loop's `activate` of
-   `t3` job 7; the last loop step removed; `loop` emptied. Rerun with the
+   `t3` job 7; the last loop step removed; `trace_position` on the following
+   `activate`; a `deadline-miss` of `t3` job 1 inserted into the loop at
+   elapsed 20; the loop replaced by one `terminal-stutter` step of delay 1;
+   `loop` emptied. Rerun with the
    `fire_*` operations declared in reverse order.
 4. Check `taskset Bad` whose task `p` has `periodic 0 ms`, then
    `periodic -4 ms`, each with `release Bad.p on M::o;`; analyze
@@ -78,7 +81,9 @@ Tag tests `#[trace("TC-3008", "FR-249-AC-7")]` to
   `invalid_runtime_input`/`invalid-value` at, in order,
   `/prefix/<miss>/transition/deadline`, `/prefix/<miss>/transition/demand`,
   the `activate` step's `/transition/deadline`,
-  `/loop/<j>/transition/deadline` and `/loop/<last>/post_state`; the
+  `/loop/<j>/transition/deadline`, `/loop/<last>/post_state`,
+  `/trace_position`, the inserted miss step's `/loop/<j>/transition` and
+  `/loop/0/transition`; the
   emptied loop is refused `malformed_wire` at `/loop`. No variant settles
   `refuted`.
 - Step 4: each check refuses `invalid_timed_model`/`invalid-task-set`

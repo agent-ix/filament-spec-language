@@ -65,7 +65,8 @@ a two-job preemption scenario, a mixed-criticality task with distinct
    destination) and the three-cycle finite `loop` in place of the witness.
 9. Analyze `SOnce` over the `Once` model of FR-249-AC-11 with `backend`
    `en-6`, replay its counterexample, then replay it with the stutter delay
-   0. Analyze the `OnceLocked` variant and its FR-417 time-lock item.
+   0, and replay the original record against the unguarded `OnceAgain`
+   variant. Analyze the `OnceLocked` variant and its FR-417 time-lock item.
 10. Rerun the FR-249-AC-9 claim of TC-3008 with
     `temporal.limits.max_task_product_work` set to the full run's expansion
     count at the miss node plus one (FR-249-AC-12).
@@ -106,7 +107,8 @@ evidence that the runtime provider implements the search semantics.
   `deadline-miss` of `s` job 0 at time 2 with `demand` 3 and `deadline` 2,
   the prefix ends with `complete` of `s` job 0 at time 3, and `loop` is one
   `terminal-stutter` step with positive delay that reproduces; the
-  zero-delay stutter refuses at `/loop/0/delay`. `OnceLocked` proves on the
+  zero-delay stutter refuses at `/loop/0/delay`, and the record over
+  `OnceAgain` refuses at `/loop/0/transition`. `OnceLocked` proves on the
   closed certificate with the miss node `locked`, and its time-lock item
   refutes.
 - Step 10: `incomplete`, `limit-reached{limit: work-limit}`, with

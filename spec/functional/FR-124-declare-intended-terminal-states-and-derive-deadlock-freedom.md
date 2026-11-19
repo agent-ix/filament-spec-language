@@ -29,7 +29,8 @@ A package SHALL declare the intended terminal states of a state model with a
 alias (ADR-018 DL-1). Two aliases that select one model identity may each
 carry one, and both are in force. The request writer SHALL add one derived
 deadlock-freedom item for each distinct model subject among a request's
-temporal items, unless the package carries a `terminal any` declaration
+temporal items, unless the subject's model carries a `terminal any`
+declaration on any of its aliases
 (ADR-018 DL-3). The item is checked like a reachable-state invariant
 (TP-1) whose predicate `deadlocked` is derived, not authored (ADR-018 DL-2).
 
@@ -138,8 +139,13 @@ when` and `terminal any` follow ADR-018 DL-1 and are illustrative.
 - The deadlock classifier SHALL classify a state of a subject as
   **terminal** when no transition identity is enabled at it, which is when
   FR-120's successor relation gives it no successor (ADR-018 FA-2, DL-2).
-- The deadlock classifier SHALL read every `terminal` declaration of the
-  package (FSpec FR-366 "Several declarations"). Each declaration reads a
+- The deadlock classifier SHALL read every `terminal` declaration on the
+  subject's model, the declarations of every alias that selects the model
+  identity the subject reads (FSpec FR-366 "Several declarations"), and no
+  declaration of another model: a subject reads one model selection (FSpec
+  FR-361), another model's predicate is not a predicate over its state, and
+  a derived item over a package with several model roots is `unsupported`
+  (FSpec FR-368-AC-22). Each declaration reads a
   terminal state as intending it (`Any`, or `When(P)` with `P` `true` at
   the state's observation by FR-107), not intending it (`P` `false`),
   `Undefined`, or refused (the evaluation of `P` is refused, so its value is
@@ -149,16 +155,16 @@ when` and `terminal any` follow ADR-018 DL-1 and are illustrative.
   least one is refused, since that declaration may intend it; otherwise as
   neither intended nor deadlocked when at least one is `Undefined`;
   otherwise, and with no declaration, as **deadlocked**. The class SHALL NOT
-  depend on the order in which the declarations are read, the model
-  selection identities or the aliases.
+  depend on the order in which the declarations are read or on the
+  aliases.
 - An undecided state settles the item `inconclusive`, cause
   `undecided-successor` (ADR-018 V-6). An `Undefined` state makes the
   deadlock-freedom item's letter at that state undefined: the item settles
   `refuted` with cause `UndefinedEvaluation{where, cause}` (ADR-018 UE-1,
   FR-126).
-- The classifier SHALL read the declarations in FSpec FR-476 terminal row
-  order (by model selection identity, then terminal node key, then `claim`
-  occurrence ordinal) on both routes, and an undecided or `Undefined`
+- The classifier SHALL read the model's declarations in FSpec FR-476
+  terminal row order (terminal node key, then `claim` occurrence ordinal)
+  on both routes, and an undecided or `Undefined`
   report SHALL name the first refused or `Undefined` declaration in that
   order, by its terminal key (selection identity, ordinal), with its first
   undefined cause. The source route SHALL compute that order from the
@@ -175,9 +181,10 @@ when` and `terminal any` follow ADR-018 DL-1 and are illustrative.
 - The request writer SHALL add one `DeadlockFreedom` item per distinct model
   subject among the request's temporal items, so two items over equal
   subjects share one deadlock-freedom item.
-- When the package carries a `terminal any` declaration on any of its
-  models, the request writer SHALL add no deadlock-freedom item for the
-  subject, since every terminal state is then intended.
+- When the subject's model carries a `terminal any` declaration on any of
+  its aliases, the request writer SHALL add no deadlock-freedom item for the
+  subject, since every terminal state is then intended. A `terminal any` on
+  another model does not reach this subject.
 - The request writer SHALL give the item the subject and the property
   `always holds(not deadlocked)`, routed, negotiated and settled as a
   `ReachableInvariant` item (FR-126, FR-127).
@@ -199,7 +206,7 @@ when` and `terminal any` follow ADR-018 DL-1 and are illustrative.
 | FR-124-AC-8 | In the AC-5 model with universe `{}`, the single state is terminal and intended under `terminal Done using v on M when { self.value = 3 };`; in the AC-5 model with universe `{c1}`, `terminal Done using v on M when { exists(c in M::counters : c.value = 3) };` is evaluated once at each terminal state: with universe `{c1}` and `c1.value = 3` the terminal state is intended, and with universe `{}` it is false there, so the state is deadlocked. | Test (TC-519) |
 | FR-124-AC-9 | In a model with one object type `Counter` covered by two populations, `counters` and `archive`, `terminal Done using v on M when { self.value = 3 };` refuses `ambiguous_declaration`/`ambiguous-name` at `self`, naming `archive` and `counters`; the same predicate written `forall(c in M::counters : c.value = 3)` checks to `When`. In a model with `Counter` in `counters` and `archive` and `Gate` in `gates` (several object types), `self.value = 3` refuses `missing_declaration`/`missing-name` at `self`. | Test (TC-519) |
 | FR-124-AC-10 | In the AC-5 model with no operations and `terminal Done using v on M when { 3 mod (2 - self.value) = 1 or self.value = 3 };` (true at 0 and 3, false at 1, undefined at 2), universe `{c1, c2}`: with `c1.value = 2` and `c2.value = 1` the terminal state is deadlocked (one object false, one `Undefined`); with `c1.value = 2` and `c2.value = 3` it is neither intended nor deadlocked and the deadlock-freedom item settles `refuted` with cause `UndefinedEvaluation`; with `c1.value = 0` and `c2.value = 3` it is intended. | Test (TC-519) |
-| FR-124-AC-11 | Over FSpec FR-366-AC-12's unit (`V` selects `test/vault`, `N` selects `test/vault-other`, each vault terminal at `l = 1`, `q(x)` is `6 mod x`), on the source route and on the package route, with equal results: `terminal Done using v on V when { q(1 - self.l) = 0 };` (undefined at `l = 1`) with `terminal Halt using v on N any;` classifies the terminal state intended and the request carries no deadlock-freedom item, and so does the pair with `Done` on `N` and `Halt` on `V`; `Done` on `V` with `terminal Stop using v on N when { false };` settles the item `refuted`, `UndefinedEvaluation`, naming the declaration keyed (`test/vault`, 0) with label `V`, and `Stop` on `V` with `Done` on `N` names (`test/vault-other`, 0) with label `N`; `Done` on `V` with `N`'s `when { self.l = 1 }` evaluated under an evaluation meter too small for it (refused) settles `inconclusive`, `undecided-successor`, naming (`test/vault-other`, 0). With `model M = "test/vault"; model N = "test/vault";`, `terminal Done using v on M when { self.l = 1 };` and `terminal Stop using v on N when { false };` both check (no `ambiguous-name`), the package carries two terminal nodes on one model node, and the item settles `proved`; swapping the two `model` lines or the two declarations leaves the package and every report equal. `terminal Done using v on V when { true };` intends every terminal state on both routes. | Test (TC-519) |
+| FR-124-AC-11 | On the source route and on the package route, with equal results. A unit selects one model identity under two aliases `M` and `N`; its one object `v` steps `l` from 0 to 1, so the state at `l = 1` is terminal; `q(x)` is `6 mod x`. `terminal Done using v on M when { q(1 - self.l) = 0 };` (undefined at `l = 1`) with `terminal Stop using v on N when { true };` checks (no `ambiguous-name`), the package carries two terminal nodes on the one model node, and the item settles `proved`, also with `Done` on `N` and `Stop` on `M`. `Done` on `M` with `terminal Stop using v on N when { false };` settles `refuted`, `UndefinedEvaluation`, naming `Done`'s terminal key (the identity, `Done`'s ordinal in terminal node key order) with label `M`; with the placements swapped it names the same key with label `N`. `Done` with `terminal Halt using v on N any;` writes no deadlock-freedom item. Swapping the two `model` lines or the two declarations leaves the semantic graph (node ids and bodies), the terminal rows and every report equal. Over FR-380-AC-7's model with no operations (population `PM` bounded `[1]`, universe `{a, b}`, so the initial state is terminal and every read of `M::PM` is refused `cardinality_out_of_bound`/`above-maximum` by the kernel), selected by `M` and `N`: `terminal Done using v on M when { exists(p in M::PM : true) };` with `terminal Stop using v on N when { false };` settles `inconclusive`, `undecided-successor`, naming `Done`'s key, and with `Stop` written `when { true }` settles `proved`. A unit whose aliases select two identities, `test/vault` and `test/vault-other`, gets no deadlock-freedom request item (`unsupported`, FSpec FR-368-AC-22) whatever its declarations. `terminal Done using v on M when { true };` alone intends every terminal state on both routes. | Test (TC-519) |
 
 ## Dependencies
 

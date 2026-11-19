@@ -48,12 +48,13 @@ exactly when every counter is at 3, and `terminal any`.
 9. In the one-type model with no operations, classify the terminal state under
    `terminal Done using v on M when { 3 mod (2 - self.value) = 1 or self.value = 3 };` for
    `c1.value`, `c2.value` of 2 and 1, 2 and 3, and 0 and 3.
-10. Over FSpec FR-366-AC-12's two-vault unit, run each declaration pair of
-    FR-124-AC-11 on the source route and on the package route: undefined
-    `Done` with `any`, in both placements; `Done` with `when { false }`, in
-    both placements; `Done` with a meter-refused `when { self.l = 1 }` on
-    `N`; then the one-identity unit with `M` and `N`, in both alias-line
-    orders and both declaration orders; then `when { true }` alone.
+10. On the source route and on the package route, run each case of
+    FR-124-AC-11: the one-identity vault unit under `M` and `N` with the
+    undefined `Done` and `Stop` `when { true }` and `when { false }` in both
+    placements, and with `Halt` `any`; the swaps of the two `model` lines
+    and of the two declarations; FR-380-AC-7's bounded `PM` model under `M`
+    and `N` with the kernel-refused `Done` and `Stop` `when { false }`, then
+    `when { true }`; the two-identity unit; then `when { true }` alone.
 
 Tag the tests `#[trace("TC-519", "FR-124-AC-n")]`.
 
@@ -83,11 +84,11 @@ Tag the tests `#[trace("TC-519", "FR-124-AC-n")]`.
   `missing-name` at `self` in the model with `Gate`.
 - Step 9: deadlocked; neither intended nor deadlocked, item `refuted` with
   `UndefinedEvaluation`; intended.
-- Step 10: both routes agree in every case. `any` with undefined `Done`:
-  intended, no deadlock-freedom item, in both placements. `Done` with
-  `when { false }`: `refuted`, `UndefinedEvaluation`, naming (`test/vault`,
-  0) label `V`, or (`test/vault-other`, 0) label `N`. Meter-refused
-  declaration: `inconclusive`, `undecided-successor`, naming
-  (`test/vault-other`, 0). One identity: both declarations check, two
-  terminal nodes on one model node, `proved`, equal under every swap.
-  `when { true }`: every terminal state intended.
+- Step 10: both routes agree in every case. Undefined `Done` with
+  `when { true }`: two terminal nodes on one model node, `proved`, in both
+  placements. With `when { false }`: `refuted`, `UndefinedEvaluation`,
+  naming `Done`'s key, label `M` or `N` by placement. With `any`: no item.
+  Swaps: equal semantic graph, rows and reports. Kernel-refused `Done`:
+  `inconclusive`, `undecided-successor`, naming `Done`'s key; with
+  `when { true }`: `proved`. Two identities: `unsupported`, no request item.
+  `when { true }` alone: every terminal state intended.

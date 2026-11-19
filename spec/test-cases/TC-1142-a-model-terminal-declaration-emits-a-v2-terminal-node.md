@@ -105,4 +105,5 @@ backs.
   both routes; one node with two `claim` occurrences for `any` on both;
   `terminals` is one entry for `test/vault` listing both keys; `proved`;
   the `Stop`-removed run refuses `TerminalDeclaration` naming `test/vault`
-  and the two lists; each swap leaves package and `terminals` equal.
+  and the two lists; each swap leaves the semantic graph (node ids and bodies) and
+  `terminals` equal.
