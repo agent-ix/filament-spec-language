@@ -898,6 +898,7 @@ fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
         json!({"models": models, "items": [{"claim": "Saves"}]}),
     ));
     let item = run.item(0);
+    assert!(item.is_object(), "analyzed item is present: {}", run.document());
     assert_ne!(
         item["record"]["diagnostic"]["cause"], "not-yet-implemented",
         "{item}"
