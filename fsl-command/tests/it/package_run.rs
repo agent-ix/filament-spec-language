@@ -319,11 +319,12 @@ fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
     let mut unit = crate::config_version_spine::spine::unit_text();
     unit = unit.replace(
         "profile v = \"filament.model.complete/v1\";",
-        "profile v = \"filament.model.complete/v1\";\nimport \"test/lib\" as library;",
+        "profile v = \"filament.model.complete/v1\";\n\
+         profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         import \"test/lib\" as library;",
     );
     unit.push_str(
-        "profile inf = \"filament.temporal.infinite-trace/v1\";\n\
-         enum Mode { On, Off }\n\
+        "enum Mode { On, Off }\n\
          record Pair { left: Integer; right: Integer; }\n\
          temporal Canonical using inf over (x: Config::ConfigVersion) clock \"model-steps\" on origin { always (holds(if library::positive(x.versionNumber) then contains(set[1, 2], 1) else Mode::On = Mode::On) and holds(Pair{left: 1, right: 2} = Pair{left: 1, right: 2})) }\n",
     );
