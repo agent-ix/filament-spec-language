@@ -480,7 +480,7 @@ pub(crate) fn braking_request(directory: &Path, member: Value) -> PathBuf {
 }
 
 /// An export of `SlowEnough` that assembles: `member` over the defaults.
-fn braking_member() -> Value {
+pub(crate) fn braking_member() -> Value {
     json!({"profile": "filament.output.tla2/v1", "obligations": ["SlowEnough"],
         "minimum_fidelity": "any"})
 }

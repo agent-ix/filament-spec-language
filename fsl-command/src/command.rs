@@ -710,6 +710,16 @@ pub enum RunCause {
         /// The existing output path.
         path: PathBuf,
     },
+    /// FSpec FR-817 / FR-286: the export was made but its file could not be
+    /// written: an output failure after S4.
+    #[error("cannot write the export to {path}: {error}")]
+    ExportOutput {
+        /// The file the export was to create.
+        path: PathBuf,
+        /// Original operating-system error.
+        #[source]
+        error: io::Error,
+    },
     /// FSpec FR-817: the export mapper failed on a construct it does not lower.
     #[error("the export mapper does not lower {construct}: {reason}")]
     ExportMapper {
@@ -1044,7 +1054,9 @@ impl RunCause {
             | Self::OutputExists { .. } => Code::InvalidRequest,
             Self::ExportMapper { .. } => Code::RuntimeInvariant,
             Self::ExportRequest { .. } => Code::InvalidRuntimeInput,
-            Self::Output(_) | Self::ClauseOutput(_) => Code::OutputFailure,
+            Self::Output(_) | Self::ClauseOutput(_) | Self::ExportOutput { .. } => {
+                Code::OutputFailure
+            }
             Self::Format => Code::UnknownWire,
             Self::Limit(_) => Code::ResourceExhausted,
             Self::Identifier { .. } => Code::InvalidIdentifier,
@@ -1116,7 +1128,10 @@ impl RunCause {
     /// failure at S6a"); every other cause takes its code's category.
     pub fn category(&self) -> filament_semantic_value::catalog::Category {
         match self {
-            Self::Output(_) | Self::ClauseOutput(_) | Self::TlFault(_) => {
+            Self::Output(_)
+            | Self::ClauseOutput(_)
+            | Self::ExportOutput { .. }
+            | Self::TlFault(_) => {
                 filament_semantic_value::catalog::Category::InternalFailure
             }
             Self::SpineRun(refusal) => refusal.category(),
@@ -1209,13 +1224,13 @@ impl RunError {
                 OutcomeDocument::new(operation, None, self.category())
                     .with_diagnostics(vec![projected])
             }
-            RunCause::ExportMapper { .. } => OutcomeDocument::new(
+            RunCause::ExportMapper { .. } | RunCause::ExportOutput { .. } => OutcomeDocument::new(
                 operation,
                 Some(fsl_replay::OutcomeStage::S4),
                 self.category(),
             )
             .with_diagnostics(vec![OutcomeDiagnostic::new(
-                None,
+                matches!(self.cause, RunCause::ExportOutput { .. }).then_some("output-failure"),
                 self.cause.code().as_str(),
                 None,
                 self.outcome_message(),

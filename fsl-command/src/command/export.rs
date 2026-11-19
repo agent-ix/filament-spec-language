@@ -127,9 +127,6 @@ pub(super) fn run_bytes(
         .map(|limits| limits.export)
         .unwrap_or_default();
     let request = request::read(&member, &given)?;
-    if let Some(observer) = &request.observer {
-        return Ok(Some(unsupported_observer(&request, observer)));
-    }
     for name in ["output", "handoff"] {
         if body.contains_key(name) {
             return Err(RunCause::ClauseRequest {
@@ -140,6 +137,13 @@ pub(super) fn run_bytes(
         }
     }
     let output = target_path(directory, &request, overrides)?;
+    if let Some(observer) = &request.observer {
+        return Ok(Some(unsupported_observer(
+            &request,
+            observer,
+            output.as_deref(),
+        )));
+    }
     document["format"] = json!(fsl_foundation::wire_format::WireFormat::CompileRequest.as_str());
     let compile = serde_json::to_vec(&document).map_err(RunCause::Output)?;
     let compile: wire::CompileRequest = super::request(&compile)?;
@@ -148,12 +152,12 @@ pub(super) fn run_bytes(
 }
 
 /// A valid `observer` this build cannot run (FSpec FR-817): `unsupported`,
-/// raised after the request is read and before any stage, so `last_stage` is
-/// null and no limit, floor or file applies.
-fn unsupported_observer(request: &Request, observer: &str) -> RunResult {
+/// raised after the request is read and its output path admitted, and before
+/// any stage, so `last_stage` is null and no limit, floor or file applies.
+fn unsupported_observer(request: &Request, observer: &str, output: Option<&Path>) -> RunResult {
     let path = "/request/export/observer";
     let reason = format!("observer `{observer}` is not run by this build");
-    let export = json!({
+    let mut export = json!({
         "format": "filament.export-outcome/v1",
         "mapping_profile_id": request.target.profile(),
         "target_family": request.target.family(),
@@ -168,6 +172,9 @@ fn unsupported_observer(request: &Request, observer: &str) -> RunResult {
             "details": {"path": path},
         },
     });
+    if let Some(named) = output_name(request, output) {
+        export["output"] = json!({"path": named, "bytes_written": 0});
+    }
     let document = OutcomeDocument::new(fsl_replay::Operation::Export, None, Category::Unsupported)
         .with_export(export.clone())
         .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
@@ -187,6 +194,15 @@ fn unsupported_observer(request: &Request, observer: &str) -> RunResult {
         requirements: None,
         sources: crate::Sources::default(),
     }
+}
+
+/// The path the outcome's `output` member names: the member's spelling, else
+/// the caller's path.
+fn output_name(request: &Request, output: Option<&Path>) -> Option<String> {
+    request
+        .output
+        .clone()
+        .or_else(|| output.map(|path| path.display().to_string()))
 }
 
 /// The file the export writes: the member's, the caller's, or none. A path
@@ -365,16 +381,19 @@ fn finish(
     let written = match (mapped, category) {
         (Mapped::Assembled { text, .. }, Category::Success) => {
             if let Some(path) = output {
-                output_file::write_new_file(path, text.as_bytes())?;
+                output_file::write_new_file(path, text.as_bytes()).map_err(
+                    |cause| match cause {
+                        RunCause::Io { path, error } => RunCause::ExportOutput { path, error },
+                        other => other,
+                    },
+                )?;
             }
             text.len()
         }
         _ => 0,
     };
-    if let Some(named) = &request.output {
+    if let Some(named) = output_name(request, output) {
         export["output"] = json!({"path": named, "bytes_written": written});
-    } else if let Some(path) = output {
-        export["output"] = json!({"path": path.display().to_string(), "bytes_written": written});
     }
     let document = OutcomeDocument::new(
         fsl_replay::Operation::Export,

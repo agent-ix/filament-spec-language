@@ -3,7 +3,7 @@
 //! obligation this build does not lower is a mapper failure, never a record,
 //! a package or a file; the `initial` member is checked.
 
-use crate::plan_export_surface::{counter_request, outcome_json};
+use crate::plan_export_surface::{braking_member, braking_request, counter_request, outcome_json};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -99,4 +99,83 @@ fn the_initial_member_must_name_a_snapshot() {
     let value = error.value().unwrap();
     names(&value, "/request/export/initial");
     assert!(!directory.path().join("counter.tla").exists());
+}
+
+fn observer_member(file: Option<&str>) -> Value {
+    let mut member = braking_member();
+    member["observer"] = json!("tlc");
+    if let Some(file) = file {
+        member["output"] = json!({"file": file});
+    }
+    member
+}
+
+/// An unsupported observer names the requested output file with no bytes
+/// written, and still raises its refusal ahead of any compile.
+#[test]
+fn an_unsupported_observer_names_its_output_with_no_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = braking_request(directory.path(), observer_member(Some("m.tla")));
+    let result = fsl_command::command::run(&path, &crate::negotiation::Fr290).expect("a result");
+    assert_eq!(result.exit_code, 21);
+    let value: Value = serde_json::from_str(&result.value.to_string()).unwrap();
+    assert_eq!(
+        value["export"]["output"],
+        json!({"path": "m.tla", "bytes_written": 0}),
+        "{value}"
+    );
+    assert!(!directory.path().join("m.tla").exists());
+}
+
+/// The output-path admission refusals win over an unsupported observer:
+/// an existing path, and a member plus an override, are exit 20.
+#[test]
+fn output_admission_refusals_precede_the_observer_refusal() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = braking_request(directory.path(), observer_member(Some("m.tla")));
+    std::fs::write(directory.path().join("m.tla"), b"old").unwrap();
+    let error = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+        .expect_err("an existing path refuses");
+    assert_eq!(error.category().exit_code(), 20);
+    names(&error.value().unwrap(), "invalid-request");
+    assert_eq!(
+        std::fs::read(directory.path().join("m.tla")).unwrap(),
+        b"old"
+    );
+    let document = outcome_json(&error.outcome_document(fsl_replay::Operation::Export));
+    assert_eq!(document["last_stage"], Value::Null, "{document}");
+
+    let fresh = tempfile::tempdir().unwrap();
+    let path = braking_request(fresh.path(), observer_member(Some("m.tla")));
+    let other = fresh.path().join("other.tla");
+    let overrides = fsl_command::command::RequestOverrides {
+        output: Some(&other),
+        ..Default::default()
+    };
+    let error =
+        fsl_command::command::run_with_overrides(&path, &overrides, &crate::negotiation::Fr290)
+            .expect_err("a doubled output refuses");
+    assert_eq!(error.category().exit_code(), 20);
+    names(&error.value().unwrap(), "invalid-request");
+    assert!(!other.exists());
+}
+
+/// FR-286: a file that cannot be written after a successful export is an
+/// output failure (exit 30) whose `last_stage` is the stage the export
+/// reached.
+#[test]
+fn a_file_that_cannot_be_written_is_an_output_failure_after_s4() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut member = braking_member();
+    member["output"] = json!({"file": "missing-directory/m.tla"});
+    let path = braking_request(directory.path(), member);
+    let error = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+        .expect_err("an unwritable path fails");
+    assert_eq!(error.category().exit_code(), 30);
+    let value = error.value().unwrap();
+    assert_eq!(value["code"], "output-failure", "{value}");
+    assert_eq!(value["cause"], "output-failure", "{value}");
+    assert_eq!(value["stage"], "emit", "{value}");
+    let document = outcome_json(&error.outcome_document(fsl_replay::Operation::Export));
+    assert_eq!(document["last_stage"], "S4", "{document}");
 }

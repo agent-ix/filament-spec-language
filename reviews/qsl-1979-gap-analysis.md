@@ -66,6 +66,12 @@ Round 1, head d0b22461599864133bc136765ba904d34a4b10ed. The focused run of expor
 
 Round 2, head 94d3a82647b51c8eac60a9316f8f98aa04533076. Focused run (export_surface::, plan_export_surface::, export_rulings::, --test-threads=1, house skips): 20 passed, 38 ignored. FR-1015-AC-9..13 stubs are un-ignored and pass.
 
+Round 3, head dcd70c8d0527b009437d513a39fecf34338417a8. Focused run: 20 passed, 38 ignored.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-007 | fixed | `an_observer_the_build_cannot_run_is_unsupported` now asserts no file at `m.tla`, `last_stage` null and `diagnostics[0].details.path` `/request/export/observer`, and it adds the unknown-observer `invalid-value` case |
+
 ## New findings (disposition pass 2)
 
 | ID | Severity | Summary | Refs |

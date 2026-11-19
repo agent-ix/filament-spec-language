@@ -102,9 +102,23 @@ Round 1, head d0b22461599864133bc136765ba904d34a4b10ed (fix commit d0b224615 on 
 
 Round 2, head 94d3a82647b51c8eac60a9316f8f98aa04533076 (fix commit 94d3a8264 on merge a740f2a16). Verified by code reading, the focused tests (20 passed) and a temporary reviewer probe (never committed). Round-2 rows cover only findings whose latest outcome was still-open or deferred.
 
+Round 3, head dcd70c8d0527b009437d513a39fecf34338417a8 (fix commit dcd70c8d0). Verified by code reading, the focused tests (20 passed) and a temporary reviewer probe (never committed). The `RunCause::Io` message now reads "cannot access {path}", which covers a write failure; no test asserts the old wording.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-014 | fixed | The observer refusal is now raised in `run_bytes` right after `request::read`, before any stage. `last_stage` is null, the refusal and an outcome diagnostic carry `details` `{"path": "/request/export/observer"}`, there is no package and no file (probe X1; asserted in `an_observer_the_build_cannot_run_is_unsupported`) |
+| FND-015 | fixed | `observer` must be one of `sany`/`tlc`/`apalache`/`lean`; any other name refuses `invalid_runtime_input`/`invalid-value` at `/request/export/observer`, exit 20 (test case `coq`) |
+
 ## New findings (disposition pass 2)
 
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-014 | medium | The unsupported-observer refusal does not match W61 FR-1015 Behavior in two ways. It writes `last_stage` `S4` (probe O1), where Behavior says "`last_stage` null" and places the refusal "after admission and before classification". The check runs inside the `check_sources` closure, after S1 to S4 compile and packaging, and `finish()` always stamps S4. It also carries no `details` `{"path": "/request/export/observer"}`, which Behavior requires; the refusal object has `capability`/`observer`/`reason` only, and the outcome has no diagnostic. Moving the check ahead of the compile (right after `request::read`) would give a null `last_stage` and avoid a wasted compile | fsl-command/src/command/export.rs:286-290,327-338 |
 | FND-015 | low | `observer` is not checked against FSpec FR-817's four structural observers (`sany`, `tlc`, `apalache`, `lean`). `"observer": "bogus"` is refused `unsupported-requested-capability`, exit 21 (probe O2), so a misspelt name reads as a missing build capability rather than a malformed member (`invalid_runtime_input`/`invalid-value`, exit 20). Behavior says the member "names one of" the four | fsl-command/src/command/export/request.rs:193 |
+
+## New findings (disposition pass 3)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-016 | medium | The observer refusal now runs before the admission refusals that FR-286 "Export outcomes" lists as exit 20. W61 says the observer refusal "comes after admission", but an observer request whose output path already exists, or that names both `export.output` and the `--output` override, now exits 21 `unsupported-requested-capability` instead of exit 20 `invalid-request` (probes X2, X3). The `output`/`handoff` compile-member refusal is pre-empted the same way. Moving the check below `target_path` keeps `last_stage` null and restores the admission order | fsl-command/src/command/export.rs:129-143 |
+| FND-017 | low | The observer refusal outcome has no `output` member although the request named one (probe X1). FSpec FR-817 says `output` is present exactly when an output file was named, with `bytes_written` `0` when none was written, and round 2's refusal carried it. `unsupported_observer` builds the document without it | fsl-command/src/command/export.rs:150-190 |

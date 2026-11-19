@@ -202,7 +202,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 },
             },
         ),
-        RunCause::ExportMapper { .. } => (
+        RunCause::ExportMapper { .. } | RunCause::ExportOutput { .. } => (
             types::Stage::Spine(fsl_replay::spine::SpineStage::Emit),
             types::Details::None,
         ),
@@ -383,6 +383,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 _ => None,
             },
             RunCause::ExportRequest { cause, .. } => Some(*cause),
+            RunCause::ExportOutput { .. } => Some("output-failure"),
             RunCause::TemporalCorrection(_) => Some("invalid-value"),
             RunCause::TlCorrespondence { .. } | RunCause::IntegerDivisionLaw { .. } => {
                 Some("unsupported-selection")
