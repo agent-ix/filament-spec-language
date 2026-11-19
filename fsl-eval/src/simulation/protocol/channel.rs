@@ -198,6 +198,17 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         if let Some(pending) = instance.pending_sends.get(&(path.clone(), node)) {
             let payload = pending.payload.clone();
             let remaining = pending.remaining;
+            if !self.related_admits(
+                instance,
+                path,
+                node,
+                Some(message.record.slot),
+                Some(&payload),
+                &state.model,
+                &mut gathered.findings,
+            )? {
+                return Ok(());
+            }
             let message_occurrence = pending.message.clone();
             let next_delivery = resume_delivery_index(
                 pending.next_delivery,
@@ -248,6 +259,17 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 message.record.constraint,
                 message.record.slot,
                 &payload,
+                &state.model,
+                &mut gathered.findings,
+            )? {
+                continue;
+            }
+            if !self.related_admits(
+                instance,
+                path,
+                node,
+                Some(message.record.slot),
+                Some(&payload),
                 &state.model,
                 &mut gathered.findings,
             )? {
@@ -641,6 +663,17 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 message.record.constraint,
                 message.record.slot,
                 &entry.payload,
+                &state.model,
+                &mut gathered.findings,
+            )? {
+                continue;
+            }
+            if !self.related_admits(
+                instance,
+                path,
+                node,
+                Some(message.record.slot),
+                Some(&entry.payload),
                 &state.model,
                 &mut gathered.findings,
             )? {

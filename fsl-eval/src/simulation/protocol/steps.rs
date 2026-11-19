@@ -827,13 +827,13 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
 
     /// Whether every checked relationship premise holds for this candidate
     /// event binding in the same observed state as its constraint (FR-731).
-    fn related_admits(
+    pub(super) fn related_admits(
         &self,
         instance: &Instance,
         path: &ThreadPath,
         node: ProtocolNodeId,
-        slot: usize,
-        record: &Value,
+        slot: Option<usize>,
+        record: Option<&Value>,
         observed: &ModelSimState,
         findings: &mut Vec<ModelFinding>,
     ) -> Result<bool, ExpansionStop> {
@@ -844,8 +844,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         let observation = self.model.observation_of(observed)?;
         for clause in clauses {
             let mut frame = self.frame(instance, path, node);
-            if let Some(entry) = frame.get_mut(slot) {
-                *entry = Some(record.clone());
+            if let (Some(slot), Some(record)) = (slot, record) {
+                if let Some(entry) = frame.get_mut(slot) {
+                    *entry = Some(record.clone());
+                }
             }
             let first = self.evaluate_value_in(clause.ends[0], frame.clone(), &observation)?;
             let second = self.evaluate_value_in(clause.ends[1], frame, &observation)?;
@@ -1037,7 +1039,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     },
                     record.constraint,
                     record.slot,
-                    &value,
+                    Some(&value),
                     &observed,
                     &mut gathered.findings,
                 )? {
@@ -1047,8 +1049,8 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     instance,
                     path,
                     node,
-                    record.slot,
-                    &value,
+                    Some(record.slot),
+                    Some(&value),
                     &observed,
                     &mut gathered.findings,
                 )? {
@@ -1793,6 +1795,17 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         continue;
                     }
                 }
+            }
+            if !self.related_admits(
+                instance,
+                path,
+                node,
+                self.program.binder_of.get(&node).copied(),
+                bound.as_ref().and_then(|bound| bound.value.as_ref()),
+                observed.state(),
+                &mut gathered.findings,
+            )? {
+                continue;
             }
             // ST-1 binds every attempt binder to the record (receiver,
             // arguments, result). With no result of the binder's type the
