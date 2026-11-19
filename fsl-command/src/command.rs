@@ -3831,7 +3831,20 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
             },
             &call_cancel,
         ),
-        (None, _) => fsl_replay::spine::run(
+        (None, Some(integer_division)) => fsl_replay::spine::run_with_integer_division(
+            source.source().identity().clone(),
+            package_name(source.source().identity()),
+            source.source().path(),
+            source.source().text().as_bytes(),
+            &prepared.packages,
+            &prepared.dependencies,
+            fsl_replay::spine::SpineLimits::default(),
+            &prepared.call,
+            &objects,
+            integer_division,
+            &call_cancel,
+        ),
+        (None, None) => fsl_replay::spine::run(
             source.source().identity().clone(),
             package_name(source.source().identity()),
             source.source().path(),

@@ -686,6 +686,41 @@ pub fn run(
     )
 }
 
+/// Compile and run `bytes` with a caller-selected integer-division law
+/// (FR-767), without supplying an extension profile catalog.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "FR-100 run inputs plus the request-owned integer-division selection are explicit"
+)]
+pub fn run_with_integer_division(
+    source: SourceIdentity,
+    package_name: String,
+    path: &str,
+    bytes: &[u8],
+    packages: &fsl_semantics::model::intake::PackageInput,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    integer_division: crate::AdmittedIntegerDivision,
+    cancel: &Cancel,
+) -> Result<CallOutcome, Box<RunRefusal>> {
+    run_with_optional_profile_catalog(
+        source,
+        package_name,
+        path,
+        bytes,
+        packages,
+        dependencies,
+        limits,
+        call,
+        objects,
+        None,
+        Some(integer_division),
+        cancel,
+    )
+}
+
 /// Compile and run `bytes` with request-supplied extension definitions.
 #[allow(
     clippy::too_many_arguments,
