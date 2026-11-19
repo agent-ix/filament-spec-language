@@ -278,6 +278,8 @@ pub(super) struct Program<'a> {
     pub(super) finish: Finish<'a>,
     /// Each binder slot's node, `None` for the `over` input.
     pub(super) slots: Vec<Option<ProtocolNodeId>>,
+    /// Package binder node ids aligned to `slots`, `None` on the source route.
+    pub(super) package_binders: Vec<Option<fsl_package::CheckedNodeId>>,
     /// Each binder slot's readers.
     pub(super) readers: Vec<BTreeSet<ProtocolNodeId>>,
     /// The binder slot of each node that has one.
@@ -522,6 +524,7 @@ impl<'a> Program<'a> {
         if readers.len() != slots.len() {
             return Err(ProtocolRefusal::fault("readers-align-with-binders"));
         }
+        let package_binders = vec![None; slots.len()];
         // Slot 0 is the `over` input. Any other binder with no node (the
         // activation binder, a capture) has no value this system binds, so a
         // slot that reads one is refused before any state is built.
@@ -854,6 +857,7 @@ impl<'a> Program<'a> {
             channels,
             finish,
             slots,
+            package_binders,
             readers,
             binder_of,
             binder_types: protocol
@@ -935,12 +939,28 @@ impl<'a> Program<'a> {
         }
 
         let mut attempts = BTreeMap::new();
+        let mut slots = vec![None];
+        let mut package_binders = vec![Some(package.over.clone())];
+        let mut binder_types = vec![package.over_type.clone()];
+        let mut binder_of = BTreeMap::new();
         for control in package.controls.values().filter(|control| {
             control.operation == fsl_package::protocol_view::ControlOperation::Attempt
         }) {
             let operation = package
                 .operation_ref(control.id)
                 .map_err(|_| ProtocolRefusal::fault("a-package-attempt-resolves"))?;
+            let binds = if let (Some(binder), Some(binder_type)) =
+                (&control.binder, &control.binder_type)
+            {
+                let slot = slots.len();
+                slots.push(Some(control.id));
+                package_binders.push(Some(binder.clone()));
+                binder_types.push(binder_type.clone());
+                binder_of.insert(control.id, slot);
+                Some(slot)
+            } else {
+                None
+            };
             attempts.insert(
                 control.id,
                 Attempt {
@@ -949,7 +969,7 @@ impl<'a> Program<'a> {
                     receiver: operation.receiver,
                     contracts: std::sync::Arc::new(control.contract_keys.iter().cloned().collect()),
                     constraint: None,
-                    binds: None,
+                    binds,
                 },
             );
         }
@@ -982,12 +1002,22 @@ impl<'a> Program<'a> {
                 .unwrap_or(0)
                 .saturating_add(1),
         );
+        let finish_slot = slots.len();
+        slots.push(None);
+        package_binders.push(Some(package.finish_binder.clone()));
+        binder_types.push(package.finish_binder_type.clone());
         let finish = Finish {
             node: finish_node,
             text: format!("{}::finish", package.name),
             constraint: None,
-            binder: (1, ValueType::Boolean),
+            binder: (finish_slot, package.finish_binder_type.clone()),
         };
+        let reader_nodes: BTreeSet<_> = attempts
+            .keys()
+            .copied()
+            .chain(std::iter::once(finish_node))
+            .collect();
+        let readers = vec![reader_nodes; slots.len()];
         let mut program = Self {
             root: package.root,
             controls,
@@ -1002,10 +1032,11 @@ impl<'a> Program<'a> {
             messages: BTreeMap::new(),
             channels: Vec::new(),
             finish,
-            slots: vec![None, None],
-            readers: vec![BTreeSet::new(), BTreeSet::new()],
-            binder_of: BTreeMap::new(),
-            binder_types: vec![ValueType::Boolean, ValueType::Boolean],
+            slots,
+            package_binders,
+            readers,
+            binder_of,
+            binder_types,
             terminal: None,
             templates: Vec::new(),
             effects: BTreeMap::new(),

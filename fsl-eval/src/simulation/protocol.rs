@@ -60,12 +60,12 @@ use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::explore::TransitionSystem;
 use crate::simulation::footprint::Location;
 use crate::simulation::key::{self, EncodingRefusal};
-use crate::simulation::model::encode::{map_enc, reference_enc, value_enc, Canonicalizer, Enc};
+use crate::simulation::model::encode::{Canonicalizer, Enc, map_enc, reference_enc, value_enc};
 use crate::simulation::model::{
-    verdict, ClauseOutcome, ModelEvaluator, ModelFinding, ModelSimState, ModelSystem, Observed,
-    TerminalClass, Verdict, BROKEN,
+    BROKEN, ClauseOutcome, ModelEvaluator, ModelFinding, ModelSimState, ModelSystem, Observed,
+    TerminalClass, Verdict, verdict,
 };
-use crate::simulation::not_simulated::{check_requires_bound, NotSimulated, RequiresBound};
+use crate::simulation::not_simulated::{NotSimulated, RequiresBound, check_requires_bound};
 use crate::simulation::progress::ZeroProgressError;
 use crate::simulation::subject::ConstraintError;
 use crate::simulation::subject::{Bounded, Cut, SubjectSystem};
@@ -76,13 +76,13 @@ pub use access::{
     AccessShape, AttemptInstance, InstanceAccess, LoadBufferingShape, WeakAccessFailure,
     WeakAccessShape, WeakAccesses, WeakAttempt,
 };
-pub use capacity::{capacity_value, Capacities, CapacityRefusal, UnboundCapacity};
+pub use capacity::{Capacities, CapacityRefusal, UnboundCapacity, capacity_value};
 pub use fairness::{
-    protocol_constraints, FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError,
-    ProtocolTarget,
+    FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError, ProtocolTarget,
+    protocol_constraints,
 };
 pub use footprint::{
-    visible, AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation,
+    AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation, visible,
 };
 pub use identity::{
     Actor, BlockedThread, BusinessEffectOccurrence, CarriedComponent, DeliveryIdentity,
@@ -104,7 +104,7 @@ pub use reach::{ReachRefusal, Reachable, ReachedState};
 pub use selection::{
     MemorySelection, MemorySelectionRefusal, ResolvedMemory, ResolvedParallel, SubjectMemory,
 };
-pub use tso::{Buffered, Tso, TsoComponent, DEFAULT_MEMORY_BOUND};
+pub use tso::{Buffered, DEFAULT_MEMORY_BOUND, Tso, TsoComponent};
 pub use wire::{
     blocked_json, fairness_json, location_json, over_reference, send_record_json, transition_json,
 };
@@ -1138,6 +1138,9 @@ pub struct ProtocolSystem<'a, M: MemoryModel> {
     evaluator: &'a dyn ModelEvaluator,
     protocol: &'a CheckedProtocol,
     program: Program<'a>,
+    /// The admitted package execution form, when this system was built from
+    /// package nodes rather than a source `CheckedProtocol`.
+    package_program: Option<PackageProtocolProgram<'a>>,
     memory: M,
     /// The per-channel queue occupancy bound supplied by model checking.
     channel_message_bound: Option<u64>,
@@ -1342,6 +1345,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             evaluator,
             protocol,
             program,
+            package_program: None,
             memory,
             channel_message_bound: None,
             governing,
@@ -2217,6 +2221,50 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         Ok(verdict(&evaluation.outcome))
     }
 
+    /// Evaluate a package control constraint from admitted binder identities.
+    /// A package expression receives the state values by node identity and
+    /// never crosses through a synthetic `CheckedBody`.
+    pub(super) fn evaluate_package_control(
+        &self,
+        node: fsl_semantics::check::ProtocolNodeId,
+        frame: Vec<Option<Value>>,
+    ) -> Result<Option<Verdict>, ExpansionStop> {
+        let Some(package) = self.package_program.as_ref() else {
+            return Ok(None);
+        };
+        let Some(control) = package.controls.get(&node) else {
+            return Ok(None);
+        };
+        if control.constraint.is_none() {
+            return Ok(None);
+        }
+        let binders = package_binder_values(&self.program, frame);
+        let supply = package.supply(binders, None).map_err(|_| broken())?;
+        let result = package
+            .evaluate_control_constraint(node, &supply, &mut Meter::new(self.model.meter()))
+            .map_err(|_| broken())?;
+        package_slot_verdict(result).map(Some)
+    }
+
+    /// Evaluate the package finish constraint over its finish record.
+    pub(super) fn evaluate_package_finish(
+        &self,
+        frame: Vec<Option<Value>>,
+    ) -> Result<Option<Verdict>, ExpansionStop> {
+        let Some(package) = self.package_program.as_ref() else {
+            return Ok(None);
+        };
+        if package.finish.is_none() {
+            return Ok(None);
+        }
+        let binders = package_binder_values(&self.program, frame);
+        let supply = package.supply(binders, None).map_err(|_| broken())?;
+        let result = package
+            .evaluate_finish(&supply, &mut Meter::new(self.model.meter()))
+            .map_err(|_| broken())?;
+        result.map(package_slot_verdict).transpose()
+    }
+
     /// FR-211 and ADR-027 PD-1: the class of `state`. A state with no live
     /// instance is intended; otherwise the protocol's `terminal` member
     /// decides, read through the one clause evaluator.
@@ -2301,6 +2349,41 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
 }
 
 /// `runtime_invariant`/`established-invariant-broken`.
+fn package_binder_values(
+    program: &Program<'_>,
+    frame: Vec<Option<Value>>,
+) -> Vec<(
+    fsl_package::CheckedNodeId,
+    crate::value::ProtocolSuppliedValue,
+)> {
+    program
+        .package_binders
+        .iter()
+        .zip(frame)
+        .filter_map(|(binder, value)| Some((binder.clone()?, value?)))
+        .map(|(binder, value)| {
+            (
+                binder,
+                crate::value::ProtocolSuppliedValue::from(crate::value::SuppliedValue::Value(
+                    value,
+                )),
+            )
+        })
+        .collect()
+}
+
+fn package_slot_verdict(
+    result: Option<crate::value::ProtocolSlotEvaluation>,
+) -> Result<Verdict, ExpansionStop> {
+    match result {
+        None => Ok(Verdict::True),
+        Some(crate::value::ProtocolSlotEvaluation::Evaluated(evaluation, _)) => {
+            Ok(verdict(&evaluation.outcome))
+        }
+        Some(crate::value::ProtocolSlotEvaluation::Unavailable { .. }) => Err(broken()),
+    }
+}
+
 fn broken() -> ExpansionStop {
     ExpansionStop {
         cause: BROKEN,
