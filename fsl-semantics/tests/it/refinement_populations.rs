@@ -320,11 +320,11 @@ fn a_row_bound_depending_on_population_size_checks() {
 #[test]
 fn sum_over_a_population_with_a_decimal_body_checks() {
     let source = ring_is_queue(
-        "busy = sum(s in R::slots: convert<D>(rational(1, 1))) = convert<D>(rational(2, 1));",
+        "busy = sum(s in R::slots: convert<D>(convert<N>(1))) = convert<D>(convert<N>(2));",
     )
     .replacen(
         "invariant Anything",
-        "type D = Decimal[0, 100; 1, 1; exact];\ninvariant Anything",
+        "type N = Rational[0, 2; 1, 1];\ntype D = Decimal[0, 100; 1, 1; exact];\ninvariant Anything",
         1,
     );
     let graph = checked(&source).graph;
