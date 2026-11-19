@@ -889,6 +889,38 @@ fn model_based_test_request_rules() {
         first["model_based_test"]["provenance"]["max_value_bits"], 8,
         "{first}"
     );
+    let partitions = first["model_based_test"]["partitions"]
+        .as_array()
+        .expect("the value partitions are reported");
+    assert_eq!(
+        partitions
+            .iter()
+            .take(5)
+            .map(|partition| partition["kind"].as_str().expect("partition kind"))
+            .collect::<Vec<_>>(),
+        [
+            "size-least",
+            "size-unit",
+            "size-unit",
+            "size-extreme-low",
+            "size-extreme-high",
+        ],
+        "{first}"
+    );
+    assert_eq!(
+        partitions
+            .iter()
+            .take(5)
+            .map(|partition| partition["value"]["value"].as_str().expect("integer value"))
+            .collect::<Vec<_>>(),
+        ["0", "-1", "1", "-255", "255"],
+        "{first}"
+    );
+    assert_eq!(
+        first["model_based_test"]["provenance"]["size_bounded"][0]["values"],
+        "511",
+        "{first}"
+    );
     assert_eq!(first, mbt(bounded.clone()), "deterministic");
     let mut zero = bounded.clone();
     zero["max_cases"] = json!(0);
