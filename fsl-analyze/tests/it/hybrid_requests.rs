@@ -26,9 +26,9 @@ use fsl_foundation::SourceIdentity;
 use fsl_replay::{ExactReplay, HybridReplayMeter};
 use fsl_semantics::check::ModeIndex;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{Run, Workspace, analyze_with_providers};
+use crate::analyze_cli_support::{analyze_with_providers, Run, Workspace};
 
 /// FR-447's `Braking` without `t`; `claims` follow the declaration.
 pub(crate) fn braking(claims: &str) -> String {
@@ -454,10 +454,8 @@ fn hybrid_replay_request(
         profile_selections: Vec::new(),
         dependencies: Vec::new(),
         replay_target: fsl_replay::RequestTargetWire::state_clause(
-            fsl_replay::QualifiedName::new(vec![
-                filament_exact::Identifier::new("TooSlow")
-                    .expect("the claim name is an identifier"),
-            ])
+            fsl_replay::QualifiedName::new(vec![filament_exact::Identifier::new("TooSlow")
+                .expect("the claim name is an identifier")])
             .expect("the claim name is qualified"),
         ),
         source: fsl_replay::ReplaySource::Hybrid(Box::new(counterexample)),
@@ -763,7 +761,10 @@ fn an_accepted_witness_settles_a_not_exact_provider_refutation() {
         vec![hybrid_fixture("hybrid-fixture", &entry(grow_witness(8)))],
     );
     assert_eq!(rejected["record"]["result"], "inconclusive", "{rejected}");
-    assert_eq!(rejected["certificate"]["rule"], "witness-violation", "{rejected}");
+    assert_eq!(
+        rejected["certificate"]["rule"], "witness-violation",
+        "{rejected}"
+    );
     let text = rejected.to_string();
     assert!(text.contains("replay-parity"), "{rejected}");
     assert!(text.contains("not-exact"), "{rejected}");
@@ -1116,15 +1117,97 @@ fn a_plan_validation_item_carries_rational_objects() {
     todo!("QSL-2534: FR-1021-AC-3");
 }
 
-/// FR-750-AC-12 (exact-replay half): over `Shuttle`, a lasso trace for an
-/// `on each` claim that reads its activation state, and for `fair` claims
-/// over a transition with a non-deterministic reset, reproduces or does not
-/// reproduce by exact replay instead of refusing.
+/// `Shuttle` of FR-750-AC-12, its `Moving -> Stopped` reset `reset`, with
+/// the claims `Whole` (`fair Moving;`) and `Named` (`fair Moving::Stopped;`),
+/// each over `eventually [0, *] holds(h.v > 1)`.
+fn shuttle(reset: &str) -> String {
+    let claim = |name: &str, fairness: &str| {
+        format!(
+            "temporal {name} using p over (h: Shuttle) clock \"model-time\" \
+             on origin {{ fair {fairness}; eventually [0, *] holds(h.v > 1) }}\n"
+        )
+    };
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile p = \"filament.temporal.infinite-trace/v1\";\n\
+         hybrid Shuttle using p {{\n\
+           initial {{ mode Moving when {{ v = 0 }}; }}\n\
+           mode Moving invariant {{ v >= 0 and v <= 1 }} flow {{ v' = 1; }}\n\
+             transition to Moving when {{ v = 1 }} reset {{ v = 0 }};\n\
+             transition to Stopped when {{ v >= 0 }} reset {{ {reset} }};\n\
+           mode Stopped invariant {{ v >= 1 and v <= 2 }} flow {{ v' = 0; }}\n\
+         }}\n{}{}",
+        claim("Whole", "Moving"),
+        claim("Named", "Moving::Stopped"),
+    )
+}
+
+/// The point lasso `L` of `Shuttle` as a provider's `refuted` entry: from
+/// `(Moving, v = 0)` at time 0 by transition 0 (`before` `(time 1, v = 1)`)
+/// to `(Moving, v = 0)` at time 1, `loop_to` 0.
+fn shuttle_lasso_entry() -> Value {
+    let state = |time: &str, v: &str| {
+        json!({"mode": "Moving", "time": interval(time, time),
+            "enclosure": {"v": interval(v, v)}})
+    };
+    let mut entry = refuted_entry(json!({"start": state("0", "0"),
+        "jumps": [{"transition": 0,
+            "before": {"time": interval("1", "1"), "enclosure": {"v": interval("1", "1")}},
+            "state": state("1", "0")}],
+        "loop": 0}));
+    entry["counterexamples"][0]["trace"]["loop"] = json!(0);
+    entry
+}
+
+/// FR-750-AC-12 (exact-replay half, fairness): over `Shuttle` and its point
+/// lasso `L`, `fair Moving;` over `eventually [0, *] holds(h.v > 1)` reproduces
+/// by exact replay with kind `formula` and the item settles `refuted`:
+/// `Moving -> Stopped` is enabled at every instant, its reset `v >= 0`
+/// admitting a post-jump `v` in `[1, 2]`, and the whole constraint is taken
+/// every period by the self-loop. `fair Moving::Stopped;` is enabled at every
+/// instant and never taken, so `L` is unfair, the replay is `NotReproduced`
+/// at check 5 and the item settles `inconclusive`, `replay-parity`; with the
+/// reset `v <= 1/2`, which no state under `Stopped`'s invariant meets, the
+/// enabled set is empty and the item settles `refuted`.
 #[test]
 #[trace("TC-3037", "FR-750-AC-12")]
-#[ignore = "QSL-2529: exact replay of activation-state and non-deterministic-reset claims (tau as a second real variable, quantifier elimination) is not implemented; those gaps still settle `NotExact`"]
-fn exact_replay_decides_activation_state_and_nondeterministic_reset_claims() {
-    todo!("QSL-2529: FR-450 exact replay of the Shuttle claims");
+fn exact_replay_decides_nondeterministic_reset_fairness_claims() {
+    let run = |name: &str, reset: &str, claim: &str| {
+        let entry = shuttle_lasso_entry();
+        let (fixture, _) = answering("hybrid-fixture", entry_answer(entry));
+        first_item(
+            name,
+            &shuttle(reset),
+            named(claim, "hybrid-fixture"),
+            json!({}),
+            vec![fixture],
+        )
+        .1
+    };
+    let fair = run("hybrid-750-12-fair", "v >= 0", "Whole");
+    assert_eq!(fair["record"]["result"], "refuted", "{fair}");
+    assert_eq!(fair["replay"]["reproduced"], true, "{fair}");
+    let unfair = run("hybrid-750-12-unfair", "v >= 0", "Named");
+    assert_eq!(unfair["record"]["result"], "inconclusive", "{unfair}");
+    assert_eq!(
+        unfair["record"]["cause"]["kind"], "replay-parity",
+        "{unfair}"
+    );
+    let never_enabled = run("hybrid-750-12-never", "v <= 1/2", "Named");
+    assert_eq!(
+        never_enabled["record"]["result"], "refuted",
+        "{never_enabled}"
+    );
+}
+
+/// FR-750-AC-12 (exact-replay half, activation state): over `Shuttle`, a
+/// lasso trace for an `on each` claim that reads its activation state
+/// reproduces or does not reproduce by exact replay instead of refusing.
+#[test]
+#[trace("TC-3037", "FR-750-AC-12")]
+#[ignore = "QSL-2529 remaining work: exact replay of activation-state claims (tau as a second real variable) is not implemented; those claims still settle `NotExact`"]
+fn exact_replay_decides_activation_state_claims() {
+    todo!("QSL-2529: FR-450 exact replay of the Shuttle activation-state claims");
 }
 
 /// FR-750-AC-12 (replay-request half): the same refusals on FR-098's replay
