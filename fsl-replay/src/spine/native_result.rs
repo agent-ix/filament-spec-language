@@ -35,6 +35,7 @@ pub use temporal::{
     FairnessKindRead, FairnessOperationRead, FairnessRead, GuardRead, IndeterminateReasonRead,
     ProgressValueRead, TemporalRecord, UndefinedLocusRead,
 };
+pub(crate) use temporal::{replay_locus_wire, replay_outcome_wire};
 
 /// Why a clause-run report could not be written as a canonical document.
 #[derive(Debug, thiserror::Error)]
