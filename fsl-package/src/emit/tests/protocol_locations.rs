@@ -24,7 +24,11 @@ fn checked_and_emitted(source: &str) -> (CheckedPackage, Value) {
     let packages = fsl_semantics::model::intake::package_input([domain().as_slice()]).unwrap();
     let graph = assemble_with_models(source.as_bytes(), &packages)
         .expect("fixture assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("fixture checks");
     let package = CheckedPackage::link(graph);
     let emission = emit_checked(&package).expect("fixture emits");
