@@ -593,6 +593,51 @@ pub(crate) fn classify(
     over: &Value,
     mode: ClassificationMode,
 ) -> Result<WeakAccesses, ProtocolRefusal> {
+    classify_with(
+        model,
+        Some(protocol),
+        program,
+        governing,
+        initial,
+        over,
+        mode,
+        None,
+    )
+}
+
+/// FR-940 package form of EN-1 classification. The package program carries
+/// its access orderings and no source slot bodies.
+pub(crate) fn classify_package(
+    model: &ModelSystem<'_>,
+    program: &Program<'_>,
+    governing: &BTreeMap<ProtocolNodeId, MemoryModelName>,
+    initial: Option<&ModelSimState>,
+    over: &Value,
+    mode: ClassificationMode,
+    orderings: &BTreeMap<ProtocolNodeId, Option<AccessOrdering>>,
+) -> Result<WeakAccesses, ProtocolRefusal> {
+    classify_with(
+        model,
+        None,
+        program,
+        governing,
+        initial,
+        over,
+        mode,
+        Some(orderings),
+    )
+}
+
+fn classify_with(
+    model: &ModelSystem<'_>,
+    protocol: Option<&CheckedProtocol>,
+    program: &Program<'_>,
+    governing: &BTreeMap<ProtocolNodeId, MemoryModelName>,
+    initial: Option<&ModelSimState>,
+    over: &Value,
+    mode: ClassificationMode,
+    package_orderings: Option<&BTreeMap<ProtocolNodeId, Option<AccessOrdering>>>,
+) -> Result<WeakAccesses, ProtocolRefusal> {
     let Some(initial) = initial else {
         return Ok(WeakAccesses::default());
     };
@@ -626,9 +671,8 @@ pub(crate) fn classify(
     let mut node_reads: BTreeMap<ProtocolNodeId, BTreeSet<Location>> = BTreeMap::new();
     let mut reader_chains: BTreeMap<ProtocolNodeId, Chain> = BTreeMap::new();
     let parameters: Vec<(String, ValueType)> = protocol
-        .slots
-        .binders
-        .iter()
+        .into_iter()
+        .flat_map(|protocol| protocol.slots.binders.iter())
         .map(|binder| (binder.name.clone(), binder.value_type.clone()))
         .collect();
     let constraints = program
@@ -795,12 +839,14 @@ pub(crate) fn classify(
         }
     }
 
-    let ordering_of: BTreeMap<ProtocolNodeId, Option<AccessOrdering>> = protocol
-        .memory
-        .accesses
-        .iter()
-        .map(|access| (access.node, access.ordering))
-        .collect();
+    let ordering_of: BTreeMap<ProtocolNodeId, Option<AccessOrdering>> =
+        package_orderings.cloned().unwrap_or_else(|| {
+            protocol
+                .into_iter()
+                .flat_map(|protocol| protocol.memory.accesses.iter())
+                .map(|access| (access.node, access.ordering))
+                .collect()
+        });
     let mut attempts = BTreeMap::new();
     for (node, instances) in footprints {
         let Some((parallel, _)) = chains.get(&node) else {
