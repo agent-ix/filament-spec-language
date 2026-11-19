@@ -210,14 +210,12 @@ fn repeated_trace_identities_fold_only_when_records_match() {
             json!([trace("a", &[(0, 0)]), trace("a", &[(0, 1)])]),
         ),
     );
+    let item = conflicting.item(0);
     assert_eq!(
-        conflicting.item(0)["record"]["diagnostic"]["code"],
-        "invalid_runtime_input"
+        item["record"]["cause"]["code"], "invalid_runtime_input",
+        "{item}"
     );
-    assert_eq!(
-        conflicting.item(0)["record"]["diagnostic"]["cause"],
-        "invalid-value"
-    );
+    assert_eq!(item["record"]["cause"]["kind"], "invalid-input", "{item}");
 }
 
 /// FR-898-AC-5: a tuple missing an aligned state remains inconclusive.
