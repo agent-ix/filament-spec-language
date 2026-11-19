@@ -11,9 +11,9 @@ use fsl_package::ObligationIdentity;
 use fsl_replay::spine::{self, ParseRequest};
 use fsl_replay::{
     call_site, replay, replay_state_clause, DependencyEntryWire, DependencyInput, EnvelopeSource,
-    QualifiedName, ReplayLimits, ReplayRefusal, ReplayRequestWire,
-    ReplaySource, ReplayTargetMembers, RequestTargetWire, StateClauseCounterexample,
-    StateEnvironment, SuppliedLibrary, WitnessEnvelope, WitnessPacket,
+    QualifiedName, ReplayLimits, ReplayRefusal, ReplayRequestWire, ReplaySource,
+    ReplayTargetMembers, RequestTargetWire, StateClauseCounterexample, StateEnvironment,
+    SuppliedLibrary, WitnessEnvelope, WitnessPacket,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::package_input;

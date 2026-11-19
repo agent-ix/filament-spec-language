@@ -201,7 +201,11 @@ fn deep_option_keys(stack: usize) -> Vec<KeyShape> {
                     fsl_foundation::IdentityLimits::default(),
                 )
             }
-            .check(CheckMode::Linked, limits)
+            .check(
+                CheckMode::Linked,
+                limits,
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("the deep option parameter checks: {refusals:?}"));
             let options = checked
                 .semantic_graph()
@@ -437,6 +441,7 @@ fn keying_a_recursion_group_is_charged_to_the_work_budget() {
         .check(
             CheckMode::Linked,
             CheckingLimits::default().with_work_budget(budget),
+            &crate::check::test_support::ZeroRewardEvaluator,
         )
     };
     assert!(checked(u64::MAX).is_ok(), "the ring checks unbounded");

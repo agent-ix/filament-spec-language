@@ -302,6 +302,7 @@ fn checked_dispatch_package() -> fsl_package::CheckedPackage {
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
             )
             .unwrap(),
     )
@@ -622,6 +623,7 @@ fn imported_callable_consumer_uses_a_real_emitted_and_admitted_library() {
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
             )
             .unwrap(),
     );
@@ -656,6 +658,7 @@ fn imported_callable_consumer_uses_a_real_emitted_and_admitted_library() {
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
             )
             .unwrap(),
     );
@@ -836,6 +839,7 @@ fn query_stop_provenance_rejects_a_missing_selected_position_at_the_real_quantif
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
             )
             .unwrap(),
     );
@@ -1086,6 +1090,7 @@ fn both_ieee_profile_checks_and_conversion_operand_check_are_real_producers() {
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &crate::value::S6aRewardEvaluator,
     )
     .unwrap();
     let package = fsl_package::CheckedPackage::link(graph);
@@ -1151,6 +1156,7 @@ fn field_slot_and_record_constructor_fail_at_the_actual_application_sites() {
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &crate::value::S6aRewardEvaluator,
     )
     .unwrap();
     let package = fsl_package::CheckedPackage::link(graph);
@@ -1188,6 +1194,7 @@ fn object_package(
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &crate::value::S6aRewardEvaluator,
     )
     .unwrap();
     fsl_package::CheckedPackage::link(graph)
@@ -1551,6 +1558,7 @@ fn an_out_of_type_stored_value_is_refused_at_the_public_call_and_evaluate_entrie
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
             )
             .unwrap(),
     );

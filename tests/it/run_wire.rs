@@ -1294,7 +1294,9 @@ fn a_monitor_request_supplies_the_integer_division_law() {
          function half using v(a: Int[0, 9]): Int[0, 9] pure {{ a div 2 }}\n\
          temporal Half using i over (r: Reading) clock \"steps\" on origin {{ always holds(half(r.level) < 5) }}\n"
     );
-    let div_start = program.find("a div 2").expect("the program's div expression") as u64;
+    let div_start = program
+        .find("a div 2")
+        .expect("the program's div expression") as u64;
     let run = |law: Option<&str>| {
         let mut request = monitor_request(json!([{"name": "Half"}]), json!({"kind": "finite"}));
         request["request"]["records"] = json!("half.jsonl");

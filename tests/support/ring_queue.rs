@@ -24,6 +24,23 @@ use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use serde_json::{json, Value};
 
+/// The ring fixtures declare no reward, so the checker never asks for one.
+struct NoRewards;
+
+impl fsl_semantics::check::RewardEvaluator for NoRewards {
+    fn evaluate(
+        &self,
+        _graph: &CheckedGraph,
+        _reward: &fsl_semantics::check::Reward,
+        _arguments: Vec<filament_exact::Value>,
+        _meter: &mut filament_exact::Meter,
+    ) -> Result<filament_exact::Value, fsl_semantics::check::RewardEvaluationFailure> {
+        Ok(filament_exact::Value::Integer(
+            filament_exact::Integer::from(0_i64),
+        ))
+    }
+}
+
 /// The abstract package.
 pub const QUEUE: &str = "example/ring-queue-spec";
 /// The concrete package.
@@ -426,11 +443,7 @@ pub fn check_over(queue: &[u8], body: &str) -> Result<Checked, Vec<Refused>> {
     .unwrap_or_else(|refusal| panic!("{body}: the unit assembles: {refusal:?}"))
     .with_unwritten_refinements();
     let regions = declarations.regions();
-    match declarations.check(
-        CheckMode::Linked,
-        CheckingLimits::default(),
-        &fsl_eval::value::S6aRewardEvaluator,
-    ) {
+    match declarations.check(CheckMode::Linked, CheckingLimits::default(), &NoRewards) {
         Ok(graph) => Ok(Checked { graph, packages }),
         Err(refusals) => Err(refusals
             .into_iter()

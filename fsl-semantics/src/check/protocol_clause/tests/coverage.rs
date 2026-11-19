@@ -436,6 +436,7 @@ fn a_compensation_without_its_temporal_alias_keeps_missing_profile() {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
         )
         .expect_err("a template whose using alias is not selected refuses");
     let missing_profile = found.iter().find_map(|refusal| {

@@ -106,7 +106,11 @@ impl ModelForm {
             .stack_size(STACK)
             .spawn(move || {
                 self.declarations(levels)
-                    .check(CheckMode::Linked, limits)
+                    .check(
+                        CheckMode::Linked,
+                        limits,
+                        &crate::check::test_support::ZeroRewardEvaluator,
+                    )
                     .map(drop)
             })
             .expect("the check thread spawns")

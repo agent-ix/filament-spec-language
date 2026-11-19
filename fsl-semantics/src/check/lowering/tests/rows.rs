@@ -685,6 +685,7 @@ fn preimage_bytes_bind_before_the_work_budget() {
             CheckingLimits::default()
                 .with_input_bytes(bytes)
                 .with_work_budget(bytes),
+            &crate::check::test_support::ZeroRewardEvaluator,
         )
         .expect_err("one declaration's preimage passes 10,000 bytes");
     assert!(
@@ -1009,6 +1010,7 @@ fn rational_literal_normalization_exhausting_the_bits_limit_is_a_stage_limit() {
         .check(
             CheckMode::Linked,
             CheckingLimits::default().with_rational_bits(64),
+            &crate::check::test_support::ZeroRewardEvaluator,
         )
     };
     let exhausted = |actual: u128| {

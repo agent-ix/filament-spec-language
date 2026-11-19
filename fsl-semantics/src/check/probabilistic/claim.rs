@@ -2584,6 +2584,7 @@ mod conversion_budget_tests {
                 .check(
                     CheckMode::Linked,
                     CheckingLimits::default().with_rational_bits(2),
+                    &crate::check::test_support::ZeroRewardEvaluator,
                 )
                 .expect("the rational conversion ceiling must preserve nonreward Integer checking");
         }

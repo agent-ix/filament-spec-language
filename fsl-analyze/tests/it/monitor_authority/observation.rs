@@ -119,7 +119,7 @@ pub(super) fn admitted_with_progress_limits(
             visibility: Visibility::External,
             anchor: Anchor::TimestampNanos(10),
             event_time_nanos: 10,
-            ingestion_time_nanos: 11,
+            ingestion_time_nanos: Some(11),
             causal_relationship_identity: None,
             clock_identity: id("clock:monitor-events"),
             clock_revision: id("1"),

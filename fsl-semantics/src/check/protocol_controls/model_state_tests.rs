@@ -67,7 +67,11 @@ fn check_with_limits(
     // lowering stage, whose contract is its own. Any other refusal is the
     // check's answer; when emission refusals are all there are, the graph
     // is read through the per-protocol results.
-    let refusals = match assembled().check(CheckMode::Linked, limits) {
+    let refusals = match assembled().check(
+        CheckMode::Linked,
+        limits,
+        &crate::check::test_support::ZeroRewardEvaluator,
+    ) {
         Ok(graph) => return Ok(graph),
         Err(refusals) => refusals,
     };
@@ -84,7 +88,11 @@ fn check_with_limits(
     if !checked.is_empty() {
         return Err(checked);
     }
-    assembled().check_with_protocol_results(CheckMode::Linked, limits)
+    assembled().check_with_protocol_results(
+        CheckMode::Linked,
+        limits,
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
 }
 
 /// The one channel's checked ordering.

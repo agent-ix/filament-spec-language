@@ -344,8 +344,11 @@ fn eq_over(
     compared: &str,
     limits: CheckingLimits,
 ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
-    package(records, vec![equality("eq", ("a", "b"), named(compared))])
-        .check(CheckMode::Linked, limits)
+    package(records, vec![equality("eq", ("a", "b"), named(compared))]).check(
+        CheckMode::Linked,
+        limits,
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
 }
 
 fn eq_over_node(limits: CheckingLimits) -> Result<CheckedGraph, Vec<CheckRefusal>> {

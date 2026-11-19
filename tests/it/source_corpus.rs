@@ -514,7 +514,12 @@ fn corpus_values() {
 
 /// STD-654: the five float-bearing equality cases now check, while
 /// `String = Text` keeps its settled `type-mismatch` refusal.
-#[trace("FSpec-TC-194", "FSpec-FR-149-AC-22", "FSpec-FR-149-AC-25", "FSpec-FR-149-AC-26")]
+#[trace(
+    "FSpec-TC-194",
+    "FSpec-FR-149-AC-22",
+    "FSpec-FR-149-AC-25",
+    "FSpec-FR-149-AC-26"
+)]
 #[test]
 fn std654_equality_corpus_cases_follow_the_settled_matrix() {
     let directory = corpus_root().join("values");
@@ -530,8 +535,9 @@ fn std654_equality_corpus_cases_follow_the_settled_matrix() {
         let expectation = directory.join(format!("{stem}.expected.json"));
         let bytes = std::fs::read(&expectation)
             .unwrap_or_else(|error| panic!("{}: {error}", expectation.display()));
-        let expected: Expectation = serde_json::from_slice(&bytes)
-            .unwrap_or_else(|error| panic!("{}: invalid expectation: {error}", expectation.display()));
+        let expected: Expectation = serde_json::from_slice(&bytes).unwrap_or_else(|error| {
+            panic!("{}: invalid expectation: {error}", expectation.display())
+        });
         assert_eq!(expected.flips_with, None, "{stem} is settled");
         let actual = execute(&program, &expected)
             .unwrap_or_else(|error| panic!("{}: {error}", program.display()));

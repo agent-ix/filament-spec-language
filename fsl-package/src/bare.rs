@@ -746,6 +746,17 @@ impl SourceObjectJson {
                 value_type,
             });
         }
+        let row_operations = self
+            .operations
+            .iter()
+            .map(
+                |operation| filament_contract_model::SelectedSourceObjectOperation {
+                    identity: operation.identity.as_str().into(),
+                    query: operation.query,
+                    clock_parameters: Vec::new(),
+                },
+            )
+            .collect();
         Ok((
             SelectedSourceObjectRow {
                 structural_node: self.structural_node,
@@ -765,6 +776,7 @@ impl SourceObjectJson {
                         },
                     )
                     .collect(),
+                operations: row_operations,
             },
             facts,
             self.operations

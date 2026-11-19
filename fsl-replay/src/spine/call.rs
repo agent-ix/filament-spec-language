@@ -1704,6 +1704,7 @@ pub(crate) fn kernel_undefined_reason(reason: Undefined) -> &'static str {
         Undefined::NoneValue => "none-value",
         Undefined::NoElement => "no-element",
         Undefined::SumOutOfDomain => "sum-out-of-domain",
+        Undefined::MalformedNumber => "malformed-number",
     }
 }
 
