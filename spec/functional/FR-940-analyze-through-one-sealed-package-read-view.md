@@ -210,6 +210,40 @@ and `FR-621`'s outcome document is unchanged.
   `invalid-request` `invalid_capability`/`model-alias`, naming the identity
   to use, as FR-850 "Building the analysis input" states.
 
+### Claim occurrence ordinals
+
+Structurally equal declarations share one node, and each is its own `claim`
+occurrence of that node with its own ordinal (FSpec FR-322 "Temporal clause
+names"). Neither the node nor the name alone identifies a declaration: the
+node is shared, and the name is not a node-identity input. Only the whole
+occurrence key (node, `claim` role, ordinal) does. The two routes therefore
+agree on an item only if they number the occurrences of a shared node the
+same way and key every later step on the whole key.
+
+- The `claim` occurrences of one node SHALL be numbered per node and role,
+  from 0, in the source order of the declarations that introduce them. The
+  first declaration of the node in source order is its `claim` occurrence 0,
+  the next is 1, and so on. A declaration's ordinal SHALL NOT depend on the
+  declarations of any other node. A unit that declares `BelowThree` and then
+  `AtMostTwo` with one formula gives `BelowThree` occurrence 0 and
+  `AtMostTwo` occurrence 1 of their shared node.
+- The source route's checked declaration (a temporal clause's
+  `TemporalClauseNode::claim`, and the checked occurrence of every other
+  claim-bearing declaration) SHALL carry the ordinal its emitted
+  `temporal_clause_names` or `claim_names` row carries. Giving a later
+  declaration of a shared node ordinal 0 would make it the first
+  declaration's occurrence: two declarations would have one key, and that
+  declaration's record and replay would be reported at another
+  declaration's occurrence.
+- Negotiation, the item's claim-family and authored-occurrence checks, the
+  engines, the item record and counterexample replay SHALL key on the
+  whole occurrence key that `claim_name` returns, on both routes. They
+  SHALL NOT select a declaration by its node alone, for example by taking
+  the first checked clause whose node matches and comparing its occurrence.
+  A node that structurally equal declarations share holds one declaration
+  per `claim` occurrence, so the first declaration of the node is not
+  necessarily the declaration a request names.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -223,6 +257,7 @@ and `FR-621`'s outcome document is unchanged.
 | FR-940-AC-7 | For AC-4's Counter unit, `claim_name("NotAboveThree")`, `claim_name("Bounded")` and `claim_name("AtMostTwo")` return equal occurrences over the `AdmittedPackageRead` and over the `BarePackage` of its handoff directory, the first from a `claim_names` row and the others from `temporal_clause_names` rows; `claim_name("Missing")` returns `None` on both. | Test (TC-2967) |
 | FR-940-AC-8 | AC-4's Counter unit declaring the temporal clause `Bounded` and the state-graph claim `possible Bounded` is refused `ambiguous_declaration`/`ambiguous-name` before any item is analyzed; with the claim named `ReachThree` both items settle with equal records over source and over the package, and that package with its `ReachThree` `claim_names` row renamed `Bounded` is refused `ambiguous_declaration`/`ambiguous-name` with no item settled (FSpec FR-322-AC-459). | Test (TC-2970) |
 | FR-940-AC-9 | A unit declaring `probabilistic Stable ... { probability >= 0.5 [ holds(true) ] }` and `probabilistic Stable ... { probability >= 0.25 [ holds(true) ] }` is refused `ambiguous_declaration`/`ambiguous-name` at the second `Stable`, naming both; with the second named `Other` it checks, and its package carries one `claim_names` row per claim. The package of a unit whose operation has two postconditions `Q1` and `Q2` constraining one field (a derived conjunction, FR-105-AC-14) is admitted by the strict reader, and `claim_name("Q1")` returns `Q1`'s own node, never the derived node, over the source route and over the package. A step relation's package carries rows for its `declaration` and `claim` occurrences under one name and region, is admitted, and `claim_name` returns the `claim` occurrence. A hyper clause's package is admitted with its name on its `hyperproperty` node's `claim_names` row, and `claim_name` returns that node. | Test (TC-3015) |
+| FR-940-AC-10 | AC-4's Counter unit declares `BelowThree` and then `AtMostTwo`, both `always holds(c.value <= 2)`, which share one `temporal_clause` node. `claim_name("BelowThree")` returns that node's `claim` occurrence 0 and `claim_name("AtMostTwo")` returns occurrence 1, over the `AdmittedPackageRead` and over the `BarePackage` of its handoff directory. Each equals the source checked clause's `claim` origin and its `temporal_clause_names` row. With the two declarations swapped in source, the ordinals swap. A `program` request and a `package` request with the items `[{"claim": "BelowThree"}, {"claim": "AtMostTwo"}]`, and with `[{"claim": "AtMostTwo"}]` alone, each negotiate every item and settle it `refuted`, with `replay.reproduced` `true`, at its own declaration's occurrence key. The item records, counterexamples and replays are equal across the two routes. No item settles `unsupported` or `invalid-request`. | Test (TC-3023) |
 
 ## Dependencies
 
