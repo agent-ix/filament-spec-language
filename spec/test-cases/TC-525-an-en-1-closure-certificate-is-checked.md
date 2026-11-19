@@ -13,7 +13,7 @@ relationships:
 Verify that `check_closure` accepts a safety proof's closure and rejects a
 missing initial state, a missing successor and a bad state.
 
-Scope: FR-338-AC-1 to FR-338-AC-7, FR-338-AC-10, FR-338-AC-16 and FR-338-AC-23 to FR-338-AC-26. Canonical translation-state cases below
+Scope: FR-338-AC-1 to FR-338-AC-7, FR-338-AC-10, FR-338-AC-16 and FR-338-AC-23 to FR-338-AC-27. Canonical translation-state cases below
 are prospective qualification procedures; this artifact claims no execution.
 
 ## Test Procedure
@@ -115,6 +115,12 @@ are prospective qualification procedures; this artifact claims no execution.
     `s2`'s raw `ProtocolKey` (FR-338-AC-26).
 
 Tag the tests `#[trace("TC-525", "FR-338-AC-n")]`.
+16. FR-338-AC-27: check FR-337-AC-12's `on origin` capture monitor
+    certificate as produced, with its capture vector changed to 1, omitted
+    and extended by an unread capture; run FSpec FR-828-AC-8's `Once`
+    message obligation and read the `bound` member and captured value before
+    and after each removal; re-key a capture-free clause; read the context
+    activation of the `on origin` variant over `Once`.
 
 ## Expected Results
 
@@ -177,3 +183,8 @@ Tag the tests `#[trace("TC-525", "FR-338-AC-n")]`.
   initial state, whose `send` successor's cycle key it lacks. The step fails
   if the checker matches raw keys (it would then also need `s2` and reject
   the first certificate) or accepts the raw key.
+- Step 16: the produced certificate is accepted; each altered one is
+  rejected `ShapeMismatch` at the first altered product state; `bound` turns
+  `"removed"` with the message replaced by `null` and the post-removal states
+  of the two lifetimes coincide; capture-free keys are byte-unchanged; the
+  activation is `"each-activate"`.
