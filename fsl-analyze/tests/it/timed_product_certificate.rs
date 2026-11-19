@@ -4,23 +4,23 @@
 //! over ADR-028 §15.5's `Retx`, and the core checker that rebuilds the
 //! digital or region product itself.
 
-use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::analyze::{
-    AnalyzeRecord, Engines, analyze_items, exact_probabilistic_item,
-    exact_probabilistic_item_tampered,
+    analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered, AnalyzeRecord,
+    Engines,
 };
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    CertificateRule, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
-    InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule,
-    ProbabilityDocumentError, ProofBasis, TerminalValue, check_probability_certificate_document,
+    check_probability_certificate_document, CertificateRule, ExactProbabilityCertificate,
+    ExactProbabilityCertificateCheck, InconclusiveCause, ProbabilityCertificateLocus,
+    ProbabilityCertificateRule, ProbabilityDocumentError, ProofBasis, TerminalValue,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::long_run_certificate::limits;
 use crate::timed_world::{self, World};
@@ -319,8 +319,23 @@ fn timed_document_has_no_component_member() {
     let mut doc = document(&settle(&world, "Deadline"));
     doc["components"] = json!([]);
     assert!(!accepted(&world, "Deadline", &doc));
-    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
-        .expect("S4 emits the timed unit");
+    // Retx's random parameter is checked but not yet emitted by this S4
+    // profile; use a deterministic timed package to test that the certificate
+    // profile itself is not part of package source.
+    let emission_world = timed_world::world(
+        &timed_world::document(&["x"], &[("send", &["late", "x"])]),
+        PROFILES,
+        &format!(
+            "{}\
+             pre Send using v on M::Call::send {{ not self.late and self.x >= 1 ms }}\n\
+             post Sent using v on M::Call::send {{ self.late = true and self.x = 0 ms }}\n\
+             time invariant Deadline when {{ not self.late }} {{ self.x <= 2 ms }}\n",
+            timed_world::DENSE,
+        ),
+    );
+    let emission =
+        fsl_package::emit_checked(&emission_world.package, fsl_package::EmitLimits::fixture())
+            .expect("S4 emits the deterministic timed unit");
     let text = String::from_utf8_lossy(emission.package().bytes()).into_owned();
     assert!(!text.contains("timed-product/v1"));
 }
