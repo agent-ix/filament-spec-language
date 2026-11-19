@@ -32,8 +32,12 @@
 use std::collections::BTreeSet;
 use std::marker::PhantomData;
 use std::ops::Deref;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
-use filament_eval::{CheckedClosure, Evaluation, LiveContext, RequestRefusal, Signature, Transition};
+use filament_eval::{
+    CheckedClosure, Evaluation, LiveContext, RequestRefusal, SessionLimits, Signature, Transition,
+};
 use filament_exact::{Meter, NodeKey, Value, ValueType};
 use filament_semantic_value::call::InputRefusal;
 use filament_semantic_value::catalog::InternalFault;
@@ -66,6 +70,13 @@ pub struct PackageClosure<P, X> {
     /// Whether the caller already admitted its arguments (under its own
     /// supplied-value run), so `Begin` admits nothing more.
     pre_admitted: bool,
+    /// The configured evaluator call-stack bound, mirrored into the S6a
+    /// machine whose nested calls run within one scheduler transition. This
+    /// closure returns `Done` after that machine completes and never requests
+    /// a scheduler child, so the scheduler holds only the mirrored root frame.
+    session_limits: SessionLimits,
+    /// Peak from the S6a machine, which the external scheduler cannot see.
+    peak_live_occurrences: Option<Arc<AtomicU64>>,
     expression: PhantomData<fn() -> X>,
 }
 
@@ -79,17 +90,25 @@ where
         Self {
             package,
             pre_admitted: false,
+            session_limits: SessionLimits {
+                live_occurrences: filament_eval::DEFAULT_LIVE_OCCURRENCES,
+            },
+            peak_live_occurrences: None,
             expression: PhantomData,
         }
     }
 
-    /// A closure for a caller that admitted its arguments already, under its
-    /// own supplied-value run (`call_supplied`): `Begin` admits nothing more,
-    /// so no argument is admitted twice.
-    pub(super) const fn pre_admitted(package: P) -> Self {
+    /// A closure for a caller that supplied the arguments and session bound.
+    pub(super) fn pre_admitted_with_session_limits(
+        package: P,
+        session_limits: SessionLimits,
+        peak_live_occurrences: Arc<AtomicU64>,
+    ) -> Self {
         Self {
             package,
             pre_admitted: true,
+            session_limits,
+            peak_live_occurrences: Some(peak_live_occurrences),
             expression: PhantomData,
         }
     }
@@ -309,30 +328,44 @@ where
                     InternalFault::new("S6a", "checked-identity-not-resolved-by-package")
                 })?;
                 // The scheduler charged this application's `function.call`.
-                let mut env = EvaluationEnv::charged(package, environment, arguments);
-                evaluate_declaration(
+                let mut env = EvaluationEnv::charged_with_session_limits(
+                    package,
+                    environment,
+                    arguments,
+                    self.session_limits,
+                );
+                let mut evaluation = evaluate_declaration(
                     S6aFamilyKind::Value,
                     &callable,
                     EvaluationTarget::Value(&mut env),
                     meter,
-                )
-                .map(Transition::Done)
+                )?;
+                if let Some(peak) = self.peak_live_occurrences.as_ref() {
+                    peak.fetch_max(env.peak_live_occurrences, Ordering::Relaxed);
+                }
+                evaluation.peak_live_occurrences = env.peak_live_occurrences;
+                Ok(Transition::Done(evaluation))
             }
             Frame::Expression {
                 expression,
                 parameters,
             } => {
                 let graph = self.package.graph();
-                Machine::new(
+                let mut machine = Machine::new(
                     graph.scope(),
                     graph,
                     environment,
                     meter,
                     graph.dispatch_tables(),
                 )
-                .with_formed_units(expression.formed_units())
-                .run(expression.root(), expression.slots(), parameters)
-                .map(Transition::Done)
+                .with_session_limits(self.session_limits)
+                .with_formed_units(expression.formed_units());
+                if let Some(peak) = self.peak_live_occurrences.as_ref() {
+                    machine = machine.with_peak_live_occurrences_sink(Arc::clone(peak));
+                }
+                let evaluation =
+                    machine.run_expression(expression.root(), expression.slots(), parameters)?;
+                Ok(Transition::Done(evaluation))
             }
             Frame::Finished => Err(InternalFault::new(
                 "S6a",

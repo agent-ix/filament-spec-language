@@ -13,6 +13,7 @@ use filament_checked::node::{
 };
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
 use super::causes::{
@@ -32,7 +33,8 @@ use filament_eval::Evaluation;
 use filament_eval::FamilyOutcome;
 use filament_eval::FamilyResult;
 use filament_eval::{
-    PreconditionFailure, ProtocolReferenceUnsupported, ReferenceUnresolved, StateModelUndefined,
+    PreconditionFailure, ProtocolReferenceUnsupported, ReferenceUnresolved, SessionLimits,
+    StateModelUndefined,
 };
 use filament_exact::{
     admit_quantity_result, compare_text, BoundedQuantityType, ComparisonOperator,
@@ -620,6 +622,14 @@ struct PoppedArguments {
     owners: Vec<Owner>,
 }
 
+/// One live occurrence for the call frame plus all occurrences retained by
+/// the values bound to its parameters, matching `filament_eval::Session`.
+fn frame_occurrences(arguments: &[Value]) -> Integer {
+    arguments
+        .iter()
+        .fold(Integer::one(), |sum, argument| sum.add(&argument.occ()))
+}
+
 /// The binder of each root-frame source slot and the routing of one call's
 /// charge intervals onto them (FR-520-AC-11).
 struct BinderRouting {
@@ -922,6 +932,16 @@ pub(crate) struct Machine<'a, 'm, N> {
     /// being forwarded as a reference, rather than read by an operation.
     value_guard_provenance: Vec<bool>,
     frames: Vec<Vec<Option<Value>>>,
+    /// Live occurrence charge retained for each call frame while it is on
+    /// the stack; ordinary clause and expression roots retain zero or their
+    /// separately admitted expression-root charge.
+    frame_live_occurrences: Vec<u64>,
+    /// The session's call-frame live-occurrence limit.
+    live_occurrences_limit: u64,
+    /// The current and peak occurrence counts of this machine's call frames.
+    live_occurrences: u64,
+    peak_live_occurrences: u64,
+    peak_live_occurrences_sink: Option<Arc<AtomicU64>>,
     /// Per-slot provenance parallel to `frames`.
     frame_guard_provenance: Vec<Vec<bool>>,
     /// FR-390 source slots whose caller supplied an unavailable value.
@@ -1081,6 +1101,18 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         self
     }
 
+    /// Apply the configured live-occurrence bound to calls held in this
+    /// machine's frame stack.
+    pub(crate) fn with_session_limits(mut self, limits: SessionLimits) -> Self {
+        self.live_occurrences_limit = limits.live_occurrences;
+        self
+    }
+
+    pub(crate) fn with_peak_live_occurrences_sink(mut self, sink: Arc<AtomicU64>) -> Self {
+        self.peak_live_occurrences_sink = Some(sink);
+        self
+    }
+
     /// A value-family evaluator that records each completed application and
     /// its result. An occurrence whose operand or operator stopped is absent
     /// from the trace.
@@ -1190,6 +1222,11 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             values: Vec::new(),
             value_guard_provenance: Vec::new(),
             frames: Vec::new(),
+            frame_live_occurrences: Vec::new(),
+            live_occurrences_limit: SessionLimits::default().live_occurrences,
+            live_occurrences: 0,
+            peak_live_occurrences: 0,
+            peak_live_occurrences_sink: None,
             frame_guard_provenance: Vec::new(),
             unavailable_slots: std::collections::BTreeMap::new(),
             unavailable_read: None,
@@ -1356,13 +1393,57 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// itself turns into `Err(InternalFault)` rather than an `Outcome`
     /// (FR-096-AC-15).
     pub(crate) fn run(
-        mut self,
+        self,
         root: N,
         slots: usize,
         arguments: Vec<Value>,
     ) -> Result<Evaluation, InternalFault> {
-        self.enter_frame(slots, arguments);
-        self.drive(root)
+        self.run_with_root_frame(root, slots, arguments, false, false)
+    }
+
+    /// Evaluate a call frame whose `function.call` charge was already granted.
+    pub(crate) fn run_call(
+        self,
+        root: N,
+        slots: usize,
+        arguments: Vec<Value>,
+    ) -> Result<Evaluation, InternalFault> {
+        self.run_with_root_frame(root, slots, arguments, true, true)
+    }
+
+    /// Evaluate an expression root, which contributes a live frame to nested
+    /// calls but has no call charge and is not itself tested against the bound.
+    pub(crate) fn run_expression(
+        self,
+        root: N,
+        slots: usize,
+        arguments: Vec<Value>,
+    ) -> Result<Evaluation, InternalFault> {
+        self.run_with_root_frame(root, slots, arguments, true, false)
+    }
+
+    fn run_with_root_frame(
+        mut self,
+        root: N,
+        slots: usize,
+        arguments: Vec<Value>,
+        count_root: bool,
+        enforce_root: bool,
+    ) -> Result<Evaluation, InternalFault> {
+        let root_location = root.location().cloned();
+        if let Err(halt) = self.enter_frame(slots, arguments, count_root, enforce_root) {
+            return match halt {
+                Halt::Stop(stop) => self.stopped(stop, root_location.as_ref()),
+                Halt::Fault(fault) => Err(fault),
+                _ => Err(invariant("call-frame-limit-returned-non-stop")),
+            };
+        }
+        let mut evaluation = self.drive(root)?;
+        evaluation.peak_live_occurrences = self.peak_live_occurrences;
+        if let Some(sink) = self.peak_live_occurrences_sink.as_ref() {
+            sink.fetch_max(self.peak_live_occurrences, AtomicOrdering::Relaxed);
+        }
+        Ok(evaluation)
     }
 
     /// [`Self::run`] over a frame given slot by slot: `frame[i]` is local
@@ -1442,7 +1523,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         slots: usize,
         arguments: Vec<Value>,
     ) -> Result<(Evaluation, Trail), InternalFault> {
-        self.enter_frame(slots, arguments);
+        self.enter_frame(slots, arguments, false, false)
+            .map_err(|_| invariant("traced-root-frame-unexpected-limit"))?;
         let evaluation = self.drive(root)?;
         let trail = self
             .trail
@@ -1452,7 +1534,18 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     }
 
     /// Push the outermost frame: `arguments` in its first slots.
-    fn enter_frame(&mut self, slots: usize, arguments: Vec<Value>) {
+    fn enter_frame(
+        &mut self,
+        slots: usize,
+        arguments: Vec<Value>,
+        count_occurrences: bool,
+        enforce_limit: bool,
+    ) -> Result<(), Halt> {
+        let occurrences = if count_occurrences {
+            frame_occurrences(&arguments)
+        } else {
+            Integer::zero()
+        };
         let mut frame: Vec<Option<Value>> = arguments.into_iter().map(Some).collect();
         frame.resize(slots.max(frame.len()), None);
         let mut provenance = vec![false; frame.len()];
@@ -1461,15 +1554,17 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 *slot = true;
             }
         }
-        if let Some(owners) = self.owners.as_mut() {
-            owners.push_frame(Vec::new(), frame.len());
-        }
-        self.frames.push(frame);
-        self.frame_guard_provenance.push(provenance);
+        self.push_frame_owned(frame, provenance, Vec::new(), occurrences, enforce_limit)
     }
 
     fn push_frame(&mut self, frame: Vec<Option<Value>>, provenance: Vec<bool>) {
-        self.push_frame_owned(frame, provenance, Vec::new());
+        // Protocol and clause frames are not pure-function call frames.
+        if let Some(tracked) = self.owners.as_mut() {
+            tracked.push_frame(Vec::new(), frame.len());
+        }
+        self.frames.push(frame);
+        self.frame_guard_provenance.push(provenance);
+        self.frame_live_occurrences.push(0);
     }
 
     /// Push a frame whose first slots derive from `owners`, one per argument.
@@ -1478,13 +1573,46 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         frame: Vec<Option<Value>>,
         mut provenance: Vec<bool>,
         owners: Vec<Owner>,
-    ) {
+        next_charge: Integer,
+        enforce_limit: bool,
+    ) -> Result<(), Halt> {
+        let admitted_occurrences = next_charge.to_u64();
+        let occurrences = admitted_occurrences.unwrap_or(u64::MAX);
+        let total = self.live_occurrences.checked_add(occurrences);
+        if enforce_limit
+            && (admitted_occurrences.is_none()
+                || total.map_or(true, |total| total > self.live_occurrences_limit))
+        {
+            return Err(Halt::Stop(Stop::Incomplete(Incomplete {
+                limit_kind: LimitKind::LiveOccurrences,
+                limit: self.live_occurrences_limit,
+                consumed: self.live_occurrences,
+                next_charge,
+                charge_point: ChargePoint::FunctionCall,
+            })));
+        }
+        let total = total.unwrap_or(u64::MAX);
         provenance.resize(frame.len(), false);
         if let Some(tracked) = self.owners.as_mut() {
             tracked.push_frame(owners, frame.len());
         }
         self.frames.push(frame);
         self.frame_guard_provenance.push(provenance);
+        self.frame_live_occurrences.push(occurrences);
+        self.live_occurrences = total;
+        self.peak_live_occurrences = self.peak_live_occurrences.max(total);
+        Ok(())
+    }
+
+    fn pop_live_frame(&mut self) -> Result<(), Halt> {
+        let Some(occurrences) = self.frame_live_occurrences.pop() else {
+            return Err(invariant("evaluation-live-occurrence-frame-missing"));
+        };
+        self.live_occurrences = self
+            .live_occurrences
+            .checked_sub(occurrences)
+            .ok_or_else(|| invariant("evaluation-live-occurrence-count-underflow"))?;
+        Ok(())
     }
 
     /// Evaluate `root` on the current frame to its outcome: the task loop
@@ -1637,7 +1765,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             return Err(fault());
         };
         let (source, body) = (quantifier.at(*source), quantifier.at(*body));
-        self.enter_frame(slots, arguments);
+        self.enter_frame(slots, arguments, false, false)
+            .map_err(|_| invariant("separation-root-frame-unexpected-limit"))?;
         for binding in lets {
             let NodeKind::Let { slot, value, .. } = binding.kind() else {
                 return Err(fault());
@@ -2318,6 +2447,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 self.frame_guard_provenance
                     .pop()
                     .ok_or_else(|| invariant("evaluation-return-provenance-frame-missing"))?;
+                self.pop_live_frame()?;
                 self.pop_frame_owners()?;
                 Ok(())
             }
@@ -2336,6 +2466,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 self.frame_guard_provenance
                     .pop()
                     .ok_or_else(|| invariant("evaluation-return-provenance-frame-missing"))?;
+                self.pop_live_frame()?;
                 self.pop_frame_owners()?;
                 if !holds {
                     // ADR-013 O-16, FR-090-AC-11: a `StateModel` family-owned
@@ -2353,10 +2484,11 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     self.absorb_owner(*owner);
                 }
                 charge_call(self.meter)?;
+                let next_charge = frame_occurrences(&arguments);
                 let mut frame: Vec<Option<Value>> = arguments.into_iter().map(Some).collect();
                 frame.resize(callable.slots.max(frame.len()), None);
                 let provenance = vec![false; frame.len()];
-                self.push_frame_owned(frame, provenance, owners);
+                self.push_frame_owned(frame, provenance, owners, next_charge, true)?;
                 self.tasks.push(Task::ObserveApplication(node));
                 self.tasks.push(Task::Return);
                 self.tasks.push(Task::Eval(callable.body));
@@ -3498,13 +3630,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     provenance,
                     owners: argument_owners,
                 } = self.pop_many_forwarded(arguments_len)?;
+                let next_charge = frame_occurrences(&arguments);
                 charge_call(self.meter)?;
                 self.enter_function_case()?;
                 let mut frame: Vec<Option<Value>> = arguments.into_iter().map(Some).collect();
                 frame.resize(callable.slots.max(frame.len()), None);
                 let mut frame_provenance = provenance;
                 frame_provenance.resize(frame.len(), false);
-                self.push_frame_owned(frame, frame_provenance, argument_owners);
+                self.push_frame_owned(frame, frame_provenance, argument_owners, next_charge, true)?;
                 // shared-grammar.md: "self, result and pre(...) are ...
                 // unavailable ... inside a reusable predicate" -- a callee's
                 // own body is never anchored by its caller's `pre(..)`, so
@@ -3545,13 +3678,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     provenance,
                     owners: argument_owners,
                 } = self.pop_many_forwarded(arguments_len)?;
+                let next_charge = frame_occurrences(&arguments);
                 charge_call(self.meter)?;
                 self.enter_function_case()?;
                 let mut frame: Vec<Option<Value>> = arguments.into_iter().map(Some).collect();
                 frame.resize(callable.slots.max(frame.len()), None);
                 let mut frame_provenance = provenance;
                 frame_provenance.resize(frame.len(), false);
-                self.push_frame_owned(frame, frame_provenance, argument_owners);
+                self.push_frame_owned(frame, frame_provenance, argument_owners, next_charge, true)?;
                 let previous = self.enter(PackageContext {
                     world: World::Checked {
                         scope: library.scope(),
@@ -3949,11 +4083,18 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             .ok_or_else(|| invariant("evaluation-callable-unresolved"))?
                             .name
                             .to_owned();
+                        let next_charge = frame_occurrences(&full_arguments);
                         let mut frame: Vec<Option<Value>> =
                             full_arguments.clone().into_iter().map(Some).collect();
                         frame.resize(callable.slots.max(frame.len()), None);
                         let provenance = vec![false; frame.len()];
-                        self.push_frame_owned(frame, provenance, full_owners.clone());
+                        self.push_frame_owned(
+                            frame,
+                            provenance,
+                            full_owners.clone(),
+                            next_charge,
+                            true,
+                        )?;
                         self.tasks.push(Task::DispatchGuard(Box::new(DispatchGuard {
                             body_function: candidate.body,
                             arguments: full_arguments,
@@ -3973,11 +4114,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             .callee(self.world.graph(), candidate.body)
                             .ok_or_else(|| invariant("evaluation-callable-unresolved"))?;
                         charge_call(self.meter)?;
+                        let next_charge = frame_occurrences(&full_arguments);
                         let mut frame: Vec<Option<Value>> =
                             full_arguments.into_iter().map(Some).collect();
                         frame.resize(callable.slots.max(frame.len()), None);
                         let provenance = vec![false; frame.len()];
-                        self.push_frame_owned(frame, provenance, full_owners);
+                        self.push_frame_owned(frame, provenance, full_owners, next_charge, true)?;
                         self.tasks.push(Task::ObserveApplication(node));
                         self.tasks.push(Task::Return);
                         self.tasks.push(Task::Eval(callable.body));
@@ -6392,7 +6534,7 @@ mod tests {
             &[],
         )
         .with_trail(Trail::new(observation.clone(), None));
-        machine.enter_frame(0, Vec::new());
+        assert!(machine.enter_frame(0, Vec::new(), false, false).is_ok());
 
         let items = filament_exact::from_admitted(
             items_type.clone(),

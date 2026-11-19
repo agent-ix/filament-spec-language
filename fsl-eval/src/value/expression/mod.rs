@@ -36,15 +36,15 @@ mod value_invariants;
 
 pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol_slot;
 pub(crate) use bare::post_targets as bare_post_targets;
-pub(crate) use evaluate::reader_source::{
-    package_constraint_reads, package_guard_reads, package_operation_footprint, package_term_reads,
-    ProjectedClause,
-};
+pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations};
 pub(crate) use bare::{
     evaluate_state_graph_predicate as evaluate_bare_state_graph_predicate,
     evaluate_terminal_predicate as evaluate_bare_terminal_predicate, StateGraphOver,
 };
-pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations};
+pub(crate) use evaluate::reader_source::{
+    package_constraint_reads, package_guard_reads, package_operation_footprint, package_term_reads,
+    ProjectedClause,
+};
 use evaluate::Machine;
 use filament_eval::{Registry, SessionLimits};
 use filament_exact::{FieldValue, Meter, NodeKey, Outcome, Value, ValueType};
@@ -60,6 +60,8 @@ use fsl_semantics::check::StepRead;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::SelfKind;
 use s6a::{ReferenceEvaluation, S6aFamilyKind};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 pub(crate) use clause_set::evaluate_with_cancel as evaluate_clause_set_with_cancel;
 pub use clause_set::{ClauseSetEntry, ClauseSetEvaluation, ClauseSetOutcome};
@@ -1345,7 +1347,7 @@ fn evaluate_declaration(
     meter: &mut Meter,
 ) -> Result<Evaluation, InternalFault> {
     let mismatch = || InternalFault::new("S6a", "family-and-evaluation-environment-disagree");
-    let (outcome, location, losses, frame_depth) = match (family, env) {
+    let (outcome, location, losses, frame_depth, peak_live_occurrences) = match (family, env) {
         (S6aFamilyKind::Value, EvaluationTarget::Value(env)) => {
             let outcome =
                 fsl_semantics::check::ValueFunctionFamily::evaluate(identity, env, meter)?;
@@ -1354,6 +1356,7 @@ fn evaluate_declaration(
                 env.location.take(),
                 std::mem::take(&mut env.losses),
                 env.frame_depth,
+                env.peak_live_occurrences,
             )
         }
         (S6aFamilyKind::ProtocolClause, EvaluationTarget::ProtocolClause(env)) => {
@@ -1363,6 +1366,7 @@ fn evaluate_declaration(
                 outcome.into(),
                 env.location.take(),
                 std::mem::take(&mut env.losses),
+                0,
                 0,
             )
         }
@@ -1386,7 +1390,7 @@ fn evaluate_declaration(
         location,
         losses,
         frame_depth,
-        peak_live_occurrences: 0,
+        peak_live_occurrences,
     })
 }
 
@@ -2146,11 +2150,22 @@ fn evaluate_expression(
     }
     // An expression root incurs no call charge unless it reaches an
     // application (FR-262).
-    let mut registry =
-        Registry::new(PackageClosure::<&CheckedPackage, &CheckedExpression>::pre_admitted(package));
-    registry
-        .begin_expression(expression, arguments, SessionLimits::default(), objects, meter)?
-        .run()
+    let session_limits = SessionLimits::default();
+    let peak_live_occurrences = Arc::new(AtomicU64::new(0));
+    let mut registry = Registry::new(
+        PackageClosure::<&CheckedPackage, &CheckedExpression>::pre_admitted_with_session_limits(
+            package,
+            session_limits,
+            Arc::clone(&peak_live_occurrences),
+        ),
+    );
+    let mut evaluation = registry
+        .begin_expression(expression, arguments, session_limits, objects, meter)?
+        .run()?;
+    evaluation.peak_live_occurrences = evaluation
+        .peak_live_occurrences
+        .max(peak_live_occurrences.load(Ordering::Relaxed));
+    Ok(evaluation)
 }
 
 /// Call a checked package under an explicit live-occurrence session bound.
@@ -2181,12 +2196,21 @@ pub fn call_checked_package_with_session_limits(
     )?;
     // FR-401: the session owns this call's application stack and charges the
     // same meter the supplied-value run was admitted against.
+    let peak_live_occurrences = Arc::new(AtomicU64::new(0));
     let mut registry = Registry::new(
-        PackageClosure::<&CheckedPackage, &CheckedExpression>::pre_admitted(package),
+        PackageClosure::<&CheckedPackage, &CheckedExpression>::pre_admitted_with_session_limits(
+            package,
+            session_limits,
+            Arc::clone(&peak_live_occurrences),
+        ),
     );
-    registry
+    let mut evaluation = registry
         .begin_call(callable.identity, arguments, session_limits, objects, meter)?
-        .run()
+        .run()?;
+    evaluation.peak_live_occurrences = evaluation
+        .peak_live_occurrences
+        .max(peak_live_occurrences.load(Ordering::Relaxed));
+    Ok(evaluation)
 }
 
 /// [`CheckedPackageEvaluation::evaluate`] over an environment FR-106 admitted

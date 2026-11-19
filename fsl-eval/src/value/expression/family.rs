@@ -20,6 +20,7 @@
 //! evaluation half over it -- layer 5 depending on layer 3 is the
 //! permitted direction (ADR-011 §6.1).
 
+use filament_eval::SessionLimits;
 use filament_exact::{is_identifier, NodeKey, Value};
 use filament_semantic_value::catalog::InternalFault;
 
@@ -117,9 +118,13 @@ pub(crate) struct EvaluationEnv<'a> {
     pub(crate) losses: Vec<filament_semantic_value::loss::LocatedLoss>,
     /// The last hook call's S6a frame depth, recorded alongside its location.
     pub(crate) frame_depth: u32,
+    /// The last hook call's peak live-occurrence count.
+    pub(crate) peak_live_occurrences: u64,
     /// Whether the caller already charged this application's `function.call`
     /// (the `filament-eval` scheduler does), so the hook charges nothing.
     pub(crate) call_charged: bool,
+    /// The evaluator session bound mirrored by the S6a machine.
+    pub(crate) session_limits: SessionLimits,
 }
 
 impl<'a> EvaluationEnv<'a> {
@@ -137,7 +142,9 @@ impl<'a> EvaluationEnv<'a> {
             location: None,
             losses: Vec::new(),
             frame_depth: 0,
+            peak_live_occurrences: 0,
             call_charged: false,
+            session_limits: SessionLimits::default(),
         }
     }
 
@@ -150,6 +157,21 @@ impl<'a> EvaluationEnv<'a> {
     ) -> Self {
         Self {
             call_charged: true,
+            ..Self::new(package, objects, arguments)
+        }
+    }
+
+    /// An environment for a scheduler-charged call with an explicit
+    /// live-occurrence bound.
+    pub(crate) fn charged_with_session_limits(
+        package: &'a super::CheckedPackage,
+        objects: &'a fsl_semantics::model::object_environment::ObjectEnvironment,
+        arguments: Vec<Value>,
+        session_limits: SessionLimits,
+    ) -> Self {
+        Self {
+            call_charged: true,
+            session_limits,
             ..Self::new(package, objects, arguments)
         }
     }
@@ -206,6 +228,7 @@ impl super::s6a::ReferenceEvaluation for ValueFunctionFamily {
         env.location = None;
         env.losses.clear();
         env.frame_depth = 0;
+        env.peak_live_occurrences = 0;
         // FR-090-AC-3 (ADR-013 T-4): `call` always resolves `checked` from
         // this same package's declarations before calling `evaluate`, so a
         // lookup miss here means the two lookups disagreed -- a broken S6a
@@ -249,11 +272,13 @@ impl super::s6a::ReferenceEvaluation for ValueFunctionFamily {
             meter,
             env.package.graph().dispatch_tables(),
         )
+        .with_session_limits(env.session_limits)
         .with_formed_units(function.formed_units)
-        .run(function.body, function.slots, arguments)?;
+        .run_call(function.body, function.slots, arguments)?;
         env.location = evaluation.location;
         env.losses = evaluation.losses;
         env.frame_depth = evaluation.frame_depth;
+        env.peak_live_occurrences = evaluation.peak_live_occurrences;
         match evaluation.outcome {
             filament_eval::FamilyOutcome::Evaluated(outcome) => {
                 Ok(filament_eval::EvalOutcome::Kernel(outcome))
