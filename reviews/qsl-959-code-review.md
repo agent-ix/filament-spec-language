@@ -152,3 +152,32 @@ Examined criteria and test bindings:
   ]
 }
 ```
+
+
+## Dispositions
+
+Round 1 inspected at 54b2a2774dc99a73789e6a69b3587cde8766ecbf. FND-001: assembly now collects all distinct admitted member types of every population through named_populations, so the exactly-one test no longer uses canonical domain keys. FND-002: SMT uses one empty binding for no receiver, preserves vacuous truth for an empty receiver population, and treats a known false object as defined even alongside an undefined object. Population queries now reach the existing OutOfFragment refusal rather than the missing-receiver invariant fault. The new tests assert constant true/false SMT outcomes, typed population refusal, and both false/Undefined object orders. No new defect found.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | Inspected fix at 54b2a2774dc99a73789e6a69b3587cde8766ecbf; exact fixed excerpt in round-1 tracker data below. |
+| FND-002 | fixed | Inspected fix at 54b2a2774dc99a73789e6a69b3587cde8766ecbf; exact fixed excerpt in round-1 tracker data below. |
+
+```yaml
+{
+  "dispositions": [
+    {
+      "fnd": "FND-001",
+      "outcome": "fixed",
+      "after_excerpt": "let objects: BTreeSet<EffectiveId> = model\n                    .named_populations()\n                    .flat_map(|population| population.members)\n                    .collect();\n                let objects: Vec<_> = objects.into_iter().collect();"
+    },
+    {
+      "fnd": "FND-002",
+      "outcome": "fixed",
+      "after_excerpt": "let bindings = match predicate.parameters() {\n                        [] => vec![Vec::new()],"
+    }
+  ]
+}
+```
+
+Current verdict: PASS for source review; all original findings are fixed. Named targeted test execution is coder-owned and remains pending; no duplicate build, aggregate gate, whole-repository matrix, source edit or commit was performed by this reviewer. Merge readiness remains conditional on the lead's scoped test gate.

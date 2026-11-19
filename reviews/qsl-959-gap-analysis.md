@@ -151,3 +151,26 @@ Examined criteria and test bindings:
   ]
 }
 ```
+
+
+## Dispositions
+
+Round 1 inspected at 54b2a2774dc99a73789e6a69b3587cde8766ecbf. The added terminal_self_refuses_several_member_types_in_one_population test uses the existing heterogeneous-member fixture and asserts exactly one MissingDeclaration/missing-name error at the self span. Its FR-124-AC-7 trace binds the regression to the governing behavior. No remaining changed-scope coverage finding.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | Inspected fix at 54b2a2774dc99a73789e6a69b3587cde8766ecbf; exact fixed excerpt in round-1 tracker data below. |
+
+```yaml
+{
+  "dispositions": [
+    {
+      "fnd": "FND-001",
+      "outcome": "fixed",
+      "after_excerpt": "fn terminal_self_refuses_several_member_types_in_one_population() {\n    let document = crate::model_operations::tc465_document_with_tag_type_sharing_a_field_name();\n    let refusal = admit_and_assemble_with_body(&document, WHEN)\n        .expect_err(\"one population covers ConfigVersion and Tag\");"
+    }
+  ]
+}
+```
+
+Current verdict: PASS for source review; all original findings are fixed. Named targeted test execution is coder-owned and remains pending; no duplicate build, aggregate gate, whole-repository matrix, source edit or commit was performed by this reviewer. Merge readiness remains conditional on the lead's scoped test gate.
