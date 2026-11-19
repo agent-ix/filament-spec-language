@@ -29,7 +29,7 @@
     ],
     "items": [
       {
-        "claim": "CanReachFour",
+        "claim": "CanStayZero",
         "kind": "temporal-satisfaction",
         "temporal": {
           "item_kind": "formula",

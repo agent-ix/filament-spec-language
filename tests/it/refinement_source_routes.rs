@@ -70,7 +70,10 @@ fn analyze(stem: &str) {
     match expected.result.as_str() {
         "proved" => {
             assert_eq!(output.exit_code, 0, "{stem}: {value}");
-            assert_eq!(item["certificate"]["accepted"], true, "{stem}: {value}");
+            assert_eq!(
+                item["record"]["certification"], "certified",
+                "{stem}: {value}"
+            );
         }
         "refuted" => {
             assert_eq!(output.exit_code, 10, "{stem}: {value}");
