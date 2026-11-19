@@ -1391,7 +1391,7 @@ pub fn replay_protocol_trace_from_package(
             identity.occurrence().origin().clone(),
         );
         if expected != *envelope.occurrence_key()
-            || identity.occurrence().node() != *envelope.clause_node()
+            || identity.occurrence().node() != envelope.clause_node()
         {
             return Err(refused(ModelTraceRefusal::ItemIdentity {
                 clause_node: envelope.clause_node().clone(),
