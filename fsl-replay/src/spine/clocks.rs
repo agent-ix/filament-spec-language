@@ -154,9 +154,10 @@ impl RequestClocks {
             .collect()
     }
 
-    /// The selection of every clock-bearing temporal clause, hyper clause and
-    /// `compensate` template of `checked`, in source order, or the FR-640
-    /// refusal at stage `emit`. `parsed` are the program's parsed units,
+    /// The selection of every clock-bearing temporal clause, hyper clause,
+    /// protocol `await` and `compensate` template of `checked`, in source
+    /// order, or the FR-640 refusal at stage `emit`. `parsed` are the
+    /// program's parsed units,
     /// which locate a refusal at the declaration's `clock` argument. A member
     /// is unused when no declaration of the program or of any library unit
     /// it compiles with (FR-099) takes its configuration from `clocks`.
@@ -329,12 +330,13 @@ impl RequestClocks {
 }
 
 /// What the parsed units of one checked package tell a clock selection that
-/// its checked graph does not: where each `temporal` clause's `clock`
-/// argument is, which locates a refusal. Built before the check consumes the
-/// parsed units.
+/// its checked graph does not: where each `temporal` clause's and protocol
+/// `await`'s `clock` argument is, which locates a refusal. Built before the
+/// check consumes the parsed units.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ClockLocator {
-    /// Each `temporal` clause's source, declaration span and `clock` span.
+    /// Each `temporal` clause and protocol `await`'s source, declaration span
+    /// and `clock` span.
     clocks: Vec<(RawSourceRef, Span, Span)>,
 }
 
@@ -344,12 +346,24 @@ impl ClockLocator {
         for unit in parsed {
             let source = unit.source().reference();
             for form in unit.unit().forms() {
-                if let fsl_forms::DeclarationForm::Temporal(clause) = form.form() {
-                    if let Some(clock) = &clause.clock {
-                        locator
-                            .clocks
-                            .push((source.clone(), form.span(), clock.span));
+                match form.form() {
+                    fsl_forms::DeclarationForm::Temporal(clause) => {
+                        if let Some(clock) = &clause.clock {
+                            locator
+                                .clocks
+                                .push((source.clone(), form.span(), clock.span));
+                        }
                     }
+                    fsl_forms::DeclarationForm::Protocol(protocol) => {
+                        for await_form in &protocol.awaits {
+                            locator.clocks.push((
+                                source.clone(),
+                                await_form.span,
+                                await_form.clock.span,
+                            ));
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -378,8 +392,8 @@ fn emit_refusal(
 }
 
 /// Every clock-bearing declaration of `package`'s own graph, in source
-/// order: its temporal clauses, its hyper clauses and its `compensate`
-/// templates.
+/// order: its temporal clauses, hyper clauses, protocol `await`s and
+/// `compensate` templates.
 fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
     let graph = package.graph();
     let mut declarations = Vec::new();
@@ -449,6 +463,19 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
         });
     }
     for protocol in graph.protocols() {
+        for await_form in &protocol.awaits {
+            let Some(profile) = await_form.profile else {
+                continue;
+            };
+            declarations.push(Declaration {
+                name: &await_form.name,
+                profile,
+                clock: &await_form.clock,
+                model: None,
+                source: graph.source().clone(),
+                span: await_form.span,
+            });
+        }
         for template in &protocol.obligations.compensations {
             let Some(profile) = template.temporal_profile else {
                 continue;
