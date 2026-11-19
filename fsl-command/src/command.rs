@@ -718,6 +718,18 @@ pub enum RunCause {
         /// Why it stopped.
         reason: String,
     },
+    /// FR-1015: an `export` member the request reader refuses, with its
+    /// FR-805 cause (`missing-member`, `invalid-value`, `wrong-value-kind`,
+    /// `unknown-member`) apart from the message.
+    #[error("invalid export request member {path}: {cause}: {reason}")]
+    ExportRequest {
+        /// The JSON pointer of the member at fault.
+        path: String,
+        /// The FR-805 cause.
+        cause: &'static str,
+        /// Why the member is refused.
+        reason: String,
+    },
     /// FR-312: a clause request member cannot form a typed selection.
     #[error("invalid clause request member {member}: {reason}")]
     ClauseRequest {
@@ -1031,6 +1043,7 @@ impl RunCause {
             | Self::OutputGivenTwice
             | Self::OutputExists { .. } => Code::InvalidRequest,
             Self::ExportMapper { .. } => Code::RuntimeInvariant,
+            Self::ExportRequest { .. } => Code::InvalidRuntimeInput,
             Self::Output(_) | Self::ClauseOutput(_) => Code::OutputFailure,
             Self::Format => Code::UnknownWire,
             Self::Limit(_) => Code::ResourceExhausted,
@@ -1196,6 +1209,31 @@ impl RunError {
                 OutcomeDocument::new(operation, None, self.category())
                     .with_diagnostics(vec![projected])
             }
+            RunCause::ExportMapper { .. } => OutcomeDocument::new(
+                operation,
+                Some(fsl_replay::OutcomeStage::S4),
+                self.category(),
+            )
+            .with_diagnostics(vec![OutcomeDiagnostic::new(
+                None,
+                self.cause.code().as_str(),
+                None,
+                self.outcome_message(),
+            )]),
+            RunCause::ExportRequest { path, cause, .. } => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        Some(*cause),
+                        self.cause.code().as_str(),
+                        None,
+                        self.outcome_message(),
+                    )
+                    .with_details(Some(serde_json::Map::from_iter([(
+                        "path".to_owned(),
+                        serde_json::Value::String(path.clone()),
+                    )]))),
+                ])
+            }
             RunCause::ClauseRequest { member, .. } if member.starts_with("/call/arguments/") => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
@@ -1221,7 +1259,6 @@ impl RunError {
             | RunCause::ClocksGivenTwice
             | RunCause::OutputGivenTwice
             | RunCause::OutputExists { .. }
-            | RunCause::ExportMapper { .. }
             | RunCause::Output(_)
             | RunCause::ClauseOutput(_)
             | RunCause::Format

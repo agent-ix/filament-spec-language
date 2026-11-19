@@ -462,7 +462,7 @@ pub(crate) fn counter_export(member: Value) -> (u8, Value) {
 }
 
 /// The JSON form of an FR-286 outcome document.
-fn outcome_json(document: &fsl_replay::OutcomeDocument) -> Value {
+pub(crate) fn outcome_json(document: &fsl_replay::OutcomeDocument) -> Value {
     serde_json::from_slice(&document.to_bytes().expect("serializes")).unwrap()
 }
 
@@ -546,8 +546,9 @@ fn an_export_stops_at_its_output_byte_limit() {
     assert_eq!(value["export"]["status"], "incomplete", "{value}");
     names(&value["export"], "export.output_bytes");
     assert_eq!(
-        value["export"]["incomplete"],
-        json!({"limit": "export.output_bytes", "bound": 1}),
+        value["export"]["cause"],
+        json!({"type": "limit-reached", "limit": "output_bytes", "value": 1,
+            "setting": "export.output_bytes"}),
         "{value}"
     );
     assert!(value["export"].get("target_text").is_none(), "{value}");
@@ -720,8 +721,9 @@ fn the_export_settings_take_the_compile_defaults() {
     let (exit, value) = export(BRAKING, false, member);
     assert_eq!(value["export"]["status"], "incomplete", "{value}");
     assert_eq!(
-        value["export"]["incomplete"],
-        json!({"limit": "export.work_units", "bound": 1}),
+        value["export"]["cause"],
+        json!({"type": "limit-reached", "limit": "work_units", "value": 1,
+            "setting": "export.work_units"}),
         "{value}"
     );
     assert_eq!(exit, 22, "{value}");

@@ -44,3 +44,21 @@ tagged with a name-only check and its work_units clause would fail. FR-1015-AC-1
 FR-286-AC-22 and FSpec FR-811-AC-2 are partly asserted. Fix by enabling the existing
 stubs under `minimum_fidelity: any` (or extending the new tests) and dropping duplicate
 tags, in this PR.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | medium | Four new tests in export_surface.rs claim ACs they do not assert. `an_unlowered_invariant_is_a_mapper_failure` is tagged FR-1015-AC-1, which is the `SlowEnough`/`Braking` floor case; the mapper-failure rule is FR-1015 Behavior and has no AC of its own. `a_refused_record_fails_the_floor_before_a_mapper_failure` is tagged FR-1015-AC-7, which is floor before `export.output_bytes`. `the_initial_member_must_name_a_snapshot` is tagged FR-1015-AC-3, which is the output file. `an_observer_is_refused_as_not_run_by_this_build` is tagged FR-1015-AC-2, which is limits. Each tag inflates its AC's coverage with an unrelated behaviour. Untag them, or tag them to the right criterion once one exists | tests/it/export_surface.rs:26-113 |
+
+## Dispositions
+
+Round 1, head d0b22461599864133bc136765ba904d34a4b10ed. The focused run of export_surface::, plan_export_surface:: and export_rulings:: (--test-threads=1, house skips) gave 15 passed, with the rest ignored.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The FR-255-AC-22 stub `the_export_settings_take_the_compile_defaults` is un-ignored and now asserts the names, the compile counterparts, the `export.nodes=7` parse, and `export.work_units` 1 giving `incomplete` `{limit, bound: 1}`, exit 22. The defaults are asserted through the package key test |
+| FND-002 | fixed | `an_export_below_its_fidelity_floor_refuses_with_no_text` is un-ignored over `SlowEnough`/`Braking`. It asserts refused / unsupported_projection / below-fidelity-floor, the failing obligation, no `target_text`, no `package`, no file, category unsupported, and the `any` case. The `preserved` companion record of FSpec FR-811-AC-2 cannot exist without FR-812 lowering; this is stated in the test doc and the remaining case stays ignored |
+| FND-003 | fixed | The stubs are un-ignored and cover the missing clauses. AC-2: override-only `incomplete` 22, and the doubled `export.output_bytes` naming `limits`. AC-3: override byte-identical, existing path with `last_stage`/`result` null, member+override naming `output`/`--output` with no file. AC-4: the key set, two equal runs, the 99999 difference. FR-286-AC-22: `items`/`artifacts` `[]`, success, incomplete, unsupported (via the AC-1 test). They run over `Braking` instead of the AC's counter, because the counter's invariant is now a mapper failure until FR-812 |
+| FND-004 | fixed | The stale "not implemented" stubs are un-ignored or carry accurate reasons (FR-812 lowering), and the weaker duplicate tests were removed from export_surface.rs |
+| FND-005 | fixed | Un-ignored and passing: AC-5's hybrid part (`a_hybrid_claim_is_unrepresented_by_its_flow_nodes`, tla and lean), AC-6 (`obligations_are_nonempty_declared_names`), AC-7 (`the_floor_is_decided_before_the_text_is_charged`) and AC-8 (`the_generator_is_the_application`). The parts that need a preserved Bounded record are split into ignored tests keyed QSL-1979 |

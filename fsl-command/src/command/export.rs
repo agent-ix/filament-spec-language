@@ -84,6 +84,9 @@ pub(super) enum Mapped {
     },
     /// A denied export charge: the setting that stopped it and its bound.
     Incomplete { setting: &'static str, bound: u64 },
+    /// A valid `observer` this build cannot run (FSpec FR-817): refused
+    /// `unsupported` before any charge, whatever the limits.
+    Unsupported { observer: String },
 }
 
 /// An obligation the mapper met and does not lower (FSpec FR-811: a mapper
@@ -249,9 +252,9 @@ fn compile_and_map(
                     fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT,
                 ),
             )
-            .map_err(|refusal| RunCause::ClauseRequest {
-                member: "program".to_owned(),
-                reason: format!("the compiled package is not admitted: {refusal:?}"),
+            .map_err(|_| RunCause::ExportMapper {
+                construct: "checked package".to_owned(),
+                reason: "the package the run compiled is not admitted".to_owned(),
             })?;
             let _ = &initial;
             let graph = checked.package().graph();
@@ -280,6 +283,11 @@ fn compile_and_map(
                         }),
                 )
                 .collect();
+            if let Some(observer) = &request.observer {
+                return Ok(Mapped::Unsupported {
+                    observer: observer.clone(),
+                });
+            }
             map::run(&admitted, &program.identity, &clauses, request, &effective)
         },
     )?;
@@ -316,6 +324,18 @@ fn finish(
             incomplete(&mut export, setting, *bound);
             Category::Incomplete
         }
+        Mapped::Unsupported { observer } => {
+            export["status"] = json!("refused");
+            export["records"] = json!([]);
+            export["refusal"] = json!({
+                "code": "unsupported_projection",
+                "cause": "unsupported-requested-capability",
+                "capability": "observer",
+                "observer": observer,
+                "reason": format!("observer `{observer}` is not run by this build"),
+            });
+            Category::Unsupported
+        }
     };
     let written = match (mapped, category) {
         (Mapped::Assembled { text, .. }, Category::Success) => {
@@ -346,10 +366,16 @@ fn finish(
     }))
 }
 
-/// A denied charge: the setting and its bound, and no records, text or package.
+/// A denied charge: the limit reached (FSpec FR-817 `limit-reached`), and no
+/// records, text or package.
 fn incomplete(export: &mut Value, setting: &str, bound: u64) {
     export["status"] = json!("incomplete");
-    export["incomplete"] = json!({"limit": setting, "bound": bound});
+    export["cause"] = json!({
+        "type": "limit-reached",
+        "limit": setting.strip_prefix("export.").unwrap_or(setting),
+        "value": bound,
+        "setting": setting,
+    });
     export["records"] = json!([]);
 }
 

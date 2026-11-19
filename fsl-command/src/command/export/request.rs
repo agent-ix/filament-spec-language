@@ -101,12 +101,24 @@ pub(super) struct Request {
     pub(super) target: Target,
     pub(super) obligations: Vec<String>,
     pub(super) floor: Floor,
+    /// The requested observer (FSpec FR-817); this build runs none.
+    pub(super) observer: Option<String>,
     pub(super) initial: Option<String>,
     pub(super) limits: Limits,
     pub(super) output: Option<String>,
 }
 
-fn refuse(pointer: &str, reason: impl Into<String>) -> RunCause {
+/// A member the reader refuses, with its FR-805 `cause`.
+fn refuse(pointer: &str, cause: &'static str, reason: impl Into<String>) -> RunCause {
+    RunCause::ExportRequest {
+        path: format!("/request/export{pointer}"),
+        cause,
+        reason: reason.into(),
+    }
+}
+
+/// A `limits` entry the reader refuses: `invalid-request` naming the entry.
+fn refuse_limit(pointer: &str, reason: impl Into<String>) -> RunCause {
     RunCause::ClauseRequest {
         member: format!("/request/export{pointer}"),
         reason: reason.into(),
@@ -117,7 +129,11 @@ fn text<'a>(object: &'a Map<String, Value>, name: &str) -> Result<Option<&'a str
     match object.get(name) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(text)) => Ok(Some(text)),
-        Some(_) => Err(refuse(&format!("/{name}"), "expected a string")),
+        Some(_) => Err(refuse(
+            &format!("/{name}"),
+            "wrong-value-kind",
+            "expected a string",
+        )),
     }
 }
 
@@ -128,20 +144,24 @@ fn text<'a>(object: &'a Map<String, Value>, name: &str) -> Result<Option<&'a str
 ///
 /// `invalid-request` at the member's pointer for a malformed member, an
 /// unknown profile or limit name, a family mismatch, a duplicate obligation,
-/// a limit given both in the member and by the caller, or an observer
-/// request (observers run in a later slice).
+/// a limit given both in the member and by the caller.
 pub(super) fn read(member: &Value, given: &fsl_replay::spine::ExportLimits) -> Result<Request> {
     let Some(object) = member.as_object() else {
-        return Err(refuse("", "expected an object"));
+        return Err(refuse("", "wrong-value-kind", "expected an object"));
     };
     if let Some(unknown) = object.keys().find(|key| !MEMBERS.contains(&key.as_str())) {
-        return Err(refuse(&format!("/{unknown}"), "unknown export member"));
+        return Err(refuse(
+            &format!("/{unknown}"),
+            "unknown-member",
+            "unknown export member",
+        ));
     }
-    let profile =
-        text(object, "profile")?.ok_or_else(|| refuse("/profile", "the profile is required"))?;
+    let profile = text(object, "profile")?
+        .ok_or_else(|| refuse("/profile", "missing-member", "the profile is required"))?;
     let target = Target::of_profile(profile).ok_or_else(|| {
         refuse(
             "/profile",
+            "invalid-value",
             format!("unknown output-mapping profile `{profile}`"),
         )
     })?;
@@ -149,6 +169,7 @@ pub(super) fn read(member: &Value, given: &fsl_replay::spine::ExportLimits) -> R
         if family != target.family() {
             return Err(refuse(
                 "/target_family",
+                "invalid-value",
                 format!(
                     "target family `{family}` does not match profile `{profile}`, whose family is `{}`",
                     target.family()
@@ -164,26 +185,23 @@ pub(super) fn read(member: &Value, given: &fsl_replay::spine::ExportLimits) -> R
         Some(other) => {
             return Err(refuse(
                 "/minimum_fidelity",
+                "invalid-value",
                 format!("`{other}` is none of preserved, conditional and any"),
             ))
         }
     };
-    if let Some(observer) = text(object, "observer")? {
-        return Err(refuse(
-            "/observer",
-            format!("observer `{observer}` is not run by this build"),
-        ));
-    }
+    let observer = text(object, "observer")?.map(str::to_owned);
     let limits = limits(object, given)?;
     let output = match object.get("output") {
         None | Some(Value::Null) => None,
         Some(Value::Object(record)) => Some(output_file(record)?),
-        Some(_) => return Err(refuse("/output", "expected an object")),
+        Some(_) => return Err(refuse("/output", "wrong-value-kind", "expected an object")),
     };
     Ok(Request {
         target,
         obligations,
         floor,
+        observer,
         initial: text(object, "initial")?.map(str::to_owned),
         limits,
         output,
@@ -195,20 +213,23 @@ fn obligations(object: &Map<String, Value>) -> Result<Vec<String>> {
         None | Some(Value::Null) => {
             return Err(refuse(
                 "/obligations",
-                "missing-member: the obligations member is required",
+                "missing-member",
+                "the obligations member is required",
             ))
         }
         Some(Value::Array(names)) if names.is_empty() => {
             return Err(refuse(
                 "/obligations",
-                "invalid-value: name at least one obligation",
+                "invalid-value",
+                "name at least one obligation",
             ))
         }
         Some(Value::Array(names)) => names,
         Some(_) => {
             return Err(refuse(
                 "/obligations",
-                "invalid-value: expected an array of obligation names",
+                "wrong-value-kind",
+                "expected an array of obligation names",
             ))
         }
     };
@@ -218,12 +239,14 @@ fn obligations(object: &Map<String, Value>) -> Result<Vec<String>> {
         let Some(name) = name.as_str() else {
             return Err(refuse(
                 &format!("/obligations/{index}"),
+                "wrong-value-kind",
                 "expected a string",
             ));
         };
         if !seen.insert(name) {
             return Err(refuse(
                 &format!("/obligations/{index}"),
+                "invalid-value",
                 format!("obligation `{name}` is named twice"),
             ));
         }
@@ -236,12 +259,17 @@ fn output_file(record: &Map<String, Value>) -> Result<String> {
     if let Some(unknown) = record.keys().find(|key| key.as_str() != "file") {
         return Err(refuse(
             &format!("/output/{unknown}"),
+            "unknown-member",
             "unknown output member",
         ));
     }
     match record.get("file") {
         Some(Value::String(file)) if !file.is_empty() => Ok(file.clone()),
-        _ => Err(refuse("/output/file", "expected a non-empty path")),
+        _ => Err(refuse(
+            "/output/file",
+            "invalid-value",
+            "expected a non-empty path",
+        )),
     }
 }
 
@@ -252,7 +280,7 @@ fn limits(object: &Map<String, Value>, given: &fsl_replay::spine::ExportLimits) 
     let entries = match object.get("limits") {
         None | Some(Value::Null) => None,
         Some(Value::Object(entries)) => Some(entries),
-        Some(_) => return Err(refuse("/limits", "expected an object")),
+        Some(_) => return Err(refuse("/limits", "wrong-value-kind", "expected an object")),
     };
     for (name, value) in entries.into_iter().flatten() {
         let slot = match Setting::from_name(name) {
@@ -260,7 +288,7 @@ fn limits(object: &Map<String, Value>, given: &fsl_replay::spine::ExportLimits) 
             Some(Setting::ExportNodes) => &mut limits.nodes,
             Some(Setting::ExportWorkUnits) => &mut limits.work_units,
             _ => {
-                return Err(refuse(
+                return Err(refuse_limit(
                     &format!("/limits/{name}"),
                     format!(
                         "`{name}` is no export limit; the settings are export.output_bytes, \
@@ -270,7 +298,7 @@ fn limits(object: &Map<String, Value>, given: &fsl_replay::spine::ExportLimits) 
             }
         };
         let Some(bound) = value.as_u64() else {
-            return Err(refuse(
+            return Err(refuse_limit(
                 &format!("/limits/{name}"),
                 "expected an unsigned integer",
             ));

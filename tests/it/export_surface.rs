@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-1015 and FSpec FR-811 stops that need no lowering: a representable
 //! obligation this build does not lower is a mapper failure, never a record,
-//! a package or a file; the `initial` and `observer` members are checked.
+//! a package or a file; the `initial` member is checked.
 
-use crate::plan_export_surface::{braking_request, counter_request};
+use crate::plan_export_surface::{counter_request, outcome_json};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -25,7 +25,6 @@ fn counter_member(floor: Option<&str>) -> Value {
 /// failure: internal-failure, exit 30, no package and no file, under every
 /// floor.
 #[test]
-#[trace("TC-2865", "FR-1015-AC-1")]
 fn an_unlowered_invariant_is_a_mapper_failure() {
     for floor in [None, Some("any"), Some("preserved")] {
         let directory = tempfile::tempdir().unwrap();
@@ -38,13 +37,17 @@ fn an_unlowered_invariant_is_a_mapper_failure() {
         names(&value, "Bounded");
         assert!(value.get("export").is_none(), "{value}");
         assert!(!directory.path().join("counter.tla").exists());
+        // The program reached S4 before the mapper ran (FR-286).
+        let document = outcome_json(&error.outcome_document(fsl_replay::Operation::Export));
+        assert_eq!(document["last_stage"], "S4", "{document}");
+        assert_eq!(value["stage"], "emit", "{value}");
     }
 }
 
 /// The floor is decided before the mapper meets a representable obligation:
 /// a refused record fails the default floor, exit 21, ahead of the failure.
 #[test]
-#[trace("TC-3002", "FR-1015-AC-7")]
+#[trace("TC-3002", "FR-1015-AC-6")]
 fn a_refused_record_fails_the_floor_before_a_mapper_failure() {
     let directory = tempfile::tempdir().unwrap();
     let mut member = counter_member(None);
@@ -70,8 +73,10 @@ fn the_closure_of_an_obligation_is_charged_node_by_node() {
         assert_eq!(result.exit_code, 22, "{setting}");
         let value: Value = serde_json::from_str(&result.value.to_string()).unwrap();
         assert_eq!(
-            value["export"]["incomplete"],
-            json!({"limit": setting, "bound": bound}),
+            value["export"]["cause"],
+            json!({"type": "limit-reached",
+                "limit": setting.strip_prefix("export.").unwrap(),
+                "value": bound, "setting": setting}),
             "{value}"
         );
     }
@@ -80,7 +85,6 @@ fn the_closure_of_an_obligation_is_charged_node_by_node() {
 /// FSpec FR-817 `initial` names a `filament.state.snapshot/v1` document; any
 /// other document refuses at its pointer, exit 20.
 #[test]
-#[trace("TC-2992", "FR-1015-AC-3")]
 fn the_initial_member_must_name_a_snapshot() {
     let directory = tempfile::tempdir().unwrap();
     let path = counter_request(directory.path(), counter_member(Some("any")));
@@ -95,21 +99,4 @@ fn the_initial_member_must_name_a_snapshot() {
     let value = error.value().unwrap();
     names(&value, "/request/export/initial");
     assert!(!directory.path().join("counter.tla").exists());
-}
-
-/// An observer member is well formed but is not run by this build; it refuses
-/// naming that, and writes nothing.
-#[test]
-#[trace("TC-2865", "FR-1015-AC-2")]
-fn an_observer_is_refused_as_not_run_by_this_build() {
-    let directory = tempfile::tempdir().unwrap();
-    let mut member = json!({"profile": "filament.output.tla2/v1",
-        "obligations": ["SlowEnough"], "minimum_fidelity": "any", "observer": "tlc"});
-    member["output"] = json!({"file": "m.tla"});
-    let path = braking_request(directory.path(), member);
-    let error = fsl_command::command::run(&path, &crate::negotiation::Fr290)
-        .expect_err("an observer refuses");
-    assert_eq!(error.category().exit_code(), 20);
-    names(&error.value().unwrap(), "not run by this build");
-    assert!(!directory.path().join("m.tla").exists());
 }

@@ -69,3 +69,28 @@ spec ruling on FND-002. FND-003 and FND-004 are cheap in-PR fixes. The W53
 amendments now on main (FND-009..012) make FND-002/003 binding and add the
 obligation-set, stop-order and generator rulings. The branch must be rebased and
 brought to FR-1015-AC-5..8 before merge.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-013 | medium | A mapper failure writes an outcome with `last_stage` `null`, and the native result reports `stage` `request`, although the program was compiled and packaged (S4) before the mapper ran (probe C1: category internal-failure, exit 30, `last_stage` null, `result` null). FR-286 "Export outcomes" says `last_stage` is the greatest compile stage the export's program reached (S4 for an export of a checked package), and `null` only for a refusal of the request itself. The `RunCause::ExportMapper` error goes through the generic `RunError::outcome_document` arm with `None` for the stage | fsl-command/src/command/export.rs:386-395; fsl-command/src/command.rs:1240-1250 |
+
+## Dispositions
+
+Round 1, head d0b22461599864133bc136765ba904d34a4b10ed (fix commit d0b224615 on top of merge cac423ef2). Verified by reading the code and by a temporary reviewer probe (never committed), as well as the PR's tests.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `Meter::charge` charges one node and one work unit per distinct dependency-closure node (shared nodes once, via `charged`). work_units 1 and 2 stop `incomplete` `{limit: export.work_units, bound}` with exit 22 (probe C3, test `the_closure_of_an_obligation_is_charged_node_by_node`) |
+| FND-002 | fixed | A representable obligation with no lowering yields `Unlowered` and no record. After the floor, `assembled()` returns `RunCause::ExportMapper`: internal-failure, exit 30, no package, no file, under default, `any` and `preserved` floors, and with the `--output` override (probes C1, C6; test `an_unlowered_invariant_is_a_mapper_failure`) |
+| FND-003 | fixed | Causes now read `target` `tla`/`lean`, `construct` `node_tag/semantic_form`, `node` the package node id text, and `locus` the source-map region in FR-286 form `{kind: region, source, start, end}`, with one cause per distinct flow node (probe B2/B4). `locus` is null when the node has no source-map region (spec question, not a defect) |
+| FND-004 | fixed | `initial` must parse with `format` `filament.state.snapshot/v1`, or the request refuses at `/request/export/initial`, exit 20 (test `the_initial_member_must_name_a_snapshot`). It stays unused, which is in scope: Init is FR-1035 |
+| FND-005 | fixed | Nodes are charged per closure node. `export.output_bytes` is still compared after the text is built, but that now matches the amended stop order (text last) |
+| FND-006 | still-open | Unchanged: an admission failure of the run's own compiled package still refuses `ClauseRequest`, invalid-request exit 20, with `{refusal:?}` in the message (export.rs:245-255). It should be `RunCause::ExportMapper` or another internal cause, exit 30 |
+| FND-007 | deferred | `observer` is still refused invalid-request, "not run by this build". W53 did not rule on it, and the coordinator has asked arch; outcome follows that ruling |
+| FND-008 | still-open | The overwrite message, the use of `ExportMapper` and the tautological `debug_assert` are fixed. `mod export_rulings;`/`mod export_surface;` still sit before `mod exact_decimals;` in tests/it/main.rs, which is not alphabetical (a one-line nit) |
+| FND-009 | fixed | An absent `obligations` refuses `missing-member` and `[]` refuses `invalid-value`, both at `/request/export/obligations`, exit 20 (probes B5/B6, test `obligations_are_nonempty_declared_names`). Pre, post and constraint clauses and undeclared names give `refused` records `not-an-obligation{name}` in request order (probes C4/C5) |
+| FND-010 | fixed | `assembled()` now runs in this order: the floor (21), then the mapper failure (30), then `export.output_bytes` (22). Classification limits are charged in `map::run` before that. The below-floor request with output_bytes 1 now exits 21 (test `the_floor_is_decided_before_the_text_is_charged`) |
+| FND-011 | fixed | `generator` is `build_inventory(..).application`: `{"identity": "filament-spec-language", "version": "0.3.0"}` (probe), equal to `filament_spec_language::VERSION` (test `the_generator_is_the_application`) |
+| FND-012 | still-open | W53 is merged in (cac423ef2), but the branch again conflicts with origin/main. `git merge-tree` reports a content conflict in fsl-replay/src/outcome.rs against 2ad065147 (#2940, replay result rows), so a rebase or merge is needed before merge |

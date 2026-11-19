@@ -202,8 +202,18 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 },
             },
         ),
-        RunCause::ExportMapper { .. }
-        | RunCause::ClauseRequest { .. }
+        RunCause::ExportMapper { .. } => (
+            types::Stage::Spine(fsl_replay::spine::SpineStage::Emit),
+            types::Details::None,
+        ),
+        RunCause::ExportRequest { path, .. } => (
+            types::Stage::Request,
+            types::Details::Object(serde_json::Map::from_iter([(
+                "path".to_owned(),
+                Value::String(path.clone()),
+            )])),
+        ),
+        RunCause::ClauseRequest { .. }
         | RunCause::ClocksGivenTwice
         | RunCause::OutputGivenTwice
         | RunCause::OutputExists { .. }
@@ -372,6 +382,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 }
                 _ => None,
             },
+            RunCause::ExportRequest { cause, .. } => Some(*cause),
             RunCause::TemporalCorrection(_) => Some("invalid-value"),
             RunCause::TlCorrespondence { .. } | RunCause::IntegerDivisionLaw { .. } => {
                 Some("unsupported-selection")
