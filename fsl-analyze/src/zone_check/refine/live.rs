@@ -677,7 +677,6 @@ impl Product<'_, '_> {
         through: usize,
     ) -> Result<Result<bool, Decided>, Halt> {
         let mut positions = Vec::with_capacity(cycle.len());
-        let mut steps = Vec::with_capacity(cycle.len());
         let mut transitions = BTreeSet::<ModelTransition>::new();
         for &arc_index in cycle {
             run.poll()?;
