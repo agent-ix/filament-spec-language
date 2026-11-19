@@ -1161,7 +1161,7 @@ fn snapshot_of(directory: &Path, keys: &[&str], complete: bool) -> Value {
         .map(|key| {
             let mut object = template.clone();
             object["key"] = json!(key);
-            object["fields"]["versionNumber"] = json!({"type": "integer", "value": "0"});
+            object["fields"]["versionNumber"] = json!({"integer": "0"});
             object["fields"]["parent"] = json!({"absent": {}});
             object
         })
