@@ -31,6 +31,8 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-850
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-286
+    type: depends_on
 ---
 # FR-644: Stream observations through the monitor command
 
@@ -235,6 +237,51 @@ monitor is most likely to also prove over its model.
   started as `providers` and the resolved limits as
   `options.provider_limits`, and its production negotiator as `negotiate`;
   it refuses neither option on `monitor`.
+- Every event and summary `command::monitor` hands back shall validate
+  against its published schema, and its canonical encoding shall be RFC
+  8785's.
+
+### Published schemas
+
+The event and the summary are published as two JSON Schemas (draft
+2020-12) beside the types that build them in `fsl-command`:
+
+| Object | File | `$id` | Constant |
+| --- | --- | --- | --- |
+| `filament.monitor-event/1` | `fsl-command/schemas/filament-monitor-event-1.schema.json` | `urn:filament:monitor-event:1` | `fsl_command::command::monitor::MONITOR_EVENT_SCHEMA_1` |
+| `filament.monitor-summary/1` | `fsl-command/schemas/filament-monitor-summary-1.schema.json` | `urn:filament:monitor-summary:1` | `fsl_command::command::monitor::MONITOR_SUMMARY_SCHEMA_1` |
+
+Each constant is its file's text (`include_str!`), so the driver's tests of
+`fsl monitor` (driver FR-025) validate each line it writes against the same
+bytes. A refusal or failure the stream ends with is a `filament-outcome/1`
+document and validates against FR-286's `urn:filament:outcome:1`.
+
+- Each schema describes every member at every depth and closes every object
+  (`unevaluatedProperties: false`). The event's `settlement` is required
+  exactly when `settled` is `true` and absent when it is `false`, and its
+  `cause` is required exactly when `trigger` is `cancelled`. The summary's
+  `ledger` is present exactly for a `progressed` or `timestamped` stream,
+  its `cancelled` exactly when the stream was cancelled, and its `items` and
+  `registry` together or not at all.
+- `disposition` is described by a `$defs` entry transcribed from FR-267's
+  clause-run disposition spelling. The summary's `items` entries and
+  `registry` are FR-621's analyze item and FR-635's registry, and are a
+  `$ref` into `urn:filament:outcome:1`, so one description serves the
+  monitor summary and the analyze document.
+- Each schema is versioned with its object's format as FR-286 "Published
+  schema" states for the outcome document: an added optional member updates
+  the `/1` file in the same change as the type; a change an existing reader
+  cannot read is `/2` with its own file and `$id`.
+
+The schemas are checked against a golden corpus,
+`fsl-command/tests/fixtures/monitor-golden/`, one JSON Lines file per
+stream an acceptance criterion of this requirement runs (AC-1, AC-2, AC-6,
+AC-7, AC-8 and a cancelled stream), holding the canonical encoding of each
+event and of the summary, in order, as the driver writes them. The corpus
+test reruns each stream, compares each line with the file, checks each line
+is its own RFC 8785 re-encoding, and validates each event line against
+`MONITOR_EVENT_SCHEMA_1` and the summary line against
+`MONITOR_SUMMARY_SCHEMA_1`.
 
 ## Acceptance Criteria
 
@@ -251,6 +298,7 @@ monitor is most likely to also prove over its model.
 | FR-644-AC-9 | AC-1's stream with the recording provider in `providers` and no `items` calls neither the negotiator nor the provider, and its events and summary are byte-equal to the stream's with `providers` empty. | Test (TC-2984) |
 | FR-644-AC-10 | AC-8's request whose item names the unregistered backend `fsl.absent` settles that item `invalid-request` `unknown-backend` in the summary's `items`, calls no provider, still streams every record with AC-1's events, and exits 20; AC-8's request with a provider answering `unknown` settles the item `inconclusive` `solver-inconclusive` and exits 10 (the violation outranks it), and with every clause successful exits 22; two providers of one `BackendId` refuse `invalid-request` naming `providers`, exit 20, before any record is read and with no event. | Test (TC-2984) |
 | FR-644-AC-11 | AC-8's request with `cancel` fired before `monitor` is called settles the item `incomplete` with cause `cancelled{requested}` and sends no provider request; the driver's `fsl monitor monitor.json --provider-config providers.json --input records.jsonl` over AC-8's request and a configured test plugin writes AC-8's events and a summary carrying its `items`, and does not refuse `--provider-config`. | Test (TC-2984) |
+| FR-644-AC-12 | Every line of `fsl-command/tests/fixtures/monitor-golden/` equals the canonical encoding of the event or summary its stream gives, is its own RFC 8785 re-encoding, and validates against `MONITOR_EVENT_SCHEMA_1` or `MONITOR_SUMMARY_SCHEMA_1`. AC-7's record-2 event fails validation with `settlement` removed (an error at the root pointer, keyword `required`), with `/settlement/trigger` set to `"decide"` (an error at `/settlement/trigger`) and with a member `extra` added (an error at the root pointer); AC-7's record-0 event with a `settlement` added fails at the root pointer; AC-7's summary with a `ledger` added fails, and AC-8's summary with `registry` removed fails, each at the root pointer. | Test (TC-3115) |
 
 ## Dependencies
 
