@@ -654,7 +654,6 @@ fn with_sum_bound(bound: &str) -> String {
 
 #[trace("TC-1416", "FR-577-AC-18")]
 #[test]
-#[ignore = "QSL-2040: a transferred two-path sum bound (FSpec FR-146 item 8) is not implemented yet"]
 fn a_transferred_sum_bound_refines_the_same_sum() {
     checks(PLAIN, &with_sum_bound("100"));
 }
