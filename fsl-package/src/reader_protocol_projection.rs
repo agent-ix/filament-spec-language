@@ -740,6 +740,7 @@ pub(crate) fn admit_equality_decisions(
 }
 
 struct WireIndex<'wire> {
+    populations: Option<&'wire crate::bare::BarePackage<'wire>>,
     equality: std::borrow::Cow<'wire, EqualityDecisions>,
     projections: std::borrow::Cow<'wire, ExactProjections>,
     admitted: &'wire CheckedPackageV2,
@@ -780,6 +781,7 @@ impl<'wire> WireIndex<'wire> {
             ids.insert(key, &node.node_id);
         }
         Ok(Self {
+            populations: None,
             equality,
             projections,
             admitted,
@@ -1115,6 +1117,15 @@ pub(crate) struct BareWalker<'wire> {
 }
 
 impl<'wire> BareWalker<'wire> {
+    /// Read named population operands from the already admitted catalog.
+    pub(crate) fn with_populations(
+        mut self,
+        package: &'wire crate::bare::BarePackage<'wire>,
+    ) -> Self {
+        self.index.populations = Some(package);
+        self
+    }
+
     pub(crate) fn new(
         admitted: &'wire CheckedPackageV2,
         identities: &'wire filament_contract_model::SelectedExactIdentities,
@@ -1873,6 +1884,20 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         if let Some(slot) = locals.get(id).copied() {
             let value_type = self.value_type(id)?;
             return Ok(self.push(ReaderProjectedNode::leaf(NodeKind::Local(slot), value_type)));
+        }
+        if let Some(package) = self.index.populations {
+            let key = self.index.key(id).map_err(BuildError::Fault)?;
+            if let Some((population, members)) = package.population_types(&key) {
+                return Ok(self.push(ReaderProjectedNode::leaf(
+                    NodeKind::NamedPopulation {
+                        population: population.clone(),
+                        members: members.to_vec(),
+                    },
+                    // The all_instances/lookup result carries the bound;
+                    // the population reference itself is bound-independent.
+                    ValueType::Population(None),
+                )));
+            }
         }
         let node = self.node(id)?;
         let (kind, children, term) = match &node.body {
