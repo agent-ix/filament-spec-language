@@ -455,33 +455,6 @@ fn a_record_names_its_backend_exactly_when_a_result_settles_it() {
     assert!(record.get("backend").is_none(), "{record}");
 }
 
-/// FR-489-AC-5: the linked registrations are exactly the EN-1, EN-4, EN-5,
-/// EN-6, EN-7, check-arm and protocol-analysis descriptors.
-#[trace("TC-1272", "FR-489-AC-5")]
-#[test]
-#[ignore = "QSL-2293: EN-7 is not registered in Engines::fsl() yet"]
-fn the_linked_registrations_include_en7() {
-    let engines = fsl_analyze::analyze::Engines::fsl().expect("the layer-A engines register");
-    let mut ids: Vec<&str> = engines
-        .registrations()
-        .map(|descriptor| descriptor.id().as_str())
-        .collect();
-    ids.sort_unstable();
-    assert_eq!(
-        ids,
-        [
-            "contract-checker",
-            "en-1",
-            "en-4",
-            "en-5",
-            "en-6",
-            "en-7",
-            "protocol-analysis",
-            "value-checker"
-        ]
-    );
-}
-
 /// FR-967-AC-1: an option EN-1's manifest does not publish settles that
 /// item `invalid-request` `invalid_capability`/`unknown-option`, naming the
 /// least unpublished name, and leaves the other item as it is alone.
