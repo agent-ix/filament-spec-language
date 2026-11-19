@@ -36,7 +36,7 @@ mod model;
 pub use claim::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedTemporalFormula,
     ClaimActivation, ClaimNormalForm, Confidence, Event, FractionMeasure, ModelSubjectRef,
-    OverBinding, ProbForm, ProbScheduler, ReachTarget,
+    OverBinding, ProbForm, ProbScheduler, ReachTarget, TimeTypeMismatchReason, Weighting,
 };
 pub(crate) use model::{check, precondition_reads, site_spans, ProbabilisticInput, Unresolved};
 pub use model::{
@@ -503,6 +503,8 @@ pub enum ProbabilisticCause {
         claim: String,
         /// The time position's span.
         span: Span,
+        /// Why the time position is incompatible.
+        reason: TimeTypeMismatchReason,
     },
     /// A claim's `over` parameter whose type is not an object type of the
     /// subject's model. `invalid_probabilistic_model`/`over-not-object-type`
@@ -525,6 +527,15 @@ pub enum ProbabilisticCause {
         /// The operand's span.
         span: Span,
     },
+}
+
+/// The reason a probabilistic time-valued position is ill typed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TimeTypeMismatchReason {
+    /// The subject's model does not declare a model-time binding.
+    MissingTimeBinding,
+    /// A step count appears where a time quantity is required.
+    IncompatiblePosition,
 }
 
 /// The qualitative property equivalent to a probabilistic threshold of 0 or 1.

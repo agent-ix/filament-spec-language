@@ -206,7 +206,7 @@ pub use probabilistic::{
     DelayDistribution, DelayFault, Event, FractionMeasure, ModelSubjectRef, OverBinding,
     PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause, ProbabilisticDeclaration,
     ProbabilisticFeature, ProbabilisticOperation, QualitativeForm, RandomParameter, ReachTarget,
-    Reward, SupportValue, WeightOwner, Workload,
+    Reward, SupportValue, TimeTypeMismatchReason, WeightOwner, Weighting, Workload,
 };
 pub use probabilistic::{
     PackageDelay, PackageDelayFamily, PackageLiteral, PackageProbabilistic,
