@@ -267,3 +267,71 @@ pub fn admit(model: &CheckedHybridModel, trace: &HybridTrace) -> Result<(), Trac
     }
     Ok(())
 }
+
+pub(super) fn rational_wire(value: &Rational) -> serde_json::Value {
+    serde_json::json!({
+        "numerator": value.numerator().to_string(),
+        "denominator": value.denominator().to_string(),
+    })
+}
+
+fn interval_wire(value: &ExactInterval) -> serde_json::Value {
+    serde_json::json!({
+        "lower": rational_wire(&value.lower),
+        "upper": rational_wire(&value.upper),
+    })
+}
+
+fn enclosure_wire(model: &CheckedHybridModel, enclosure: &[ExactInterval]) -> serde_json::Value {
+    serde_json::Value::Object(
+        model
+            .variables
+            .iter()
+            .zip(enclosure)
+            .map(|(variable, interval)| (variable.name.as_str().to_owned(), interval_wire(interval)))
+            .collect(),
+    )
+}
+
+fn state_wire(model: &CheckedHybridModel, state: &TraceState) -> serde_json::Value {
+    serde_json::json!({
+        "mode": model.modes.get(state.mode.get()).map(|mode| mode.name.as_str()),
+        "time": interval_wire(&state.time),
+        "enclosure": enclosure_wire(model, &state.enclosure),
+    })
+}
+
+impl HybridTrace {
+    /// The trace in FSpec FR-193's "Hybrid trace" wire form over `model`,
+    /// the form [`admit`]'s reader takes back.
+    pub fn to_wire(&self, model: &CheckedHybridModel) -> serde_json::Value {
+        let jumps: Vec<serde_json::Value> = self
+            .jumps
+            .iter()
+            .map(|jump| {
+                let mut wire = serde_json::json!({
+                    "transition": jump.transition,
+                    "state": state_wire(model, &jump.state),
+                });
+                if let Some(before) = &jump.before {
+                    wire["before"] = serde_json::json!({
+                        "time": interval_wire(&before.time),
+                        "enclosure": enclosure_wire(model, &before.enclosure),
+                    });
+                }
+                wire
+            })
+            .collect();
+        let mut wire = serde_json::json!({
+            "start": state_wire(model, &self.start),
+            "jumps": jumps,
+        });
+        if let Some(delta) = &self.delta {
+            wire["delta"] = rational_wire(delta);
+        }
+        if let Some(loop_to) = self.loop_to {
+            wire["loop"] = loop_to.into();
+        }
+        wire
+    }
+}

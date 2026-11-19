@@ -264,6 +264,8 @@ pub enum CallOutcome {
     Undefined {
         /// The reason's tabled spelling.
         reason: &'static str,
+        /// The expression location retained by the evaluator, when present.
+        location: Option<Location>,
     },
     /// `Outcome::Incomplete(i)`: `incomplete`, exit 22.
     Incomplete(CallIncomplete),
@@ -1787,7 +1789,18 @@ pub(crate) fn convert_outcome(
     graph: &CheckedGraph,
     sources: &[Source],
 ) -> Result<CallOutcome, Box<RunRefusal>> {
-    let record = fsl_eval::value::refusal_record(&evaluation, |location| graph.region(location));
+    convert_outcome_resolving(evaluation, |location| graph.region(location), sources)
+}
+
+/// [`convert_outcome`] with `resolve` mapping a location to its source region:
+/// a checked graph's region, or none for a package read from its bytes.
+#[deny(clippy::wildcard_enum_match_arm)]
+pub(crate) fn convert_outcome_resolving(
+    evaluation: filament_eval::Evaluation,
+    resolve: impl Fn(&Location) -> Option<fsl_foundation::source::provenance::SourceRegion>,
+    sources: &[Source],
+) -> Result<CallOutcome, Box<RunRefusal>> {
+    let record = fsl_eval::value::refusal_record(&evaluation, resolve);
     let filament_eval::Evaluation {
         outcome, location, ..
     } = evaluation;
@@ -1818,6 +1831,7 @@ pub(crate) fn convert_outcome(
         )?)),
         FamilyOutcome::Evaluated(Outcome::Undefined(reason)) => Ok(CallOutcome::Undefined {
             reason: kernel_undefined_reason(reason),
+            location,
         }),
         FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)) => {
             Ok(CallOutcome::Incomplete(CallIncomplete {
@@ -1837,6 +1851,7 @@ pub(crate) fn convert_outcome(
         FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause)) => {
             Ok(CallOutcome::Undefined {
                 reason: cause.undefined_record().reason.as_str(),
+                location,
             })
         }
         // FR-063: no arm for the probe variant under `--cfg seam_probe`

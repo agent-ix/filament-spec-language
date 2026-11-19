@@ -105,6 +105,9 @@ pub enum CertificateRule {
     /// A passing edge's post position or `Taken` differs from the listed
     /// edge's (FR-149).
     PostDiffers,
+    /// A liveness certificate's non-Zeno premise is absent, unexpected or
+    /// differs from the checker's recomputation (FR-245).
+    NonZenoMismatch,
 }
 
 /// FR-338 and FR-314: where a certificate rejection occurred.
@@ -156,6 +159,9 @@ pub enum CertificateLocus {
     },
     /// A malformed member of a certificate (FR-163, FR-245).
     CertificateMember(CertificateMember),
+    /// The FR-418 `non_zeno` certificate member (not yet in the pinned
+    /// contract-model member catalogue).
+    NonZenoMember,
     /// A zone certificate node, by its position in `nodes` (FR-245).
     ZoneNode {
         /// The node's position.
@@ -219,6 +225,11 @@ impl Serialize for CertificateLocus {
             Self::CertificateMember(member) => {
                 let mut object = serializer.serialize_struct("CertificateLocus", 1)?;
                 object.serialize_field("member", member.as_str())?;
+                object.end()
+            }
+            Self::NonZenoMember => {
+                let mut object = serializer.serialize_struct("CertificateLocus", 1)?;
+                object.serialize_field("member", "non_zeno")?;
                 object.end()
             }
             Self::ZoneNode { node } => {

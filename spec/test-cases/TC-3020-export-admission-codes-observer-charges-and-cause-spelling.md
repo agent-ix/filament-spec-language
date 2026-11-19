@@ -23,7 +23,7 @@ Verify the structured refusal codes of malformed export members, the `unsupporte
 ## Expected Results
 
 - Step 1: `code` `invalid_runtime_input` with `cause` `invalid-value`, `missing-member` and `wrong-value-kind`, at their `/request/export` paths, exit 20; no `invalid-request`.
-- Step 2: `unsupported_projection`/`unsupported-requested-capability` naming `tlc`, exit 21, no text, package or file; the same with `export.nodes` 1, not `incomplete`; then `assembled`, exit 0.
+- Step 2: `unsupported_projection`/`unsupported-requested-capability` naming `tlc`, exit 21, no text, package or file; `export.refusal` holds exactly `code`, `cause`, `capability` `observer`, `observer` `tlc`, a non-empty string `reason` and `details` `{"path": "/request/export/observer"}`; the same with `export.nodes` 1, not `incomplete`; then `assembled`, exit 0.
 - Step 3: `incomplete`, `records` `[]`, `cause` `limit-reached` with `work_units`, 1 and `export.work_units`, exit 22; then `nodes`, 1 and `export.nodes`.
 - Step 4: the pair's value is less than the sum of the singles and at least their maximum.
 - Step 5: each `node` is a canonical node-id string of the package, equal to the matching `name_map` entry's; each `locus` is `null` or a region with `start < end`.

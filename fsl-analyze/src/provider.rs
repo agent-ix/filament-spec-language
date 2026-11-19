@@ -6,6 +6,9 @@ use crate::analyze::{
     SourceProvision, SubjectBinding,
 };
 use filament_exact::Cancel;
+pub use fsl_replay::{
+    HybridAnswer, HybridProvider, HybridSolveRequest, HybridVerdict, UnsupportedConstruct,
+};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_package::CheckedPackage;
@@ -626,7 +629,7 @@ pub(crate) type Settled = BTreeMap<RequestIndex, Result<ProviderVerdict, Refusal
 /// admitted them back against `packages` (FR-940 "Inputs": the source
 /// route's `AdmittedPackageRead`); `None` when they do not emit or are not
 /// admitted.
-fn admitted_bytes(
+pub(crate) fn admitted_bytes(
     package: &CheckedPackage,
     packages: &PackageInput,
     emit: EmitLimits,

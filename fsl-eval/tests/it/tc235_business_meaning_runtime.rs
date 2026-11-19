@@ -242,7 +242,11 @@ fn model_package_with(
         Vec::new(),
     )
     .expect("M15 source assembles");
-    let graph = declarations.check(CheckMode::Linked, CheckingLimits::default())?;
+    let graph = declarations.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )?;
     Ok((CheckedPackage::link(graph), view, packages))
 }
 
@@ -545,7 +549,11 @@ fn package_with_types(
             declarations.function_selections = function_selections;
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap(),
     )
 }
@@ -827,7 +835,11 @@ fn unresolved_object_reference_refuses_at_input_admission() {
             declarations.types = types;
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap(),
     );
     let reference = ObjectReference::new(
@@ -1259,7 +1271,11 @@ fn lifecycle_receiver_and_parameter_boolean_components() {
             declarations.types = types;
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap(),
     );
     let receiver = ObjectReference::new(

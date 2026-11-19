@@ -603,7 +603,11 @@ fn modelled(
     declarations.functions.extend(functions);
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the package checks"),
     )
 }
@@ -620,7 +624,11 @@ fn modelled_with_documents(
     declarations.functions.extend(functions);
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the package checks"),
     )
 }
@@ -1231,8 +1239,9 @@ fn a_row_empty_refinement_identity_excludes_its_source_region() {
     assert_eq!(first_node["semantic_type"], concrete_root);
     assert_eq!(first_node["body"]["abstract"], abstract_root);
     assert_eq!(first_node["dependencies"], json!([abstract_root]));
-    // FSpec FR-375-AC-20: the typed body writes exactly the nine closed
-    // members, every row array present and empty, and no optional member.
+    // FSpec FR-375-AC-20 and FR-322-AC-200: the typed body writes exactly the
+    // ten closed members (the declared `name` among them), every row array
+    // present and empty, and no optional member.
     let mut members: Vec<&str> = first_node["body"]
         .as_object()
         .expect("an object body")
@@ -1247,6 +1256,7 @@ fn a_row_empty_refinement_identity_excludes_its_source_region() {
             "assume",
             "ensure",
             "histories",
+            "name",
             "objects",
             "populations",
             "profile",
@@ -1546,7 +1556,11 @@ fn package_with_internals(
         declarations = declarations.with_refinement_internals(value);
     }
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{unit}: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -1753,7 +1767,11 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
     .expect("dependency assembles");
     let dependency = std::sync::Arc::new(CheckedPackage::link(
         dependency_declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("dependency checks"),
     ));
     let dependency_emission = emit_checked(&dependency).expect("dependency emits");
@@ -1825,7 +1843,11 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
         .with_refinement_internals(json!([{"refinement":"R","internal":["Spec::Twice::Done"]}]));
     let root = CheckedPackage::link_with(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("dependency protocol refinement checks"),
         vec![crate::checked::Import {
             identity: library.clone(),
@@ -2048,7 +2070,11 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
     )
     .expect("wrong-owner dependency assembles");
     let refusals = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("a dependency protocol over another model is refused");
     assert!(
         refusals.iter().any(|refusal| matches!(
@@ -2091,7 +2117,11 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
         )
         .expect("missing-clause dependency assembles");
         let refusals = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect_err("an unknown dependency clause or type refuses");
         assert!(refusals.iter().any(|refusal| matches!(
             &refusal.cause,
@@ -2148,7 +2178,11 @@ fn a_dependency_protocol_node_row_checks_its_receiver_argument() {
             Vec::new(),
         )
         .expect("dependency assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("dependency checks"),
     ));
     let dependency_emission = emit_checked(&dependency).expect("dependency emits");
@@ -2208,7 +2242,11 @@ fn a_dependency_protocol_node_row_checks_its_receiver_argument() {
             }],
         )
         .expect("root assembles");
-        declarations.check(CheckMode::Linked, CheckingLimits::default())
+        declarations.check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
     };
     let graph = check(&unit("node Spec::Twice::a1(self)")).expect("the dependency node row checks");
     let checked = graph.refinements().first().expect("one checked refinement");
@@ -3032,7 +3070,11 @@ fn refused_rows(rows: &str, operations: &[&str]) -> Vec<fsl_semantics::check::Ch
         fsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice)).unwrap();
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .map(|_| ())
         .expect_err("the refinement is not emitted")
         .into_iter()

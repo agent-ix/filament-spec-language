@@ -55,7 +55,11 @@ fn package_from(document: &serde_json::Value, declarations: &str) -> CheckedPack
 fn package_over(document: &serde_json::Value, alias: &str, declarations: &str) -> CheckedPackage {
     CheckedPackage::link(
         declarations_over(document, alias, declarations)
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}")),
     )
 }
@@ -252,7 +256,11 @@ fn linked_ledger_clause(trace: &str) -> (CheckedPackage, fsl_semantics::check::C
         "M",
         "function noop using v(): Boolean pure { true }\n",
     )
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("the linked-reference unit checks: {refusals:?}"));
     let package = CheckedPackage::link(graph);
     let [Ok(CheckedHyper::Behaviours(clause))] = checked.as_slice() else {

@@ -15,15 +15,16 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{analyze_with_providers, Workspace};
-use crate::hybrid_requests::{braking, braking_pair, claim, find, first_item, hybrid_fixture};
+use crate::hybrid_requests::{
+    braking, braking_pair, claim, find, first_item, hybrid_fixture, interval, rational,
+};
 
 const REFERENCE: &str = "fsl-hybrid-reference";
 
 /// The reference provider as the command entries take it: `vec![Engine::hybrid_reference()]`
-/// (FR-1019). Until that constructor exists this registers none, so every
-/// assertion that needs the reference provider fails as it should.
+/// (FR-1019).
 fn reference_providers() -> Vec<Engine> {
-    Vec::new()
+    vec![Engine::hybrid_reference().expect("the reference descriptor registers")]
 }
 
 /// [`reference_providers`] with `fixture` registered beside them.
@@ -59,7 +60,7 @@ fn descriptor<'v>(document: &'v Value, backend: &str) -> Option<&'v Value> {
 /// flowpipe covering horizon 10 with one jump.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-1")]
-#[ignore = "QSL-2234: the first-party reference hybrid provider is not implemented yet"]
+#[ignore = "QSL-2534: the first-party reference hybrid provider is not implemented yet"]
 fn the_reference_provider_proves_slow_enough() {
     let item = reference("ref-1", &braking_pair(), one("SlowEnough"));
     let record = &item["record"];
@@ -83,7 +84,7 @@ fn the_reference_provider_proves_slow_enough() {
 /// box's lower corner, which replays exactly, the same on every run.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-2")]
-#[ignore = "QSL-2234: the reference provider's candidate point trace is not implemented yet"]
+#[ignore = "QSL-2534: the reference provider's candidate point trace is not implemented yet"]
 fn the_reference_provider_refutes_too_slow_deterministically() {
     let first = reference("ref-2a", &braking_pair(), one("TooSlow"));
     assert_eq!(first["record"]["result"], "refuted", "{first}");
@@ -91,10 +92,26 @@ fn the_reference_provider_refutes_too_slow_deterministically() {
     let trace = find(&first["counterexample"], "trace").expect("a hybrid trace");
     assert_eq!(trace["jumps"], json!([]), "{first}");
     assert_eq!(trace["start"]["mode"], "Moving", "{first}");
-    assert_eq!(trace["start"]["enclosure"]["v"]["lower"], "0", "{first}");
-    assert_eq!(trace["start"]["enclosure"]["v"]["upper"], "0", "{first}");
-    assert_eq!(trace["start"]["enclosure"]["a"]["lower"], "1", "{first}");
-    assert_eq!(trace["start"]["enclosure"]["a"]["upper"], "1", "{first}");
+    assert_eq!(
+        trace["start"]["enclosure"]["v"]["lower"],
+        rational("0"),
+        "{first}"
+    );
+    assert_eq!(
+        trace["start"]["enclosure"]["v"]["upper"],
+        rational("0"),
+        "{first}"
+    );
+    assert_eq!(
+        trace["start"]["enclosure"]["a"]["lower"],
+        rational("1"),
+        "{first}"
+    );
+    assert_eq!(
+        trace["start"]["enclosure"]["a"]["upper"],
+        rational("1"),
+        "{first}"
+    );
     let second = reference("ref-2b", &braking_pair(), one("TooSlow"));
     assert_eq!(first["counterexample"], second["counterexample"]);
 }
@@ -103,7 +120,7 @@ fn the_reference_provider_refutes_too_slow_deterministically() {
 /// `unsupported` with a located `expression-form` cause.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-3")]
-#[ignore = "QSL-2234: the reference hybrid provider's class check is not implemented yet"]
+#[ignore = "QSL-2534: the reference hybrid provider's class check is not implemented yet"]
 fn a_non_polynomial_flow_is_a_located_unsupported() {
     let unit = braking_pair().replace(
         "flow { v' = -a; a' = 0; }",
@@ -127,7 +144,6 @@ fn a_non_polynomial_flow_is_a_located_unsupported() {
 /// a named fixture hybrid provider beside it routes to the fixture.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-4")]
-#[ignore = "QSL-2234: hybrid dispatch beside the reference provider is not implemented yet"]
 fn the_provider_path_stays_beside_the_reference_provider() {
     let engines = Engines::fsl().expect("the layer-A engines register");
     assert!(
@@ -136,9 +152,22 @@ fn the_provider_path_stays_beside_the_reference_provider() {
             .all(|descriptor| descriptor.candidate().id().as_str() != REFERENCE),
         "Engines::fsl() leaves the reference provider out"
     );
+    let (_, alone) = first_item(
+        "ref-4-alone",
+        &braking_pair(),
+        one("SlowEnough"),
+        json!({}),
+        Vec::new(),
+    );
+    let text = alone.to_string();
+    assert_eq!(alone["record"]["result"], "unsupported", "{alone}");
+    for member in ["temporal-satisfaction", "hybrid-dynamics"] {
+        assert!(text.contains(member), "{member}: {alone}");
+    }
     let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
         "basis": {"type": "bounded-solver", "method": "delta-complete",
-            "horizon": "10", "jumps": 1, "exhaustive": ["time"]}});
+            "horizon": {"numerator": "10", "denominator": "1"}, "jumps": 1,
+            "exhaustive": ["time"]}});
     let (_, item) = first_item(
         "ref-4",
         &braking_pair(),
@@ -155,7 +184,6 @@ fn the_provider_path_stays_beside_the_reference_provider() {
 /// and naming neither settles `ambiguous-backend` naming both.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-5")]
-#[ignore = "QSL-2234: the reference provider's registration is not implemented yet"]
 fn the_reference_provider_negotiates_by_dynamics() {
     let item = reference("ref-5a", &braking_pair(), one("SlowEnough"));
     assert_eq!(
@@ -180,7 +208,8 @@ fn the_reference_provider_negotiates_by_dynamics() {
     assert_ne!(backends[0], REFERENCE, "{discrete}");
     let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
         "basis": {"type": "bounded-solver", "method": "delta-complete",
-            "horizon": "10", "jumps": 1, "exhaustive": ["time"]}});
+            "horizon": {"numerator": "10", "denominator": "1"}, "jumps": 1,
+            "exhaustive": ["time"]}});
     let (_, named) = first_item(
         "ref-5c",
         &braking_pair(),
@@ -207,7 +236,7 @@ fn the_reference_provider_negotiates_by_dynamics() {
 /// the solver `limit-reached` naming `hybrid.max_solver_steps`.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-6")]
-#[ignore = "QSL-2234: the reference provider's descriptor and budgets are not implemented yet"]
+#[ignore = "QSL-2534: the reference descriptor's bounds and `dynamics` exist; its `options` defaults and the solver step budget do not"]
 fn the_reference_provider_publishes_its_defaults_and_stops_at_its_budget() {
     let ws = Workspace::new("ref-6a");
     let run = analyze_with_providers(
@@ -247,7 +276,7 @@ fn the_reference_provider_publishes_its_defaults_and_stops_at_its_budget() {
 /// out-of-domain or unknown option settles `invalid-request` naming it.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-7")]
-#[ignore = "QSL-2234: the reference provider's method options are not implemented yet"]
+#[ignore = "QSL-2534: the reference provider's method options are not implemented yet"]
 fn the_reference_provider_reads_its_method_options() {
     let default = reference("ref-7a", &braking_pair(), one("SlowEnough"));
     let coarse = reference(
@@ -284,7 +313,7 @@ fn the_reference_provider_reads_its_method_options() {
 /// `Moving` box crosses below `v = 0`.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-8")]
-#[ignore = "QSL-2234: the reference flowpipe's guard handling is not implemented yet"]
+#[ignore = "QSL-2534: the reference flowpipe's guard handling is not implemented yet"]
 fn the_flowpipe_stops_at_the_guard_and_jumps_once() {
     let item = reference("ref-8", &braking_pair(), one("SlowEnough"));
     let steps = item["certificate"]["form"]["steps"]
@@ -295,25 +324,15 @@ fn the_flowpipe_stops_at_the_guard_and_jumps_once() {
         .filter(|step| step["mode"] == "Stopped")
         .collect();
     assert_eq!(stopped.len(), 1, "{item}");
-    assert_eq!(
-        stopped[0]["box"]["v"],
-        json!({"lower": "0", "upper": "0"}),
-        "{item}"
-    );
-    assert_eq!(
-        stopped[0]["box"]["a"],
-        json!({"lower": "1", "upper": "2"}),
-        "{item}"
-    );
-    assert_eq!(
-        stopped[0]["time"],
-        json!({"lower": "0", "upper": "10"}),
-        "{item}"
-    );
+    assert_eq!(stopped[0]["box"]["v"], interval("0", "0"), "{item}");
+    assert_eq!(stopped[0]["box"]["a"], interval("1", "2"), "{item}");
+    assert_eq!(stopped[0]["time"], interval("0", "10"), "{item}");
     for step in steps.iter().filter(|step| step["mode"] == "Moving") {
         for member in ["box", "apriori"] {
-            let lower = step[member]["v"]["lower"].as_str().expect("a rational");
-            assert!(!lower.starts_with('-'), "{step}");
+            let numerator = step[member]["v"]["lower"]["numerator"]
+                .as_str()
+                .expect("a rational");
+            assert!(!numerator.starts_with('-'), "{step}");
         }
     }
 }
@@ -322,7 +341,7 @@ fn the_flowpipe_stops_at_the_guard_and_jumps_once() {
 /// enclosure of the two modes' hulls.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-9")]
-#[ignore = "QSL-2234: the reference provider's inductive enclosure is not implemented yet"]
+#[ignore = "QSL-2534: the reference provider's inductive enclosure is not implemented yet"]
 fn a_claim_with_no_horizon_is_proved_inductively() {
     let unit = braking(&claim("Bounded", "always holds(h.v < 30)"));
     let item = reference("ref-9", &unit, one("Bounded"));
@@ -337,23 +356,15 @@ fn a_claim_with_no_horizon_is_proved_inductively() {
     );
     assert_eq!(item["record"]["certification"], "certified", "{item}");
     let boxes = &item["certificate"]["form"]["boxes"];
-    assert_eq!(
-        boxes["Moving"]["v"],
-        json!({"lower": "0", "upper": "20"}),
-        "{item}"
-    );
-    assert_eq!(
-        boxes["Stopped"]["v"],
-        json!({"lower": "0", "upper": "0"}),
-        "{item}"
-    );
+    assert_eq!(boxes["Moving"]["v"], interval("0", "20"), "{item}");
+    assert_eq!(boxes["Stopped"]["v"], interval("0", "0"), "{item}");
 }
 
 /// FR-1019-AC-10: a violation inside a dwell no jump closes is reached by
 /// the trace's `end`.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-10")]
-#[ignore = "QSL-2234: the reference provider's `end`-cut traces are not implemented yet"]
+#[ignore = "QSL-2533: the reference provider's `end`-cut traces are not implemented yet"]
 fn a_violation_in_a_final_dwell_is_cut_by_end() {
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
          profile p = \"filament.temporal.infinite-trace/v1\";\n\
@@ -367,24 +378,20 @@ fn a_violation_in_a_final_dwell_is_cut_by_end() {
     assert_eq!(item["record"]["result"], "refuted", "{item}");
     let trace = find(&item["counterexample"], "trace").expect("a hybrid trace");
     assert_eq!(trace["jumps"], json!([]), "{item}");
-    assert_eq!(trace["start"]["enclosure"]["v"]["lower"], "8", "{item}");
     assert_eq!(
-        trace["end"]["time"],
-        json!({"lower": "3", "upper": "3"}),
+        trace["start"]["enclosure"]["v"]["lower"],
+        rational("8"),
         "{item}"
     );
-    assert_eq!(
-        trace["end"]["enclosure"]["v"],
-        json!({"lower": "5", "upper": "5"}),
-        "{item}"
-    );
+    assert_eq!(trace["end"]["time"], interval("3", "3"), "{item}");
+    assert_eq!(trace["end"]["enclosure"]["v"], interval("5", "5"), "{item}");
 }
 
 /// FR-1019-AC-11: a cyclic polynomial flow refutes through a
 /// `validated-witness` the core accepts.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-11")]
-#[ignore = "QSL-2234: the reference provider's validated witnesses are not implemented yet"]
+#[ignore = "QSL-2534: the reference provider's validated witnesses are not implemented yet"]
 fn a_cyclic_polynomial_flow_refutes_through_a_validated_witness() {
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
          profile p = \"filament.temporal.infinite-trace/v1\";\n\
@@ -433,7 +440,6 @@ fn workspace_root() -> PathBuf {
 /// core crate does.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-12")]
-#[ignore = "QSL-2234: the `fsl-hybrid-reference` crate does not exist yet"]
 fn the_reference_crate_sits_in_layer_h() {
     let root = workspace_root();
     let allowed = [
@@ -475,7 +481,7 @@ fn the_reference_crate_sits_in_layer_h() {
 /// verdicts with no provider configured.
 #[test]
 #[trace("TC-2997", "FR-1019-AC-13")]
-#[ignore = "QSL-2234: `examples/hybrid-braking/` and the reference provider are not implemented yet"]
+#[ignore = "QSL-2534: `examples/hybrid-braking/` and the reference provider are not implemented yet"]
 fn the_hybrid_braking_examples_reach_verdicts() {
     let examples = workspace_root().join("examples/hybrid-braking");
     let slow = analyze_with_providers(

@@ -30,7 +30,11 @@ fn an_absent_enum_type_name_is_a_typed_missing_name() {
     };
 
     let refusals = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("an undeclared enum type name must be refused");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert!(matches!(

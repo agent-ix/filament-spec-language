@@ -3161,7 +3161,11 @@ mod float_members {
             },
         )?;
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
             .map(|_| ())
             .map_err(|refusals| {
                 refusals
@@ -3303,4 +3307,27 @@ fn bare_native_text_rational_and_decimal_model_members_are_admitted() {
         Vec::new(),
     )
     .unwrap_or_else(|refusal| panic!("bare native members are admitted: {refusal:?}"));
+}
+
+/// FR-056-AC-63: a value type bound by `target` to a data native is that
+/// native under its own name, so a field typed by it assembles with the
+/// native's type and raises no `UnsupportedModelMember`.
+#[trace("TC-3031", "FR-056-AC-63")]
+#[test]
+#[ignore = "QSL-2176: a value type bound to a data native by target is not assembled as that native yet"]
+fn a_value_type_bound_to_a_data_native_by_target_is_that_native() {
+    let package = "test/rational-value-type";
+    for native in ["Boolean", "Integer", "String", "Float64", "Float32"] {
+        let mut document = rational_intake_document();
+        let ratio = &mut document["types"][0];
+        let node = ratio.as_object_mut().expect("Ratio node");
+        node.remove("scalar");
+        node.insert("constraints".to_owned(), serde_json::json!([]));
+        node.insert(
+            "target".to_owned(),
+            format!("ix://filament/native/{native}").into(),
+        );
+        assemble_model_document(package, &document, &format!("bound-{native}"))
+            .unwrap_or_else(|refusal| panic!("a value type bound to {native}: {refusal:?}"));
+    }
 }

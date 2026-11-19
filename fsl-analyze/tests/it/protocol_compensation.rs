@@ -9,21 +9,23 @@
 //! trigger. A recovery predicate that reads its recovery binder is evaluated
 //! at `cend` over each recovery record (FR-207-AC-5, FSpec FR-730).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 
 use filament_contract_model::ClockConfiguration;
 use filament_exact::{Cancel, FieldValue, Value};
 use fsl_analyze::model_check::{check_protocol, ModelCheckRefusal, ProtocolCheckRequest};
 use fsl_eval::simulation::protocol::{
     protocol_domains, visible, AnchorName, ClaimReads, PathStep, ProtocolLocation, ProtocolSystem,
-    ProtocolTransition, RegistrationKey, RestKind, Sc, StepKind, ThreadPath, WaitCause,
+    ProtocolState, ProtocolTransition, RegistrationKey, RestKind, Sc, StepKind, ThreadPath,
+    WaitCause,
 };
 use fsl_eval::simulation::{independent, Footprint, Location, SubjectSystem};
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_package::TemporalClockSelection;
 use fsl_replay::{
-    CounterexampleKind, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelStep,
-    ModelTraceSettlement, ResultLabel, TemporalCounterexample,
+    CounterexampleKind, IncompleteCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
+    ModelCheckOutcome, ModelStep, ModelTraceSettlement, ReachedLimit, ResultLabel,
+    TemporalCounterexample,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value as Json};
@@ -1394,54 +1396,159 @@ fn committed(reached: &[Reached], at: usize) -> usize {
     found[0]
 }
 
+/// The first cend successors reached by a bounded breadth-first walk.
+fn bounded_cends(
+    system: &ProtocolSystem<'_, Sc>,
+) -> Option<Vec<(ProtocolTransition, ProtocolState<Sc>)>> {
+    use fsl_eval::simulation::TransitionSystem;
+
+    const MAX_STATES: usize = 256;
+    let mut queue: VecDeque<_> = system.initial().into_iter().collect();
+    let mut seen = BTreeSet::new();
+    while let Some(state) = queue.pop_front() {
+        let (key, _) = SubjectSystem::state_key(system, &state).ok()?;
+        if !seen.insert(key) {
+            continue;
+        }
+        if seen.len() > MAX_STATES {
+            return None;
+        }
+        let expansion = system.successors(&state).ok()?;
+        let cends: Vec<_> = expansion
+            .successors
+            .iter()
+            .filter(|(transition, _)| transition.kind() == StepKind::CEnd)
+            .cloned()
+            .collect();
+        if !cends.is_empty() {
+            return Some(cends);
+        }
+        queue.extend(expansion.successors.into_iter().map(|(_, next)| next));
+    }
+    None
+}
+
 /// FR-207-AC-5 (TC-652), FSpec FR-730-AC-1: a recovery predicate that
 /// reads its recovery binder is evaluated at `cend` over each recovery
 /// record, one successor per record, and nothing settles `unsupported`.
 #[trace("TC-652", "FR-207-AC-5", "FSpec-FR-730-AC-1")]
 #[test]
 fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
-    explore(
-        &pay_with_recovery_type("r.bal = 0", "M::Recovery"),
-        |system, explored| {
-            let reached = &explored.reached;
-            let t2 = after(
-                reached,
-                after(reached, 0, StepKind::Attempt),
-                StepKind::Event,
-            );
-            let (_, t4) = fail(system, reached, t2, true);
-            let t6 = after(reached, t4, StepKind::CAttempt);
-            let ends: Vec<usize> = reached[t6]
-                .steps
-                .iter()
-                .filter(|(step, _)| step.kind() == StepKind::CEnd)
-                .map(|(_, next)| *next)
-                .collect();
-            assert_eq!(ends.len(), 2, "one cend per recovery record: {ends:?}");
-            let outcomes: Vec<(String, String)> = reached[t6]
-                .steps
-                .iter()
-                .filter(|(step, _)| step.kind() == StepKind::CEnd)
-                .map(|(step, next)| {
-                    let Some(Value::Composite(record)) = step.binder_record() else {
-                        panic!("cend binds its recovery record: {step:?}");
-                    };
-                    let [FieldValue::Present(Value::Integer(balance))] = record.slots() else {
-                        panic!("recovery record contains its balance: {record:?}");
-                    };
-                    let status = statuses(&key_json(system, &reached[*next]));
-                    assert_eq!(status.len(), 1, "one registration status: {status:?}");
-                    (balance.to_string(), status[0].clone())
-                })
-                .collect();
-            assert_eq!(
-                outcomes,
-                [
-                    ("0".to_owned(), "recovered".to_owned()),
-                    ("1".to_owned(), "unrecovered".to_owned()),
-                ]
-            );
+    let body = pay_with_recovery_type("r.bal = 0", "M::Recovery");
+    let case = Case::new(&body, &[0]);
+
+    let mut stop_limits = ModelCheckLimits::default();
+    stop_limits.limits.max_states = 1;
+    stop_limits.limits.max_transitions = 1;
+    let stopped = check_protocol(
+        ProtocolCheckRequest {
+            temporal_clock_selections: &[],
+            subject: case.subject("Pay"),
+            item: ModelCheckItem::DeadlockFreedom,
+            max_depth: None,
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+            limits: stop_limits,
+            ignore_memory_constraints: false,
         },
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the bounded protocol check is admitted");
+    assert!(
+        matches!(
+            &stopped,
+            ModelCheckOutcome::Stopped {
+                cause: IncompleteCause::ResourceExhausted,
+                limit: Some(ReachedLimit {
+                    limit: ModelCheckLimit::MaxStates | ModelCheckLimit::MaxTransitions,
+                    ..
+                }),
+                ..
+            }
+        ),
+        "FR-109 reports an exhausted state or transition budget: {stopped:?}"
+    );
+
+    let check = |case: &Case| {
+        let mut limits = ModelCheckLimits::default();
+        limits.limits.max_states = 10_000;
+        limits.limits.max_transitions = 40_000;
+        check_protocol(
+            ProtocolCheckRequest {
+                temporal_clock_selections: &[],
+                subject: case.subject("Pay"),
+                item: ModelCheckItem::DeadlockFreedom,
+                max_depth: None,
+                max_store_buffer: None,
+                max_messages: None,
+                max_live_instances: None,
+                limits,
+                ignore_memory_constraints: false,
+            },
+            &filament_exact::Cancel::new(),
+        )
+        .expect("the limited protocol check is admitted")
+    };
+    let recovery_outcome = check(&case);
+    assert!(
+        recovery_outcome.stats().product_states > 0,
+        "the FR-109 checker explores the recovery-view protocol: {recovery_outcome:?}"
+    );
+    assert!(
+        matches!(
+            &recovery_outcome,
+            ModelCheckOutcome::Holds { .. }
+                | ModelCheckOutcome::HoldsReduced { .. }
+                | ModelCheckOutcome::Violated { .. }
+                | ModelCheckOutcome::Stopped {
+                    cause: IncompleteCause::ResourceExhausted,
+                    ..
+                }
+        ),
+        "the recovery view completes or stops at an FR-109 limit, not as unsupported: {recovery_outcome:?}"
+    );
+
+    let system = sc_system(&case.subject("Pay"));
+    let cends = bounded_cends(&system).expect("the bounded walk reaches a recovery step");
+    assert_eq!(cends.len(), 2, "one cend per recovery record");
+    let outcomes: Vec<(String, String)> = cends
+        .iter()
+        .map(|(transition, next)| {
+            let Some(Value::Composite(record)) = transition.binder_record() else {
+                panic!("cend binds its recovery record: {transition:?}");
+            };
+            let [FieldValue::Present(Value::Integer(balance))] = record.slots() else {
+                panic!("recovery record contains its balance: {record:?}");
+            };
+            let (bytes, _) = SubjectSystem::state_key(&system, next).expect("a state key");
+            let status = statuses(&json_of(&bytes));
+            assert_eq!(status.len(), 1, "one registration status: {status:?}");
+            (balance.to_string(), status[0].clone())
+        })
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            ("0".to_owned(), "recovered".to_owned()),
+            ("1".to_owned(), "unrecovered".to_owned()),
+        ]
+    );
+    let unrecovered = cends
+        .iter()
+        .find(|(transition, _)| {
+            transition
+                .binder_record()
+                .is_some_and(|value| matches!(value, Value::Composite(record) if matches!(record.slots(), [FieldValue::Present(Value::Integer(balance))] if balance.to_string() == "1")))
+        })
+        .expect("bal 1 produces the unrecovered successor");
+    let (bytes, _) = SubjectSystem::state_key(&system, &unrecovered.1)
+        .expect("the unrecovered successor has a state key");
+    let status = statuses(&json_of(&bytes));
+    assert_eq!(
+        status,
+        ["unrecovered"],
+        "bal 1 settles the registration as unrecovered"
     );
 }
 

@@ -66,7 +66,11 @@ fn compile(unit: &str) -> Compiled {
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let graph_clauses = graph.hyper_clauses().to_vec();
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
@@ -84,7 +88,11 @@ fn refusals(unit: &str) -> Vec<fsl_semantics::check::CheckRefusal> {
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("the unit is refused")
 }
 
@@ -164,28 +172,35 @@ fn slots(wire: &Value) -> BTreeMap<String, &Value> {
 /// FR-488-AC-1, AC-2, AC-3, AC-6: `NonInterference` emits one
 /// `claim`/`hyperproperty` node whose body binds the seven FR-402 members in
 /// order, with the `quantifiers` Tuple of Groups.
-/// FR-322-AC-344, FR-322-AC-346: a hyper clause's name row is keyed by its
-/// body wrapper node, at the ordinal of the clause's assembled `claim`
-/// occurrence, and carries the declared name.
-#[trace("TC-233", "FR-322-AC-344", "FR-322-AC-346")]
+/// FR-322-AC-466: a hyper clause's body wrapper has no
+/// `temporal_clause_names` row; the clause has one `claim_names` row, on its
+/// `hyperproperty` node, at the clause's assembled `claim` occurrence and
+/// carrying the declared name.
+#[trace("TC-233", "FR-322-AC-466")]
 #[test]
-fn a_hyper_clause_has_one_name_row_on_its_wrapper() {
+fn a_hyper_clause_has_one_name_row_on_its_hyperproperty_node() {
     let compiled = compile(&unit(INFINITE, &non_interference()));
     let [clause] = compiled.graph_clauses.as_slice() else {
         panic!("one hyper clause");
     };
     let occurrence = clause.assembled_occurrence().expect("assembled");
-    let wrapper = target(binding(&hyper_node(&compiled.wire)["body"], "body")).clone();
-    assert_ne!(wrapper, hyper_node(&compiled.wire)["node_id"]);
-    let names = compiled.wire["temporal_clause_names"]
+    let hyper = hyper_node(&compiled.wire);
+    let wrapper = target(binding(&hyper["body"], "body")).clone();
+    assert_ne!(wrapper, hyper["node_id"]);
+    let wrapper_rows: Vec<&Value> = compiled.wire["temporal_clause_names"]
         .as_array()
-        .expect("names");
+        .into_iter()
+        .flatten()
+        .filter(|row| row["declaration"] == wrapper)
+        .collect();
+    assert!(wrapper_rows.is_empty(), "{wrapper_rows:?}");
+    let names = compiled.wire["claim_names"].as_array().expect("names");
     let [row] = names.as_slice() else {
         panic!("one name row: {names:?}");
     };
-    assert_eq!(row["declaration"], wrapper);
+    assert_eq!(row["declaration"], hyper["node_id"]);
     assert_eq!(
-        row["occurrence"].as_u64(),
+        row["occurrence"]["ordinal"].as_u64(),
         Some(occurrence.origin().ordinal())
     );
     assert_eq!(row["name"], clause.name());
@@ -649,7 +664,11 @@ fn build(profile: &str, aliases: &[&str], declarations: &str) -> Built {
     let (text, documents) = world_unit(profile, aliases, declarations);
     let graph = assemble_with_models(text.as_bytes(), &packages_of(&documents))
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}\n{text}"));
     let mut selections = graph
         .temporal_clauses()
@@ -708,7 +727,11 @@ fn refused(profile: &str, aliases: &[&str], declarations: &str) -> (String, Vec<
     let (text, documents) = world_unit(profile, aliases, declarations);
     let refusals = assemble_with_models(text.as_bytes(), &packages_of(&documents))
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("the unit is refused");
     (text, refusals)
 }
@@ -1002,7 +1025,11 @@ fn a_substituted_hyper_clause_definition_identity_refuses_at_the_definition_fiel
     let (text, documents) = world_unit(EVENT, &["V"], &declarations);
     let graph = assemble_with_models(text.as_bytes(), &packages_of(&documents))
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}\n{text}"));
     assert_eq!(graph.hyper_clauses().len(), 1);
     let span = graph.hyper_clauses()[0].span();
@@ -1073,6 +1100,7 @@ fn the_emitted_nodes_count_against_the_node_ceiling_exactly() {
             .check(
                 CheckMode::Linked,
                 CheckingLimits::default().with_nodes(nodes),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
             )
     };
     let needed = (1..200)

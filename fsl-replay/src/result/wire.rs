@@ -1784,6 +1784,11 @@ impl LocationWire {
     }
 }
 
+pub(super) fn expression_location_json(location: &Location) -> serde_json::Value {
+    serde_json::to_value(LocationWire::of(location))
+        .expect("expression location wire form is serializable")
+}
+
 /// Whether `left` and `right` have the same typed value encoding; a value
 /// with no encoding is the same as nothing.
 pub(super) fn same_encoding(left: &Value, right: &Value) -> bool {

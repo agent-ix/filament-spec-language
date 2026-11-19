@@ -107,7 +107,11 @@ fn assemble(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<(Code, Opti
         }
     };
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .map_err(|refusals| {
             refusals
                 .iter()
@@ -378,7 +382,11 @@ fn source_refusals(declarations: &str) -> Result<(), Vec<(Code, Option<String>)>
         }
     };
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .map(|_| ())
         .map_err(|refusals| {
             refusals
@@ -641,7 +649,11 @@ fn unit_name_causes(
             )
         })?;
     assembled
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .map(|_| ())
         .map_err(|refusals| {
             (

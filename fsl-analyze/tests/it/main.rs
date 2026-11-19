@@ -100,6 +100,7 @@ mod protocol_constructs;
 mod protocol_counted_steps;
 mod protocol_footprints;
 mod protocol_item_bounds;
+mod protocol_docs_examples;
 mod protocol_outcomes;
 mod protocol_projection;
 mod protocol_realizability;
@@ -125,6 +126,7 @@ mod reduction_manifest;
 mod reduction_proptest;
 mod reduction_world;
 mod reference_literal_binding;
+mod reward_evaluator_port;
 #[path = "../../../tests/support/refinement_aux.rs"]
 mod refinement_aux;
 mod refinement_auxiliary;

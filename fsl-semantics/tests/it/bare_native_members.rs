@@ -121,7 +121,11 @@ fn assembled(
         &format!("function keep using v(): Boolean pure {{ true }}\n{clauses}"),
     )
     .unwrap_or_else(|refusal| panic!("assembly admits: {refusal:?}"));
-    declarations.check(CheckMode::Linked, CheckingLimits::default())
+    declarations.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
 }
 
 /// The refusals of `clauses` as (code, cause, owner, member, locus).

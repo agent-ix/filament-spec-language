@@ -825,7 +825,11 @@ mod tests {
         assert!(text(&declaration).ends_with("c + d }"));
 
         let checked = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the unit checks");
         for (location, expected) in &cases {
             let region = checked
@@ -877,7 +881,11 @@ mod tests {
         assert_eq!(declarations.declaration_region(1), None);
 
         let checked = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the unit checks");
         for location in &unresolved {
             assert_eq!(checked.region(location), None, "{location:?}");
@@ -953,7 +961,11 @@ mod tests {
         let standalone = unit();
         let regions = declarations.regions();
         let checked = for_check
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the unit checks");
         let cases = [
             (body(&[]), "if a then b else c + d"),

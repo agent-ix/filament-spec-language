@@ -219,7 +219,7 @@ impl Lowering<'_> {
             kind: DeclaredClauseKind::Precondition,
             source_declaration: None,
         };
-        let location = reward.expression_location();
+        let location = reward.evaluation_location();
         let name = format!("{}::{}", operation.name(), reward.name());
         let input = FunctionInput {
             name: &name,

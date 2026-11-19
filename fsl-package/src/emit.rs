@@ -288,12 +288,6 @@ pub enum EmitRefusal {
         /// The exact checked application key retained by FSL lowering.
         application: NodeKey,
     },
-    /// FR-148's top-level `numericEqual` schedule has no checked-package/v2
-    /// equality schedule in the pinned contract IR (QSL-2173).
-    #[error(
-        "float equality schedule is not supported by the pinned checked-package/v2 contract IR yet (QSL-2173)"
-    )]
-    FloatEqualityScheduleNotEmitted,
     /// The pinned checked-package/v2 literal vocabulary has no form for this
     /// native construct yet (QSL-2242).
     #[error(
@@ -487,7 +481,6 @@ impl EmitRefusal {
             Self::ProbabilisticModelNotEmitted { .. } | Self::TimedModelNotEmitted { .. } => {
                 Code::UnsupportedConstruct
             }
-            Self::FloatEqualityScheduleNotEmitted => Code::UnsupportedConstruct,
             Self::NativeLiteralNotEmitted { .. } => Code::UnsupportedConstruct,
             Self::MonitorPlanAmbiguous { .. } => Code::InvalidProjectionCorrespondence,
             Self::MonitorBaseRefused(read) => read.code(),
@@ -547,7 +540,6 @@ impl EmitRefusal {
             | Self::UnresolvedNodeReference
             | Self::OperandNotInGraph { .. }
             | Self::MissingEqualityIdentityContext { .. } => None,
-            Self::FloatEqualityScheduleNotEmitted => Some("not-yet-implemented"),
             Self::NativeLiteralNotEmitted { .. } => Some("not-yet-implemented"),
             Self::MissingTemporalClockSelection { .. } => Some("missing-selection"),
             Self::SurplusTemporalClockSelection { .. }
@@ -3739,11 +3731,15 @@ fn checked_equality_term_data(
             });
         };
         let operation = application_body.operation.identity();
-        let operator_matches = match row.producer_data.operator() {
-            filament_semantic_value::declaration::EqualityOperator::Equal => {
+        let operator_matches = match (row.producer_data.schedule(), row.producer_data.operator()) {
+            (
+                filament_semantic_value::declaration::EqualitySchedule::Float,
+                _,
+            ) => operation == "filament.op.ieee.numeric_equal",
+            (_, filament_semantic_value::declaration::EqualityOperator::Equal) => {
                 OperationSuffix::of(operation) == Some(OperationSuffix::Eq)
             }
-            filament_semantic_value::declaration::EqualityOperator::NotEqual => {
+            (_, filament_semantic_value::declaration::EqualityOperator::NotEqual) => {
                 OperationSuffix::of(operation) == Some(OperationSuffix::Ne)
             }
         };
@@ -3897,12 +3893,18 @@ fn checked_equality_term_data(
         let mut operands = operands.into_iter();
         let left = operands.next().ok_or(EmitRefusal::SourceMapInvariant)?;
         let right = operands.next().ok_or(EmitRefusal::SourceMapInvariant)?;
-        let operator = match row.producer_data.operator() {
-            filament_semantic_value::declaration::EqualityOperator::Equal => {
-                filament_contract_model::CheckedEqualityOperator::Equal
-            }
-            filament_semantic_value::declaration::EqualityOperator::NotEqual => {
-                filament_contract_model::CheckedEqualityOperator::NotEqual
+        let operator = if row.producer_data.schedule()
+            == filament_semantic_value::declaration::EqualitySchedule::Float
+        {
+            filament_contract_model::CheckedEqualityOperator::Equal
+        } else {
+            match row.producer_data.operator() {
+                filament_semantic_value::declaration::EqualityOperator::Equal => {
+                    filament_contract_model::CheckedEqualityOperator::Equal
+                }
+                filament_semantic_value::declaration::EqualityOperator::NotEqual => {
+                    filament_contract_model::CheckedEqualityOperator::NotEqual
+                }
             }
         };
         if matches!(
@@ -3926,7 +3928,7 @@ fn checked_equality_term_data(
         }
         let schedule = match row.producer_data.schedule() {
             filament_semantic_value::declaration::EqualitySchedule::Float => {
-                return Err(EmitRefusal::FloatEqualityScheduleNotEmitted);
+                filament_contract_model::CheckedEqualitySchedule::Float
             }
             filament_semantic_value::declaration::EqualitySchedule::Text => {
                 filament_contract_model::CheckedEqualitySchedule::Text
@@ -4861,7 +4863,6 @@ fn require_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(),
 /// with [`EmitRefusal::OutputLimit`] in place of being returned.
 pub fn emit_checked(package: &CheckedPackage, limits: EmitLimits) -> Result<Emission, EmitRefusal> {
     require_protocol_results_for_refusals(package)?;
-    refuse_ieee_numeric_equality(package.graph())?;
     if let Some(emission) = package.remembered_emission() {
         return remembered_within(emission, limits, package.graph());
     }
@@ -4893,7 +4894,6 @@ fn emit_checked_uncached(
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
     let graph = package.graph();
-    refuse_ieee_numeric_equality(graph)?;
     emit_package_inner(
         package,
         graph.memoized_regions(),
@@ -6094,6 +6094,7 @@ pub fn emit_timed_models(
                 checked_term_data: None,
                 temporal_bindings: base.temporal_bindings(),
                 temporal_clause_names: base.temporal_clause_names(),
+                claim_names: base.claim_names(),
                 operation_effects: operation_effects.as_deref(),
                 schedulability_claims: None,
                 operation_bodies: base.operation_body_rows(),
@@ -6136,24 +6137,6 @@ pub fn emit_timed_models(
         temporal_rows: TemporalRows::default(),
     }
     .with_identity_row_selection())
-}
-
-/// The current semantic-value lowering represents FR-148 float equality as a
-/// catalogued IEEE operation rather than an `EqualitySchedule` producer fact.
-/// Until checked-package/v2 has the matching schedule, fail closed at this
-/// boundary rather than serializing a representation the pinned reader cannot
-/// validate (QSL-2173).
-fn refuse_ieee_numeric_equality(graph: &CheckedGraph) -> Result<(), EmitRefusal> {
-    if graph.semantic_graph().nodes().any(|node| {
-        matches!(
-            node.body(),
-            BodyTerm::Application(application)
-                if application.operation.identity() == "filament.op.ieee.numeric_equal"
-        )
-    }) {
-        return Err(EmitRefusal::FloatEqualityScheduleNotEmitted);
-    }
-    Ok(())
 }
 
 /// [`emit_checked`] under the caller's [`Cancel`] handle, polled once at
@@ -6523,7 +6506,6 @@ fn emit_package_inner(
         return Err(refusal);
     }
     let graph = package.graph();
-    refuse_ieee_numeric_equality(graph)?;
     let source_keys = source_declaration_key_rewrites(graph)?;
     // FSpec FR-490, FR-491: each guarantee and composition declaration is a
     // `correspondence` node beside the graph's own.
@@ -7061,7 +7043,14 @@ fn emit_package_inner(
         names: temporal_clause_names,
         keyed: temporal_binding_rows,
         refs: temporal_clause_refs,
-    } = temporal_binding_rows(graph, &emitted_node_ids, &nodes, temporal_selections)?;
+    } = temporal_binding_rows(
+        graph,
+        &emitted_node_ids,
+        &nodes,
+        &source_map,
+        temporal_selections,
+    )?;
+    let claim_names = claim_name_rows(graph, &emitted_node_ids, &nodes, &source_map)?;
     let equality_producer_identity_rows = equality_producer_emission_rows_excluding(
         graph,
         &emitted_node_ids,
@@ -7188,6 +7177,7 @@ fn emit_package_inner(
                     .then_some(temporal_bindings.as_slice()),
                 temporal_clause_names: (!temporal_clause_names.is_empty())
                     .then_some(temporal_clause_names.as_slice()),
+                claim_names: (!claim_names.is_empty()).then_some(claim_names.as_slice()),
                 operation_effects,
                 operation_bodies: operation_body_rows.as_deref(),
                 schedulability_claims: (!schedulability_claim_rows.is_empty())
@@ -8329,6 +8319,184 @@ fn validate_temporal_clock(
     Ok(())
 }
 
+/// Whether `node` is claim-bearing (FSpec FR-322 "Claim declaration names"):
+/// a `state`/`state_clause`, `relation`/`refinement` or `claim` node.
+fn claim_bearing(node: &CheckedSemanticNodeV2) -> bool {
+    let (tag, form) = (node.node_tag.as_ref(), node.semantic_form.as_ref());
+    (tag == CheckedNodeTag::State.as_wire() && form == "state_clause")
+        || (tag == CheckedNodeTag::Relation.as_wire() && form == "refinement")
+        || tag == CheckedNodeTag::Claim.as_wire()
+}
+
+/// FSpec FR-322 "Claim declaration names": one `claim_names` row for each
+/// `declaration` or `claim` occurrence through which a source declaration
+/// introduces a `state`/`state_clause`, `relation`/`refinement` or `claim`
+/// node, with the declared name, its package-local path and the whole
+/// declaration's region, sorted by node then occurrence. The rows are
+/// written from the checked unit's declarations, never derived from a
+/// region, a node path or the clause body.
+fn claim_name_rows(
+    graph: &CheckedGraph,
+    emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
+    nodes: &[CheckedSemanticNodeV2],
+    source_map: &[CheckedSourceMapEntry],
+) -> Result<Vec<filament_contract_model::ClaimNameRow>, EmitRefusal> {
+    // Each claim-bearing declaration: its own occurrence, name and span.
+    let mut sites: Vec<(OccurrenceKey, &str, fsl_foundation::Span)> = Vec::new();
+    for clause in graph.state_clauses() {
+        sites.push((
+            OccurrenceKey::new(clause.identity(), clause.claim().clone()),
+            clause.name(),
+            clause.declaration_span(),
+        ));
+    }
+    for refinement in graph.refinements() {
+        let occurrence = refinement
+            .requirement_occurrence()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        sites.push((
+            occurrence.clone(),
+            refinement.name(),
+            refinement.declaration_span(),
+        ));
+    }
+    for claim in graph.state_graph_claims() {
+        let occurrence = claim.occurrence().ok_or(EmitRefusal::SourceMapInvariant)?;
+        sites.push((occurrence.clone(), claim.name(), claim.span()));
+    }
+    for claim in graph.probabilistic_model().claims() {
+        let occurrence = claim.occurrence().ok_or(EmitRefusal::SourceMapInvariant)?;
+        sites.push((occurrence.clone(), claim.name.as_str(), claim.span));
+    }
+    for claim in graph.task_sets().claims() {
+        // A claim whose task set did not convert has no node.
+        if let Some(occurrence) = claim.occurrence() {
+            sites.push((occurrence, claim.name.as_str(), claim.span));
+        }
+    }
+    for relation in graph.step_relations() {
+        if let Some(occurrence) = relation.occurrence() {
+            sites.push((occurrence.clone(), relation.name(), relation.span()));
+        }
+    }
+    // FSpec FR-322 "Rows of one declaration": a hyper clause's name is on its
+    // `hyperproperty` node; its body wrapper has no name row.
+    for hyper in graph.hyper_clauses() {
+        let occurrence = hyper
+            .assembled_occurrence()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        sites.push((occurrence.clone(), hyper.name(), hyper.span()));
+    }
+    // The other occurrences one declaration introduces (a step relation's
+    // `declaration` occurrence, a derived conjunction's `claim` occurrence
+    // per contributing clause) are recorded at that declaration's own
+    // location, so each carries its name and region.
+    let located: Vec<(&Location, &str, fsl_foundation::Span)> = sites
+        .iter()
+        .filter_map(|(occurrence, name, span)| {
+            graph
+                .occurrence(occurrence.node().clone(), occurrence.origin())
+                .map(|location| (location, *name, *span))
+        })
+        .collect();
+    let keys: BTreeMap<&CheckedNodeId, &NodeKey> =
+        emitted_node_ids.iter().map(|(key, id)| (id, key)).collect();
+    let mut rows = Vec::with_capacity(sites.len());
+    let mut row = |declaration: CheckedNodeId,
+                   occurrence: CheckedOccurrence,
+                   name: &str,
+                   span: fsl_foundation::Span|
+     -> Result<(), EmitRefusal> {
+        rows.push(filament_contract_model::ClaimNameRow {
+            declaration_region: declaration_region(source_map, &declaration, &occurrence, span)?,
+            declaration,
+            occurrence,
+            name: name.into(),
+            qualified_name: vec![name.into()],
+        });
+        Ok(())
+    };
+    let mut named: Vec<(CheckedNodeId, CheckedOccurrence)> = Vec::with_capacity(sites.len());
+    for (occurrence, name, span) in &sites {
+        let Some(declaration) = emitted_node_ids.get(occurrence.node()).cloned() else {
+            continue;
+        };
+        let occurrence = CheckedOccurrence {
+            role: occurrence_role(occurrence.node(), occurrence.origin())?,
+            ordinal: occurrence.origin().ordinal(),
+        };
+        named.push((declaration.clone(), occurrence.clone()));
+        row(declaration, occurrence, name, *span)?;
+    }
+    for node in nodes.iter().filter(|node| claim_bearing(node)) {
+        let Some(key) = keys.get(&node.node_id) else {
+            continue;
+        };
+        for occurrence in &node.occurrences {
+            let role = match occurrence.role {
+                CheckedOccurrenceRole::Declaration => "declaration",
+                CheckedOccurrenceRole::Claim => "claim",
+                _ => continue,
+            };
+            if named
+                .iter()
+                .any(|(id, held)| *id == node.node_id && held == occurrence)
+            {
+                continue;
+            }
+            let origin =
+                filament_exact::Origin::new(filament_exact::Role::new(role), occurrence.ordinal);
+            let Some(location) = graph.occurrence((*key).clone(), &origin) else {
+                continue;
+            };
+            if let Some((_, name, span)) = located.iter().find(|(at, _, _)| *at == location) {
+                row(node.node_id.clone(), occurrence.clone(), name, *span)?;
+            }
+        }
+    }
+    rows.sort_by(|left, right| {
+        (&left.declaration, &left.occurrence).cmp(&(&right.declaration, &right.occurrence))
+    });
+    rows.dedup_by(|later, earlier| {
+        later.declaration == earlier.declaration && later.occurrence == earlier.occurrence
+    });
+    Ok(rows)
+}
+
+/// A name row's `declaration_region` (FSpec FR-322 "Clause declaration
+/// regions"): the whole declaration's span, under the source of the
+/// occurrence's own `source_map` region.
+fn declaration_region(
+    source_map: &[CheckedSourceMapEntry],
+    declaration: &CheckedNodeId,
+    occurrence: &CheckedOccurrence,
+    span: fsl_foundation::Span,
+) -> Result<CheckedSourceRegion, EmitRefusal> {
+    let source = source_map
+        .iter()
+        .find(|entry| {
+            entry.node_id == *declaration
+                && entry.role == occurrence.role
+                && entry.ordinal == occurrence.ordinal
+        })
+        .and_then(|entry| entry.regions.first())
+        .map(|region| region.source.clone())
+        .ok_or(EmitRefusal::SourceMapInvariant)?;
+    Ok(CheckedSourceRegion {
+        source,
+        start: u64::try_from(span.start).map_err(encoding)?,
+        end: u64::try_from(span.end).map_err(encoding)?,
+    })
+}
+
+/// The `claim` occurrence `ordinal`.
+fn claim_occurrence(ordinal: u64) -> CheckedOccurrence {
+    CheckedOccurrence {
+        role: CheckedOccurrenceRole::Claim,
+        ordinal,
+    }
+}
+
 /// The temporal rows one emission writes.
 struct WrittenTemporalRows {
     bindings: Vec<filament_contract_model::TemporalBinding>,
@@ -8341,6 +8509,7 @@ fn temporal_binding_rows(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     nodes: &[CheckedSemanticNodeV2],
+    source_map: &[CheckedSourceMapEntry],
     selections: &[TemporalClockSelection],
 ) -> Result<WrittenTemporalRows, EmitRefusal> {
     use fsl_semantics::check::TemporalProfile;
@@ -8371,11 +8540,18 @@ fn temporal_binding_rows(
     let mut keyed = TemporalBindingRows::default();
     let mut names = Vec::new();
     for site in graph.hybrid_claim_sites() {
+        let declaration = emitted_node_ids
+            .get(&site.identity)
+            .cloned()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
         names.push(filament_contract_model::TemporalClauseName {
-            declaration: emitted_node_ids
-                .get(&site.identity)
-                .cloned()
-                .ok_or(EmitRefusal::SourceMapInvariant)?,
+            declaration_region: declaration_region(
+                source_map,
+                &declaration,
+                &claim_occurrence(site.claim.ordinal()),
+                site.span,
+            )?,
+            declaration,
             occurrence: site.claim.ordinal(),
             name: site.name.as_str().into(),
         });
@@ -8400,6 +8576,12 @@ fn temporal_binding_rows(
             clause: position,
         });
         names.push(filament_contract_model::TemporalClauseName {
+            declaration_region: declaration_region(
+                source_map,
+                &declaration,
+                &claim_occurrence(temporal.claim().ordinal()),
+                clause.span(),
+            )?,
             declaration,
             occurrence: temporal.claim().ordinal(),
             name: clause.name().into(),
@@ -8477,15 +8659,10 @@ fn temporal_binding_rows(
         let occurrence = hyper
             .assembled_occurrence()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
+        // FSpec FR-322 "Temporal clause names": the body wrapper has no name
+        // row; the clause is named on its `hyperproperty` node's
+        // `claim_names` row.
         let wrapper = hyper_wrapper(graph, occurrence.node())?;
-        names.push(filament_contract_model::TemporalClauseName {
-            declaration: emitted_node_ids
-                .get(&wrapper)
-                .cloned()
-                .ok_or(EmitRefusal::SourceMapInvariant)?,
-            occurrence: occurrence.origin().ordinal(),
-            name: hyper.name().into(),
-        });
         let profile = hyper.profile();
         if !matches!(
             profile,

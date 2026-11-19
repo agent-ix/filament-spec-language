@@ -78,7 +78,11 @@ fn compile_with(
     body: &str,
 ) -> Result<CheckedPackage, Vec<CheckRefusal>> {
     assemble(&source(extra, parameters, body))
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .map(CheckedPackage::link)
 }
 
@@ -132,7 +136,11 @@ fn refusal_with(extra: &str, parameters: &str, body: &str) -> (String, Option<St
 /// The source byte range the one refusal of `body` is located at.
 fn refused_at(parameters: &str, body: &str) -> (usize, usize) {
     let text = source("", parameters, body);
-    let Err(refusals) = assemble(&text).check(CheckMode::Linked, CheckingLimits::default()) else {
+    let Err(refusals) = assemble(&text).check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    ) else {
         panic!("{body} is refused");
     };
     let [refusal] = refusals.as_slice() else {

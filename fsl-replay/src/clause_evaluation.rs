@@ -335,7 +335,7 @@ fn settle(disposition: ClauseDisposition) -> ClauseEvaluation {
         ClauseDisposition::Evaluate(CallOutcome::Completed(CallValue::Boolean(value))) => {
             ClauseEvaluation::Completed(value)
         }
-        ClauseDisposition::Evaluate(CallOutcome::Undefined { reason }) => {
+        ClauseDisposition::Evaluate(CallOutcome::Undefined { reason, .. }) => {
             ClauseEvaluation::Undefined { reason }
         }
         ClauseDisposition::Evaluate(CallOutcome::Incomplete(incomplete)) => {
@@ -445,6 +445,7 @@ mod tests {
     fn an_undefined_evaluation_settles_as_undefined() {
         let undefined = settle(ClauseDisposition::Evaluate(CallOutcome::Undefined {
             reason: "division-by-zero",
+            location: None,
         }));
         assert!(
             matches!(

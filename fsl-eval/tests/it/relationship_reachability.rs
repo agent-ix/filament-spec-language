@@ -233,7 +233,11 @@ fn orders_package(shape: Shape, declarations: &str) -> CheckedPackage {
     .expect("the model assembles");
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .expect("the clauses check"),
     )
 }

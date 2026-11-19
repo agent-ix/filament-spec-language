@@ -74,7 +74,11 @@ pub(super) fn check(declarations: &str) -> CheckedGraph {
         Vec::new(),
     )
     .expect("the unit assembles")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("{declarations}: {refusals:?}"))
 }
 
@@ -422,7 +426,11 @@ fn division_package(
         Some(admit_integer_division(&[role.reference()], None).expect("a closed law"));
     let package = CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{operator}: {refusals:?}")),
     );
     let graph = package.graph();

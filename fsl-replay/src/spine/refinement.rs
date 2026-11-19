@@ -384,6 +384,7 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::Extension(_)
         | CheckCause::RefinementNotEmitted { .. }
         | CheckCause::Probabilistic(_)
+        | CheckCause::RewardEvaluation(_)
         | CheckCause::TimedNotChecked { .. }
         | CheckCause::Temporal(_)
         | CheckCause::Hyper(_)
@@ -632,7 +633,7 @@ fn classify_outcome(outcome: &CallOutcome) -> Classification {
             Classification::new(Refused, causes)
         }
         // An undefined evaluation settles refuted.
-        CallOutcome::Undefined { reason } => Classification::new(
+        CallOutcome::Undefined { reason, .. } => Classification::new(
             Refused,
             vec![RefusalCause::new(Code::UndefinedExpression, Some(reason))],
         ),

@@ -80,7 +80,11 @@ fn assemble(declarations: &str) -> (String, PackageDeclarations) {
 fn checks(declarations: &str) -> CheckedGraph {
     let (_, assembled) = assemble(declarations);
     assembled
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{declarations}: {refusals:?}"))
 }
 
@@ -88,11 +92,14 @@ fn checks(declarations: &str) -> CheckedGraph {
 /// and tag.
 fn only_refusal(declarations: &str) -> (String, ProtocolAnchorCause, &'static str, String) {
     let (text, assembled) = assemble(declarations);
-    let found: Vec<CheckRefusal> =
-        match assembled.check(CheckMode::Linked, CheckingLimits::default()) {
-            Err(refusals) => refusals,
-            Ok(_) => panic!("{declarations}: checking refuses"),
-        };
+    let found: Vec<CheckRefusal> = match assembled.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    ) {
+        Err(refusals) => refusals,
+        Ok(_) => panic!("{declarations}: checking refuses"),
+    };
     let [refusal] = &found[..] else {
         panic!("{declarations}: one refusal, got {found:?}");
     };
@@ -278,7 +285,11 @@ fn a_weak_join_with_no_outstanding_rule_reports_both_refusals() {
     let declarations = protocol(&parallel("Both", "memory tso", "any [left]", ""));
     let (_, assembled) = assemble(&declarations);
     let found = assembled
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("checking refuses");
     let mut seen: Vec<(&str, String)> = found
         .iter()
@@ -510,7 +521,11 @@ fn litmus(
 fn classes(source: &str) -> Vec<(String, Option<AccessClass>, Option<AccessOrdering>)> {
     let (_, assembled) = assemble_model(source, store_buffering_model());
     let graph = assembled
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{source}: {refusals:?}"));
     let checked = graph.protocol("Flow").expect("the checked protocol");
     checked
@@ -548,7 +563,11 @@ fn assemble_model(declarations: &str, model: SelectedModel) -> (String, PackageD
 
 fn refused(source: &str) -> (String, Vec<ProtocolAnchorCause>) {
     let (text, assembled) = assemble_model(source, store_buffering_model());
-    let Err(found) = assembled.check(CheckMode::Linked, CheckingLimits::default()) else {
+    let Err(found) = assembled.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    ) else {
         panic!("{source}: checking refuses");
     };
     let causes = found
@@ -626,7 +645,11 @@ fn store_buffering_checks_under_every_memory_model() {
         );
         let (_, assembled) = assemble_model(&source, store_buffering_model());
         let graph = assembled
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("checks");
         assert!(
             graph
@@ -820,7 +843,11 @@ fn atomicity_follows_the_written_ordering() {
     let atomic = |source: &str| -> Vec<(String, bool, Option<AccessClass>)> {
         let (_, assembled) = assemble_model(source, store_buffering_model());
         let graph = assembled
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{source}: {refusals:?}"));
         let checked = graph.protocol("Flow").expect("the checked protocol");
         checked

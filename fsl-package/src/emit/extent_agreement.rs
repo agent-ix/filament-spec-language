@@ -169,7 +169,11 @@ pub(super) fn package_declaring(types: TypeEnvironment) -> CheckedPackage {
     declarations.types = types;
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the fixture records check"),
     )
 }
@@ -679,7 +683,11 @@ fn emit_text(declarations: &str) -> (CheckedPackage, Value, Box<CheckedPackageV2
             Vec::new(),
         )
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{declarations}: {refusals:?}")),
     );
     let emission = emit_checked(&package, crate::EmitLimits::fixture()).expect("the package emits");

@@ -69,7 +69,11 @@ fn source_assembly_keeps_empty_derived_dimension_dimensionless() {
     );
 
     let checked = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the assembled package checks");
     let graph = checked.semantic_graph();
     let dimension_of = |unit_name: &str| {

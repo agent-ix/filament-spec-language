@@ -51,7 +51,11 @@ fn check_with(
         .unwrap_or_else(|refusal| panic!("assembly refused: {refusal:?}"));
     let regions = declarations.regions();
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .map_err(|refusals| {
             refusals
                 .into_iter()

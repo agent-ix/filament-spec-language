@@ -63,7 +63,11 @@ fn assemble_document(document: &Value, alias: &str, declarations: &str) -> Packa
 }
 
 fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
-    assemble_as("M", declarations).check(CheckMode::Linked, CheckingLimits::default())
+    assemble_as("M", declarations).check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
 }
 
 fn mismatch() -> CheckCause {
@@ -248,7 +252,11 @@ fn a_collection_literal_of_the_parent_admits_a_child_element() {
 /// The refusals of `declarations` over the event fixture package.
 fn refused_with_events(declarations: &str) -> Vec<CheckRefusal> {
     assemble_document(&fixture::document_with_event(), "M", declarations)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("an event has no equality")
 }
 
@@ -383,7 +391,11 @@ fn an_event_type_is_one_model_owned_event_type_node_in_a_package() {
         "function shipped using v(e: M::Shipped): Boolean pure { true }\n\
          function placed using v(e: M::OrderPlaced): Boolean pure { true }",
     )
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
     .expect("the event unit checks");
     let nodes = model_nodes(&graph);
     let events: Vec<_> = nodes
@@ -417,7 +429,11 @@ fn a_model_record_key_is_its_model_node_key_whatever_the_alias() {
         let declarations = assemble_as(alias, "function noop using v(): Boolean pure { true }");
         let types = declarations.types.clone();
         let graph = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
             .expect("an empty unit checks");
         let nodes: std::collections::BTreeMap<_, _> = graph
             .semantic_graph()
@@ -458,7 +474,11 @@ fn uuid_timestamp_and_string_fields_are_read_through_a_child() {
          function label using v(t: M::Ticket): Boolean pure { t.label = t.label }\n\
          function viaChild using v(t: M::StampedTicket): Boolean pure { label(t) }",
     )
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
     .expect("native leaves check");
 }
 

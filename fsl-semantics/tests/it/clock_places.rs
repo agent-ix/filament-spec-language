@@ -3199,3 +3199,57 @@ fn a_clock_tuple_position_and_union_case_are_clock_places() {
         )]
     );
 }
+
+/// FR-056-AC-64: a value type bound by `target` to
+/// `ix://filament/native/Clock` is an alias of the clock type, so a field
+/// typed by it is a clock place and its `max` constraint bounds that place.
+#[trace("TC-3031", "FR-056-AC-64")]
+#[test]
+#[ignore = "QSL-2176: a value type bound to Clock by target is not admitted as a clock alias yet"]
+fn a_value_type_bound_to_clock_by_target_types_a_clock_place() {
+    let document = timer_document(|document: &mut Value| {
+        let watch = package("Watch");
+        let constraint = json!({
+            "identity": format!("{watch}/constraints/max"),
+            "keyword": "max",
+            "operands": {"value": 5},
+            "appliesTo": watch.clone(),
+            "diagnosticCode": "clock.max",
+            "origin": {"generated": {
+                "generatorIdentity": watch.clone(),
+                "generatorVersion": "1.0.0",
+                "inputIdentities": [watch.clone()],
+            }},
+        });
+        let types = document["types"].as_array_mut().expect("types");
+        types.push(wire_type(
+            &watch,
+            "clock_value_type",
+            json!({"target": "ix://filament/native/Clock", "constraints": [constraint]}),
+        ));
+        types[1]["fields"]
+            .as_array_mut()
+            .expect("Call fields")
+            .push(field("w", &watch));
+        document["constructs"]
+            .as_array_mut()
+            .expect("constructs")
+            .push(wire_construct("clock_value_type", meaning::VALUE_TYPE, json!({})));
+    });
+    let graph = check(&document, &format!("{UNITS}{DENSE}"))
+        .unwrap_or_else(|refusals| panic!("a clock-bound value type checks: {refusals:?}"));
+    let model = timed(&graph);
+    let w = model
+        .clocks()
+        .iter()
+        .find(|clock| clock.name() == "w")
+        .unwrap_or_else(|| panic!("w's place: {:?}", model.clocks()));
+    assert!(
+        model.invariants().iter().any(|invariant| invariant
+            .bounds()
+            .iter()
+            .any(|bound| model.clock(bound.clock()).map(|c| c.name()) == Some(w.name()))),
+        "Watch's max bounds w: {:?}",
+        model.invariants()
+    );
+}

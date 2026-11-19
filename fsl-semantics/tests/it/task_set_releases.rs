@@ -43,7 +43,11 @@ fn unit_text(declarations: &str) -> String {
 fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
     admit_and_assemble_with_profiles(&document(), PROFILES, &unit_text(declarations))
         .expect("S2 keeps the release declarations")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
 }
 
 fn checked(declarations: &str) -> CheckedGraph {
@@ -196,7 +200,11 @@ fn a_release_is_refused_unless_the_timed_facet_is_selected() {
         &text,
     )
     .expect("S2 keeps the forms")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
     .expect_err("the facet gate refuses");
     let found = refusals.iter().any(|refusal| {
         matches!(
@@ -231,7 +239,11 @@ fn an_operation_inherited_from_two_unrelated_types_is_ambiguous() {
     let refusals =
         admit_and_assemble_with_profiles(&ambiguous_operation_document(), PROFILES, &text)
             .expect("S2 keeps the release")
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
             .expect_err("the operation is ambiguous");
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");

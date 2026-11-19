@@ -202,8 +202,11 @@ fn declarations(
 }
 
 fn check(functions: Vec<FunctionDeclaration>) -> Result<CheckedGraph, Vec<CheckRefusal>> {
-    declarations(TypeEnvironment::default(), functions)
-        .check(CheckMode::Linked, CheckingLimits::default())
+    declarations(TypeEnvironment::default(), functions).check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
 }
 
 /// The quotient fixture uses integer operands with a Rational result; `/`
@@ -224,7 +227,11 @@ fn check_quotient(functions: Vec<FunctionDeclaration>) -> Result<CheckedGraph, V
             identity_span: fsl_foundation::Span { start: 0, end: 0 },
         },
     );
-    package.check(CheckMode::Linked, CheckingLimits::default())
+    package.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
 }
 
 /// The single refusal of a package check.
@@ -293,7 +300,11 @@ fn last() -> FunctionDeclaration {
 #[test]
 fn p01_projection_under_a_presence_guard_decreases_structurally() {
     declarations(node_environment(), vec![last()])
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
 }
 
@@ -397,7 +408,11 @@ fn p03_mutual_recursion_needs_measures_of_one_arity() {
             parity("odd", "even", call("M2", vec![name("n"), literal(0)])),
         ],
     )
-    .check(CheckMode::Linked, CheckingLimits::default());
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    );
     assert_eq!(
         unproved_decrease(result),
         (
@@ -546,7 +561,11 @@ fn p05_unreachable_calls_still_resolve_and_model_operations_are_ineligible() {
         declarations.functions = vec![calling("M::pay")];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::default());
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    );
     let ineligible = refusal(model);
     assert_eq!(
         ineligible.cause,
@@ -582,7 +601,11 @@ fn chain(types: &TypeEnvironment, heads: &[i64]) -> Value {
 fn p06_each_call_charges_function_call() {
     let types = node_environment();
     let graph = declarations(types.clone(), vec![last()])
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
     // ADR-013 T-1 (FR-087): the S4 link step, over an empty
     // dependency closure -- this fixture declares no import.
@@ -664,7 +687,11 @@ fn call_observation_is_recorded_only_after_the_callee_returns() {
     );
     let package = CheckedPackage::link(
         declarations(TypeEnvironment::default(), vec![callee, caller])
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .expect("the nested calls are admitted"),
     );
     let mut meter = Meter::new(UNLIMITED);
@@ -863,7 +890,11 @@ fn p08_measures_decrease_lexicographically_by_accepted_forms() {
         ),
     );
     declarations(types, vec![lex])
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
 }
 
@@ -1025,7 +1056,11 @@ fn p10_stable_paths_ieee_conversion_references_duplicates_and_node_limits() {
             declarations.models = vec![obj_model()];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
     };
     let guarded = |operand: &dyn Fn() -> Expression| {
         if_then(present(operand()), value(operand()), literal(0))
@@ -1142,7 +1177,11 @@ fn p10_stable_paths_ieee_conversion_references_duplicates_and_node_limits() {
         declarations.functions = vec![down()];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::new(4));
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::new(4),
+        &fsl_eval::value::S6aRewardEvaluator,
+    );
     let exhausted = refusal(limited);
     assert_eq!(exhausted.cause.code().as_str(), "stage_limit_exceeded");
     assert_eq!(exhausted.cause.cause(), Some("node-count-exceeded"));
@@ -1195,7 +1234,11 @@ fn nodes_limit_is_enforced_across_the_whole_package_not_per_declaration() {
         declarations.functions = vec![small("a")];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::new(4))
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::new(4),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .expect("one small declaration admits under a budget of 4");
 
     // Two declarations under a budget wide enough for both still admit --
@@ -1209,7 +1252,11 @@ fn nodes_limit_is_enforced_across_the_whole_package_not_per_declaration() {
         declarations.functions = vec![small("a"), small("b")];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::new(100))
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::new(100),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .expect("two small declarations admit under a generous package-wide budget");
 
     // The same two declarations, under the reviewer's own measured budget
@@ -1226,7 +1273,11 @@ fn nodes_limit_is_enforced_across_the_whole_package_not_per_declaration() {
             declarations.functions = vec![small("a"), small("b")];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::new(4)),
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::new(4),
+            &fsl_eval::value::S6aRewardEvaluator,
+        ),
     );
     assert_eq!(
         exhausted.cause,
@@ -1265,6 +1316,7 @@ fn p_input_bytes_limit_refuses_through_package_declarations_check() {
     .check(
         CheckMode::Linked,
         CheckingLimits::default().with_input_bytes(1),
+        &fsl_eval::value::S6aRewardEvaluator,
     );
     let exhausted = refusal(limited);
     assert!(
@@ -1290,7 +1342,11 @@ fn p_input_bytes_limit_refuses_through_package_declarations_check() {
         declarations.functions = vec![down()];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .expect("the unconfigured default is unlimited, so the same package admits");
 }
 
@@ -1315,6 +1371,7 @@ fn p_work_budget_limit_refuses_through_package_declarations_check() {
     .check(
         CheckMode::Linked,
         CheckingLimits::default().with_work_budget(0),
+        &fsl_eval::value::S6aRewardEvaluator,
     );
     let exhausted = refusal(limited);
     assert!(
@@ -1340,7 +1397,11 @@ fn p_work_budget_limit_refuses_through_package_declarations_check() {
         declarations.functions = vec![down()];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .expect("the unconfigured default is unlimited, so the same package admits");
 }
 
@@ -1566,7 +1627,11 @@ fn s6a_returns_kernel_outcomes_unchanged_in_evaluated() {
         declarations.ieee_profile = Some(ieee_profile());
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .expect("convert(x) carries no definedness obligation, and the divisor is a nonzero literal");
     let package = CheckedPackage::link(package);
     let float = |bits: u64| vec![Value::Float(IeeeValue::binary64(bits))];

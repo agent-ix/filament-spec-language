@@ -12,9 +12,10 @@ relationships:
 
 Verify that an analyze request's `package` selection names an FR-517 handoff
 directory, that the analysis attaches the identity rows of its
-`identities.json` and the equality rows of its optional `equality.json`
+`identities.json` and the equality rows of its `equality.json`
 through the strict readers, and that a missing or refused identity file, a
-refused equality file and an absent directory each refuse the request
+refused equality file, an equality file absent beside a package that holds an
+equality application, and an absent directory each refuse the request
 `invalid_package` before any engine runs. Scope: FR-850-AC-6.
 
 ## Test Procedure
@@ -33,7 +34,8 @@ Test: `fsl-analyze/tests/it/analyze_package_selection.rs`.
   exit 20, `items` empty.
 - Step 2: `invalid_package`, `malformed-file`, naming `identities.json`;
   then `unknown-format`.
-- Step 3: the request analyzes as FR-850-AC-1 states; then
+- Step 3: `invalid_package`, `missing-file`, naming `equality.json`
+  (FR-850-AC-10); then
   `invalid_package`, `refused-file`, naming `equality.json`.
 - Step 4: `invalid_package`, `missing-file`, naming the path.
 - Assertions compare typed members, never message text.

@@ -142,6 +142,7 @@ pub(crate) use lowering::record_node_key;
 pub use lowering::{protocol_site, ProtocolSite, RelatedSide};
 mod extension;
 mod hybrid;
+mod hybrid_locus;
 mod hyper_clause;
 mod node_key;
 mod observation;
@@ -149,6 +150,8 @@ mod operation_body;
 mod operation_clause;
 mod probabilistic;
 mod profile;
+mod reward_evaluator;
+pub use reward_evaluator::{RewardEvaluationFailure, RewardEvaluator};
 mod protocol_clause;
 mod protocol_controls;
 mod protocol_memory;
@@ -161,6 +164,29 @@ mod references;
 mod refinement;
 mod refusal;
 mod region;
+mod reward_validation;
+#[cfg(any(test, feature = "test-support"))]
+/// Test-only helpers for S3 check fixtures.
+pub mod test_support {
+    use filament_exact::{Integer, Meter, Value};
+
+    use super::{CheckedGraph, Reward, RewardEvaluationFailure, RewardEvaluator};
+
+    /// Explicit test fixture for checker tests that assert no reward value.
+    pub struct ZeroRewardEvaluator;
+
+    impl RewardEvaluator for ZeroRewardEvaluator {
+        fn evaluate(
+            &self,
+            _graph: &CheckedGraph,
+            _reward: &Reward,
+            _arguments: Vec<Value>,
+            _meter: &mut Meter,
+        ) -> Result<Value, RewardEvaluationFailure> {
+            Ok(Value::Integer(Integer::from(0_i64)))
+        }
+    }
+}
 mod settings;
 mod source_model;
 pub(crate) mod state_clause;
@@ -470,6 +496,7 @@ pub use field_refinement::RefinementObligation;
 pub use fsl_forms::{
     AccessOrdering, ChannelCapacity, ChannelDelivery, ChannelOverflow, LossSelector,
 };
+pub use hybrid_locus::{HybridTermHome, HybridTermNode};
 pub use hybrid::{
     hybrid_horizon, ArithmeticOp, CaptureIndex, CheckedFunctionRef, CheckedHybridClaim,
     CheckedHybridModel, CheckedMode, CheckedTransition, CompareOp, ContinuousVariable,
@@ -1414,6 +1441,9 @@ pub struct ClauseSite {
     pub claim: filament_exact::Origin,
     /// The declared clause name.
     pub name: String,
+    /// The span of the whole declaration (FSpec FR-322 "Clause declaration
+    /// regions").
+    pub span: fsl_foundation::Span,
 }
 
 impl TemporalClauseNode {
@@ -1978,8 +2008,9 @@ impl PackageDeclarations {
         self,
         mode: CheckMode,
         limits: CheckingLimits,
+        reward_evaluator: &dyn RewardEvaluator,
     ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
-        self.check_with_cancel(mode, limits, &Cancel::new())
+        self.check_with_cancel(mode, limits, reward_evaluator, &Cancel::new())
     }
 
     /// Check the unit while preserving refusals that belong to individual
@@ -1990,8 +2021,9 @@ impl PackageDeclarations {
         self,
         mode: CheckMode,
         limits: CheckingLimits,
+        reward_evaluator: &dyn RewardEvaluator,
     ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
-        self.check_with_protocol_results_and_cancel(mode, limits, &Cancel::new())
+        self.check_with_protocol_results_and_cancel(mode, limits, reward_evaluator, &Cancel::new())
     }
 
     /// [`Self::check`] under a caller-owned [`Cancel`] handle (FR-276): the
@@ -2004,6 +2036,7 @@ impl PackageDeclarations {
         self,
         mode: CheckMode,
         limits: CheckingLimits,
+        reward_evaluator: &dyn RewardEvaluator,
         cancel: &Cancel,
     ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
         let mut protocol_refusals = Vec::new();
@@ -2011,6 +2044,7 @@ impl PackageDeclarations {
             mode,
             limits,
             cancel,
+            reward_evaluator,
             false,
             false,
             &mut protocol_refusals,
@@ -2042,9 +2076,18 @@ impl PackageDeclarations {
         self,
         mode: CheckMode,
         limits: CheckingLimits,
+        reward_evaluator: &dyn RewardEvaluator,
         cancel: &Cancel,
     ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
-        self.check_retaining_protocols(mode, limits, cancel, true, false, &mut Vec::new())
+        self.check_retaining_protocols(
+            mode,
+            limits,
+            cancel,
+            reward_evaluator,
+            true,
+            false,
+            &mut Vec::new(),
+        )
     }
 
     /// Continue through a unit-level state-clause refusal so independent
@@ -2055,9 +2098,18 @@ impl PackageDeclarations {
         self,
         mode: CheckMode,
         limits: CheckingLimits,
+        reward_evaluator: &dyn RewardEvaluator,
         cancel: &Cancel,
     ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
-        self.check_retaining_protocols(mode, limits, cancel, true, true, &mut Vec::new())
+        self.check_retaining_protocols(
+            mode,
+            limits,
+            cancel,
+            reward_evaluator,
+            true,
+            true,
+            &mut Vec::new(),
+        )
     }
 
     /// The check proper. `protocol_check_refusals` receives every refusal a
@@ -2073,6 +2125,7 @@ impl PackageDeclarations {
         mode: CheckMode,
         limits: CheckingLimits,
         cancel: &Cancel,
+        reward_evaluator: &dyn RewardEvaluator,
         independent_protocols: bool,
         continue_state_clause_refusals: bool,
         protocol_check_refusals: &mut Vec<ProtocolCheckRefusal>,
@@ -7203,6 +7256,7 @@ impl PackageDeclarations {
                 identity: lowered.key.clone(),
                 claim: claim.clone(),
                 name: declared.form.name.name.clone(),
+                span: declared.span,
             });
             let bounded = checked_claim.horizon.is_some();
             // The class S3 recorded for each variable; the request label is
@@ -7921,6 +7975,14 @@ impl PackageDeclarations {
         }
         // Every occurrence is recorded by now.
         graph.occurrences_by_location = occurrences_by_location(&graph.occurrences);
+        if let Err(refusals) = reward_validation::check_reward_signs(
+            &graph,
+            reward_evaluator,
+            &mut contract_meter,
+            limits.work_budget(),
+        ) {
+            return Err(refusals);
+        }
         Ok(graph)
     }
 }
@@ -10038,7 +10100,11 @@ mod tests {
     fn protocol_population_types_debug_joins_the_shared_node_table() {
         use filament_exact::{NodeKey, PathSegment};
         let mut graph = depth_forms::declarations(depth_forms::Form::Add, 2)
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap();
         let leaf = NodeKey::new(
             "population_scope",
@@ -10176,7 +10242,11 @@ mod tests {
                 fsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("one record declaration checks cleanly");
 
         let nodes: Vec<&CheckedTypeNode> = graph.checked_type_nodes().collect();
@@ -10235,7 +10305,11 @@ mod tests {
                 fsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("a package-qualified declared name checks cleanly");
 
         let nodes: Vec<&CheckedTypeNode> = graph.checked_type_nodes().collect();
@@ -10338,7 +10412,11 @@ mod tests {
                 fsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("one enum declaration checks cleanly");
 
         let mut checked_nodes = 0;
@@ -10421,7 +10499,11 @@ mod tests {
             literal_function("caller_one", call_helper()),
             literal_function("caller_two", call_helper()),
         ])
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("two callers of one no-argument function check cleanly");
 
         // Steps 2-3: both call sites mint the same identity, but distinct
@@ -10474,7 +10556,11 @@ mod tests {
             literal_function("renamed_caller_one", call_helper()),
             literal_function("renamed_caller_two", call_helper()),
         ])
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("renaming the callers changes no checking outcome");
         assert!(
             renamed.occurrence(call_identity.clone(), &first).is_some(),
@@ -10524,7 +10610,11 @@ mod tests {
                 ),
             ),
         ])
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("a caller of a one-parameter function checks");
         let mut nodes = 0;
         for node in graph.semantic_graph().nodes() {
@@ -10553,7 +10643,11 @@ mod tests {
                 fsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("index 0 names no function");
         assert!(matches!(
             refusals.as_slice(),

@@ -572,6 +572,7 @@ impl Unit {
                     CheckMode::Linked
                 },
                 CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
             )
             .map_err(|refusals| {
                 refusals

@@ -856,6 +856,7 @@ fn refusal_of(fairness: &str) -> fsl_semantics::check::CheckRefusal {
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
     )
     .expect_err("the unit refuses");
     assert_eq!(refusals.len(), 1, "{refusals:?}");

@@ -11,7 +11,7 @@ use filament_semantic_value::checking::CheckMode;
 
 use super::admission_corpus::config_version_unit;
 use super::*;
-use crate::checked_v2::{ClauseRoot, V2ReadRefusal, clause_roots, resolve_clause_root};
+use crate::checked_v2::{clause_roots, resolve_clause_root, ClauseRoot, V2ReadRefusal};
 
 pub(super) const INFINITE: &str = "filament.temporal.infinite-trace/v1";
 pub(super) const EVENT: &str = "filament.temporal.event-position.false-extension/v1";
@@ -242,7 +242,11 @@ pub(super) fn check_graph(unit: &str) -> fsl_semantics::check::CheckedGraph {
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"))
 }
 
@@ -256,6 +260,7 @@ fn check_graph_with_s3_input_limit(
         .check(
             CheckMode::Linked,
             CheckingLimits::default().with_input_bytes(input_bytes),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
 }
 
@@ -1085,13 +1090,11 @@ fn reaches_two_emits_as_a_v2_temporal_clause_node_the_i2_read_admits() {
     );
     assert_eq!(body["operation"]["member"], Value::Null);
     // The lock selects the same profile under the same role.
-    assert!(
-        wire["lock"]["profile_selections"]
-            .as_array()
-            .unwrap()
-            .contains(&json!({"role": "temporal_profile", "definition": {
-            "authority": "agent-ix", "identity": INFINITE}}))
-    );
+    assert!(wire["lock"]["profile_selections"]
+        .as_array()
+        .unwrap()
+        .contains(&json!({"role": "temporal_profile", "definition": {
+            "authority": "agent-ix", "identity": INFINITE}})));
     let arguments = body["arguments"].as_array().expect("arguments");
     assert_eq!(arguments.len(), 6);
     // over: a reference to `c`'s parameter node.
@@ -1616,7 +1619,11 @@ fn record_of(
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let [checked] = graph.temporal_clauses() else {
         panic!("one emitted clause");
@@ -1762,7 +1769,11 @@ fn an_on_each_clause_emits_its_trigger_and_guard() {
     let declarations = assemble_with_models(text.as_bytes(), &packages).expect("assembles");
     let regions = declarations.regions();
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let at = u64::try_from(text.find("(q:").unwrap() + 1).unwrap();
     let located = |wire_key: &Value, role: &str| -> Vec<u64> {
@@ -1802,7 +1813,11 @@ fn an_on_each_clause_emits_its_trigger_and_guard() {
         assemble_with_models(truth_text.as_bytes(), &truth_packages).expect("assembles");
     let truth_regions = truth_declarations.regions();
     let truth_graph = truth_declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let guard_key = node_key(truth_wire, &truth_guard["node_id"]);
     let guard_at: Vec<_> = truth_graph
@@ -1838,7 +1853,11 @@ fn refused_on(activation: &str, body: &str) -> (Code, Option<&'static str>, u64,
     let declarations = assemble_with_models(text.as_bytes(), &packages).expect("assembles");
     let regions = declarations.regions();
     let refusals = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("the clause is refused");
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal: {refusals:?}");
@@ -1960,7 +1979,11 @@ fn refusal_of(activation: &str, body: &str) -> (fsl_semantics::check::CheckRefus
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     let refusals = assemble_with_models(text.as_bytes(), &packages)
         .expect("assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("the clause is refused");
     let [refusal] = <[_; 1]>::try_from(refusals).unwrap_or_else(|refusals| {
         panic!("one refusal: {refusals:?}");
@@ -2300,7 +2323,11 @@ fn the_captures_aggregate_and_nodes_are_emitted() {
     let declarations = assemble_with_models(text.as_bytes(), &packages).expect("assembles");
     let regions = declarations.regions();
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let located = |wire_key: &Value, role: &str| -> Vec<u64> {
         let sought = node_key(wire, wire_key);

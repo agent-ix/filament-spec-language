@@ -42,7 +42,11 @@ fn check(text: &str) -> CheckedGraph {
         Vec::new(),
     )
     .expect("the unit assembles")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .expect("the unit checks")
 }
 

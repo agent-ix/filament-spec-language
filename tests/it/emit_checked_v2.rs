@@ -450,6 +450,7 @@ fn encode(read: &CheckedPackageV2) -> Vec<u8> {
             checked_term_data: None,
             temporal_bindings: None,
             temporal_clause_names: None,
+            claim_names: read.claim_names(),
             operation_effects: operation_effects.as_deref(),
             operation_bodies: read.operation_body_rows(),
             schedulability_claims: (!schedulability_claims.is_empty())

@@ -759,6 +759,11 @@ impl BackendDescriptor {
         }
     }
 
+    /// The solver bounds a hybrid descriptor publishes.
+    pub fn solver_bounds(&self) -> Option<SolverBounds> {
+        self.solver_bounds
+    }
+
     /// The descriptor member as supplied; `None` stays absent on the wire.
     pub fn dynamics(&self) -> Option<&BTreeSet<DynamicsKind>> {
         self.dynamics.as_ref()

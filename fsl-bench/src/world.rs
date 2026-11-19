@@ -377,7 +377,11 @@ impl World {
             Vec::new(),
         )
         .map_err(|e| refused("assemble", e))?
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .map_err(|e| refused("S3", e))?;
 
         let snapshot = model.snapshot();

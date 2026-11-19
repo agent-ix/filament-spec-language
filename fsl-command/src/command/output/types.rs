@@ -230,7 +230,12 @@ pub(super) enum SpineOutcome {
 #[derive(Serialize)]
 pub(super) struct SpineRunReport<'a> {
     pub format: Format,
-    pub source: RunSource<'a>,
+    /// The program a source run compiled; absent for a package run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<RunSource<'a>>,
+    /// FR-1039: the request's `package` selection a package run ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package: Option<&'a serde_json::Value>,
     pub function: &'a str,
     pub outcome: SpineOutcome,
     /// FR-963: one FR-621 entry per settled requirement item, present

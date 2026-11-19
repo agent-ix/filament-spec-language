@@ -83,8 +83,8 @@ mod protocol_compensation;
 mod protocol_controls;
 mod protocol_function_bodies;
 mod protocol_graph;
-mod protocol_observe;
 mod protocol_locations;
+mod protocol_observe;
 mod protocol_occurrence;
 mod protocol_recursion;
 mod protocol_reference;
@@ -226,7 +226,11 @@ fn graph_of_named(
     );
     declarations.functions = functions;
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the fixture functions check")
 }
 
@@ -260,7 +264,11 @@ fn tree() -> CheckedPackage {
     declarations.types = types;
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("Tree checks"),
     )
 }
@@ -681,6 +689,9 @@ fn assert_equality_reader_outcomes(emission: &Emission, read: Read) {
                 let expected_schedule = match decision["schedule"].as_str() {
                     Some("plan") => filament_semantic_value::declaration::EqualitySchedule::Plan,
                     Some("text") => filament_semantic_value::declaration::EqualitySchedule::Text,
+                    Some("float") => {
+                        filament_semantic_value::declaration::EqualitySchedule::Float
+                    }
                     Some("enum") => filament_semantic_value::declaration::EqualitySchedule::Enum,
                     Some("quantity") => {
                         filament_semantic_value::declaration::EqualitySchedule::Quantity
@@ -701,6 +712,9 @@ fn assert_equality_reader_outcomes(emission: &Emission, read: Read) {
                     "decision {index}: {error:?}"
                 );
                 let (expected_witness, expected_at) = match decision["schedule"].as_str() {
+                    Some("float") => panic!(
+                        "the selected Float schedule must admit same-type, unconverted operands; decision {index}: {error:?}"
+                    ),
                     // IR currently reports its typed Text witness refusal;
                     // preserve the exact TextBounds node until IR-1209 lifts
                     // the Text equality schedule.
@@ -898,7 +912,11 @@ fn a_function_identity_survives_emission_and_the_i2_read() {
             PackageDeclarations::new(source(), "pkg", fsl_foundation::IdentityLimits::default());
         declarations.functions = functions;
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("t and f check")
     };
     let mut identities = BTreeSet::new();
@@ -1032,7 +1050,11 @@ fn a_float_sum_carries_the_ieee_law_and_its_rounding_mode() {
     );
     let package = CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the float sum checks"),
     );
     let emission = emit(&package);
@@ -1097,7 +1119,11 @@ fn a_carried_sum_lowers_to_its_identity_with_the_carriers_rounding_mode() {
     .expect("the assembler builds the declarations");
     let package = CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the carried sums check"),
     );
     let wire = wire(&emit(&package));
@@ -1486,7 +1512,11 @@ fn declared_types(
     declarations.functions = functions;
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the declared types check"),
     )
 }
@@ -1638,7 +1668,11 @@ fn a_declared_name_segment_that_is_no_identifier_refuses_by_that_segment() {
         PackageDeclarations::new(source(), "pkg", fsl_foundation::IdentityLimits::default());
     declarations.types = types;
     let refusals = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("the name has no identifier segments");
     assert!(
         refusals.iter().any(|refusal| refusal.cause
@@ -1976,7 +2010,6 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
         TemporalClockProfileMismatch,
         ProtocolResultInvariant,
         ProtocolResultsRequired,
-        FloatEqualityScheduleNotEmitted,
         NativeLiteralNotEmitted(&'static str),
     }
     fn classify(result: Result<Emission, EmitRefusal>) -> Seen {
@@ -2026,9 +2059,6 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             }
             Err(EmitRefusal::ProtocolResultInvariant) => Seen::ProtocolResultInvariant,
             Err(EmitRefusal::ProtocolResultsRequired) => Seen::ProtocolResultsRequired,
-            Err(EmitRefusal::FloatEqualityScheduleNotEmitted) => {
-                Seen::FloatEqualityScheduleNotEmitted
-            }
             Err(EmitRefusal::NativeLiteralNotEmitted { construct }) => {
                 Seen::NativeLiteralNotEmitted(construct)
             }
@@ -2305,7 +2335,11 @@ fn checked_call_package(functions: Vec<FunctionDeclaration>) -> fsl_semantics::c
     );
     declarations.functions = functions;
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("g and f check cleanly")
 }
 
@@ -2462,7 +2496,11 @@ fn generated_nodes_are_placed_at_their_enclosing_declaration() {
     declarations.functions = vec![inc_read_from_text()];
     let package = CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("inc checks"),
     );
     let emission = emit_checked(&package).expect("inc emits");
@@ -2533,7 +2571,11 @@ fn source_text_compiles_through_the_spine_and_reads_back_verified() {
     .expect("the assembler builds the package declarations");
     let package = CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the package checks"),
     );
     let emission = emit_checked(&package).expect("the package emits with its source map");
@@ -2674,7 +2716,11 @@ pub(super) fn q_and_t_package_over(
     declarations.functions = vec![q, t()];
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("q checks"),
     )
 }
@@ -2875,7 +2921,11 @@ fn try_package_from_text(declarations: &str) -> Result<CheckedPackage, Vec<Check
     let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
     PackageDeclarations::assemble(raw, "pkg".to_owned(), unit, Vec::new(), Vec::new())
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .map(CheckedPackage::link)
 }
 
@@ -3051,7 +3101,11 @@ fn spine_compile_package() -> CheckedPackage {
     let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
     let graph = PackageDeclarations::assemble(raw, "pkg".to_owned(), unit, Vec::new(), Vec::new())
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the package checks");
     CheckedPackage::link(graph)
 }
@@ -3121,7 +3175,11 @@ fn emit_model_unit(unit: &str, evidence_identity: Option<&str>) -> (Emission, Va
     let packages = fsl_semantics::model::intake::package_input([SPINE_MODEL_DOCUMENT]).unwrap();
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the package checks");
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
     assert_eq!(emission.omitted, []);
@@ -3989,7 +4047,11 @@ fn check_attempt_unit(
         Vec::new(),
     )
     .expect("the unit assembles")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    )
 }
 
 /// What FR-114's emission assertions read from one attempt unit: the
@@ -4399,7 +4461,11 @@ pub(crate) fn package_from_text(declarations: &str) -> (String, CheckedPackage) 
     let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
     let graph = PackageDeclarations::assemble(raw, "pkg".to_owned(), unit, Vec::new(), Vec::new())
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the package checks");
     (text, CheckedPackage::link(graph))
 }

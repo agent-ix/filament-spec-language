@@ -3796,11 +3796,35 @@ impl<'a> Typer<'a> {
             if left_type != right_type {
                 return Err(mismatch(location));
             }
-            let equal = node(
+            if left.conversion_target.is_some() || right.conversion_target.is_some() {
+                return Err(mismatch(location));
+            }
+            let operand_type_facts = [(0, &left.source_type), (1, &right.source_type)]
+                .into_iter()
+                .map(
+                    |(operand_position, value_type)| super::ir::EqualityOperandTypeFact {
+                        operand_position,
+                        role: super::ir::EqualityUnitOperandRole::Source,
+                        value_type: value_type.clone(),
+                    },
+                )
+                .collect();
+            let producer = EqualityProducerData {
+                operator,
+                schedule: filament_semantic_value::declaration::EqualitySchedule::Float,
+                authored_operands: [left.authored.clone(), right.authored.clone()],
+                compared_operands: [left.stored.clone(), right.stored.clone()],
+                operand_type_facts,
+                units: UnitTable::default(),
+                unit_type_facts: Vec::new(),
+                enum_members: EnumMemberIndex::default(),
+            };
+            let mut equal = node(
                 NodeKind::IeeeNumericEquality(self.push(left.node), self.push(right.node)),
                 ValueType::Boolean,
                 location,
             );
+            equal.equality_producer = Some(Box::new(producer));
             return Ok(if operator == EqualityOperator::Equal {
                 equal
             } else {

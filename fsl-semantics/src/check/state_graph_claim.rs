@@ -151,6 +151,11 @@ impl CheckedStatePredicate {
         }
     }
 
+    /// The checked predicate body when this predicate was written.
+    pub fn predicate_body(&self) -> Option<&CheckedPredicateBody> {
+        self.written()
+    }
+
     /// The written predicate's checked body with its slot names, or `None`
     /// for the constant `true`.
     pub(crate) fn written(&self) -> Option<&CheckedPredicateBody> {

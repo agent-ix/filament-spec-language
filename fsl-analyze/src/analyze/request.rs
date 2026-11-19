@@ -231,8 +231,16 @@ pub enum ItemForm {
 /// Hybrid item settings kept distinct from temporal and probabilistic forms.
 #[derive(Clone, Debug, Default)]
 pub struct HybridItem {
-    /// The subject's explicit proof-bound substitution.
+    /// The item's proof bounds (FR-750). A hybrid claim's request item names
+    /// no subject to substitute them into (FR-447 writes `domains` for an
+    /// unbounded claim only), so document resolution leaves this empty and
+    /// the provider request does not carry it.
     pub proof_bounds: Vec<fsl_foundation::bound::ProofBound>,
+    /// The item's `hybrid.limits` (FR-750): a member left unset takes the
+    /// serving descriptor's published bound.
+    pub limits: fsl_replay::SolverBudget,
+    /// The item's FSpec FR-331 `options`.
+    pub options: std::collections::BTreeMap<String, String>,
 }
 
 /// Temporal request settings, with no separately supplied model subject.
@@ -543,20 +551,27 @@ fn checked_v2_package(
     Some(Box::new(admitted.admitted().clone()))
 }
 
-fn checked_node_named(
+/// The role of `protocol` named `name`. Only a role of that protocol
+/// resolves, so a channel, record or other declaration that shares the
+/// role's name is never taken for it (FR-570).
+fn protocol_role_named(
     package: &filament_contract_model::CheckedPackageV2,
+    protocol: &filament_contract_model::CheckedNodeId,
     name: &str,
 ) -> Option<filament_contract_model::CheckedNodeId> {
-    package
-        .resolved_graph()
-        .nodes
-        .iter()
-        .find(|node| {
-            node.declaration.as_ref().is_some_and(|declaration| {
+    let view = fsl_package::protocol_view::protocol_view(package, protocol).ok()?;
+    view.roles().iter().find_map(|id| {
+        package
+            .resolved_graph()
+            .nodes
+            .iter()
+            .find(|node| &node.node_id == *id)
+            .and_then(|node| node.declaration.as_ref())
+            .filter(|declaration| {
                 declaration.qualified_name.last().map(|segment| &**segment) == Some(name)
             })
-        })
-        .map(|node| node.node_id.clone())
+            .map(|_| (*id).clone())
+    })
 }
 
 fn protocol_analysis_work<'a>(
@@ -635,7 +650,8 @@ fn protocol_analysis_work<'a>(
         // Route an unresolved name through the adapter's existing
         // `UnknownRole` invalid-value settlement. The protocol node is a
         // valid checked identity that cannot be one of its roles.
-        let role = checked_node_named(&v2, role_name).unwrap_or_else(|| protocol_node.clone());
+        let role = protocol_role_named(&v2, &protocol_node, role_name)
+            .unwrap_or_else(|| protocol_node.clone());
         let request = crate::protocol_analysis::ProjectionRequest {
             protocol: protocol_node,
             definition_key,
@@ -833,6 +849,7 @@ fn work<'a>(
                 &item.claim,
                 item.request_index,
                 form,
+                digital.then_some(crate::model_check::manifest::METHOD_DIGITAL_CLOCKS),
             )
             .unwrap_or_else(absent)
         }
@@ -945,6 +962,21 @@ fn work<'a>(
                 Ok(subject) => subject.configured(form.clone()).item(item.request_index),
                 Err(_) => absent(),
             }
+        }
+        Some(ItemForm::Hybrid(form)) if item.kind == Capability::TemporalSatisfaction => {
+            super::hybrid_item::hybrid_item(
+                package,
+                item.request_index,
+                &item.claim,
+                form,
+                limits.accounting.work_units,
+                limits.deadline,
+                super::hybrid_item::Spelling {
+                    packages: binding.packages,
+                    emit: limits.emit,
+                },
+            )
+            .unwrap_or_else(absent)
         }
         Some(ItemForm::Probabilistic(form))
             if item.kind == Capability::ProbabilisticSatisfaction =>
@@ -1136,7 +1168,11 @@ fn work<'a>(
             Some(crate::protocol_analysis::manifest::BACKEND_ID)
         }
         Some(ItemForm::Temporal(_)) if super::document::is_state_graph(package, &item.claim) => {
-            Some(crate::model_check::manifest::BACKEND_ID)
+            Some(if super::document::timed(package) && !digital {
+                crate::zone_check::manifest::BACKEND_ID
+            } else {
+                crate::model_check::manifest::BACKEND_ID
+            })
         }
         Some(ItemForm::Temporal(form))
             if digital
@@ -1185,6 +1221,9 @@ fn work<'a>(
         ExtentClassification::Bounded => fsl_route::Mode::Bounded,
         ExtentClassification::Unbounded { .. } => fsl_route::Mode::Unbounded,
     };
+    if matches!(&item.form, Some(ItemForm::Hybrid(_))) {
+        built = built.hybrid();
+    }
     built.required(item.options.required).disposed(
         negotiated.disposition.clone(),
         negotiated.diagnostic.clone(),

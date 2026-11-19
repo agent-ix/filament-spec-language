@@ -43,7 +43,11 @@ fn compile(declarations: &str) -> Compiled {
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     let graph = assemble_with_models(text.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
     assert_eq!(emission.omitted, []);
@@ -360,7 +364,11 @@ fn a_packages_terminals_resolve_through_their_emitted_nodes() {
         let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
         let graph = assemble_with_models(text.as_bytes(), &packages)
             .expect("the unit assembles")
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the package checks");
         let package = CheckedPackage::link(graph);
         let terminals = resolve_terminals(&package)
@@ -399,7 +407,11 @@ fn resolution_follows_the_node_not_the_checked_declaration() {
     let checked = || {
         assemble_with_models(unit(WHEN).as_bytes(), &packages)
             .expect("the unit assembles")
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the package checks")
     };
     let mut graph = checked();

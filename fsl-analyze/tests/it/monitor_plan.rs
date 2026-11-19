@@ -135,6 +135,7 @@ pub(crate) fn checked_clause_on(
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("S3: {refusals:?}"));
     assert_eq!(graph.temporal_clauses().len(), 1);
@@ -942,6 +943,7 @@ fn position_counted(profile: &str, formula: &str) -> CheckedPackage {
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
     )
     .unwrap_or_else(|refusals| panic!("S3: {refusals:?}"));
     CheckedPackage::link(graph)

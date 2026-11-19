@@ -231,8 +231,8 @@ impl Reward {
         site_location(self.declared, Site::Declaration)
     }
 
-    /// The location of the reward's expression.
-    pub fn expression_location(&self) -> Location {
+    /// The source location of the reward expression.
+    pub fn evaluation_location(&self) -> Location {
         site_location(self.declared, Site::Reward)
     }
 

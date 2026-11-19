@@ -20,7 +20,11 @@ fn probabilistic_package() -> CheckedPackage {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     assert!(!graph.probabilistic_model().is_empty());
     CheckedPackage::link(graph)
@@ -48,7 +52,11 @@ pub(super) fn workload_package(weights: &str) -> CheckedPackage {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -66,7 +74,11 @@ fn claims_package(declarations: &[&str]) -> CheckedPackage {
     let unit = format!("{unit}{}\n", declarations.join("\n"));
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -194,7 +206,7 @@ fn probabilistic_on_each_emits_per_member() {
 fn probabilistic_claim_identity_survives_reordering() {
     let declared = [
         ("PC-01", claim("Stable", "0.5")),
-        ("PC-02", claim("Stable", "0.25")),
+        ("PC-02", claim("Steady", "0.25")),
         ("PC-03", claim("Other", "0.5")),
     ];
     let emit = |order: &[usize]| {
@@ -240,31 +252,81 @@ fn probabilistic_claim_identity_survives_reordering() {
     assert_eq!(forward_rows, reversed_rows, "the rows are byte-identical");
     assert_ne!(
         forward[0].1, forward[1].1,
-        "equal names are distinct claims"
+        "distinct names are distinct claims"
     );
-    // Ordinals rank written content ascending: `0.25` before `0.5`.
-    assert_eq!(forward[1].1["declaration"]["ordinal"], 0, "Stable@0.25");
-    assert_eq!(forward[0].1["declaration"]["ordinal"], 1, "Stable@0.5");
+    // Each name is its own path, so each claim is the first of its name.
+    assert_eq!(forward[1].1["declaration"]["ordinal"], 0, "Steady@0.25");
+    assert_eq!(forward[0].1["declaration"]["ordinal"], 0, "Stable@0.5");
 
     // Renaming a claim changes its identity and no other claim's.
     let renamed = claims_package(&[
         &claim("Stable", "0.5"),
-        &claim("Stable", "0.25"),
+        &claim("Steady", "0.25"),
         &claim("Renamed", "0.5"),
     ]);
     let renamed = identities(&renamed, &[("PC-01", ""), ("PC-02", ""), ("PC-03", "")]);
     assert_eq!(renamed[..2], forward[..2]);
     assert_ne!(renamed[2].1, forward[2].1);
 
-    // Two identically written claims are two declarations.
-    let twins = claims_package(&[&claim("Stable", "0.5"), &claim("Stable", "0.5")]);
+    // Two identically written claims with distinct names are two
+    // declarations.
+    let twins = claims_package(&[&claim("Stable", "0.5"), &claim("Steady", "0.5")]);
     let twins = identities(&twins, &[("a", ""), ("b", "")]);
     assert_ne!(twins[0].1, twins[1].1);
     let (rows, nodes) = emitted_claims(&claims_package(&[
         &claim("Stable", "0.5"),
-        &claim("Stable", "0.5"),
+        &claim("Steady", "0.5"),
     ]));
     assert_eq!((rows.len(), nodes.len()), (2, 2));
+}
+
+/// FR-940-AC-9 (TC-3015): a second probabilistic claim named as an earlier
+/// one is refused `ambiguous_declaration`/`ambiguous-name` at the second,
+/// naming both; with the second renamed the unit checks and its package
+/// carries one `claim_names` row per claim.
+#[trace("FR-940-AC-9", "TC-3015")]
+#[test]
+fn a_second_same_named_probabilistic_claim_is_ambiguous() {
+    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
+    let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
+    let unit = config_version_unit::unit_text().replace(
+        "profile v = \"filament.model.complete/v1\";\n",
+        "profile v = \"filament.model.complete/v1\";\n\
+         profile ev = \"filament.temporal.event-position.false-extension/v1\";\n",
+    );
+    let unit = format!(
+        "{unit}{}\n{}\n",
+        claim("Stable", "0.5"),
+        claim("Stable", "0.25")
+    );
+    let refusals = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .map(|_| ())
+        .expect_err("two claims named Stable are ambiguous");
+    let [refusal] = refusals.as_slice() else {
+        panic!("one refusal: {refusals:?}");
+    };
+    let fsl_semantics::check::CheckCause::AmbiguousName { name, loci } = &refusal.cause else {
+        panic!("ambiguous-name: {refusal:?}");
+    };
+    assert_eq!(name, "Stable");
+    assert_eq!(loci.len(), 2, "names both declarations");
+    assert_eq!(loci[1], refusal.location, "located at the second");
+    assert_ne!(loci[0], loci[1]);
+
+    let package = claims_package(&[&claim("Stable", "0.5"), &claim("Other", "0.25")]);
+    let wire = wire(&emit_checked(&package).expect("the package emits"));
+    let names: Vec<&str> = wire["claim_names"]
+        .as_array()
+        .expect("claim_names rows")
+        .iter()
+        .filter_map(|row| row["name"].as_str())
+        .collect();
+    for declared in ["Stable", "Other"] {
+        let rows = names.iter().filter(|name| **name == declared).count();
+        assert_eq!(rows, 1, "one claim_names row for {declared}: {names:?}");
+    }
 }
 
 /// The emission of `package` read back by the strict reader with `document`
@@ -328,7 +390,11 @@ pub(super) fn random_parameter_package() -> (Vec<u8>, CheckedPackage) {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     (document, CheckedPackage::link(graph))
 }
@@ -680,7 +746,11 @@ fn an_enum_valued_random_parameter_refuses_emission_with_its_locus() {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let refusal = emit_checked(&CheckedPackage::link(graph)).expect_err("emission refuses");
     assert!(matches!(
@@ -715,7 +785,11 @@ fn a_quantity_valued_random_parameter_reads_back_as_the_s3_record() {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let package = CheckedPackage::link(graph);
     assert!(matches!(
@@ -751,7 +825,11 @@ fn lineage_package(declarations: &str) -> (Vec<u8>, CheckedPackage) {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     (document, CheckedPackage::link(graph))
 }
@@ -814,7 +892,11 @@ fn a_workload_over_unrelated_types_refuses_with_its_locus_qsl_2444() {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let refusal = emit_checked(&CheckedPackage::link(graph)).expect_err("emission refuses");
     assert!(matches!(
@@ -897,7 +979,11 @@ fn changing_one_weight_or_support_value_changes_the_node_identity() {
         );
         let graph = assemble_with_models(unit.as_bytes(), &packages)
             .expect("the unit assembles")
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
         let (wire, _) = emit_and_read(&CheckedPackage::link(graph), &document);
         let [node] = super::owners::node_where(&wire, "probabilistic", "random_parameter")[..]
@@ -983,7 +1069,11 @@ pub(super) fn delay_package(delay: &str) -> (Vec<u8>, CheckedPackage) {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the delay checks: {refusals:?}"));
     (document, CheckedPackage::link(graph))
 }
@@ -1219,7 +1309,11 @@ fn a_delay_beside_a_second_object_type_is_refused_at_the_time_source() {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default());
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        );
     let Err(refusals) = graph else {
         panic!("a timed model over two object types checks");
     };
@@ -1313,7 +1407,11 @@ fn a_delay_on_a_timed_source_model_refuses_emission_with_its_locus() {
             .expect("the package input is empty");
         let graph = assemble_with_models(source.as_bytes(), &packages)
             .expect("the unit assembles")
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{operation}: S3 accepts the delay: {refusals:?}"));
         assert_eq!(
             graph.probabilistic_model().delays().len(),

@@ -1276,6 +1276,12 @@ impl CheckedStateClause {
         &self.claim
     }
 
+    /// The span of the whole declaration, from its first keyword to its
+    /// closing byte (FSpec FR-322 "Clause declaration regions").
+    pub fn declaration_span(&self) -> fsl_foundation::Span {
+        self.spans.declaration
+    }
+
     /// FR-391 "Evaluation": each domain-package population the body names,
     /// by its declaration identity, with the observation it is read at, in
     /// body order and once each. FR-106 requires each complete in the

@@ -311,7 +311,11 @@ fn try_world_of(
     )
     .expect("the unit assembles")
     .with_unwritten_timed_members()
-    .check(CheckMode::Linked, CheckingLimits::default())?;
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )?;
     let header = json!({"identity": PACKAGE});
     let document = json!({
         "format": "filament.state.snapshot/v1",

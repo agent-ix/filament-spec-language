@@ -361,7 +361,7 @@ fn compile_bytes(unit: &str) -> Result<Vec<u8>, Value> {
 #[test]
 #[trace("TC-2103", "FR-753-AC-3")]
 #[trace("FSpec-TC-1601", "FSpec-FR-192-AC-11")]
-#[ignore = "QSL-2236: `verify` plan emission outside the checked package not implemented yet"]
+#[ignore = "QSL-2509: plan emission outside the checked package (S4) is not on main yet"]
 fn a_plan_leaves_the_package_identity_unchanged_and_emits_its_document() {
     let plan_free = RELEASE_PLAN.split("verify Release").next().unwrap();
     let without = compile_bytes(&format!("{MODEL_HEADER}{plan_free}")).expect("compiles");
@@ -399,7 +399,7 @@ fn a_plan_leaves_the_package_identity_unchanged_and_emits_its_document() {
 #[trace("TC-2103", "FR-753-AC-4")]
 #[trace("TC-3018", "FR-1038-AC-1")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-1")]
-#[ignore = "QSL-2236: verification plan execution not implemented yet"]
+#[ignore = "QSL-2511: the plan coordinator (execute_plan) and QSL-2509 plan documents are not on main yet"]
 fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
     let (exit, value) = run(
         &format!("{MODEL_HEADER}{RELEASE_PLAN}"),
@@ -426,6 +426,105 @@ fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
     assert_eq!(exit, 22, "{value}");
 }
 
+/// The `details.path` of a refused run's document.
+fn refusal_path(value: &Value) -> &str {
+    value["details"]["path"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a path: {value}"))
+}
+
+/// FR-1038-AC-2, FSpec FR-824-AC-3: the strict reader refuses a malformed
+/// `verification_plan` member at its exact pointer before any stage runs, so
+/// no outcome is written and the run exits `20`.
+#[test]
+#[trace("TC-3018", "FR-1038-AC-2")]
+#[trace("TC-3032", "FR-1038-AC-3")]
+#[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
+#[trace("FSpec-TC-2046", "FSpec-FR-824-AC-6")]
+fn the_verification_plan_reader_refuses_a_malformed_member_at_its_pointer() {
+    let unit = format!("{MODEL_HEADER}{RELEASE_PLAN}");
+    for (member, cause, pointer) in [
+        (
+            json!({"plan": "Release", "seed": "7"}),
+            "wrong-value-kind",
+            "/request/verification_plan/seed",
+        ),
+        (
+            json!({"plan": "Release", "seed": -1}),
+            "invalid-value",
+            "/request/verification_plan/seed",
+        ),
+        (
+            json!({"plan": "Release", "seed": 7.5}),
+            "invalid-value",
+            "/request/verification_plan/seed",
+        ),
+        (
+            serde_json::from_str(r#"{"plan": "Release", "seed": 18446744073709551616}"#).unwrap(),
+            "invalid-value",
+            "/request/verification_plan/seed",
+        ),
+        (
+            json!({"plan": "Release", "emit": "yes"}),
+            "wrong-value-kind",
+            "/request/verification_plan/emit",
+        ),
+        (
+            json!({"plan": "Release", "emit": false, "execute": false}),
+            "invalid-value",
+            "/request/verification_plan/execute",
+        ),
+        (
+            json!({"plan": "Release", "engine": "x"}),
+            "unknown-member",
+            "/request/verification_plan/engine",
+        ),
+        (
+            json!({"plan": "Release", "document": {"file": "p.json"}}),
+            "unknown-member",
+            "/request/verification_plan/document",
+        ),
+        (json!([]), "wrong-value-kind", "/request/verification_plan"),
+        (
+            json!(null),
+            "wrong-value-kind",
+            "/request/verification_plan",
+        ),
+    ] {
+        let (exit, value) = run(&unit, true, ("verification_plan", member));
+        assert_eq!(exit, 20, "{value}");
+        assert_eq!(refusal_path(&value), pointer, "{value}");
+        refusal_names(&value, cause);
+        assert!(
+            value.get("verification_plan").is_none(),
+            "no outcome: {value}"
+        );
+    }
+}
+
+/// FR-1038-AC-3, FSpec FR-824-AC-6: a `null` member inside the object is
+/// absent, so the request passes the reader and reaches the stages after it
+/// (which refuse the unimplemented member as before, not at its kind).
+#[test]
+#[trace("TC-3032", "FR-1038-AC-3")]
+#[trace("FSpec-TC-2046", "FSpec-FR-824-AC-6")]
+fn a_null_member_inside_the_verification_plan_object_is_absent() {
+    let unit = format!("{MODEL_HEADER}{RELEASE_PLAN}");
+    let (_, value) = run(
+        &unit,
+        true,
+        (
+            "verification_plan",
+            json!({"plan": "Release", "seed": null, "emit": null, "initial": null}),
+        ),
+    );
+    let path = value["details"]["path"].as_str().unwrap_or_default();
+    assert!(
+        !path.starts_with("/request/verification_plan/"),
+        "the reader refused a null member: {value}"
+    );
+}
+
 /// FR-1038-AC-2, FSpec FR-824-AC-2/AC-3: the plan is selected by declared
 /// name, an omitted name runs the only plan, and bad selections or inputs
 /// refuse at their `/verification_plan` pointers.
@@ -433,7 +532,7 @@ fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
 #[trace("TC-3018", "FR-1038-AC-2")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-2")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
-#[ignore = "QSL-2236: verification plan selection and request members not implemented yet"]
+#[ignore = "QSL-2508/QSL-2509: plan selection over emitted plan documents is not on main yet; the request members are read (QSL-2510)"]
 fn the_verification_plan_member_selects_one_plan_or_refuses() {
     let one = format!("{MODEL_HEADER}{RELEASE_PLAN}");
     let (_, value) = run(
@@ -465,24 +564,6 @@ fn the_verification_plan_member_selects_one_plan_or_refuses() {
             json!({"plan": "Never"}),
             "missing-name",
             "/verification_plan/plan",
-        ),
-        (
-            one.as_str(),
-            json!({"plan": "Release", "seed": "7"}),
-            "wrong-value-kind",
-            "/verification_plan/seed",
-        ),
-        (
-            one.as_str(),
-            json!({"plan": "Release", "emit": false, "execute": false}),
-            "invalid-value",
-            "/verification_plan/execute",
-        ),
-        (
-            one.as_str(),
-            json!({"plan": "Release", "engine": "x"}),
-            "unknown-member",
-            "/verification_plan/engine",
         ),
     ] {
         let (exit, value) = run(unit, true, ("verification_plan", member));
@@ -1024,11 +1105,6 @@ fn a_malformed_tl_lowering_member_is_refused() {
                 "max_steps": 0}}),
             "max_steps",
         ),
-        (
-            json!({"clause": "Low", "cross_evaluate": {"trace": {"lasso": {"prefix": [],
-                "loop": ["spine-snapshot.json"]}}}}),
-            "tl_lowering.cross_evaluate.trace",
-        ),
     ] {
         let (code, value) = lower(member.clone());
         assert_eq!(code, 20, "{member}: {value}");
@@ -1166,7 +1242,7 @@ fn snapshot_of(directory: &Path, keys: &[&str], complete: bool) -> Value {
         .map(|key| {
             let mut object = template.clone();
             object["key"] = json!(key);
-            object["fields"]["versionNumber"] = json!({"type": "integer", "value": "0"});
+            object["fields"]["versionNumber"] = json!({"integer": "0"});
             object["fields"]["parent"] = json!({"absent": {}});
             object
         })
@@ -1355,4 +1431,52 @@ fn tl_cross_evaluation_refuses_an_incomplete_universe_and_counts_an_empty_one() 
     assert_eq!(cross["traces"], 0, "{value}");
     assert_eq!(cross["positions"], 0, "{value}");
     assert_eq!(cross["agree"], true, "{value}");
+}
+
+/// FR-931-AC-10, fairness half (TC-3023 step 4): the infinite-trace clause
+/// `C` with a weak fairness constraint over an observed lasso settles
+/// `MissingFairnessPremise` as FR-329 settles it, exit 21, and its record
+/// carries no `cross_evaluation`, because the native side has no verdict to
+/// compare; the same clause without the constraint cross-evaluates.
+#[test]
+#[trace("TC-3023", "FR-931-AC-10")]
+fn a_fairness_constraint_over_a_lasso_settles_missing_fairness_premise() {
+    let unit = |constraint: &str| {
+        format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             profile m = \"filament.model.complete/v1\";\n\
+             profile t = \"filament.temporal.infinite-trace/v1\";\n\
+             model Config = \"example/config-version\";\n\
+             record Counter {{ level: Int[0, 9]; }}\n\
+             temporal C using t over (c: Counter) clock \"steps\" on each (q: Counter) \
+             {{ {constraint}once[1,1] not holds(c.level = 0) }}\n"
+        )
+    };
+    let lasso = json!({"lasso": {"prefix": [],
+        "loop": [{"sample": {"level": {"integer": "0"}}}]}});
+    let lower = |unit: String| {
+        run(
+            &unit,
+            true,
+            (
+                "tl_lowering",
+                json!({"clause": "C", "cross_evaluate": {"trace": lasso}}),
+            ),
+        )
+    };
+    let (code, value) = lower(unit(""));
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["tl_lowering"]["cross_evaluation"]["agree"], true);
+
+    let (code, value) = lower(unit(
+        "fair weak each Config::ConfigVersion::attemptUpdate; ",
+    ));
+    assert_eq!(code, 21, "{value}");
+    assert!(
+        value.to_string().contains("MissingFairnessPremise")
+            || value.to_string().contains("missing-fairness-premise"),
+        "{value}"
+    );
+    assert!(value.get("tl_lowering").is_none(), "{value}");
 }

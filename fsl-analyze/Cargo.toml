@@ -18,6 +18,9 @@ description = "ADR-011 §6.1 layer A: in-process analysis engines, including ret
 [dependencies]
 fsl-eval = { path = "../fsl-eval" }
 fsl-forms = { path = "../fsl-forms" }
+# ADR-011 §6.1 layer H: the reference hybrid provider (FR-1019) this crate
+# registers as `Engine::hybrid_reference`.
+fsl-hybrid-reference = { path = "../fsl-hybrid-reference" }
 fsl-foundation = { path = "../fsl-foundation" }
 fsl-package = { path = "../fsl-package" }
 fsl-replay = { path = "../fsl-replay" }
@@ -34,7 +37,7 @@ quire-canonical = { workspace = true }
 # Strict admission authenticates the plan root final clause binding.
 filament-contract-model = { workspace = true }
 # The observation owner admits progress associations independently of FSL.
-filament-observation = { git = "https://github.com/agent-ix/filament-observation", tag = "v0.1.1" }
+filament-observation = { workspace = true }
 filament-exact = { workspace = true }
 filament-eval = { workspace = true }
 num-bigint = "0.4.8"

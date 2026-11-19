@@ -258,6 +258,7 @@ pub struct GraphEvidenceEnvelope {
     declared_domains: Vec<DeclaredDomain>,
     backend: BackendId,
     family_payload: GraphEvidence,
+    zone_certificate: Option<Box<crate::ZoneCertificate<fsl_route::deadlock::ItemObligation<()>>>>,
 }
 
 impl GraphEvidenceEnvelope {
@@ -282,7 +283,18 @@ impl GraphEvidenceEnvelope {
             declared_domains,
             backend,
             family_payload,
+            zone_certificate: None,
         }
+    }
+
+    /// Attach FR-712's replayed timed-zone certificate.
+    #[must_use]
+    pub fn with_zone_certificate(
+        mut self,
+        certificate: crate::ZoneCertificate<fsl_route::deadlock::ItemObligation<()>>,
+    ) -> Self {
+        self.zone_certificate = Some(Box::new(certificate));
+        self
     }
 
     /// The obligation identity of the checked subject, claim and instance.
@@ -325,6 +337,13 @@ impl GraphEvidenceEnvelope {
         &self.family_payload
     }
 
+    /// The timed-zone certificate, when this is a timed state-graph item.
+    pub fn zone_certificate(
+        &self,
+    ) -> Option<&crate::ZoneCertificate<fsl_route::deadlock::ItemObligation<()>>> {
+        self.zone_certificate.as_deref()
+    }
+
     pub(crate) fn measured_bytes(&self) -> usize {
         std::mem::size_of_val(self)
             .saturating_add(self.occurrence_key.to_string().len())
@@ -336,6 +355,10 @@ impl GraphEvidenceEnvelope {
             )
             .saturating_add(self.backend.as_str().len())
             .saturating_add(self.family_payload.measured_bytes())
+            .saturating_add(self.zone_certificate.as_ref().map_or(0, |certificate| {
+                certificate.nodes.len() * std::mem::size_of::<crate::CertNode>()
+                    + certificate.edges.len() * std::mem::size_of::<crate::CertEdge>()
+            }))
     }
 }
 

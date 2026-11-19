@@ -76,7 +76,11 @@ fn check(source: &str) -> Result<CheckedGraph, Vec<(Code, Option<&'static str>)>
             .collect::<Vec<_>>()
     })?;
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .map_err(|refusals| {
             refusals
                 .iter()

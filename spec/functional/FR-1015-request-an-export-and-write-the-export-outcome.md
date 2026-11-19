@@ -80,7 +80,11 @@ writes no target bytes of its own, so the two give byte-identical files.
   `last_stage` null, and leaves it untouched. A request carrying
   `export.output` with an `output` override refuses `invalid-request` naming
   `output` and `--output`, exit `20`, and writes no file. The outcome's
-  `output` member names the path as given and the bytes written.
+  `output` member names the path as given and the bytes written. A file
+  that cannot be written after the export assembled (its parent directory
+  missing, permission denied, the device full) is FR-286's output failure:
+  `output-failure`, internal-failure, exit `30`, `last_stage` the stage the
+  export reached, with no partial file.
 - FSL SHALL lower every construct that FSpec FR-811's coverage table marks
   `preserved` or `conditional` for the selected target, and writes
   `target-unrepresentable` only for a construct that the table or FSpec
@@ -137,6 +141,17 @@ writes no target bytes of its own, so the two give byte-identical files.
   the request. The refusal comes after admission and before
   classification, so a caller who asked for an observer gets its run or a
   refusal naming it, never a package without it.
+- The export outcome's `refusal` member for an observer this build has no
+  backend for SHALL be the closed object `{"code":
+  "unsupported_projection", "cause": "unsupported-requested-capability",
+  "capability": "observer", "observer": O, "reason": R, "details":
+  {"path": "/request/export/observer"}}`, with `O` the requested observer
+  name as given and `R` a non-empty human-readable string. `capability`
+  names the kind of capability the build lacks, so a caller tells a missing
+  observer backend from any other missing capability by that member, not by
+  reading `reason`; `reason` is display text only and no caller decision
+  rests on it. The outcome document's diagnostic carries the same `code`,
+  `cause` and `details`.
 - FSL SHALL stop in FSpec FR-817's order: admission, then classification
   (`export.nodes` and per-node `export.work_units`), then the floor, then
   the text (`export.output_bytes` and per-region `export.work_units`). A
@@ -162,7 +177,7 @@ writes no target bytes of its own, so the two give byte-identical files.
 | FR-1015-AC-7 | `SlowEnough` under the default floor with `limits` `{"export.output_bytes": 1}` refuses `below-fidelity-floor`, exit `21`. | Test (TC-3002) |
 | FR-1015-AC-8 | The counter export's `generator` is `{"identity": "filament-spec-language", "version": V}` with `V` equal to `filament_spec_language::VERSION`. | Test (TC-3002) |
 | FR-1015-AC-9 | The counter request with `obligations` `[]` refuses with `code` `invalid_runtime_input`, `cause` `invalid-value` and `details.path` `/request/export/obligations`, exit `20`; without the member, `cause` `missing-member` at the same path; with `minimum_fidelity` `7`, `cause` `wrong-value-kind` at `/request/export/minimum_fidelity`. None of the three has `code` `invalid-request`. | Test (TC-3020) |
-| FR-1015-AC-10 | `SlowEnough` over `Braking` under `minimum_fidelity` `any` with `observer` `tlc`, in a build with no TLC backend, refuses `unsupported_projection`/`unsupported-requested-capability` naming `tlc`, exit `21`, with no `target_text`, no `package` and no file at its `output` path; with `limits` `{"export.nodes": 1}` added it refuses the same way, exit `21`, not `incomplete`; the same request without `observer` assembles, exit `0`. | Test (TC-3020) |
+| FR-1015-AC-10 | `SlowEnough` over `Braking` under `minimum_fidelity` `any` with `observer` `tlc`, in a build with no TLC backend, refuses `unsupported_projection`/`unsupported-requested-capability` naming `tlc`, exit `21`, with no `target_text`, no `package` and no file at its `output` path; its `export.refusal` holds `code` `unsupported_projection`, `cause` `unsupported-requested-capability`, `capability` `observer`, `observer` `tlc`, a non-empty string `reason` and `details` `{"path": "/request/export/observer"}`, and no other member; with `limits` `{"export.nodes": 1}` added it refuses the same way, exit `21`, not `incomplete`; the same request without `observer` assembles, exit `0`. | Test (TC-3020) |
 | FR-1015-AC-11 | The counter export under `export.work_units` 1 writes `status` `incomplete`, `records` `[]` and `cause` `{"type": "limit-reached", "limit": "work_units", "value": 1, "setting": "export.work_units"}`, exit `22`; under `export.nodes` 1 its `cause` names `nodes`, value 1 and `export.nodes`, though `export.work_units` 1 is also set. | Test (TC-3020) |
 | FR-1015-AC-12 | Over the spine unit with invariants `Low` and `High` over `Config::ConfigVersion`, let `n(S)` be the least `export.nodes` under which the export of obligations `S` is not `incomplete`. Then `n(["Low", "High"])` is less than `n(["Low"]) + n(["High"])` and at least the greater of the two. | Test (TC-3020) |
 | FR-1015-AC-13 | Every `target-unrepresentable` cause of `SlowEnough` over `Braking` under `any` has a string `node` that reads back as a `CheckedNodeId` of the package and re-encodes to the same text, and a `locus` that is either `null` or a region with `start < end`; a cause's `node` equals the `node` of the `name_map` entry, if one exists, for the same node. | Test (TC-3020) |

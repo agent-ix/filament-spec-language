@@ -2770,6 +2770,9 @@ impl TryFrom<Setting> for CheckingLimitKind {
             | Setting::I2WorkUnits
             | Setting::I2NativeJoinStorage
             | Setting::EmitOutputBytes
+            | Setting::ExportOutputBytes
+            | Setting::ExportNodes
+            | Setting::ExportWorkUnits
             | Setting::ExploreStates
             | Setting::ExploreTransitions
             | Setting::ModelCheckMaxStates
@@ -2891,6 +2894,10 @@ pub enum CheckCause {
     /// declaration, or a quantity literal reached a position no checker
     /// reads yet.
     Probabilistic(Box<super::probabilistic::ProbabilisticCause>),
+    /// An undefined or refused reward evaluation returned by S6a's
+    /// `RewardEvaluator` port (FR-185). The evaluator's catalog pair and
+    /// structured fields are preserved at the reward's source span.
+    RewardEvaluation(Box<super::RewardEvaluationFailure>),
     /// A `terminal when` predicate's checking refused (FR-124), with the
     /// declaration it is about.
     Terminal(Box<super::terminal::TerminalRefusal>),
@@ -3647,6 +3654,7 @@ impl CheckCause {
                 )),
             },
             Self::DispatchLink(cause) => Some(cause.catalog),
+            Self::RewardEvaluation(failure) => Some(failure.catalog),
             _ => Some(filament_semantic_value::catalog::CatalogCode::new(
                 self.code().as_str(),
                 self.cause()?,
@@ -3684,6 +3692,7 @@ impl CheckCause {
             Self::Abstraction(cause) => cause.code(),
             Self::Extension(cause) => cause.code(),
             Self::Probabilistic(cause) => cause.code(),
+            Self::RewardEvaluation(failure) => failure.diagnostic_code,
             Self::ModelConformance(failure) => failure.code,
             Self::ModelIncomplete(_) => Code::ResourceExhausted,
             Self::TypeAdmission { code, .. } => *code,
@@ -3769,6 +3778,7 @@ impl CheckCause {
             Self::Abstraction(cause) => Some(cause.cause()),
             Self::Extension(cause) => Some(cause.cause()),
             Self::Probabilistic(cause) => Some(cause.tag()),
+            Self::RewardEvaluation(failure) => Some(failure.catalog.cause()),
             Self::ModelConformance(failure) => Some(failure.cause.as_str()),
             // The model ceilings are the caller's budget (FR-255), so a denied
             // charge is an insufficient next charge, never a stage limit.

@@ -18,7 +18,11 @@ fn one_name_in_two_units_is_admitted() {
     for _ in 0..2 {
         let (_, declarations) = super::assemble(FLOW);
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("each unit owns its `Flow`: {refusals:?}"));
     }
 }

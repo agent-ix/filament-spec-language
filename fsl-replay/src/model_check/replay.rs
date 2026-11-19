@@ -115,6 +115,9 @@ pub struct TimedReplay {
     /// The bound on a state's live clocks the counterexample was found
     /// under (FSpec FR-415, `model_check.max_clocks`).
     pub max_clocks: std::num::NonZeroU64,
+    /// Whether the evidence was produced by the integer-clock reading
+    /// selected by EN-1's `digital-clocks` method.
+    pub digital: bool,
 }
 
 /// What forbids a delay in a timed counterexample (FR-231 "Delay").

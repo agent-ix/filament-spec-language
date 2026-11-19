@@ -881,8 +881,11 @@ fn refusals_of(profiles: &str, clauses: &str) -> Vec<fsl_semantics::check::Check
     );
     match assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
-    {
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        ) {
         Ok(_) => Vec::new(),
         Err(refusals) => refusals,
     }

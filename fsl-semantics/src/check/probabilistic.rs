@@ -227,6 +227,16 @@ pub enum ProbabilisticCause {
         /// The read's span.
         span: Span,
     },
+    /// A reward's value is negative for one finite argument vector
+    /// (`invalid_probabilistic_model`/`negative-reward`, FR-185).
+    NegativeReward {
+        /// The operation, as written.
+        operation: String,
+        /// The reward.
+        reward: String,
+        /// The argument names and values in operation parameter order.
+        arguments: Vec<(String, String)>,
+    },
     /// A probability threshold, quantile level, mean threshold or long-run
     /// threshold of 0, 1 or outside `(0, 1)`.
     /// `invalid_probabilistic_model`/`qualitative-threshold`.
@@ -568,7 +578,7 @@ impl ProbabilisticCause {
             | Self::TimeTypeMismatch { span, .. }
             | Self::OverNotObjectType { span, .. }
             | Self::NotStatePredicate { span, .. } => Some(*span),
-            Self::RandomReadInPrecondition { .. } => None,
+            Self::RandomReadInPrecondition { .. } | Self::NegativeReward { .. } => None,
         }
     }
 
@@ -592,6 +602,7 @@ impl ProbabilisticCause {
             | Self::DuplicateReward { .. }
             | Self::QuantileOverFraction { .. }
             | Self::StateReadInReward { .. }
+            | Self::NegativeReward { .. }
             | Self::QualitativeThreshold { .. }
             | Self::PartialConfidence { .. }
             | Self::InvalidConfidence { .. }
@@ -640,6 +651,7 @@ impl ProbabilisticCause {
             Self::DelayOnUntimedModel { .. } => "delay-on-untimed-model",
             Self::QuantileOverFraction { .. } => "quantile-over-fraction",
             Self::StateReadInReward { .. } => "state-read-in-reward",
+            Self::NegativeReward { .. } => "negative-reward",
             Self::QualitativeThreshold { .. } => "qualitative-threshold",
             Self::PartialConfidence { .. } => "partial-confidence",
             Self::InvalidConfidence { .. } => "invalid-confidence",

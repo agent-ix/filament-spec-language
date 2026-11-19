@@ -948,6 +948,7 @@ fn package_state_clauses_equal_their_source_forms() {
 /// graph holds: the same name, span, binders, clock, activation, operators,
 /// formula and claim, so the model checker reads one clause on both routes.
 #[trace("TC-2958", "FR-940-AC-6")]
+#[trace("TC-2983", "FR-850-AC-8")]
 #[test]
 fn the_package_form_of_each_temporal_clause_equals_its_source_form() {
     let (_ws, handoff, mut budget) = handoff("package-forms-clause");
@@ -984,20 +985,16 @@ fn the_package_form_of_each_temporal_clause_equals_its_source_form() {
             filament_semantic_value::checking::CheckingLimits::default().nodes(),
         )
         .unwrap_or_else(|refusal| panic!("{}: {refusal}", source.clause().name()));
-        // The package carries the declaration's name region, not its whole
-        // span: the name lies within the declaration, and every other field
-        // is the source form's.
-        let (name, declaration) = (package.span(), source.clause().span());
-        assert!(
-            declaration.start <= name.start && name.end <= declaration.end,
-            "{name:?} within {declaration:?}"
-        );
+        // FSpec FR-322 "Clause declaration regions": the name row carries the
+        // whole declaration's region, so every field, span included, is the
+        // source form's (FR-850-AC-8).
+        assert_eq!(package.span(), source.clause().span());
         assert_eq!(
             format!("{package:?}"),
-            format!("{:?}", source.clause().clone().with_span(name)),
+            format!("{:?}", source.clause()),
             "{}",
             source.clause().name()
         );
-        assert!(package == source.clause().clone().with_span(name));
+        assert!(package == *source.clause());
     }
 }

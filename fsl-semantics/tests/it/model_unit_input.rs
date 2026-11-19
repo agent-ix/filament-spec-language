@@ -68,7 +68,11 @@ fn a_supplied_model_unit_is_admitted_as_its_compiled_document() {
         .link_dispatch(ModelNormalizationLimits::default())
         .expect("dispatch links");
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect("the invariant over M::Order checks");
 }
 

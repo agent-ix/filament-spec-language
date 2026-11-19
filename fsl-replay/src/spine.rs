@@ -54,17 +54,16 @@ mod clocks;
 mod lifecycle;
 #[cfg(feature = "quire-extraction")]
 mod native_fences;
-pub(crate) use clocks::ClockLocator;
-pub use clocks::{InvalidClock, RequestClocks};
 /// FR-527's TL mapping table and the native valuation a TL cross-evaluation
 /// reads (FR-757, FR-931), for the command adapter's correspondence stage.
 pub use crate::spine_eval_api::{
     SpineEvalAtomReading as AtomReading, SpineEvalLateCutoff as LateCutoff,
-    SpineEvalObservedValuation as ObservedValuation,
-    SpineEvalStampInterval as StampInterval, SpineEvalTemporalOutcome as TemporalOutcome,
-    SpineEvalTemporalRefusal as TemporalRefusal,
+    SpineEvalObservedValuation as ObservedValuation, SpineEvalStampInterval as StampInterval,
+    SpineEvalTemporalOutcome as TemporalOutcome, SpineEvalTemporalRefusal as TemporalRefusal,
     SpineEvalValueInvariantEvaluation as ValueInvariantEvaluation,
 };
+pub(crate) use clocks::ClockLocator;
+pub use clocks::{InvalidClock, RequestClocks};
 pub use fsl_package::checked_views::{
     support_of as tl_support_of, Closure as TlClosure, Support as TlSupport, Target as TlTarget,
     Unmatched as TlUnmatched,
@@ -221,6 +220,7 @@ pub use bind::{
 
 mod call;
 mod identity_form;
+mod package_call;
 mod run_value;
 pub use call::{
     default_accounting, run, run_with_profile_catalog,
@@ -228,10 +228,11 @@ pub use call::{
     CallOutcome, CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument,
     DEFAULT_LIVE_OCCURRENCES, DEFAULT_WORK_UNITS,
 };
-pub(crate) use call::{run_reading, run_reading_with_integer_division};
 #[cfg(test)]
 pub(crate) use call::{run_compiled, CallSources};
+pub(crate) use call::{run_reading, run_reading_with_integer_division};
 pub use identity_form::{effective_form, node_key_form, universe_form};
+pub use package_call::run_package;
 pub use run_value::ArgumentDefect;
 
 pub(crate) mod clause;
@@ -278,12 +279,12 @@ pub(crate) use native_result::{item_record, ReasonWire};
 pub use native_result::{
     read_native_run_result, read_native_run_result_bounded, temporal_disposition_json,
     write_clause_run_result, write_clause_run_result_for,
-    write_clause_run_result_for_with_extraction, CallLocationRead, CallLocusRead,
-    CallOriginRead, ClauseRunRecord, ClosureRead, CommandErrorRecord, CounterexampleRead,
-    DimensionRead, EffectiveIdRead, FairnessGranularityRead, FairnessKindRead,
-    FairnessOperationRead, FairnessRead, GuardRead, IndeterminateReasonRead, NativeRunLimits,
-    NativeRunOutcome, NativeRunReadError, NativeRunResult, NativeRunResultError, PositionRead,
-    ProgressValueRead, ProtocolAnalysisKind, ProtocolAnalysisRecord, ProtocolIncompleteCause,
+    write_clause_run_result_for_with_extraction, CallLocationRead, CallLocusRead, CallOriginRead,
+    ClauseRunRecord, ClosureRead, CommandErrorRecord, CounterexampleRead, DimensionRead,
+    EffectiveIdRead, FairnessGranularityRead, FairnessKindRead, FairnessOperationRead,
+    FairnessRead, GuardRead, IndeterminateReasonRead, NativeRunLimits, NativeRunOutcome,
+    NativeRunReadError, NativeRunResult, NativeRunResultError, PositionRead, ProgressValueRead,
+    ProtocolAnalysisKind, ProtocolAnalysisRecord, ProtocolIncompleteCause,
     ProtocolInconclusiveCause, ProtocolProofBasis, ProtocolRecordError, ProtocolSettlementEntry,
     RefusalLocusRead, SourceRefRead, SpanRead, TemporalRecord, UndefinedLocusRead,
     UnsupportedDiagnostic,
@@ -590,10 +591,13 @@ impl CompileRefusal {
             Self::Limit(limit) => match limit.setting() {
                 // Formatting, rendering and backend prepare are never compile stages.
                 Setting::FormatOutputBytes
+                | Setting::ExportOutputBytes
+                | Setting::ExportNodes
+                | Setting::ExportWorkUnits
                 | Setting::RenderOutputBytes
                 | Setting::PrepareCompileWorkUnits
                 | Setting::PrepareCodeBytes => {
-                    unreachable!("format, render and prepare limits are not compile refusals")
+                    unreachable!("format, render, export and prepare limits are not compile refusals")
                 }
                 Setting::EmitOutputBytes => SpineStage::Emit,
                 Setting::S1InputBytes
@@ -1890,6 +1894,13 @@ fn check_message_one(first: &CheckRefusal) -> String {
                 } => format!(
                     "{message}: reward `{reward}` on `{operation}` reads state or an ambient value"
                 ),
+                ProbabilisticCause::NegativeReward {
+                    reward,
+                    operation,
+                    arguments,
+                } => format!(
+                    "{message}: reward `{reward}` on `{operation}` is negative for arguments {arguments:?}"
+                ),
                 ProbabilisticCause::QualitativeThreshold {
                     claim,
                     qualitative_form,
@@ -2886,6 +2897,9 @@ pub struct SpineLimits {
     /// (`emit.output_bytes`, FR-264 Behavior 5): the library compiles of the
     /// closure and the unit itself.
     pub package: PackageLimits,
+    /// The export limits a caller supplied (`export.*`, FR-1015): each is
+    /// `None` until given, so a request that also names one is refused.
+    pub export: ExportLimits,
 }
 
 /// `i2.native_join_storage` default, in logical ownership units (FR-255,
@@ -2909,6 +2923,7 @@ impl Default for SpineLimits {
             imports: fsl_package::V2ReadLimits::bounded(I2_NATIVE_JOIN_STORAGE_DEFAULT),
             progress: ProgressLimits::default(),
             package: PackageLimits::default(),
+            export: ExportLimits::default(),
         }
     }
 }
@@ -2924,6 +2939,7 @@ impl fsl_foundation::SettingLimits for SpineLimits {
         bounds.extend(self.imports.bounds());
         bounds.extend(self.progress.bounds());
         bounds.extend(self.package.bounds());
+        bounds.extend(self.export.bounds());
         bounds
     }
 
@@ -2936,6 +2952,45 @@ impl fsl_foundation::SettingLimits for SpineLimits {
             || self.imports.set_bound(setting, bound)
             || self.progress.set_bound(setting, bound)
             || self.package.set_bound(setting, bound)
+            || self.export.set_bound(setting, bound)
+    }
+}
+
+/// The `export.*` limits a caller supplied beside a request (FR-255,
+/// FR-1015). A limit not given is `None`, so the export can tell a setting
+/// the caller gave from one it defaults, and refuse one given twice.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ExportLimits {
+    /// `export.output_bytes`, the bytes of the target text.
+    pub output_bytes: Option<u64>,
+    /// `export.nodes`, the nodes of the dependency closures read.
+    pub nodes: Option<u64>,
+    /// `export.work_units`, one per node mapped and per region written.
+    pub work_units: Option<u64>,
+}
+
+/// FR-255: the `export.*` settings that were given.
+impl fsl_foundation::SettingLimits for ExportLimits {
+    fn bounds(&self) -> Vec<(Setting, u64)> {
+        [
+            (Setting::ExportOutputBytes, self.output_bytes),
+            (Setting::ExportNodes, self.nodes),
+            (Setting::ExportWorkUnits, self.work_units),
+        ]
+        .into_iter()
+        .filter_map(|(setting, bound)| bound.map(|bound| (setting, bound)))
+        .collect()
+    }
+
+    fn set_bound(&mut self, setting: Setting, bound: u64) -> bool {
+        let slot = match setting {
+            Setting::ExportOutputBytes => &mut self.output_bytes,
+            Setting::ExportNodes => &mut self.nodes,
+            Setting::ExportWorkUnits => &mut self.work_units,
+            _ => return false,
+        };
+        *slot = Some(bound);
+        true
     }
 }
 
