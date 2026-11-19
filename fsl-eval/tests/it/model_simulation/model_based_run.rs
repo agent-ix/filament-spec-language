@@ -785,6 +785,19 @@ fn text_partitions_are_independent_of_max_value_bits() {
     };
     let wide = run(8);
     let narrow = run(1);
+    for result in [&wide, &narrow] {
+        let empty = result
+            .partitions
+            .iter()
+            .find(|partition| {
+                partition.path == [1] && partition.kind == ModelBoundaryKind::TextEmpty
+            })
+            .expect("the text root has an empty partition");
+        assert_eq!(
+            empty.status,
+            Some(fsl_eval::simulation::model::ModelPartitionStatus::Covered { first_case: 0 })
+        );
+    }
     let text_partitions = |result: &fsl_eval::simulation::model::ModelBasedTestResult| {
         result
             .partitions

@@ -1115,8 +1115,8 @@ fn run_model_based_value_function(
     let mut counterexample = None;
     let mut case_index = 0_u64;
 
-    for (generated_partition, (parameter_index, parameter, value_type, partition)) in
-        generated_partitions.iter_mut().zip(&partitions)
+    for (partition_index, (parameter_index, parameter, value_type, partition)) in
+        partitions.iter().enumerate()
     {
         if case_index >= max_cases {
             break;
@@ -1174,9 +1174,10 @@ fn run_model_based_value_function(
                     ModelBasedTestDiscardReason::DomainRefusal,
                     case_index,
                 );
-                generated_partition.status = Some(ModelPartitionStatus::Refused {
-                    first_case: case_index,
-                });
+                generated_partitions[partition_index].status =
+                    Some(ModelPartitionStatus::Refused {
+                        first_case: case_index,
+                    });
             }
             super::ModelBoundaryKind::LowerEndpoint
             | super::ModelBoundaryKind::UpperEndpoint
@@ -1196,9 +1197,14 @@ fn run_model_based_value_function(
                 }
                 let outcome = value_function_result(package, &qualified_name, &assignment, system)?;
                 checks.evaluated += 1;
-                generated_partition.status = Some(ModelPartitionStatus::Covered {
-                    first_case: case_index,
-                });
+                if matches!(outcome, CaseResult::Pass | CaseResult::Fail(_)) {
+                    cover_value_partitions(
+                        system,
+                        &assignment,
+                        &mut generated_partitions,
+                        case_index,
+                    );
+                }
                 match outcome {
                     CaseResult::Pass => counts.passing = counts.passing.saturating_add(1),
                     CaseResult::Discard(reason) => {
@@ -1260,7 +1266,11 @@ fn run_model_based_value_function(
             assignment: Some(assignment.clone()),
             max_value_bits,
         });
-        match value_function_result(package, &qualified_name, &assignment, system)? {
+        let outcome = value_function_result(package, &qualified_name, &assignment, system)?;
+        if matches!(outcome, CaseResult::Pass | CaseResult::Fail(_)) {
+            cover_value_partitions(system, &assignment, &mut generated_partitions, case_index);
+        }
+        match outcome {
             CaseResult::Pass => counts.passing = counts.passing.saturating_add(1),
             CaseResult::Discard(reason) => {
                 record_discard(&mut counts, &mut discarded_by, reason, case_index)
@@ -1798,6 +1808,35 @@ where
         cause,
         counterexample,
     })
+}
+
+fn cover_value_partitions(
+    system: &ModelSystem<'_>,
+    assignment: &[Value],
+    partitions: &mut [ModelBoundaryPartition],
+    case: u64,
+) {
+    for partition in partitions {
+        if matches!(
+            partition.status,
+            Some(ModelPartitionStatus::Covered { .. } | ModelPartitionStatus::Refused { .. })
+        ) || matches!(
+            partition.kind,
+            super::ModelBoundaryKind::LowerRefusal | super::ModelBoundaryKind::UpperRefusal
+        ) {
+            continue;
+        }
+        let [position] = partition.path.as_slice() else {
+            continue;
+        };
+        if usize::try_from(*position)
+            .ok()
+            .and_then(|position| assignment.get(position))
+            .is_some_and(|value| partition_has_value(system, partition, value))
+        {
+            partition.status = Some(ModelPartitionStatus::Covered { first_case: case });
+        }
+    }
 }
 
 fn record_partition(
