@@ -184,6 +184,7 @@ fn compile_with(documents: &Documents, text: String, dependencies: &DependencyIn
         .check(
             filament_semantic_value::checking::CheckMode::Kernel,
             limits.checking,
+            &fsl_eval::value::S6aRewardEvaluator,
         )
         .unwrap();
         return Compiled {
