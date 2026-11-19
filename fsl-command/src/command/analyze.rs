@@ -900,7 +900,9 @@ fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
         identity,
     } = refusal;
     // FR-940 "Claim names": a name shared by two `claim_names` rows is the
-    // one ambiguous declaration, whichever reader found it.
+    // one ambiguous declaration, whichever reader found it. QSL-2545: the
+    // contract-ir reader still reports `invalid_package` here; delete this
+    // remap once the reader returns `ambiguous_declaration` itself.
     let code = match (&cause, &pointer) {
         (Some(cause), Some(pointer))
             if cause == "ambiguous-name" && pointer.starts_with("/claim_names/") =>
