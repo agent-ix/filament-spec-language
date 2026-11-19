@@ -28,7 +28,7 @@ use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::request::ProtocolAnalysisSelection;
 use super::{
@@ -1194,7 +1194,10 @@ fn claim_occurrence(
         .iter()
         .find(|site| &site.identity == node)
     {
-        return Some(OccurrenceKey::new(site.identity.clone(), site.claim.clone()));
+        return Some(OccurrenceKey::new(
+            site.identity.clone(),
+            site.claim.clone(),
+        ));
     }
     if let Some(clause) = graph
         .state_clauses()
@@ -1342,7 +1345,7 @@ pub fn resolve_items(
 mod package_run;
 
 pub use package_run::{
-    settle_package_run, PackageRun, PackageRunError, PendingFamily, PendingPackageFamily,
+    PackageRun, PackageRunError, PendingFamily, PendingPackageFamily, settle_package_run,
 };
 
 /// One requirement item of a run call (FR-395 "Item of the call") with the
@@ -3484,6 +3487,12 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
             }
             item.insert("certificate".to_owned(), certificate);
         }
+    }
+    if let Some(certificate) = detail
+        .as_ref()
+        .and_then(|detail| detail.hybrid_certificate.as_ref())
+    {
+        item.insert("certificate".to_owned(), certificate.clone());
     }
     let mut spelled = None;
     if let Some(mut counterexample) = counterexample {
