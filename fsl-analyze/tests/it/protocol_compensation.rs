@@ -9,16 +9,17 @@
 //! trigger. A recovery predicate that reads its recovery binder is evaluated
 //! at `cend` over each recovery record (FR-207-AC-5, FSpec FR-730).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 
 use filament_contract_model::ClockConfiguration;
 use filament_exact::{Cancel, FieldValue, Value};
 use fsl_analyze::model_check::{check_protocol, ModelCheckRefusal, ProtocolCheckRequest};
 use fsl_eval::simulation::protocol::{
     protocol_domains, visible, AnchorName, ClaimReads, PathStep, ProtocolLocation, ProtocolSystem,
-    ProtocolTransition, RegistrationKey, RestKind, Sc, StepKind, ThreadPath, WaitCause,
+    ProtocolState, ProtocolTransition, RegistrationKey, RestKind, Sc, StepKind, ThreadPath,
+    WaitCause,
 };
-use fsl_eval::simulation::{independent, Footprint, Location, SubjectSystem, TransitionSystem};
+use fsl_eval::simulation::{independent, Footprint, Location, SubjectSystem};
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_package::TemporalClockSelection;
 use fsl_replay::{
@@ -1395,6 +1396,38 @@ fn committed(reached: &[Reached], at: usize) -> usize {
     found[0]
 }
 
+/// The first cend successors reached by a bounded breadth-first walk.
+fn bounded_cends(
+    system: &ProtocolSystem<'_, Sc>,
+) -> Option<Vec<(ProtocolTransition, ProtocolState<Sc>)>> {
+    use fsl_eval::simulation::TransitionSystem;
+
+    const MAX_STATES: usize = 256;
+    let mut queue: VecDeque<_> = system.initial().into_iter().collect();
+    let mut seen = BTreeSet::new();
+    while let Some(state) = queue.pop_front() {
+        let (key, _) = SubjectSystem::state_key(system, &state).ok()?;
+        if !seen.insert(key) {
+            continue;
+        }
+        if seen.len() > MAX_STATES {
+            return None;
+        }
+        let expansion = system.successors(&state).ok()?;
+        let cends: Vec<_> = expansion
+            .successors
+            .iter()
+            .filter(|(transition, _)| transition.kind() == StepKind::CEnd)
+            .cloned()
+            .collect();
+        if !cends.is_empty() {
+            return Some(cends);
+        }
+        queue.extend(expansion.successors.into_iter().map(|(_, next)| next));
+    }
+    None
+}
+
 /// FR-207-AC-5 (TC-652), FSpec FR-730-AC-1: a recovery predicate that
 /// reads its recovery binder is evaluated at `cend` over each recovery
 /// record, one successor per record, and nothing settles `unsupported`.
@@ -1477,29 +1510,7 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
     );
 
     let system = sc_system(&case.subject("Pay"));
-    let mut state = system
-        .initial()
-        .into_iter()
-        .next()
-        .expect("one initial state");
-    for kind in [StepKind::Attempt, StepKind::Event, StepKind::CAttempt] {
-        let expansion = system.successors(&state).expect("the bounded path expands");
-        let (_, next) = expansion
-            .successors
-            .into_iter()
-            .find(|(transition, _)| transition.kind() == kind)
-            .unwrap_or_else(|| panic!("the finite recovery path has a {kind:?} step"));
-        state = next;
-    }
-
-    let expansion = system
-        .successors(&state)
-        .expect("the recovery step expands");
-    let cends: Vec<_> = expansion
-        .successors
-        .into_iter()
-        .filter(|(transition, _)| transition.kind() == StepKind::CEnd)
-        .collect();
+    let cends = bounded_cends(&system).expect("the bounded walk reaches a recovery step");
     assert_eq!(cends.len(), 2, "one cend per recovery record");
     let outcomes: Vec<(String, String)> = cends
         .iter()
