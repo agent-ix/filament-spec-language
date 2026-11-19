@@ -5,9 +5,9 @@ use crate::check::ir::CheckedNode;
 use crate::check::numeric_conversion::{classify, Class};
 use crate::check::refusal::{CheckRefusal, Obligation, OperandText};
 use filament_checked::node::{CheckedLiteral, NodeKind};
-use filament_exact::{DecimalType, IntegerInterval, RationalDomain, UnitTable, Value, ValueType};
+use filament_exact::{DecimalType, IntegerInterval, RationalDomain, Value, ValueType};
 use filament_semantic_value::declaration::admits_equality_conversion;
-use filament_semantic_value::quantity::UnitScope;
+use filament_semantic_value::quantity::{UnitScope, UnitTable};
 
 impl Definedness<'_> {
     pub(super) fn numeric_literal(&self, mut node: CheckedNode<'_>) -> Option<Value> {
@@ -66,8 +66,8 @@ impl Definedness<'_> {
                 DecimalType::new(
                     value.coefficient().clone(),
                     value.coefficient().clone(),
-                    value.scale(),
-                    value.scale(),
+                    u64::from(value.scale()),
+                    u64::from(value.scale()),
                     filament_exact::RoundingMode::Exact,
                 )
                 .ok()

@@ -768,9 +768,6 @@ const REQUIRED_FLIPS_BY_CASE: &[(&str, &str)] = &[
     ("rem-1989", "QSL-1989"),
     ("div-profile-select", "QSL-1989"),
     ("div-profile-using", "QSL-1989"),
-    ("conv-narrow-2007", "QSL-2007"),
-    ("conv-narrow-noguard", "QSL-2007"),
-    ("conv-rat-narrow", "QSL-2007"),
     ("conv-text-num", "G-024"),
     ("float-conv-eq-2004", "QSL-2004"),
     ("fn-param-named-set-2006", "QSL-2006"),
@@ -810,7 +807,6 @@ const EXPECTED_FLIP_COUNTS: &[(&str, usize)] = &[
     ("QSL-1989", 4),
     ("QSL-2004", 4),
     ("QSL-2006", 1),
-    ("QSL-2007", 3),
     ("QSL-2008", 1),
 ];
 

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-149's first-match conversion classes, based only on declared types.
-use filament_exact::{Integer, UnitTable, ValueType};
+use filament_exact::{Integer, ValueType};
 use filament_semantic_value::declaration::admits_equality_conversion;
-use filament_semantic_value::quantity::UnitScope;
+use filament_semantic_value::quantity::{UnitScope, UnitTable};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Class {

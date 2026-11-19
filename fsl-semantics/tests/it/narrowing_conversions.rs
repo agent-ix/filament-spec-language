@@ -191,3 +191,19 @@ fn float_to_integer_narrowing_stays_refused() {
     .unwrap_err();
     assert_eq!(errors[0].cause.code(), Code::IllTyped);
 }
+
+#[trace("FR-096", "FSpec-FR-149")]
+#[test]
+fn historical_narrowing_corpus_now_reports_unproved_range() {
+    for source in [
+        include_str!("../../../tests/corpus/values/conv-narrow-2007.native"),
+        include_str!("../../../tests/corpus/values/conv-narrow-noguard.native"),
+        include_str!("../../../tests/corpus/values/conv-rat-narrow.native"),
+    ] {
+        let declarations = source
+            .split_once("filament.value.complete/v1\";")
+            .unwrap()
+            .1;
+        assert_unproved(declarations);
+    }
+}
