@@ -22,6 +22,7 @@ mod limits;
 mod owner;
 mod package;
 mod producer;
+pub use producer::producer_bundle;
 mod request;
 mod trigger;
 mod work;

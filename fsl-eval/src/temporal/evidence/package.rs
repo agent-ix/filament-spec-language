@@ -676,12 +676,13 @@ impl<'p> EvidencePackage<'p> {
     /// As [`Self::subject`] and [`evaluate_temporal_evidence`] state.
     pub fn evaluate_temporal_evidence(
         &self,
+        producer: &filament_observation::AdmittedStaticBundle,
         clause: &CheckedNodeId,
         request: &EvidenceRequest,
         meter: &mut Meter,
     ) -> Result<EvaluatedEvidence, CallFailure> {
         let subject = self.subject(clause, request.occurrence.as_ref())?;
-        evaluate_temporal_evidence(&subject, request, meter)
+        evaluate_temporal_evidence(producer, &subject, request, meter)
     }
 }
 
