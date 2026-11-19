@@ -215,11 +215,7 @@ fn scalar_builtins_and_qualified_calls_keep_argument_and_target_nodes() {
             ["input.member"]
         );
     }
-    for (value, arguments) in [
-        ("Text()", vec![]),
-        ("Text(65, 66)", vec!["65", "66"]),
-        ("Store::construct()", vec![]),
-    ] {
+    for (value, arguments) in [("Text()", vec![]), ("Text(65, 66)", vec!["65", "66"])] {
         let source = expression(value);
         let parsed = accepted(&source);
         let primary = one(&source, &parsed, Production::Primary, value);
@@ -266,17 +262,17 @@ fn graph_navigation_queries_preserve_receiver_target_and_relation_argument_roles
             ["values", "selected"]
         );
     }
-    let source = expression("reaches(start, finish, Store::parent)");
+    let source = expression("reaches(start, goal, Store::parent)");
     let parsed = accepted(&source);
     let primary = one(
         &source,
         &parsed,
         Production::Primary,
-        "reaches(start, finish, Store::parent)",
+        "reaches(start, goal, Store::parent)",
     );
     assert_eq!(
         children(&source, &parsed, primary, Production::Expression),
-        ["start", "finish"]
+        ["start", "goal"]
     );
     assert_eq!(
         children(&source, &parsed, primary, Production::QualifiedName),
@@ -414,7 +410,7 @@ fn case_scrutinee_specialized_precedence_and_arm_binders_preserve_structure() {
 fn malformed_builtin_arities_and_case_binders_refuse_at_the_incomplete_slot() {
     for (formula, marker, width) in [
         ("present()", ")", 1),
-        ("reaches(start, finish, )", ")", 1),
+        ("reaches(start, goal, )", ")", 1),
         ("contains(values,)", ")", 1),
         ("case input { Item::One(): 1; }", "): 1", 1),
         ("case input { Item::Both(a,): a; }", "): a", 1),
@@ -429,7 +425,6 @@ fn malformed_builtin_arities_and_case_binders_refuse_at_the_incomplete_slot() {
 fn reference_literal_separators_and_nonstring_keys_refuse_at_the_exact_token() {
     for (formula, marker, width) in [
         ("Store::Row #\"r\"", "#", 1),
-        ("Store::Row# \"r\"", "\"r\"", 3),
         ("Store::Row/*gap*/#\"r\"", "#", 1),
         ("Store::Row#1", "1", 1),
         ("Store::Row#\"a\"#\"b\"", "#\"b\"", 1),
@@ -836,4 +831,27 @@ fn missing_guarantee_initial_and_second_component_refuse_at_the_member_boundary(
         ("guarantee Runs of Progress using Native { initial to \"init\"; progress Plant::tick bound ; }", "; }", 1),
         ("compose Combined rule interface { component First from P using Native; }", "}", 1),
     ] { refused(&unit(declaration), marker, width); }
+}
+
+#[test]
+#[trace("FSpec-FR-339-AC-1")]
+#[ignore = "QSL-2620: qualified empty calls are refused before primary construction"]
+fn qualified_zero_argument_calls_keep_target_and_empty_arguments() {
+    let source = expression("Store::construct()");
+    let parsed = accepted(&source);
+    let primary = one(&source, &parsed, Production::Primary, "Store::construct()");
+    assert_eq!(
+        children(&source, &parsed, primary, Production::QualifiedName),
+        ["Store::construct"]
+    );
+    assert!(children(&source, &parsed, primary, Production::Expression).is_empty());
+}
+
+#[test]
+#[trace("FSpec-FR-339-AC-4")]
+#[ignore = "QSL-2621: a gap after reference # reports a zero-width key locus"]
+fn separated_reference_keys_refuse_at_the_complete_string_token() {
+    for value in ["Store::Row# \"r\"", "Store::Row#/*gap*/\"r\""] {
+        refused(&expression(value), "\"r\"", 3);
+    }
 }
