@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile m = "filament.model.complete/v1";
+model M = "example/config-version";
+type Total = Integer;
+function f using m(a: Population<M::ConfigVersion>[2]): Integer pure { count<Total>(x in allInstances<M::ConfigVersion>(a): deref(x).versionNumber >= 1) }

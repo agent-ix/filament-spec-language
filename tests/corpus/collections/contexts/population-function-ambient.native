@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile m = "filament.model.complete/v1";
+model M = "example/config-version";
+function f using m(): Boolean pure { size(allInstances<M::ConfigVersion>(M::config_history)) >= 0 }

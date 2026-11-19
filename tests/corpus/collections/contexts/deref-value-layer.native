@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+model M = "example/config-version";
+function f using v(a: Reference<M::ConfigVersion>): Integer pure { deref(a).versionNumber }

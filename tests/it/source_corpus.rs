@@ -1708,3 +1708,6 @@ fn corpus_runner_compares_lifecycle_members_of_every_command_kind() {
     .unwrap();
     assert_eq!(run_directory(directory.path()).unwrap(), "flips_with: none");
 }
+
+#[path = "source_corpus_collection_contexts.rs"]
+mod collection_contexts;
