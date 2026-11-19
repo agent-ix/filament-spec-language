@@ -2152,6 +2152,38 @@ impl Scope {
         false
     }
 
+    /// Whether a value type contains an IEEE float directly or through an
+    /// option, collection, map value, or declared composite field.
+    pub(crate) fn reaches_float(&self, value_type: &ValueType) -> bool {
+        let mut seen = BTreeSet::new();
+        let mut pending = vec![value_type];
+        while let Some(value_type) = pending.pop() {
+            match value_type {
+                ValueType::Float(_) => return true,
+                ValueType::Option(payload) => pending.push(payload),
+                ValueType::Collection(collection) => pending.push(collection.element()),
+                ValueType::Map(map) => pending.push(map.values()),
+                ValueType::Composite(declaration) => {
+                    if !seen.insert(declaration.clone()) {
+                        continue;
+                    }
+                    match self.types.composite(declaration.clone()).map(|c| c.shape()) {
+                        Some(CompositeShape::Record(fields)) => {
+                            pending.extend(fields.iter().map(FieldDeclaration::value_type));
+                        }
+                        Some(CompositeShape::Tuple(positions)) => pending.extend(positions),
+                        Some(CompositeShape::Union(members)) => {
+                            pending.extend(members.iter().flat_map(|member| member.positions()));
+                        }
+                        None => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// The position, in the record `declaration`'s own fields, of the field
     /// `field` names (FR-359 item 2): found in the value's own declaration by
     /// the field's identity, never by a position computed from the record
