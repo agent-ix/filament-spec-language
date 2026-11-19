@@ -32,4 +32,6 @@ FR-1039-AC-3.
   `invalid-request` naming `program`.
 - Step 2: the source route's outcomes; `invalid-request` with `requires`
   `directory`.
-- Step 3: each refusal at stage `request`, exit 20, at its row's locus.
+- Step 3: each refusal at stage `request`, exit 20, at its row's locus; the
+  v1 document refuses `unknown_wire`/`unsupported-wire` at
+  `/request/package/contract_version`.

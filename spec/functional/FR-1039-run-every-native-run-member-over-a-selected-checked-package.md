@@ -95,12 +95,25 @@ none falls back to source:
 | Defect | Code / cause | Locus or `details` |
 | --- | --- | --- |
 | the selected file or directory is missing or unreadable | `invalid-request` | names `package` and the path |
-| `contract_version` is not `filament.checked-package/v2` | `unknown_contract_version` | `/request/package` |
+| `contract_version` is not `filament.checked-package/v2` | `unknown_wire`/`unsupported-wire`, `actual` the version read, `expected` `filament.checked-package/v2` | `/request/package/contract_version` |
 | the strict reader refuses the bytes | `invalid_package` with the reader's cause | the reader's pointer, under `/request/package` |
 | the `lock` edition is not `1-draft` | `unknown_edition` (stage `profile`) | names the package and the edition |
 | a recorded model selection has no matching `models` entry | `missing_import`/`missing-selection` | `/request/models`, naming the identity |
 | a `models` entry matches no recorded model selection | `invalid-request` | `/request/models/<i>`, naming its identity |
 | the member's target is absent from the package's name rows | the member's own refusal (FR-945, FR-850, FR-1037, FSpec FR-824) | the member's pointer |
+
+### Decision: a wrong document type keeps the I2 reader's code
+
+The package route reads the selected bytes through the same I2 reader as
+every other checked-package consumer, so a document of another type refuses
+with the code FR-096 "The I2 reader locates its refusals in the artifact"
+gives that defect: `unknown_wire`/`unsupported-wire` with `actual` and
+`expected`. Contract IR's reader names the defect `unknown_contract_version`
+(FSpec FR-271, FR-760); FSL's diagnostic catalogue carries it as
+`unknown_wire`, and the package route does not add a second FSL code or an
+`invalid_package` cause for the same defect. The locus is the reader's
+pointer `/contract_version` under `/request/package`, as for every other
+reader refusal in the table.
 
 ## Acceptance Criteria
 
@@ -108,7 +121,7 @@ none falls back to source:
 | --- | --- | --- |
 | FR-1039-AC-1 | A unit declaring `function half using v(): Integer pure { -7 div 2 }`, compiled with `integer_division` `floor` and selected as `package` `{file}` with the `call` `half`, completes with `-4`, the source route's value under the recorded law, with the source file removed before the run; the same request with `integer_division` refuses `invalid-request` naming `integer_division` before any selected file is opened; a request with neither `program` nor `package` refuses `invalid-request` naming `program`. | Test (TC-3019) |
 | FR-1039-AC-2 | The FR-517 handoff of FR-754-AC-3's `Pick` unit selected as `package` `{directory}`, and its package file selected as `{file}`, each run the `synthesis` member `{"declaration": "Pick"}` to the source route's `candidate` 7; a `clause` member over a `{file}` selection refuses `invalid-request` with `details` `{"member": "clause", "requires": "directory"}`, exit 20. | Test (TC-3019) |
-| FR-1039-AC-3 | Each defect of "A package that cannot run" refuses at stage `request`, exit 20, with the code and locus its row states: a missing file; a document whose `contract_version` is `filament.checked-package/v1`; a package with an unknown top-level member (`invalid_package` at the reader's pointer); a spine-model package run with no `models` entry for its recorded selection (`missing_import`/`missing-selection` at `/request/models`); and the value package run with one `models` entry, the spine document (`invalid-request` at `/request/models/0`). | Test (TC-3019) |
+| FR-1039-AC-3 | Each defect of "A package that cannot run" refuses at stage `request`, exit 20, with the code and locus its row states: a missing file; a document whose `contract_version` is `filament.checked-package/v1` (`unknown_wire`/`unsupported-wire` with `actual` `filament.checked-package/v1` at `/request/package/contract_version`, never `invalid_package`); a package with an unknown top-level member (`invalid_package` at the reader's pointer); a spine-model package run with no `models` entry for its recorded selection (`missing_import`/`missing-selection` at `/request/models`); and the value package run with one `models` entry, the spine document (`invalid-request` at `/request/models/0`). | Test (TC-3019) |
 
 ## Dependencies
 
