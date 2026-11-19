@@ -312,11 +312,24 @@ fn bound_reference_ids(
         .iter()
         .flat_map(|state| &state.steps)
         .filter(|(transition, _)| transition.kind() == kind)
-        .filter_map(|(transition, _)| match transition.binder_record() {
-            Some(filament_exact::Value::Reference(reference)) => {
-                Some(reference.object().as_str().to_owned())
+        .filter_map(|(transition, _)| {
+            fn first_reference(value: &filament_exact::Value) -> Option<String> {
+                match value {
+                    filament_exact::Value::Reference(reference) => {
+                        Some(reference.object().as_str().to_owned())
+                    }
+                    filament_exact::Value::Composite(composite) => composite
+                        .slots()
+                        .iter()
+                        .find_map(|slot| match slot {
+                            filament_exact::FieldValue::Present(value) => first_reference(value),
+                            filament_exact::FieldValue::Absent
+                            | filament_exact::FieldValue::Null => None,
+                        }),
+                    _ => None,
+                }
             }
-            _ => None,
+            transition.binder_record().and_then(first_reference)
         })
         .collect()
 }
