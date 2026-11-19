@@ -82,6 +82,13 @@ that test is never reached today. Clippy (`-p fsl-package -p fsl-command --all-t
 | FND-008 | low | The combined `UnkeyedProbabilisticClaim \| UnresolvedClaimWorkload` arm in `emit_checked_never_returns_incomplete_across_the_fixture_set` now panics with `"lowering keys every probabilistic claim"`. That message is wrong for `UnresolvedClaimWorkload`, which is an emission invariant (no emitted workload node named `W`), not a lowering one | fsl-package/src/emit/tests.rs:2025-2030 |
 | FND-009 | low | The public accessor `Emission::claim_workloads()` (re-exported with `ClaimWorkload` from the crate root) is not marked TEMPORARY. Only the struct and the private `probabilistic::claim_workloads` say that QSL-2546 removes it, so a caller reading the accessor's doc sees a stable API | fsl-package/src/emit.rs:1376-1378 |
 
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-010 | low | The round-2 hunks in `fsl-package/src/emit/tests/probabilistic.rs` are not rustfmt-clean. In-repo `cargo fmt --check -p fsl-package` (toolchain 1.98) splits the `refusal_of` return tuple `-> (EmitRefusal, fsl_foundation::source::provenance::RawSourceRef)` and the `assert_eq!(region.source(), &unit, ...)` call onto several lines | fsl-package/src/emit/tests/probabilistic.rs:1998-2001,2087 |
+| FND-011 | low | `reviews/qsl-2441-code-review-dispositions-r1.md` and `reviews/qsl-2441-gap-analysis-dispositions-r1.md` were committed. They are Linear comment bodies, not SpecReview artifacts: they have no frontmatter, and `quire validate` fails on both ("required 'type' is missing from frontmatter"). The dispositions already live in the SR files' `## Dispositions` sections and on Linear, so delete these two files | reviews/qsl-2441-code-review-dispositions-r1.md:1; reviews/qsl-2441-gap-analysis-dispositions-r1.md:1 |
+
 ## Dispositions
 
 Round 1, head 9588a1a78f391de7c609d8e5b0cca221398b30b9. Focused runs, each with `--test-threads=1` and the two house skips, all pass: `a_claim_under_a_workload_is_emitted_with_its_workload_node`, `each_claim_resolves_to_the_workload_it_is_stated_under`, `probabilistic_refusals_have_locus`, and fsl-command `a_package_stage_refusal_of_a_reward_carries_its_locus`. The FR-640-AC-3 test is ignored, citing QSL-2546. Clippy (`-p fsl-package -p fsl-command --all-targets -- --cap-lints warn`) reports nothing in the diff files.
@@ -95,3 +102,11 @@ Round 1, head 9588a1a78f391de7c609d8e5b0cca221398b30b9. Focused runs, each with 
 | FND-005 | fixed | The doc now matches four cases: reward, delay, random parameter and workload. Each asserts the `declaration`, that the region slice of the unit text contains the name, and that the message contains the name |
 | FND-006 | still-open | `fsl-package/src/lib.rs` is still not rustfmt-clean. rustfmt sorts `ClaimWorkload` before `ClockSelectionCause` and repacks `SelectedSourceCollectionRow, ...` onto full lines (`rustfmt --check` on the file with its `mod` lines stubbed). Fix: run rustfmt on that block |
 | FND-007 | fixed | The float-arm reflow is reverted. `git diff origin/main...HEAD -- fsl-package/src/emit/tests.rs` touches only the fixture-set refusal arm |
+
+Round 2, head 357352b6f08618d43f9cfdfdeccd25d057d90820. The full `emit::tests::probabilistic::` group passes (34 passed, 2 ignored: QSL-2546 and QSL-2463), and so does fsl-command `a_package_stage_refusal_of_a_reward_carries_its_locus`. Clippy reports nothing in the diff files. In-repo `cargo fmt --check`: `fsl-package/src/lib.rs` is clean. `emit/tests.rs:689` and `emit.rs:3770,7652` are pre-existing on main.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-006 | fixed | The re-export block is now rustfmt-clean (in-repo `cargo fmt --check` reports nothing for lib.rs) |
+| FND-008 | fixed | The arm is split. `UnresolvedClaimWorkload` panics with "emission emits every recorded workload a claim is stated under" |
+| FND-009 | fixed | The accessor doc now carries "TEMPORARY (QSL-2441, QSL-2546, spec W77): in memory only, like [`ClaimWorkload`]; the claim body carries it later." |

@@ -1998,7 +1998,10 @@ fn a_reward_on_a_source_object_is_emitted() {
 fn refusal_of(
     source: &str,
     documents: &[&[u8]],
-) -> (EmitRefusal, fsl_foundation::source::provenance::RawSourceRef) {
+) -> (
+    EmitRefusal,
+    fsl_foundation::source::provenance::RawSourceRef,
+) {
     let packages = fsl_semantics::model::intake::package_input(documents.iter().copied())
         .expect("the package input is valid");
     let graph = assemble_with_models(source.as_bytes(), &packages)
@@ -2084,7 +2087,11 @@ fn probabilistic_refusals_have_locus() {
             panic!("{name}: {refusal:?}");
         };
         assert_eq!((*feature, declaration.as_str()), (expected, name));
-        assert_eq!(region.source(), &unit, "{name}: the region is in the unit's source");
+        assert_eq!(
+            region.source(),
+            &unit,
+            "{name}: the region is in the unit's source"
+        );
         let label = source
             .get(region.start() as usize..region.end() as usize)
             .unwrap_or_else(|| panic!("{name}: the region lies in the unit: {refusal:?}"));
