@@ -29,6 +29,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-observation/FR-005
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-322
+    type: references
 ---
 # FR-944: Map the evaluator's trace facts onto filament-observation's contexts, selections and views
 
@@ -63,7 +65,7 @@ package, producer, binding, subject, membership, closure, sources and scope.
 The evaluator has no such caller: a run request names a checked package, a
 clause, a trace and progress, and nothing else. Every member of the admission
 request is therefore derived, deterministically, from three things only: the
-checked package (its identity, revision and canonical bytes), the request's
+checked package (its identity, contract version and canonical bytes), the request's
 trace with its clock profile and cover, and `fsl-eval`'s own crate-constant
 producer bundle. No member is read from the run request as an owner selection
 and no member has a default the caller could change. Two runs over equal
@@ -72,8 +74,8 @@ and every owner-derived identity in them (record, membership, population) is
 computed by the owner's own derivation functions, never spelled by the
 evaluator.
 
-The finite recorded trace is its own population. Its members are exactly its
-positions, its closure is that explicit enumeration, its scope is one
+The finite recorded trace is its own population. Its members are exactly the
+distinct facts its positions state, its closure is that explicit enumeration, its scope is one
 immutable snapshot of those members, and its one observation source is the
 clock binding. FSL has no separate closure-definition artifact, no producer
 relationship graph and no second source for a trace, so the evaluator does not
@@ -135,7 +137,7 @@ reading maps exactly, with no wrapping, saturation or refusal.
   interval stamp, order key, arrival watermark and admitted observation
   document, the clock binding's name, unit, epoch and period, the profile
   identity and the cover (FR-501, FR-522, FR-966).
-- The checked package's identity, revision and canonical bytes, on the source
+- The checked package's identity, contract version and canonical bytes, on the source
   route and on the bare-package route alike.
 - The clause occurrence: its `temporal_clause` node, occurrence ordinal,
   activation and `over` parameter.
@@ -161,8 +163,10 @@ FR-526's reports, read from them.
   identity to its position's FR-106 identity, built at admission, and SHALL
   report every owner answer (FR-501, FR-502, FR-524, FR-526) under the FR-106
   identities it maps to. An owner record identity never stands in for an
-  FR-106 identity in a report; the FR-106 document labels reach the owner only
-  inside the record's value, where they keep two positions' records distinct.
+  FR-106 identity in a report, and no owner document carries an FR-106
+  identity: a record's value holds its document without the document's
+  labels. The mapping is many-to-one where several positions state one fact
+  (below).
 - The tick-to-nanosecond conversion SHALL be exact: a stamp or `u` of `k`
   ticks of a timed unit is `k × s` nanoseconds, where `s` is the unit's
   declared rational factor to the second (FR-230's `time ... unit`) times
@@ -199,8 +203,8 @@ FR-526's reports, read from them.
   every member the owner refused.
 - Each owner call SHALL use `Context::new(History::batch(&qualified),
   &authority, &subject, revision, predecessor)` with `authority` the clause
-  occurrence's key as definition identity, the package revision as definition
-  revision and the package digest as definition digest; `subject` the scope's
+  occurrence's key as definition identity, the package selection's `revision` as
+  definition revision and the package digest as definition digest; `subject` the scope's
   snapshot identity (the membership rule identity, below) as scope identity,
   which is the scope identity the owner compares against the qualified scope,
   and the admitted population identity; `revision`
@@ -212,24 +216,35 @@ FR-526's reports, read from them.
 
 - `package` SHALL be `PackageSelection { format:
   NATIVE_LINKED_PACKAGE_FORMAT, identity, revision, digest }` with `identity`
-  the checked package's `name` (FSpec FR-322), `digest` the SHA-256 of the
-  package's canonical bytes and `revision` the package revision.
-- A checked package is immutable and has no revision counter, so its
-  revision SHALL be its content revision: `sha256:` followed by the 64
-  lowercase hexadecimal digits of that same SHA-256. Two packages under one
-  `name` are one revision exactly when their canonical bytes are equal.
+  the checked package's `name` (FSpec FR-322), `revision` the package's
+  `contract_version` literal `filament.checked-package/v2`, and `digest` the
+  SHA-256 of the package's canonical bytes.
+- A checked package has no revision, identifier, hash, digest or seal (FSpec
+  FR-322, FR-201): it is identified by its `name` and compared structurally.
+  The owner requires a non-empty revision string, and the contract version is
+  the one revision-like fact every package states, so it fills that member.
+  It distinguishes no two packages of one contract and is never read back.
+- The digest SHALL be an evaluator-local integrity value, held in memory
+  only, as FSpec FR-322 permits a consumer: it is computed over the exact
+  bytes the reader consumed, or, for a package held in memory from
+  compilation, over the bytes of its canonical S4 emit (FR-264), and it is
+  used only as the owner's required `digest` member and, through it, the
+  owner `Context`'s definition digest. It is never written to a package,
+  plan or outcome document, never names, identifies or versions a package,
+  and never decides whether two packages are the same.
 - `fsl-package` SHALL give every checked package, on both routes, the
-  accessors `canonical_bytes(&self) -> &[u8]` and `revision(&self) -> &str`:
-  - the bare-package reader (FR-531) SHALL retain the canonical encoding of
-    the package it read (the RFC 8785 encoding of the admitted document,
-    equal to the input bytes when they are canonical) and the revision
-    computed from it, at read time;
+  accessor `canonical_bytes(&self) -> &[u8]`:
+  - the bare-package reader (FR-531) SHALL retain the exact bytes it read.
+    The reader admits only canonical bytes and refuses any other encoding
+    `noncanonical_wire` (FSpec FR-322-AC-4), so these are the input bytes
+    exactly;
   - a package held in memory from compilation SHALL obtain them by the
     canonical S4 emit (FR-264), once, and retain them.
 
-  The same package therefore has one revision and one digest on the source
-  route and the bare-package route, and every timed call, from either route,
-  carries both into the admission request and the owner `Context`.
+  The same package therefore has the same bytes, and so the same digest, on
+  the source route and the bare-package route, and every timed call, from
+  either route, carries the digest into the admission request and the owner
+  `Context`.
 
 ### The producer bundle
 
@@ -287,22 +302,23 @@ profile identity.
   record's `causal_relationship_identity` SHALL be absent. A trace carries no
   producer relationship: an order key is a sequence order of one order
   authority (FR-501), not a typed relationship, and the bundle declares none.
-- `records` SHALL hold one `AdmittedRecord` per position, in canonical order
-  (FR-501), with:
+- `records` SHALL hold one `AdmittedRecord` per distinct position fact, in
+  canonical order (FR-501) of the first position stating it, with:
   - `binding_identity`, `source_identity`, `schema_identity`,
     `signal_identity`, `trigger_identity` and `unit` the binding's;
   - `subject` the expected subject;
   - `value`: `ValueState::Present { value_type: "fsl-eval/trace-position/1",
     canonical_value }`, `canonical_value` the RFC 8785 text of
     `{"interval": I, "observation": D, "order_key": K}`, with `D` the
-    position's admitted FR-106 document as its canonical JSON value, `K`
+    position's admitted FR-106 document as its canonical JSON value without
+    its `identity` member (the document's own labels), `K`
     `{"authority": A, "key": k}` or `null`, and `I` the interval stamp
     `{"earliest": "<n>", "earliest_open": B, "latest": "<n>",
     "latest_open": B}` or `null`, integers in FR-038's decimal spelling. The
     value holds every fact of the position that the record's other fields do
-    not, so two positions never share a record identity unless they are one
-    fact, and a superseding request that changes a valuation, an order key or
-    an interval changes that record's identity;
+    not, except its FR-106 labels, so two positions share a record identity
+    exactly when they state one fact, and a superseding request that changes
+    a valuation, an order key or an interval changes that record's identity;
   - `visibility`: `Internal`, because a position is a snapshot of the
     assessed system's own state at its own anchor (FR-106);
   - `anchor`: `EventPosition(t)` for an event position clock,
@@ -311,18 +327,21 @@ profile identity.
     `TimestampNanos(t × s)` for a timestamped clock, `t` the nominal stamp;
   - `event_time_nanos`: `t × s`;
   - `ingestion_time_nanos`: the arrival watermark `× s` when the position
-    carries one (FR-966); for a position without one, see "Owner requirement:
-    an unrecorded ingestion instant";
+    carries one (FR-966); for a position without one, the interim rule of
+    "Owner requirement: an unrecorded ingestion instant" below;
   - `clock_identity` `C`, `clock_revision` `P`;
   - `clock_uncertainty_nanos`: the cover's `u × s` (`0` under `Exact`); an
     interval stamp is carried in the value and compared through the
     quarter-tick intervals below, never through this field;
   - `identity`: `authority::observation::record_identity(&record,
     Limits::owner_max())` over the record above.
-- Two positions with one record identity are one fact delivered twice; the
-  evaluator SHALL refuse the request at stage `admit`,
-  `invalid_runtime_input`/`invalid-value`, naming the later position in
-  canonical order, before calling `admit`.
+- Two or more positions that state one fact (equal observations at one
+  stamp with equal order keys, interval stamps and arrival watermarks, which
+  FR-501 admits and
+orders by observation identity) SHALL map to one owner record and one
+  member. The side mapping is then many-to-one: that record maps to every
+  FR-106 identity of those positions, and every owner answer about the record
+  is reported under each of them. No such trace is refused.
 - `scope` SHALL be the `ScopeSelection`:
   - `required_member_identities`: the record identities, in ascending byte
     order. A member's object identity is its record's identity, an opaque
@@ -360,8 +379,8 @@ profile identity.
   - `population_identity`: `authority::population::population_identity(&request,
     Limits::owner_max())` over the request with every other member set.
 - `limits` SHALL be `ResourceLimits { max_records: n, max_members: n,
-  max_relationships: 0, max_required_relationships: 0 }`, `n` the position
-  count: the evaluator's own ceilings already bound the trace, and these
+  max_relationships: 0, max_required_relationships: 0 }`, `n` the number of
+  distinct records: the evaluator's own ceilings already bound the trace, and these
   exact counts never refuse a request built as above.
 
 ### Partial values and interval order
@@ -482,9 +501,9 @@ the owner.
 The owner's `AdmittedRecord` requires an `ingestion_time_nanos` and keeps it
 independent of the event time (filament-observation FR-001). An FSL position
 has an ingestion instant only when it carries an arrival watermark (FR-966);
-a position without one was never stamped on arrival, and any instant the
-evaluator wrote there (its event time, the request's watermark) would be a
-fact the trace does not hold. `filament-observation` SHALL therefore provide,
+a position without one was never stamped on arrival, so no instant the
+evaluator can write there (its event time, the request's watermark) is an
+ingestion instant the trace holds. `filament-observation` SHALL therefore provide,
 as its own requirement amending its FR-001 and FR-004 (filed against the
 owner as a requirement, as FR-013 was):
 
@@ -498,10 +517,15 @@ owner as a requirement, as FR-013 was):
   no owner rule SHALL order, compare or classify by an absent ingestion
   instant.
 
-Until that requirement lands, a record without an arrival watermark carries
-`ingestion_time_nanos` equal to its `event_time_nanos`, and the evaluator
-reads no owner answer that depends on a record's ingestion instant; when it
-lands, the record carries `None`.
+Interim rule, in force only until that owner requirement lands (tracked as
+QSL-2524): a record without an arrival watermark SHALL carry
+`ingestion_time_nanos` equal to its `event_time_nanos`, and its
+`partial::Selection` ingestion position the same value. This is a
+placeholder that fills a member the owner does not yet let the evaluator
+leave empty; the evaluator does not assert it as the time the observation
+arrived, SHALL NOT report it, and SHALL read no owner answer that depends on
+a record's ingestion instant. When the owner requirement lands, the record
+SHALL carry `None` and this interim rule is removed.
 
 ## Acceptance Criteria
 
@@ -513,9 +537,9 @@ lands, the record carries `None`.
 | FR-944-AC-4 | Once filament-observation FR-013 lands, FR-502-AC-2's cases through `completeness::revise` refuse `Complete { through: 60 }`, `Incomplete` and the uncovered position stamped 80, refuse a covered position re-delivered under a different observation identity (`MemberObservationChanged`, FR-502's changed-fingerprint case), accept a successor over its own admitted history with another subject, and accept `Complete { through: 100 }` and `{ through: 140 }`, exactly as FR-502's ledger does. | Test (TC-2624) |
 | FR-944-AC-5 | Under `Bounded { uncertainty: 0 }` and unit `ms`, a request `holds(req)` stamped 1 with interval `(0, 1]` maps to `[1, 4]` and an `ack` stamped 3 with interval `[3, 4)` maps to `[12, 15]`; `within_bound(3, req, ack)` read through `relation_to(ack, req shifted by 12)` is `Indeterminate`, and `holds(req) implies eventually[0,3] holds(ack)` with `W` and `Complete { through: 10 }` gives `Indeterminate { reason: StraddlesBound }`, equal to `ClockCover`'s answer, where the half-tick mapping (`[1, 2]`, `[6, 7]`, shift 6) would read `True`. The same request with the `ack` stamped 2 with interval `[2, 3)`, mapped to `[8, 11]`, gives `Completed(true)`. | Test (TC-2624) |
 | FR-944-AC-6 | With an anchor of interval `[0, 0]` (`[0, 0]` in quarter ticks) under `Counter { uncertainty: 0 }`: for `at_least 2`, reading 2 (`[8, 11]`) is eligible, reading 1 (`[4, 7]`) ineligible, and reading 2 under `Counter { uncertainty: 1 }` (`[4, 15]`) `Indeterminate` with reason `StraddlesBound`; for `at_most 2`, reading 1 is eligible, reading 3 (`[12, 15]`) ineligible and reading 2 `Indeterminate` with reason `StraddlesBound`; a candidate of interval `(1, 2]` (`[5, 8]`) is eligible for `at_least 1`, one of interval `[0, 1)` (`[0, 3]`) is ineligible for `at_least 1` and `Indeterminate` for `at_most 0`; and against an anchor of interval `(0, 1]` (`[1, 4]`) a candidate of interval `[3, 4)` (`[12, 15]`) is `Indeterminate` for `at_most 3` and eligible for `at_least 2`. Each decision equals `ClockCover`'s eligibility, and no owner interval with an unbounded end is formed. | Test (TC-2624) |
-| FR-944-AC-8 | FR-501-AC-13's counter-cover request under `ms` with a position carrying arrival 2, one carrying an order key and one an interval stamp builds an admission request that `admit` returns `Available` for, in which: `package` is `native-linked-package/1`, the package `name`, revision `sha256:<hex>` and digest of the same SHA-256 over `canonical_bytes()`; `producer` is the `fsl-eval` bundle; `binding` has the stated identity text, source `C`, schema `fsl-eval/trace-position/1`, the `over` node's `node_wire` text as signal, the clause node's text plus `/activation` as trigger, unit `ms`, subject kind `package` and `required` true; `expected_subject` is kind `package` with the package identity; both relationship lists are empty; each record's identity equals `record_identity` of the record, its value text is the stated `{"interval", "observation", "order_key"}` object, visibility `Internal`, anchor `TimestampNanos(t × 1000000)`, ingestion `2000000` for the arrival-2 position, uncertainty `1000000`; `required_member_identities` is the sorted record identities and equals the members' object and record identities; membership, closure and snapshot identity are `derive_membership`'s identity and digest; the range is `[min, max + 1)` in nanoseconds; sources and both dependency lists are `[C]`; `membership_complete` is true; `population_identity` equals `population_identity` of the request; limits are the position count and 0. Building it twice gives equal requests; changing one valuation, one order key or one interval changes exactly that record's identity; two positions with equal documents, stamps, keys and intervals refuse at stage `admit`, `invalid_runtime_input`/`invalid-value` at the later position. An event-position clause's request uses `EventPosition` anchors, unit `position` and an `EventPosition` range and is also `Available`. | Test (TC-3036) |
+| FR-944-AC-8 | FR-501-AC-13's counter-cover request under `ms` with a position carrying arrival 2, one carrying an order key and one an interval stamp builds an admission request that `admit` returns `Available` for, in which: `package` is `native-linked-package/1`, the package `name`, revision `filament.checked-package/v2` and the SHA-256 of `canonical_bytes()`; `producer` is the `fsl-eval` bundle; `binding` has the stated identity text, source `C`, schema `fsl-eval/trace-position/1`, the `over` node's `node_wire` text as signal, the clause node's text plus `/activation` as trigger, unit `ms`, subject kind `package` and `required` true; `expected_subject` is kind `package` with the package identity; both relationship lists are empty; each record's identity equals `record_identity` of the record, its value text is the stated `{"interval", "observation", "order_key"}` object whose `observation` has no `identity` member, so no owner document carries an FR-106 identity, visibility `Internal`, anchor `TimestampNanos(t × 1000000)`, ingestion `2000000` for the arrival-2 position, uncertainty `1000000`; `required_member_identities` is the sorted record identities and equals the members' object and record identities; membership, closure and snapshot identity are `derive_membership`'s identity and digest; the range is `[min, max + 1)` in nanoseconds; sources and both dependency lists are `[C]`; `membership_complete` is true; `population_identity` equals `population_identity` of the request; limits are the record count and 0. Building it twice gives equal requests; changing one valuation, one order key or one interval changes exactly that record's identity. Adding a second observation equal to the first in content, stamp, order key, interval and arrival but with another FR-106 identity admits: the request has one record and one member for both, and every report about that record names both FR-106 identities through the many-to-one side mapping. A position without an arrival carries `ingestion_time_nanos` equal to its event time under the interim rule, and no report carries that value. An event-position clause's request uses `EventPosition` anchors, unit `position` and an `EventPosition` range and is also `Available`. | Test (TC-3036) |
 | FR-944-AC-9 | The `fsl-eval` bundle has identity `fsl-eval`, revision `Revision::producer` of the crate version, interface `1.2.0`, no relationships, configuration `fsl-eval/default` whose digest equals `canonical_digest_selection()` of a bundle holding only `{"configurationIdentity": "fsl-eval/default"}`, and digest equal to its own `canonical_digest_selection()`; it is admitted once per process. An admission request mutated after derivation (the binding's source changed, the population identity changed, one record identity changed), each alone, ends the run `runtime_invariant`/`established-invariant-broken`, invariant `observation-admission`, carrying the owner's refusal cause, exit `30`, and no clause outcome; none is `invalid_runtime_input`. A trace of `max_population_entries + 1` positions refuses at stage `admit`, `stage_limit_exceeded`/`node-count-exceeded`, `bound` the owner maximum, `actual` the count, `setting` `filament_observation::authority::Limits.max_population_entries`, and a position whose value text is one byte over `max_string_bytes` refuses `stage_limit_exceeded`/`input-bytes-exceeded` with `setting` `filament_observation::authority::Limits.max_string_bytes`, both before any owner derivation. | Test (TC-3036) |
-| FR-944-AC-10 | One compiled package evaluated on the source route and, after a canonical emit, read and evaluated on the bare-package route gives equal `canonical_bytes()`, equal `revision()` and equal admission `package` selections and owner `Context` authorities on both routes; the bare reader given the same package as non-canonical JSON (reordered members, extra whitespace) retains the canonical bytes and the same revision; a package differing in one node gives a different revision and digest. | Test (TC-3036) |
+| FR-944-AC-10 | One compiled package evaluated on the source route and, after a canonical emit, read and evaluated on the bare-package route gives `canonical_bytes()` equal to the emitted bytes on both routes and to the bytes the reader consumed, exactly, and so equal admission `package` selections (revision `filament.checked-package/v2`, equal digest) and equal owner `Context` authorities on both routes; the same package as non-canonical JSON (reordered members, extra whitespace) is refused by the reader `noncanonical_wire` (FSpec FR-322-AC-4) and admits nothing; no package, plan or outcome document the run writes carries the digest. | Test (TC-3036) |
 | FR-944-AC-7 | Scaling is exact at the domain's edge: a reading `18446744073709551615` under `Counter { uncertainty: 18446744073709551615 }` maps to `[0, 147573952589676412923]`, reading 0 under the same cover to `[-73786976294838206460, 73786976294838206463]`, and the bounds `9223372036854775807` and `-9223372036854775808` scale to `36893488147419103228` and `-36893488147419103232`; `within_bound` and `definitely_before` over these readings and bounds equal `ClockCover`'s answers. | Test (TC-2624) |
 
 ## Dependencies
