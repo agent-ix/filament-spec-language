@@ -237,6 +237,7 @@ fn timed_sampling_from_source() {
         }}]),
     );
     let item = &document["items"][0];
+    assert!(item.is_object(), "expected an analyzed item: {document}");
     assert_eq!(label(item), "measured", "{item}");
     assert_eq!(item["request"]["probabilistic"]["timed_sampling"]["q"], 8);
     assert_eq!(
