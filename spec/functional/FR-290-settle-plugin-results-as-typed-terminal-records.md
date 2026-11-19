@@ -172,10 +172,14 @@ this order, and return the first refusal:
    FR-331's planner-only `transfer-not-preserving` and `premise-unproved`,
    which only FR-529's `planner` writes, and its method-record-only
    `no-evaluated-case`, which only FR-752's model-based test record writes) is
-   `FslOnlyCause`. The method-record-only `tool-failure` defects
-   `oracle-disagreement` and `invalid-shrink` never reach these readers: a
-   plugin `result` body carrying one fails its FSpec FR-331 stage schema, so
-   FR-291 settles the item `failed` with `tool-failure` `malformed-body`. The `stale-dependency` spelling is FSpec's.
+   `FslOnlyCause`. FSpec FR-331's stage schema excludes the three
+   method-record-only spellings (`no-evaluated-case` and the `tool-failure`
+   defects `oracle-disagreement` and `invalid-shrink`), so a plugin `result`
+   frame carrying one fails the schema before these readers run, and FR-291
+   (FSpec FR-462) settles the item `failed` with `tool-failure`
+   `malformed-body`. `read_plugin_inconclusive_cause` refuses
+   `no-evaluated-case` `FslOnlyCause` when it is called on such an entry
+   directly; the defects are never read here. The `stale-dependency` spelling is FSpec's.
    `invalid-request` is FR-127's `InvalidRequest{requested, certified}`. Each is at `/<member>/type`.
    Each check applies only to its
    own member. A `basis` that spells an FSL-only cause, or a `cause` that

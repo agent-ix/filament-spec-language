@@ -20,7 +20,8 @@ dependents. Scope: FR-753-AC-5.
 1. Execute `Release` with an engine set holding no `temporal-satisfaction`
    engine, a recording `Negotiate`, seed 7 and `max_trace_length` 8.
 2. Execute `Release` with a plan document whose `package` is another
-   identity.
+   identity, seed 7 and `max_trace_length` `Some(8)`; then the same with
+   `max_trace_length` `None`.
 
 ## Expected Results
 
@@ -28,4 +29,4 @@ dependents. Scope: FR-753-AC-5.
   `unsupported_projection`/`unsupported-requested-capability`; `tested`
   `tested`, run by `fsl-eval`'s model-based test entry with `max_cases` 500,
   seed 7 and `max_trace_length` 8; `timely` `blocked` by `safe`; the `Negotiate` saw only `safe`.
-- Step 2: a whole-plan refusal naming both identities, and no step runs.
+- Step 2: a whole-plan refusal naming both identities, and no step runs, in both runs: the identity mismatch is refused before the missing `max_trace_length`.
