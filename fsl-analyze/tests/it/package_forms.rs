@@ -12,13 +12,13 @@ use fsl_package::{BarePackage, BareSupply, ReadEqualityRows, ReadIdentityRows};
 use fsl_semantics::check::{FormulaNode, FormulaNodeId, TemporalClauseNode};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::model::observation::{admit_trace_snapshot, DocumentRef, ObservationLimits};
+use fsl_semantics::model::observation::{DocumentRef, ObservationLimits, admit_trace_snapshot};
 use ix_trace_rs::trace;
 
 use crate::analyze_cli_support::{
-    counter_request_with, counter_snapshot, package_selection, request_members, Workspace, HANDOFF,
+    HANDOFF, Workspace, counter_request_with, counter_snapshot, package_selection, request_members,
 };
-use crate::counter::{document, package_with_mode, CONTRACT};
+use crate::counter::{CONTRACT, document, package_with_mode};
 use filament_semantic_value::checking::CheckMode;
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -402,7 +402,7 @@ fn document_ref(label: &str) -> DocumentRef {
 fn package_frame_equals_source_frame() {
     use filament_exact::Identifier;
     use fsl_semantics::model::observation::{
-        admit_frame_invocation, FrameFacts, OperationFacts, Provisions,
+        FrameFacts, OperationFacts, Provisions, admit_frame_invocation,
     };
 
     let (_ws, handoff, mut budget) = handoff("package-forms-frame");
@@ -753,7 +753,7 @@ fn admit_clause(
     input: fsl_semantics::model::observation::ClauseSelectionInput,
 ) -> fsl_semantics::model::observation::AdmittedObservations {
     use fsl_semantics::model::observation::{
-        admit_observations, ClauseFacts, ClauseSelection, OperationFacts, Provisions,
+        ClauseFacts, ClauseSelection, OperationFacts, Provisions, admit_observations,
     };
     let graph = handoff.compiled.checked().graph();
     let clause = graph.state_clause(name).expect("the clause");
@@ -1022,6 +1022,18 @@ const STATE_GRAPH_CLAIMS: &str = "\
      always possible FromOne using v over (c: M::Counter) from (c.value = 1) { c.value = 0 }\n\
      unique path Straight using v over (c: M::Counter) from (c.value = 0) to (c.value = 1);\n";
 
+/// The predicates of `form` in order `from`, `target`.
+fn graph_predicates(
+    form: &fsl_semantics::check::StateGraphForm,
+) -> Vec<&fsl_semantics::check::CheckedStatePredicate> {
+    use fsl_semantics::check::StateGraphForm;
+    match form {
+        StateGraphForm::Possible { target } => vec![target],
+        StateGraphForm::AlwaysPossible { from, target } => vec![from, target],
+        StateGraphForm::UniquePath { from, to } => vec![from, to],
+    }
+}
+
 /// FR-940-AC-11 (first half): `BarePackage::state_graph_claim_form` of each
 /// claim's `claim_names` occurrence, rebuilt by
 /// `CheckedStateGraphClaim::of_package_form`, equals the source route's
@@ -1031,7 +1043,6 @@ const STATE_GRAPH_CLAIMS: &str = "\
 #[trace("TC-3034", "FR-940-AC-11")]
 #[test]
 fn the_package_form_of_each_state_graph_claim_equals_its_source_claim() {
-    use fsl_semantics::check::{CheckedStatePredicate, StateGraphForm};
     let (_ws, handoff, mut budget) = handoff_of("package-forms-state-graph", STATE_GRAPH_CLAIMS);
     let bare = BarePackage::new(&handoff.admitted)
         .with_supply(
@@ -1045,13 +1056,6 @@ fn the_package_form_of_each_state_graph_claim_equals_its_source_claim() {
     let world = bare.world().expect("the package's declarations read");
     let sources = handoff.compiled.checked().graph().state_graph_claims();
     assert_eq!(sources.len(), 4);
-    let predicates = |form: &StateGraphForm| -> Vec<&CheckedStatePredicate> {
-        match form {
-            StateGraphForm::Possible { target } => vec![target],
-            StateGraphForm::AlwaysPossible { from, target } => vec![from, target],
-            StateGraphForm::UniquePath { from, to } => vec![from, to],
-        }
-    };
     for source in sources {
         let occurrence = source.occurrence().expect("an assembled claim").clone();
         let form = bare
@@ -1079,12 +1083,20 @@ fn the_package_form_of_each_state_graph_claim_equals_its_source_claim() {
             std::mem::discriminant(source.form()),
             "{name}"
         );
-        for (package, source) in predicates(package.form())
+        for (package, source) in graph_predicates(package.form())
             .into_iter()
-            .zip(predicates(source.form()))
+            .zip(graph_predicates(source.form()))
         {
-            assert_eq!(package.is_constant_true(), source.is_constant_true(), "{name}");
-            assert_eq!(package.package().is_some(), source.body().is_some(), "{name}");
+            assert_eq!(
+                package.is_constant_true(),
+                source.is_constant_true(),
+                "{name}"
+            );
+            assert_eq!(
+                package.package().is_some(),
+                source.body().is_some(),
+                "{name}"
+            );
             assert!(package.body().is_none(), "{name}");
         }
     }
