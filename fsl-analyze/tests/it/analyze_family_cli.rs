@@ -873,42 +873,89 @@ pub(crate) fn ctl_request(ws: &Workspace, claims: &str, items: Value) -> std::pa
 /// under the two rows' configurations; it is never `not-yet-implemented`.
 #[trace("TC-2243", "FR-640-AC-12")]
 #[test]
-#[ignore = "QSL-2128: hyperproperty items are not reachable through fsl analyze yet"]
 fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
-    let declaration = "hyper Saves using e over behaviours (v: V::Vault, w: N::Vault) \
-                       forall trace a of V forall trace b of N \
-                       { always[0,3] holds(v.l @ a = w.l @ b) }";
-    let (unit, model, other, snapshot) =
-        crate::hyper_world::two_model_request_files((1, 0), declaration);
-    let unit = unit.replace(
-        "profile p =",
-        "profile e = \"filament.temporal.event-position.false-extension/v1\";\nprofile p =",
+    const BASE_MODEL: &[u8] =
+        include_bytes!("../../../examples/config-version/model.semantic-ir.json");
+    const SAVING: &str = "example/device-saving";
+    const NORMAL: &str = "example/device-normal";
+    let model = |identity: &str| {
+        String::from_utf8(BASE_MODEL.to_vec())
+            .expect("model fixture is UTF-8")
+            .replace("example/config-version", identity)
+            .into_bytes()
+    };
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile e = \"filament.temporal.event-position.false-extension/v1\";\n\
+         model S = \"{SAVING}\";\n\
+         model N = \"{NORMAL}\";\n\
+         hyper Saves using e over behaviours (d: S::ConfigVersion, e: N::ConfigVersion) \
+         forall trace s of S forall trace n of N \
+         {{ always[0,3] holds(d.versionNumber @ s <= e.versionNumber @ n) }}\n"
     );
+    let model = model(SAVING);
+    let other = model(NORMAL);
+    let snapshot = config_version_snapshot(SAVING, NORMAL, 1, 0);
     let ws = Workspace::new("family-hyper-two-models");
     ws.write("other.json", &other);
     let mut models = request_members(None)["models"].clone();
-    models.as_array_mut().expect("models").push(
-        json!({"format": "semantic-ir/2.0.0", "source": {"file": "other.json",
-            "authority": "test", "identity": "vault-other-model", "document": "VaultOther",
-            "formal_revision": 1}}),
-    );
-    let run = analyze(&request_over(
+    let saving_source = &mut models.as_array_mut().expect("models")[0]["source"];
+    saving_source["identity"] = json!("device-saving-model");
+    saving_source["document"] = json!("DeviceSaving");
+    models.as_array_mut().expect("models").push(json!({
+        "format": "semantic-ir/2.0.0",
+        "source": {"file": "other.json", "authority": "test",
+            "identity": "device-normal-model", "document": "DeviceNormal",
+            "formal_revision": 1}
+    }));
+    let path = request_over(
         &ws,
         &unit,
         &model,
         &[snapshot],
         json!({"models": models, "items": [{"claim": "Saves"}]}),
-    ));
+    );
+    let run = analyze(&path);
     let item = run.item(0);
     assert_ne!(
         item["record"]["diagnostic"]["cause"], "not-yet-implemented",
         "{item}"
     );
     let verdict = label(&item);
-    assert!(matches!(verdict, "proved" | "refuted"), "{item}");
-    if verdict == "refuted" {
-        assert_eq!(item["replay"]["reproduced"], true, "{item}");
-    }
+    assert_eq!(
+        verdict, "refuted",
+        "the initial ConfigVersion values violate Saves: {item}"
+    );
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+}
+
+/// A shared initial snapshot carrying one ConfigVersion from each model.
+fn config_version_snapshot(
+    saving_package: &str,
+    normal_package: &str,
+    saving_version: i64,
+    normal_version: i64,
+) -> Vec<u8> {
+    let population = |package: &str, key: &str, version: i64| {
+        let identity = |suffix: &str| format!("ix://{package}/{suffix}");
+        json!({"population": identity("config_history"), "complete": true,
+            "objects": [{"key": key, "type": identity("ConfigVersion"),
+                "fields": {"versionNumber": {"integer": version.to_string()},
+                    "parent": {"absent": {}}}}]})
+    };
+    json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "test", "identity": "device-start"},
+        "observation": "current",
+        "model": {"identity": saving_package},
+        "anchor": {"kind": "initialization", "name": "start"},
+        "populations": [
+            population(saving_package, "saving", saving_version),
+            population(normal_package, "normal", normal_version)
+        ]
+    })
+    .to_string()
+    .into_bytes()
 }
 
 /// [`refinement_request`] with every item's `abstract_subject` removed, so
