@@ -170,10 +170,10 @@ pub fn evaluate_finite_hyper<T>(
         .iter()
         .all(|(kind, _)| *kind == FiniteQuantifier::Forall);
     match (truth, population.closure) {
-        (Truth::False(false_tuples), FiniteTraceClosure::Closed)
-        | (Truth::False(false_tuples), FiniteTraceClosure::Open)
-            if population.closure == FiniteTraceClosure::Closed || open_refutation_is_decisive =>
-        {
+        (Truth::False(false_tuples), FiniteTraceClosure::Closed) => {
+            FiniteHyperOutcome::Refuted { false_tuples }
+        }
+        (Truth::False(false_tuples), FiniteTraceClosure::Open) if open_refutation_is_decisive => {
             FiniteHyperOutcome::Refuted { false_tuples }
         }
         (Truth::False(_), FiniteTraceClosure::Open) => FiniteHyperOutcome::Inconclusive,
