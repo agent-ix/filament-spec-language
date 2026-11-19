@@ -1994,10 +1994,7 @@ impl Clocks<'_> {
         else {
             return false;
         };
-        if matches!(
-            form.expression.get(*operand).map(|n| n.node()),
-            Some(ExprNode::SelfRef)
-        ) {
+        if self_path(form, *operand).is_some() {
             return false;
         }
         match self.object_of(form, *operand, context, parents) {
