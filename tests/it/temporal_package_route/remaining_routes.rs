@@ -80,8 +80,7 @@ fn model_subject_window_aggregates_refuse_at_the_aggregate() {
         "identity":"example:rover/model", "document":"model", "formal_revision":1}});
     let request = |file: &str| {
         json!({"format":"native-compile/1", "request": {
-        "models":[model.clone()], "program":{"source":source(&corpus(file))},
-        "clocks":{"events":{"kind":"event_position","sequence_authority":"events"}}}})
+        "models":[model.clone()], "program":{"source":source(&corpus(file))}}})
     };
     let control = command::compile_outcome(&write(
         directory.path(),

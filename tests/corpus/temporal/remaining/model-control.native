@@ -1,6 +1,6 @@
 language "ix:native" edition "1-draft";
 profile e = "filament.temporal.event-position.false-extension/v1";
 model Fleet = "example/rover";
-temporal HasStopped using e over (r: Fleet::Rover) clock "events" on origin {
+temporal HasStopped using e over (r: Fleet::Rover) clock "model-steps" on origin {
   always[0,2] holds(r.stopped)
 }
