@@ -9,7 +9,7 @@
 //! domains are in `witness_member`.
 
 use super::frame::object;
-use super::frame_replay::{packet, request, unit_for, witness_source, Unit};
+use super::frame_replay::{config_version_unit, packet, request, unit_for, witness_source, Unit};
 use super::*;
 use crate::execute::{separate, settle_separation, stopped_reason, SeparationOutcome};
 use crate::proof_result::SettlementBasis;
@@ -1622,10 +1622,10 @@ fn basis_of(request: ClauseRunRequest) -> (SettlementBasis, bool) {
     (report.basis, report.witness.is_some())
 }
 
-/// TC-741 step 2 (FR-266-AC-2): FR-108's corpus requests carry
-/// `closed-scope` when evaluated and `unavailable` otherwise, never a
-/// witness; a `Function` selection carries `closed-scope` for its
-/// violation and `unavailable` for an admission refusal.
+/// TC-741 step 2 (FR-266-AC-2): decisive `ParentOrder` corpus reports carry
+/// their FR-265 comparison record, while unavailable reports carry none; a
+/// `Function` selection carries `closed-scope` for its violation and
+/// `unavailable` for an admission refusal.
 #[trace("TC-741", "FR-266-AC-2")]
 #[test]
 fn tc_741_corpus_and_function_reports_carry_their_basis() {
@@ -1633,17 +1633,44 @@ fn tc_741_corpus_and_function_reports_carry_their_basis() {
     let decisive_witness = (SettlementBasis::DecisiveWitness, true);
     let decisive_counterexample = (SettlementBasis::DecisiveCounterexample, true);
     let unavailable = (SettlementBasis::Unavailable, false);
-    assert_eq!(
-        basis_of(parent_order_request("healthy-parent", healthy(), true)),
-        decisive_witness
+    let unit = config_version_unit();
+    let implication = occurrence(&unit, "ParentOrder", &[], Operator::Binary);
+    let comparison = occurrence(&unit, "ParentOrder", &[1], Operator::Binary);
+    let assert_parent_order_record =
+        |request: ClauseRunRequest, basis, parent_version, child_version| {
+            let report = run_clause(request).expect("a well-formed request always reports");
+            assert_eq!(report.basis, basis);
+            let record = report.witness.expect("the decisive report has a witness record");
+            assert_eq!(record.deciding_comparison, Some(comparison.clone()));
+            let operands = record.operands.as_ref().expect("comparison operands");
+            assert!(crate::result::same_element(
+                &operands[0],
+                &integer(parent_version)
+            ));
+            assert!(crate::result::same_element(
+                &operands[1],
+                &integer(child_version)
+            ));
+            assert_eq!(
+                record.decision_path,
+                Some(vec![implication.clone(), comparison.clone()])
+            );
+        };
+    assert_parent_order_record(
+        parent_order_request("healthy-parent", healthy(), true),
+        decisive_witness.0,
+        1,
+        2,
     );
-    assert_eq!(
-        basis_of(parent_order_request(
+    assert_parent_order_record(
+        parent_order_request(
             "violating-parent",
             vec![object("root", 3, None), object("child", 2, Some("root"))],
-            true
-        )),
-        decisive_counterexample
+            true,
+        ),
+        decisive_counterexample.0,
+        3,
+        2,
     );
     let changed = run_config_version_invocation_report(
         config_version_request,
