@@ -20,13 +20,12 @@
 //! A row may also read a concrete population whole (FR-139, ADR-020 RM-8):
 //! the population's name, and the `count`, `sum`, `exists`, `all`, `only` and
 //! `seq` forms over it. S3 types them with the population's universe size `n`
-//! symbolic. A row whose value is a population name, a `count` or a `sum`
-//! records the bound that depends on `n` ([`PopulationUse`]), and
-//! [`CheckedRefinement::admit_universes`] checks it against the type of the
-//! row's use once a subject supplies the universes. A bound that depends on
-//! `n` through any other form is refused as not yet checked.
+//! symbolic. A row whose value depends on a population name, `count` or
+//! integer `sum` records the bound that depends on `n` ([`PopulationUse`]),
+//! and [`CheckedRefinement::admit_universes`] checks it against the type of
+//! the row's use once a subject supplies the universes.
 
-use filament_checked::node::{NodeKind, Visit};
+use filament_checked::node::{Arithmetic, NodeKind, Visit};
 mod catalog;
 mod history;
 mod internal_list;
@@ -4263,6 +4262,37 @@ fn population_uses(
             }
         }
     };
+    let population_query = |query: CheckedNode<'_>| {
+        let (key, value) = match query.kind() {
+            NodeKind::Query {
+                visit: Visit::Count,
+                source,
+                ..
+            } => (source_population(query.at(*source))?, PopulationValue::Count),
+            NodeKind::Query {
+                visit: Visit::Sum,
+                source,
+                body: summand,
+                ..
+            } => {
+                let summand = query.at(*summand);
+                let range = static_integer_range(
+                    (summand.kind(), summand.value_type()),
+                    &|id| {
+                        let found = body.node(id);
+                        Some((found.kind(), found.value_type()))
+                    },
+                )
+                .and_then(|(lower, upper)| IntegerInterval::new(lower, upper).ok())?;
+                (
+                    source_population(query.at(*source))?,
+                    PopulationValue::Sum { summand: range },
+                )
+            }
+            _ => return None,
+        };
+        Some((key, value))
+    };
     let (key, value) = match root.kind() {
         NodeKind::PopulationObjects { population } => {
             (population.clone(), PopulationValue::Objects)
@@ -4296,11 +4326,35 @@ fn population_uses(
             }
         }
         _ => {
-            return if relaxed_conforms(types, root.value_type(), required) {
-                Err(Some(depends_on_size()))
+            if let NodeKind::Arithmetic(Arithmetic::Add, left, right) = root.kind() {
+                let zero = |node: CheckedNode<'_>| {
+                    static_integer_range((node.kind(), node.value_type()), &|id| {
+                        let found = body.node(id);
+                        Some((found.kind(), found.value_type()))
+                    }) == Some((Integer::zero(), Integer::zero()))
+                };
+                if zero(root.at(*right))
+                    && let Some((key, value)) = population_query(root.at(*left))
+                {
+                    (key, value)
+                } else if zero(root.at(*left))
+                    && let Some((key, value)) = population_query(root.at(*right))
+                {
+                    (key, value)
+                } else {
+                    return if relaxed_conforms(types, root.value_type(), required) {
+                        Err(Some(depends_on_size()))
+                    } else {
+                        Err(None)
+                    };
+                }
             } else {
-                Err(None)
-            };
+                return if relaxed_conforms(types, root.value_type(), required) {
+                    Err(Some(depends_on_size()))
+                } else {
+                    Err(None)
+                };
+            }
         }
     };
     let Some(population) = scope.populations.iter().find(|found| found.key == key) else {

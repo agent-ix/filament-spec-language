@@ -271,17 +271,35 @@ fn a_count_used_as_a_boolean_refuses_whatever_the_universe_size() {
     assert_eq!(at, "count(s in R::slots where s.value = 1)");
 }
 
-/// FR-139 behavior: a bound that depends on a population's size through a
-/// form other than the row's whole value is refused as not yet checked,
-/// rather than admitted unchecked.
+/// FR-139: arithmetic around a population count preserves the size-dependent
+/// bound and checks at subject admission.
 #[trace("TC-544")]
 #[test]
-fn a_size_dependent_bound_inside_a_larger_expression_is_refused_as_unbuilt() {
-    let (code, cause, _) = only_refusal("used = count(s in R::slots where s.value = 1) + 0;");
-    assert_eq!(
-        (code, cause),
-        (Code::UnsupportedConstruct, Some("not-yet-implemented"))
+fn a_row_bound_depending_on_population_size_checks() {
+    let graph = checked(&ring_is_queue(
+        "used = count(s in R::slots where s.value = 1) + 0;",
+    ))
+    .graph;
+    let [refinement] = graph.refinements() else {
+        panic!("one refinement");
+    };
+    let [count] = queue_row(refinement, 1).population_uses() else {
+        panic!("the row retains its population-dependent count bound");
+    };
+    assert_eq!(count.value(), &PopulationValue::Count);
+    assert_eq!(count.admitted_type(2), Some(interval(0, 2)));
+    assert_eq!(refinement.admit_universes(&BTreeMap::from([(slots(), 2)])), Ok(()));
+}
+
+/// FR-139: `sum` refuses a Boolean summand as ill-typed.
+#[trace("TC-544")]
+#[test]
+fn sum_over_a_population_with_a_boolean_body_refuses_ill_typed() {
+    let (code, cause, at) = only_refusal(
+        "total = sum(s in R::slots where s.ring = self: s.value = 1);",
     );
+    assert_eq!((code, cause), (Code::IllTyped, Some("type-mismatch")));
+    assert_eq!(at, "s.value = 1");
 }
 
 /// FR-139 (admission): a population whose universe is smaller than the
