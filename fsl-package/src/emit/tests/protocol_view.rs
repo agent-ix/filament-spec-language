@@ -1183,6 +1183,16 @@ fn the_execution_view_reads_attempt_facts_from_package_nodes() {
         via_analysis_view.protocol.clause(),
         execution.protocol.clause()
     );
+    assert_eq!(
+        node(package, execution.protocol.over()).semantic_form,
+        "parameter"
+    );
+    assert_eq!(execution.finish.node.semantic_form, "obligation");
+    assert_eq!(
+        node(package, execution.finish.binder).semantic_form,
+        "parameter"
+    );
+    assert!(execution.finish.constraint.is_some());
     let attempt = execution
         .controls
         .iter()

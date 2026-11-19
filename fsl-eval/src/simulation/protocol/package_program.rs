@@ -92,6 +92,8 @@ pub struct PackageProtocolProgram<'a> {
     pub name: String,
     /// The `run` root control.
     pub root: ProtocolNodeId,
+    /// The checked `over` parameter node.
+    pub over: fsl_package::CheckedNodeId,
     /// The source/package-independent memory selection result.
     pub memory: ResolvedMemory,
     /// Every control, keyed by the package-local protocol node identity.
@@ -104,6 +106,8 @@ pub struct PackageProtocolProgram<'a> {
     evaluator: &'a dyn ModelEvaluator,
     /// The admitted `finish` slot, when its constraint is present.
     pub finish: Option<ProtocolSlot>,
+    /// The admitted `finish` result binder node.
+    pub finish_binder: fsl_package::CheckedNodeId,
 }
 
 /// Why a package protocol could not become an executable program.
@@ -371,23 +375,27 @@ impl<'a> PackageProtocolProgram<'a> {
                 })
             })
             .collect::<Result<Vec<_>, PackageProgramRefusal>>()?;
-        let finish = Some(
+        let finish = form.finish.constraint.map(|_| {
             input
                 .evaluator
-                .package_protocol_slot(form.protocol.finish(), "constraint", None)
+                .package_protocol_slot(&form.finish.node.node_id, "constraint", None)
                 .ok_or_else(|| {
-                    PackageProgramRefusal::MissingIdentity(form.protocol.finish().clone())
-                })?,
-        );
+                    PackageProgramRefusal::MissingIdentity(form.finish.node.node_id.clone())
+                })
+        });
+        let finish = finish.transpose()?;
+        let finish_binder = form.finish.binder.clone();
         Ok(Self {
             name: form.name.clone(),
             root,
+            over: form.protocol.over().clone(),
             memory,
             controls,
             roles,
             form,
             evaluator: input.evaluator,
             finish,
+            finish_binder,
         })
     }
 

@@ -238,6 +238,7 @@ pub struct ProtocolView<'p> {
     compensations: Vec<&'p CheckedNodeId>,
     requirements: Vec<&'p CheckedNodeId>,
     run: &'p CheckedNodeId,
+    over: &'p CheckedNodeId,
     finish: &'p CheckedNodeId,
     terminal: Option<&'p CheckedNodeId>,
     scheduling: Option<Scheduling>,
@@ -292,9 +293,22 @@ pub struct ProtocolExecutionView<'p> {
     pub channels: Vec<&'p CheckedSemanticNodeV2>,
     /// The queue nodes in the package's node order.
     pub queues: Vec<&'p CheckedSemanticNodeV2>,
+    /// The admitted `finish` obligation and its binder/constraint slots.
+    pub finish: ProtocolFinishView<'p>,
     /// Every control in the `run` tree, in the same order as
     /// [`ProtocolView::controls`].
     pub controls: Vec<ProtocolControlView<'p>>,
+}
+
+/// The package-native `finish` obligation used by protocol execution.
+#[derive(Clone, Debug)]
+pub struct ProtocolFinishView<'p> {
+    /// The checked `finish` obligation node.
+    pub node: &'p CheckedSemanticNodeV2,
+    /// The finish result binder node.
+    pub binder: &'p CheckedNodeId,
+    /// The optional finish constraint expression node.
+    pub constraint: Option<&'p CheckedNodeId>,
 }
 
 impl<'p> ProtocolView<'p> {
@@ -339,6 +353,11 @@ impl<'p> ProtocolView<'p> {
     /// The root `run` control.
     pub fn run(&self) -> &'p CheckedNodeId {
         self.run
+    }
+
+    /// The `over` parameter binder.
+    pub fn over(&self) -> &'p CheckedNodeId {
+        self.over
     }
 
     /// The `finish` obligation.
@@ -618,6 +637,7 @@ pub fn protocol_view<'p>(
     let index = Index::new(package);
     let clause = index.clause(protocol)?;
     let run = single(clause, "run")?;
+    let over = single(clause, "over")?;
     let finish = single(clause, "finish")?;
     let terminal = optional(clause, "terminal")?
         .map(|term| reference(term).ok_or_else(|| malformed(&clause.node_id, "terminal")))
@@ -643,6 +663,7 @@ pub fn protocol_view<'p>(
         compensations: references(clause, "compensations")?,
         requirements: references(clause, "requirements")?,
         run,
+        over,
         finish,
         terminal,
         scheduling,
@@ -704,6 +725,19 @@ pub fn protocol_execution_view<'p>(
         .collect::<Result<Vec<_>, ViewRefusal>>()?;
     let channels = node_list(view.channels(), "channels")?;
     let queues = node_list(view.queues(), "queues")?;
+    let finish_node = nodes
+        .get(view.finish())
+        .copied()
+        .ok_or_else(|| missing(view.clause, "finish"))?;
+    let finish_binder = single(finish_node, "binder")?;
+    let finish_constraint = optional(finish_node, "constraint")?
+        .map(|term| reference(term).ok_or_else(|| malformed(&finish_node.node_id, "constraint")))
+        .transpose()?;
+    let finish = ProtocolFinishView {
+        node: finish_node,
+        binder: finish_binder,
+        constraint: finish_constraint,
+    };
     drop(node_list);
     let name = nodes
         .get(&view.clause)
@@ -732,6 +766,7 @@ pub fn protocol_execution_view<'p>(
         roles,
         channels,
         queues,
+        finish,
         controls,
     })
 }
