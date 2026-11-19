@@ -47,6 +47,17 @@ fn run(unit: &str, with_model: bool, member: (&str, Value)) -> (u8, Value) {
     };
     let mut request = json!({"models": models, "program": {"source": source("unit.native")}});
     request[member.0] = member.1;
+    if request["model_based_test"]["initial"].is_string() {
+        let snapshot_path = directory.path().join("spine-snapshot.json");
+        let bytes = std::fs::read(&snapshot_path).expect("the spine snapshot exists");
+        let mut snapshot: Value = serde_json::from_slice(&bytes).expect("a JSON snapshot");
+        snapshot["anchor"] = json!({"kind": "initialization", "name": "start"});
+        std::fs::write(
+            snapshot_path,
+            serde_json::to_vec(&snapshot).expect("the snapshot serializes"),
+        )
+        .expect("the initial snapshot is written");
+    }
     write_request(
         directory.path(),
         &json!({"format": "native-run/1", "request": request}),
