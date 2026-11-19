@@ -14,6 +14,7 @@
 use filament_exact::{Cancel, ObjectReference, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
+use fsl_eval::simulation::model::PackageModelInput;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PendingClauseForm,
     TimedState, TimedSystem,
@@ -23,31 +24,30 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
     CertificateCheckLimits, CertificateChecker, CertificateRule, CertifiedItem, GraphEvidence,
-    GraphEvidenceEnvelope, GraphReplayResult, GraphReplaySettlement,
-    ModelTraceSubject, ProfileSelection, ReplayLimits, ReplayPackage, ReplayRefusal,
-    ReplayRequestWire, ReplayResult, ReplaySource, RequestTargetWire, StateGraphCertificateForm,
-    StateGraphInstanceOutcome, StateGraphOutcome, StateGraphPropertyForm, StateGraphRecord,
-    TerminalValue, TrapClosure, WitnessPath, ZoneCertificateRequest, ZoneCertificateVerdict,
+    GraphEvidenceEnvelope, GraphReplayResult, GraphReplaySettlement, ModelTraceSubject,
+    ProfileSelection, ReplayLimits, ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplayResult,
+    ReplaySource, RequestTargetWire, StateGraphCertificateForm, StateGraphInstanceOutcome,
+    StateGraphOutcome, StateGraphPropertyForm, StateGraphRecord, TerminalValue, TrapClosure,
+    WitnessPath, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
+use fsl_route::StateGraphFormKind;
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
-use fsl_route::StateGraphFormKind;
-use fsl_eval::simulation::model::PackageModelInput;
 use fsl_semantics::check::{Capability, CheckedStateGraphClaim, DeclarationFamily, StateGraphForm};
 
 use super::items::{INVALID_VALUE, model_refusal};
+use super::timed_item::subject_refusal;
 use super::{
     AnalyzeItem, AnalyzeLimits, EngineReport, GraphReport, Refusal, SourceProvision,
     SubjectBinding, TemporalItem,
 };
 use crate::model_check::manifest as en1;
-use super::timed_item::subject_refusal;
 use crate::model_check::{
     StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest, check_and_settle_state_graph,
 };
 use crate::zone_check::{
-    certificate_item, decide_timed_state_graph, explore_timed_state_graph,
-    TimedStateGraphDecision, ZoneCheckLimit, ZoneCheckRefusal, ZoneStop,
+    TimedStateGraphDecision, ZoneCheckLimit, ZoneCheckRefusal, ZoneStop, certificate_item,
+    decide_timed_state_graph, explore_timed_state_graph,
 };
 
 /// The property form of a checked claim.
@@ -131,6 +131,14 @@ struct Run<'r, 'a> {
 }
 
 impl<'a> Run<'_, 'a> {
+    /// The checked package of a source-route run; the package route has none.
+    fn package(&self) -> Option<&'a CheckedPackage> {
+        match self.source {
+            Source::Checked { package, .. } => Some(package),
+            Source::Bytes { .. } => None,
+        }
+    }
+
     fn simulation(&self) -> ModelSimulationRequest<'a> {
         ModelSimulationRequest {
             input: self.input.clone(),
@@ -255,7 +263,7 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
 }
 
 fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
-    let Some(model) = super::timed_item::timed_model(read.package) else {
+    let Some(model) = read.package().and_then(super::timed_item::timed_model) else {
         return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
     };
     let system = match ModelSystem::new(read.simulation()) {
@@ -274,10 +282,12 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         return EngineReport::Refused(refusal);
     }
     let instances = match read.claim.over() {
-        Some(parameter) => match system.instances(&ValueType::Reference(parameter.object.clone())) {
-            Ok(instances) => instances.into_iter().map(Some).collect::<Vec<_>>(),
-            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-        },
+        Some(parameter) => {
+            match system.instances(&ValueType::Reference(parameter.object.clone())) {
+                Ok(instances) => instances.into_iter().map(Some).collect::<Vec<_>>(),
+                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+            }
+        }
         None => vec![None],
     };
     if instances.is_empty() {
@@ -334,12 +344,12 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     for instance in instances {
         let over = match (read.claim.over(), instance.as_ref()) {
             (None, None) => None,
-            (Some(parameter), Some(instance)) => match system
-                .bound_reference(parameter.object.clone(), instance)
-            {
-                Ok(reference) => Some(reference),
-                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-            },
+            (Some(parameter), Some(instance)) => {
+                match system.bound_reference(parameter.object.clone(), instance) {
+                    Ok(reference) => Some(reference),
+                    Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+                }
+            }
             _ => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         };
         let (source, target) = match read.claim.form() {
@@ -347,27 +357,19 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             StateGraphForm::AlwaysPossible { from, target } => (Some(from), target),
             StateGraphForm::UniquePath { from, to } => (Some(from), to),
         };
-        let target_values = match digital_predicate_values(
-            &system,
-            &graph.nodes,
-            target,
-            over.as_ref(),
-            cancel,
-        ) {
-            Ok(values) => values,
-            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-        };
-        let source_values = match source {
-            Some(source) => match digital_predicate_values(
-                &system,
-                &graph.nodes,
-                source,
-                over.as_ref(),
-                cancel,
-            ) {
-                Ok(values) => Some(values),
+        let target_values =
+            match digital_predicate_values(&system, &graph.nodes, target, over.as_ref(), cancel) {
+                Ok(values) => values,
                 Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-            },
+            };
+        let source_values = match source {
+            Some(source) => {
+                match digital_predicate_values(&system, &graph.nodes, source, over.as_ref(), cancel)
+                {
+                    Ok(values) => Some(values),
+                    Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+                }
+            }
             None => None,
         };
         let decision = match read.claim.form() {
@@ -385,16 +387,22 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         };
         let held = matches!(decision, DigitalDecision::Holds(_));
         let evidence = match decision {
-            DigitalDecision::Holds(witnesses) if matches!(read.claim.form(), StateGraphForm::Possible { .. }) => {
+            DigitalDecision::Holds(witnesses)
+                if matches!(read.claim.form(), StateGraphForm::Possible { .. }) =>
+            {
                 let paths = witnesses
                     .into_iter()
                     .map(|(initial, edges)| {
-                        digital_model_path(&timed, &graph, initial, &edges)
-                            .map(|path| (WitnessPath::Path(path), fsl_replay::WitnessSource::Explored))
+                        digital_model_path(&timed, &graph, initial, &edges).map(|path| {
+                            (WitnessPath::Path(path), fsl_replay::WitnessSource::Explored)
+                        })
                     })
                     .collect::<Result<Vec<_>, _>>();
                 match paths {
-                    Ok(paths) => Some(GraphEvidence::Witness { paths, over: instance.clone() }),
+                    Ok(paths) => Some(GraphEvidence::Witness {
+                        paths,
+                        over: instance.clone(),
+                    }),
                     Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 }
             }
@@ -404,9 +412,18 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                     Ok(stem) => stem,
                     Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 };
-                Some(GraphEvidence::Trap { stem, closure: TrapClosure::StateGraph, over: instance.clone() })
+                Some(GraphEvidence::Trap {
+                    stem,
+                    closure: TrapClosure::StateGraph,
+                    over: instance.clone(),
+                })
             }
-            DigitalDecision::PathPair { initial, stem, first, second } => {
+            DigitalDecision::PathPair {
+                initial,
+                stem,
+                first,
+                second,
+            } => {
                 let stem = match digital_model_path(&timed, &graph, initial, &stem) {
                     Ok(stem) => stem,
                     Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
@@ -419,7 +436,12 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                     Ok(steps) => steps,
                     Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 };
-                Some(GraphEvidence::PathPair { stem, first, second, over: instance.clone() })
+                Some(GraphEvidence::PathPair {
+                    stem,
+                    first,
+                    second,
+                    over: instance.clone(),
+                })
             }
         };
         if let Some(evidence) = evidence.as_ref() {
@@ -471,7 +493,10 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                 fsl_replay::Truth::Violated
             },
             method: fsl_replay::EXPLICIT_STATE,
-            max_depth: read.form.max_depth.and_then(|depth| u64::try_from(depth).ok()),
+            max_depth: read
+                .form
+                .max_depth
+                .and_then(|depth| u64::try_from(depth).ok()),
             limits: read.form.limits.used(),
             limit_reached: None,
             seed: read.form.seed.unwrap_or_default(),
@@ -578,8 +603,16 @@ fn digital_path_to(
 
 enum DigitalDecision {
     Holds(Vec<(usize, Vec<usize>)>),
-    Trap { initial: usize, stem: Vec<usize> },
-    PathPair { initial: usize, stem: Vec<usize>, first: Vec<usize>, second: Vec<usize> },
+    Trap {
+        initial: usize,
+        stem: Vec<usize>,
+    },
+    PathPair {
+        initial: usize,
+        stem: Vec<usize>,
+        first: Vec<usize>,
+        second: Vec<usize>,
+    },
 }
 
 fn digital_possible_paths(
@@ -589,7 +622,10 @@ fn digital_possible_paths(
     let mut paths = Vec::new();
     for (initial, &node) in graph.initials.iter().enumerate() {
         let Some(path) = digital_path_to(graph, node, target) else {
-            return DigitalDecision::Trap { initial, stem: Vec::new() };
+            return DigitalDecision::Trap {
+                initial,
+                stem: Vec::new(),
+            };
         };
         paths.push((initial, path));
     }
@@ -618,7 +654,12 @@ fn digital_unique_path_failure(
     source: &[bool],
     target: &[bool],
 ) -> DigitalDecision {
-    for node in source.iter().copied().enumerate().filter_map(|(node, yes)| yes.then_some(node)) {
+    for node in source
+        .iter()
+        .copied()
+        .enumerate()
+        .filter_map(|(node, yes)| yes.then_some(node))
+    {
         let dfa = digital_determinize(graph, node, target);
         let words = digital_first_accepted_words(&dfa);
         if words.len() != 1 {
@@ -631,7 +672,10 @@ fn digital_unique_path_failure(
                     digital_path_for_word(graph, node, second, target),
                 ) {
                     (Some(first), Some(second)) => DigitalDecision::PathPair {
-                        initial, stem, first, second,
+                        initial,
+                        stem,
+                        first,
+                        second,
                     },
                     _ => DigitalDecision::Holds(Vec::new()),
                 },
@@ -643,7 +687,12 @@ fn digital_unique_path_failure(
 }
 
 struct DigitalDfa {
-    transitions: Vec<Vec<(filament_semantic_value::model_transition::ModelTransition, usize)>>,
+    transitions: Vec<
+        Vec<(
+            filament_semantic_value::model_transition::ModelTransition,
+            usize,
+        )>,
+    >,
     accepting: Vec<bool>,
 }
 
@@ -665,7 +714,9 @@ fn digital_determinize(
         for node in subset {
             accepting[at] |= target.get(node).copied().unwrap_or(false);
             for edge in graph.edges.iter().filter(|edge| edge.from == node) {
-                let Some(symbol) = &edge.transition else { continue };
+                let Some(symbol) = &edge.transition else {
+                    continue;
+                };
                 if let Some((_, destinations)) = symbols.iter_mut().find(|(old, _)| old == symbol) {
                     destinations.push(edge.to);
                 } else {
@@ -675,18 +726,24 @@ fn digital_determinize(
         }
         for (symbol, destinations) in symbols {
             let next = digital_epsilon_closure(graph, destinations);
-            let target_state = subsets.iter().position(|old| *old == next).unwrap_or_else(|| {
-                let index = subsets.len();
-                subsets.push(next);
-                transitions.push(Vec::new());
-                accepting.push(false);
-                index
-            });
+            let target_state = subsets
+                .iter()
+                .position(|old| *old == next)
+                .unwrap_or_else(|| {
+                    let index = subsets.len();
+                    subsets.push(next);
+                    transitions.push(Vec::new());
+                    accepting.push(false);
+                    index
+                });
             transitions[at].push((symbol, target_state));
         }
         at += 1;
     }
-    DigitalDfa { transitions, accepting }
+    DigitalDfa {
+        transitions,
+        accepting,
+    }
 }
 
 fn digital_epsilon_closure(
@@ -697,17 +754,30 @@ fn digital_epsilon_closure(
     let mut queue = std::collections::VecDeque::new();
     for start in starts {
         if let Some(mark) = seen.get_mut(start) {
-            if !*mark { *mark = true; queue.push_back(start); }
-        }
-    }
-    while let Some(node) = queue.pop_front() {
-        for edge in graph.edges.iter().filter(|edge| edge.from == node && edge.transition.is_none()) {
-            if let Some(mark) = seen.get_mut(edge.to) {
-                if !*mark { *mark = true; queue.push_back(edge.to); }
+            if !*mark {
+                *mark = true;
+                queue.push_back(start);
             }
         }
     }
-    seen.iter().enumerate().filter_map(|(node, yes)| yes.then_some(node)).collect()
+    while let Some(node) = queue.pop_front() {
+        for edge in graph
+            .edges
+            .iter()
+            .filter(|edge| edge.from == node && edge.transition.is_none())
+        {
+            if let Some(mark) = seen.get_mut(edge.to) {
+                if !*mark {
+                    *mark = true;
+                    queue.push_back(edge.to);
+                }
+            }
+        }
+    }
+    seen.iter()
+        .enumerate()
+        .filter_map(|(node, yes)| yes.then_some(node))
+        .collect()
 }
 
 fn digital_first_accepted_words(
@@ -722,7 +792,9 @@ fn digital_first_accepted_words(
                 changed = true;
             }
         }
-        if !changed { break; }
+        if !changed {
+            break;
+        }
     }
     let max_len = dfa.transitions.len().saturating_mul(2).saturating_add(2);
     let mut queue = std::collections::VecDeque::from([(0_usize, Vec::new())]);
@@ -730,9 +802,13 @@ fn digital_first_accepted_words(
     while let Some((state, word)) = queue.pop_front() {
         if dfa.accepting[state] {
             words.push(word.clone());
-            if words.len() == 2 { break; }
+            if words.len() == 2 {
+                break;
+            }
         }
-        if word.len() >= max_len { continue; }
+        if word.len() >= max_len {
+            continue;
+        }
         for (symbol, next_state) in &dfa.transitions[state] {
             if can_accept[*next_state] {
                 let mut next = word.clone();
@@ -757,13 +833,20 @@ fn digital_path_for_word(
         if at == word.len() && target.get(node).copied().unwrap_or(false) {
             return Some(path);
         }
-        for (edge_index, edge) in graph.edges.iter().enumerate().filter(|(_, edge)| edge.from == node) {
+        for (edge_index, edge) in graph
+            .edges
+            .iter()
+            .enumerate()
+            .filter(|(_, edge)| edge.from == node)
+        {
             let next_at = match &edge.transition {
                 None => at,
                 Some(symbol) if word.get(at) == Some(symbol) => at + 1,
                 Some(_) => continue,
             };
-            if seen.get(edge.to)?.get(next_at).copied()? { continue; }
+            if seen.get(edge.to)?.get(next_at).copied()? {
+                continue;
+            }
             seen[edge.to][next_at] = true;
             let mut next_path = path.clone();
             next_path.push(edge_index);
@@ -775,19 +858,28 @@ fn digital_path_for_word(
 
 fn digital_predecessors_of(graph: &fsl_replay::DigitalStateGraph, target: &[bool]) -> Vec<bool> {
     let mut reaches = target.to_vec();
-    let mut queue: std::collections::VecDeque<usize> = reaches.iter().enumerate()
-        .filter_map(|(index, yes)| yes.then_some(index)).collect();
+    let mut queue: std::collections::VecDeque<usize> = reaches
+        .iter()
+        .enumerate()
+        .filter_map(|(index, yes)| yes.then_some(index))
+        .collect();
     while let Some(node) = queue.pop_front() {
         for edge in graph.edges.iter().filter(|edge| edge.to == node) {
             if let Some(mark) = reaches.get_mut(edge.from) {
-                if !*mark { *mark = true; queue.push_back(edge.from); }
+                if !*mark {
+                    *mark = true;
+                    queue.push_back(edge.from);
+                }
             }
         }
     }
     reaches
 }
 
-fn digital_stem_to(graph: &fsl_replay::DigitalStateGraph, target: usize) -> Option<(usize, Vec<usize>)> {
+fn digital_stem_to(
+    graph: &fsl_replay::DigitalStateGraph,
+    target: usize,
+) -> Option<(usize, Vec<usize>)> {
     for (initial, &start) in graph.initials.iter().enumerate() {
         let mut parent = vec![None; graph.nodes.len()];
         let mut seen = vec![false; graph.nodes.len()];
@@ -805,7 +897,12 @@ fn digital_stem_to(graph: &fsl_replay::DigitalStateGraph, target: usize) -> Opti
                 path.reverse();
                 return Some((initial, path));
             }
-            for (edge_index, edge) in graph.edges.iter().enumerate().filter(|(_, edge)| edge.from == node) {
+            for (edge_index, edge) in graph
+                .edges
+                .iter()
+                .enumerate()
+                .filter(|(_, edge)| edge.from == node)
+            {
                 if !seen.get(edge.to).copied().unwrap_or(true) {
                     seen[edge.to] = true;
                     parent[edge.to] = Some((node, edge_index));
@@ -892,7 +989,10 @@ fn no_timed_graph_decision(
         execution: fsl_replay::Execution::Completed,
         truth: fsl_replay::Truth::Pending,
         method: fsl_replay::EXPLICIT_STATE,
-        max_depth: read.form.max_depth.and_then(|depth| u64::try_from(depth).ok()),
+        max_depth: read
+            .form
+            .max_depth
+            .and_then(|depth| u64::try_from(depth).ok()),
         limits: read.form.limits.used(),
         limit_reached: None,
         seed: read.form.seed.unwrap_or_default(),
@@ -912,7 +1012,7 @@ fn no_timed_graph_decision(
 }
 
 fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
-    let Some(model) = super::timed_item::timed_model(read.package) else {
+    let Some(model) = read.package().and_then(super::timed_item::timed_model) else {
         return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
     };
     let simulation = read.simulation();
@@ -929,10 +1029,12 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
     };
     let instances = match read.claim.over() {
-        Some(parameter) => match system.instances(&ValueType::Reference(parameter.object.clone())) {
-            Ok(instances) => instances.into_iter().map(Some).collect::<Vec<_>>(),
-            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-        },
+        Some(parameter) => {
+            match system.instances(&ValueType::Reference(parameter.object.clone())) {
+                Ok(instances) => instances.into_iter().map(Some).collect::<Vec<_>>(),
+                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+            }
+        }
         None => vec![None],
     };
     if instances.is_empty() {
@@ -952,18 +1054,17 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                 ZoneCheckLimit::MaxSymbolicStates(value) => {
                     (fsl_replay::ModelCheckLimit::MaxStates, value)
                 }
-                ZoneCheckLimit::MaxSymbolicTransitions(value) => {
-                    (fsl_replay::ModelCheckLimit::ZoneMaxSymbolicTransitions, value)
-                }
+                ZoneCheckLimit::MaxSymbolicTransitions(value) => (
+                    fsl_replay::ModelCheckLimit::ZoneMaxSymbolicTransitions,
+                    value,
+                ),
                 ZoneCheckLimit::MaxAutomatonStates(value) => {
                     (fsl_replay::ModelCheckLimit::ZoneMaxAutomatonStates, value)
                 }
                 ZoneCheckLimit::MaxZoneBytes(value) => {
                     (fsl_replay::ModelCheckLimit::ZoneMaxZoneBytes, value)
                 }
-                ZoneCheckLimit::MaxClocks(value) => {
-                    (fsl_replay::ModelCheckLimit::MaxClocks, value)
-                }
+                ZoneCheckLimit::MaxClocks(value) => (fsl_replay::ModelCheckLimit::MaxClocks, value),
             };
             return EngineReport::Refused(Refusal::Incomplete(
                 fsl_replay::IncompleteCause::LimitReached { limit, value },
@@ -987,19 +1088,19 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     for instance in instances {
         let over = match (read.claim.over(), instance.as_ref()) {
             (None, None) => None,
-            (Some(parameter), Some(instance)) => match system
-                .bound_reference(parameter.object.clone(), instance)
-            {
-                Ok(reference) => Some(reference),
-                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-            },
+            (Some(parameter), Some(instance)) => {
+                match system.bound_reference(parameter.object.clone(), instance) {
+                    Ok(reference) => Some(reference),
+                    Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+                }
+            }
             _ => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         };
-        let decision = match decide_timed_state_graph(&system, &graph, read.claim, over.as_ref(), cancel)
-        {
-            Ok(decision) => decision,
-            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-        };
+        let decision =
+            match decide_timed_state_graph(&system, &graph, read.claim, over.as_ref(), cancel) {
+                Ok(decision) => decision,
+                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+            };
         let held = matches!(decision, TimedStateGraphDecision::Holds { .. });
         let form = certificate_form(read.claim.form());
         let ef_nodes = match &decision {
@@ -1051,14 +1152,14 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         if (held && !accepted) || (!held && !refuted) {
             return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
         }
-        let evidence = match timed_evidence(&timed, &graph, read.claim, &decision, instance.clone()) {
+        let evidence = match timed_evidence(&timed, &graph, read.claim, &decision, instance.clone())
+        {
             Ok(evidence) => evidence,
             Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         };
         if let Some(evidence) = evidence.as_ref() {
             match replay_instance(read, evidence.clone(), Some(&certificate), false) {
-                Ok(replay)
-                    if replay.settlement == GraphReplaySettlement::Reproduced => {}
+                Ok(replay) if replay.settlement == GraphReplaySettlement::Reproduced => {}
                 _ => {
                     return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
                 }
@@ -1108,7 +1209,10 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                 fsl_replay::Truth::Violated
             },
             method: fsl_replay::EXPLICIT_STATE,
-            max_depth: read.form.max_depth.and_then(|depth| u64::try_from(depth).ok()),
+            max_depth: read
+                .form
+                .max_depth
+                .and_then(|depth| u64::try_from(depth).ok()),
             limits: limit_values,
             limit_reached: None,
             seed: read.form.seed.unwrap_or_default(),
@@ -1173,12 +1277,12 @@ fn timed_evidence(
                 .iter()
                 .enumerate()
                 .map(|(initial, edges)| {
-                    let steps = crate::zone_check::concretise_timed_state_graph_path(
-                        timed, graph, edges,
-                    )?;
+                    let steps =
+                        crate::zone_check::concretise_timed_state_graph_path(timed, graph, edges)?;
                     let path = fsl_replay::ModelPath {
-                        initial: u32::try_from(initial)
-                            .map_err(|_| crate::zone_check::ZoneCheckRefusal::Fault("state-graph-initial"))?,
+                        initial: u32::try_from(initial).map_err(|_| {
+                            crate::zone_check::ZoneCheckRefusal::Fault("state-graph-initial")
+                        })?,
                         steps,
                     };
                     Ok((WitnessPath::Path(path), fsl_replay::WitnessSource::Explored))
@@ -1192,12 +1296,10 @@ fn timed_evidence(
         } => {
             let stem = model_path(timed, graph, stem, *node)?;
             if let Some((first, second)) = paths {
-                let first = crate::zone_check::concretise_timed_state_graph_path(
-                    timed, graph, first,
-                )?;
-                let second = crate::zone_check::concretise_timed_state_graph_path(
-                    timed, graph, second,
-                )?;
+                let first =
+                    crate::zone_check::concretise_timed_state_graph_path(timed, graph, first)?;
+                let second =
+                    crate::zone_check::concretise_timed_state_graph_path(timed, graph, second)?;
                 Ok(Some(GraphEvidence::PathPair {
                     stem,
                     first,
@@ -1355,16 +1457,10 @@ fn replay_instance(
         .ok_or_else(|| fault("graph-claim-occurrence"))?;
     let node = occurrence.node().clone();
     let (bytes, dependencies, byte_provision) = match read.source {
-        Source::Checked {
-            package,
-            provision,
-        } => {
-            let emission = fsl_package::emit_checked_with_temporal_selections(
-                package,
-                &[],
-                read.limits.emit,
-            )
-            .map_err(|_| fault("package-emission"))?;
+        Source::Checked { package, provision } => {
+            let emission =
+                fsl_package::emit_checked_with_temporal_selections(package, &[], read.limits.emit)
+                    .map_err(|_| fault("package-emission"))?;
             (
                 emission.package().bytes().to_vec(),
                 super::request::dependency_wires(package),
@@ -1413,7 +1509,7 @@ fn replay_instance(
             .collect(),
     };
     let timed = (digital || certificate.is_some())
-        .then(|| super::timed_item::timed_model(read.package))
+        .then(|| read.package().and_then(super::timed_item::timed_model))
         .flatten()
         .map(|model| fsl_replay::TimedReplay {
             model,
@@ -1531,6 +1627,8 @@ impl<'a> PackageStateGraphSubject<'a> {
                         limits: self.limits,
                         claim: &self.claim,
                         form: &self.form,
+                        timed: false,
+                        digital: false,
                     },
                     cancel,
                 )

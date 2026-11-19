@@ -4,8 +4,8 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use filament_exact::ObjectReference;
-use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::catalog::Category;
+use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::simulation::model::{
     ModelSimState, ModelSimulationRequest, ModelSystem, PredicateReading, TerminalClass,
     TimedSystem,
@@ -16,6 +16,9 @@ use fsl_semantics::check::{
 };
 
 use crate::bounds::ReplayLimits;
+use crate::certificate::zone_certificate::{
+    CertificateItem, CertifiedItem, ZoneCertificateRequest, ZoneCertificateVerdict,
+};
 use crate::execute::{ReplayRefusal, recompile_with_temporal_selections, request_limits};
 use crate::model_check::counterexample::ModelStep;
 use crate::model_check::graph_settle::{GraphReplayResult, GraphReplaySettlement};
@@ -25,9 +28,6 @@ use crate::model_check::replay::ModelTraceSubject;
 use crate::model_check::replay::{ModelTraceRefusal, fault, refused};
 use crate::model_check::state_graph::{GraphEvidence, ModelPath, TrapClosure, WitnessPath};
 use crate::request::{ReplayRequest, ReplayRequestWire};
-use crate::certificate::zone_certificate::{
-    CertificateItem, CertifiedItem, ZoneCertificateRequest, ZoneCertificateVerdict,
-};
 use crate::result::{DisagreementCause, Verdict};
 use crate::witness::ReplaySource;
 use filament_exact::Cancel;
@@ -203,74 +203,76 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
         })
         .transpose()?;
     let model_limits = caller.engines.model_check;
-    let state_graph_truth = if let (Some(claim), Some(certificate)) =
-        (claim, envelope.zone_certificate())
-    {
-        let reading = subject
-            .timed
-            .as_ref()
-            .ok_or(ReplayRefusal::ModelGraphMismatch {
-                member: "timed_subject",
-            })?;
-        let over = graph_over(&system, claim, envelope.family_payload())?;
-        let verdict = crate::check_zone_certificate(
-            ZoneCertificateRequest {
-                simulation,
-                model: &reading.model,
-                max_clocks: reading.max_clocks,
-                item: CertifiedItem::StateGraph { claim, over: over.as_ref() },
-            },
-            &certificate.obligation,
-            |obligation| match &obligation.kind {
-                fsl_route::deadlock::ObligationKind::StateGraphAuthored(occurrence) => {
-                    CertificateItem::StateGraph(occurrence)
-                }
-                _ => CertificateItem::Other,
-            },
-            certificate,
-            crate::CertificateCheckLimits::default(),
-            cancel,
-        )
-        .map_err(|_| ReplayRefusal::ModelGraphMismatch {
-            member: "zone_certificate",
-        })?;
-        match verdict {
-            ZoneCertificateVerdict::Accepted => Some(true),
-            ZoneCertificateVerdict::Rejected(rejection)
-                if matches!(
-                    rejection.rule,
-                    crate::CertificateRule::InitialMissing
-                        | crate::CertificateRule::SuccessorMissing
-                        | crate::CertificateRule::CountBroken
-                ) =>
-            {
-                Some(false)
-            }
-            _ => {
-                return Err(ReplayRefusal::ModelGraphMismatch {
-                    member: "zone_certificate",
-                });
-            }
-        }
-    } else if let (Some(claim), Some(timed_replay), Some(timed)) =
-        (claim, subject.timed.as_ref(), timed.as_ref())
-    {
-        if timed_replay.digital {
-            Some(digital_state_graph_truth(
-                &system,
-                timed,
-                claim,
-                envelope.family_payload(),
-                u64::try_from(model_limits.limits.max_states).unwrap_or(u64::MAX),
-                u64::try_from(model_limits.limits.max_transitions).unwrap_or(u64::MAX),
+    let state_graph_truth =
+        if let (Some(claim), Some(certificate)) = (claim, envelope.zone_certificate()) {
+            let reading = subject
+                .timed
+                .as_ref()
+                .ok_or(ReplayRefusal::ModelGraphMismatch {
+                    member: "timed_subject",
+                })?;
+            let over = graph_over(&system, claim, envelope.family_payload())?;
+            let verdict = crate::check_zone_certificate(
+                ZoneCertificateRequest {
+                    simulation,
+                    model: &reading.model,
+                    max_clocks: reading.max_clocks,
+                    item: CertifiedItem::StateGraph {
+                        claim,
+                        over: over.as_ref(),
+                    },
+                },
+                &certificate.obligation,
+                |obligation| match &obligation.kind {
+                    fsl_route::deadlock::ObligationKind::StateGraphAuthored(occurrence) => {
+                        CertificateItem::StateGraph(occurrence)
+                    }
+                    _ => CertificateItem::Other,
+                },
+                certificate,
+                crate::CertificateCheckLimits::default(),
                 cancel,
-            )?)
+            )
+            .map_err(|_| ReplayRefusal::ModelGraphMismatch {
+                member: "zone_certificate",
+            })?;
+            match verdict {
+                ZoneCertificateVerdict::Accepted => Some(true),
+                ZoneCertificateVerdict::Rejected(rejection)
+                    if matches!(
+                        rejection.rule,
+                        crate::CertificateRule::InitialMissing
+                            | crate::CertificateRule::SuccessorMissing
+                            | crate::CertificateRule::CountBroken
+                    ) =>
+                {
+                    Some(false)
+                }
+                _ => {
+                    return Err(ReplayRefusal::ModelGraphMismatch {
+                        member: "zone_certificate",
+                    });
+                }
+            }
+        } else if let (Some(claim), Some(timed_replay), Some(timed)) =
+            (claim, subject.timed.as_ref(), timed.as_ref())
+        {
+            if timed_replay.digital {
+                Some(digital_state_graph_truth(
+                    &system,
+                    timed,
+                    claim,
+                    envelope.family_payload(),
+                    u64::try_from(model_limits.limits.max_states).unwrap_or(u64::MAX),
+                    u64::try_from(model_limits.limits.max_transitions).unwrap_or(u64::MAX),
+                    cancel,
+                )?)
+            } else {
+                None
+            }
         } else {
             None
-        }
-    } else {
-        None
-    };
+        };
     let result = if let Some(claim) = claim {
         replay_evidence(
             &system,
@@ -379,12 +381,9 @@ pub fn replay_model_graph_from_package(
             &mut budget,
         )
         .map_err(|_| fault("handoff-supply-joins"))?;
-    let input = fsl_eval::simulation::model::PackageModelInput::of(
-        &bare,
-        &packages,
-        caller.spine.model,
-    )
-    .map_err(|_| fault("package-route-input"))?;
+    let input =
+        fsl_eval::simulation::model::PackageModelInput::of(&bare, &packages, caller.spine.model)
+            .map_err(|_| fault("package-route-input"))?;
     let claim = input
         .state_graph_claim(
             envelope.occurrence_key(),
@@ -410,6 +409,8 @@ pub fn replay_model_graph_from_package(
     let model_limits = caller.engines.model_check;
     Ok(crate::result::ReplayResult::ModelGraph(replay_evidence(
         &system,
+        None,
+        None,
         Loci::Package(&input),
         &claim,
         envelope.family_payload(),
@@ -786,7 +787,9 @@ fn graph_over(
         (None, None) => Ok(None),
         (Some(parameter), Some(instance)) => {
             let model_instance = system
-                .instances(&filament_exact::ValueType::Reference(parameter.object.clone()))
+                .instances(&filament_exact::ValueType::Reference(
+                    parameter.object.clone(),
+                ))
                 .map_err(|_| refused(ModelTraceRefusal::OverBinding))?
                 .into_iter()
                 .find(|candidate| {
@@ -811,15 +814,10 @@ fn digital_state_graph_truth(
     max_transitions: u64,
     cancel: &Cancel,
 ) -> Result<bool, ReplayRefusal> {
-    let graph = crate::explore_digital_state_graph(
-        timed,
-        max_states,
-        max_transitions,
-        cancel,
-    )
-    .map_err(|_| ReplayRefusal::ModelGraphMismatch {
-        member: "digital_state_graph",
-    })?;
+    let graph = crate::explore_digital_state_graph(timed, max_states, max_transitions, cancel)
+        .map_err(|_| ReplayRefusal::ModelGraphMismatch {
+            member: "digital_state_graph",
+        })?;
     let over = graph_over(system, claim, evidence)?;
     let read_values = |predicate: &fsl_semantics::check::CheckedStatePredicate| {
         if predicate.is_constant_true() {
@@ -830,20 +828,24 @@ fn digital_state_graph_truth(
             .ok_or(ReplayRefusal::ModelGraphMismatch {
                 member: "digital_state_graph_predicate",
             })?;
-        graph.nodes.iter().map(|node| {
-            let readings = system
-                .state_predicates_with_cancel(node.discrete(), &[(body, over.as_ref())], cancel)
-                .map_err(|_| ReplayRefusal::ModelGraphMismatch {
-                    member: "digital_state_graph_predicate",
-                })?;
-            match readings.as_slice() {
-                [PredicateReading::True] => Ok(true),
-                [PredicateReading::False] => Ok(false),
-                _ => Err(ReplayRefusal::ModelGraphMismatch {
-                    member: "digital_state_graph_predicate",
-                }),
-            }
-        }).collect::<Result<Vec<_>, _>>()
+        graph
+            .nodes
+            .iter()
+            .map(|node| {
+                let readings = system
+                    .state_predicates_with_cancel(node.discrete(), &[(body, over.as_ref())], cancel)
+                    .map_err(|_| ReplayRefusal::ModelGraphMismatch {
+                        member: "digital_state_graph_predicate",
+                    })?;
+                match readings.as_slice() {
+                    [PredicateReading::True] => Ok(true),
+                    [PredicateReading::False] => Ok(false),
+                    _ => Err(ReplayRefusal::ModelGraphMismatch {
+                        member: "digital_state_graph_predicate",
+                    }),
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()
     };
     let (source, target) = match claim.form() {
         StateGraphForm::Possible { target } => (None, target),
@@ -859,14 +861,14 @@ fn digital_state_graph_truth(
             .zip(&reaches_target)
             .all(|(is_source, reaches)| !is_source || *reaches))
     } else {
-        Ok(graph.initials.iter().all(|initial| reaches_target[*initial]))
+        Ok(graph
+            .initials
+            .iter()
+            .all(|initial| reaches_target[*initial]))
     }
 }
 
-fn digital_predecessors(
-    graph: &crate::DigitalStateGraph,
-    target: &[bool],
-) -> Vec<bool> {
+fn digital_predecessors(graph: &crate::DigitalStateGraph, target: &[bool]) -> Vec<bool> {
     let mut reaches = target.to_vec();
     let mut queue: VecDeque<usize> = reaches
         .iter()
@@ -1166,6 +1168,20 @@ fn replay_steps(
     Ok(positions)
 }
 
+fn check_target_endpoint(
+    system: &ModelSystem<'_>,
+    target: Slot<'_>,
+    states: &[Position],
+    over: Option<&ObjectReference>,
+    evaluated: &mut Vec<(PredicateRole, bool)>,
+) -> Result<bool, ReplayRefusal> {
+    let Some((state, _)) = states.last() else {
+        return Err(fault("target-path-has-no-endpoint"));
+    };
+    let reading = read_predicate(system, target, state, over)?;
+    record_reading(target.role, reading, evaluated)
+}
+
 fn check_first_target(
     system: &ModelSystem<'_>,
     target: Slot<'_>,
@@ -1324,8 +1340,7 @@ impl Loci<'_> {
                     .project_state_clause(&entry.identity, &entry.name)
                     .ok()?;
                 let projection = body.projection();
-                (projection.location(projection.root()) == Some(locus))
-                    .then(|| entry.name.clone())
+                (projection.location(projection.root()) == Some(locus)).then(|| entry.name.clone())
             }),
         }
     }
