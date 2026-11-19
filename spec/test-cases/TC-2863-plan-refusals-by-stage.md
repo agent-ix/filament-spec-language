@@ -22,4 +22,4 @@ Verify S3 plan refusals and request admission refusals. Scope: FR-1013-AC-1 and 
 
 - Step 1: `ill_typed`/`type-mismatch`, exit 20.
 - Step 2: `missing_declaration`/`missing-name` at `elapsed`, exit 20.
-- Step 3: `unknown-member` at `/synthesis/initial`; `missing-name` at `/synthesis/declaration` and `/synthesis/policy/0`, `type-mismatch` at `/synthesis/policy/0`, the snapshot's admission refusal at `/synthesis/initial`; each exit 20, no outcome.
+- Step 3: `unknown-member` at `/request/synthesis/initial`; `missing-name` at `/request/synthesis/declaration` and `/request/synthesis/policy/0`, `type-mismatch` at `/request/synthesis/policy/0`, the snapshot's admission refusal at `/request/synthesis/initial`; each exit 20, no outcome.

@@ -23,7 +23,8 @@ both routes before any engine runs. Scope: FR-940-AC-11 and FR-940-AC-12.
    rebuild it; compare with the source route's checked claims.
 2. Analyze the four items by a `program` request and by a `package` request
    over the handoff directory; evaluate each predicate at each explored
-   state through the port on both routes.
+   state through the port on both routes, keyed by its FR-475 role `from`
+   or `target` (`Straight`'s end predicate is `target`).
 3. Analyze the colliding source unit; analyze the package with the
    `ReachThree` row renamed `Bounded`.
 

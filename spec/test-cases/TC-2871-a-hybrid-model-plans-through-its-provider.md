@@ -19,5 +19,5 @@ Verify hybrid plan synthesis outcomes. Scope: FR-1021-AC-1 and AC-2.
 
 ## Expected Results
 
-- Step 1: `feasible`; `infeasible` certified; `unsupported` naming `hybrid-dynamics`, exit 21; `missing-member` at `/synthesis/dwell_grid`.
-- Step 2: `wrong-value-kind` and `invalid-value` at `/synthesis/dwell_grid`; `unknown-member` at `/synthesis/engines`; every member present on the `unsupported` outcome, the no-plan members `null`.
+- Step 1: `feasible`; `infeasible` certified; `unsupported` naming `hybrid-dynamics`, exit 21; `missing-member` at `/request/synthesis/dwell_grid`.
+- Step 2: `wrong-value-kind` and `invalid-value` at `/request/synthesis/dwell_grid`; `unknown-member` at `/request/synthesis/engines`; every member present on the `unsupported` outcome, the no-plan members `null`.

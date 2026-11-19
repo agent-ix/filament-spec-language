@@ -35,8 +35,11 @@ coordinator when `execute` holds, and write FSpec FR-824's
   locates `package` refusals under `/request/package`: FSpec FR-824's
   `/seed` is reported as `/request/verification_plan/seed`, and the whole
   member's defects at `/request/verification_plan`. The diagnostic carries
-  the pointer as `details.path` with the FSpec FR-805 cause as its `cause`,
-  code `invalid_runtime_input`, as every other run-request member refuses.
+  the pointer as `details.path` and the code and cause FSpec FR-824 states
+  for the defect: `invalid_runtime_input` with its member cause for a
+  malformed member, and the selection's `missing_declaration`/`missing-name`
+  or `ambiguous_declaration`/`ambiguous-name` for a plan name, as every other
+  run-request member refuses.
 - A member of the `verification_plan` object whose value is JSON `null` is
   read as absent, as the `export` reader reads it (FSpec FR-824); a `null`
   `verification_plan` member is not an object and refuses

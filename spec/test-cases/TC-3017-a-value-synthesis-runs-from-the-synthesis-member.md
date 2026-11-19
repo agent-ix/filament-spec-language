@@ -12,7 +12,7 @@ relationships:
 
 Verify that the run request's `synthesis` member selects and runs a value
 synthesis, writes the `filament.synthesis-outcome/v1` document, and refuses
-bad selections and members at their `/synthesis` pointers. Scope:
+bad selections and members at their `/request/synthesis` pointers. Scope:
 FR-1037-AC-1 and FR-1037-AC-2.
 
 ## Test Procedure
@@ -28,6 +28,6 @@ FR-1037-AC-1 and FR-1037-AC-2.
 - Step 1: `candidate` `{"type": "integer", "value": "7"}` `validated`,
   `visited` 8, exit 0; `no-candidate`, `visited` 10, exit 10; candidate 3
   `optimal`; `incomplete` naming `synthesis.max_candidates`, exit 22.
-- Step 2: `Pick` runs; `missing-member` at `/synthesis/declaration`;
-  `missing-name` at `/synthesis/declaration` twice; `unknown-member` at
-  `/synthesis/initial` and `/synthesis/limits/work`; each exit 20, no outcome.
+- Step 2: `Pick` runs; `missing-member` at `/request/synthesis/declaration`;
+  `missing-name` at `/request/synthesis/declaration` twice; `unknown-member` at
+  `/request/synthesis/initial` and `/request/synthesis/limits/work`; each exit 20, no outcome.
