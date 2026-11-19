@@ -96,7 +96,7 @@ impl Lowering<'_> {
         )?;
         self.record(
             key.clone(),
-            crate::check::family::OccurrenceRole::Claim,
+            crate::check::family::OccurrenceRole::Declaration,
             claim_at,
         );
         Ok(key)
