@@ -255,6 +255,23 @@ fn big_endian(digest: [u8; 32]) -> Integer {
     })
 }
 
+/// Uniformly choose an integer below `count` from FR-188's pinned draw stream.
+/// The wide range keeps a size-bounded Integer domain representable when it
+/// is larger than `usize`.
+pub(crate) fn uniform_below(at: ChoicePoint, count: &Integer) -> Option<Integer> {
+    let modulus = filament_exact::NonZeroInteger::try_from(count).ok()?;
+    let draw_range = Integer::one().shifted_left(256);
+    let accept_below = count.mul(&draw_range.exact_div(&modulus));
+    let mut draw = 0_u64;
+    loop {
+        let value = big_endian(plain_digest(&DrawPreimage::at(at, draw)));
+        draw = draw.wrapping_add(1);
+        if value < accept_below {
+            return Some(value.div_mod_floor(&modulus).1);
+        }
+    }
+}
+
 /// The index `weights` selects at `at`, and how many draw digests the
 /// selection computed: none for a one-item choice.
 pub(crate) fn choose(at: ChoicePoint, weights: &Weights) -> (usize, u64) {

@@ -114,6 +114,14 @@ impl NativeResult {
         Self(document)
     }
 
+    /// The FR-190 result record of a direct model-based test request.
+    pub(super) fn model_based_test_document(record: Value) -> Self {
+        Self(serde_json::json!({
+            "format": "native-run-result/2",
+            "model_based_test": record,
+        }))
+    }
+
     /// The FR-862 replay result: FR-323's `results` disposition.
     pub(super) fn replay_document(document: Value) -> Self {
         Self(document)

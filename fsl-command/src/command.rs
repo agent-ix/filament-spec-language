@@ -7,6 +7,7 @@ mod export;
 mod flow;
 mod items;
 pub mod monitor;
+mod model_based_test;
 mod output;
 mod output_file;
 mod package_run;
@@ -633,6 +634,14 @@ pub enum PreparedRun {
     /// FR-100, FR-1039: a call over a selected checked package, run from the
     /// package's own records without compiling source.
     Package(Box<package_run::PreparedPackageRun>),
+    /// FSpec FR-190: the result of the direct model-based testing request.
+    ModelBasedTest(PreparedModelBasedTestRun),
+}
+
+/// The direct model-based test record and sources admitted to produce it.
+pub struct PreparedModelBasedTestRun {
+    record: serde_json::Value,
+    sources: crate::Sources,
 }
 
 /// A typed clause request together with every source admitted to prepare it.
@@ -685,6 +694,7 @@ impl PreparedRun {
             Self::Clause(request) => request.sources.clone(),
             Self::TlLowering(prepared) => prepared.sources.clone(),
             Self::Package(prepared) => prepared.sources(),
+            Self::ModelBasedTest(prepared) => prepared.sources.clone(),
         }
     }
 }
@@ -3739,6 +3749,9 @@ fn prepare_run_bytes_with_sources(
     if let Some(member) = &request.tl_lowering {
         tl::decode(member)?;
     }
+    if let Some(member) = &request.model_based_test {
+        model_based_test::decode(member)?;
+    }
     if request.items.is_some() {
         return Err(RunCause::ClauseRequest {
             member: "items".to_owned(),
@@ -3764,6 +3777,13 @@ fn prepare_run_bytes_with_sources(
                     .call
                     .as_ref()
                     .is_some_and(|call| call.snapshot.is_some()),
+            ) + usize::from(
+                request
+                    .model_based_test
+                    .as_ref()
+                    .and_then(|member| member.get("initial"))
+                    .and_then(serde_json::Value::as_str)
+                    .is_some(),
             ),
             extensions: request.extensions.len(),
         },
@@ -3903,6 +3923,9 @@ fn prepare_complete_run(
 ) -> Result<PreparedRun> {
     if let Some(member) = &request.tl_lowering {
         return prepare_lowering(intake, request, member, source, observation_override);
+    }
+    if let Some(member) = &request.model_based_test {
+        return model_based_test::prepare(intake, request, member, source, observation_override);
     }
     if let Some(clause) = &request.clause {
         if request.call.is_some() {
@@ -4100,6 +4123,22 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
         PreparedRun::Function(prepared) => prepared,
         PreparedRun::TlLowering(prepared) => return execute_lowering(*prepared),
         PreparedRun::Package(prepared) => return package_run::execute(*prepared),
+        PreparedRun::ModelBasedTest(prepared) => {
+            let status = prepared.record.get("status").and_then(serde_json::Value::as_str);
+            let exit_code = match status {
+                Some("tested") => 0,
+                Some("refuted") => 10,
+                Some("inconclusive") => 11,
+                _ => 22,
+            };
+            return Ok(RunResult {
+                exit_code,
+                value: NativeResult::model_based_test_document(prepared.record),
+                outcome: None,
+                requirements: None,
+                sources: prepared.sources,
+            });
+        }
         PreparedRun::Clause(request) => {
             let selection = request.selection.clone();
             let report =

@@ -302,6 +302,9 @@ pub(super) struct Request {
     /// QSL-2235 until synthesis lowering can admit its S1-S3 records.
     #[serde(default, deserialize_with = "present_json_value")]
     pub synthesis: Option<serde_json::Value>,
+    /// FSpec FR-190's direct model-based testing request member.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub model_based_test: Option<serde_json::Value>,
 }
 
 fn from_object_opt<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
