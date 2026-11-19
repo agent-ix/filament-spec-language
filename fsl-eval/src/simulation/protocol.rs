@@ -2163,14 +2163,26 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             )
             .map_err(|_| broken())?;
         Ok(match evaluation.outcome {
-            filament_exact::Outcome::Completed(value) => Ok(value),
-            filament_exact::Outcome::Undefined(undefined) => {
-                Err(ClauseOutcome::KernelUndefined(undefined))
-            }
-            filament_exact::Outcome::Refused(refusal) => Err(ClauseOutcome::KernelRefused(refusal)),
-            filament_exact::Outcome::Incomplete(incomplete) => {
-                Err(ClauseOutcome::Incomplete(incomplete))
-            }
+            filament_eval::FamilyOutcome::Evaluated(outcome) => match outcome {
+                filament_exact::Outcome::Completed(value) => Ok(value),
+                filament_exact::Outcome::Undefined(undefined) => {
+                    Err(ClauseOutcome::KernelUndefined(undefined))
+                }
+                filament_exact::Outcome::Refused(refusal) => {
+                    Err(ClauseOutcome::KernelRefused(refusal))
+                }
+                filament_exact::Outcome::Incomplete(incomplete) => {
+                    Err(ClauseOutcome::Incomplete(incomplete))
+                }
+            },
+            filament_eval::FamilyOutcome::FamilyEvaluated(family) => Err(match family {
+                filament_eval::FamilyResult::Refused(cause) => {
+                    ClauseOutcome::FamilyRefused(cause.catalog_code())
+                }
+                filament_eval::FamilyResult::Undefined(cause) => {
+                    ClauseOutcome::FamilyUndefined(cause.undefined_record().reason)
+                }
+            }),
         })
     }
 
