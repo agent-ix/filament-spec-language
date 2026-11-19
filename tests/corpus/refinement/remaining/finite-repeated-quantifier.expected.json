@@ -1,9 +1,0 @@
-{
-  "verb": "compile",
-  "exit_code": 20,
-  "category": "refusal",
-  "last_stage": "S3",
-  "code": "ambiguous_declaration",
-  "cause": "ambiguous-name",
-  "flips_with": "none"
-}

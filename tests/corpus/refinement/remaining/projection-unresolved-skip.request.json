@@ -3,10 +3,10 @@
   "request": {
     "program": {
       "source": {
-        "file": "relation-unknown-operation.native",
+        "file": "projection-unresolved-skip.native",
         "authority": "test",
-        "identity": "test:remaining-refinement/relation-unknown-operation",
-        "document": "relation-unknown-operation",
+        "identity": "test:remaining-refinement/projection-unresolved-skip",
+        "document": "projection-unresolved-skip",
         "formal_revision": 1
       }
     },

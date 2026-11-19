@@ -3,10 +3,10 @@
   "request": {
     "program": {
       "source": {
-        "file": "whole-model-three-traces.native",
+        "file": "projection-empty-skip.native",
         "authority": "test",
-        "identity": "test:remaining-refinement/whole-model-three-traces",
-        "document": "whole-model-three-traces",
+        "identity": "test:remaining-refinement/projection-empty-skip",
+        "document": "projection-empty-skip",
         "formal_revision": 1
       }
     },

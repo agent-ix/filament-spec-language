@@ -1,4 +1,0 @@
-language "ix:native" edition "1-draft";
-profile values = "filament.value.complete/v1";
-model CounterModel = "test/counter-step";
-relation EqualExecutions using values over (runA: CounterModel::Counter::inc, runB: CounterModel::Counter::missing) { pre(runA.self.value) = pre(runB.self.value) implies runA.self.value = runB.self.value }
