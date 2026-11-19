@@ -3018,7 +3018,19 @@ fn undefined<S: SubjectSystem>(
         } else if matches!(reads, ItemReads::Deadlock) {
             match SubjectSystem::terminal_class(system, &position.state, &expansion, cut) {
                 Ok(TerminalClass::Undefined { model, cause }) => Some(UndefinedEvaluation {
-                    site: site(UndefinedLocus::Terminal(model), None),
+                    // A model's name is route-specific: the source alias on
+                    // the source route, the selection identity on the package
+                    // route (FR-940). A claimed terminal locus is compared by
+                    // its declaration's evaluation, so it keeps its own label.
+                    site: site(
+                        match &claimed.site.locus {
+                            UndefinedLocus::Terminal(label) => {
+                                UndefinedLocus::Terminal(label.clone())
+                            }
+                            _ => UndefinedLocus::Terminal(model),
+                        },
+                        None,
+                    ),
                     cause,
                 }),
                 Ok(_) => None,

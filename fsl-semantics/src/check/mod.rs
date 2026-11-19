@@ -3971,6 +3971,7 @@ impl PackageDeclarations {
                     nodes_used = used;
                     terminals.push(CheckedTerminal {
                         model: terminal.model.clone(),
+                        package: terminal.package.clone(),
                         name: Some(terminal.name.clone()),
                         declaration,
                         occurrence: None,
@@ -3992,6 +3993,11 @@ impl PackageDeclarations {
             {
                 terminals.push(CheckedTerminal {
                     model: alias.clone(),
+                    package: models
+                        .iter()
+                        .find(|model| model.alias() == Some(alias.as_str()))
+                        .map(|model| model.selection().identity.clone())
+                        .unwrap_or_default(),
                     name: None,
                     declaration: TerminalDeclaration::None,
                     occurrence: None,

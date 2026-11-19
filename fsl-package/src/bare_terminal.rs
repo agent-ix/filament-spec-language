@@ -140,6 +140,9 @@ impl BarePackage<'_> {
             };
             terminals.push(BareTerminal { model, declaration });
         }
+        // FR-940: ordered by the model selection's identity, as the source
+        // route orders its declarations.
+        terminals.sort_by(|left, right| left.model.cmp(&right.model));
         Ok(terminals)
     }
 }

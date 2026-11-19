@@ -110,6 +110,7 @@ pub enum TerminalDeclaration {
 #[derive(Debug)]
 pub struct CheckedTerminal {
     pub(crate) model: String,
+    pub(crate) package: String,
     pub(crate) name: Option<String>,
     pub(crate) declaration: TerminalDeclaration,
     /// The `claim` occurrence `[node, "claim", ordinal]` of the declaration's
@@ -122,6 +123,12 @@ impl CheckedTerminal {
     /// The model alias.
     pub fn model(&self) -> &str {
         &self.model
+    }
+
+    /// The identity of the domain package the model alias selects: the key
+    /// the declarations are ordered by on both routes (FR-940).
+    pub fn package(&self) -> &str {
+        &self.package
     }
 
     /// The declared name; `None` when the model declares none.

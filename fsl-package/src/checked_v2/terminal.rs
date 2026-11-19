@@ -169,6 +169,8 @@ pub fn read_terminal(
 pub struct PackageTerminal<'p> {
     /// The model alias the declaration is on.
     pub model: &'p str,
+    /// The identity of the domain package the model selects.
+    pub package: &'p str,
     /// The declared name.
     pub name: &'p str,
     /// The declaration.
@@ -240,10 +242,14 @@ pub fn resolve_terminals(
         }
         resolved.push(PackageTerminal {
             model: checked.model(),
+            package: checked.package(),
             name: checked.name().unwrap_or("terminal"),
             declaration,
         });
     }
+    // FR-940: both routes order the declarations by the model selection's
+    // identity, so the first undefined or intended one is the same.
+    resolved.sort_by(|left, right| (left.package, left.model).cmp(&(right.package, right.model)));
     if let Some(orphan) = nodes.iter().find(|node| !claimed.contains(&node.node)) {
         return Err(disagrees(&orphan.node.to_string()));
     }

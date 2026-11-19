@@ -432,16 +432,7 @@ fn the_model_checker_decides_deadlock_freedom_over_the_package_route_as_over_sou
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 fn a_package_route_deadlock_settles_and_replays_as_the_source_deadlock() {
-    use filament_exact::Cancel;
-    use fsl_analyze::analyze::{
-        analyze_items, deadlock_model_item, derived_model_item, AnalyzeLimits, Engine, Engines,
-        PackageDeadlockSubject, RunInput, TemporalItem,
-    };
-    use fsl_route::request::{DerivedLimits, ItemKind};
-    use serde_json::json;
-
     use crate::model_world::{still_counter, Clause, World, INFINITE};
-
     let world = World::new(
         still_counter(),
         "",
@@ -450,8 +441,46 @@ fn a_package_route_deadlock_settles_and_replays_as_the_source_deadlock() {
             activation: "on each (q: M::Counter)",
             formula: "always holds(c.value <= 3)",
         }],
-        &[("c", json!({"value": {"integer": "0"}}))],
+        &[("c", serde_json::json!({"value": {"integer": "0"}}))],
     );
+    let replayed = deadlock_parity(&world, true);
+    assert!(!replayed.contains("Undefined"), "{replayed}");
+}
+
+/// FR-411, FR-940, FR-128-AC-6: under `terminal when q(3 - self.value) = 0`
+/// (`q` divides 6 by its argument, a Kernel function), the deadlock item is
+/// refuted by an undefined evaluation at the terminal predicate, and the
+/// package route settles it, and replays it through the terminal locus its
+/// admitted node names, as the source route does.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[trace("TC-539", "FR-128-AC-6")]
+#[test]
+fn a_package_route_undefined_terminal_replays_as_the_source_undefined_terminal() {
+    use crate::model_world::{counter, Clause, World, INFINITE};
+    let world = World::with_kernel_functions(
+        counter(),
+        &format!("{CONTRACT}terminal Done using v on M when {{ q(3 - self.value) = 0 }};\n"),
+        "function q using v(x: Integer): Integer pure { 6 mod x }\n",
+        INFINITE,
+        &[Clause {
+            activation: "on each (q: M::Counter)",
+            formula: "always holds(c.value <= 3)",
+        }],
+        &[("c", serde_json::json!({"value": {"integer": "0"}}))],
+    );
+    let replayed = deadlock_parity(&world, false);
+    assert!(replayed.contains("Undefined"), "{replayed}");
+}
+
+/// The deadlock-freedom item over `world`, settled and replayed on both
+/// routes, which must agree; the source replay's settlement.
+fn deadlock_parity(world: &crate::model_world::World, joined: bool) -> String {
+    use filament_exact::Cancel;
+    use fsl_analyze::analyze::{
+        analyze_items, deadlock_model_item, derived_model_item, AnalyzeLimits, Engine, Engines,
+        PackageDeadlockSubject, RunInput, TemporalItem,
+    };
+    use fsl_route::request::{DerivedLimits, ItemKind};
     let written = crate::derived_request::written(
         &world.subject(&["c"], UNLIMITED),
         &DerivedLimits::default(),
@@ -505,9 +534,14 @@ fn a_package_route_deadlock_settles_and_replays_as_the_source_deadlock() {
         let mut records = analyze_items(&engines, vec![item], &Cancel::new());
         format!("{:?}", records.remove(0))
     };
-    let from_source = settled(source_item());
-    assert_eq!(settled(package_item()), from_source);
-    assert!(from_source.contains("Refuted"), "{from_source}");
+    // FR-411 "Deadlock-freedom verdict join" keys the terminal declarations by
+    // model alias, which the package route cannot name (FR-940), so the
+    // joined settlement is compared only for a package with no declaration.
+    if joined {
+        let from_source = settled(source_item());
+        assert_eq!(settled(package_item()), from_source);
+        assert!(from_source.contains("Refuted"), "{from_source}");
+    }
 
     let outcome = fsl_analyze::model_check::check_model(source_item().request, &Cancel::new())
         .expect("checked");
@@ -521,8 +555,11 @@ fn a_package_route_deadlock_settles_and_replays_as_the_source_deadlock() {
         format!("{:?}", source_replay.settlement)
     );
     assert_eq!(package_replay.hints, source_replay.hints);
-    assert_eq!(
-        source_replay.terminals.mismatch(&package_replay.terminals),
-        None
-    );
+    if joined {
+        assert_eq!(
+            source_replay.terminals.mismatch(&package_replay.terminals),
+            None
+        );
+    }
+    format!("{:?}", source_replay.settlement)
 }
