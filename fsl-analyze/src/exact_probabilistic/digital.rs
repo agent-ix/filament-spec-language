@@ -24,15 +24,15 @@ use filament_exact::{
 };
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{
-    Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov, PlaceConstraint,
-    PredicateReading, ScheduledIdentity, TimedStop, TimedSystem, same_rewards,
+    same_rewards, Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov,
+    PlaceConstraint, PredicateReading, ScheduledIdentity, TimedStop, TimedSystem,
 };
+use fsl_eval::simulation::StateKey;
 use fsl_replay::{
-    DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail,
-    ModelCheckLimit, ProbabilityProductKey, RegionClockKey, RegionDeadlineKey, RegionKeyKind,
-    RegionProductKeyInput, digital_probability_product_key, region_probability_product_key,
+    digital_probability_product_key, region_probability_product_key, DigitalClockKey,
+    DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail, ModelCheckLimit,
+    ProbabilityProductKey, RegionClockKey, RegionDeadlineKey, RegionKeyKind, RegionProductKeyInput,
 };
 use fsl_semantics::check::{
     BinaryTemporal, CheckedInterval, CheckedPredicate, CheckedProbabilisticClaim, ClockOp,
@@ -42,7 +42,7 @@ use fsl_semantics::check::{
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive, Zero};
-use serde_json::{Value as JsonValue, json};
+use serde_json::{json, Value as JsonValue};
 
 use super::{
     DeadlineKind, DeadlinePhase, ExactProbLimits, FreeDelayRow, MonitorState, MonitorVerdict,
@@ -164,6 +164,13 @@ enum Form<'c> {
         bound: Rational,
         reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
     },
+    /// Expected elapsed time until a checked state predicate holds.
+    MeanTime {
+        /// The expected-time comparison threshold in the model's time unit.
+        bound: Rational,
+        /// The target predicate used to label product states.
+        reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
+    },
     /// An unbounded reachability form: its predicates label the states.
     Labels(Vec<(UndefinedRead, &'c CheckedPredicate)>),
 }
@@ -181,6 +188,13 @@ impl<'c> Form<'c> {
             member: claim.formula_member_path(chain),
         };
         match &claim.form {
+            ProbForm::MeanTime { bound, until } => Ok(Self::MeanTime {
+                bound: match bound {
+                    fsl_semantics::check::Bound::AtLeast(value)
+                    | fsl_semantics::check::Bound::AtMost(value) => value.clone(),
+                },
+                reads: vec![(UndefinedRead::Predicate(super::PredicateRole::Until), until)],
+            }),
             ProbForm::Probability {
                 event: Event::Formula { formula, .. },
                 ..
@@ -255,7 +269,9 @@ impl<'c> Form<'c> {
 
     fn reads(&self) -> &[(UndefinedRead, &'c CheckedPredicate)] {
         match self {
-            Self::Deadline { reads, .. } | Self::Labels(reads) => reads,
+            Self::Deadline { reads, .. } | Self::MeanTime { reads, .. } | Self::Labels(reads) => {
+                reads
+            }
         }
     }
 }
@@ -374,6 +390,8 @@ fn scale_of(
         }
     }
     if let Form::Deadline { bound, .. } = form {
+        note(bound);
+    } else if let Form::MeanTime { bound, .. } = form {
         note(bound);
     }
     for delay in system.input().probabilistic.delays() {
@@ -784,7 +802,7 @@ impl<'c> Builder<'_, '_, 'c> {
     fn deadline_bound(&self) -> Step<Option<u64>> {
         match &self.form {
             Form::Deadline { bound, .. } => self.bound_units(bound).map(Some),
-            Form::Labels(_) => Ok(None),
+            Form::MeanTime { .. } | Form::Labels(_) => Ok(None),
         }
     }
 
@@ -949,8 +967,7 @@ impl<'c> Builder<'_, '_, 'c> {
             .map(|reference| {
                 let text = fsl_eval::simulation::model::reference_canonical_text(reference)
                     .map_err(|_| fault("certificate-binding-encodes"))?;
-                serde_json::from_str(&text)
-                    .map_err(|_| fault("certificate-binding-is-json"))
+                serde_json::from_str(&text).map_err(|_| fault("certificate-binding-is-json"))
             })
             .transpose()?;
         let unit = json!([
@@ -981,8 +998,9 @@ impl<'c> Builder<'_, '_, 'c> {
                 .map_err(|_| fault("certificate-clock-type-encodes"))?;
                 let declaring = fsl_foundation::node_wire::node_key_to_json(&declaring)
                     .map_err(|_| fault("certificate-clock-type-encodes"))?;
-                let receiver = fsl_eval::simulation::model::reference_canonical_text(place.object())
-                    .map_err(|_| fault("certificate-clock-receiver-encodes"))?;
+                let receiver =
+                    fsl_eval::simulation::model::reference_canonical_text(place.object())
+                        .map_err(|_| fault("certificate-clock-receiver-encodes"))?;
                 let receiver: JsonValue = serde_json::from_str(&receiver)
                     .map_err(|_| fault("certificate-clock-receiver-is-json"))?;
                 let identity = json!([declaring, field.name(), receiver]);
@@ -1163,7 +1181,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 kind: *kind,
                 phase: Self::read_letter(*kind, DeadlinePhase::Pending, truths),
             }),
-            Form::Labels(_) => None,
+            Form::MeanTime { .. } | Form::Labels(_) => None,
         }
     }
 
@@ -1219,7 +1237,7 @@ impl<'c> Builder<'_, '_, 'c> {
                                 kind: *kind,
                                 phase: DeadlinePhase::Pending,
                             }),
-                            Form::Labels(_) => None,
+                            Form::MeanTime { .. } | Form::Labels(_) => None,
                         };
                         let key = self.key_of(&state, binding, monitor, None)?;
                         return Err(self.undefined(None, None, None, at, key, hit));
@@ -2380,7 +2398,7 @@ impl<'c> Builder<'_, '_, 'c> {
         }
         decided.sort_by_key(|(state, _)| state.index());
         decided.dedup_by_key(|(state, _)| state.index());
-        let labels = if matches!(self.form, Form::Labels(_)) {
+        let labels = if matches!(self.form, Form::Labels(_) | Form::MeanTime { .. }) {
             self.nodes.iter().map(|node| node.truths.clone()).collect()
         } else {
             Vec::new()
