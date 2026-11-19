@@ -53,8 +53,10 @@ request's `verification_plan` member and written as the
   document bound to the package identity.
 - The coordinator SHALL dispatch each step's item to its engine (or to
   FR-752, FR-754 or FSpec FR-181 simulation for the language methods) in
-  `requires` order, record one disposition per node, block only descendants
-  of a failed node, and never substitute one evidence kind for another.
+  `requires` order, record one disposition per node, block only the
+  descendants of a step whose `requires` prerequisite is not satisfied
+  (FSpec FR-824 "Outcome document"), and never substitute one evidence kind
+  for another.
 
 ### Decision: the coordinator is `fsl-analyze`'s `plan` module
 
