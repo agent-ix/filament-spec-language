@@ -4016,6 +4016,35 @@ fn read_decimal_domain(ctx: &NodeCtx<'_>, at: &str) -> Result<DecimalType, Model
     .map_err(|_| ctx.malformed_in("decimal", "invalid Decimal domain"))
 }
 
+/// Applies this alias's bounds to the Decimal domain it reaches.
+#[ix_trace_rs::string_edge]
+fn narrow_decimal_domain(
+    ctx: &NodeCtx<'_>,
+    at: &str,
+    inherited: &DecimalType,
+) -> Result<DecimalType, ModelRefusal> {
+    let scale = u64::from(inherited.max_scale());
+    let lower = inherited
+        .lower()
+        .to_string()
+        .parse::<i128>()
+        .map_err(|_| ctx.malformed_in("constraints", "Decimal lower coefficient overflowed"))?;
+    let upper = inherited
+        .upper()
+        .to_string()
+        .parse::<i128>()
+        .map_err(|_| ctx.malformed_in("constraints", "Decimal upper coefficient overflowed"))?;
+    let (lower, upper) = read_decimal_bounds(ctx, at, scale, lower, upper)?;
+    DecimalType::new(
+        Integer::from(lower),
+        Integer::from(upper),
+        scale,
+        scale,
+        RoundingMode::Exact,
+    )
+    .map_err(|_| ctx.malformed_in("constraints", "invalid narrowed Decimal domain"))
+}
+
 /// Applies the bounds on one node of a Decimal resolution walk to its
 /// inherited coefficient interval.
 #[ix_trace_rs::string_edge]
@@ -5496,7 +5525,14 @@ fn read_type_node(
                 )
                 .into());
         }
-        let target = if let Some(decimal) = decimal_types.get(node) {
+        let decimal = if let Some(decimal) = decimal_types.get(node) {
+            Some(decimal.clone())
+        } else if let Some(inherited) = decimal_types.get(target) {
+            Some(narrow_decimal_domain(&ctx, at, inherited)?)
+        } else {
+            None
+        };
+        let target = if let Some(decimal) = &decimal {
             ValueTypeRef::Resolved(Box::new(ValueType::Decimal(decimal.clone())))
         } else if target == "ix://filament/native/Clock" {
             ValueTypeRef::Clock
@@ -5535,7 +5571,7 @@ fn read_type_node(
         // An alias's `min`/`max` constraints bound the clocks or the
         // quantities it types (FR-230 "Clock constraints on a type", FSpec
         // FR-154 "Unit bounds").
-        let bounds = if decimal_types.contains_key(node) {
+        let bounds = if decimal.is_some() {
             Vec::new()
         } else {
             read_value_bounds(package, &ctx, at, node, Some((&key, &target)))?
