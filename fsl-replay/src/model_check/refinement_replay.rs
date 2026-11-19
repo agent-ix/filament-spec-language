@@ -26,9 +26,12 @@
 //! emitted, so a refinement unit does not compile through the replay request;
 //! the caller passes the systems of an already-checked package.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use filament_semantic_value::catalog::Category;
-use filament_semantic_value::fairness::FairnessKind;
+use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
+use fsl_eval::fairness::{Constraint, Identity, Strength};
 use fsl_eval::simulation::model::{ClockValuation, ModelFinding, TimedSystem};
 use fsl_eval::simulation::{Limits, TransitionSystem};
 use fsl_semantics::model::state::ModelState;
@@ -40,18 +43,19 @@ use crate::model_check::counterexample::{
 };
 use crate::model_check::limits::{ModelCheckLimit, ReachedLimit};
 use crate::model_check::replay::{
-    close_loop, disagreement, fault, loop_states_of, no_value_cause, reexecute, refused,
-    timed_prefix, unfair_constraint, ModelTraceRefusal, Position,
+    ModelTraceRefusal, Position, close_loop, disagreement, fault, loop_states_of, no_value_cause,
+    reexecute, refused, timed_prefix, unfair_constraint,
 };
 use crate::refinement::{
-    abstract_classes, check_initial, check_protocol_initial, check_protocol_state_relations,
-    check_protocol_step, check_step, initial_history, map_state, step_history, stop_verdict,
-    AssumptionSide, AssumptionTarget, ConcreteStep, ProtocolAssumptionReason,
-    ProtocolAssumptionWitness, ProtocolRelationError, ProtocolStateRelation, RefinementFailure,
-    RefinementPosition, RefinementSystems, StepVerdict, Taken,
+    AssumptionSide, AssumptionTarget, CandidateFairState, CandidateFairStep, ConcreteStep,
+    ProtocolAssumptionReason, ProtocolAssumptionWitness, ProtocolRelationError,
+    ProtocolStateRelation, RefinementFailure, RefinementPosition, RefinementSystems, StepVerdict,
+    Taken, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
+    check_protocol_state_relations, check_protocol_step, check_step, initial_history, map_state,
+    step_history, stop_verdict,
 };
 use crate::result::DisagreementCause;
-use crate::timed::explore::{explore, widen, Closure};
+use crate::timed::explore::{Closure, explore, widen};
 use fsl_semantics::check::CheckedRefinement;
 
 /// FR-145's settlement of a refinement counterexample's replay.
@@ -1489,43 +1493,134 @@ fn replay_lasso(
         return Err(fault("a-lasso-loop-is-in-the-trail"));
     };
     let loop_trail = &loop_trail[..loop_taken.len()];
-    let mut enabled = Vec::with_capacity(loop_trail.len());
+    let mut positions = Vec::with_capacity(loop_trail.len());
+    let mut identities = BTreeSet::<ModelTransition>::new();
     for position in loop_trail {
-        match abstract_enabled(systems, position)? {
-            Enabledness::Enabled(here) => enabled.push(here),
-            Enabledness::Undecided => {
+        let mut candidates = Vec::with_capacity(position.abstract_states.len());
+        for candidate in &position.abstract_states {
+            let (key, _) = systems
+                .abstract_system
+                .state_key_of(candidate)
+                .map_err(|_| fault("hidden-liveness-candidate-has-a-state-key"))?;
+            let expansion = match systems.abstract_system.expand_state(candidate) {
+                Ok(expansion) => expansion,
+                Err(stop) => match stop_verdict(&systems.abstract_system, stop) {
+                    StepVerdict::Stopped(reached) => {
+                        return Ok(RefinementTraceSettlement::Stopped(reached));
+                    }
+                    _ => return Err(fault("hidden-liveness-candidate-expands")),
+                },
+            };
+            if expansion
+                .findings
+                .iter()
+                .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
+            {
                 return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()));
             }
-            Enabledness::Stopped(reached) => {
-                return Ok(RefinementTraceSettlement::Stopped(reached));
-            }
+            let transitions: Vec<_> = expansion
+                .successors
+                .into_iter()
+                .map(|(transition, _)| transition)
+                .collect();
+            identities.extend(transitions.iter().cloned());
+            candidates.push((key, transitions));
         }
+        positions.push(candidates);
     }
-    let mut identities: Vec<ModelTransition> = enabled.iter().flatten().cloned().collect();
+    let mut taken_identities = Vec::<ModelTransition>::new();
     for taken in loop_taken {
         match taken {
-            Taken::Abstract(transitions) => identities.extend(transitions.iter().cloned()),
+            Taken::Abstract(transitions) => taken_identities.extend(transitions.iter().cloned()),
             Taken::CandidateSteps(steps) => {
-                identities.extend(steps.iter().filter_map(|step| step.transition.clone()))
+                taken_identities.extend(steps.iter().filter_map(|step| step.transition.clone()))
             }
             Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) => {}
         }
     }
+    identities.extend(taken_identities);
     let abstract_fairness: Vec<_> = refinement.abstract_operation_fairness().cloned().collect();
-    let classes = abstract_classes(&systems.abstract_system, &abstract_fairness, &identities)
-        .map_err(ReplayRefusal::Fault)?;
-    let violated = classes.iter().any(|class| {
-        if class.constraint() != index || loop_taken.iter().any(|taken| class.is_taken_by(taken)) {
-            return false;
+    let identities: Vec<_> = identities.into_iter().collect();
+    let numbered: BTreeMap<_, _> = identities
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, transition)| (transition, Identity::new(index as u64)))
+        .collect();
+    let candidate_positions = positions
+        .iter()
+        .map(|candidates| {
+            candidates
+                .iter()
+                .map(|(key, enabled)| {
+                    Ok(CandidateFairState {
+                        key: key.clone(),
+                        enabled: enabled
+                            .iter()
+                            .map(|transition| {
+                                numbered
+                                    .get(transition)
+                                    .copied()
+                                    .ok_or_else(|| fault("candidate-enabled-transition-numbered"))
+                            })
+                            .collect::<Result<Vec<_>, ReplayRefusal>>()?,
+                    })
+                })
+                .collect::<Result<Vec<_>, ReplayRefusal>>()
+        })
+        .collect::<Result<Vec<_>, ReplayRefusal>>()?;
+    let candidate_steps = loop_taken
+        .iter()
+        .map(|taken| match taken {
+            Taken::CandidateSteps(rows) => rows
+                .iter()
+                .map(|row| {
+                    Ok(CandidateFairStep {
+                        pre_state: row.pre_state.clone(),
+                        transition: row
+                            .transition
+                            .as_ref()
+                            .map(|transition| {
+                                numbered
+                                    .get(transition)
+                                    .copied()
+                                    .ok_or_else(|| fault("candidate-taken-transition-numbered"))
+                            })
+                            .transpose()?,
+                        post_state: row.post_state.clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>, ReplayRefusal>>(),
+            _ => Err(fault("hidden-liveness-loop-retains-candidate-steps")),
+        })
+        .collect::<Result<Vec<_>, ReplayRefusal>>()?;
+    let fair_through = |through: usize| -> Result<bool, ReplayRefusal> {
+        let constraints = replay_candidate_constraints(
+            &systems.abstract_system,
+            &abstract_fairness,
+            &numbered,
+            through,
+        )?;
+        candidate_lasso_has_fair_run(
+            &candidate_positions,
+            &candidate_steps,
+            &constraints,
+            &filament_exact::Cancel::new(),
+        )
+        .map_err(|_| fault("candidate-lasso-check-replays"))
+    };
+    let mut violated = false;
+    for prefix in 0..=index {
+        let has_fair_candidate = fair_through(prefix)?;
+        if prefix < index && !has_fair_candidate {
+            return Ok(RefinementTraceSettlement::Inconclusive(disagreement(
+                Category::Success,
+            )));
         }
-        let Some(constraint) = abstract_fairness.get(index) else {
-            return false;
-        };
-        match constraint.kind() {
-            FairnessKind::Weak => enabled.iter().all(|here| class.is_enabled_in(here)),
-            FairnessKind::Strong => enabled.iter().any(|here| class.is_enabled_in(here)),
+        if prefix == index {
+            violated = !has_fair_candidate;
         }
-    });
+    }
     let divergent = loop_taken.iter().all(|taken| match taken {
         Taken::Stutter => true,
         Taken::CandidateSteps(steps) => steps.iter().all(|step| step.transition.is_none()),
@@ -1786,6 +1881,37 @@ enum Enabledness {
     Undecided,
     /// A budget stopped the expansion.
     Stopped(ReachedLimit),
+}
+
+fn replay_candidate_constraints(
+    system: &fsl_eval::simulation::model::ModelSystem<'_>,
+    fairness: &[filament_semantic_value::fairness::FairnessConstraint],
+    numbered: &BTreeMap<ModelTransition, Identity>,
+    through: usize,
+) -> Result<Vec<Constraint>, ReplayRefusal> {
+    let mut constraints = Vec::new();
+    for constraint in fairness.iter().take(through.saturating_add(1)) {
+        let operation = constraint.operation();
+        let name = system
+            .operation_text(operation.declaring_type(), operation.name())
+            .ok_or_else(|| fault("candidate-fairness-names-declared-operation"))?;
+        let covered: Vec<_> = numbered
+            .iter()
+            .filter_map(|(transition, identity)| {
+                (transition.operation() == name).then_some(*identity)
+            })
+            .collect();
+        let strength = Strength::from(constraint.kind());
+        match constraint.granularity() {
+            FairnessGranularity::Whole => constraints.push(Constraint::new(strength, covered)),
+            FairnessGranularity::Each => constraints.extend(
+                covered
+                    .into_iter()
+                    .map(|identity| Constraint::new(strength, [identity])),
+            ),
+        }
+    }
+    Ok(constraints)
 }
 
 /// The abstract transition identities enabled from the mapped state of
