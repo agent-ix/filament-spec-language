@@ -5,12 +5,24 @@ use filament_exact::{Integer, IntegerInterval};
 use serde::Serialize;
 use serde_json::Value;
 
+const DEFAULT_MAX_CANDIDATES: u64 = 10_000_000;
+const DEFAULT_MAX_WORK: u64 = 100_000_000;
+
 /// The two independent limits applied while enumerating a bounded integer
 /// domain. Each candidate consumes one unit from each counter.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub(super) struct SearchLimits {
     pub(super) max_candidates: Option<u64>,
     pub(super) max_work: Option<u64>,
+}
+
+impl Default for SearchLimits {
+    fn default() -> Self {
+        Self {
+            max_candidates: Some(DEFAULT_MAX_CANDIDATES),
+            max_work: Some(DEFAULT_MAX_WORK),
+        }
+    }
 }
 
 /// The disposition of a bounded integer search.
@@ -21,7 +33,7 @@ pub(super) enum SearchDisposition {
     /// Every value in the finite domain was visited without a match.
     NoCandidate,
     /// A request limit stopped the search before its finite domain was done.
-    Incomplete { cause: &'static str },
+    Incomplete { cause: &'static str, value: u64 },
 }
 
 /// One bounded integer search result, including the number of visited values.
@@ -188,6 +200,7 @@ pub(super) fn search_integer_domain(
             return SearchResult {
                 disposition: SearchDisposition::Incomplete {
                     cause: "synthesis.max_candidates",
+                    value: limits.max_candidates.expect("limit was checked"),
                 },
                 visited,
             };
@@ -196,6 +209,7 @@ pub(super) fn search_integer_domain(
             return SearchResult {
                 disposition: SearchDisposition::Incomplete {
                     cause: "synthesis.max_work",
+                    value: limits.max_work.expect("limit was checked"),
                 },
                 visited,
             };
@@ -210,6 +224,78 @@ pub(super) fn search_integer_domain(
         }
         candidate = candidate.add(&Integer::one());
     }
+}
+
+/// Run the integer candidate loop and encode its FR-823 result without
+/// coupling the search helper to request selection or package admission.
+pub(super) fn search_integer_outcome(
+    package: &str,
+    declaration: &str,
+    node: Value,
+    domain: &IntegerInterval,
+    limits: SearchLimits,
+    mut satisfies: impl FnMut(&Integer) -> bool,
+    mut validate: impl FnMut(&Integer) -> Result<(), Value>,
+) -> (SynthesisOutcomeDocument, u8) {
+    let max_candidates = limits.max_candidates.unwrap_or(DEFAULT_MAX_CANDIDATES);
+    let max_work = limits.max_work.unwrap_or(DEFAULT_MAX_WORK);
+    let result = search_integer_domain(domain, limits, &mut satisfies);
+    let mut document = SynthesisOutcomeDocument::new(
+        package,
+        declaration,
+        "",
+        result.visited,
+        max_work,
+        max_candidates,
+        max_work,
+    );
+    let exit = match result.disposition {
+        SearchDisposition::Candidate(value) => {
+            document.status = "candidate".to_owned();
+            document.candidate = Some(integer_value(&value));
+            document.lineage = Some(Lineage {
+                node,
+                index: result.visited.saturating_sub(1),
+                symmetry: "identity".to_owned(),
+                synthesizer: "filament.synthesis.enumerate/v1",
+                checker: "filament.native.value-validity/v1",
+            });
+            match validate(&value) {
+                Ok(()) => {
+                    document.check = Some("validated".to_owned());
+                    0
+                }
+                Err(counterexample) => {
+                    document.check = Some("rejected".to_owned());
+                    document = document.with_counterexample(counterexample);
+                    30
+                }
+            }
+        }
+        SearchDisposition::NoCandidate => {
+            document.status = "no-candidate".to_owned();
+            10
+        }
+        SearchDisposition::Incomplete { cause, value } => {
+            let setting = cause;
+            let limit = setting
+                .strip_prefix("synthesis.")
+                .expect("a synthesis search limit");
+            document.status = "incomplete".to_owned();
+            document = document.with_cause(serde_json::json!({
+                "kind": "limit-reached",
+                "limit": limit,
+                "value": value,
+                "setting": setting,
+            }));
+            22
+        }
+    };
+    (document, exit)
+}
+
+fn integer_value(value: &Integer) -> Value {
+    serde_json::json!({"type": "integer", "value": value.to_string()})
 }
 
 #[cfg(test)]
@@ -253,10 +339,58 @@ mod tests {
         assert_eq!(
             result.disposition,
             SearchDisposition::Incomplete {
-                cause: "synthesis.max_candidates"
+                cause: "synthesis.max_candidates",
+                value: 3
             }
         );
         assert_eq!(result.visited, 3);
+    }
+
+    #[test]
+    fn search_outcome_carries_typed_candidate_and_limit_cause() {
+        let (candidate, exit) = super::search_integer_outcome(
+            "pkg",
+            "Pick",
+            serde_json::json!({"package": "pkg", "path": ["Pick"], "ordinal": 0}),
+            &digit_domain(),
+            SearchLimits::default(),
+            |value| value == &Integer::from(7_i64),
+            |_| Ok(()),
+        );
+        assert_eq!(exit, 0);
+        let candidate = candidate.into_value();
+        assert_eq!(candidate["status"], "candidate");
+        assert_eq!(
+            candidate["candidate"],
+            serde_json::json!({"type": "integer", "value": "7"})
+        );
+        assert_eq!(candidate["check"], "validated");
+        assert_eq!(candidate["lineage"]["index"], 7);
+        assert_eq!(candidate["lineage"]["symmetry"], "identity");
+
+        let (limited, exit) = super::search_integer_outcome(
+            "pkg",
+            "Pick",
+            serde_json::json!({"package": "pkg", "path": ["Pick"], "ordinal": 0}),
+            &digit_domain(),
+            SearchLimits {
+                max_candidates: Some(3),
+                max_work: Some(DEFAULT_MAX_WORK),
+            },
+            |_| false,
+            |_| Ok(()),
+        );
+        assert_eq!(exit, 22);
+        let limited = limited.into_value();
+        assert_eq!(limited["status"], "incomplete");
+        assert_eq!(limited["explored"]["visited"], 3);
+        assert_eq!(
+            limited["cause"],
+            serde_json::json!({
+                "kind": "limit-reached", "limit": "max_candidates", "value": 3,
+                "setting": "synthesis.max_candidates"
+            })
+        );
     }
 
     #[test]
