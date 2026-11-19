@@ -308,7 +308,8 @@ shared grammar's "Precedence and bindings" (lowest to highest: `let`/`if`/
 
 **Binders.** Every binder a printed expression introduces (a `case` arm's
 payload binder, a `let` binder, a query, quantifier, `count` or `sum`
-binder, a `fold` or `reduce` accumulator or element binder) and every read
+binder, a `fold` or `reduce` accumulator or element binder, a `seq` index
+binder) and every read
 of one prints as the binder's **declared name**: the source identifier the
 author bound, which the checked package already records as the `name` of
 the binder's `value`/`parameter` node (FSpec FR-322, FSpec FR-440 "Arm
@@ -337,9 +338,24 @@ another visible binding (FSpec shared grammar, "lexical binders ... cannot
 shadow"), so a checked expression contains no shadowed name and the
 printed text needs no renaming to stay unambiguous. The grammar has no
 wildcard pattern: `_` is an ordinary identifier, so an arm written
-`Rect(_, h)` binds a binder named `_` and prints `Rect(_, h)`. A checked
-binder always has a declared name, because every binding production binds
-an `ident` and the checker introduces no unnamed binder into an expression.
+`Rect(_, h)` binds a binder named `_` and prints `Rect(_, h)`. Every binder
+the author wrote has a declared name, because every binding production binds
+an `ident`.
+
+The checker makes one binder of its own: an IEEE ordering comparison (`<`,
+`<=`, `>`, `>=` over floats, FR-397 "Comparison") evaluates each operand
+once, so the checker binds an operand that is not already a local read or a
+literal by a `let` around the comparison's composition, under a slot it
+names `ieee_operand_<slot>`. That binder is no part of the source, and the
+printer never prints it or its name: it prints the composition as the one
+comparison it denotes, `L < R` or `L <= R` with each operand printed as the
+expression the binder holds, the lesser operand on the left (so `a > b` and
+`b < a`, one checked tree, both print `b < a`). The printer recognises the
+composition by its checked structure (the `let` binders around an ordering
+composition whose parts read exactly those slots), on both routes alike,
+and never by the binder's name, so an author's own
+`let ieee_operand_0 = c.versionNumber in ieee_operand_0 <= 2` is an
+ordinary `let` and prints with its name as written.
 
 A `case` prints as `case`, its scrutinee, then one arm per member of the
 scrutinee's union **in member declaration order**, the order the checked
@@ -418,6 +434,7 @@ field order; a reference literal as `Q#"key"`.
 | FR-931-AC-11 | Over the `Low` fixture written `on origin { always [0, 3] holds( ( c.versionNumber<=2 ) ) }`, the `atoms` entry of `p0` is exactly `holds(c.versionNumber <= 2)`, the same bytes as for FR-931-AC-1's spelling. Over a variant whose `c` also has Boolean fields `a`, `b`, `p`, `q`, Integer fields `x`, `y` and a Text field `name`, a leaf written `holds(not(c.a=c.b) and ((c.x+1)-(c.y-2))>=0 implies c.p implies c.q)` prints `holds(not (c.a = c.b) and c.x + 1 - (c.y - 2) >= 0 implies c.p implies c.q)`, and a leaf written `holds(c.name = "a\u0041\t")` prints `holds(c.name = "aA\t")`; and the same requests over the unit's checked package selected as `package` (FR-1039) give byte-equal `atoms`, with the source file removed. | Test (TC-2601) |
 | FR-931-AC-12 | Over the `Low` unit with the ConfigVersion model `example/config-version` selected under the alias `Config`, with a source enumeration `enum Mode { On, Off }` declared by the unit (its `SourceOwner` identity `I`) and a state read `c.mode: Mode`, the leaves `holds(c.mode = Mode::On)` and `holds(size(allInstances<Config::ConfigVersion>(Config::P)) >= 1)` (`P` the model's population of `ConfigVersion`) give the atom texts `holds(c.mode = ix://I/Mode::On)` and `holds(size(allInstances<ix://example/config-version/ConfigVersion>(ix://example/config-version/P)) >= 1)`; the same unit with the alias renamed to `K` throughout gives byte-equal `atoms`, and so does each unit's checked package selected as `package` (FR-1039) with the source removed. | Test (TC-2601) |
 | FR-931-AC-13 | Over the `Low` unit with a source union `union Shape { Circle(Integer), Rect(Integer, Integer), Empty }` declared by the unit (its `SourceOwner` identity `I`), the leaf written `holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })` has the atom text `holds(case ix://I/Shape::Rect(c.versionNumber, 2) { Circle(r): r <= 2; Rect(w, h): w + h <= 4; Empty: true; })`, arms in member declaration order and binders under their declared names; the leaf `holds(let k = c.versionNumber in case Shape::Rect(k, 1) { Circle(r): r <= k; Rect(_, h): case Shape::Circle(h) { Circle(x): x + k <= 4; Rect(a, b): false; Empty: true; }; Empty: true; })` prints `holds(let k = c.versionNumber in case ix://I/Shape::Rect(k, 1) { Circle(r): r <= k; Rect(_, h): case ix://I/Shape::Circle(h) { Circle(x): x + k <= 4; Rect(a, b): false; Empty: true; }; Empty: true; })`, with `_` printed as an ordinary binder; the first leaf with `w` renamed to `width` throughout prints `Rect(width, h): width + h <= 4`, so the atom texts differ; and each unit's checked package selected as `package` (FR-1039) with the source removed gives byte-equal `atoms`. | Test (TC-3039) |
+| FR-931-AC-14 | Over FR-931-AC-13's unit, the leaf `holds(-float64(bits: 0x3ff0000000000000) < float64(bits: 0x0000000000000000))`, whose left operand the checker binds under its own `ieee_operand_<slot>` binder, has the atom text `holds(-float64(bits: 0x3ff0000000000000) < float64(bits: 0x0000000000000000))`, with no `let` and no `ieee_operand` in it; the leaf `holds(float64(bits: 0x0000000000000000) > -float64(bits: 0x3ff0000000000000))` gives the same atom text; the leaf `holds(let ieee_operand_0 = c.versionNumber in ieee_operand_0 <= 2)` prints exactly as written; and each unit's checked package selected as `package` (FR-1039) with the source removed gives byte-equal `atoms`. | Test (TC-3039) |
 
 ## Dependencies
 

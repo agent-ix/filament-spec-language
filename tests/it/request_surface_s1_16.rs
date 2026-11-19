@@ -995,8 +995,8 @@ fn shape_low(leaf: &str) -> String {
 /// FR-931-AC-13 (source route): a `case` prints its arms in member
 /// declaration order with each binder under its declared name, nested
 /// binders keep their scopes, `_` is an ordinary binder, and renaming a
-/// binder changes the label. The package-route half joins FR-931-AC-11's
-/// package test (FR-1039).
+/// binder changes the label. The package route is
+/// `case_binders_match_across_the_source_and_package_routes`.
 #[test]
 #[trace("TC-3039", "FR-931-AC-13")]
 #[ignore = "QSL-2562: case binder names in the checked record and canonical case printing not implemented yet"]
@@ -1008,7 +1008,10 @@ fn case_binders_print_under_their_declared_names() {
             ("tl_lowering", json!({"clause": "Low"})),
         );
         assert_eq!(code, 0, "{value}");
-        value["tl_lowering"]["atoms"]["p0"].as_str().unwrap().to_owned()
+        value["tl_lowering"]["atoms"]["p0"]
+            .as_str()
+            .unwrap()
+            .to_owned()
     };
     let first = atom(
         "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })",
@@ -1019,7 +1022,10 @@ fn case_binders_print_under_their_declared_names() {
         .and_then(|rest| rest.split_once("::Rect("))
         .map(|(key, _)| key.to_owned())
         .unwrap_or_else(|| panic!("{first}"));
-    assert!(key.starts_with("ix://") && key.ends_with("/Shape"), "{first}");
+    assert!(
+        key.starts_with("ix://") && key.ends_with("/Shape"),
+        "{first}"
+    );
     assert_eq!(
         first,
         format!(
@@ -1043,8 +1049,102 @@ fn case_binders_print_under_their_declared_names() {
     let renamed = atom(
         "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(width, h): width+h<=4; Circle(r): r<=2; })",
     );
-    assert!(renamed.contains("Rect(width, h): width + h <= 4"), "{renamed}");
+    assert!(
+        renamed.contains("Rect(width, h): width + h <= 4"),
+        "{renamed}"
+    );
     assert_ne!(renamed, first);
+}
+
+/// A leaf over `shape_low` lowered on the
+/// source route and, after compiling `shape_low(leaf)` to a checked package
+/// and removing the source, on the package route (FR-1039). Returns each
+/// leaf's source and package `atoms` entry of `p0`.
+fn both_routes(leaf: &str) -> (String, String) {
+    let unit = shape_low(leaf);
+    let lower = json!({"clause": "Low"});
+    let (code, value) = run(&unit, true, ("tl_lowering", lower.clone()));
+    assert_eq!(code, 0, "{value}");
+    let from_source = value["tl_lowering"]["atoms"]["p0"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
+    let models =
+        json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}]);
+    let compile = directory.path().join("compile.json");
+    std::fs::write(
+        &compile,
+        serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
+            "models": models, "program": {"source": source("unit.native")},
+            "output": {"package": "package.json"}}}))
+        .unwrap(),
+    )
+    .unwrap();
+    fsl_command::command::compile(&compile).expect("the unit compiles");
+    std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+    let (code, value) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {"models": models,
+            "package": {"file": "package.json"}, "tl_lowering": lower}}),
+    );
+    assert_eq!(code, 0, "{value}");
+    let from_package = value["tl_lowering"]["atoms"]["p0"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    (from_source, from_package)
+}
+
+/// FR-400-AC-13 and FR-931-AC-13 (package route): the reader-backed read
+/// gives every `case` and `let` binding site the declared names the
+/// in-process read gives, observed through the one printer that reads them,
+/// so each leaf, and each leaf with its binders renamed, gives byte-equal
+/// `atoms` on both routes.
+#[test]
+#[trace("TC-3039", "FR-400-AC-13")]
+#[trace("TC-3039", "FR-931-AC-13")]
+#[ignore = "QSL-2562: case binder names on the reader-backed read and package-route case printing not implemented yet"]
+fn case_binders_match_across_the_source_and_package_routes() {
+    for leaf in [
+        "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })",
+        "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(width, h): width+h<=4; Circle(r): r<=2; })",
+        "holds(let k = c.versionNumber in case Shape::Rect(k, 1) { Circle(r): r <= k; \
+         Rect(_, h): case Shape::Circle(h) { Circle(x): x + k <= 4; Rect(a, b): false; Empty: true; }; \
+         Empty: true; })",
+        "holds(let kk = c.versionNumber in case Shape::Rect(kk, 1) { Circle(rr): rr <= kk; \
+         Rect(_, hh): case Shape::Circle(hh) { Circle(xx): xx + kk <= 4; Rect(aa, bb): false; Empty: true; }; \
+         Empty: true; })",
+    ] {
+        let (from_source, from_package) = both_routes(leaf);
+        assert_eq!(from_source, from_package, "{leaf}");
+    }
+}
+
+/// FR-931-AC-14: the checker's own `ieee_operand_<slot>` binder of an IEEE
+/// ordering never prints; the composition prints as the one comparison, the
+/// lesser operand on the left; an author's `ieee_operand_0` prints as
+/// written; both routes agree.
+#[test]
+#[trace("TC-3039", "FR-931-AC-14")]
+#[ignore = "QSL-2562: IEEE ordering composition printing not implemented yet"]
+fn the_checker_ieee_operand_binder_never_prints() {
+    let expected = "holds(-float64(bits: 0x3ff0000000000000) < float64(bits: 0x0000000000000000))";
+    for leaf in [
+        expected,
+        "holds(float64(bits: 0x0000000000000000) > -float64(bits: 0x3ff0000000000000))",
+    ] {
+        let (from_source, from_package) = both_routes(leaf);
+        assert_eq!(from_source, expected, "{leaf}");
+        assert_eq!(from_package, expected, "{leaf}");
+    }
+    let written = "holds(let ieee_operand_0 = c.versionNumber in ieee_operand_0 <= 2)";
+    let (from_source, from_package) = both_routes(written);
+    assert_eq!(from_source, written);
+    assert_eq!(from_package, written);
 }
 
 /// A driver can execute the value returned by the public preparation API.

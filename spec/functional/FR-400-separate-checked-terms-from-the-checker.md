@@ -294,8 +294,10 @@ variant SHALL carry the `Literal` parameter. All other variants, metadata,
 admitted evidence and operand ordering SHALL keep their existing meaning.
 Each binding site SHALL carry the declared name of every slot it binds beside
 that slot: `CaseArm` one name per payload binder in position order, `Let`
-and `Query` the name of their slot, and `Fold` the names of its accumulator
-and element slots. An in-process read SHALL take the name from the source
+and `Query` the name of their slot, `Fold` the names of its accumulator
+and element slots, and `Seq` the name of its index slot. A slot the checker
+binds for itself (FR-397's IEEE ordering operand) carries the name the
+checker gave it. An in-process read SHALL take the name from the source
 identifier and a reader-backed read from the `name` of the binder's
 `value`/`parameter` node (FSpec FR-322, FSpec FR-440), so both reads give a
 consumer such as FR-931's canonical printer the same names. The name is
@@ -398,7 +400,7 @@ move MAY land in steps, in this order: expression terms; clause records;
 | FR-400-AC-10 | After the move, `fsl_semantics::model::key::EffectiveDeclarationPreimage::identity` and `fsl_semantics::model::key::EffectiveDeclarationPreimage::validate_derivation` resolve from another crate. `identity` reproduces each published effective-declaration identity vector from FSpec FR-150-AC-6; `validate_derivation` rejects FSpec's `unsorted-derivation` mutation (TC-195) with `UnsortedDerivation` naming its position and ordinal, rejects an FSL test preimage whose first two facts have the same `rule` and equal `inputs` with `DuplicatePath{earlier: 0, later: 1}`, and accepts the unmutated vector. `filament_checked` exposes no `EffectiveDeclarationPreimage`, `Fact` or `RuleRef`, `filament-checked`'s `DeclarationKey` has no `identity` or `validate_derivation` method (a call to either fails to compile), and no `filament-checked` item names `ModelRefusalCause`. | Test |
 | FR-400-AC-11 | A stored `NodeKind` and its `NodeRead` projection match the same exhaustive generic enum: every variant, nested operand position, literal value, metadata/evidence identity, checked type and location are preserved. A probe variant makes both evaluator paths non-exhaustive. No parallel operation enum exists; the layer-C read descriptors compile without `std`, FSL or IR dependencies. | Test |
 | FR-400-AC-12 | Constructing a `NodeRead` or a parameterized operation descriptor cannot create a checked term or an admitted FR-390 view: passing a descriptor to the public evaluator as a checked input fails to compile. Existing checked-term constructor and mutation rejection checks remain failing, with their positive pairs compiling. | Test |
-| FR-400-AC-13 | For FR-931-AC-13's leaves, the in-process read and the reader-backed read of each `case`, `let` and nested `case` binding site give equal declared names in equal positions (`Circle` `[r]`, `Rect` `[w, h]` and `[_, h]`, `Empty` `[]`, `let` `k`); evaluating each leaf gives the same outcome and charges with every binder renamed. | Test (TC-3039) |
+| FR-400-AC-13 | For FR-931-AC-13's leaves, the in-process read and the reader-backed read of each `case`, `let` and nested `case` binding site give equal declared names in equal positions (outer arms `Circle` `[r]`, `Rect` `[w, h]` and `[_, h]`, `Empty` `[]`; inner arms `Circle` `[x]`, `Rect` `[a, b]`, `Empty` `[]`; `let` `k`); evaluating each leaf gives the same outcome and charges with every binder renamed. | Test (TC-3039) |
 
 ## Dependencies
 
