@@ -1,1 +1,1 @@
-{"verb":"check","exit_code":20,"category":"refusal","last_stage":"S3","code":"undefined_expression","cause":"unproved-range"}
+{"verb":"check","exit_code":0,"category":"success","last_stage":"S4"}

@@ -1,1 +1,41 @@
-{"format":"native-run/1","request":{"models":[],"program":{"source":{"file":"r-map-lookup.native","authority":"agent-ix","identity":"test:corpus:r-map-lookup","document":"r-map-lookup","formal_revision":1}},"call":{"function":"f","arguments":[{"parameter":"m","value":{"map":[{"key":{"integer":"1"},"value":{"integer":"8"}}]}}]}}}
+{
+  "format": "native-run/1",
+  "request": {
+    "models": [],
+    "program": {
+      "source": {
+        "file": "r-map-lookup.native",
+        "authority": "agent-ix",
+        "identity": "test:corpus:r-map-lookup",
+        "document": "r-map-lookup",
+        "formal_revision": 1
+      }
+    },
+    "call": {
+      "function": "f",
+      "arguments": [
+        {
+          "parameter": "m",
+          "value": {
+            "map": [
+              {
+                "key": {
+                  "integer": "1"
+                },
+                "value": {
+                  "integer": "8"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "parameter": "k",
+          "value": {
+            "integer": "1"
+          }
+        }
+      ]
+    }
+  }
+}

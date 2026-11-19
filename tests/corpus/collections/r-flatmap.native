@@ -1,4 +1,5 @@
 language "ix:native" edition "1-draft";
 profile v = "filament.value.complete/v1";
-function same using v(a: Sequence<Integer>[0,2],b: Sequence<Integer>[0,4]): Boolean pure { flatMap(x in a:sequence[x,x])=b }
+function twice using v(x: Integer): Sequence<Integer>[2,2] pure { sequence[x,x] }
+function same using v(a: Sequence<Integer>[0,2],b: Sequence<Integer>[0,4]): Boolean pure { flatMap(x in a:twice(x))=b }
 function f using v(): Boolean pure { same(sequence[1,2],sequence[1,1,2,2]) }

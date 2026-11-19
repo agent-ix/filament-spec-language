@@ -1,1 +1,1 @@
-{"verb":"run","exit_code":10,"category":"violation","last_stage":"S6a"}
+{"verb":"run","exit_code":20,"category":"refusal","last_stage":"S3","code":"undefined_expression","cause":"unproved-nonzero"}

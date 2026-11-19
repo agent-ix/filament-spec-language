@@ -1,4 +1,4 @@
 language "ix:native" edition "1-draft";
 profile v = "filament.value.complete/v1";
-function lookup using v(m: Map<Int[0,9],Boolean>[0,3], k: Int[0,9]): Option<Boolean> pure { if contains(m,k) then Some(m[k]) else none }
-function f using v(m: Map<Int[0,9],Boolean>[0,3]): Option<Boolean> pure { lookup(m,1) }
+function get using v(m: Map<Int[0,9],Boolean>[0,3],k: Int[0,9]): Option<Boolean> pure { if contains(m,k) then Some(m[k]) else none }
+function f using v(m: Map<Int[0,9],Boolean>[0,3]): Option<Boolean> pure { get(m,1) }

@@ -1,3 +1,4 @@
 language "ix:native" edition "1-draft";
 profile v = "filament.value.complete/v1";
-function f using v(s: Sequence<Integer>[0,3]): Sequence<Integer>[0,6] pure { flatMap(x in s: sequence[x,x]) }
+function twice using v(x: Integer): Sequence<Integer>[2,2] pure { sequence[x,x] }
+function f using v(s: Sequence<Integer>[0,3]): Sequence<Integer>[0,6] pure { flatMap(x in s:twice(x)) }
