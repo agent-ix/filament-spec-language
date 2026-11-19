@@ -356,7 +356,7 @@ pub fn evaluate_terminal_predicate(
     package: &CheckedPackage,
     predicate: &fsl_semantics::check::CheckedTerminalPredicate,
     current: &ObjectEnvironment,
-    self_object: filament_exact::ObjectReference,
+    self_object: Option<filament_exact::ObjectReference>,
     meter: &mut Meter,
 ) -> Result<Evaluation, InternalFault> {
     // An invariant's checked body reads no `pre(..)`, so every model read
@@ -374,7 +374,7 @@ pub fn evaluate_terminal_predicate(
     .run(
         predicate.body(),
         predicate.slots(),
-        vec![Value::Reference(self_object)],
+        self_object.into_iter().map(Value::Reference).collect(),
     )
 }
 

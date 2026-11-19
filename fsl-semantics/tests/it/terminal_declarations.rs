@@ -171,19 +171,17 @@ fn a_predicate_reading_a_pre_state_refuses_as_an_invariant_does() {
     );
 }
 
-/// A `terminal when` on a model with no population has no object for `self`
-/// to range over and refuses `missing_declaration`/`missing-name` at the
-/// model alias; one on a model whose populations range over several object
-/// types refuses `ambiguous_declaration`/`ambiguous-name`.
+/// Only a predicate reading `self` needs exactly one covered object type.
+#[trace("TC-519", "FR-124-AC-7")]
 #[test]
-fn a_when_predicate_needs_exactly_one_state_object_type() {
+fn terminal_self_requires_one_covered_type_and_refuses_at_self() {
     let mut envelope: serde_json::Value = serde_json::from_slice(&document()).expect("JSON");
     envelope["populations"] = json!([]);
     let none = serde_json::to_vec(&envelope).expect("JSON");
     let several = crate::model_operations::with_unrelated_population(document());
     for (document, code, tag) in [
         (none, Code::MissingDeclaration, "missing-name"),
-        (several, Code::AmbiguousDeclaration, "ambiguous-name"),
+        (several, Code::MissingDeclaration, "missing-name"),
     ] {
         let refusal =
             admit_and_assemble_with_body(&document, WHEN).expect_err("no single state object type");
@@ -191,15 +189,104 @@ fn a_when_predicate_needs_exactly_one_state_object_type() {
         assert_eq!(refusal.errors.len(), 1, "{tag}");
         assert_eq!(refusal.errors[0].cause.code(), code);
         assert_eq!(refusal.errors[0].cause.catalog_code().cause(), tag);
-        let on = span_of(&text, " on Config");
-        assert_eq!(
-            refusal.errors[0].span,
-            Span {
-                start: on.start + " on ".len(),
-                end: on.end
-            }
-        );
+        assert_eq!(refusal.errors[0].span, span_of(&text, "self"));
+        let constant = "terminal Done using v on Config when { true };";
+        let graph = admit_and_assemble_with_body(&document, constant)
+            .expect("self-free predicate assembles")
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
+            .expect("self-free predicate checks");
+        let TerminalDeclaration::When(predicate) = declaration(&graph) else {
+            panic!("when predicate")
+        };
+        assert!(predicate.parameters().is_empty());
     }
+}
+
+#[trace("TC-519", "FR-124-AC-9")]
+#[test]
+fn terminal_self_refuses_two_covering_populations_but_quantification_checks() {
+    let mut envelope: serde_json::Value = serde_json::from_slice(&document()).expect("JSON");
+    let mut archive = envelope["populations"][0].clone();
+    let identity = "ix://example/config-version/archive";
+    archive["identity"] = json!(identity);
+    archive["displayName"] = json!(identity);
+    archive["origin"]["generated"]["generatorIdentity"] = json!(identity);
+    archive["origin"]["generated"]["inputIdentities"] = json!([identity]);
+    envelope["populations"]
+        .as_array_mut()
+        .expect("populations")
+        .push(archive);
+    let document = serde_json::to_vec(&envelope).expect("JSON");
+    let refusal = admit_and_assemble_with_body(&document, WHEN).expect_err("two populations");
+    let [error] = refusal.errors.as_slice() else {
+        panic!("one ambiguity: {refusal:?}")
+    };
+    assert_eq!(error.cause.code(), Code::AmbiguousDeclaration);
+    assert_eq!(error.cause.catalog_code().cause(), "ambiguous-name");
+    let AssemblyCause::AmbiguousPopulation { populations, .. } = &error.cause else {
+        panic!("population ambiguity")
+    };
+    assert_eq!(
+        populations
+            .iter()
+            .map(|key| key.node.rsplit('/').next().expect("population name"))
+            .collect::<Vec<_>>(),
+        ["archive", "config_history"]
+    );
+    let (text, _) = config_unit_with_body(&document, WHEN);
+    assert_eq!(error.span, span_of(&text, "self"));
+    check_population_terminal(&document);
+    let several = crate::model_operations::with_unrelated_population(document);
+    let refusal = admit_and_assemble_with_body(&several, WHEN).expect_err("several types");
+    assert_eq!(refusal.errors[0].cause.code(), Code::MissingDeclaration);
+    check_population_terminal(&several);
+}
+
+fn check_population_terminal(document: &[u8]) {
+    let body = "terminal Done using v on Config when { forall(c in Config::config_history : c.versionNumber = 1000) };";
+    let graph = admit_and_assemble_with_body(document, body)
+        .expect("population terminal assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+        .expect("population terminal checks");
+    let TerminalDeclaration::When(predicate) = declaration(&graph) else {
+        panic!("when predicate")
+    };
+    assert!(predicate.parameters().is_empty());
+    assert_eq!(
+        predicate.body().value_type(),
+        &filament_exact::ValueType::Boolean
+    );
+}
+
+#[trace("TC-1076", "FR-391-AC-9", "TC-519", "FR-124-AC-6")]
+#[test]
+fn terminal_population_quantifier_checks_with_several_covered_types() {
+    check_population_terminal(&crate::model_operations::with_unrelated_population(
+        document(),
+    ));
+}
+
+#[trace("TC-519", "FR-124-AC-7")]
+#[test]
+fn terminal_self_refuses_several_member_types_in_one_population() {
+    let document = crate::model_operations::tc465_document_with_tag_type_sharing_a_field_name();
+    let refusal = admit_and_assemble_with_body(&document, WHEN)
+        .expect_err("one population covers ConfigVersion and Tag");
+    let [error] = refusal.errors.as_slice() else {
+        panic!("one missing self binding: {refusal:?}");
+    };
+    assert_eq!(error.cause.code(), Code::MissingDeclaration);
+    assert_eq!(error.cause.catalog_code().cause(), "missing-name");
+    let (text, _) = config_unit_with_body(&document, WHEN);
+    assert_eq!(error.span, span_of(&text, "self"));
 }
 
 /// STD-492: `terminal any` on a model that declares no object type names no

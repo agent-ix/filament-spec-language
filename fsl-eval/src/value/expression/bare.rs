@@ -1409,14 +1409,16 @@ pub(crate) fn evaluate_terminal_predicate(
     package: &BarePackage<'_>,
     predicate: &fsl_package::BareTerminalPredicate,
     objects: &ObjectEnvironment,
-    self_object: filament_exact::ObjectReference,
+    self_object: Option<filament_exact::ObjectReference>,
     meter: &mut Meter,
 ) -> Result<Evaluation, InternalFault> {
     let world = package
         .world()
         .map_err(|_| InternalFault::new("FR-940", "terminal-predicate-world"))?;
     let bindings = if predicate.reads_self() {
-        vec![Value::Reference(self_object)]
+        vec![Value::Reference(self_object.ok_or_else(|| {
+            InternalFault::new("FR-124", "terminal-self-object")
+        })?)]
     } else {
         Vec::new()
     };

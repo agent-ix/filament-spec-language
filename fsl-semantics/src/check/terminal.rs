@@ -27,7 +27,7 @@ use ix_trace_rs::string_edge;
 use super::ir::{CheckedBody, CheckedNode};
 use super::node_key::{BindingValue, BodyTerm, LeafTerm, LiteralValue, MemberTerm, NodeTag};
 use super::refusal::{CheckCause, CheckRefusal};
-use super::state_clause::{check_clause, ClauseDeclarations, ClauseView, PopulationDomain};
+use super::state_clause::{ClauseDeclarations, ClauseView, PopulationDomain};
 use super::CheckedGraph;
 use super::SemanticNode;
 use crate::family::CheckContext;
@@ -61,14 +61,14 @@ pub enum TerminalClauseKind {
     When {
         /// The predicate as S2 built it.
         predicate: ExpressionForm,
-        /// The model's state object, the type of `self`.
-        context: EffectiveId,
+        /// The model's state object, when the predicate reads `self`.
+        context: Option<EffectiveId>,
         /// The population the object type ranges over.
         population: Option<PopulationDomain>,
     },
 }
 
-/// The checked body of a `terminal when` predicate: a Boolean over `self`,
+/// The checked body of a `terminal when` predicate: a Boolean over the state,
 /// the evaluation reads at each state's observation.
 #[derive(Debug)]
 pub struct CheckedTerminalPredicate {
@@ -79,7 +79,7 @@ pub struct CheckedTerminalPredicate {
 }
 
 impl CheckedTerminalPredicate {
-    /// `self` with its type: the one slot the body is checked over.
+    /// `self` with its type, when the predicate reads it.
     pub fn parameters(&self) -> &[(String, ValueType)] {
         &self.parameters
     }
@@ -178,8 +178,10 @@ pub(crate) fn check_terminal<'a>(
         source_owner: None,
         kind: StateClauseKind::Invariant,
         complete_value: super::state_clause::is_complete_value(&declaration.selection),
-        context: Some(context.clone()),
-        receiver: Some(("self", ValueType::Reference(context.clone()))),
+        context: context.clone(),
+        receiver: context
+            .clone()
+            .map(|context| ("self", ValueType::Reference(context))),
         operation: None,
         context_population: population.clone(),
         frame_population: None,
@@ -187,15 +189,21 @@ pub(crate) fn check_terminal<'a>(
         presence_places: &[],
         body: &predicate.expression,
     };
-    let typed = check_clause(&view, declarations, &mut cx.reborrow(declarations.scope)).map_err(
-        |refusal| CheckRefusal {
-            location: refusal.location,
-            cause: CheckCause::Terminal(Box::new(TerminalRefusal {
-                declaration: index,
-                cause: refusal.cause,
-            })),
-        },
-    )?;
+    let named =
+        super::check::NamedScope::of(declarations.models, declarations.scope, declarations.unit);
+    let typed = super::state_clause::check_clause_named(
+        &view,
+        declarations,
+        &mut cx.reborrow(declarations.scope),
+        named,
+    )
+    .map_err(|refusal| CheckRefusal {
+        location: refusal.location,
+        cause: CheckCause::Terminal(Box::new(TerminalRefusal {
+            declaration: index,
+            cause: refusal.cause,
+        })),
+    })?;
     Ok((
         TerminalDeclaration::When(CheckedTerminalPredicate {
             parameters: typed.parameters,

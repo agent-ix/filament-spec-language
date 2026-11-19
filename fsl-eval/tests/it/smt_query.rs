@@ -1202,6 +1202,34 @@ fn a_deadlock_is_a_terminal_state_no_declaration_intends() {
     assert!(sat_at(&at_two, 4));
 }
 
+#[trace("TC-519", "FR-124-AC-8", "TC-1076", "FR-391-AC-9")]
+#[test]
+fn terminal_when_smt_reads_constants_once_and_refuses_population_outside_its_fragment() {
+    for (predicate, deadlocked) in [("true", false), ("false", true)] {
+        let world = counter_with(
+            &format!("{COUNTER_CONTRACT}terminal Done using v on M when {{ {predicate} }};\n"),
+            INFINITE,
+            &[],
+        );
+        let script = world
+            .deadlock(SmtQueryKind::Unrolling { depth: 3 })
+            .expect("self-free terminal encodes");
+        assert_eq!(satisfiable(&script), deadlocked, "{predicate}");
+    }
+    let world = counter_with(
+        &format!("{COUNTER_CONTRACT}terminal Done using v on M when {{ exists(c in M::objects : c.value = 3) }};\n"),
+        INFINITE,
+        &[],
+    );
+    assert!(
+        matches!(
+            world.deadlock(SmtQueryKind::Unrolling { depth: 0 }),
+            Err(SmtEncodingRefusal::Refused(Refusal::OutOfFragment { .. }))
+        ),
+        "population expressions must get a typed fragment refusal"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The `Tally` subject of FR-315-AC-4 and the scripts read as text.
 // ---------------------------------------------------------------------------

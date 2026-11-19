@@ -5122,6 +5122,7 @@ fn a_terminal_on_a_shared_alias_is_on_its_own_units_package() {
     };
     let alternate = admitted_model(&declarations, "example/alternate-config-version");
     let original = admitted_model(&declarations, "example/config-version");
+    let context = context.as_ref().expect("self has an object type");
     assert!(
         alternate.population_objects().contains(context),
         "{context:?}"

@@ -179,28 +179,29 @@ impl ModelSystem<'_> {
     }
 
     /// `predicate` at `state`: each conforming object in ascending
-    /// reference order, each with a fresh meter. The first undefined or
-    /// refused object decides; otherwise any `false` object makes it false.
+    /// reference order, each with a fresh meter. A false object outweighs
+    /// undefined objects. A predicate without `self` is read once.
     fn read(
         &self,
         state: &ModelSimState,
         predicate: TerminalWhen<'_>,
     ) -> Result<Reading, ExpansionStop> {
-        let Some(context) = predicate.context() else {
-            return Err(stop(BROKEN));
-        };
         let walk = walk_of(self, state, None)?;
-        let mut objects: Vec<_> = walk
-            .rows
-            .iter()
-            .map(|row| row.reference.clone())
-            .filter(|reference| {
-                self.types
-                    .conforms(reference.object_type().clone(), context.clone())
-            })
-            .collect();
+        let mut objects: Vec<_> = if let Some(context) = predicate.context() {
+            walk.rows
+                .iter()
+                .filter(|row| {
+                    self.types
+                        .conforms(row.reference.object_type().clone(), context.clone())
+                })
+                .map(|row| Some(row.reference.clone()))
+                .collect()
+        } else {
+            vec![None]
+        };
         objects.sort();
         let mut holds = true;
+        let mut undefined = None;
         for object in objects {
             let evaluation = self
                 .evaluator()
@@ -216,7 +217,8 @@ impl ModelSystem<'_> {
                 Verdict::False => holds = false,
                 Verdict::Undecided(outcome) => {
                     if let Some(cause) = outcome.undefined_cause() {
-                        return Ok(Reading::Undefined(cause));
+                        undefined.get_or_insert(cause);
+                        continue;
                     }
                     if let ClauseOutcome::Incomplete(incomplete) = outcome {
                         return Err(exhausted(ExpansionLimit::EvaluationMeter(
@@ -227,6 +229,12 @@ impl ModelSystem<'_> {
                 }
             }
         }
-        Ok(if holds { Reading::True } else { Reading::False })
+        Ok(if !holds {
+            Reading::False
+        } else if let Some(cause) = undefined {
+            Reading::Undefined(cause)
+        } else {
+            Reading::True
+        })
     }
 }
