@@ -400,8 +400,8 @@ fn guarded_routes(level: i64, stopped: bool) -> Vec<Value> {
     vec![source, package]
 }
 
-/// Run an already checked package with no source provision for evaluation.
-pub(super) fn package_run(
+/// Compile once, then run the checked package with no source provision.
+fn package_run(
     unit: &fsl_replay::spine::ParseRequest<'_>,
     packages: &fsl_semantics::model::intake::PackageInput,
     snapshots: &fsl_semantics::model::observation::DocumentProvision,
@@ -497,6 +497,75 @@ fn false_guard_deliveries_create_no_capture_obligation_on_both_routes() {
             assert_eq!(temporal(&document)["kind"], kind, "{document}");
         }
     }
+}
+
+/// The canonical stop-speed-0 example runs unchanged from source and
+/// through the library package entry over the same admitted snapshot.
+#[test]
+#[trace("FSpec-FR-093-AC-5", "FSpec-FR-093-AC-6")]
+#[ignore = "requires the authoritative filament-examples corpus via FSL_EXAMPLES_DIR"]
+fn the_canonical_false_guard_capture_example_is_inactive() {
+    let root = PathBuf::from(
+        std::env::var_os("FSL_EXAMPLES_DIR")
+            .expect("set FSL_EXAMPLES_DIR to the authoritative filament-examples checkout"),
+    );
+    let request = root.join("examples/docs-captures/requests/false-guard-inactive.json");
+    let source_run = fsl_command::command::run(&request, &crate::negotiation::Fr290).unwrap();
+    assert_eq!(source_run.exit_code, 0);
+    let outcome: Value =
+        serde_json::from_slice(&source_run.outcome.as_ref().unwrap().to_bytes().unwrap()).unwrap();
+    let item = &outcome["items"][0];
+    assert_eq!(item["clause"], "StopForEachFastStart", "{outcome}");
+    assert_eq!(item["axes"]["activation"], "inactive", "{outcome}");
+    assert_eq!(item["axes"]["execution"], "completed", "{outcome}");
+    assert_eq!(item["axes"]["truth"], Value::Null, "{outcome}");
+
+    let input: Value = serde_json::from_slice(&std::fs::read(&request).unwrap()).unwrap();
+    let base = request.parent().unwrap();
+    let read = |file: &Value| std::fs::read(base.join(file.as_str().unwrap())).unwrap();
+    let source = &input["request"]["program"]["source"];
+    let bytes = read(&source["file"]);
+    let model = read(&input["request"]["models"][0]["source"]["file"]);
+    let packages = fsl_semantics::model::intake::package_input([model.as_slice()]).unwrap();
+    let stop = read(&input["request"]["clause"]["observations"]["stop"]);
+    let document: Value = serde_json::from_slice(&stop).unwrap();
+    let label = fsl_semantics::model::observation::DocumentRef {
+        authority: document["identity"]["authority"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+        identity: document["identity"]["identity"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    };
+    let snapshots = [(label.clone(), stop)].into_iter().collect();
+    let over = &input["request"]["clause"]["selection"]["temporal"]["over"]["reference"];
+    let package = package_run(
+        &fsl_replay::spine::ParseRequest {
+            source: &fsl_foundation::SourceIdentity::new(
+                source["authority"].as_str().unwrap(),
+                source["identity"].as_str().unwrap(),
+            ),
+            path: source["file"].as_str().unwrap(),
+            bytes: &bytes,
+        },
+        &packages,
+        &snapshots,
+        &fsl_replay::spine::TraceInput::Lasso {
+            prefix: vec![],
+            repeat: vec![label],
+        },
+        Some(&fsl_replay::spine::OverObject {
+            population: over["population"].as_str().unwrap().to_owned(),
+            key: over["key"].as_str().unwrap().to_owned(),
+        }),
+        "StopForEachFastStart",
+    );
+    assert_eq!(package["axes"]["activation"], "inactive", "{package}");
+    assert_eq!(package["axes"]["execution"], "completed", "{package}");
+    assert_eq!(package["axes"]["truth"], Value::Null, "{package}");
+    assert!(package["disposition"].get("truth").is_none(), "{package}");
 }
 
 /// FR-860-AC-4, FR-337 "Captures": a possibly-zero `mod` written in a
