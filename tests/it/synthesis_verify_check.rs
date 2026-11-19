@@ -422,7 +422,6 @@ fn plan_reference_bound_and_method_applicability_refusals() {
 #[trace("TC-2104", "FR-754-AC-2")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-9")]
 #[test]
-#[ignore = "QSL-2235: S3 `synthesis` name and type checks not implemented yet"]
 fn synthesis_name_and_type_refusals() {
     let missing = check(
         "type Digit = Int[0, 9];\n\
