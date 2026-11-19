@@ -8610,10 +8610,19 @@ fn claim_name_rows(
         .enumerate()
         .map(|(at, node)| (&node.node_id, at))
         .collect();
-    rows.sort_by(|left, right| {
-        (position.get(&left.declaration), &left.occurrence)
-            .cmp(&(position.get(&right.declaration), &right.occurrence))
+    // Every row's declaration was taken from an emitted node, so a miss is an
+    // emitter fault, not an ordering to guess.
+    let mut ranked = Vec::with_capacity(rows.len());
+    for row in rows {
+        let at = *position
+            .get(&row.declaration)
+            .ok_or(EmitRefusal::UnresolvedNodeReference)?;
+        ranked.push((at, row));
+    }
+    ranked.sort_by(|(left_at, left), (right_at, right)| {
+        (left_at, &left.occurrence).cmp(&(right_at, &right.occurrence))
     });
+    let mut rows: Vec<_> = ranked.into_iter().map(|(_, row)| row).collect();
     rows.dedup_by(|later, earlier| {
         later.declaration == earlier.declaration && later.occurrence == earlier.occurrence
     });

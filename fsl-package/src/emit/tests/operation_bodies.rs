@@ -542,3 +542,328 @@ fn under_kernel_a_precondition_clause_function_is_linked_and_a_body_is_kernel() 
     assert!(modes.contains(&json!("kernel")), "{modes:?}");
     assert!(modes.contains(&json!("linked")), "{modes:?}");
 }
+
+/// Rewards over the config-version package: `cost` and `load` on `size`
+/// (which has a body) and `stable` on `empty` (which has none).
+const REWARDS: [&str; 3] = [
+    "reward cost on ConfigVersion::size = 1;",
+    "reward load on ConfigVersion::size = 2;",
+    "reward stable on ConfigVersion::empty = 3;",
+];
+const SIZE_BODY: &str = "body sizeA using v on Config::ConfigVersion::size() { 41 }\n";
+
+fn rewarded(declarations: &[&str]) -> (Vec<u8>, Emission) {
+    let document = package(base_operations(), &[]);
+    let emission = emitted(
+        &document,
+        &format!("{SIZE_BODY}{}\n", declarations.join("\n")),
+    );
+    (document, emission)
+}
+
+/// FSL's strict read of `wire` re-encoded, with `document` as the domain
+/// package evidence.
+pub(super) fn read_wire_over(wire: &Value, document: Option<&[u8]>) -> Read {
+    let mut edited = wire.clone();
+    fsl_semantics::check::wire_id::write_operand_rows(&mut edited);
+    let bytes = quire_canonical::to_vec(&edited, ceiling().canonical()).expect("canonical");
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in edited["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    if let Some(document) = document {
+        evidence
+            .insert_domain_package_document(package_identity(document), document)
+            .expect("a fresh evidence key");
+    }
+    read_v2(&bytes, library(), V2ReadLimits::fixture(), &evidence)
+}
+
+/// The position in `wire`'s graph of the node with `id`.
+fn position_of(wire: &Value, id: &Value) -> usize {
+    nodes(wire)
+        .iter()
+        .position(|node| &node["node_id"] == id)
+        .expect("the node is in the graph")
+}
+
+/// The function node of the reward `name` in `wire`, its position and the
+/// position of its `reward` node.
+pub(super) fn reward_function_of(wire: &Value, name: &str) -> (usize, usize) {
+    let reward = nodes(wire)
+        .iter()
+        .position(|node| {
+            node["semantic_form"] == "reward"
+                && node["body"]["members"].as_array().is_some_and(|members| {
+                    members
+                        .iter()
+                        .any(|member| member["name"] == "name" && member["value"]["value"] == name)
+                })
+        })
+        .unwrap_or_else(|| panic!("the reward `{name}`"));
+    let expression = nodes(wire)[reward]["body"]["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|member| member["name"] == "expression")
+        .expect("the expression binding")["value"]["target"]
+        .clone();
+    (position_of(wire, &expression), reward)
+}
+
+pub(super) fn set_clause(wire: &mut Value, function: usize, clause: &str) {
+    let members = wire["semantic_graph"]["nodes"][function]["body"]["members"]
+        .as_array_mut()
+        .expect("an aggregate body");
+    members
+        .iter_mut()
+        .find(|member| member["name"] == "clause")
+        .expect("the clause binding")["value"]["value"] = json!(clause);
+}
+
+pub(super) fn refusal_of(read: Read) -> filament_contract_model::CheckedPackageRefusal {
+    let Read::Refused(crate::checked_v2::V2ReadRefusal::Envelope { refusal, .. }) = read else {
+        panic!("the edited package is refused with an envelope");
+    };
+    *refusal
+}
+
+/// FSpec FR-322-AC-471, FR-640-AC-7: a reward's function carries the clause
+/// kind `reward` under the `ModelOwner` of its operation member and the owner
+/// join admits it; the operation without a body keeps its `no_body` row and no
+/// function owned by it has another clause kind than `reward`.
+#[trace("FSpec-TC-1563", "FSpec-FR-322-AC-471")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-7")]
+#[test]
+fn a_reward_on_a_bodyless_operation_leaves_its_no_body_row_and_reads_as_no_precondition() {
+    let (document, emission) = rewarded(&REWARDS);
+    let wire = wire(&emission);
+    let mut evidence = read_evidence(&emission);
+    evidence
+        .insert_domain_package_document(package_identity(&document), document.as_slice())
+        .expect("a fresh evidence key");
+    assert!(matches!(
+        read_with(&emission, &evidence),
+        Read::Verified { .. }
+    ));
+    let rows = rows(&emission);
+    assert_eq!(
+        body_of(&rows, "ConfigVersion", "empty"),
+        OperationBody::NoBody
+    );
+    let (function, _) = reward_function_of(&wire, "stable");
+    let node = &nodes(&wire)[function];
+    assert_eq!(node["owner"]["node"], owner("ConfigVersion/empty"));
+    for node in nodes(&wire).iter().filter(|node| {
+        node["node_tag"] == "function" && node["owner"]["node"] == owner("ConfigVersion/empty")
+    }) {
+        let clause = node["body"]["members"]
+            .as_array()
+            .and_then(|members| members.iter().find(|member| member["name"] == "clause"))
+            .map(|member| member["value"]["value"].clone());
+        assert_eq!(clause, Some(json!("reward")), "{node}");
+    }
+}
+
+/// `refusal` as `(code, cause, pointer)`.
+pub(super) fn summary(
+    refusal: &filament_contract_model::CheckedPackageRefusal,
+) -> (
+    filament_contract_model::CheckedPackageRefusalCode,
+    Option<filament_contract_model::CheckedPackageRefusalCause>,
+    Option<String>,
+) {
+    (
+        refusal.code,
+        refusal.cause,
+        refusal
+            .loci
+            .first()
+            .and_then(|locus| locus.path.as_ref())
+            .map(|path| path.as_str().to_owned()),
+    )
+}
+
+fn set_owner(wire: &mut Value, function: usize, node: &str) {
+    wire["semantic_graph"]["nodes"][function]["owner"]["node"] = json!(node);
+}
+
+/// FSpec FR-322-AC-471, FR-640-AC-7: the mutations of a reward's function the
+/// strict reader refuses, each at its stated locus.
+#[trace("FSpec-TC-1563", "FSpec-FR-322-AC-471")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-7")]
+#[test]
+fn a_reward_function_with_another_clause_kind_or_owner_is_refused() {
+    use filament_contract_model::{
+        CheckedPackageRefusalCause as Cause, CheckedPackageRefusalCode as Code,
+    };
+    let (document, emission) = rewarded(&REWARDS);
+    let wire = wire(&emission);
+    let (stable, stable_reward) = reward_function_of(&wire, "stable");
+    let (cost, cost_reward) = reward_function_of(&wire, "cost");
+    let expression =
+        |reward: usize| format!("/semantic_graph/nodes/{reward}/body/members/4/value/target");
+    let refused = |edited: &Value| summary(&refusal_of(read_wire_over(edited, Some(&document))));
+
+    // `precondition`: the owner join admits it; reader rule 4 refuses it.
+    let mut edited = wire.clone();
+    set_clause(&mut edited, cost, "precondition");
+    assert_eq!(
+        refused(&edited),
+        (
+            Code::InvalidPackage,
+            Some(Cause::InvalidValue),
+            Some(expression(cost_reward))
+        )
+    );
+
+    // `body` on the bodyless operation: its `no_body` row refuses.
+    let row = wire["operation_bodies"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .position(|row| row["operation"] == "empty")
+        .expect("the row of `empty`");
+    let mut edited = wire.clone();
+    set_clause(&mut edited, stable, "body");
+    assert_eq!(
+        refused(&edited),
+        (
+            Code::InvalidPackage,
+            Some(Cause::InvalidValue),
+            Some(format!("/operation_bodies/{row}/body"))
+        )
+    );
+
+    // Owned by another operation member: rule 4 refuses it.
+    let mut edited = wire.clone();
+    set_owner(&mut edited, stable, &owner("ConfigVersion/size"));
+    assert_eq!(
+        refused(&edited),
+        (
+            Code::InvalidPackage,
+            Some(Cause::InvalidValue),
+            Some(expression(stable_reward))
+        )
+    );
+
+    // Owned by the object type, and by a field member of it: the owner join
+    // finds no operation member.
+    for (name, owner_node) in [
+        ("type", owner("ConfigVersion")),
+        ("field", owner("ConfigVersion/versionNumber")),
+    ] {
+        let mut edited = wire.clone();
+        set_owner(&mut edited, stable, &owner_node);
+        assert_eq!(
+            refused(&edited),
+            (
+                Code::MissingDeclaration,
+                Some(Cause::MissingSelection),
+                Some(format!("/semantic_graph/nodes/{stable}/node_id")),
+            ),
+            "owned by the {name}"
+        );
+    }
+}
+
+/// The `(reward name, ordinal)` of every reward function of `wire`, and the
+/// ordinal of the function of the body of `size`.
+fn function_ordinals(wire: &Value) -> (Vec<(String, u64)>, u64) {
+    let ordinal = |position: usize| {
+        nodes(wire)[position]["node_id"]["ordinal"]
+            .as_u64()
+            .unwrap()
+    };
+    let rewards = ["cost", "load", "stable"]
+        .iter()
+        .map(|name| {
+            (
+                (*name).to_owned(),
+                ordinal(reward_function_of(wire, name).0),
+            )
+        })
+        .collect();
+    let body = nodes(wire)
+        .iter()
+        .position(|node| {
+            node["node_tag"] == "function"
+                && node["owner"]["node"] == owner("ConfigVersion/size")
+                && node["body"]["members"].as_array().is_some_and(|members| {
+                    members.iter().any(|member| {
+                        member["name"] == "clause" && member["value"]["value"] == "body"
+                    })
+                })
+        })
+        .expect("the body function of `size`");
+    (rewards, ordinal(body))
+}
+
+/// FSpec FR-640-AC-3 "Reward identity": the reward functions of a model take
+/// ordinals after every other clause function of their owner, ranked by
+/// (operation key, reward name), and the package is byte-identical whatever
+/// order the rewards are written in.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+fn reward_functions_follow_every_other_clause_function_in_operation_then_name_order() {
+    let [cost, load, stable] = REWARDS;
+    let orders = [
+        [cost, load, stable],
+        [stable, load, cost],
+        [load, stable, cost],
+    ];
+    // The graph, with each id resolved past positional indexes and no
+    // source occurrence (those follow the written text).
+    let graphs: Vec<Vec<Value>> = orders
+        .iter()
+        .map(|order| {
+            let wire = wire(&rewarded(order).1);
+            nodes(&wire)
+                .iter()
+                .map(|node| {
+                    let mut node = node.clone();
+                    node["occurrences"] = Value::Null;
+                    node["resolved_id"] =
+                        super::probabilistic::resolved_id(&wire, &node["node_id"], 8);
+                    node
+                })
+                .collect()
+        })
+        .collect();
+    assert_eq!(graphs[0], graphs[1], "written order changes no node");
+    assert_eq!(graphs[0], graphs[2], "written order changes no node");
+
+    let (_, emission) = rewarded(&REWARDS);
+    let (rewards, body) = function_ordinals(&wire(&emission));
+    let ordinal = |name: &str| rewards.iter().find(|(n, _)| n == name).unwrap().1;
+    assert!(
+        rewards.iter().all(|(_, ordinal)| *ordinal > body),
+        "after the body function ({body}): {rewards:?}"
+    );
+    assert!(
+        ordinal("stable") < ordinal("cost") && ordinal("cost") < ordinal("load"),
+        "`empty` before `size`, then by reward name: {rewards:?}"
+    );
+}
+
+/// FSpec FR-640-AC-3: rewriting a reward's expression changes its `reward`
+/// node and leaves its function's id alone (the function key holds no
+/// content).
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+fn a_changed_reward_expression_changes_the_reward_and_keeps_the_function_id() {
+    let ids = |expression: &str| {
+        let declarations = format!("reward cost on ConfigVersion::size = {expression};");
+        let (_, emission) = rewarded(&[declarations.as_str()]);
+        let wire = wire(&emission);
+        let (function, reward) = reward_function_of(&wire, "cost");
+        (
+            super::probabilistic::resolved_id(&wire, &nodes(&wire)[function]["node_id"], 8),
+            super::probabilistic::resolved_id(&wire, &nodes(&wire)[reward]["node_id"], 8),
+        )
+    };
+    let (function_one, reward_one) = ids("1");
+    let (function_two, reward_two) = ids("2");
+    assert_eq!(function_one, function_two);
+    assert_ne!(reward_one, reward_two);
+}

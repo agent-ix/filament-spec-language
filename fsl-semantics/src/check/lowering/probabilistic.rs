@@ -27,6 +27,16 @@ use crate::check::node_key::{Binding, BindingValue, BodyTerm, LeafTerm, MemberTe
 use crate::check::probabilistic::{CheckedProbabilisticClaim, CheckedProbabilisticModel, Reward};
 use crate::check::refusal::CheckRefusal;
 
+/// What lowering wrote for one reward: the node of the object type that
+/// declares its operation, its clause function, and the operand that names the
+/// function's content.
+#[derive(Clone, Debug)]
+pub(crate) struct LoweredReward {
+    pub(crate) declaring: NodeKey,
+    pub(crate) function: NodeKey,
+    pub(crate) operand: PathSegment,
+}
+
 /// The semantic form of a probabilistic claim's node.
 const FORM: &str = "probabilistic_claim";
 
@@ -39,7 +49,7 @@ impl Lowering<'_> {
     pub(crate) fn probabilistic_declarations(
         &mut self,
         model: &CheckedProbabilisticModel,
-    ) -> Result<Vec<Option<(NodeKey, PathSegment)>>, CheckRefusal> {
+    ) -> Result<Vec<Option<LoweredReward>>, CheckRefusal> {
         for random in model.random_parameters() {
             let at = random.declaration_location();
             self.charge(1, &at)?;
@@ -72,7 +82,7 @@ impl Lowering<'_> {
             (rewards[left].operation().key(), rewards[left].name())
                 .cmp(&(rewards[right].operation().key(), rewards[right].name()))
         });
-        let mut keys: Vec<Option<(NodeKey, PathSegment)>> = vec![None; rewards.len()];
+        let mut keys: Vec<Option<LoweredReward>> = vec![None; rewards.len()];
         for at in order {
             keys[at] = self.reward_function(&rewards[at])?;
         }
@@ -188,36 +198,41 @@ impl Lowering<'_> {
     /// FSpec FR-640 `reward`: the clause function of `reward`'s expression,
     /// owned by the operation member it is declared on (FR-094), with a
     /// parameter for each of the operation's parameters in declared order,
-    /// the random ones included. A reward whose operation's declaring type
-    /// has no `model` node (a source-declared object type) lowers to
-    /// nothing, and emission refuses it with its locus.
+    /// the random ones included. A reward whose operation names no declaring
+    /// object type lowers to nothing, and emission refuses it with its locus.
     ///
-    /// TEMPORARY (QSL-2535): FSpec FR-640 states no `clause` binding for this
-    /// function, and the reader joins a `ModelOwner` on an operation member
-    /// only for a `precondition` or a `body` clause. A `body` clause function
-    /// makes the operation's `operation_bodies` row a function row (FR-576),
-    /// which a reward must not do to an operation with no body, so until
-    /// QSL-2535 adds the clause kind `reward` (spec W75 and the contract-ir
-    /// reader) the function carries `precondition`, the one kind the join
-    /// admits for every operation. Every consumer that joins functions by
-    /// owner and clause kind therefore sees a rewarded operation as having an
-    /// integer-typed `precondition` until then; replace the kind, not the
-    /// shape, when QSL-2535 lands.
-    fn reward_function(
-        &mut self,
-        reward: &Reward,
-    ) -> Result<Option<(NodeKey, PathSegment)>, CheckRefusal> {
+    /// The function's clause kind is `reward` (FSpec FR-322): a precondition
+    /// consumer never reads it as a guard and no `operation_bodies` row is
+    /// demanded for the operation. Rewards are lowered after every other
+    /// clause function and rank by (operation key, reward name) (FR-640
+    /// "Reward identity"). A reward on a source-declared operation is a
+    /// `SourceOwner` declaration `[type, operation, "reward", name]`.
+    fn reward_function(&mut self, reward: &Reward) -> Result<Option<LoweredReward>, CheckRefusal> {
         let at = reward.declaration_location();
         self.charge(1, &at)?;
         let operation = reward.operation();
         let Some(declaring) = operation.declaring_key() else {
             return Ok(None);
         };
-        self.rooted_model_node(declaring, &at)?;
+        let declaring_node = self.model_node(declaring, &at)?;
+        self.record_generated(declaring_node.clone(), &at);
+        let source_declaration = if operation.model().is_empty() {
+            let type_name =
+                crate::model::intake::type_identity_segment(&declaring.package, &declaring.node)
+                    .ok_or_else(|| stage_fault(&at, "reward-source-type-is-named"))?;
+            Some(vec![
+                type_name.to_owned(),
+                operation.name().to_owned(),
+                "reward".to_owned(),
+                reward.name().to_owned(),
+            ])
+        } else {
+            None
+        };
         let clause = ModelClause {
             declaration: operation.key().clone(),
-            kind: DeclaredClauseKind::Precondition,
-            source_declaration: None,
+            kind: DeclaredClauseKind::Reward,
+            source_declaration,
         };
         let location = reward.evaluation_location();
         let name = format!("{}::{}", operation.name(), reward.name());
@@ -244,7 +259,11 @@ impl Lowering<'_> {
         let operand = self
             .function_body_operand(&function)
             .ok_or_else(|| stage_fault(&at, "reward-function-has-a-body"))?;
-        Ok(Some((function, operand)))
+        Ok(Some(LoweredReward {
+            declaring: declaring_node,
+            function,
+            operand,
+        }))
     }
 
     /// The operand that names what the function node `function` computes:
