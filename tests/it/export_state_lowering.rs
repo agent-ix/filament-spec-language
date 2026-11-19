@@ -566,7 +566,7 @@ fn an_export_with_no_output_file_renders_none() {
 
 /// FR-1015 "Meter": writing the text charges one `export.work_units` per
 /// output region on top of the node charges, so the least bound that lets
-/// the counter export finish is at least one per written definition.
+/// the counter export finish is the node charges plus one per definition.
 #[test]
 fn writing_the_regions_charges_work_units() {
     let least = |setting: &str| {
@@ -580,10 +580,12 @@ fn writing_the_regions_charges_work_units() {
     };
     let (exit, value) = counter_export(tla());
     assert_eq!(exit, 0, "{value}");
-    let definitions = text(&value).matches("\n\\* fsl: ").count() as u64;
-    assert!(
-        least("export.work_units") >= definitions,
-        "one work unit per written region"
+    // The `VARIABLES` comment annotates a declaration, not a definition.
+    let definitions = text(&value).matches("\n\\* fsl: ").count() as u64 - 1;
+    assert_eq!(
+        least("export.work_units"),
+        least("export.nodes") + definitions,
+        "one work unit per written definition on top of the node charges"
     );
 }
 
