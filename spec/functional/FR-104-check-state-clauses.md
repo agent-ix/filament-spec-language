@@ -329,7 +329,10 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
   refuses this way.
 - An integer ordering or equality against an integer literal adds an
   interval fact. An integer ordering between two non-literal paths adds the
-  difference bound FR-577 defines, and only that bound. A precondition's
+  difference bound FR-577 defines, and only that bound. A comparison of a
+  two-path `+` or `-` term against an integer literal adds the sum or
+  difference bound FSpec FR-146 item 8 defines (FR-680 "Two-path term
+  guards"), and only that bound. A precondition's
   facts reach a postcondition of the same operation and context only as
   FR-577 states. Every other comparison of two non-literal operands adds no
   fact.
