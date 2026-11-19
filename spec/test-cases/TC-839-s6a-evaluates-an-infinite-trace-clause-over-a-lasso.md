@@ -14,7 +14,7 @@ Verify ADR-018 SM-8 lasso evaluation with past operators reaching into the
 prefix, malformed-lasso refusals, fairness on a model-step lasso, and
 metering.
 
-Scope: FR-329-AC-1 to FR-329-AC-5 and FR-329-AC-8 to FR-329-AC-10.
+Scope: FR-329-AC-1 to FR-329-AC-5 and FR-329-AC-8 to FR-329-AC-11 (FR-329-AC-11 planned under QSL-2568).
 
 ## Test Procedure
 
@@ -46,8 +46,10 @@ Scope: FR-329-AC-1 to FR-329-AC-5 and FR-329-AC-8 to FR-329-AC-10.
    package (the payload carrying the default package's scheduler
    constraints) and against the package that declares `scheduling
    adversarial`. Repeat both with loop closure compared by `ProtocolKey`
-   (an adverse build of the closure test), and for a clause that reads the
-   delivery index of `Rcv`'s receive steps.
+   (an adverse build of the closure test).
+9. Planned under QSL-2568 (FR-329-AC-11): evaluate step 8's lasso, against
+   both packages, for a clause that reads the delivery index of `Rcv`'s
+   receive steps.
 
 Tag the tests `#[trace("TC-839", "FR-329-AC-n")]`.
 
@@ -67,6 +69,8 @@ Tag the tests `#[trace("TC-839", "FR-329-AC-n")]`.
   every loop position, never taken), no truth value; against the adversarial
   package `Completed(false)` at 0. The step fails if the closure test compares
   `ProtocolKey`s: both evaluations then refuse as a loop that does not
-  close, naming no constraint and giving no truth value. For the clause
-  that reads the delivery index, both refuse `invalid_runtime_input`/
-  `invalid-value` as a loop that does not close.
+  close, naming the loop's last step, no constraint and giving no truth
+  value, since closure is checked before fairness.
+- Step 9 (planned, QSL-2568): both refuse `invalid_runtime_input`/
+  `invalid-value` as a loop that does not close, naming the loop's last
+  step and no constraint.

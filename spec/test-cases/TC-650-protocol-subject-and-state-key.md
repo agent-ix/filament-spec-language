@@ -12,7 +12,7 @@ relationships:
 
 Verify the protocol subject's construction and refusals, the thread paths and ordinals, binder removal and the canonical state key.
 
-Scope: FR-205-AC-1 to FR-205-AC-11.
+Scope: FR-205-AC-1 to FR-205-AC-13 (FR-205-AC-12 planned under QSL-2568).
 
 ## Test Procedure
 
@@ -53,18 +53,24 @@ Use ADR-027 §7's `Fill` unit (universe `{c}`, `c.v = 0`).
 9. Read `w`'s `roles` entry in every state of `Fill`; build FR-205-AC-9's
    two-alias variant with no role bindings and read both roles' entries.
 10. Build FR-205-AC-10's `Echo` subject. Take `send(Snd)` to `s1`; from
-    `s1` take `duplicate` then `lose` of delivery 0 to `s2`, and
-    `duplicate` then `lose` of delivery 1 to `s3`; take a second
-    `duplicate` from `s2`. Read each state's `ProtocolKey` and cycle key
-    for the claim `always holds(c.v = 0)` and for an item whose obligation
-    reads the delivery index of `Rcv`'s receive steps. Run EN-1 on both
-    items with `max_depth` 8, and check a closure certificate of the cycle
-    keys for the first.
+    `s1` take `duplicate` then `lose` of delivery 0 to `s2`; separately,
+    also from `s1`, take `duplicate` then `lose` of delivery 1 to `s3`;
+    take a second `duplicate` from `s2`. Read each state's `ProtocolKey`
+    and cycle key for the claim `always holds(c.v = 0)`. Run EN-1 on it
+    with `max_depth` 8, and check a closure certificate of the cycle keys.
 11. Pair the enabled steps at `s1` and `s2` and compare their post-states'
     cycle keys, model states and `receive` payloads; canonicalise an
-    `unordered` variant holding deliveries 1 and 3 of one message; read the
-    cycle keys of `s1` to `s3` for an item that reads the message identity
+    `unordered` variant holding deliveries 1 and 3 of one message.
+12. Planned under QSL-2568 (FR-205-AC-12): repeat step 10's key reads and
+    EN-1 run for an item whose obligation reads the delivery index of
+    `Rcv`'s receive steps, and for an item that reads the message identity
     of `Rcv`'s receive steps and no delivery index.
+13. Re-concretise from `Echo`'s initial state the cycle-key path with
+    prefix `send`, `duplicate`, `lose` of the older copy and loop
+    `duplicate`, `lose` of the older copy; replay it through FR-217 for
+    `eventually holds(c.v = 1)` against the `scheduling adversarial`
+    package; replay it again with the loop's `duplicate` relabelled to
+    delivery 1.
 
 Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
 
@@ -105,11 +111,18 @@ Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
 - Step 10: three different `ProtocolKey`s and, for the unread claim, one
   cycle key (`s1`'s `ProtocolKey`); the second `duplicate` from `s2` carries
   delivery index 2; EN-1 settles `Holds` (`proved`) and the certificate is
-  accepted. For the reading item, three different cycle keys and
-  `inconclusive` `BoundReached{depth: 8}`. The step fails if `canon` erases
-  a label the item reads or leaves the `next-delivery` bound in the cycle
-  key of an unread channel.
+  accepted. The step fails if the cycle key keeps the `next-delivery` bound
+  or the raw delivery index of an unread channel.
 - Step 11: the steps pair one to one (`duplicate`, `lose`, `receive`) with
-  equal cycle keys, model states and payloads; the `unordered` copies become
-  deliveries 0 and 1 with bound 2; one cycle key for the message-identity
-  item.
+  equal cycle keys, model states and payloads, the paired `duplicate` steps
+  taking deliveries 1 and 2; the `unordered` copies become deliveries 0 and
+  1 with bound 2.
+- Step 12 (planned, QSL-2568): for the delivery-reading item, three
+  different cycle keys and `inconclusive` `BoundReached{depth: 8}`, never
+  `proved`; for the message-identity item, one cycle key and `Holds`.
+- Step 13: `duplicate` identities carry deliveries 1 then 2, `lose`
+  identities 0 then 1, post-state keys are concrete (`next-delivery` 2,
+  then 3), and no index repeats; the replay settles
+  `reproduced-with-evaluated-witness`. The relabelled replay refuses
+  `invalid_runtime_input`/`invalid-value` naming the loop's `duplicate` as
+  not enabled.

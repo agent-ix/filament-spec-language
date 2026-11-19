@@ -102,6 +102,9 @@ causes, and the report counts as a refutation only then.
   so a loop of `duplicate` and `lose` steps on a channel the claim reads no
   delivery index of closes although its concrete indices grow, and the same
   loop on a channel whose delivery index the claim reads does not close.
+  The executor SHALL make these enabledness and closure checks before the
+  fairness check below, so a lasso that does not close is refused naming
+  the step, never as unfair.
 - For `kind: Formula`, the executor SHALL check the lasso against the
   fairness set over FR-212's classes, reading enabledness from
   `ProtocolSystem` at every loop state, and refuse an unfair lasso with
