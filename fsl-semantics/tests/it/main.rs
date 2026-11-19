@@ -20,6 +20,7 @@ const TEST_PACKAGE_NAME: &str = "fsl-semantics-integration-tests";
 
 mod aggregate_threshold;
 mod annotated_let;
+mod narrowing_conversions;
 mod bare_native_members;
 #[cfg(feature = "test-support")]
 mod business_meanings;
