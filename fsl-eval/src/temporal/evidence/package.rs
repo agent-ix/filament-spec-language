@@ -153,7 +153,6 @@ struct SourceCheck<'p> {
 fn collect_time_unit_scales(
     rows: &PackageRows,
     source: Option<&SourceCheck<'_>>,
-    bare: Option<&BarePackage<'_>>,
 ) -> BTreeMap<Box<str>, filament_exact::Rational> {
     let mut scales = BTreeMap::new();
     for binding in &rows.bindings {
@@ -165,19 +164,15 @@ fn collect_time_unit_scales(
                 timestamp_unit.as_ref()
             }
         };
-        let scale = bare
-            .and_then(|bare| bare.time_unit_scale(unit))
-            .or_else(|| {
-                source.and_then(|source| {
-                    source
-                        .read
-                        .source()
-                        .graph()
-                        .time_unit_scale(unit)
-                        .ok()
-                        .cloned()
-                })
-            });
+        let scale = source.and_then(|source| {
+            source
+                .read
+                .source()
+                .graph()
+                .time_unit_scale(unit)
+                .ok()
+                .cloned()
+        });
         if let Some(scale) = scale {
             scales.insert(unit.into(), scale);
         }
@@ -351,7 +346,7 @@ impl<'p> EvidencePackage<'p> {
             bare.canonical_bytes(),
             None,
             projections,
-            collect_time_unit_scales(&rows, None, Some(bare)),
+            BTreeMap::new(),
             rows,
         ))
     }
@@ -380,7 +375,7 @@ impl<'p> EvidencePackage<'p> {
             Some(Err(_)) | None => SelectedExactIdentities::empty(),
         };
         let projections = Self::project_captures(package, &rows, &identities, budget)?;
-        let time_unit_scales = collect_time_unit_scales(&rows, source.as_ref(), None);
+        let time_unit_scales = collect_time_unit_scales(&rows, source.as_ref());
         Ok(Self::assemble(
             package,
             canonical_package_bytes,
