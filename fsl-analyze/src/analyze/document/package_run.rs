@@ -26,7 +26,7 @@ use fsl_replay::TerminalRecord;
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{Capability, DeclarationFamily};
-use serde_json::{json, Map};
+use serde_json::{Map, json};
 
 use super::super::{
     AnalyzeItem, AnalyzeLimits, ClaimItem, ClauseItemRefusal, ClauseLimits, Engines, ItemForm,
@@ -34,10 +34,10 @@ use super::super::{
     PackageInvariantSubject, PackageItemInputs, PackageStateGraphSubject, SubjectBinding,
 };
 use super::{
-    candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
-    unknown_claim, unknown_option, write_run, AnalyzeDocumentError, ItemReads, ItemSelection,
-    Negotiate, Negotiation, ResolvedClaim, ResolvedItem, SettledParts, SettledRun,
-    SubjectSelection,
+    AnalyzeDocumentError, ItemReads, ItemSelection, Negotiate, Negotiation, ResolvedClaim,
+    ResolvedItem, SettledParts, SettledRun, SubjectSelection, candidate_list, invalid_kind,
+    negotiate_items, negotiated_routes, temporal_settings, unknown_claim, unknown_option,
+    write_run,
 };
 
 /// A `package` request (FR-850) whose item names a family the package route
@@ -837,7 +837,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                         index,
                         Some(name),
                         "unknown-kind",
-                    )))
+                    )));
                 }
             },
             None => Capability::TemporalSatisfaction,
@@ -1069,7 +1069,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                         index,
                         Some(name),
                         "unknown-kind",
-                    )))
+                    )));
                 }
             },
             None => Capability::OperationContract,
@@ -1282,9 +1282,10 @@ impl<'a> WorkInputs<'_, 'a> {
             {
                 let form = match &item.form {
                     Some(ItemForm::Temporal(form)) => form.clone(),
-                    Some(ItemForm::Probabilistic(_) | ItemForm::Hybrid(_)) | None => {
-                        super::super::TemporalItem::default()
-                    }
+                    Some(
+                        ItemForm::FiniteHyper(_) | ItemForm::Probabilistic(_) | ItemForm::Hybrid(_),
+                    )
+                    | None => super::super::TemporalItem::default(),
                 };
                 PackageInvariantSubject::new(
                     PackageItemInputs {
