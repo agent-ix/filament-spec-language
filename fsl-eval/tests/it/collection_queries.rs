@@ -2410,8 +2410,14 @@ fn q14_count_kernel_refusal_records_its_domain_at_the_count() {
             &mut Meter::new(UNLIMITED),
         )
         .unwrap();
+    let FamilyOutcome::Evaluated(outcome) = &evaluation.outcome else {
+        panic!(
+            "count reaches an evaluated refusal: {:?}",
+            evaluation.outcome
+        );
+    };
     assert_eq!(
-        refused_domain(&evaluation.outcome),
+        refused_domain(outcome),
         IntegerInterval::spanning(0_i64.into(), 3_i64.into())
     );
     assert_eq!(
