@@ -5692,5 +5692,8 @@ fn a_package_map_type_assembles_with_its_declared_key_and_bound() {
         project("model.ByInt").expect("an Integer key assembles"),
         expected(ValueType::Integer, None)
     );
-    assert!(matches!(project("model.ByFloat"), Err(Unmapped::Unsupported)));
+    assert!(matches!(
+        project("model.ByFloat"),
+        Err(Unmapped::Unsupported)
+    ));
 }
