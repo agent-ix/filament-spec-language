@@ -653,6 +653,123 @@ fn the_event_controls_emit_their_layouts_in_source_order() {
     assert_eq!(ordering["value"], "seq_cst");
 }
 
+/// FR-218-AC-15: a checked `related by` clause survives S4 as one ordered
+/// relationship record with both checked ends linked into the package.
+#[trace("FR-218-AC-15")]
+#[test]
+fn a_related_clause_carries_its_relationship_and_both_ends_into_the_package() {
+    use filament_checked::key::DeclarationKey;
+    use fsl_foundation::Span;
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+    use fsl_semantics::model::domain_package::{
+        DomainPackage, DomainPackageRecord, DomainPackageRef, Multiplicity, ObjectTypeRecord,
+        RelationshipDirection, RelationshipEnd, RelationshipRecord,
+    };
+    use fsl_semantics::model::intake::SelectedModel;
+    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
+
+    let key = |name: &str| DeclarationKey {
+        package: "test/related".to_owned(),
+        node: format!("ix://test/related/{name}"),
+    };
+    let one = Multiplicity {
+        lower: 1,
+        upper: Some(1),
+        ordered: false,
+        unique: true,
+    };
+    let model = DomainPackage::new(
+        DomainPackageRef {
+            identity: "test/related".to_owned(),
+        },
+        vec![
+            DomainPackageRecord::ObjectType(ObjectTypeRecord {
+                key: key("Node"),
+                interface_features: None,
+                abstract_type: false,
+                supertypes: Vec::new(),
+            }),
+            DomainPackageRecord::Relationship(RelationshipRecord {
+                key: key("owns"),
+                declared_at: None,
+                source: RelationshipEnd {
+                    type_identity: key("Node"),
+                    role: None,
+                    multiplicity: Some(one),
+                },
+                target: RelationshipEnd {
+                    type_identity: key("Node"),
+                    role: None,
+                    multiplicity: Some(one),
+                },
+                direction: RelationshipDirection::SourceToTarget,
+            }),
+        ],
+    );
+    let NormalizeOutcome::Completed(view) =
+        normalize(&model, ModelNormalizationLimits::UNLIMITED)
+    else {
+        panic!("the related-by model normalizes");
+    };
+    let source = "language \"ix:native\" edition \"1-draft\";\n\
+        profile p = \"filament.protocol.finite-global/v1\";\n\
+        model M = \"test/related\";\n\
+        protocol Flow using p over (input: M::Node) on origin {\n\
+        role Buyer on M::Node;\n\
+        relationship Owns = M::owns;\n\
+        run sequence Main { event Done by Buyer as (done: M::Node) \
+        related by Owns (done, input) { true }; }\n\
+        finish End as (outcome: Boolean) { true };\n\
+        }";
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:related-by-package"),
+        "protocol.native",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the source");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let graph = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_owned(),
+        unit,
+        vec![SelectedModel {
+            alias: "M".to_owned(),
+            span: Span { start: 0, end: 0 },
+            view,
+            operation_clauses: Vec::new(),
+            type_invariants: Vec::new(),
+        }],
+        Vec::new(),
+    )
+    .expect("I1 admits the model")
+    .check(CheckMode::Linked, CheckingLimits::default())
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    let wire = wire(&emission);
+    let event = run_control(&wire, "Done");
+    let related = argument(
+        event,
+        &["role", "compensation", "binder", "related", "constraint"],
+        "related",
+    );
+    let [record] = related["members"].as_array().unwrap().as_slice() else {
+        panic!("one related-by record: {related}");
+    };
+    let relationship = target(&wire, member(record, "relationship"));
+    let held_relationships = clause_argument(clause(&wire), "relationships")["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|term| target(&wire, term))
+        .filter(|held| held["node_id"] == relationship["node_id"])
+        .count();
+    assert_eq!(held_relationships, 1, "the exact relationship is carried");
+    assert_eq!(member(record, "from")["term"], "reference");
+    assert_eq!(member(record, "to")["term"], "reference");
+}
+
 /// FR-383-AC-10, FR-383-AC-9 (FSpec FR-464 "Binders"): a control's binder
 /// level is the size of its entry set; each control is declared at the path
 /// of its holder followed by its own name; `check` and `fence` introduce no
