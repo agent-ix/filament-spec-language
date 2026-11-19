@@ -28,6 +28,9 @@ pub enum TimedStateGraphDecision {
         node: usize,
         /// The `E(P)` nodes, when the form is `always possible`.
         ef_nodes: Vec<usize>,
+        /// Two distinct paths for a `unique path` refutation; absent for a
+        /// possible or always-possible refutation.
+        paths: Option<(Vec<usize>, Vec<usize>)>,
     },
 }
 
@@ -47,7 +50,9 @@ pub fn decide_timed_state_graph(
     let target = match claim.form() {
         StateGraphForm::Possible { target }
         | StateGraphForm::AlwaysPossible { target, .. } => target,
-        StateGraphForm::UniquePath { .. } => return Err(ZoneCheckRefusal::UnsupportedForm),
+        StateGraphForm::UniquePath { .. } => {
+            return decide_unique_path(system, graph, claim, over, cancel);
+        }
     };
     let p = graph
         .nodes
@@ -64,6 +69,7 @@ pub fn decide_timed_state_graph(
                         stem: Vec::new(),
                         node: initial,
                         ef_nodes: Vec::new(),
+                        paths: None,
                     });
                 };
                 witness_paths.push(path);
@@ -85,6 +91,7 @@ pub fn decide_timed_state_graph(
                         stem: path_from_initial(graph, node),
                         node,
                         ef_nodes: indices(&ef_nodes),
+                        paths: None,
                     });
                 }
             }
@@ -95,6 +102,204 @@ pub fn decide_timed_state_graph(
         }
         StateGraphForm::UniquePath { .. } => unreachable!("handled above"),
     }
+}
+
+fn decide_unique_path(
+    system: &ModelSystem<'_>,
+    graph: &TimedStateGraph,
+    claim: &CheckedStateGraphClaim,
+    over: Option<&ObjectReference>,
+    cancel: &Cancel,
+) -> Result<TimedStateGraphDecision, ZoneCheckRefusal> {
+    let StateGraphForm::UniquePath { from, to } = claim.form() else {
+        return Err(ZoneCheckRefusal::Fault("state-graph-form"));
+    };
+    let x = graph
+        .nodes
+        .iter()
+        .map(|node| predicate(system, from, &node.state, over, cancel))
+        .collect::<Result<Vec<_>, _>>()?;
+    let y = graph
+        .nodes
+        .iter()
+        .map(|node| predicate(system, to, &node.state, over, cancel))
+        .collect::<Result<Vec<_>, _>>()?;
+    for (node, is_from) in x.iter().enumerate().filter(|(_, is_from)| **is_from) {
+        let dfa = determinize(graph, node, &y);
+        let words = first_accepted_words(&dfa);
+        if words.len() != 1 {
+            let paths = match words.as_slice() {
+                [first, second, ..] => Some((
+                    path_for_word(graph, node, first, &y).ok_or(
+                        ZoneCheckRefusal::Fault("state-graph-first-path"),
+                    )?,
+                    path_for_word(graph, node, second, &y).ok_or(
+                        ZoneCheckRefusal::Fault("state-graph-second-path"),
+                    )?,
+                )),
+                _ => None,
+            };
+            return Ok(TimedStateGraphDecision::Refuted {
+                stem: path_from_initial(graph, node),
+                node,
+                ef_nodes: Vec::new(),
+                paths,
+            });
+        }
+    }
+    Ok(TimedStateGraphDecision::Holds {
+        witness_paths: Vec::new(),
+        ef_nodes: Vec::new(),
+    })
+}
+
+#[derive(Clone)]
+struct DfaTransition {
+    symbol: filament_semantic_value::model_transition::ModelTransition,
+    target: usize,
+}
+
+struct Dfa {
+    transitions: Vec<Vec<DfaTransition>>,
+    accepting: Vec<bool>,
+}
+
+fn determinize(graph: &TimedStateGraph, start: usize, target: &[bool]) -> Dfa {
+    let mut subsets = vec![vec![start]];
+    let mut transitions = vec![Vec::new()];
+    let mut accepting = vec![false];
+    let mut at = 0;
+    while at < subsets.len() {
+        let subset = subsets[at].clone();
+        let mut symbols: Vec<(
+            filament_semantic_value::model_transition::ModelTransition,
+            Vec<usize>,
+        )> = Vec::new();
+        for node in subset {
+            accepting[at] |= target.get(node).copied().unwrap_or(false);
+            if target.get(node).copied().unwrap_or(false) {
+                continue;
+            }
+            for edge in graph.edges.iter().filter(|edge| edge.from == node) {
+                let Some((_, destinations)) = symbols
+                    .iter_mut()
+                    .find(|(symbol, _)| symbol == &edge.transition)
+                else {
+                    symbols.push((edge.transition.clone(), vec![edge.to]));
+                    continue;
+                };
+                destinations.push(edge.to);
+            }
+        }
+        for (symbol, mut destinations) in symbols {
+            destinations.sort_unstable();
+            destinations.dedup();
+            let next = if let Some(found) = subsets.iter().position(|old| old == &destinations) {
+                found
+            } else {
+                let found = subsets.len();
+                subsets.push(destinations);
+                transitions.push(Vec::new());
+                accepting.push(false);
+                found
+            };
+            transitions[at].push(DfaTransition {
+                symbol,
+                target: next,
+            });
+        }
+        at += 1;
+    }
+    Dfa {
+        transitions,
+        accepting,
+    }
+}
+
+fn first_accepted_words(
+    dfa: &Dfa,
+) -> Vec<Vec<filament_semantic_value::model_transition::ModelTransition>> {
+    let mut can_accept = dfa.accepting.clone();
+    loop {
+        let mut changed = false;
+        for (from, outgoing) in dfa.transitions.iter().enumerate() {
+            if !can_accept[from]
+                && outgoing
+                    .iter()
+                    .any(|edge| can_accept.get(edge.target).copied().unwrap_or(false))
+            {
+                can_accept[from] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let max_len = dfa.transitions.len().saturating_mul(2).saturating_add(2);
+    let mut queue = VecDeque::from([(0_usize, Vec::new())]);
+    let mut words = Vec::new();
+    while let Some((state, word)) = queue.pop_front() {
+        if dfa.accepting.get(state).copied().unwrap_or(false) {
+            words.push(word.clone());
+            if words.len() == 2 {
+                break;
+            }
+        }
+        if word.len() >= max_len {
+            continue;
+        }
+        for edge in dfa.transitions.get(state).into_iter().flatten() {
+            if !can_accept.get(edge.target).copied().unwrap_or(false) {
+                continue;
+            }
+            let mut next = word.clone();
+            next.push(edge.symbol.clone());
+            queue.push_back((edge.target, next));
+        }
+    }
+    words
+}
+
+fn path_for_word(
+    graph: &TimedStateGraph,
+    start: usize,
+    word: &[filament_semantic_value::model_transition::ModelTransition],
+    target: &[bool],
+) -> Option<Vec<usize>> {
+    let mut queue = VecDeque::from([(start, 0_usize, Vec::new())]);
+    let mut seen = vec![vec![false; word.len() + 1]; graph.nodes.len()];
+    seen.get_mut(start)?.get_mut(0).map(|seen| *seen = true)?;
+    while let Some((node, at, path)) = queue.pop_front() {
+        if at == word.len() {
+            if target.get(node).copied().unwrap_or(false) {
+                return Some(path);
+            }
+            continue;
+        }
+        if target.get(node).copied().unwrap_or(false) {
+            continue;
+        }
+        for (edge_index, edge) in graph.edges.iter().enumerate().filter(|(_, edge)| {
+            edge.from == node && edge.transition == word[at]
+        }) {
+            let next_at = at + 1;
+            if seen
+                .get(edge.to)
+                .and_then(|positions| positions.get(next_at))
+                .copied()
+                .unwrap_or(true)
+            {
+                continue;
+            }
+            seen[edge.to][next_at] = true;
+            let mut next_path = path.clone();
+            next_path.push(edge_index);
+            queue.push_back((edge.to, next_at, next_path));
+        }
+    }
+    None
 }
 
 fn predicate(
