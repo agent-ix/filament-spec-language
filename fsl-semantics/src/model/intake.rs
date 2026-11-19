@@ -7154,6 +7154,8 @@ mod tests {
         let mut document = option_wire_document(Some(serde_json::json!(
             "ix://filament/native/Integer"
         )));
+        document["types"][1]["operations"][0]["params"][0]["typeRef"] =
+            serde_json::json!("ix://filament/native/Integer");
         document["types"][1]["operations"][0]["params"][0]["presence"] =
             serde_json::json!("optional");
         let records = read_records(
@@ -7171,6 +7173,8 @@ mod tests {
             let mut invalid = option_wire_document(Some(serde_json::json!(
                 "ix://filament/native/Integer"
             )));
+            invalid["types"][1]["operations"][0]["params"][0]["typeRef"] =
+                serde_json::json!("ix://filament/native/Integer");
             invalid["types"][1]["operations"][0]["params"][0]["presence"] =
                 invalid_presence;
             let refusals = read_records(
