@@ -88,6 +88,32 @@ fn run(name: &str, claims: &str, items: Value) -> Value {
     run.document()
 }
 
+fn timed_unit(claims: &str) -> String {
+    let header = "profile inf = \"filament.temporal.infinite-trace/v1\";\n";
+    let source = LINK_UNIT.replace(
+        header,
+        &format!("{header}profile t = \"filament.temporal.timed/v1\";\n"),
+    );
+    format!(
+        "{source}\n\
+         delay Msg::send_a ~ uniform[1 ms, 2 ms];\n\
+         delay Msg::send_b ~ uniform[1 ms, 2 ms];\n\
+         {claims}\n"
+    )
+}
+
+fn run_timed(name: &str, claims: &str, items: Value) -> Value {
+    let ws = Workspace::new(name);
+    let request = request_over(
+        &ws,
+        &timed_unit(claims),
+        LINK_MODEL,
+        &[LINK_START.to_vec()],
+        json!({"items": items}),
+    );
+    analyze(&request).document()
+}
+
 fn run_health_long_run(name: &str, items: Value) -> Value {
     let model =
         crate::prob_world::health("self.healthy = (not fault)", "true: 1, false: 1", false, "");
@@ -194,6 +220,33 @@ fn statistical_regenerative_from_source() {
     statistical_method_from_source(
         "regenerative",
         json!({"type": "regenerative", "min_cycles": 1}),
+    );
+}
+
+#[test]
+fn timed_sampling_from_source() {
+    let claim = "probabilistic TimedDelivery using t on M over (m: M::Msg) under Even on origin \
+         with alpha 0.01, beta 0.01, indifference 0.05 \
+         { probability >= 0.9 [ eventually[0 ms, 3 ms] holds(m.delivered) ] }";
+    let document = run_timed(
+        "timed-sampling-source",
+        claim,
+        json!([{"claim": "TimedDelivery", "probabilistic": {
+            "evidence": "statistical", "method": {"type": "sprt"},
+            "seed": "7", "timed_sampling": {"q": 8, "max_sample_steps": 1000}
+        }}]),
+    );
+    let item = &document["items"][0];
+    assert_eq!(label(item), "measured", "{item}");
+    assert_eq!(item["request"]["probabilistic"]["timed_sampling"]["q"], 8);
+    assert_eq!(
+        item["request"]["probabilistic"]["timed_sampling"]["max_sample_steps"],
+        1000
+    );
+    assert_eq!(item["verdict"]["basis"]["delay_grid_bits"], 8, "{item}");
+    assert_eq!(
+        item["verdict"]["provenance"]["max_sample_steps"], 1000,
+        "{item}"
     );
 }
 

@@ -28,7 +28,7 @@ use fsl_route::{CandidateOutcome, EvidenceKind, ItemEvidence, Registry};
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use super::request::ProtocolAnalysisSelection;
 use super::{
@@ -953,6 +953,8 @@ struct ProbabilisticSelection {
     max_witnesses: Option<u32>,
     #[serde(default)]
     workers: Option<NonZeroU32>,
+    #[serde(default)]
+    timed_sampling: Option<TimedSamplingSelection>,
 }
 
 #[derive(Deserialize)]
@@ -962,6 +964,25 @@ struct StatisticalMethodSelection {
     kind: String,
     #[serde(default)]
     min_cycles: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TimedSamplingSelection {
+    #[serde(default)]
+    q: Option<u32>,
+    #[serde(default)]
+    max_sample_steps: Option<u64>,
+}
+
+impl TimedSamplingSelection {
+    fn resolve(self) -> fsl_replay::statistical::TimedSampling {
+        let defaults = fsl_replay::statistical::TimedSampling::default();
+        fsl_replay::statistical::TimedSampling {
+            q: self.q.unwrap_or(defaults.q),
+            max_sample_steps: self.max_sample_steps.unwrap_or(defaults.max_sample_steps),
+        }
+    }
 }
 
 fn probabilistic_item(
@@ -976,9 +997,12 @@ fn probabilistic_item(
         .map(EvidenceKind::from_wire)
         .unwrap_or(Some(default_evidence))
         .ok_or(())?;
+    let timed_sampling = selection
+        .timed_sampling
+        .map(TimedSamplingSelection::resolve);
     let (method, seed, sampler, limits) = match evidence {
         EvidenceKind::Exact => {
-            if selection.method.is_some() || selection.seed.is_some() {
+            if selection.method.is_some() || selection.seed.is_some() || timed_sampling.is_some() {
                 return Err(());
             }
             (
@@ -1036,7 +1060,7 @@ fn probabilistic_item(
         max_witnesses: selection.max_witnesses,
         workers: selection.workers,
         symmetry: Vec::new(),
-        timed_sampling: None,
+        timed_sampling,
     })
 }
 
@@ -1414,7 +1438,7 @@ pub fn resolve_items(
 mod package_run;
 
 pub use package_run::{
-    PackageRun, PackageRunError, PendingFamily, PendingPackageFamily, settle_package_run,
+    settle_package_run, PackageRun, PackageRunError, PendingFamily, PendingPackageFamily,
 };
 
 /// One requirement item of a run call (FR-395 "Item of the call") with the
@@ -2913,15 +2937,21 @@ impl ClaimItem {
                     );
                     member.insert(
                         "max_witnesses".to_owned(),
-                        json!(
-                            probabilistic
-                                .max_witnesses
-                                .unwrap_or(crate::statistical::DEFAULT_MAX_WITNESSES)
-                        ),
+                        json!(probabilistic
+                            .max_witnesses
+                            .unwrap_or(crate::statistical::DEFAULT_MAX_WITNESSES)),
                     );
                     member.insert(
                         "workers".to_owned(),
                         json!(probabilistic.workers.map_or(1, NonZeroU32::get)),
+                    );
+                    let timed_sampling = probabilistic.timed_sampling.unwrap_or_default();
+                    member.insert(
+                        "timed_sampling".to_owned(),
+                        json!({
+                            "q": timed_sampling.q,
+                            "max_sample_steps": timed_sampling.max_sample_steps,
+                        }),
                     );
                 }
                 EvidenceKind::Exact => {}
