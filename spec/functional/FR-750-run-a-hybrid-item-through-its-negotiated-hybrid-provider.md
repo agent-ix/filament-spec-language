@@ -92,9 +92,10 @@ validated witness reproduces a trace, one `counterexamples` entry.
   because FR-250 settles that `SolverInconclusive`, and replay parity needs
   the claim. `Unsupported` settles `unsupported` with the diagnostic
   `unsupported_construct`/`expression-form`, its `detail` naming `form`,
-  the `declaration` (the hybrid model), `mode`, `variable` for a flow and
-  `backend`, and its location the construct's term node (FSpec FR-193
-  "Solver result on the wire"); no engine verdict is written and replay
+  the `declaration` (the hybrid model), `mode`, `variable` for a flow,
+  `backend`, and `locus`, the FSpec FR-331 `Locus` `{node, occurrence}` of
+  the construct's term node in the checked package (FSpec FR-193 "Solver
+  result on the wire", FSpec FR-272); no engine verdict is written and replay
   does not run. An `UnsupportedConstruct` whose site or term the model does
   not have is an engine fault and settles `failed`
   `runtime_invariant`/`established-invariant-broken`.
@@ -113,7 +114,7 @@ validated witness reproduces a trace, one `counterexamples` entry.
   `/counterexample`. A `proved` entry reads into `Solved` by its `basis`,
   an `inconclusive` or `incomplete` entry into `Solved` by its `cause`, and
   an `unsupported` entry carrying the `expression-form` diagnostic into
-  `Unsupported`, its `detail` and location read against `model`. Any other
+  `Unsupported`, its `detail`, `locus` included, read against `model`. Any other
   admitted entry, such as `failed` with `tool-failure` or `unsupported`
   with `tool-unavailable`, is not a solver answer: `read_entry` returns
   `HybridEntryRefusal::NotRead` and the item takes FR-290's settlement of
@@ -218,7 +219,7 @@ validated witness reproduces a trace, one `counterexamples` entry.
 | FR-750-AC-4 | A hybrid item routed to `hybrid-fixture` while no engine serves it settles `unsupported`, `tool-unavailable`, naming `hybrid-fixture`. | Test (TC-2100) |
 | FR-750-AC-5 | A process fixture provider receiving the v2 bytes of a clause request over `SlowEnough` returns a `refuted` point trace that exact replay reproduces; the item settles `refuted` with one `HybridCounterexample`; a trace that does not reproduce settles `inconclusive`, `replay-parity`. | Test (TC-2100) |
 | FR-750-AC-6 | `HybridAnswer::read_entry` reads a `proved` entry whose `horizon` is `{"numerator": "10", "denominator": "1"}` into `Solved` with horizon 10; the same entry with `horizon` `"10"` or `10` refuses `invalid_result`/`wrong-value-kind` at `/basis/horizon`, and a trace interval with `lower` `"0"` refuses at that member's pointer; an item with `options` `{"step": "1/16"}` reaches the provider with that string. | Test (TC-3035) |
-| FR-750-AC-7 | An in-process fixture answering `Unsupported` for the flow `v' = -a / (1 + v)` of `Moving`, and a process fixture whose entry is `unsupported` with `unsupported_construct`/`expression-form` naming the same, each settle the item `unsupported` with that diagnostic, `detail` naming `form`, `declaration`, `mode` `Moving`, `variable` `v` and the backend, located at the flow's term node, with no `counterexamples` entry and no replay; an `Unsupported` naming a mode the model does not have settles `failed`, `runtime_invariant`. | Test (TC-3035) |
+| FR-750-AC-7 | An in-process fixture answering `Unsupported` for the flow `v' = -a / (1 + v)` of `Moving`, and a process fixture whose entry is `unsupported` with `unsupported_construct`/`expression-form` naming the same, each settle the item `unsupported` with that diagnostic, `detail` naming `form`, `declaration`, `mode` `Moving`, `variable` `v`, the backend and `locus`, the flow's term node as an FSpec FR-331 `Locus`, with no `counterexamples` entry and no replay; an `Unsupported` naming a mode the model does not have settles `failed`, `runtime_invariant`. | Test (TC-3035) |
 | FR-750-AC-8 | An in-process fixture answering `Refuted` with the FR-450-AC-2 point trace against `always [0, 12] holds(h.v > 0)` settles `refuted` with one `HybridCounterexample`; the same answer with `before` `v = 1` settles `inconclusive`, `ReplayParity(DisagreementCause::HybridTrace(NotReproduced{counterexample}))` carrying the fixture's complete counterexample, never `SolverInconclusive`; and a `Solved` `Unknown(Some(trace))` with that trace settles `SolverInconclusive{trace, replay}`. | Test (TC-3035) |
 | FR-750-AC-9 | Over `Braking` against `always [0, 12] holds(1 / (h.v - 5) != 0)`, the reproduced counterexample's `to_wire` is `{"type": "hybrid-counterexample", "kind": {"type": "undefined-evaluation", "where": {"position": 0, "time": {"lower": {"numerator": "15", "denominator": "2"}, "upper": {"numerator": "15", "denominator": "2"}}, "locus": L}, "cause": "division-by-zero"}, "trace": ...}`, `L` the division's term node, and the plugin reader reads it back to a `Refuted` answer that FR-450 reproduces; a reproduced instant that is irrational writes a `time` with rational ends `lower < upper` that contains it; the analyze outcome item carries that counterexample and never settles `failed` for an unspelled counterexample. | Test (TC-3035) |
 | FR-750-AC-10 | The refuted hybrid item `TooSlow` carries `replay` `{"target": {"state_clause": "TooSlow"}, "reproduced": true}`; the replay request built from it resolves to the hybrid claim in the recompiled package and FR-098 writes the FSpec FR-323 `hybrid` row `reproduced-with-evaluated-witness`; the same request with a non-reproducing trace writes `inconclusive` with the `hybrid-trace` disagreement. | Test (TC-3035) |

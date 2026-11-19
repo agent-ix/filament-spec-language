@@ -54,8 +54,8 @@ Scope: FR-750-AC-6 to FR-750-AC-11 and FR-1021-AC-3.
   interval's member; the provider receives `step` as the string `1/16`.
 - Step 2: both settle `unsupported`, `unsupported_construct`/
   `expression-form`, `detail` naming `form`, `declaration`, `mode`
-  `Moving`, `variable` `v` and the backend, located at the flow's term
-  node, with no counterexample and no replay; the unknown mode settles
+  `Moving`, `variable` `v`, the backend and `locus`, the flow's term
+  node as a `Locus`, with no counterexample and no replay; the unknown mode settles
   `failed`, `runtime_invariant`.
 - Step 3: `refuted` with one `HybridCounterexample`; then `inconclusive`,
   `ReplayParity(HybridTrace(NotReproduced{counterexample}))` with the
