@@ -306,7 +306,7 @@ fn a_row_bound_depending_on_population_size_checks() {
     let [refinement] = graph.refinements() else {
         panic!("one refinement");
     };
-    let [count] = queue_row(refinement, 1).population_uses() else {
+    let [count] = queue_row(refinement, 0).population_uses() else {
         panic!("the row retains its population-dependent count bound");
     };
     assert_eq!(count.value(), &PopulationValue::Count);
@@ -319,10 +319,15 @@ fn a_row_bound_depending_on_population_size_checks() {
 #[trace("TC-544", "FSpec-FR-376-AC-1")]
 #[test]
 fn sum_over_a_population_with_a_decimal_body_checks() {
-    let graph = checked(&ring_is_queue(
-        "busy = sum(s in R::slots: decimal(1, 1)) = decimal(2, 1);",
-    ))
-    .graph;
+    let source = ring_is_queue(
+        "busy = sum(s in R::slots: convert<D>(s.value)) = convert<D>(2);",
+    )
+    .replacen(
+        "invariant Anything",
+        "type D = Decimal[0, 100; 1, 1; exact];\ninvariant Anything",
+        1,
+    );
+    let graph = checked(&source).graph;
     assert!(graph.semantic_graph().nodes().any(|node| {
         matches!(node.body(), fsl_semantics::check::BodyTerm::Application(application)
             if application.operation.identity() == "filament.op.collection.sum.decimal")
