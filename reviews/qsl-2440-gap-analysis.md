@@ -77,3 +77,5 @@ deferred.
 | FND-004 | fixed | - |
 | FND-005 | fixed | - |
 | FND-006 | fixed | - |
+| FND-001 | fixed | - |
+| FND-007 | fixed | - |
