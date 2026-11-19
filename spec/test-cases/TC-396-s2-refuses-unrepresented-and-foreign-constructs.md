@@ -5,14 +5,15 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-763
+    type: verifies
 ---
 # TC-396: S2 refuses unrepresented constructs, and the check stage refuses another family's construct with that family's cause
 
 ## Description
 
-Verify two things. S2 refuses the whole unit, and never yields a partial
-form, for a construct with no `Expression` variant (ADR-011 §2.3 E2). And
-S2 builds the `forms`-core variant for `deref`, `pre` and `allInstances`
+Verify that S2 builds the admitted index, typed-size, option and qualified
+reachability forms. It also builds the `forms`-core variant for `deref`, `pre` and `allInstances`
 nested in a function body, which the check stage then refuses with the
 owning family's catalogued cause.
 
@@ -20,7 +21,7 @@ This catches a production that refuses another family's construct at S2
 with `unsupported_construct`. That would discard the `forbidden-pre-read`
 distinction that FR-090 assigns to `ProtocolClause`.
 
-Scope: FR-091-AC-7, FR-091-AC-8, FR-091-AC-39.
+Scope: FR-091-AC-7, FR-091-AC-8, FR-091-AC-39, FR-763-AC-5.
 
 ## Test Procedure
 
@@ -41,6 +42,9 @@ alias is `v`.
    `function g using v(x: Int[0, 9]): Boolean pure decreases(pre(x)) { true }`.
    Run S2, then the assembler, then `PackageDeclarations::check` on
    whatever the assembler returns.
+4. Run `parse` over a temporal clause containing the hyper condition
+   `x @ a = x @ b` (TC-2159). Test:
+   `forms_refusal_cause::every_construct_message_begins_with_the_construct`.
 
 Tag the test `#[trace("FR-091-AC-7", "FR-091-AC-8", "FR-091-AC-39")]`.
 
@@ -66,3 +70,5 @@ Tag the test `#[trace("FR-091-AC-7", "FR-091-AC-8", "FR-091-AC-39")]`.
   unresolved-type-name error naming `M::T`, code
   `missing_declaration`/`missing-name`.
 - No step-3 refusal has code `unsupported_construct`.
+- Step 4 refuses at S2 with the located `hyper-condition` payload and
+  `unsupported_construct`/`not-yet-implemented`, exit 21, as TC-2159 specifies.

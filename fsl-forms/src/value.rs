@@ -1856,7 +1856,6 @@ impl<'c> Mapping<'c> {
                     suffixes.push((shape, end, arguments));
                 }
                 Item::Token(token) if token.spelling() == b"[" => {
-                    let ahead = rest.clone();
                     let selector = match (rest.next(), rest.next()) {
                         (Some(Item::Node(selector)), Some(Item::Token(close)))
                             if selector.production() == Production::Expression
@@ -1867,24 +1866,7 @@ impl<'c> Mapping<'c> {
                         _ => None,
                     };
                     let Some((selector, end)) = selector else {
-                        let end = ahead
-                            .clone()
-                            .find_map(|item| match item {
-                                Item::Token(close) if close.spelling() == b"]" => {
-                                    Some(close.span().end)
-                                }
-                                Item::Token(_) | Item::Node(_) => None,
-                            })
-                            .unwrap_or(node.span().end);
-                        return Err(unrepresented(
-                            self.cst,
-                            Production::Postfix,
-                            Span {
-                                start: node.span().start,
-                                end,
-                            },
-                            ConstructKind::IndexSelection,
-                        ));
+                        return Err(unexpected(node));
                     };
                     suffixes.push((Shape::Index, end, vec![selector]));
                 }

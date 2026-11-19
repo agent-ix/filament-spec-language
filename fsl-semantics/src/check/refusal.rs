@@ -2985,6 +2985,8 @@ pub enum CheckCause {
     },
     /// `refused { code: ill_typed }` with its FR-272 cause.
     IllTyped(IllTypedCause),
+    /// FR-986: `null` outside a record field value is never a value.
+    NullExpression,
     /// An undeclared case of a declared variant type, still classified as
     /// `ill_typed` / `type-mismatch` by FR-360-AC-5.
     UndeclaredVariantCase {
@@ -3696,12 +3698,12 @@ impl CheckCause {
             },
             Self::DispatchLink(cause) => Some(cause.catalog),
             Self::RewardEvaluation(failure) => Some(failure.catalog),
-            Self::VerificationPlanInapplicableMethod { .. } => Some(
-                filament_semantic_value::catalog::CatalogCode::new(
+            Self::VerificationPlanInapplicableMethod { .. } => {
+                Some(filament_semantic_value::catalog::CatalogCode::new(
                     "invalid_capability",
                     "inapplicable-kind",
-                ),
-            ),
+                ))
+            }
             _ => Some(filament_semantic_value::catalog::CatalogCode::new(
                 self.code().as_str(),
                 self.cause()?,
@@ -3746,6 +3748,7 @@ impl CheckCause {
             Self::EmptyPackage { .. } => Code::MissingDeclaration,
             Self::TypeCheckAllocation(_) | Self::TypeCheckCapacity(_) => Code::ResourceExhausted,
             Self::IllTyped(_)
+            | Self::NullExpression
             | Self::UndeclaredVariantCase { .. }
             | Self::OperandTypeMismatch { .. }
             | Self::IdentityObservingForm(_)
@@ -3838,6 +3841,7 @@ impl CheckCause {
             Self::TypeCheckAllocation(_) => Some("allocation-failed"),
             Self::TypeCheckCapacity(_) => Some("reservation-size-overflow"),
             Self::IllTyped(cause) => cause.tag(),
+            Self::NullExpression => Some("type-mismatch"),
             Self::UndeclaredVariantCase { .. } => Some("type-mismatch"),
             Self::OperandTypeMismatch { .. } => Some("type-mismatch"),
             Self::WrongSnapshot(cause) => Some(cause.as_str()),

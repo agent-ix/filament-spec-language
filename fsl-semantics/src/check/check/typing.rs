@@ -1361,10 +1361,10 @@ impl<'a> Typer<'a> {
             } => self.decimal_literal(coefficient, *scale, hint.as_deref(), &location)?,
             ExprNode::Absent => self.absent_literal(hint.as_deref(), &location)?,
             ExprNode::Null => {
-                return Err(CheckRefusal::ill_typed(
-                    &location,
-                    IllTypedCause::TypeMismatch,
-                ));
+                return Err(CheckRefusal {
+                    location,
+                    cause: CheckCause::NullExpression,
+                });
             }
             // FR-185: a quantity literal is its magnitude, measured and
             // reduced as an exact value, in the unit its name declares.

@@ -119,14 +119,6 @@ fn body(body: &str) -> (String, FunctionDeclaration) {
     (text, function(unit.forms()[0].form()).clone())
 }
 
-fn refusal(declarations: &str) -> (String, FormsCause, Option<Span>) {
-    let (text, parsed) = admissible(declarations);
-    match build_unit(&parsed) {
-        Err(refusal) => (text, refusal.cause, refusal.span),
-        other => panic!("{declarations}: a refusal, not {other:?}"),
-    }
-}
-
 /// Provenance: QSL-2006.
 #[trace("TC-113", "FR-035-AC-7")]
 #[test]
@@ -671,6 +663,7 @@ fn s2_refuses_inadmissible_input_and_undispatched_declarations() {
 #[trace("FR-091-AC-7", "TC-396")]
 #[trace("TC-2214", "FR-091-AC-7")]
 #[trace("FR-680-AC-1", "FR-981-AC-1")]
+#[trace("TC-2156", "TC-2157", "FR-763-AC-2", "FR-763-AC-3")]
 #[test]
 fn formerly_unrepresented_value_constructs_build_with_their_spans() {
     for source in ["xs[0]", "size<Int[0, 1]>(c)"] {
@@ -715,6 +708,7 @@ fn a_qualified_edge_in_a_function_builds_with_its_name_and_span() {
 }
 
 #[trace("TC-2214", "FSpec-FR-143-AC-20", "FSpec-FR-986-AC-1")]
+#[trace("TC-2156", "FR-763-AC-2")]
 #[test]
 fn null_expression_builds_as_its_own_form() {
     let (_, unit) = build("function f using v(): Boolean pure { null }");
@@ -724,22 +718,52 @@ fn null_expression_builds_as_its_own_form() {
     ));
 }
 
-#[trace("FSpec-FR-763-AC-1", "QSL-2174")]
+#[trace("TC-2157", "FR-763-AC-3", "FR-981-AC-1")]
 #[test]
-fn size_with_a_type_argument_builds_a_form_or_refuses_with_a_located_cause() {
+fn size_with_a_type_argument_builds_with_its_type_and_span() {
     let source = "size<Int[0, 1]>(c)";
-    let (text, cause, span) = refusal(&format!(
-        "function f using v(): Integer pure {{ {source} }}"
-    ));
+    let (text, function) = body(source);
+    let root = function.body.root();
+    let ExprNode::Size {
+        operand,
+        type_argument: Some(result),
+    } = root.node()
+    else {
+        panic!("typed size form");
+    };
+    assert_eq!(show(root.at(*operand)), "c");
+    assert_eq!(result.head, TypeFormHead::Builtin(BuiltinType::Int));
+    assert_eq!(result.bounds, ["0", "1"]);
+    assert_eq!(
+        function.spans().expect("source spans").body.at(&[]),
+        Some(span_of(&text, source))
+    );
+}
+
+#[trace("TC-2157", "FR-763-AC-3", "FR-091-AC-10")]
+#[test]
+fn size_and_index_forms_retain_their_nested_spans() {
+    let (text, function) = body("size(xs) + xs[1]");
+    let root = function.body.root();
+    let ExprNode::Binary {
+        operator: BinaryOperator::Add,
+        left,
+        right,
+    } = root.node()
+    else {
+        panic!("sum form");
+    };
     assert!(matches!(
-        &cause,
-        FormsCause::UnrepresentedConstruct {
-            production: Production::Primary,
+        root.at(*left).node(),
+        ExprNode::Size {
+            type_argument: None,
             ..
         }
     ));
-    assert_eq!(cause.catalog_code(), Code::UnsupportedConstruct);
-    assert_eq!(span, Some(span_of(&text, source)));
+    assert!(matches!(root.at(*right).node(), ExprNode::Index { .. }));
+    let spans = &function.spans().expect("source spans").body;
+    assert_eq!(spans.at(&[0]), Some(span_of(&text, "size(xs)")));
+    assert_eq!(spans.at(&[1]), Some(span_of(&text, "xs[1]")));
 }
 
 /// FR-397-AC-20: bit-pattern literals retain their exact width and bits.
