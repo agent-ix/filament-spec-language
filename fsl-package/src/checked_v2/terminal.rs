@@ -8,7 +8,7 @@
 //! and the nodes of its `self` parameter and condition. A model with no node
 //! reads as [`ReadTerminalDeclaration::None`].
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use filament_contract_model::{
     CheckedNodeKind, CheckedNodeTag, CheckedPackageV2, CheckedSemanticNodeV2, CheckedTerm,
@@ -139,16 +139,15 @@ fn read_node(
 pub fn read_terminals(package: &CheckedPackageV2) -> Result<Vec<ReadTerminal>, InternalFault> {
     let nodes = &package.resolved_graph().nodes;
     let graph = WireGraph::new(nodes.iter().map(|node| &node.node_id)).map_err(|_| SHAPE)?;
+    let mut terminals = BTreeMap::new();
+    for node in nodes.iter().filter(|node| is_terminal(node)) {
+        terminals.insert(key(&graph, &node.node_id)?, node);
+    }
     package
         .terminal_rows()
         .iter()
         .map(|row| {
-            let wanted = key(&graph, &row.node)?;
-            let node = nodes
-                .iter()
-                .filter(|node| is_terminal(node))
-                .find(|node| key(&graph, &node.node_id).as_ref() == Ok(&wanted))
-                .ok_or(SHAPE)?;
+            let node = terminals.get(&key(&graph, &row.node)?).ok_or(SHAPE)?;
             read_node(&graph, node, row.ordinal)
         })
         .collect()

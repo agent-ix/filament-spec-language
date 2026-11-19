@@ -410,11 +410,12 @@ fn two_aliases(body: &str) -> (CheckedPackage, fsl_semantics::model::intake::Pac
 /// package identity each declare a terminal. The source route keys the two
 /// declarations by (identity, ordinal), so neither replaces the other, and a
 /// request written under both is refused `TerminalDeclaration` over a package
-/// that carries only the first. A package cannot hold both today: emission
-/// writes two terminal nodes on the one model node and the strict reader
-/// refuses them `ambiguous-name` (the several-terminals-per-model-node rule is
-/// W80 / QSL-2558).
+/// that carries only the first. A package holds both: emission writes two
+/// terminal nodes on the one model node and the reader admits them as two
+/// terminal rows, (model, 0) and (model, 1) in terminal node key order
+/// (FSpec FR-476-AC-5/6).
 #[trace("TC-1142", "FR-411-AC-5")]
+#[trace("TC-519", "FR-124-AC-11")]
 #[test]
 fn two_aliases_of_one_identity_keep_their_terminals_apart() {
     let when = "terminal Done using v on M when { self.value = 3 };\n";
@@ -453,10 +454,17 @@ fn two_aliases_of_one_identity_keep_their_terminals_apart() {
         &packages,
         V2ReadLimits::fixture(),
     );
-    let refusal = admitted.expect_err("a package cannot carry two terminal nodes on one model node");
-    assert_eq!(refusal.cause.as_deref(), Some("ambiguous-name"));
+    let admitted = admitted.expect("a package carries two terminal nodes on one model node");
+    let rows = fsl_package::read_terminals(&admitted).expect("the terminal rows read");
+    let [first_row, second_row] = &rows[..] else {
+        panic!("two terminal rows: {rows:?}");
+    };
+    assert_eq!(first_row.model, second_row.model);
+    assert_eq!((first_row.ordinal, second_row.ordinal), (0, 1));
+    assert_ne!(first_row.node, second_row.node);
     assert_eq!(
-        refusal.code,
-        fsl_foundation::diagnostic::Code::InvalidPackage
+        fsl_package::read_terminal(&admitted, &second_row.model, 1),
+        Ok(second_row.declaration.clone())
     );
+    assert_ne!(first_row.declaration, second_row.declaration);
 }
