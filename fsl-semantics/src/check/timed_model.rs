@@ -4304,6 +4304,203 @@ pub(crate) fn prepare(
     prepare_models(inputs, state_clauses).map_err(refusal)
 }
 
+/// The name of one timed declaration, used to bind it to the time source
+/// selected by FR-230's owning-time-source rule.
+fn timed_declaration_name(declaration: &TimedDeclaration) -> &str {
+    match declaration {
+        TimedDeclaration::TimeInvariant(form) => &form.name.name,
+        TimedDeclaration::Urgent(form) => &form.name.name,
+        TimedDeclaration::TimeSource { .. } | TimedDeclaration::ClockType(_) => "",
+    }
+}
+
+/// Select a timed declaration's source from the models named by its reads.
+fn timed_declaration_owner(
+    declaration: &TimedDeclaration,
+    inputs: &Inputs<'_>,
+    timed_models: &[(&str, &AdmittedModel)],
+) -> Result<String, TemporalCause> {
+    let declaration_span = match declaration {
+        TimedDeclaration::TimeInvariant(form) => form.span,
+        TimedDeclaration::Urgent(form) => form.span,
+        TimedDeclaration::TimeSource { .. } | TimedDeclaration::ClockType(_) => {
+            return Err(TemporalCause::AmbiguousTimedDeclaration {
+                span: declaration.span(),
+            });
+        }
+    };
+    if let [only] = timed_models {
+        return Ok(only.0.to_owned());
+    }
+    let mut expressions = Vec::new();
+    let mut operation_alias = None;
+    let mut operation_span = declaration_span;
+    match declaration {
+        TimedDeclaration::TimeInvariant(form) => {
+            expressions.push(&form.guard);
+            for bound in &form.bounds {
+                match bound {
+                    fsl_forms::TimeInvariantBoundForm::Clock(bound) => {
+                        expressions.push(&bound.clock);
+                    }
+                    fsl_forms::TimeInvariantBoundForm::Quantified(bound) => {
+                        expressions.push(&bound.collection);
+                        expressions.push(&bound.clock);
+                    }
+                }
+            }
+        }
+        TimedDeclaration::Urgent(form) => match &form.target {
+            UrgentTarget::When(expression) => expressions.push(expression),
+            UrgentTarget::Operation(operation) => {
+                operation_alias = operation.segments.first().map(String::as_str);
+                operation_span = operation.span;
+            }
+        },
+        TimedDeclaration::TimeSource { .. } | TimedDeclaration::ClockType(_) => unreachable!(),
+    }
+
+    let mut evidence: Vec<(Vec<String>, Span)> = Vec::new();
+    if let Some(alias) = operation_alias {
+        let owners = timed_models
+            .iter()
+            .filter(|(candidate, _)| *candidate == alias)
+            .map(|(candidate, _)| (*candidate).to_owned())
+            .collect::<Vec<_>>();
+        if !owners.is_empty() {
+            evidence.push((owners, operation_span));
+        }
+    }
+    for expression in expressions {
+        for node in expression.expression.iter() {
+            match node.node() {
+                ExprNode::Name(name) if name.segments.len() > 1 => {
+                    let owners = timed_models
+                        .iter()
+                        .filter(|(candidate, _)| **candidate == name.segments[0])
+                        .map(|(candidate, _)| (*candidate).to_owned())
+                        .collect::<Vec<_>>();
+                    if !owners.is_empty() {
+                        evidence.push((owners, name.span));
+                    }
+                }
+                ExprNode::Field { .. } => {
+                    let Some(path) = self_path(expression, node.id()) else {
+                        continue;
+                    };
+                    let names: Vec<&str> = path
+                        .iter()
+                        .filter_map(|step| match step {
+                            PlaceStep::Field(name) => Some(name.as_str()),
+                            PlaceStep::Slot(_) | PlaceStep::Union(_) => None,
+                        })
+                        .collect();
+                    let owners = timed_models
+                        .iter()
+                        .filter(|(_, model)| {
+                            state_object(model, inputs.models, inputs.types, declaration_span)
+                                .ok()
+                                .is_some_and(|(context, _)| {
+                                    model_declares_field_path(inputs.types, &context, &names)
+                                })
+                        })
+                        .map(|(candidate, _)| (*candidate).to_owned())
+                        .collect::<Vec<_>>();
+                    if !owners.is_empty() {
+                        evidence.push((
+                            owners,
+                            expression.spans.span(node.id()).unwrap_or(declaration_span),
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut possible: BTreeSet<String> = timed_models
+        .iter()
+        .map(|(alias, _)| (*alias).to_owned())
+        .collect();
+    let mut evidence_span = declaration_span;
+    for (owners, span) in evidence {
+        let next: BTreeSet<String> = owners.into_iter().collect();
+        possible = possible.intersection(&next).cloned().collect();
+        evidence_span = span;
+        if possible.is_empty() {
+            return Err(TemporalCause::AmbiguousTimedDeclaration { span });
+        }
+    }
+    match possible.iter().next() {
+        Some(owner) if possible.len() == 1 && evidence_span != declaration_span => {
+            Ok(owner.clone())
+        }
+        _ => Err(TemporalCause::AmbiguousTimedDeclaration {
+            span: evidence_span,
+        }),
+    }
+}
+
+/// Whether `context` declares every field in the self-rooted path.
+fn model_declares_field_path(
+    types: &TypeEnvironment,
+    context: &EffectiveId,
+    path: &[&str],
+) -> bool {
+    let Some((first, rest)) = path.split_first() else {
+        return false;
+    };
+    let Some(attribute) = types.attribute(context.clone(), first) else {
+        return false;
+    };
+    let mut value_type = attribute.field().value_type().clone();
+    for name in rest {
+        let field_type = match &value_type {
+            ValueType::Reference(object) => types
+                .attribute(object.clone(), name)
+                .map(|attribute| attribute.field().value_type().clone()),
+            ValueType::Composite(key) => {
+                types
+                    .composite(key.clone())
+                    .and_then(|composite| match composite.shape() {
+                        CompositeShape::Record(fields) => fields
+                            .iter()
+                            .find(|field| field.name() == *name)
+                            .map(|field| field.value_type().clone()),
+                        CompositeShape::Union(members) => members
+                            .iter()
+                            .find(|member| member.identifier() == *name)
+                            .and_then(|member| member.positions().first().cloned()),
+                        CompositeShape::Tuple(_) => None,
+                    })
+            }
+            ValueType::Option(inner) => match inner.as_ref() {
+                ValueType::Reference(object) => types
+                    .attribute(object.clone(), name)
+                    .map(|attribute| attribute.field().value_type().clone()),
+                ValueType::Composite(key) => {
+                    types
+                        .composite(key.clone())
+                        .and_then(|composite| match composite.shape() {
+                            CompositeShape::Record(fields) => fields
+                                .iter()
+                                .find(|field| field.name() == *name)
+                                .map(|field| field.value_type().clone()),
+                            CompositeShape::Union(_) | CompositeShape::Tuple(_) => None,
+                        })
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(field_type) = field_type else {
+            return false;
+        };
+        value_type = field_type;
+    }
+    true
+}
+
 fn prepare_models(
     inputs: &Inputs<'_>,
     state_clauses: &mut [StateClauseDeclaration],
@@ -4415,35 +4612,57 @@ fn prepare_models(
         })
         .collect();
     if let Some(form) = declarations.first() {
-        match (inputs.time_sources, form) {
-            ([], TimedDeclaration::TimeInvariant(form)) => {
-                return Err(timed(TemporalCause::TimeInvariantWithoutTimeSource {
-                    span: form.span,
-                }));
-            }
-            ([], TimedDeclaration::Urgent(form)) => {
-                return Err(timed(TemporalCause::UrgencyWithoutTimeSource {
-                    span: form.span,
-                }));
-            }
-            ([_], _) | ([], _) => {}
-            (_, form) => {
-                let span = match form {
-                    TimedDeclaration::TimeInvariant(form) => form.span,
-                    TimedDeclaration::Urgent(form) => form.span,
-                    TimedDeclaration::TimeSource { .. } | TimedDeclaration::ClockType(_) => {
-                        form.span()
-                    }
-                };
-                return Err(timed(TemporalCause::AmbiguousTimedDeclaration { span }));
+        if inputs.time_sources.is_empty() {
+            match form {
+                TimedDeclaration::TimeInvariant(form) => {
+                    return Err(timed(TemporalCause::TimeInvariantWithoutTimeSource {
+                        span: form.span,
+                    }));
+                }
+                TimedDeclaration::Urgent(form) => {
+                    return Err(timed(TemporalCause::UrgencyWithoutTimeSource {
+                        span: form.span,
+                    }));
+                }
+                TimedDeclaration::TimeSource { .. } | TimedDeclaration::ClockType(_) => {}
             }
         }
     }
+    let timed_models: Vec<(&str, &AdmittedModel)> = inputs
+        .time_sources
+        .iter()
+        .filter_map(|source| {
+            inputs
+                .models
+                .iter()
+                .find(|model| source.times(model))
+                .and_then(|model| model.alias().map(|alias| (alias, model)))
+        })
+        .collect();
+    let declaration_owners: BTreeMap<String, String> = declarations
+        .iter()
+        .map(|form| {
+            let owner = timed_declaration_owner(form, inputs, &timed_models).map_err(timed)?;
+            Ok((timed_declaration_name(form).to_owned(), owner))
+        })
+        .collect::<Result<_, CheckCause>>()?;
     let mut models = Vec::new();
     for source in inputs.time_sources {
         let Some(model) = inputs.models.iter().find(|model| source.times(model)) else {
             continue;
         };
+        let declarations: Vec<&TimedDeclaration> = declarations
+            .iter()
+            .copied()
+            .filter(|form| {
+                model.alias().is_some_and(|alias| {
+                    declaration_owners
+                        .get(timed_declaration_name(form))
+                        .map(String::as_str)
+                        == Some(alias)
+                })
+            })
+            .collect();
         let clocks = clocks_of(model);
         // The `Clock` parameters some postcondition of their operation
         // resets, by the operation's key and the parameter's name.
