@@ -90,6 +90,7 @@ fn limits() -> ExecuteLimits {
         accounting: default_accounting(DEFAULT_WORK_UNITS),
         supplied: Default::default(),
         prepare: PrepareLimits::default(),
+        session: Default::default(),
     }
 }
 
@@ -628,6 +629,7 @@ fn an_untranslatable_entry_is_listed_and_the_others_run() {
             &CallLimits {
                 accounting: default_accounting(DEFAULT_WORK_UNITS),
                 supplied: Default::default(),
+                session: Default::default(),
             },
             &Cancel::new(),
         )
@@ -678,6 +680,7 @@ fn a_cancelled_handle_stops_prepare_and_call() {
         &CallLimits {
             accounting: default_accounting(DEFAULT_WORK_UNITS),
             supplied: Default::default(),
+            session: Default::default(),
         },
         &cancel,
     );

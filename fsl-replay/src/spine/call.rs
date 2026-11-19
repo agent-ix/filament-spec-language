@@ -19,7 +19,7 @@
 
 use std::collections::BTreeMap;
 
-use filament_eval::{FamilyOutcome, FamilyResult};
+use filament_eval::{FamilyOutcome, FamilyResult, SessionLimits};
 use filament_exact::{
     Cancel, CancelCause, Incomplete, Integer, Outcome, Refusal, ScalarLimits, Undefined, Value,
     ValueType,
@@ -1024,6 +1024,9 @@ pub(crate) fn run_compiled(
             accounting: call.accounting,
             supplied: call.supplied,
             prepare: *prepare,
+            session: SessionLimits {
+                live_occurrences: call.live_occurrences,
+            },
         },
         cancel,
     )

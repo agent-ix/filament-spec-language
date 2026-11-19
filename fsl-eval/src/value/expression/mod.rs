@@ -2153,6 +2153,42 @@ fn evaluate_expression(
         .run()
 }
 
+/// Call a checked package under an explicit live-occurrence session bound.
+/// Argument admission and evaluation use the supplied run and meter exactly
+/// as [`CheckedPackageEvaluation::call_supplied`] does.
+pub fn call_checked_package_with_session_limits(
+    package: &CheckedPackage,
+    function: &QualifiedName,
+    arguments: Vec<Value>,
+    objects: &ObjectEnvironment,
+    meter: &mut Meter,
+    run: &mut SuppliedRun,
+    session_limits: SessionLimits,
+) -> Result<Evaluation, CallFailure> {
+    let name = function
+        .as_unqualified()
+        .ok_or_else(|| InputRefusal::UnknownFunction(function.to_string()))?;
+    let callable = package
+        .graph()
+        .callable(name)
+        .ok_or_else(|| InputRefusal::UnknownFunction(function.to_string()))?;
+    admit_arguments(
+        callable.parameters,
+        &arguments,
+        objects,
+        package.graph().scope().types(),
+        run,
+    )?;
+    // FR-401: the session owns this call's application stack and charges the
+    // same meter the supplied-value run was admitted against.
+    let mut registry = Registry::new(
+        PackageClosure::<&CheckedPackage, &CheckedExpression>::pre_admitted(package),
+    );
+    registry
+        .begin_call(callable.identity, arguments, session_limits, objects, meter)?
+        .run()
+}
+
 /// [`CheckedPackageEvaluation::evaluate`] over an environment FR-106 admitted
 /// against this package's own declarations (a snapshot position of an
 /// observed trace): the arguments are admitted, the environment is not walked
@@ -2369,35 +2405,15 @@ impl CheckedPackageEvaluation for CheckedPackage {
         meter: &mut Meter,
         run: &mut SuppliedRun,
     ) -> Result<Evaluation, CallFailure> {
-        let name = function
-            .as_unqualified()
-            .ok_or_else(|| InputRefusal::UnknownFunction(function.to_string()))?;
-        let callable = self
-            .graph()
-            .callable(name)
-            .ok_or_else(|| InputRefusal::UnknownFunction(function.to_string()))?;
-        admit_arguments(
-            callable.parameters,
-            &arguments,
+        call_checked_package_with_session_limits(
+            self,
+            function,
+            arguments,
             objects,
-            self.graph().scope().types(),
+            meter,
             run,
-        )?;
-        // FR-401: one `filament-eval` session drives the application. The
-        // scheduler charges this call's own `function.call` to the caller's
-        // `meter`, then the reference adapter runs the body against that
-        // same meter through this family's `evaluate` hook
-        // (`s6a::ReferenceEvaluation`), so `meter` counts the whole call. A
-        // denied charge surfaces as
-        // `Ok(FamilyOutcome::Evaluated(Outcome::Incomplete(_)))`, the same
-        // shape a denied charge inside the body takes. Arguments were
-        // admitted above under the caller's `run`, so `Begin` admits nothing.
-        let mut registry = Registry::new(
-            PackageClosure::<&CheckedPackage, &CheckedExpression>::pre_admitted(self),
-        );
-        registry
-            .begin_call(callable.identity, arguments, SessionLimits::default(), objects, meter)?
-            .run()
+            SessionLimits::default(),
+        )
     }
 
     fn evaluate(

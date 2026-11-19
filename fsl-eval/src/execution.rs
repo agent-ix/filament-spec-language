@@ -85,6 +85,7 @@
 //!
 //! ```
 //! use fsl_eval::execution::{ExecuteLimits, PrepareLimits};
+//! use filament_eval::SessionLimits;
 //! use filament_exact::ScalarLimits;
 //! use filament_semantic_value::supplied_stop::SuppliedLimits;
 //! fn limits(accounting: ScalarLimits) -> ExecuteLimits {
@@ -92,6 +93,7 @@
 //!         accounting,
 //!         supplied: SuppliedLimits::default(),
 //!         prepare: PrepareLimits::default(),
+//!         session: SessionLimits::default(),
 //!     }
 //! }
 //! ```
@@ -102,7 +104,7 @@
 
 use filament_eval::{
     CallFailure, Evaluation, ExecutionBackendChoice, PrepareLimitReached, PrepareSetting,
-    UnsupportedCause, UnsupportedEntry,
+    SessionLimits, UnsupportedCause, UnsupportedEntry,
 };
 use filament_exact::{Cancel, CancelCause, ScalarLimits, Value};
 use filament_semantic_value::catalog::InternalFault;
@@ -217,6 +219,8 @@ pub struct CallLimits {
     pub accounting: ScalarLimits,
     /// FR-277: the supplied-value helper ceilings.
     pub supplied: SuppliedLimits,
+    /// The evaluator session's live-occurrence bound (NFR-130).
+    pub session: SessionLimits,
 }
 
 /// The prepared entries of one `prepare`.
@@ -228,8 +232,9 @@ pub trait PreparedEntries {
     /// Call the function `entry` with the contract of
     /// [`CheckedPackageEvaluation::call_supplied`] under a supplied-value run
     /// built from `limits.supplied` and `cancel`, metered by
-    /// `limits.accounting`. An entry listed by [`Self::unsupported`] returns
-    /// [`CallFailure::Unsupported`] with its [`UnsupportedEntry`].
+    /// `limits.accounting` and bounded by `limits.session`. An entry listed
+    /// by [`Self::unsupported`] returns [`CallFailure::Unsupported`] with its
+    /// [`UnsupportedEntry`].
     fn call(
         &self,
         entry: &QualifiedName,
@@ -453,12 +458,14 @@ impl PreparedEntries for InterpreterPrepared<'_> {
         // caller's original handle, never a fresh one (FR-277).
         let mut run =
             SuppliedRun::new(limits.supplied, cancel.clone()).map_err(CallFailure::Supplied)?;
-        let evaluation = self.package.call_supplied(
+        let evaluation = crate::value::call_checked_package_with_session_limits(
+            self.package,
             function,
             arguments.to_vec(),
             environment,
             &mut meter,
             &mut run,
+            limits.session,
         );
         if let Some(cause) = cancel.tripped() {
             return Err(CallFailure::Cancelled(cause));
@@ -522,7 +529,8 @@ pub struct ExecuteRequest {
 }
 
 /// FR-279: the limits `execute` runs under. It has no `Default`, because
-/// `ScalarLimits` has none: the caller states `accounting`.
+/// `ScalarLimits` has none: the caller states `accounting` and its session
+/// bound.
 #[derive(Clone, Copy, Debug)]
 pub struct ExecuteLimits {
     /// The accounting limits the run charges under.
@@ -532,6 +540,8 @@ pub struct ExecuteLimits {
     pub supplied: SuppliedLimits,
     /// The one `PrepareLimits` that applies to whichever backend is chosen.
     pub prepare: PrepareLimits,
+    /// The evaluator session's live-occurrence bound (NFR-130).
+    pub session: SessionLimits,
 }
 
 /// FR-279: run a checked function or clause through the chosen backend:
@@ -586,6 +596,7 @@ pub fn execute(
             &CallLimits {
                 accounting: limits.accounting,
                 supplied: limits.supplied,
+                session: limits.session,
             },
             cancel,
         ),
