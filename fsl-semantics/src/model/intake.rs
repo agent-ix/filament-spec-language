@@ -6611,7 +6611,6 @@ fn read_nodes_partial(
             ))
         })
         .collect();
-    let decimal_types = decimal_type_domains(types);
     // `agent-ix-semantic-ir`'s own `IR_MEMBERS` requires `types` present and
     // `expect_array` guarantees it is an array; `populations` is optional
     // but array-shaped when present.
@@ -6622,6 +6621,7 @@ fn read_nodes_partial(
             vec![root.malformed_in("types", "missing or not an array")],
         );
     };
+    let decimal_types = decimal_type_domains(types);
     let populations = match root.array_field("populations") {
         Ok(populations) => populations,
         Err(refusal) => return (Vec::new(), vec![refusal]),
