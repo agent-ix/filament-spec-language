@@ -102,7 +102,8 @@ pub trait AnalysisView: sealed::Sealed {
     fn protocol_execution(
         &self,
         protocol: &CheckedNodeId,
-    ) -> Result<crate::protocol_view::ProtocolExecutionView<'_>, crate::protocol_view::ViewRefusal> {
+    ) -> Result<crate::protocol_view::ProtocolExecutionView<'_>, crate::protocol_view::ViewRefusal>
+    {
         crate::protocol_view::protocol_execution_view(self.package(), protocol)
     }
 
@@ -112,7 +113,10 @@ pub trait AnalysisView: sealed::Sealed {
     fn protocol_execution_named(
         &self,
         name: &str,
-    ) -> Result<Option<crate::protocol_view::ProtocolExecutionView<'_>>, crate::protocol_view::ViewRefusal> {
+    ) -> Result<
+        Option<crate::protocol_view::ProtocolExecutionView<'_>>,
+        crate::protocol_view::ViewRefusal,
+    > {
         let mut matches = self
             .package()
             .resolved_graph()

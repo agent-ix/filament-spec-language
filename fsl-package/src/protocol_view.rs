@@ -253,8 +253,28 @@ pub struct ProtocolControlView<'p> {
     pub node: &'p CheckedSemanticNodeV2,
     /// The closed operator carried by the node.
     pub operation: ControlOperation,
+    /// The node's static declaration path, used for memory selection and
+    /// trace identity.
+    pub path: Vec<String>,
+    /// The source memory default of a `parallel`, if it was authored.
+    pub memory: Option<fsl_foundation::MemoryModelName>,
     /// The operation-specific structural body.
     pub body: ControlBody<'p>,
+}
+
+/// One package-native role binding and its replication bound.
+#[derive(Clone, Debug)]
+pub struct ProtocolRoleView<'p> {
+    /// The checked package role node.
+    pub node: &'p CheckedSemanticNodeV2,
+    /// Its static declaration path.
+    pub path: Vec<String>,
+    /// The model type node selected by the role.
+    pub model: &'p CheckedNodeId,
+    /// Whether the role is replicated.
+    pub replicated: bool,
+    /// The authored maximum for a replicated role, if any.
+    pub maximum: Option<u64>,
 }
 
 /// The package-native structural form of one protocol declaration.
@@ -262,6 +282,12 @@ pub struct ProtocolControlView<'p> {
 pub struct ProtocolExecutionView<'p> {
     /// The protocol's clause, role, channel and control topology.
     pub protocol: ProtocolView<'p>,
+    /// The role bindings in the package's node order.
+    pub roles: Vec<ProtocolRoleView<'p>>,
+    /// The channel nodes in the package's node order.
+    pub channels: Vec<&'p CheckedSemanticNodeV2>,
+    /// The queue nodes in the package's node order.
+    pub queues: Vec<&'p CheckedSemanticNodeV2>,
     /// Every control in the `run` tree, in the same order as
     /// [`ProtocolView::controls`].
     pub controls: Vec<ProtocolControlView<'p>>,
@@ -639,6 +665,42 @@ pub fn protocol_execution_view<'p>(
         .iter()
         .map(|node| (&node.node_id, node))
         .collect();
+    let node_list =
+        |ids: &[&CheckedNodeId], member: &'static str| -> Result<Vec<&'p Node>, ViewRefusal> {
+            ids.iter()
+                .map(|id| {
+                    nodes
+                        .get(id)
+                        .copied()
+                        .ok_or_else(|| missing(view.clause, member))
+                })
+                .collect()
+        };
+    let roles = node_list(view.roles(), "roles")?
+        .into_iter()
+        .map(|node| {
+            Ok(ProtocolRoleView {
+                node,
+                path: node
+                    .declaration
+                    .as_ref()
+                    .map(|declaration| {
+                        declaration
+                            .qualified_name
+                            .iter()
+                            .map(|part| part.to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                model: role_model(node)?,
+                replicated: role_is_replicated(node)?,
+                maximum: role_replication_maximum(node)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ViewRefusal>>()?;
+    let channels = node_list(view.channels(), "channels")?;
+    let queues = node_list(view.queues(), "queues")?;
+    drop(node_list);
     let mut controls = Vec::with_capacity(view.controls.len());
     for id in &view.controls {
         let node = nodes
@@ -648,13 +710,44 @@ pub fn protocol_execution_view<'p>(
         controls.push(ProtocolControlView {
             node,
             operation: control_operation(node)?,
+            path: node
+                .declaration
+                .as_ref()
+                .map(|declaration| {
+                    declaration
+                        .qualified_name
+                        .iter()
+                        .map(|part| part.to_string())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            memory: control_memory(node)?,
             body: control_body(node)?,
         });
     }
     Ok(ProtocolExecutionView {
         protocol: view,
+        roles,
+        channels,
+        queues,
         controls,
     })
+}
+
+fn control_memory(
+    node: &CheckedSemanticNodeV2,
+) -> Result<Option<fsl_foundation::MemoryModelName>, ViewRefusal> {
+    if control_operation(node)? != ControlOperation::Parallel {
+        return Ok(None);
+    }
+    optional_text(node, "memory")?
+        .map(|word| match word {
+            "sc" => Ok(fsl_foundation::MemoryModelName::Sc),
+            "tso" => Ok(fsl_foundation::MemoryModelName::Tso),
+            "ra" => Ok(fsl_foundation::MemoryModelName::Ra),
+            _ => Err(malformed(&node.node_id, "memory")),
+        })
+        .transpose()
 }
 
 /// The controls of `clause`'s `run` tree in layout order. A control held by two
@@ -1323,6 +1416,15 @@ pub fn choice_visibility(
     })
 }
 
+/// The model node selected by role `role`.
+///
+/// # Errors
+///
+/// [`ViewRefusal`] naming the missing or misshapen `model` member.
+pub fn role_model(role: &CheckedSemanticNodeV2) -> Result<&CheckedNodeId, ViewRefusal> {
+    single(role, "model")
+}
+
 /// Whether the role node `role` is a replicated role, a template of role
 /// instances drawn from a population (FSpec FR-465 "Role"): its
 /// `replication` Group is not empty.
@@ -1538,16 +1640,14 @@ pub fn control_body(node: &CheckedSemanticNodeV2) -> Result<ControlBody<'_>, Vie
             of: single(node, "of")?,
             binder: single(node, "binder")?,
         },
-        ControlOperation::Attempt => {
-            ControlBody::Attempt {
-                role: single(node, "role")?,
-                operation: single(node, "operation")?,
-                ordering: optional_ordering(node, "ordering")?,
-                contracts: references(node, "contracts")?,
-                binder: single(node, "binder")?,
-                constraint: Some(single(node, "constraint")?),
-            }
-        }
+        ControlOperation::Attempt => ControlBody::Attempt {
+            role: single(node, "role")?,
+            operation: single(node, "operation")?,
+            ordering: optional_ordering(node, "ordering")?,
+            contracts: references(node, "contracts")?,
+            binder: single(node, "binder")?,
+            constraint: Some(single(node, "constraint")?),
+        },
         ControlOperation::Effect => ControlBody::Effect {
             attempt: single(node, "of")?,
             binder: optional(node, "binder")?
@@ -1571,15 +1671,13 @@ fn optional_ordering(
     member: &'static str,
 ) -> Result<Option<fsl_forms::AccessOrdering>, ViewRefusal> {
     optional_text(node, member)?
-        .map(|word| {
-            match word {
-                "relaxed" => Ok(fsl_forms::AccessOrdering::Relaxed),
-                "acquire" => Ok(fsl_forms::AccessOrdering::Acquire),
-                "release" => Ok(fsl_forms::AccessOrdering::Release),
-                "acq_rel" => Ok(fsl_forms::AccessOrdering::AcqRel),
-                "seq_cst" => Ok(fsl_forms::AccessOrdering::SeqCst),
-                _ => Err(malformed(&node.node_id, member)),
-            }
+        .map(|word| match word {
+            "relaxed" => Ok(fsl_forms::AccessOrdering::Relaxed),
+            "acquire" => Ok(fsl_forms::AccessOrdering::Acquire),
+            "release" => Ok(fsl_forms::AccessOrdering::Release),
+            "acq_rel" => Ok(fsl_forms::AccessOrdering::AcqRel),
+            "seq_cst" => Ok(fsl_forms::AccessOrdering::SeqCst),
+            _ => Err(malformed(&node.node_id, member)),
         })
         .transpose()
 }
