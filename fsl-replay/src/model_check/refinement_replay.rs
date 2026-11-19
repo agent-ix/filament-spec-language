@@ -50,7 +50,7 @@ use crate::refinement::{
     AssumptionSide, AssumptionTarget, CandidateFairState, CandidateFairStep, ConcreteStep,
     ProtocolAssumptionReason, ProtocolAssumptionWitness, ProtocolRelationError,
     ProtocolStateRelation, RefinementFailure, RefinementPosition, RefinementSystems, StepVerdict,
-    Taken, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
+    Taken, abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
     check_protocol_state_relations, check_protocol_step, check_step, initial_history, map_state,
     step_history, stop_verdict,
 };
@@ -1508,134 +1508,180 @@ fn replay_lasso(
         return Err(fault("a-lasso-loop-is-in-the-trail"));
     };
     let loop_trail = &loop_trail[..loop_taken.len()];
-    let mut positions = Vec::with_capacity(loop_trail.len());
-    let mut identities = BTreeSet::<ModelTransition>::new();
-    for position in loop_trail {
-        let mut candidates = Vec::with_capacity(position.abstract_states.len());
-        for candidate in &position.abstract_states {
-            let (key, _) = systems
-                .abstract_system
-                .state_key_of(candidate)
-                .map_err(|_| fault("hidden-liveness-candidate-has-a-state-key"))?;
-            let expansion = match systems.abstract_system.expand_state(candidate) {
-                Ok(expansion) => expansion,
-                Err(stop) => match stop_verdict(&systems.abstract_system, stop) {
-                    StepVerdict::Stopped(reached) => {
-                        return Ok(RefinementTraceSettlement::Stopped(reached));
-                    }
-                    _ => return Err(fault("hidden-liveness-candidate-expands")),
-                },
-            };
-            if expansion
-                .findings
-                .iter()
-                .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
-            {
-                return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()));
-            }
-            let transitions: Vec<_> = expansion
-                .successors
-                .into_iter()
-                .map(|(transition, _)| transition)
-                .collect();
-            identities.extend(transitions.iter().cloned());
-            candidates.push((key, transitions));
-        }
-        positions.push(candidates);
-    }
-    let mut taken_identities = Vec::<ModelTransition>::new();
-    for taken in loop_taken {
-        match taken {
-            Taken::Abstract(transitions) => taken_identities.extend(transitions.iter().cloned()),
-            Taken::CandidateSteps(steps) => {
-                taken_identities.extend(steps.iter().filter_map(|step| step.transition.clone()))
-            }
-            Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) => {}
-        }
-    }
-    identities.extend(taken_identities);
     let abstract_fairness: Vec<_> = refinement.abstract_operation_fairness().cloned().collect();
-    let identities: Vec<_> = identities.into_iter().collect();
-    let numbered: BTreeMap<_, _> = identities
-        .iter()
-        .cloned()
-        .enumerate()
-        .map(|(index, transition)| (transition, Identity::new(index as u64)))
-        .collect();
-    let candidate_positions = positions
-        .iter()
-        .map(|candidates| {
-            candidates
-                .iter()
-                .map(|(key, enabled)| {
-                    Ok(CandidateFairState {
-                        key: key.clone(),
-                        enabled: enabled
-                            .iter()
-                            .map(|transition| {
-                                numbered
-                                    .get(transition)
-                                    .copied()
-                                    .ok_or_else(|| fault("candidate-enabled-transition-numbered"))
-                            })
-                            .collect::<Result<Vec<_>, ReplayRefusal>>()?,
+    let violated = if matches!(
+        payload.refinement.as_ref(),
+        Some(RefinementFailure::HiddenUnfair { .. })
+    ) {
+        let mut positions = Vec::with_capacity(loop_trail.len());
+        let mut identities = BTreeSet::<ModelTransition>::new();
+        for position in loop_trail {
+            let mut candidates = Vec::with_capacity(position.abstract_states.len());
+            for candidate in &position.abstract_states {
+                let (key, _) = systems
+                    .abstract_system
+                    .state_key_of(candidate)
+                    .map_err(|_| fault("hidden-liveness-candidate-has-a-state-key"))?;
+                let expansion = match systems.abstract_system.expand_state(candidate) {
+                    Ok(expansion) => expansion,
+                    Err(stop) => match stop_verdict(&systems.abstract_system, stop) {
+                        StepVerdict::Stopped(reached) => {
+                            return Ok(RefinementTraceSettlement::Stopped(reached));
+                        }
+                        _ => return Err(fault("hidden-liveness-candidate-expands")),
+                    },
+                };
+                if expansion
+                    .findings
+                    .iter()
+                    .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
+                {
+                    return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()));
+                }
+                let transitions: Vec<_> = expansion
+                    .successors
+                    .into_iter()
+                    .map(|(transition, _)| transition)
+                    .collect();
+                identities.extend(transitions.iter().cloned());
+                candidates.push((key, transitions));
+            }
+            positions.push(candidates);
+        }
+        let mut taken_identities = Vec::<ModelTransition>::new();
+        for taken in loop_taken {
+            match taken {
+                Taken::Abstract(transitions) => {
+                    taken_identities.extend(transitions.iter().cloned())
+                }
+                Taken::CandidateSteps(steps) => {
+                    taken_identities.extend(steps.iter().filter_map(|step| step.transition.clone()))
+                }
+                Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) => {}
+            }
+        }
+        identities.extend(taken_identities);
+        let identities: Vec<_> = identities.into_iter().collect();
+        let numbered: BTreeMap<_, _> = identities
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, transition)| (transition, Identity::new(index as u64)))
+            .collect();
+        let candidate_positions = positions
+            .iter()
+            .map(|candidates| {
+                candidates
+                    .iter()
+                    .map(|(key, enabled)| {
+                        Ok(CandidateFairState {
+                            key: key.clone(),
+                            enabled: enabled
+                                .iter()
+                                .map(|transition| {
+                                    numbered.get(transition).copied().ok_or_else(|| {
+                                        fault("candidate-enabled-transition-numbered")
+                                    })
+                                })
+                                .collect::<Result<Vec<_>, ReplayRefusal>>()?,
+                        })
                     })
-                })
-                .collect::<Result<Vec<_>, ReplayRefusal>>()
-        })
-        .collect::<Result<Vec<_>, ReplayRefusal>>()?;
-    let candidate_steps = loop_taken
-        .iter()
-        .map(|taken| match taken {
-            Taken::CandidateSteps(rows) => rows
-                .iter()
-                .map(|row| {
-                    Ok(CandidateFairStep {
-                        pre_state: row.pre_state.clone(),
-                        transition: row
-                            .transition
-                            .as_ref()
-                            .map(|transition| {
-                                numbered
-                                    .get(transition)
-                                    .copied()
-                                    .ok_or_else(|| fault("candidate-taken-transition-numbered"))
+                    .collect::<Result<Vec<_>, ReplayRefusal>>()
+            })
+            .collect::<Result<Vec<_>, ReplayRefusal>>()?;
+        let candidate_steps = loop_taken
+            .iter()
+            .map(|taken| match taken {
+                Taken::CandidateSteps(rows) => {
+                    rows.iter()
+                        .map(|row| {
+                            Ok(CandidateFairStep {
+                                pre_state: row.pre_state.clone(),
+                                transition: row
+                                    .transition
+                                    .as_ref()
+                                    .map(|transition| {
+                                        numbered.get(transition).copied().ok_or_else(|| {
+                                            fault("candidate-taken-transition-numbered")
+                                        })
+                                    })
+                                    .transpose()?,
+                                post_state: row.post_state.clone(),
                             })
-                            .transpose()?,
-                        post_state: row.post_state.clone(),
-                    })
-                })
-                .collect::<Result<Vec<_>, ReplayRefusal>>(),
-            _ => Err(fault("hidden-liveness-loop-retains-candidate-steps")),
+                        })
+                        .collect::<Result<Vec<_>, ReplayRefusal>>()
+                }
+                _ => Err(fault("hidden-liveness-loop-retains-candidate-steps")),
+            })
+            .collect::<Result<Vec<_>, ReplayRefusal>>()?;
+        let fair_through = |through: usize| -> Result<bool, ReplayRefusal> {
+            let constraints = replay_candidate_constraints(
+                &systems.abstract_system,
+                &abstract_fairness,
+                &numbered,
+                through,
+            )?;
+            candidate_lasso_has_fair_run(
+                &candidate_positions,
+                &candidate_steps,
+                &constraints,
+                &filament_exact::Cancel::new(),
+            )
+            .map_err(|_| fault("candidate-lasso-check-replays"))
+        };
+        let mut violated = false;
+        for prefix in 0..=index {
+            let has_fair_candidate = fair_through(prefix)?;
+            if prefix < index && !has_fair_candidate {
+                return Ok(RefinementTraceSettlement::Inconclusive(disagreement(
+                    Category::Success,
+                )));
+            }
+            if prefix == index {
+                violated = !has_fair_candidate;
+            }
+        }
+        violated
+    } else {
+        let mut enabled = Vec::with_capacity(loop_trail.len());
+        for position in loop_trail {
+            match abstract_enabled(systems, position)? {
+                Enabledness::Enabled(here) => enabled.push(here),
+                Enabledness::Undecided => {
+                    return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()));
+                }
+                Enabledness::Stopped(reached) => {
+                    return Ok(RefinementTraceSettlement::Stopped(reached));
+                }
+            }
+        }
+        let mut identities: Vec<ModelTransition> = enabled.iter().flatten().cloned().collect();
+        for taken in loop_taken {
+            match taken {
+                Taken::Abstract(transitions) => identities.extend(transitions.iter().cloned()),
+                Taken::CandidateSteps(steps) => {
+                    identities.extend(steps.iter().filter_map(|step| step.transition.clone()))
+                }
+                Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) => {}
+            }
+        }
+        let classes = abstract_classes(&systems.abstract_system, &abstract_fairness, &identities)
+            .map_err(ReplayRefusal::Fault)?;
+        classes.iter().any(|class| {
+            if class.constraint() != index
+                || loop_taken.iter().any(|taken| class.is_taken_by(taken))
+            {
+                return false;
+            }
+            let Some(constraint) = abstract_fairness.get(index) else {
+                return false;
+            };
+            match constraint.kind() {
+                FairnessKind::Weak => enabled.iter().all(|here| class.is_enabled_in(here)),
+                FairnessKind::Strong => enabled.iter().any(|here| class.is_enabled_in(here)),
+            }
         })
-        .collect::<Result<Vec<_>, ReplayRefusal>>()?;
-    let fair_through = |through: usize| -> Result<bool, ReplayRefusal> {
-        let constraints = replay_candidate_constraints(
-            &systems.abstract_system,
-            &abstract_fairness,
-            &numbered,
-            through,
-        )?;
-        candidate_lasso_has_fair_run(
-            &candidate_positions,
-            &candidate_steps,
-            &constraints,
-            &filament_exact::Cancel::new(),
-        )
-        .map_err(|_| fault("candidate-lasso-check-replays"))
     };
-    let mut violated = false;
-    for prefix in 0..=index {
-        let has_fair_candidate = fair_through(prefix)?;
-        if prefix < index && !has_fair_candidate {
-            return Ok(RefinementTraceSettlement::Inconclusive(disagreement(
-                Category::Success,
-            )));
-        }
-        if prefix == index {
-            violated = !has_fair_candidate;
-        }
-    }
     let divergent = loop_taken.iter().all(|taken| match taken {
         Taken::Stutter => true,
         Taken::CandidateSteps(steps) => steps.iter().all(|step| step.transition.is_none()),
