@@ -6,7 +6,7 @@ use std::str::FromStr;
 use filament_eval::{Evaluation, FamilyOutcome};
 use filament_exact::{
     ChargePoint, IeeeFlag, Integer, Meter, Outcome, Rational, Refusal, RoundingMode, ScalarLimits,
-    TextProfile, TextType, Undefined, Value, admit_text,
+    TextProfile, TextType, Undefined, Value, ValueType, admit_text,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::loss::ValueLoss;
