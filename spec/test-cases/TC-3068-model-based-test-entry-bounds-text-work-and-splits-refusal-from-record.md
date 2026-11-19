@@ -16,14 +16,14 @@ Catches a generator that allocates a caller-sized Text table before charging it,
 
 ## Test Procedure
 
-1. Run the value clause `Huge` (`t: Text[0, 1099511627776; nfc]`, body `size(t) >= 0`) with seed 7, `max_cases` 30 and `accounting.work_units` 1000000; repeat over `unicode-scalars`; repeat over `Text[0, 4; nfc]`.
+1. Run the value clause `Huge` (`t: Text[0, 1099511627776; nfc]`, body `size(t) >= 0`) with seed 7, `max_cases` 30 and `accounting.work_units` 1000000; repeat over `unicode-scalars`; repeat over `Text[0, 4; nfc]`, then with `accounting.work_units` 2559.
 2. Call the entry with `max_cases` 0, `max_trace_length` 0, an unknown clause identity, and over an empty domain.
-3. Over FR-752-AC-7's model, call the entry with a test-double `RootAdmission` that accepts `by` 7, then with `NativeAdmission`.
-4. Run FR-752-AC-7's model as a `model_based_test` plan step with `AnalyzeLimits.simulation` `explore.states` 1, then with the published defaults.
+3. Over FR-752-AC-7's model, call the entry with a test-double `RootAdmission` that accepts `by` 7, then with `NativeAdmission`; call it for `Inc` with `max_trace_length` `None`, with no subject, and for `Square` with a subject and with `max_trace_length` `None`.
+4. Call the entry for `Inc` with `explore.states` 1, then run `Inc` as a `model_based_test` plan step with `AnalyzeLimits.simulation` `max_states` 1.
 
 ## Expected Results
 
-- Step 1: `Ok`, `incomplete`, cause `limit-reached` `work_units`/`accounting.work_units`/1000000, `cases.generated` 0, no panic, not `unsupported`, twice; then `tested` with `cases.generated` 30.
+- Step 1: `Ok`, `incomplete`, cause `limit-reached` `work_units`/`accounting.work_units`/1000000, `cases.generated` 0, no panic, not `unsupported`, twice; then `tested` with `cases.generated` 30; then `incomplete` `accounting.work_units` with `cases.generated` 0.
 - Step 2: `Err(ModelBasedTestRefusal)` naming each member, no case run; the empty domain `invalid_model_binding`/`malformed-declaration`.
-- Step 3: `Ok` settled `failed` `oracle-disagreement`; then `Ok` settled `tested`, the `by` 0 and 7 cases refused by `admit_arguments`.
-- Step 4: `jam` `uncovered` `undetermined` naming `explore.states`; `cases` and `result` equal to the default-limit step.
+- Step 3: `Ok` settled `failed` `oracle-disagreement`; then `Ok` settled `tested`, the `by` 0 and 7 cases refused by `admit_arguments`; then `missing-member` naming `max_trace_length`, `missing-member` naming `subject`, `unknown-member` naming `subject`, and a `Square` run that completes.
+- Step 4: `tested`; the `by` 6 partition `uncovered` `undetermined` naming `max_states`/`explore.states`/1 with no case generated for it; `jam` `undetermined` naming the same limit; the plan step's record equal to the direct run's.

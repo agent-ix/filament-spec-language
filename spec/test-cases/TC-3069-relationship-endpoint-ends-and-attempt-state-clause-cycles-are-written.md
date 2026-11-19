@@ -24,4 +24,4 @@ Catches a checker that refuses endpoint ends without a Connection as not impleme
 ## Expected Results
 
 - Step 1: ends `Reference<Port>` twice, no `connection` without the Connection and the full connection with it; both admitted; no `not-yet-implemented`; the `related by` clause refuses `ill_typed`/`type-mismatch`, `expected` `Reference<Port>`.
-- Step 2: `P`, `S`, `f` and the carrier share one `recursion_group`, FR-092 ordinals, written in ordinal order, admitted; the acyclic unit has no group and `P` follows `S`; the edited package refuses `invalid_semantic_graph` at `S`'s node.
+- Step 2: `P`, its `attempt` control, `S`, `f` and the carrier share one `recursion_group`, FR-092 ordinals, written in ascending node-id order, admitted; the acyclic unit has no group and `P` follows `S`; the edited package refuses `invalid_semantic_graph` at `S`'s node.

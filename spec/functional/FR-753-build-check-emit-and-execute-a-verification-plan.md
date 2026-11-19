@@ -126,7 +126,7 @@ and on no other:
 | `probabilistic_statistical` | a negotiated `probabilistic-satisfaction` item with evidence `statistical` (EN-4), seeded by the request's `seed` | FR-189, FR-191, FR-192 |
 | `hybrid_solver` | a negotiated `temporal-satisfaction` item carrying the hybrid-dynamics requirement, run by the negotiated hybrid provider | FR-750, FR-1019 |
 | `schedulability` | a negotiated `schedulability` item through `analyze` | FR-246, FR-633 |
-| `model_based_test` | `fsl-eval`'s model-based test entry, with the step's clause, domain, bound as `max_cases`, the request's `seed`, and the request's `max_trace_length` and `max_value_bits` where the step consumes them (FSpec FR-824); its FR-190 record, whose `result` and `cause` carry the step's FR-331 settlement, is the step's result | FR-752 |
+| `model_based_test` | `fsl-eval`'s `run_model_based_test` (FR-752 "Entry"), given the checked package, the step's clause, domain and bound as `max_cases`, the request's `seed`, `max_trace_length` and `max_value_bits` where the step consumes them (FSpec FR-824), for a clause over a state model the model subject whose `initial` is the step's admitted `initial` snapshot from `PlanInputs`, `AnalyzeLimits` (its `simulation` member for the exploration and position limits) and `NativeAdmission`; the entry builds the model system; its FR-190 record, whose `result` and `cause` carry the step's FR-331 settlement, is the step's result | FR-752 |
 | `simulate` | a `simulation` item through `analyze`, not negotiated | FR-634, FR-120 |
 | `replay` | a negotiated `finite-replay` item, run through the layer-6 replay facade | FR-098 |
 
