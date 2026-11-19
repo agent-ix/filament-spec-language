@@ -120,19 +120,15 @@ pub(super) fn hybrid_item<'a>(
                     Some(form) => {
                         let (result, method) = match &answer.verdict {
                             HybridVerdict::Solved(result) => {
-                                let label = match result
-                                    .terminal_value(&fsl_replay::ClaimHorizon::of(checked))
+                                let horizon = fsl_replay::ClaimHorizon::of(checked);
+                                let label = if result
+                                    .method
+                                    .is_sound_for(&result.outcome, &result.coverage)
+                                    && result.coverage.covers(&horizon)
                                 {
-                                    TerminalValue::Proved { .. } => "proved",
-                                    TerminalValue::Inconclusive(_) => "inconclusive",
-                                    TerminalValue::Incomplete(_) => "incomplete",
-                                    TerminalValue::Refuted => "refuted",
-                                    TerminalValue::Unsupported(_) => "unsupported",
-                                    TerminalValue::Declined { .. }
-                                    | TerminalValue::Failed
-                                    | TerminalValue::ToolFailed(_)
-                                    | TerminalValue::Tested
-                                    | TerminalValue::Measured(_) => "failed",
+                                    "proved"
+                                } else {
+                                    "inconclusive"
                                 };
                                 (label, Some(result.method))
                             }
