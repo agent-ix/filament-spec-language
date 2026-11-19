@@ -74,7 +74,6 @@ fn binding<'a>(node: &'a Value, name: &str) -> &'a Value {
 #[test]
 #[trace("TC-3016", "FR-1036-AC-1")]
 #[trace("FSpec-TC-2037", "FSpec-FR-322-AC-467")]
-#[ignore = "QSL-2235: the synthesis_request node writer is not implemented yet"]
 fn a_value_synthesis_is_one_synthesis_request_node() {
     let wire = package(&pick("Pick * Pick = 49", ""), &Default::default());
     let nodes = synthesis_nodes(&wire);
@@ -125,7 +124,6 @@ fn a_value_synthesis_is_one_synthesis_request_node() {
 /// and the length range as `domain`.
 #[test]
 #[trace("TC-3016", "FR-1036-AC-2")]
-#[ignore = "QSL-2235: the synthesis_request node writer is not implemented yet"]
 fn a_plan_synthesis_node_names_the_object_type_and_the_lengths() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
