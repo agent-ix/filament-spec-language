@@ -39,8 +39,19 @@ FR-498-AC-1 to FR-498-AC-4.
    the settled causes' `{node, occurrence}` locus.
 4. Read the emitted package with the strict reader and check every row names
    a node of the emitted graph with that node's own `claim` occurrence.
+5. Emit FR-498-AC-5's three claims; read each claim node's body and path;
+   rename `A` to `B`; change one weight of `Steady` and one support weight
+   of `d`; reorder `Steady`'s weight lines and the claims; compare every
+   claim `node_id` and row with the first emission; read each package with
+   the strict reader.
+6. Emit one claim of each FR-498-AC-6 form over the extended `Service` and
+   over the `time dense` unit; read each `reward` and `delays` binding;
+   rewrite `duration` on `Server::request` and the delay weight and compare
+   every claim `node_id`; read each package with the strict reader.
 
-Tag the test `#[trace("FR-498-AC-1", "FR-498-AC-2", "FR-498-AC-3", "FR-498-AC-4", "TC-1288")]`.
+Tag the test `#[trace("FR-498-AC-1", "FR-498-AC-2", "FR-498-AC-3", "FR-498-AC-4", "TC-1288")]`
+and the step 5 and 6 tests `#[trace("TC-1288", "FR-498-AC-5")]` and
+`#[trace("TC-1288", "FR-498-AC-6")]`.
 Vectors are referenced by FSpec case ID, never copied.
 
 ## Expected Results

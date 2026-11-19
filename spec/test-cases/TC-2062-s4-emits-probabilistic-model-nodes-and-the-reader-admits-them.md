@@ -12,24 +12,26 @@ relationships:
 
 Verify that S4 emits random parameters, workloads, rewards and delays as v2 `probabilistic` nodes, that the reader rebuilds the checked records, and that any S4 refusal about them carries the declaration's locus.
 
-Scope: FR-185-AC-7, FR-185-AC-12, FR-186-AC-5 (emission), FR-740-AC-1 to FR-740-AC-4, FR-740-AC-7.
+Scope: FR-185-AC-7, FR-185-AC-12, FR-186-AC-5 (emission), FR-740-AC-1 to FR-740-AC-4, FR-740-AC-7, FR-740-AC-8.
 
 ## Test Procedure
 
 1. Compile `Service` through S4; list its `probabilistic` nodes, occurrences and bodies; read the package back.
 2. Over the read package, call `weighted_steps` at FR-187-AC-1's state under `Steady`.
 3. Compile a `time dense` unit with a `discrete` delay; a workload with `Server::reset: 0`; `Steady` with its weight lines reordered.
-4. Emit a claim `under Steady` with `Service` and a claim followed by a reward declaration; read the package with the strict reader.
+4. Emit a claim `under Steady` with `Service`, a claim `under Bursty` and a claim `under every scheduler`, and a claim followed by a reward declaration; read each claim node's `scheduler` and `distributions` bindings and path operands, and read the package with the strict reader.
 5. Force an S4 refusal concerning a random parameter (for example a value family S4 cannot write) and read its diagnostic.
 6. Compile `Service` and read the reward function's `clause`, owner and the `Server::attempt` `operation_bodies` row; compile FSpec FR-640-AC-3's three-reward unit in its three declaration orders and with `load`'s expression changed (FR-740-AC-7).
+7. Compile the vendored `examples/rover` and `examples/architecture` units, passing and `-missed`, through S4 from their vendored `requests/*.json` (each unit package the request's program identity); read each package's `probabilistic` nodes and claim node bodies and paths with the strict reader (FR-740-AC-8).
 
-Tag the tests `#[trace("TC-2062", "FR-740-AC-n")]` (and `FR-185-AC-7`, `FR-185-AC-12`, `FR-186-AC-5`).
+Tag the tests `#[trace("TC-2062", "FR-740-AC-n")]` (step 7 in `fsl-package/tests/probabilistic_examples.rs`, with `include_bytes!` of the vendored files) (and `FR-185-AC-7`, `FR-185-AC-12`, `FR-186-AC-5`).
 
 ## Expected Results
 
 - Step 1: the nodes FR-740-AC-1 lists; records equal to S3's.
 - Step 2: FR-187-AC-1's six steps and probabilities.
 - Step 3: one `delay_distribution` node admitted; weight 0 emitted; byte-identical output.
-- Step 4: scheduler resolved to the `Steady` node; claim and reward nodes both emitted; package admitted.
+- Step 4: the `Steady` claim's `scheduler` binding and path operand name the `Steady` node and its `distributions` the two `Server::attempt` nodes; the `Bursty` claim names `Bursty`'s node; the every-scheduler claim names no workload; claim and reward nodes both emitted; package admitted.
 - Step 5: locus member holds the declaration's source reference and label span, never `null`; message names the declaration in words.
 - Step 6: `clause` `"reward"`, owner `Server::attempt`, row `no_body`, package admitted; the three orders byte-identical; the changed expression changes the `load` node id and no reward function id.
+- Step 7: the nodes, bindings, paths and ordinals FR-740-AC-8 states; both passing packages and both `-missed` packages admitted.
