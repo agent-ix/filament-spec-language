@@ -14,16 +14,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_checked::key::DeclarationKey;
 use filament_contract_model::{ClockConfiguration, ClockExactNumber};
 use filament_exact::ValueType;
-use fsl_foundation::Span;
 use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
+use fsl_foundation::Span;
 use fsl_package as pkg;
 use fsl_package::{
-    ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal, EmitRefusal,
-    TemporalClockSelection, clock_kind, is_model_binding_name, profile_clock_kind,
+    clock_kind, is_model_binding_name, profile_clock_kind, ClockSelectionCause,
+    ClockSelectionDeclaration, ClockSelectionRefusal, EmitRefusal, TemporalClockSelection,
 };
 use fsl_semantics::check::TemporalProfile;
 
-use super::{CheckedUnit, CompileRefusal, ParsedUnitSource, region};
+use super::{region, CheckedUnit, CompileRefusal, ParsedUnitSource};
 
 /// FR-640: the clock configurations a request supplies, by clock name.
 /// Member order is not kept: two selections with equal members are equal.

@@ -5,8 +5,8 @@ use super::{PackageMemberCause, ReplayRequestRefusal};
 use crate::identity::SourceRefWire;
 use filament_contract_model::CheckedRefinementInternal;
 use filament_contract_model::{
-    CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageIncomplete,
-    CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageV2, read_checked_package,
+    read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
+    CheckedPackageIncomplete, CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageV2,
 };
 use quire_canonical::{Document, Node, NodeRef, ReadError};
 
@@ -176,6 +176,64 @@ impl ReplayPackage {
                     PackageMemberCause::WrongKind,
                 )
             })
+    }
+
+    pub(crate) fn dependency_clock_pointer(
+        &self,
+        clock_name: &str,
+        cause: fsl_package::ClockSelectionCause,
+    ) -> Option<String> {
+        use fsl_package::ClockSelectionCause;
+        const ROOT: &str = "/package/lock/dependency_clock_selections";
+        if cause == ClockSelectionCause::MissingClockSelection {
+            return Some(ROOT.to_owned());
+        }
+        let rows = member(self.document.root(), "lock")
+            .and_then(|lock| member(lock, "dependency_clock_selections"))?;
+        let rows = match rows.node() {
+            Node::Array(rows) => rows,
+            _ => return None,
+        };
+        rows.into_iter().enumerate().find_map(|(index, row)| {
+            let name = match member(row, "clock_name")?.node() {
+                Node::String(name) => name,
+                _ => return None,
+            };
+            (name == clock_name).then(|| match cause {
+                ClockSelectionCause::ClockKindMismatch => {
+                    format!("{ROOT}/{index}/clock/kind")
+                }
+                ClockSelectionCause::UnusedClockSelection => format!("{ROOT}/{index}"),
+                _ => ROOT.to_owned(),
+            })
+        })
+    }
+
+    pub(crate) fn is_program_source(
+        &self,
+        source: &fsl_foundation::source::provenance::RawSourceRef,
+    ) -> bool {
+        let Some(lock) = member(self.document.root(), "lock") else {
+            return true;
+        };
+        let Some(rows) = member(lock, "sources") else {
+            return true;
+        };
+        let Ok(rows) = array(rows, "/package/lock/sources") else {
+            return true;
+        };
+        let Some(first) = rows.into_iter().next() else {
+            return true;
+        };
+        let authority = member(first, "authority").and_then(|node| match node.node() {
+            Node::String(value) => Some(value),
+            _ => None,
+        });
+        let identity = member(first, "identity").and_then(|node| match node.node() {
+            Node::String(value) => Some(value),
+            _ => None,
+        });
+        authority == Some(source.authority()) && identity == Some(source.identity())
     }
 
     /// FR-098-AC-34: every `function` node of a package document, in node
