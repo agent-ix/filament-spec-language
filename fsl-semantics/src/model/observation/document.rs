@@ -1519,6 +1519,11 @@ pub(super) fn rational_payload(
 /// not in FR-038's integer spelling, or a `scale` that is not a
 /// nonnegative integer at most `4294967295`.
 fn decimal_payload(native: RawNative<'_>) -> Result<filament_exact::Rational, AdmissionRecord> {
+    decimal_value(native).map(|value| value.representation().to_rational())
+}
+
+/// A Decimal payload retained as its exact native value.
+fn decimal_value(native: RawNative<'_>) -> Result<filament_exact::Decimal, AdmissionRecord> {
     let invalid = |member: &'static str| {
         admission_record(Code::InvalidRuntimeInput, "invalid-value").with("member", member)
     };
@@ -1532,7 +1537,7 @@ fn decimal_payload(native: RawNative<'_>) -> Result<filament_exact::Rational, Ad
         .and_then(|scale| scale.to_u64())
         .and_then(|scale| u32::try_from(scale).ok())
         .ok_or_else(|| invalid("scale"))?;
-    Ok(filament_exact::DecimalRepresentation::new(coefficient, scale).to_rational())
+    Ok(filament_exact::Decimal::new(coefficient, scale))
 }
 
 /// A Quantity's `magnitude` object read as its exact rational (FR-106 "A
@@ -1649,6 +1654,10 @@ fn admit_native(
         (NativeKind::Rational, filament_exact::ValueType::Rational(domain)) => {
             let value = rational_payload(native)?;
             rational_in_domain(domain, value).map(Value::Rational)
+        }
+        (NativeKind::Decimal, filament_exact::ValueType::Decimal(domain)) => {
+            let value = decimal_value(native)?;
+            decimal_in_domain(domain, value).map(Value::Decimal)
         }
         // FR-505-AC-5, the unit sentence: a Quantity of the carried unit whose
         // magnitude is a Rational admits as that quantity when the normalized
@@ -2382,6 +2391,30 @@ fn rational_in_domain(
             ),
         )
         .with("actual", value.to_string()))
+}
+
+/// `value` when `domain` contains it, else the declared Decimal domain and
+/// exact value used in the refusal detail.
+fn decimal_in_domain(
+    domain: &filament_exact::DecimalType,
+    value: filament_exact::Decimal,
+) -> Result<filament_exact::Decimal, AdmissionRecord> {
+    if domain.contains(&value) {
+        return Ok(value);
+    }
+    Err(admission_record(Code::InvalidRuntimeInput, "invalid-value")
+        .with(
+            "expected",
+            format!(
+                "Decimal[{}, {}; {}, {}; {:?}]",
+                domain.lower(),
+                domain.upper(),
+                domain.min_scale(),
+                domain.max_scale(),
+                domain.rounding()
+            ),
+        )
+        .with("actual", value.normalized().to_rational().to_string()))
 }
 
 /// The name of the first element type inside `value_type` (through `Option`
