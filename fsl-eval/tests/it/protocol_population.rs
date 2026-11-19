@@ -5,7 +5,8 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
-use filament_exact::{ScalarLimits, Value};
+use filament_eval::{FamilyOutcome, FamilyResult};
+use filament_exact::{EffectiveId, OriginalDeclarationKey, ScalarLimits, Value};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::model_subject::{ModelInstance, ModelSubject, ProtocolSubject, RoleBinding};
 use fsl_eval::simulation::model::{
@@ -375,7 +376,13 @@ fn an_undefined_missing_lookup_in_a_protocol_capture_keeps_absent_key() {
         key: "node-1".to_owned(),
     };
     let reference = model
-        .bound_reference(tc1070::model::id("Node"), &over)
+        .bound_reference(
+            EffectiveId::new(
+                None,
+                OriginalDeclarationKey::new(tc1070::model::PACKAGE, tc1070::model::id("Node")),
+            ),
+            &over,
+        )
         .expect("the selected model declares node-1");
     let observation = model
         .observe(model.initial_states()[0].state())
@@ -399,7 +406,7 @@ fn an_undefined_missing_lookup_in_a_protocol_capture_keeps_absent_key() {
     )
     .expect("protocol capture evaluation completes with its semantic outcome");
     match evaluation.outcome {
-        fsl_eval::FamilyOutcome::FamilyEvaluated(fsl_eval::FamilyResult::Undefined(cause)) => {
+        FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause)) => {
             let record = cause.undefined_record();
             assert_eq!(
                 record.reason,
