@@ -2630,7 +2630,6 @@ fn a_port_role_on_a_shared_alias_is_its_own_units_packages_port() {
 /// them as `UnsupportedModelMember`, and a protocol role binds to the Port.
 #[trace("TC-3013", "FR-103-AC-11")]
 #[test]
-#[ignore = "QSL-2176: model intake admitting systems part, port and allocation records through assembly and checking not implemented yet"]
 fn systems_part_port_allocation_records() {
     use fsl_semantics::model::domain_package::{DomainPackageRecord, PortDirection};
 
