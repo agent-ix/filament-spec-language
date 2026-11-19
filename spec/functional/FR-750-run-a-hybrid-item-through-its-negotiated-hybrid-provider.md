@@ -56,7 +56,7 @@ validated witness reproduces a trace, one `counterexamples` entry.
 ### The in-process provider interface
 
 - `fsl-analyze` SHALL export a trait `HybridProvider`, as
-  `fsl_analyze::provider::HybridProvider`, with one method that takes the
+  `fsl_analyze::provider::HybridProvider`, with two methods: `solve`, which takes the
   item's typed request `HybridSolveRequest` (its `CheckedHybridClaim`, its
   `CheckedHybridModel`, the checked package's graph, the emitted package's
   `WireGraph`, its resolved `hybrid.limits` as FR-250's `SolverBudget`, its
@@ -69,6 +69,20 @@ validated witness reproduces a trace, one `counterexamples` entry.
   `fsl-analyze`, so a provider crate below layer A, such as
   `fsl-hybrid-reference` (FR-1019, ADR-011 layer H), implements it without
   depending on `fsl-analyze`.
+- `HybridProvider`'s second method SHALL be
+  `check_options(&self, options: &BTreeMap<String, String>) -> Result<(), OptionRefusal>`,
+  `pub struct OptionRefusal { pub option: String, pub value: String }`,
+  whose default returns `Ok(())`. `fsl-analyze` SHALL call it once per item,
+  after FR-967's unknown-option check and before `solve`, with the item's
+  FSpec FR-331 `options`. A refusal SHALL settle the item `invalid-request`
+  with `invalid_capability`/`invalid-option-value` (FSpec FR-779, FSpec
+  FR-272), payload `request_index`, `backend` (the serving descriptor's
+  backend), `option` and `value` as the refusal names them, and `solve`
+  SHALL NOT be called. The method exists because a provider's value domains
+  (a positive rational step, an integer precision in a range) are not closed
+  sets the descriptor can publish, and a bad value is a defect of the
+  request, not a solver outcome, so it has no `HybridVerdict` arm.
+  FR-1019-AC-7 verifies it through the reference provider.
 - `HybridVerdict` SHALL be the sum of what a hybrid provider can answer,
   one arm per settlement path, so no arm stands in for another:
 
@@ -91,7 +105,9 @@ validated witness reproduces a trace, one `counterexamples` entry.
   the provider's complete counterexample, its kind and trace, as a claim:
   FR-450's exact replay settles it `refuted` when it reproduces, and
   `inconclusive`, `ReplayParity(DisagreementCause::HybridTrace(..))` with
-  that counterexample when it gives `NotReproduced` or `NotExact`. A
+  that counterexample when it gives `NotReproduced`, or `NotExact` without a
+  `validated-witness` FR-751 accepts; with an accepted one a `NotExact`
+  trace settles `refuted` (FR-450 "Settlement"). A
   claimed refutation is never folded into `SolverOutcome::Unknown(trace)`,
   because FR-250 settles that `SolverInconclusive`, and replay parity needs
   the claim. `Unsupported` settles `unsupported` with the diagnostic
@@ -192,8 +208,11 @@ validated witness reproduces a trace, one `counterexamples` entry.
   replay request whose `state_clause` resolves to a hybrid claim to FR-450
   over the recompiled claim and model, and write the FSpec FR-323 `hybrid`
   row: `reproduced-with-evaluated-witness` with the reproduced
-  counterexample, `inconclusive` with the `hybrid-trace` disagreement, or
-  `incomplete` with the `work_units` limit.
+  counterexample, `reproduced-with-validated-witness` with the counterexample
+  when exact replay cannot decide the trace and FR-751 accepts the
+  `validated-witness` the request carries beside it (FR-450 "Settlement"),
+  `inconclusive` with the `hybrid-trace` disagreement, or `incomplete` with
+  the `work_units` limit.
 - `Engine::hybrid(descriptor, provider)` SHALL make an engine from a
   descriptor whose `dynamics` holds `hybrid` and that advertises
   `temporal-satisfaction`. A descriptor that does not is refused with a typed
@@ -304,6 +323,7 @@ reproduces, does not reproduce, or exhausts its meter like any other.
 | FR-750-AC-12 | Each `HybridReplayRefusal` settles by its row of "Replay refusals" on both paths: a provider `refuted` trace whose `loop_to` is past its last state is refused `invalid_result`/`invalid-value` at `/loop` (FR-450), and the same counterexample in a replay request is refused `ReplayRefusal::HybridTrace`, `invalid_runtime_input`/`invalid-value` at its `/loop` pointer; a claim whose model index the graph lacks, a call to a function index the package lacks and an ill-kinded term each settle `failed`, `runtime_invariant`/`established-invariant-broken` with invariants `hybrid-claim-model`, `hybrid-call-expansion` and `hybrid-term-kind`, and end a replay request with exit `30` and no row; over `Shuttle`, `hybrid Shuttle using p { initial { mode Moving when { v = 0 }; } mode Moving invariant { v >= 0 and v <= 1 } flow { v' = 1; } transition to Moving when { v = 1 } reset { v = 0 }; transition to Stopped when { v >= 0 } reset { v >= 0 }; mode Stopped invariant { v >= 1 and v <= 2 } flow { v' = 0; } }`, and its point lasso `L` from `(Moving, v = 0)` at time 0 by transition 0 (`before` `(time 1, v = 1)`) to `(Moving, v = 0)` at time 1 with `loop_to` 0: (a) a capture claim of the FSpec FR-193-AC-15 form whose obligations depend on the activation instant `τ`, `on each (q: Shuttle) when (q.v > 0) { capture v0: Rational = q.v; eventually [0, 1] holds(h.v >= v0 + 1/2) }` under `model-time`, as a provider `refuted` claim on `L`, reproduces by exact replay with kind `formula`: in each period the obligation activated at `τ` (with `v0 = τ`) holds for `τ` in `(0, 1/2]` and is false for `τ` in `(1/2, 1)`, the item settles `refuted` with one counterexample and the replay row is `reproduced-with-evaluated-witness`, while the same claim with body `eventually [0, 1] holds(h.v >= v0)`, true for every `τ`, gives `NotReproduced` at check 5 and settles `inconclusive`, `ReplayParity(HybridTrace(NotReproduced{counterexample}))`; (b) the claim `on origin { fair Moving; eventually [0, *] holds(h.v > 1) }` as a provider `refuted` claim on `L` reproduces by exact replay with kind `formula` and settles `refuted`: `Moving -> Stopped`'s enabled instants are every instant of every period (its guard always holds and its reset `v >= 0` admits a post-jump `v` in `[1, 2]` under `Stopped`'s invariant), and the whole constraint `fair Moving;` is taken every period by the self-loop, so `L` is fair; the same claim with `fair Moving::Stopped;` gives `NotReproduced` at check 5 (that transition is enabled at every instant from time 0 on and never taken, so `L` is unfair) and settles `inconclusive`, `ReplayParity(HybridTrace(NotReproduced{..}))`; and with `fair Moving::Stopped;` and the reset changed to `v <= 1/2`, which no post-jump state under `Stopped`'s invariant meets, the enabled set is empty, `L` is fair and the item settles `refuted`; FR-450-AC-8's recursive-call guard with an unexhausted meter gives `NotExact`: a provider `refuted` trace settles `inconclusive`, `ReplayParity(HybridTrace(NotExact{counterexample}))`, a `solver-inconclusive` trace stays `SolverInconclusive` with `exact` `not-exact`, and the replay row is `inconclusive` with the `not-exact` disagreement; FR-450-AC-7's trace under a `work_units` bound of 10 settles `incomplete`, `LimitReached{work_units, 10, accounting.work_units}` and its replay row `incomplete`; no row settles `failed` for any of these except the three invariant rows. | Test (TC-3037) |
 | FR-750-AC-13 | `read_entry(entry, counterexamples, graph, claim, wire)` reads FR-750-AC-7's process `expression-form` entry, whose `locus` is the division's node id in the emitted package (a different id from the division's index in the checked graph), into `Unsupported` with the flow site of `v` in `Moving` and the division's `TermLocus`, decoding the id through `wire` and mapping it to the checked graph, never `NotRead`; the same entry with `locus` carrying the division's checked-graph index where that index names another node in the emitted package resolves through `wire` to that other node, not to the division, and refuses `invalid_result`/`invalid-value` at `/diagnostic/detail/locus` because that node is no term of `v`'s rate; a node id `wire` does not hold refuses `invalid_result`/`invalid-value` at `/diagnostic/detail/locus`; the same entry with `locus` naming a guard node of `Moving`, or a node outside the model, refuses `invalid_result`/`invalid-value` at `/diagnostic/detail/locus`, and with `mode` `Halted` at `/diagnostic/detail/mode`. | Test (TC-3037) |
 | FR-750-AC-14 | `to_wire(model, wire)` writes `division-by-zero`, `outside-parameter-range`, `outside-result-range` and `outside-capture-range` for the four `UndefinedCause` variants (a `drag(s: Rational[-100, 100])` call reached with `s = 120`, its result bounded by a `Rational[0, 1]` result type exceeded, and a capture `v0: Rational[0, 10]` initialized at 12), each with `where.locus` the term's emitted-package node id, and the reader decodes each `locus` through the `WireGraph` and reads each back to the same variant with the payload taken from the term `locus` names; an in-process `Unsupported` answer for FR-750-AC-7's flow writes `detail.locus` as the division's emitted node id, which `read_entry` reads back to the same `ExpressionSite` and `TermLocus`; a `cause` `undefined` refuses `invalid_result`/`invalid-value` at `/kind/cause`. A provider's `undefined-evaluation` claim at the reproduced position, locus and cause whose `time` contains the reproduced irrational instant settles `refuted`, and the same claim with another `cause` or a `time` that excludes the instant settles `inconclusive`, `ReplayParity(HybridTrace(NotReproduced{..}))`. | Test (TC-3037) |
+| FR-750-AC-15 | Over FSpec FR-652-AC-3's `Grow`, the replay request of its hybrid claim `Below`, carrying the point trace from `v = 1` as its `HybridCounterexample` and FR-652-AC-3's nine-step `validated-witness` at `/replay/certificate`, makes FR-098 write the FSpec FR-323 `hybrid` row `reproduced-with-validated-witness`, category `success`, with `replay` (static only, exact `not-exact`) and the request's counterexample; with the witness cut after its step at `[28, 32]`, or with no `certificate`, the row is `inconclusive` with the `hybrid-trace` `not-exact` disagreement; the witness on a `function` request refuses `invalid_runtime_input`/`unknown-member` at `/replay/certificate`. | Test (TC-3035) |
 
 ## Dependencies
 

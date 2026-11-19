@@ -603,8 +603,11 @@ what each such position means.
   **Presence reads.** `present(p)` of a clock place SHALL be written as
   FSpec FR-322's `presence_read` (FR-322-AC-155): the application of
   `filament.op.option.present`, typed `Boolean`, over the place's
-  `clock_place` template and the owner term (`self`, or another object's
-  term such as `self.peer`). A postcondition's top-level `present(self.v)`
+  `clock_place` template and the owner term (`self`, another object's
+  term such as `self.peer`, a parameter or a population binder), written
+  directly as its `Reference<O>`-typed term with no `filament.op.model.deref`
+  wrapper, so one owner has one encoding (FSpec FR-829 "Owner terms";
+  FR-1040). A postcondition's top-level `present(self.v)`
   or `not present(self.v)` (FSpec `CW-05`) SHALL stay in the lowered
   postcondition as that `presence_read` (its `not`), with no clause node,
   and the evaluator SHALL read it at the candidate post-state's presence
@@ -620,7 +623,7 @@ what each such position means.
   (FSpec FR-342-AC-11), one part for each convex part of the precondition's
   disjunctive form: the part's predicate is the Boolean expression node of its
   data predicate, lowered at its own site, or of `true`, followed by its
-  optional ordered `binders` of typed slot parameters, then its
+  optional ordered `binders` of typed place binders, then its
   `clock_constraint` nodes. Two guarded preconditions of one operation SHALL
   be the one guard of their conjunction (FSpec FR-322: at most one
   `clock_guard` for each anchor): each part of the one with each part of the
@@ -643,8 +646,11 @@ what each such position means.
   Each time invariant SHALL be one `time_invariant` of its predicate's
   expression node and its upper bounds; a `max` constraint on clocks is the
   predicate `true`. A guard part quantified over clock places SHALL carry the
-  typed slot parameter nodes in `binders`, in the same order as the slot terms
-  of its clock constraints. For `forall`, the binders scope a conjunction over
+  typed place binders, its quantified `value`/`parameter` nodes, in
+  `binders`, in the same order as the slot terms of its clock constraints. A
+  place binder is not a hyperproperty slot parameter (FSpec FR-402 "Slot
+  parameters"): its name is the source binder's or a created `<field>#<depth>`
+  name, never in FSpec FR-402's reserved slot form. For `forall`, the binders scope a conjunction over
   the live places selected by the collection; for `exists`, they scope a
   disjunction. `forall` over an empty collection is true and `exists` over an
   empty collection is false. A predicate whose root is a value is
@@ -854,6 +860,55 @@ what each such position means.
   bound with a quantified clock bound SHALL refuse `invalid_timed_model`/`time-invariant-shape`
   at the invariant, because the checked-package carrier cannot represent separate binder scopes
   for those bounds; it SHALL emit no partial timed nodes.
+- **Writing selected and family constraints.** S4 SHALL write every clock
+  constraint and clock bound that reads a collection element's clock; none is
+  left unwritten. A constraint or bound on a positionally selected element,
+  `self.ts[0].x >= 1 ms` or `self.ts[0].ys[1] >= 1 ms`, SHALL be written with
+  literal slot terms, one for each slot step of the place path in path order,
+  and no binder; each slot keeps its own presence obligation ("Selection"),
+  as a reset by selection does (FR-230-AC-67). A constraint or bound that reads
+  every slot of a collection and that no source binder names, which is a clock
+  bound the domain package declares on a clock field of a collection element
+  type, SHALL be written in the quantified form a source `forall` takes: in a
+  guard as a FR-230-AC-55 quantified part, in a time invariant as a
+  FR-230-AC-56 invariant with its `binders`, each slot term a typed place
+  binder the producer creates, one for each slot step, outermost
+  first. A created binder is named `<field>#<depth>`, the collection field
+  the slot step reads and the step's zero-based depth in the place path, such
+  as `ts#0`; `#` cannot occur in a source identifier, so a created binder
+  never takes an authored binder's name, and the same model gives the same
+  names and the same node identities on every emission (FSpec FR-322). Each
+  created binder takes the binder level a source `forall` binder at the same
+  slot step takes, so the created form and the source form of one bound
+  differ only in binder names. A created binder binds no checked-term slot:
+  it is not one of the checker's own slots that FR-400 and FR-931 name.
+- **Family parts.** A guard quantifier over a collection with no declared
+  maximum SHALL be written as one **family part**: a quantified guard part
+  whose `binders` hold the source binder as the place binder and which
+  carries FSpec FR-322's `quantifier` binding, `each` for a `forall` read
+  positively (or an `exists` negated) and `some` for an `exists` read
+  positively (or a `forall` negated). In a state whose collection holds `n`
+  elements the family part stands for the entry of size `n` of the family
+  "Quantified reads" records: for `each`, the part's predicate and
+  constraints hold at every held slot (every held key, for a `Map`), true
+  when the collection is empty; for `some`, at some held slot or key, false
+  when it is empty. The `quantifier` binding is
+  what tells the two apart, because both forms write the same binder and
+  constraints. A bounded collection keeps FR-230-AC-55's form, one part for
+  each live length (`forall`) or each selectable slot (`exists`), and its
+  parts carry no `quantifier` binding, so their bytes and node identities are
+  unchanged. A time invariant over a collection with no declared maximum
+  needs no `quantifier`: its body is always a `forall` (an `exists` refuses
+  `time-invariant-shape`), and its `binders` already bound every live place.
+  With the selected, created-binder and family forms written, every clock
+  constraint and clock bound on a selected or quantified element place is
+  written, and the unwritten-member cause for a quantified clause
+  (`UnwrittenTimedMember::QuantifiedClause`) has no case left and is deleted.
+  The causes `UnwrittenTimedMember::ElementPresence` (a guard, time-invariant
+  or urgency predicate that reads an element's presence) and
+  `UnwrittenTimedMember::PointQualifiedClause` (a clock-reading clause bound
+  to an execution point, FR-230-AC-50) remain until their own forms
+  (FR-230-AC-66, FR-230-AC-50) are written.
 - **Resets by selection.** The checker SHALL check `p[i].x = c`, `p[k].x = c`, `p[i] = literal`,
   `p[k] = literal` and `forall(e in p: P(e) implies e.x = c)` (`P` a data predicate over `e`'s
   data part, or absent) as resets of the selected places to exact non-negative rational time
@@ -1082,8 +1137,8 @@ declaration and `clock-type` for a `Clock` in a type position. An unqualified
 | FR-230-AC-48 | Over `u: Sequence<Clock>` with no declared maximum, initial states are produced in ascending count from 0 and the analysis stops `incomplete` with `limit-reached` whose `limit` is `max_clocks` once the live clocks exceed it, and it does not return `NotSimulated::RequiresBound`. | Test |
 | FR-230-AC-49 | The emitted `clock_place` of `ts.x` below `ts: Sequence<Timer>[0, 3]` is one node for the three places `ts.0.x`, `ts.1.x` and `ts.2.x`, its slot step carries the symbolic element selector of FSpec FR-322-AC-148 and no index, and the place ids of slots 0 and 1 differ only in the final component of `<slots>`; the same holds for `Set`, `Bag`, `OrderedSet` and a nested `Sequence` (two `<slots>` components). | Test |
 | FR-230-AC-50 | A clock-reading `pre` of `attemptUpdate`, `self.x >= 1 ms`, bound to the execution point `pre{operation: "attemptUpdate"}` emits its state clause on the point-qualified anchor and one `clock_guard` whose `operation` is the no-point anchor and whose final `point_anchor` names that point-qualified anchor, and reads back, never refusing `TimedModelNotEmitted`. A model with no guard emits empty aggregates and reads back (FSpec FR-322-AC-150). The excluded forms refuse `unsupported_construct`/`expression-form` at the form (FSpec FR-322-AC-267: `GJ-01`, `CW-01` to `CW-03`, `SD-01`): `self.x >= 1 ms or self.versionNumber > 0` at `self.versionNumber > 0`, `self.ts = sequence[...]` and `self.ts = filter(...)` at the write, `self.v = absent` at the write and `forall(e in self.ts: e.n > 1 implies e.x = 0 ms)` at `e.n > 1`; `self.x >= 0 ms or self.versionNumber > 0` is the one part `x >= 0 ms` (`GJ-03`). | Test (TC-2393) |
-| FR-230-AC-55 | Over `ts: Sequence<Timer>[0, 3]`, `forall(e in self.ts: e.x < 5 ms)` emits one `clock_guard` whose parts cover each possible live length; the zero-length part has no constraints and its predicate selects size zero, and each nonempty part carries the ordered typed slot parameters before its corresponding clock-constraint references. `exists(e in self.ts: e.x < 5 ms)` emits disjunctive parts for the selected live slots, each with the same ordered binder form, and emits no part for an empty `ts`. Thus `forall` is true and `exists` is false when `ts` is empty, and otherwise they denote conjunction and disjunction over the live places respectively. A quantified clock guard that reads element presence, such as `self.x >= 1 ms and forall(e in self.q: present(e))`, emits its part with the `presence_read` of the element place at the binder inside the quantified predicate (FR-230-AC-66). The guard binder uses the FSpec carrier and order rules (FR-322-AC-295) and quantifier semantics (FR-415-AC-24; CL-57, CL-58, CL-62). | Test |
-| FR-230-AC-56 | Over `ts: Sequence<Timer>[0, 3]`, `time invariant All when { true } { forall(e in self.ts: e.x <= 9 ms) }` emits one `time_invariant` with one ordered slot `parameter` reference in `binders`, and one upper-bound `clock_constraint` on the `ts` element clock template whose ordered slot term is that binder; the bound applies to each live slot, and the invariant is vacuously true with no live slot. The same source form with `exists` parses and is refused `invalid_timed_model`/`time-invariant-shape` at the invariant without emitting partial timed nodes. The quantified presence predicate `time invariant HasElement when { forall(e in self.q: present(e)) } { self.x <= 9 ms }` emits one `time_invariant` whose predicate holds the `presence_read` of the element place at the binder (FR-230-AC-66). Binder typing and order follow FR-322-AC-295 and FR-415-AC-24 (CL-59, CL-60, CL-62). A clock-reading clause bound to an execution point is written as FR-230-AC-50 states, with its `point_anchor` (FSpec FR-342-AC-13). | Test |
+| FR-230-AC-55 | Over `ts: Sequence<Timer>[0, 3]`, `forall(e in self.ts: e.x < 5 ms)` emits one `clock_guard` whose parts cover each possible live length; the zero-length part has no constraints and its predicate selects size zero, and each nonempty part carries the ordered typed place binders before its corresponding clock-constraint references. `exists(e in self.ts: e.x < 5 ms)` emits disjunctive parts for the selected live slots, each with the same ordered binder form, and emits no part for an empty `ts`. Thus `forall` is true and `exists` is false when `ts` is empty, and otherwise they denote conjunction and disjunction over the live places respectively. A quantified clock guard that reads element presence, such as `self.x >= 1 ms and forall(e in self.q: present(e))`, emits its part with the `presence_read` of the element place at the binder inside the quantified predicate (FR-230-AC-66). The guard binder uses the FSpec carrier and order rules (FR-322-AC-295) and quantifier semantics (FR-415-AC-24; CL-57, CL-58, CL-62). | Test |
+| FR-230-AC-56 | Over `ts: Sequence<Timer>[0, 3]`, `time invariant All when { true } { forall(e in self.ts: e.x <= 9 ms) }` emits one `time_invariant` with one ordered place binder `parameter` reference in `binders`, and one upper-bound `clock_constraint` on the `ts` element clock template whose ordered slot term is that binder; the bound applies to each live slot, and the invariant is vacuously true with no live slot. The same source form with `exists` parses and is refused `invalid_timed_model`/`time-invariant-shape` at the invariant without emitting partial timed nodes. The quantified presence predicate `time invariant HasElement when { forall(e in self.q: present(e)) } { self.x <= 9 ms }` emits one `time_invariant` whose predicate holds the `presence_read` of the element place at the binder (FR-230-AC-66). Binder typing and order follow FR-322-AC-295 and FR-415-AC-24 (CL-59, CL-60, CL-62). A clock-reading clause bound to an execution point is written as FR-230-AC-50 states, with its `point_anchor` (FSpec FR-342-AC-13). | Test |
 | FR-230-AC-57 | Over `ts: Sequence<Timer>[0, 3]`, `time invariant Mixed when { true } { forall(e in self.ts: e.x <= 9 ms) and self.x < 12 ms }` parses to its source-ordered quantified and ordinary bounds (FR-393-AC-9) and then refuses `invalid_timed_model`/`time-invariant-shape` at the invariant; it emits no partial timed nodes, so the ordinary `self.x` bound cannot become vacuous when `ts` is empty. | Test |
 | FR-230-AC-51 | Over `v: Option<Clock>` and `q: Sequence<Option<Clock>>[0, 2]` on two objects, `present(other.v)`, `present(self.q[i])`, and `present(e)` in the bodies of `forall(e in self.q: ...)` and `exists(e in self.q: ...)` each check as a `Boolean` data predicate resolved through the place identity, are recorded as data predicates of the convex part at the owner and slot, declare no `Option<Boolean>` or other member, and leave every model declaration key as it is without `v`; a `present` with a wrong slot count or owner type is refused as FSpec FR-322-AC-156 states. | Test |
 | FR-230-AC-52 | Over `v: Option<Clock>` in an operation's frame, the FSpec clock-presence-frame vectors FP-01, FP-03, FP-05, FP-07, FP-09, FP-11 and FP-13 step as published: a requirement of an absent place with no write has no successor and refuses `invalid_timed_model`/`clock-presence-unwritten` when the precondition establishes absence; a write makes it present with its clock, a write of `absent` drops it, and an unwritten `v` keeps its bit and clock (FSpec FR-415-AC-21, TC-367 CK-31). | Test |
@@ -1100,6 +1155,8 @@ declaration and `clock-type` for a `Clock` in a type position. An unqualified
 | FR-230-AC-66 | Over `v: Option<Clock>` with a frame that names `v`, `post P using v on Config::ConfigVersion::attemptUpdate { self.v != absent }` emits and writes the same `presence_read` body as the same post written `{ present(self.v) }`, never `TimedModelNotEmitted`; over `q: Sequence<Option<Clock>>[0, 2]`, the guard `self.x >= 1 ms and forall(e in self.q: present(e))`, the time invariant `time invariant HasElement when { forall(e in self.q: present(e)) } { self.x <= 9 ms }` and `urgent HasElement when { forall(e in self.q: present(e)) };` each emit with a `presence_read` of the element place at the binder. | Test (TC-2390) |
 | FR-230-AC-67 | Over `ts: Sequence<Timer>[0, 3]` with `Timer` holding `ys: Sequence<Clock>[0, 2]` and a frame that names `ts`, with `pre S using v on Config::ConfigVersion::attemptUpdate { size(self.ts) >= 1 and size(self.ts[0].ys) >= 2 }`, `post R using v on Config::ConfigVersion::attemptUpdate { self.ts[0].ys[1] = 0 ms }` emits one `clock_reset` whose place path is field, slot, field, slot and whose slot terms are `0` then `1`, never `TimedModelNotEmitted`. Each slot keeps its own presence obligation ("Selection"): with no precondition the reset refuses `undefined_expression`/`unproved-presence` at `0`, and with the precondition `size(self.ts) >= 1` alone it refuses the same at `1`. | Test (TC-2391) |
 | FR-230-AC-68 | `function loop using v(c: Clock, n: Integer): Boolean pure decreases(n) { if n = 0 then c <= 3 ms else loop(c, n - 1) }` with `pre L using v on Config::Call::reply { loop(self.x, 3) }` checks, its guard the one atomic constraint `x <= 3 ms`, and no `TimedNotChecked`; the same pre written `{ loop(self.x, self.n) }` refuses `invalid_timed_model`/`clock-read-outside-constraint` at the call naming `loop`, `loop`. The four unfoldings of `loop(self.x, 3)` (`n` 3, 2, 1, 0) are each charged one unit of the checker's work budget: with the budget set one unit below the work the admitted check of that unit used, the unit refuses `stage_limit_exceeded`/`work-budget-exceeded` at the call, with no guard recorded. | Test (TC-2392) |
+| FR-230-AC-69 | Over `ts: Sequence<Timer>[0, 3]` with `Timer` holding a clock `x` and `ys: Sequence<Clock>[0, 2]`, `pre G using v on Config::ConfigVersion::attemptUpdate { size(self.ts) >= 1 and self.ts[0].x >= 1 ms }` emits one `clock_guard` with one part whose one `clock_constraint` is on the `ts` element clock template `x` with the one slot term `0`, the literal, and no binder; `size(self.ts) >= 1 and size(self.ts[0].ys) >= 2 and self.ts[0].ys[1] >= 1 ms` writes slot terms `0` then `1`; `time invariant B when { size(self.ts) >= 1 } { self.ts[0].x <= 9 ms }` emits one `time_invariant` whose upper bound carries slot term `0` and whose `binders` is empty. None of them leaves an unwritten member or gives `TimedModelNotEmitted`. Each slot keeps its own presence obligation: with no size conjunct the guard refuses `undefined_expression`/`unproved-presence` at `0`, with `size(self.ts) >= 1` alone the two-step guard refuses the same at `1`, and the time invariant with `when { true }` refuses the same at `0`. | Test (TC-3045) |
+| FR-230-AC-70 | Over `ts: Sequence<Timer>[0, 3]`, a domain package that declares the clock bound `x <= 9 ms` on `Timer`'s clock `x` emits one `time_invariant` with the predicate `true`, one place binder named `ts#0` in `binders`, and one upper-bound `clock_constraint` on the `ts` element clock template whose slot term is that binder: the node a source `time invariant All when { true } { forall(e in self.ts: e.x <= 9 ms) }` emits except for the binder name, the binder `ts#0` taking the level the source binder `e` takes. With a second field `ws: Sequence<Holder>[0, 3]`, `Holder` holding `ys: Sequence<Timer>[0, 2]`, the same bound also emits a second `time_invariant` for the clock `x` of each `ys` element, with binders `ws#0` then `ys#1`. Emitting the package twice gives the same node ids. Over `us: Sequence<Timer>` with no declared maximum, `pre F using v on Config::ConfigVersion::attemptUpdate { forall(e in self.us: e.x < 5 ms) }` emits one `clock_guard` with one family part holding the place binder `e`, the `quantifier` binding `each` and one `clock_constraint` whose slot term is `e`; the same with `exists` emits the same part with `quantifier` `some`, so the two guards have different node ids; neither leaves an unwritten member. With `us` holding no element, the `each` guard is enabled and the `some` guard is not; with `us` holding two elements whose clocks read 3 ms and 7 ms, the `each` guard is not enabled and the `some` guard is. Over a bounded `ts`, the AC-55 parts carry no `quantifier` binding and keep their node ids. | Test (TC-3046; FSpec FR-322-AC-479) |
 
 ## Dependencies
 
@@ -1120,6 +1177,8 @@ declaration and `clock-type` for a `Clock` in a type position. An unqualified
 - [FR-088](FR-088-clause-name-and-type-identity.md) (unit identity),
   [FR-091](FR-091-produce-value-forms-and-assemble-package-declarations.md)
   (the unit graph a unit declares).
+- FSpec FR-322 "Quantified guards and invariants" (the family part's
+  `quantifier` binding, FR-322-AC-479).
 
 ## References
 

@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile stamped = "filament.temporal.timestamped-event.finite-window/v1";
+record Pulse { ok: Boolean; }
+temporal StampedPulse using stamped over (p: Pulse) clock "sensor" on origin {
+  eventually[0,7] holds(p.ok)
+}

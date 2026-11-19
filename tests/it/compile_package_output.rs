@@ -195,7 +195,6 @@ fn the_override_entry_writes_the_same_package_file() {
 /// `output` path inside the handoff directory refuses naming both.
 #[test]
 #[trace("TC-2297", "FR-810-AC-5")]
-#[ignore = "QSL-2309: needs the compile request's `handoff` member (QSL-2193, #2730), then the refusal of an output path inside the handoff directory"]
 fn output_and_handoff_are_independent_writes() {
     let both = |directory: &Path, output: Value| {
         let path = request(directory, "tests/fixtures/spine-compile.native", output);
@@ -226,6 +225,25 @@ fn output_and_handoff_are_independent_writes() {
         "{value}"
     );
     assert!(!directory.path().join("handoff").exists());
+    assert!(!directory.path().join("handoff/pkg.json").exists());
+
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir(directory.path().join("existing")).unwrap();
+    let path = both(
+        directory.path(),
+        json!({"package": "existing/../handoff/pkg.json"}),
+    );
+    let (exit, value) = refusal(&path);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    let text = value.to_string();
+    assert!(
+        text.contains("output") && text.contains("handoff"),
+        "{value}"
+    );
+    assert!(!directory.path().join("handoff").exists());
+    assert!(!directory.path().join("handoff/pkg.json").exists());
 }
 
 /// The `check_mode` values of every node of the package at `path`.

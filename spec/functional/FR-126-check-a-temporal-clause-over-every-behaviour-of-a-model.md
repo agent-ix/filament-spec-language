@@ -118,8 +118,10 @@ FR-120 evaluation meter budget and `ExpansionLimits` travel in the
 `ModelCheckRefusal` holds FR-106's `AdmissionFailure` from building the
 subject's `ModelSystem`, FR-101's `NotSimulated::RequiresBound`, or
 `CaptureRead { clause, capture }` (FR-337 "Capture observation"), the
-clause's checked `holds` condition reading a capture, which the engine
-refuses as a standing decision (FR-337 "Capture observation", QSL-1092).
+clause's checked `holds` condition reading a capture that is not keyable,
+whose unbounded values admit no finite product key. A condition that reads
+only keyable captures is decided, each obligation evaluated and keyed with
+its capture vector (FR-338 "Capture vectors and bound instances").
 
 ## Outputs
 
@@ -170,9 +172,13 @@ automaton states and the depth reached.
   explore no state.
 - After that classification and before any expansion, the engine SHALL
   return `ModelCheckRefusal::CaptureRead` for a clause some `holds`
-  condition of which reads a capture, under every profile, property form and
-  activation (`on origin` included), exploring no state, and naming the first
-  capture in source order that a `holds` condition reads. An admission
+  condition of which reads a capture that is not keyable (FR-337 "Capture
+  observation"), under every profile, property form and activation (`on
+  origin` included), exploring no state, and naming the first such capture in
+  source order. A clause whose conditions read only keyable captures is
+  explored: each live obligation is evaluated under its own capture vector
+  and its automaton key carries that vector and, over a protocol subject, its
+  bound protocol instance (FR-338 "Capture vectors and bound instances"). An admission
   failure or `RequiresBound` is returned instead when it applies, because the
   system is built, and the domains classified, first.
 
@@ -547,7 +553,7 @@ automaton states and the depth reached.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-126-AC-1 | ADR-018 §6: over the example unit (`attemptUpdate` framed `modifies self.versionNumber`, FR-154) and the subject's `max_candidates` 1,000,000, with universe `{a, b}` and both versions 0, `always eventually holds(c.versionNumber = 2)` under a weak `each` constraint on `attemptUpdate` returns `Holds{Exhaustive}` with 30 product states, the 15-state product of each of the two bound instances; under a weak constraint with no granularity it returns `Violated` with an empty stem and the three-step loop of one receiver, which takes the other instance through versions 0, 1, 2 and back to 0, bound to `a`, the first binding in canonical order, since both bindings give length 3 (`(0,0) -upd(b)-> (0,1) -upd(b)-> (0,2) -upd(b)-> (0,0)`), length 3. Over the shipped unit (`VersionUnchanged`) with the same receiver-scoped frame, under the weak `each` constraint it returns `Violated` with loop `(0,0) -upd(a)-> (0,0) -upd(b)-> (0,0)`. | Test (TC-521) |
+| FR-126-AC-1 | ADR-018 §6: over the example unit (`attemptUpdate` framed `modifies self.versionNumber`, FR-154) and the subject's `max_candidates` 1,000,000, with universe `{a, b}` and both versions 0, `always eventually holds(c.versionNumber = 2)` under a weak `each` constraint on `attemptUpdate` returns `Holds{Exhaustive}` with 30 product states, the 15-state product of each of the two bound instances; under a weak constraint with no granularity it returns `Violated` with an empty stem and the three-step loop of one receiver, which takes the other instance through versions 0, 1, 2 and back to 0, bound to `a`, the first binding in canonical order, since both bindings give length 3 (`(0,0) -upd(b)-> (0,1) -upd(b)-> (0,2) -upd(b)-> (0,0)`), length 3. Over the shipped unit (`VersionAdvances`) with the same receiver-scoped frame, under the weak `each` constraint it returns `Violated` with loop `(0,0) -upd(a)-> (0,0) -upd(b)-> (0,0)`, each step returning `false`. | Test (TC-521) |
 | FR-126-AC-2 | `eventually[0,5] holds(c.versionNumber = 2)` under event-position false-extension, `on origin` (TP-2), over the example subject returns `Violated` with a five-step finite prefix bound to `a` (both bindings give five steps), on which its version is never 2. `always holds(c.versionNumber <= 1000)` (TP-1) returns `Holds{Exhaustive}`. Over the `Counter` subject (FR-124-AC-1, no `terminal` declaration), `eventually[0,3] holds(c.value = 3)` under event-position false-extension `on each` returns `Holds{Exhaustive}`, and `eventually[0,1] holds(c.value = 3)` `on each` returns `Violated` with the prefix `0 -inc-> 1`. | Test (TC-521) |
 | FR-126-AC-3 | Over the `Counter` subject with no `terminal` declaration, the `DeadlockFreedom` item returns `Violated` with `kind: Deadlock` and the prefix `0 -inc-> 1 -inc-> 2 -inc-> 3`; with a `When` declaration covering value 3 it returns `Holds{Exhaustive}`. Under infinite-trace, `always eventually holds(c.value = 0)` returns `Violated` whose loop is the terminal stutter step at value 3, with the stutter marker set. | Test (TC-521) |
 | FR-126-AC-4 | Over the `Health` subject (object `s`, fields `healthy: Boolean` and `failures: Int[0, 1]`; operation `fail` with precondition `self.failures = 0` setting `healthy` false and `failures` 1; operation `recover` with precondition `not self.healthy` setting `healthy` true; `terminal any`; initial `healthy` true and `failures` 0), the recovery-stability formula `always (holds(not s.healthy) implies eventually always[0,2] holds(s.healthy))` returns `Holds{Exhaustive}`. In the `Restless` variant, where `fail` has no precondition, it returns `Violated` with a lasso on which `healthy` never holds at three consecutive positions. | Test (TC-521) |

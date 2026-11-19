@@ -41,6 +41,62 @@ use crate::smt::script::{Script, Sort, Term};
 use crate::smt::SmtEncodingLimits;
 use crate::smt::{Measure, Refusal, SmtEncodingRefusal, SmtQueryKind};
 
+// A known false object settles the conjunction even if another object's
+// reading is undefined (FR-124). The empty conjunction is true and defined.
+fn terminal_conjunction(readings: impl IntoIterator<Item = (Term, Term)>) -> (Term, Term) {
+    let mut holds = Vec::new();
+    let mut defined = Vec::new();
+    let mut false_objects = Vec::new();
+    for (value, definition) in readings {
+        false_objects.push(Term::all([definition.clone(), value.clone().not()]));
+        holds.push(value);
+        defined.push(definition);
+    }
+    (
+        Term::all(holds),
+        Term::any([Term::any(false_objects), Term::all(defined)]),
+    )
+}
+
+#[cfg(test)]
+mod terminal_tests {
+    use super::{terminal_conjunction, Term};
+    use ix_trace_rs::trace;
+
+    #[trace("TC-519", "FR-124-AC-8", "FR-124-AC-10")]
+    #[test]
+    fn terminal_when_smt_conjunction_uses_the_three_valued_truth_table() {
+        for (readings, expected) in [
+            (vec![], Some(true)),
+            (vec![Some(true), Some(true)], Some(true)),
+            (vec![Some(true), Some(false)], Some(false)),
+            (vec![Some(false), Some(true)], Some(false)),
+            (vec![Some(false), Some(false)], Some(false)),
+            (vec![None, Some(false)], Some(false)),
+            (vec![Some(false), None], Some(false)),
+            (vec![None, Some(true)], None),
+            (vec![Some(true), None], None),
+            (vec![None, None], None),
+        ] {
+            // An undefined reading's SMT value is unconstrained; either
+            // value must give the same semantic conjunction.
+            for undefined_value in [false, true] {
+                let encoded = readings.iter().map(|reading| {
+                    (
+                        Term::truth(reading.unwrap_or(undefined_value)),
+                        Term::truth(reading.is_some()),
+                    )
+                });
+                let (value, defined) = terminal_conjunction(encoded);
+                assert_eq!(defined, Term::truth(expected.is_some()), "{readings:?}");
+                if let Some(expected) = expected {
+                    assert_eq!(value, Term::truth(expected), "{readings:?}");
+                }
+            }
+        }
+    }
+}
+
 /// What a proof query is about (FR-315 Inputs).
 #[derive(Clone, Copy)]
 pub enum SmtItem<'a> {
@@ -755,22 +811,24 @@ impl Query<'_, '_> {
             let (holds, defined) = match terminal.declaration {
                 PackageTerminalDeclaration::Any => (Term::truth(true), Term::truth(true)),
                 PackageTerminalDeclaration::When(predicate) => {
-                    let Some((_, filament_exact::ValueType::Reference(context))) =
-                        predicate.parameters().first()
-                    else {
-                        return Err(fault("a terminal predicate with no state object"));
-                    };
-                    let context = context.clone();
-                    let mut holds = Vec::new();
-                    let mut defined = Vec::new();
-                    for (index, object) in self.subject.objects.iter().enumerate() {
-                        if !self
+                    let bindings = match predicate.parameters() {
+                        [] => vec![Vec::new()],
+                        [(_, filament_exact::ValueType::Reference(context))] => self
                             .subject
-                            .types
-                            .conforms(object.type_id.clone(), context.clone())
-                        {
-                            continue;
-                        }
+                            .objects
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, object)| {
+                                self.subject
+                                    .types
+                                    .conforms(object.type_id.clone(), context.clone())
+                            })
+                            .map(|(index, _)| vec![Some(Sym::Object(index))])
+                            .collect(),
+                        _ => return Err(fault("a terminal predicate with invalid parameters")),
+                    };
+                    let mut readings = Vec::new();
+                    for binding in bindings {
                         let (value, definition) = Reader::new(
                             layout,
                             self.subject,
@@ -778,13 +836,12 @@ impl Query<'_, '_> {
                             Observation::Current,
                             Vec::new(),
                             &views,
-                            vec![Some(Sym::Object(index))],
+                            binding,
                         )
                         .boolean(predicate.body())?;
-                        holds.push(value);
-                        defined.push(definition);
+                        readings.push((value, definition));
                     }
-                    (Term::all(holds), Term::all(defined))
+                    terminal_conjunction(readings)
                 }
             };
             // An undefined `P` fails only where no earlier declaration

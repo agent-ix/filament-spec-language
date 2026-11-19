@@ -1565,7 +1565,7 @@ fn nested_repeat_emission_reports_its_unavailable_wire_form() {
     let body = contracts("self.v = 0") + &protocol("P", "", &run, "d");
     let error = compiled(&body).expect_err("the checked-package writer does not emit this form");
     let refusal = match error {
-        ReplayRefusal::Recompile(refusal) => *refusal,
+        ReplayRefusal::Recompile { refusal, .. } => *refusal,
         ReplayRefusal::RecompileWithProtocolResults { refusal, .. } => *refusal,
         other => panic!("expected a checked-stage refusal, got {other:?}"),
     };

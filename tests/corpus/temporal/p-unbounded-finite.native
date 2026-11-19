@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile t = "filament.temporal.event-position.false-extension/v1";
+record Reading { ready: Boolean; }
+temporal Unbounded using t over (r: Reading) clock "events" on origin {
+  eventually holds(r.ready)
+}

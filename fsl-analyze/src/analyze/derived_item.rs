@@ -278,12 +278,13 @@ impl<'a> PackageDeadlockSubject<'a> {
 
     /// The `temporal-satisfaction` item that decides the derived
     /// deadlock-freedom item at `index` as the source route's does: its
-    /// replay joined with the package's terminal declarations, of which the
-    /// package route's input admits none (FR-411).
+    /// replay joined with the package's terminal declarations, keyed by
+    /// their model's selection identity (FR-411).
     pub fn item(self, index: RequestIndex) -> AnalyzeItem<'a> {
         let claim = self.claim.clone();
+        let keys = self.input.terminal_keys();
         let mut item = self.model_item();
-        item.replay = joined_replay(item.replay, fsl_semantics::check::TerminalKeys::default());
+        item.replay = joined_replay(item.replay, keys);
         run_model_item(
             index,
             crate::claim_family::kind_family(ItemKind::DeadlockFreedom),

@@ -12,11 +12,10 @@
 //! expansion of the concrete source and counted against the run's
 //! remaining `max_transitions`.
 //!
-//! Under the trivial group the path is already concrete: each step is
-//! recorded as it is, with no expansion and no count, so an unreduced run's
-//! counterexample is unchanged. A subject that offers no symmetry (a
-//! protocol subject) is only ever lifted under the trivial group, so it
-//! supplies no [`Permuter`].
+//! Under the trivial group a model path is already concrete. Protocol
+//! paths additionally lift delivery-label canonical edges by re-executing
+//! them from the concrete source (FR-205), retaining fresh delivery indices.
+//! Protocol subjects supply no [`Permuter`].
 
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
@@ -123,8 +122,9 @@ pub(super) struct Lift<'s, S: SubjectSystem> {
     concrete: S::State,
     key: fsl_eval::simulation::StateKey,
     steps: Vec<ModelStep<S::TransitionId>>,
-    /// The concrete steps still allowed (reduced paths only).
+    /// The concrete steps still allowed when a path needs lifting.
     budget: usize,
+    charged_steps: usize,
 }
 
 impl<'s, S: SubjectSystem> Lift<'s, S> {
@@ -172,6 +172,7 @@ impl<'s, S: SubjectSystem> Lift<'s, S> {
                     key,
                     steps: Vec::new(),
                     budget,
+                    charged_steps: 0,
                 },
             ));
         }
@@ -193,6 +194,28 @@ impl<'s, S: SubjectSystem> Lift<'s, S> {
         permutation: &Permutation,
     ) -> Result<(), LiftStop> {
         let Some(permuter) = self.permuter else {
+            if let Some((step, state)) = self
+                .system
+                .concrete_cycle_step(&self.concrete, transition, target)
+                .map_err(LiftStop::Expansion)?
+            {
+                if self.budget == 0 {
+                    return Err(LiftStop::Transitions);
+                }
+                self.budget -= 1;
+                self.charged_steps += 1;
+                self.key = self.system.canonical_state_key(&state)?;
+                self.steps.push(ModelStep {
+                    transition: self
+                        .system
+                        .reported(step, &state)
+                        .map_err(LiftStop::Expansion)?,
+                    post_state: self.key.clone(),
+                    delay: None,
+                });
+                self.concrete = state;
+                return Ok(());
+            }
             let (bytes, _) = self.system.state_key(target)?;
             self.key = fsl_eval::simulation::StateKey::from_canonical_bytes(bytes);
             self.concrete = target.clone();
@@ -210,6 +233,7 @@ impl<'s, S: SubjectSystem> Lift<'s, S> {
             return Err(LiftStop::Transitions);
         }
         self.budget -= 1;
+        self.charged_steps += 1;
         let step = permuter
             .permute_transition(transition, &self.sigma)
             .map_err(|_| fault("a-concretised-step-encodes"))?;
@@ -249,9 +273,9 @@ impl<'s, S: SubjectSystem> Lift<'s, S> {
         &self.sigma
     }
 
-    /// The concrete state's state key.
-    pub(super) fn key(&self) -> fsl_eval::simulation::StateKey {
-        self.key.clone()
+    /// Loop closure uses the cycle key; reported post-states use `key`.
+    pub(super) fn loop_key(&self) -> Result<fsl_eval::simulation::StateKey, LiftStop> {
+        Ok(self.system.loop_state_key(&self.concrete)?)
     }
 
     /// The number of concrete steps so far.
@@ -259,14 +283,10 @@ impl<'s, S: SubjectSystem> Lift<'s, S> {
         self.steps.len()
     }
 
-    /// The steps charged to the budget: every step of a reduced path, none
-    /// of a concrete one.
+    /// The steps charged to the budget: every lifted step, none of a path
+    /// that was already concrete.
     pub(super) fn charged(&self) -> usize {
-        if self.permuter.is_some() {
-            self.steps.len()
-        } else {
-            0
-        }
+        self.charged_steps
     }
 
     /// The concrete steps.
@@ -287,10 +307,10 @@ impl<'s, S: SubjectSystem> Lift<'s, S> {
         let CounterexampleKind::UndefinedEvaluation(evaluation) = kind else {
             return Ok(());
         };
+        evaluation.site.state_key = self.key.clone();
         let Some(permuter) = self.permuter else {
             return Ok(());
         };
-        evaluation.site.state_key = self.key.clone();
         if let Some(guard) = &evaluation.site.transition {
             let guard = permuter
                 .permute_model_transition(guard, &self.sigma)

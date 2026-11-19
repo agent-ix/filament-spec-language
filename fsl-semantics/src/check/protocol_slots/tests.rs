@@ -877,10 +877,9 @@ fn the_reference_protocols_check_with_their_edges() {
 /// `check` controls and capture are all written is checked to a package with a
 /// selected protocol profile, and a post-test `repeat` it holds is the one
 /// construct refused, naming STD-493.
-#[trace("FR-092-AC-18", "FR-383-AC-1")]
+#[trace("FR-880-AC-8", "TC-2502")]
 #[test]
-fn a_replicated_role_protocol_refuses_only_its_unwritten_constructs() {
-    use super::super::refusal::ProtocolConstruct;
+fn a_post_test_repeat_checks_with_its_body_binder() {
     let with_profile = |text: &str| {
         text.replacen(
             "model M",
@@ -896,17 +895,6 @@ fn a_replicated_role_protocol_refuses_only_its_unwritten_constructs() {
          sequence Body { event E by r as (seen: M::Flag) { true }; }",
         1,
     );
-    let found: Vec<ProtocolConstruct> = check(&with_profile(&choosing))
-        .map(|_| ())
-        .expect_err("the post-test repeat is not written")
-        .into_iter()
-        .map(|refusal| match refusal.cause {
-            CheckCause::ProtocolReference(cause) => {
-                cause.construct().unwrap_or_else(|| panic!("{cause:?}"))
-            }
-            other => panic!("only NotEmitted refusals, got {other:?}"),
-        })
-        .collect();
-    assert_eq!(found, [ProtocolConstruct::PostTestRepeat]);
-    assert_eq!(found[0].tracking(), "STD-539");
+    check(&with_profile(&choosing))
+        .unwrap_or_else(|refusals| panic!("the post-test repeat is written: {refusals:?}"));
 }

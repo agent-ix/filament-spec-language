@@ -45,6 +45,7 @@ value is in its support, recomputes `1/25`, and reproduces the refutation.
 pub struct ProbabilisticCounterexample {
     pub initial_state: u32,
     pub binding: Option<Binding>,
+    pub instance: Option<Binding>,                 // the `on each` object of the failing instance (FSpec FR-413); None for `on origin`
     pub bound: Bound,
         pub scheduler: Option<WitnessScheduler>,     // present over every scheduler and under a workload with free delays (FSpec FR-413)
 
@@ -119,6 +120,15 @@ race gives that post-key and elapsed amount.
   `inconclusive`, `ReplayParity`. Subsystem evidence for a quantile claim
   SHALL carry a `Lower` certificate for `V` and one for `N`, and the same
   rule SHALL apply to their values.
+- For an `on each` instance, replay SHALL apply FSpec FR-413's conditioned
+  rule the same way: a path is violating when it reaches a first activating
+  state (FR-196) and its event read from there is false under `>= θ` or true
+  under `<= θ`, and not activated when it ends at a waiting state from which
+  replay's own graph search finds no first activating state reachable; it
+  refutes when `V > (1 − θ) · (1 − N)` for `>= θ` and `V > θ · (1 − N)` for
+  `<= θ`. Every path SHALL start at the initial key of the counterexample's
+  `instance`, whose object SHALL belong to the claim's `on each` population
+  in the start snapshot.
 - The witness scheduler SHALL be defined on the evidence's states only:
   memoryless and deterministic, or memoryless and randomized for a claim
   with a fairness set (FR-200), or for the derived TS-5 observation

@@ -38,7 +38,7 @@ Scope: FR-071-AC-1, FR-071-AC-14, FR-071-AC-15.
    the request-identity members) differ.
 6. Build a request with the replay target `function`, one with
    `frame_operation` (`Config::ConfigVersion`, `attemptUpdate`) and one with
-   `state_clause` (`VersionUnchanged`), and round-trip each; then read the
+   `state_clause` (`VersionAdvances`), and round-trip each; then read the
    wire forms with no target, with both `function` and `frame_operation`,
    with both `function` and `state_clause`, and with the frame request carrying
    `arguments`, each once more with a byte-provision entry removed.

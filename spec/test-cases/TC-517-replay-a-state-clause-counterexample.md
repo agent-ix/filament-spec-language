@@ -21,7 +21,7 @@ Scope: FR-122-AC-1 to FR-122-AC-8.
 ## Test Procedure
 
 Compile FR-108's ConfigVersion unit; build envelopes by hand for
-`VersionUnchanged` (an `Invocation` observation) and `ParentOrder` (a
+`VersionAdvances` (an `Invocation` observation) and `ParentOrder` (a
 `Current` observation, anchor `handler validate`, self `child`), taking each
 clause node and `claim` occurrence for the envelope from the compiled
 package, with the unit's source, the domain package and FR-108's
@@ -29,30 +29,30 @@ observation documents in the byte provision. For step 4, compile TC-466
 step 3's `probe` unit (precondition `ReachesTarget`) and use its chain
 `a -> b -> c` pre snapshot with a `PreCall` observation.
 
-1. `VersionUnchanged` over changed-version, on a `Witness`-arm and on an
+1. `VersionAdvances` over changed-version, on a `Witness`-arm and on an
    `Input`-arm envelope; `ParentOrder` over violating-parent.
-2. `VersionUnchanged` over unchanged-version; `ParentOrder` over
+2. `VersionAdvances` over unchanged-version; `ParentOrder` over
    healthy-parent; `ParentOrder` over violating-parent with the request's
    evaluation budget at zero.
-3. `VersionUnchanged` over changed-version with the request's
+3. `VersionAdvances` over changed-version with the request's
    `state_clause` naming `Absent`; with it naming `sameIdentity`.
 4. `ReachesTarget` with `PreCall` over the chain's pre snapshot, `self`
    `a`, `target` `a`; with `self` `a`, `target` `c`. Form mismatches, each
    once with its documents in the provision and once without:
    `ReachesTarget` with an `Invocation` observation over the `probe`
-   invocation; `VersionUnchanged` with a `PreCall` observation;
-   `VersionUnchanged` with a `Current` observation over healthy-parent's
+   invocation; `VersionAdvances` with a `PreCall` observation;
+   `VersionAdvances` with a `Current` observation over healthy-parent's
    snapshot.
-5. `VersionUnchanged` over forbidden-parent-change; over changed-version
+5. `VersionAdvances` over forbidden-parent-change; over changed-version
    with its pre snapshot removed from the provision; `ParentOrder` over
    incomplete-population's snapshot.
-6. Step 1's `VersionUnchanged` envelope twice.
-7. `VersionUnchanged` over invocations whose post-state holds `child.versionNumber` -1 (pre 0), `root.versionNumber` 1001 (pre 1000, `child` unchanged), and whose pre-state holds `child.versionNumber` 1001; and over changed-version.
-8. `VersionUnchanged` over changed-version, the envelope's target
-   `state_clause` `VersionUnchanged`, with the request's replay target
+6. Step 1's `VersionAdvances` envelope twice.
+7. `VersionAdvances` over invocations whose post-state holds `child.versionNumber` -1 (pre 0, result `true`), `root.versionNumber` 1001 (pre 1000, `child` unchanged, result `false`), and whose pre-state holds `child.versionNumber` 1001; and over changed-version.
+8. `VersionAdvances` over changed-version, the envelope's target
+   `state_clause` `VersionAdvances`, with the request's replay target
    `function` `sameIdentity`; with `frame_operation`
    `{Config::ConfigVersion, attemptUpdate}`; with the request's
-   `state_clause` `VersionUnchanged` and the envelope's `ParentOrder`; each
+   `state_clause` `VersionAdvances` and the envelope's `ParentOrder`; each
    again with the request's source edited so it does not compile, and
    again with the source's byte-provision entry removed.
 

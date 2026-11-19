@@ -26,7 +26,7 @@ FR-267's native-run-result/2 writer and reader (FSpec FR-352). This is FSL's
 share of FSpec FR-180-AC-1, AC-4 and AC-5 for ConfigVersion (FSpec TC-209's
 ownership table: FSL #121).
 
-The corpus is FR-032's 13 original cases in
+The corpus is FR-032's 14 original cases in
 `examples/config-version/cases.rs`, extended with the four domain boundaries
 FSpec FR-180-AC-4 names (0, 1000, -1, 1001). The spine test owns the
 independent `expected()` oracle.
@@ -54,9 +54,11 @@ profile v = "filament.value.complete/v1";
 model Config = "example/config-version";
 invariant ParentOrder using v on Config::ConfigVersion at current { present(self.parent) implies deref(value(self.parent)).versionNumber < self.versionNumber }
 invariant NoCycle using v on Config::ConfigVersion at current { not reaches(self, self, parent) }
-post VersionUnchanged using v on Config::ConfigVersion::attemptUpdate { self.versionNumber = pre(self.versionNumber) }
+post VersionAdvances using v on Config::ConfigVersion::attemptUpdate { (result implies convert<Integer>(self.versionNumber) = pre(self.versionNumber) + 1) and (not result implies self.versionNumber = pre(self.versionNumber)) }
 function sameIdentity using v(a: Config::ConfigVersion, b: Config::ConfigVersion): Boolean pure { a = b }
 ```
+
+The repository README's first rule shows the same three clauses, `VersionAdvances` among them, and its prose explains `VersionAdvances` as "an update attempt that reports `true` advances the version by one; one that reports `false` keeps it".
 
 ## Outputs
 
@@ -84,9 +86,10 @@ the anchor `handler validate`.
 | incomplete-population | `ParentOrder`, self `child` | admit, incomplete, `incomplete_population` | 22 |
 | missing-model | `ParentOrder`, no package | compile, refusal, `missing_import` | 20 |
 | exhausted-work | `ParentOrder`, `work_units` 0 | evaluate, incomplete, `limit: work_units` | 22 |
-| unchanged-version | `VersionUnchanged`, self `child` | evaluate, success, true | 0 |
-| changed-version | `VersionUnchanged`, self `child` | evaluate, violation, false | 10 |
-| forbidden-parent-change | `VersionUnchanged`, self `child` | admit, refusal, `frame_violation` | 20 |
+| unchanged-version | `VersionAdvances`, self `child`, `child` 2 to 2, result `false` | evaluate, success, true | 0 |
+| advanced-version | `VersionAdvances`, self `child`, `child` 2 to 3, result `true` | evaluate, success, true | 0 |
+| changed-version | `VersionAdvances`, self `child`, `child` 2 to 4, result `true` | evaluate, violation, false | 10 |
+| forbidden-parent-change | `VersionAdvances`, self `child` | admit, refusal, `frame_violation` | 20 |
 | boundary-zero (new) | `ParentOrder`, root 0, child 1 | evaluate, success, true | 0 |
 | boundary-max (new) | `ParentOrder`, root 999, child 1000 | evaluate, success, true | 0 |
 | below-range (new) | `ParentOrder`, root -1 | admit, refusal, `invalid_runtime_input` | 20 |
@@ -125,8 +128,8 @@ snapshot data (ADR-012 §15.1).
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-108-AC-1 | Every one of the 17 cases gives the disposition and exit code in the Corpus table through `run_clause`, checked against the independent expected table. | Test (TC-469) |
-| FR-108-AC-2 | For each of the 17 cases, the FR-267 native-run-result/2 writer and strict reader retain the report's stage, category, truth and code. | Test (TC-469) |
+| FR-108-AC-1 | Every one of the 18 cases gives the disposition and exit code in the Corpus table through `run_clause`, checked against the independent expected table. | Test (TC-469) |
+| FR-108-AC-2 | For each of the 18 cases, the FR-267 native-run-result/2 writer and strict reader retain the report's stage, category, truth and code. | Test (TC-469) |
 | FR-108-AC-3 | Below-range and above-range refuse at admission with `invalid_runtime_input`; their native-run-result/2 records name the object (`root`, `child`) and field `versionNumber`. Boundary-zero and boundary-max complete with `true` (FSpec FR-180-AC-4, FSL's share). | Test (TC-469) |
 | FR-108-AC-4 | Generating the corpus twice gives identical files, and running it twice gives identical reports, each holding the disposition and the usage FR-109 states, so the case is fixed by its inputs (FSpec FR-180-AC-5). | Test (TC-469) |
 | FR-108-AC-5 | In `fsl-replay`'s tests built with `fsl-replay`'s `quire-extraction` feature, the Markdown run of each case, its unit extracted through I3 under its own body identity, gives the direct run's stage, category, truth and exit code. | Test (TC-469) |

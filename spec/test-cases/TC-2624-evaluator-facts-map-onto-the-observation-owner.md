@@ -13,7 +13,8 @@ relationships:
 Verify the quarter-tick interval mapping, its doubly-open strictness, the
 one-sided eligibility comparisons and its exactness at the domain edge, trace admission,
 partial facts, activation and repair mapping, and the completeness revision
-rule. Scope: FR-944-AC-1 to FR-944-AC-7.
+rule, and the separate optional activation history. Scope: FR-944-AC-1 to
+FR-944-AC-7, FR-944-AC-14 and FR-944-AC-16.
 
 ## Test Procedure
 
@@ -24,6 +25,8 @@ rule. Scope: FR-944-AC-1 to FR-944-AC-7.
 5. Map FR-944-AC-5's request `(0, 1]` and acks `[3, 4)` and `[2, 3)` to quarter ticks, read `within_bound(3, ...)` through `relation_to`, and run `holds(req) implies eventually[0,3] holds(ack)` over each.
 6. Decide FR-944-AC-6's `at_least` and `at_most` cases on the scaled difference's endpoints and compare each with `ClockCover`'s eligibility.
 7. Map FR-944-AC-7's maximal readings and uncertainty and its extreme bounds, and compare `within_bound` and `definitely_before` with `ClockCover`'s.
+8. Build FR-944-AC-14's activation requests (no instance closed, open, with an incomplete trigger record, with `Missing` and with `Refused` evidence; one instance without and with captures `a` and `b` beside a false-guard delivery; one instance with a capture faulted `Missing`; two instances with equal captures), admit each, derive its closure, completeness (only for admitted, complete trigger evidence) and capture views over its own `Context`, and derive each scope's activation, recording every `derive` call's binding identity.
+9. Admit a `ms` trace with positions stamped 10, 50 and 80; derive the completeness view for `Complete { through: 60 }` over every admitted member, and again with only the members stamped at or before 60; derive it for `Incomplete` with no retained assertion; through `revise`, apply `Complete { through: 60 }` and `Incomplete` after a retained `Complete { through: 100 }`, and `Incomplete` over a trace starting at 5 after a retained `Incomplete` over a trace starting at 10.
 
 Test: `fsl-eval/tests/it/observation_owner.rs`.
 
@@ -36,3 +39,5 @@ Test: `fsl-eval/tests/it/observation_owner.rs`.
 - Step 5: intervals `[1, 4]`, `[12, 15]` and `[8, 11]`; `Indeterminate` and `Indeterminate { reason: StraddlesBound }` for `[3, 4)`, `Completed(true)` for `[2, 3)`.
 - Step 6: each eligible, ineligible and `Indeterminate` (`StraddlesBound`) decision FR-944-AC-6 states, equal to `ClockCover`'s; no unbounded owner interval.
 - Step 7: the exact endpoints and scaled bounds FR-944-AC-7 states, and equal answers.
+- Step 8: every request `Available` with `membership_complete` true; the closed scope's closure view `Closed` without refusal, its watermark the range's exclusive end; `Inactive`, then `Unknown` with evidence `Incomplete` (reported `Unknown(open)` twice, `Unknown(missing)`, `Unknown(refused)`) with no refusal; one request per instance and one empty request for the no-instance scope; the records, capture identities, values and order FR-944-AC-14 states, including `{"instance": X}` for `fsl-eval/instance` and `{"fault": "missing"}`; `Active` for both equal-capture instances with distinct binding, record and activation identities; the trace binding still `required`; no `derive` over the trace binding's identity.
+- Step 9: three `Available` facts including the member stamped 80, boundary upper, lower and watermark 60000000 nanoseconds and carrier end 60000001, identity `{"through":"60"}`, state `Complete`; the two-fact selection refused `ExpectedMismatch`; `Incomplete` three `Incomplete` facts with no observation at upper bound -9223372036854775808000000, state `Incomplete`; `BoundaryRegressed`, `CompleteRegressed`, and the earlier-starting `Incomplete` accepted with state `Incomplete`.

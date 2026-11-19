@@ -147,8 +147,11 @@ pub enum TimeMember {
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum TaskSetRefusal {
     /// The task set declares no task.
-    #[error("invalid_timed_model/invalid-task-set: the task set declares no task")]
-    Empty,
+    #[error("invalid_timed_model/invalid-task-set: task set {task_set} declares no task")]
+    Empty {
+        /// The task set.
+        task_set: QualifiedName,
+    },
     /// A period, minimum inter-arrival time, deadline or WCET is not
     /// positive.
     #[error("invalid_timed_model/invalid-task-set: task {} states a non-positive {member:?}", .task.as_str())]
@@ -231,7 +234,7 @@ impl TaskSetRefusal {
         match self {
             Self::DuplicateTask { .. } => Code::ConflictingDeclaration,
             Self::UnknownTask { .. } => Code::MissingDeclaration,
-            Self::Empty
+            Self::Empty { .. }
             | Self::NotPositive { .. }
             | Self::Negative { .. }
             | Self::BudgetOrder { .. }
@@ -248,7 +251,7 @@ impl TaskSetRefusal {
         match self {
             Self::DuplicateTask { .. } => "duplicate-declaration",
             Self::UnknownTask { .. } => "missing-name",
-            Self::Empty
+            Self::Empty { .. }
             | Self::NotPositive { .. }
             | Self::Negative { .. }
             | Self::BudgetOrder { .. }
@@ -273,7 +276,7 @@ impl TaskSet {
     /// Admit `tasks` as the task set `name`.
     pub fn new(name: QualifiedName, tasks: Vec<Task>) -> Result<Self, TaskSetRefusal> {
         if tasks.is_empty() {
-            return Err(TaskSetRefusal::Empty);
+            return Err(TaskSetRefusal::Empty { task_set: name });
         }
         for (index, task) in tasks.iter().enumerate() {
             if tasks[..index].iter().any(|seen| seen.name == task.name) {

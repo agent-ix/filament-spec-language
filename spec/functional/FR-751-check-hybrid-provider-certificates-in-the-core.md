@@ -44,6 +44,10 @@ certificate, and the item's work limit.
 - An accepted certificate SHALL set the proof's certification to
   `Certified`; a rejected one SHALL keep FR-250's certification and record
   `certificate-rejected`.
+- The checker SHALL accept a `validated-witness` only when it has a decisive box (FSpec
+  FR-652 "Readings and the decisive box"): a reading the interval evaluator
+  returns as unknown, as over a box that straddles an atom's boundary,
+  never refutes and is never resolved by a midpoint, endpoint or sample.
 - An accepted `validated-witness` SHALL let FR-450 record the trace as the
   item's `HybridCounterexample` and settle `refuted` for a trace exact replay
   cannot decide.
@@ -53,7 +57,7 @@ certificate, and the item's work limit.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-751-AC-1 | FSpec FR-652-AC-1's two `inductive-enclosure` certificates over `Braking` without `t` are accepted, settling `Certified`, and rejected at rule (a) with the `Moving` box pointer, keeping `Uncertified`. | Test (TC-2101) |
-| FR-751-AC-2 | A `flowpipe` step violating the Picard condition is rejected at that step's pointer; FSpec FR-652-AC-3's non-polynomial trace with an accepted witness settles `refuted` and is recorded; with a straddling last box it stays `inconclusive`. | Test (TC-2101) |
+| FR-751-AC-2 | A `flowpipe` step violating the Picard condition is rejected at that step's pointer; FSpec FR-652-AC-3's non-polynomial trace with an accepted witness settles `refuted` and is recorded; with either of its witnesses whose boxes only straddle `v = 30` it stays `inconclusive`, the witness `Rejected { rule: witness-violation }` at its last step. | Test (TC-2101) |
 | FR-751-AC-3 | A check given a work limit of one box evaluation is `Rejected { rule: work-limit }`, never `Accepted`. | Test (TC-2101) |
 
 ## Dependencies

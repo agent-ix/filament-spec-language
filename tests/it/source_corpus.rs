@@ -214,6 +214,13 @@ fn execute_request(
             match ran {
                 Ok(result) => {
                     let value = result.value.as_value().clone();
+                    if value.get("format").and_then(Value::as_str) == Some("native-run-result/2") {
+                        let bytes =
+                            serde_json::to_vec(&value).map_err(|error| error.to_string())?;
+                        fsl_replay::spine::read_native_run_result(&bytes).map_err(|error| {
+                            format!("{}: invalid native result: {error}", request.display())
+                        })?;
+                    }
                     let outcome = value.get("outcome");
                     let (category, last_stage) = match &result.outcome {
                         Some(document) => lifecycle(document)?,
@@ -227,14 +234,21 @@ fn execute_request(
                         code: value
                             .get("code")
                             .or_else(|| outcome.and_then(|outcome| outcome.get("code")))
+                            .or_else(|| value.pointer("/disposition/refusal/code"))
+                            .or_else(|| value.pointer("/disposition/outcome/code"))
                             .and_then(string_member)
                             .map(str::to_owned),
                         cause: value
                             .get("cause")
                             .or_else(|| outcome.and_then(|outcome| outcome.get("cause")))
+                            .or_else(|| value.pointer("/disposition/refusal/cause"))
+                            .or_else(|| value.pointer("/disposition/outcome/cause"))
                             .and_then(string_member)
                             .map(str::to_owned),
-                        result: outcome.and_then(|outcome| outcome.get("value")).cloned(),
+                        result: outcome
+                            .and_then(|outcome| outcome.get("value"))
+                            .or_else(|| value.pointer("/disposition/outcome/value"))
+                            .cloned(),
                     })
                 }
                 Err(error) => {
@@ -464,7 +478,7 @@ fn mismatch(program: &Path, expected: &Expectation, actual: &Actual) -> Option<S
             .is_some_and(|value| actual.result.as_ref() != Some(value));
     differs.then(|| {
         format!(
-            "{}: expectation mismatch: verb={} exit_code expected={} actual={} category expected={} actual={} last_stage expected={} actual={} code expected={} actual={} cause expected={} actual={} flips_with={}",
+            "{}: expectation mismatch: verb={} exit_code expected={} actual={} category expected={} actual={} last_stage expected={} actual={} code expected={} actual={} cause expected={} actual={} result expected={:?} actual={:?} flips_with={}",
             program.display(),
             expected.verb,
             expected.exit_code,
@@ -477,6 +491,8 @@ fn mismatch(program: &Path, expected: &Expectation, actual: &Actual) -> Option<S
             display_option(&actual.code),
             display_option(&expected.cause),
             display_option(&actual.cause),
+            expected.result,
+            actual.result,
             expected.flips_with.as_deref().unwrap_or("none"),
         )
     })
@@ -980,14 +996,125 @@ fn assert_values_corpus_counts() {
     }
 }
 
+#[trace("FR-093-AC-59", "FR-680-AC-1")]
 #[test]
 fn corpus_collections() {
-    run_area("collections");
+    let directory = corpus_root().join("collections");
+    let report = run_directory(&directory).unwrap_or_else(|error| panic!("{error}"));
+    println!("{report}");
 }
 
+#[trace("FR-106", "FR-107", "FR-312-AC-1")]
 #[test]
 fn corpus_operations() {
-    run_area("operations");
+    let directory = corpus_root().join("operations");
+    let report = run_directory(&directory).unwrap_or_else(|error| panic!("{error}"));
+    println!("{report}");
+}
+
+fn stage_parameter_models(directory: &Path, fixtures: &Path) -> Result<(), String> {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (base, extension, output) in [
+        (
+            "examples/checked-handoff/model.semantic-ir.json",
+            Some("workflow.population.json"),
+            "workflow-model.json",
+        ),
+        (
+            "examples/switch-transition/switch.semantic-ir.json",
+            Some("switch.population.json"),
+            "switch-model.json",
+        ),
+    ] {
+        let bytes = std::fs::read(repository.join(base)).map_err(|error| error.to_string())?;
+        let mut model: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        if let Some(extension) = extension {
+            let bytes = std::fs::read(fixtures.join("models").join(extension))
+                .map_err(|error| error.to_string())?;
+            let extension: Value =
+                serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+            let model = model
+                .as_object_mut()
+                .ok_or_else(|| format!("{base}: model must be an object"))?;
+            let populations = model.entry("populations").or_insert_with(|| json!([]));
+            let populations = populations
+                .as_array_mut()
+                .ok_or_else(|| format!("{base}: populations must be an array"))?;
+            populations.extend(
+                extension
+                    .get("populations")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| "parameter fixture must declare populations".to_owned())?
+                    .iter()
+                    .cloned(),
+            );
+            if let Some(construct) = extension.get("construct") {
+                model
+                    .get_mut("constructs")
+                    .and_then(Value::as_array_mut)
+                    .ok_or_else(|| format!("{base}: constructs must be an array"))?
+                    .push(construct.clone());
+            }
+            for operation in extension
+                .get("operations")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let owner = operation
+                    .get("owner")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "parameter operation must name its owner".to_owned())?;
+                let declaration = operation
+                    .get("declaration")
+                    .ok_or_else(|| "parameter operation must have a declaration".to_owned())?;
+                model
+                    .get_mut("types")
+                    .and_then(Value::as_array_mut)
+                    .and_then(|types| {
+                        types.iter_mut().find(|record| {
+                            record.get("identity").and_then(Value::as_str) == Some(owner)
+                        })
+                    })
+                    .and_then(|record| record.get_mut("operations"))
+                    .and_then(Value::as_array_mut)
+                    .ok_or_else(|| format!("{base}: operation owner {owner} is absent"))?
+                    .push(declaration.clone());
+            }
+        }
+        std::fs::write(
+            directory.join(output),
+            serde_json::to_vec(&model).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[trace("FR-104", "FR-106", "FR-107")]
+#[test]
+fn corpus_operation_parameters() {
+    let fixtures = corpus_root().join("operations/parameters");
+    let scratch = tempfile::tempdir().expect("parameter request directory");
+    for part in ["", "data", "admission"] {
+        let source = fixtures.join(part);
+        let destination = scratch.path().join(part);
+        std::fs::create_dir_all(&destination).expect("parameter data directory");
+        for entry in std::fs::read_dir(&source).expect("parameter corpus inputs") {
+            let entry = entry.expect("parameter corpus entry");
+            if entry.file_type().expect("parameter input type").is_file() {
+                std::fs::copy(entry.path(), destination.join(entry.file_name()))
+                    .expect("stage authored parameter input");
+            }
+        }
+    }
+    stage_parameter_models(scratch.path(), &fixtures)
+        .unwrap_or_else(|error| panic!("parameter model fixture: {error}"));
+    let admission = run_directory(&scratch.path().join("admission"))
+        .unwrap_or_else(|error| panic!("parameter model admission: {error}"));
+    println!("parameter model admission: {admission}");
+    let report = run_directory(scratch.path()).unwrap_or_else(|error| panic!("{error}"));
+    println!("{report}");
 }
 
 #[test]

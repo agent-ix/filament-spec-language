@@ -13,9 +13,10 @@ relationships:
 Verify that model intake admits a scalar type bound to `Text` with each of
 FSpec FR-141's six profiles as `Text[min, max; profile]`, refuses bounds
 outside `0 <= min <= max`, refuses a profile
-FR-141 does not define, admits bare `ix://filament/native/Text`,
-`ix://filament/native/Rational` and `ix://filament/native/Decimal` members with no
-checked type and refuses each use of them, and refuses an undeclared native name,
+FR-141 does not define, admits bare `ix://filament/native/Text` and
+`ix://filament/native/Rational` members with no checked type and refuses each
+use of them, types `ix://filament/native/Decimal` members through their decimal
+policy (FR-056 "Decimal value types"), and refuses an undeclared native name,
 `ix://filament/native/UnknownText`. K2's `String` remains a declared native;
 it is neither this unknown-name case nor a parameterized Text alias.
 Verify the exact native-payload controls of
@@ -58,7 +59,8 @@ Start from a domain package whose object type `Note` declares a field
    Compare their same-kind canonical keys. Try UUID against Timestamp and
    each against `Int`, retaining the typed refusal and no Boolean.
 8. Build FR-056-AC-43's package: `Note` with `memo` (`Text`), `ratio`
-   (`Rational`), `amount` (`Decimal`), `amounts` (`Decimal`, `[0, 3]`),
+   (`Rational`), `amount` (`Decimal`), `amounts` (`Decimal`, `[0, 3]`), the two Decimal
+   fields each carrying the field decimal policy `{precision: 5, scale: 2}`,
    `count` (`Integer`), `scale(by: Rational): Integer` and `peek(): Text`,
    every `typeRef` under `ix://filament/native/`. Compile a unit selecting it
    with no clause naming these members. Then, one at a time, add the
@@ -69,10 +71,10 @@ Start from a domain package whose object type `Note` declares a field
    `touch()` with `modifies memo` and postcondition `self.memo =
    pre(self.memo)`; then `touch()` with `modifies memo` and no postcondition.
 9. Over step 8's admitted unit with an invariant over `count`, admit an
-   FR-106 snapshot whose `Note` object supplies `count` and omits the four
-   bare-native fields, then the same snapshot supplying `{"kind": "text",
-   "text": "a"}` for `memo`, then the same snapshot supplying `{"kind":
-   "decimal", "coefficient": "1", "scale": "0"}` for `amount`. Admit an invocation of `scale` supplying `by`,
+   FR-106 snapshot whose `Note` object supplies `count`, `amount` `{"kind":
+   "decimal", "coefficient": "1", "scale": "0"}` and an empty `amounts` and
+   omits `memo` and `ratio`, then the same snapshot supplying `{"kind": "text",
+   "text": "a"}` for `memo`. Admit an invocation of `scale` supplying `by`,
    one omitting `by`, and an invocation of `peek` with a non-null `result`.
 
 ## Expected Results
@@ -99,19 +101,19 @@ Start from a domain package whose object type `Note` declares a field
   unsigned ASCII bytewise with a proper prefix first; it grants no ordering
   operator. Payload/codec success alone is no claim that K2 was admitted.
 - Step 8: the unit with no such clause is admitted with no refusal at intake,
-  at the members or at the `model` declaration. Each field invariant refuses
+  at the members or at the `model` declaration. The `memo` and `ratio`
+  invariants each refuse
   `ill_typed`/`operator-ineligible` at its projection, naming `Note` and
-  `Field.typeRef`; the `scale` call refuses at the call naming `scale` and
+  `Field.typeRef`, and the `amount` and `amounts` invariants check, `amount` being
+  `Decimal[-99999, 99999; 2, 2; exact]` and `amounts` a collection of it; the `scale` call refuses at the call naming `scale` and
   `Operation.params[0].typeRef`, with no refusal for `self.count`; the `peek`
   call refuses at the call naming `peek` and `Operation.returns.typeRef`; the
   `touch()` postcondition refuses at the post-state projection naming `Note`
   and `Field.typeRef`; `touch()` with no postcondition is admitted.
-- Step 9: the snapshot omitting the bare-native fields is admitted, with no
+- Step 9: the snapshot omitting `memo` and `ratio` is admitted, with no
   `missing-member`, and the `count` invariant is checked against it; the
   snapshot supplying `memo` refuses `ill_typed`/`operator-ineligible` at
-  `fields.memo` with the value unread; the snapshot supplying `amount`
-  refuses the same at `fields.amount` naming `Note` and `Field.typeRef`, with
-  the value unread; the `scale` invocation supplying `by`
+  `fields.memo` with the value unread; the `scale` invocation supplying `by`
   refuses the same at `parameters.by` naming `scale`; omitting `by` refuses
   `invalid_runtime_input`/`missing-member`; the `peek` invocation refuses at
   `result` naming `peek` and `Operation.returns.typeRef`.

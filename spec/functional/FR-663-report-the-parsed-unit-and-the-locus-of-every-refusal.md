@@ -15,6 +15,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-106
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-267
+    type: references
 ---
 # FR-663: Report the parsed unit and the locus of every refusal
 
@@ -61,12 +63,15 @@ an item carries alike, SHALL hold `code`, `kind` and `locus`. `locus` is
 always present and is exactly one of:
 
 - a source locus (FR-095) for a refusal located in a source unit;
+- an artifact locus (FR-095) for a refusal located in an identified
+  artifact;
 - a document locus for a refusal located in a JSON input document (a
   request, snapshot, invocation or model document):
-  `{"document": {"authority", "identity"} | null, "path": P,
-  "pointer": "<RFC 6901 pointer>", "object": {"population", "key"} | null,
-  "member": "<member name>" | null}`, where `object` names the snapshot
-  object whose member failed and `member` the failing member's name;
+  `{"kind": "document", "document": {"authority", "identity"} | null,
+  "path": P | null, "pointer": "<RFC 6901 pointer>",
+  "object": {"population", "key"} | null, "member": "<member name>" | null}`,
+  where `object` names the snapshot object whose member failed and `member`
+  the failing member's name;
 - `null` when the refusal has no position, such as an unreadable file,
   whose path stays in the cause.
 
@@ -74,6 +79,12 @@ A snapshot or invocation admission refusal (FR-106 checks 1 to 11) SHALL
 carry the document locus of the first failing member: the snapshot's
 labels, the pointer to the member (to the object for a missing member),
 the object's population and key, and the member name.
+
+Every non-null locus is one of the five tagged forms of FR-267's
+**Refusal locus wire** (`region`, `located`, `occurrence`, `artifact`,
+`document`), with the members that table lists, in an outcome document and
+in a `native-run-result/2` document alike, so the strict reader of either
+document reads every locus its producer writes.
 
 ## Acceptance Criteria
 

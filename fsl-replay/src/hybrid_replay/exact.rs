@@ -44,6 +44,7 @@ struct PointTrace {
     states: Vec<(usize, Point)>,
     befores: Vec<Point>,
     transitions: Vec<usize>,
+    end: Option<Point>,
 }
 
 impl PointTrace {
@@ -78,10 +79,15 @@ impl PointTrace {
             ));
             transitions.push(usize::try_from(jump.transition).ok()?);
         }
+        let end = match &trace.end {
+            Some(end) => Some(point(&end.time, &end.enclosure)?),
+            None => None,
+        };
         Some(Self {
             states,
             befores,
             transitions,
+            end,
         })
     }
 }
@@ -508,7 +514,12 @@ impl Replay<'_, '_, '_> {
     /// time.
     fn dwell(&self, k: usize) -> (Rational, Rational, Vec<Poly>) {
         let (mode, state) = self.state(k);
-        let before = &self.points.befores[k];
+        let before = self
+            .points
+            .befores
+            .get(k)
+            .or(self.points.end.as_ref())
+            .unwrap_or_else(|| unreachable!("a replayed dwell has an endpoint"));
         let flow = self
             .flows
             .get(mode)
@@ -527,7 +538,12 @@ impl Replay<'_, '_, '_> {
         if high < low {
             return Ok(false);
         }
-        let before = &self.points.befores[k];
+        let before = self
+            .points
+            .befores
+            .get(k)
+            .or(self.points.end.as_ref())
+            .unwrap_or_else(|| unreachable!("a replayed dwell has an endpoint"));
         if solution
             .iter()
             .zip(&before.values)
@@ -714,6 +730,15 @@ impl Replay<'_, '_, '_> {
             if steps {
                 segments.push(self.step_segment(n, count(n)));
                 return Ok((segments, count(n + 1).into()));
+            }
+            if self.points.end.is_some() {
+                segments.push(self.dwell_segment(n, &zero()));
+                let end = self
+                    .points
+                    .end
+                    .as_ref()
+                    .unwrap_or_else(|| unreachable!("the end branch has an endpoint"));
+                return Ok((segments, end.time.clone().into()));
             }
             let (_, last) = self.state(n);
             let at: ExactReal = last.time.clone().into();
@@ -1189,7 +1214,10 @@ pub(super) fn replay(
     let lasso = trace.loop_to.and_then(|l| usize::try_from(l).ok());
     // Every mode the trace dwells in has a polynomial flow.
     let mut flows = BTreeMap::new();
-    for k in 0..n {
+    for k in 0..=n {
+        if k == n && points.end.is_none() {
+            continue;
+        }
         meter.charge()?;
         let mode = points.states[k].0;
         if flows.contains_key(&mode) {
@@ -1321,6 +1349,12 @@ pub(super) fn replay(
             return not_reproduced(jump_pointer(k), ExactCheck::Jump);
         }
     }
+    if replay.points.end.is_some() {
+        replay.meter.charge()?;
+        if !replay.dwell_holds(n)? {
+            return not_reproduced(JsonPointer::root().key("end"), ExactCheck::Loop);
+        }
+    }
     // Check 4.
     if let Some(loop_to) = lasso {
         let (last_mode, last) = replay.state(n).clone();
@@ -1360,6 +1394,7 @@ pub(super) fn replay(
         at: Box::new(UndefinedInstant {
             state: record.state,
             time: record.time,
+            time_interval: None,
             locus: record.locus,
         }),
         cause: record.cause,

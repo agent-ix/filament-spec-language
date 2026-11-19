@@ -1188,3 +1188,114 @@ fn the_port_evaluates_each_state_graph_role_alike_at_each_explored_state() {
     // ReachThree and Back (target), FromOne and Straight (from and target).
     assert_eq!(compared, 6 * 4);
 }
+
+/// FR-940-AC-11, FR-155, FR-156: the package route's operation footprints,
+/// state-constraint reads, `holds` atom reads and activation guard reads,
+/// derived through the evaluator port from the package's own nodes, equal the
+/// source route's over the Counter unit's `pre CanInc`, `post Inc` (a
+/// `pre(..)` read), `invariant`, two-atom and guarded clauses.
+#[trace("TC-3034", "FR-940-AC-11")]
+#[test]
+fn the_port_derives_the_package_footprints_the_source_derives() {
+    use fsl_eval::simulation::model::ModelEvaluator;
+    use fsl_semantics::check::footprint::{derive_atom_reads, derive_guard_reads};
+    use fsl_semantics::model::operation::OperationLookup;
+    let (_ws, handoff, mut budget) = handoff("package-forms-footprints");
+    let bare = BarePackage::new(&handoff.admitted)
+        .with_supply(
+            BareSupply {
+                identities: &handoff.identities,
+                equality: handoff.equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .expect("the handoff's supply joins the package");
+    let world = bare.world().expect("the package's declarations read");
+    let selections = fsl_package::AnalysisView::model_selections(&bare);
+    let model = fsl_semantics::model::state::StateModel::new(
+        fsl_semantics::model::observation::ModelSelections::new(&selections, &[]),
+        world.types(),
+        handoff.compiled.packages(),
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the supplied domain package admits");
+    let source: &dyn ModelEvaluator = handoff.compiled.checked();
+    let package: &dyn ModelEvaluator = &bare;
+    let operations = model
+        .operation_table(&BTreeMap::new())
+        .expect("the operations resolve");
+    let mut footprints = 0;
+    for declaration in world.types().object_types() {
+        let receiver = declaration.key();
+        for name in ["inc", "dec", "reset"] {
+            let OperationLookup::Declared {
+                declaring,
+                operation,
+            } = operations.resolve(world.types(), receiver.clone(), name)
+            else {
+                continue;
+            };
+            let from_package =
+                package.footprint(&model, receiver.clone(), declaring.clone(), operation, &[]);
+            let from_source = source.footprint(&model, receiver.clone(), declaring, operation, &[]);
+            assert!(from_source.is_ok(), "{name}: {from_source:?}");
+            assert_eq!(from_package, from_source, "{name}");
+            footprints += 1;
+        }
+    }
+    assert!(footprints > 0, "the Counter declares an operation");
+
+    assert_eq!(
+        package
+            .constraint_reads(&model, "NotAboveThree")
+            .expect("the package declares the invariant"),
+        source
+            .constraint_reads(&model, "NotAboveThree")
+            .expect("the source declares the invariant"),
+    );
+    assert!(package.constraint_reads(&model, "Missing").is_none());
+
+    let graph = handoff.compiled.checked().graph();
+    let mut atoms = 0;
+    let mut guards = 0;
+    for clause in graph.temporal_clauses() {
+        let key = clause.identity();
+        let holds = clause
+            .clause()
+            .formula()
+            .nodes()
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| matches!(node, FormulaNode::Holds { .. }))
+            .map(|(index, _)| FormulaNodeId::from_arena_index(index));
+        for id in holds {
+            let atom = HoldsAtom::of_source(clause, id).expect("a holds atom is a formula use");
+            let (condition, _) = clause.condition(id).expect("a holds atom has a condition");
+            let expected = derive_atom_reads(graph, &model, clause.clause().over(), condition)
+                .expect("the source atom reads");
+            let read = package
+                .holds_reads(&model, &key, atom.position)
+                .unwrap_or_else(|refusal| panic!("{}: {refusal:?}", clause.clause().name()));
+            assert_eq!(read.reads, expected, "{}", clause.clause().name());
+            atoms += 1;
+        }
+        let mut binders = vec![clause.clause().over().clone()];
+        binders.extend(
+            clause
+                .clause()
+                .trigger()
+                .map(|(name, value_type)| (name.to_owned(), value_type.clone())),
+        );
+        if let Some((guard, _)) = clause.guard() {
+            let expected =
+                derive_guard_reads(graph, &model, &binders, guard).expect("the source guard reads");
+            let read = package
+                .activation_guard_reads(&model, &key)
+                .unwrap_or_else(|refusal| panic!("{}: {refusal:?}", clause.clause().name()))
+                .expect("the package clause has the guard");
+            assert_eq!(read.reads, expected, "{}", clause.clause().name());
+            guards += 1;
+        }
+    }
+    assert!(atoms >= 5 && guards >= 1, "{atoms} atoms, {guards} guards");
+}

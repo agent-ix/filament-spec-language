@@ -26,8 +26,8 @@ mod footprints;
 mod frames;
 mod input;
 pub use input::{
-    ModelCheckInput, ModelEvaluator, PackageModelInput, PendingClauseForm, PendingPackageForm,
-    StateClauseEntry,
+    BodyReads, ModelCheckInput, ModelEvaluator, ModelTerminal, ModelTerminalDeclaration,
+    PackageModelInput, PendingClauseForm, PendingPackageForm, StateClauseEntry, TerminalWhen,
 };
 mod operation_coverage;
 pub use operation_coverage::{
@@ -117,7 +117,7 @@ pub use probabilistic::{
 pub use refine::{RowReading, StateObservation};
 pub use state_predicate::PredicateReading;
 pub(crate) use symbolic::{ParameterValues, ResultValues, SymbolicOperation, SymbolicSubject};
-pub use terminal::TerminalClass;
+pub use terminal::{TerminalClass, TerminalModel};
 pub use timed::{
     replay_timed_sample, sample_timed, sample_timed_race, BehaviourLetters, BehaviourReading,
     ClockPlace, ClockValuation, DelayInterval, GuardedStep, MoveRefusal, PlaceConstraint,
@@ -622,7 +622,7 @@ impl<'a> ModelSystem<'a> {
     }
 
     /// The package's `terminal` declarations (FR-411).
-    pub(crate) fn terminals(&self) -> &[fsl_package::PackageTerminal<'a>] {
+    pub(crate) fn terminals(&self) -> &[input::ModelTerminal<'a>] {
         self.input.terminals.as_deref().unwrap_or_default()
     }
 

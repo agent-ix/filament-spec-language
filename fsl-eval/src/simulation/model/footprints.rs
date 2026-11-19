@@ -14,7 +14,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use filament_checked::key::DeclarationKey;
-use filament_checked::node::NodeKind;
 use filament_exact::{EffectiveId, NodeKey, ObjectReference, Value, ValueType};
 use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape, TypeEnvironment};
 use filament_semantic_value::model_transition::ModelTransition;
@@ -22,7 +21,7 @@ use fsl_semantics::check::CheckedNode;
 use fsl_semantics::check::footprint::{
     FootprintObject, FootprintRefusal, SymbolicFootprint, SymbolicLocation,
     derive_attempt_footprint_fallback_with_reference_literals,
-    derive_selected_footprint_with_reference_literals,
+    derive_selected_footprint_with_reference_literals, reference_literals_of,
 };
 use fsl_semantics::model::clause_observation::Observation;
 use fsl_semantics::model::object_environment::{ObservedRead, ReadLog};
@@ -33,7 +32,7 @@ use crate::model_subject::ModelInstance;
 
 use super::encode::{parse_optional_reference, parse_reference};
 use super::walk::stop;
-use super::{Application, BROKEN, ModelSimState, ModelSystem, ReferenceBinding};
+use super::{Application, BROKEN, BodyReads, ModelSimState, ModelSystem, ReferenceBinding};
 use crate::simulation::expansion::{Expansion, ExpansionStop};
 use crate::simulation::footprint::{Footprint, Location};
 
@@ -464,6 +463,7 @@ impl<'a> ModelSystem<'a> {
                         application.declaring.clone(),
                         &application.declaration,
                         types,
+                        &reference_literals,
                         &select,
                     )
                 };
@@ -487,6 +487,7 @@ impl<'a> ModelSystem<'a> {
                                 application.declaring.clone(),
                                 &application.declaration,
                                 types,
+                                &reference_literals,
                                 &select,
                             )
                         }
@@ -626,12 +627,14 @@ impl<'a> ModelSystem<'a> {
     /// such clause, and [`FootprintError::Refused`] when the clause reads
     /// through a form FSpec FR-383 gives no footprint rule.
     pub fn constraint_reads(&self, name: &str) -> Result<BTreeSet<Location>, FootprintError> {
-        let evaluator = self.evaluator();
-        let clause = evaluator
-            .state_clause(name)
-            .ok_or(FootprintError::UnknownConstraint)?;
-        let mut symbolic = evaluator.constraint_reads(&self.model, clause)?;
-        self.add_reference_literal_memberships(clause.body(), &mut symbolic);
+        let BodyReads {
+            reads: mut symbolic,
+            literals,
+        } = self
+            .evaluator()
+            .constraint_reads(&self.model, name)
+            .ok_or(FootprintError::UnknownConstraint)??;
+        self.add_literal_memberships(&literals, &mut symbolic);
         Ok(symbolic
             .iter()
             .filter_map(|location| lower(location, &|_| None))
@@ -780,14 +783,67 @@ impl<'a> ModelSystem<'a> {
                 let occurrence = claim.occurrence().ok_or(FootprintRefusal::Unresolved {
                     what: "package-form state-graph claim occurrence",
                 })?;
-                self.evaluator()
-                    .state_graph_reads(&self.model, occurrence, role)
+                let BodyReads {
+                    reads: mut symbolic,
+                    literals,
+                } = self
+                    .evaluator()
+                    .state_graph_reads(&self.model, occurrence, role)?;
+                self.add_literal_memberships(&literals, &mut symbolic);
+                Ok(symbolic)
             }
             Some(predicate) => match predicate.body() {
                 Some(body) => self.atom_reads(&parameter, body),
                 None => Ok(BTreeSet::new()),
             },
         }
+    }
+
+    /// FR-156 "Atom footprints" over the package route: the symbolic
+    /// locations the `holds` atom at use `position` of the temporal clause
+    /// `clause` reads, read from the package's own nodes through the port, with
+    /// the membership reads of the created reference literals it names.
+    ///
+    /// # Errors
+    ///
+    /// [`FootprintRefusal`] as the derivation refuses.
+    pub fn holds_reads(
+        &self,
+        clause: &NodeKey,
+        position: usize,
+    ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
+        let BodyReads {
+            reads: mut symbolic,
+            literals,
+        } = self
+            .evaluator()
+            .holds_reads(&self.model, clause, position)?;
+        self.add_literal_memberships(&literals, &mut symbolic);
+        Ok(symbolic)
+    }
+
+    /// FR-125-AC-18, FR-337 over the package route: the symbolic locations the
+    /// `when` guard of the `on each` activation of the temporal clause
+    /// `clause` reads; none for a clause with no guard.
+    ///
+    /// # Errors
+    ///
+    /// [`FootprintRefusal`] as the derivation refuses.
+    pub fn activation_guard_reads(
+        &self,
+        clause: &NodeKey,
+    ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
+        let Some(BodyReads {
+            reads: mut symbolic,
+            literals,
+        }) = self
+            .evaluator()
+            .activation_guard_reads(&self.model, clause)?
+        else {
+            return Ok(BTreeSet::new());
+        };
+        self.add_literal_memberships(&literals, &mut symbolic);
+        Ok(symbolic)
     }
 
     /// FR-125-AC-18, FR-337: the symbolic locations the activation's
@@ -820,24 +876,26 @@ impl<'a> ModelSystem<'a> {
         root: CheckedNode<'_>,
         reads: &mut BTreeSet<SymbolicLocation>,
     ) {
-        let mut pending = vec![root];
-        while let Some(node) = pending.pop() {
-            pending.extend(node.children());
-            if let NodeKind::ReferenceLiteral {
-                object_type,
-                identity,
-            } = node.kind()
+        self.add_literal_memberships(&reference_literals_of(root), reads);
+    }
+
+    /// [`Self::add_reference_literal_memberships`] for the literals a port
+    /// derivation reports, whichever route holds the body.
+    pub(crate) fn add_literal_memberships(
+        &self,
+        literals: &[(EffectiveId, Vec<u8>)],
+        reads: &mut BTreeSet<SymbolicLocation>,
+    ) {
+        for (object_type, identity) in literals {
+            if let Some(ReferenceBinding::CreatedObject { populations, .. }) =
+                self.reference_bindings.get(object_type, identity)
             {
-                if let Some(ReferenceBinding::CreatedObject { populations, .. }) =
-                    self.reference_bindings.get(object_type, identity)
-                {
-                    reads.extend(
-                        populations
-                            .iter()
-                            .cloned()
-                            .map(|population| SymbolicLocation::AnyMembership { population }),
-                    );
-                }
+                reads.extend(
+                    populations
+                        .iter()
+                        .cloned()
+                        .map(|population| SymbolicLocation::AnyMembership { population }),
+                );
             }
         }
     }

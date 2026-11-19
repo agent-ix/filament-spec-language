@@ -16,7 +16,7 @@ use serde_json::Value;
 use super::{SolverBudget, SolverCoverage, SolverMethod, SolverOutcome, SolverResult, SolverStop};
 use crate::hybrid_replay::{ExpressionSite, HybridCounterexample, TermLocus};
 use crate::proof_result::{
-    read_plugin_basis, read_plugin_hybrid_counterexample, read_plugin_inconclusive_cause_over,
+    read_plugin_basis, read_plugin_hybrid_counterexample_over, read_plugin_inconclusive_cause_over,
     InconclusiveCause, PluginResultRefusal, ProofBasis, ValueFault,
 };
 
@@ -273,7 +273,7 @@ impl HybridAnswer {
                     .ok_or_else(|| malformed(ValueFault::InvalidValue))?;
                 let named = serde_json::json!({ "counterexample": found });
                 HybridVerdict::Refuted(Box::new(
-                    read_plugin_hybrid_counterexample(&named, Some(model))
+                    read_plugin_hybrid_counterexample_over(&named, graph, claim, wire)
                         .map_err(HybridEntryRefusal::Entry)?,
                 ))
             }

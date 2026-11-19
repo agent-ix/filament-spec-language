@@ -32,8 +32,8 @@ const NO_CYCLE: Clause = Clause { name: "NoCycle" };
 const SAME_IDENTITY: Clause = Clause {
     name: "SameIdentity",
 };
-const UNCHANGED: Clause = Clause {
-    name: "VersionUnchanged",
+const ADVANCES: Clause = Clause {
+    name: "VersionAdvances",
 };
 
 #[derive(Clone, Copy)]
@@ -46,6 +46,7 @@ pub(crate) enum Input {
     Update {
         pre: &'static [Row],
         post: &'static [Row],
+        result: bool,
     },
 }
 
@@ -150,18 +151,23 @@ cases! {
     MissingModel => CaseSpec { id: "missing-model", include_model: false, ..PARENT_CASE },
     Exhausted => CaseSpec { id: "exhausted-work", expression_steps: Some(0), ..PARENT_CASE },
     Unchanged => CaseSpec {
-        id: "unchanged-version", clause: UNCHANGED,
-        input: Input::Update { pre: HEALTHY, post: HEALTHY },
+        id: "unchanged-version", clause: ADVANCES,
+        input: Input::Update { pre: HEALTHY, post: HEALTHY, result: false },
+        ..PARENT_CASE
+    },
+    Advanced => CaseSpec {
+        id: "advanced-version", clause: ADVANCES,
+        input: Input::Update { pre: HEALTHY, post: &[ROOT, Row { version: 3, ..CHILD }], result: true },
         ..PARENT_CASE
     },
     Changed => CaseSpec {
-        id: "changed-version", clause: UNCHANGED,
-        input: Input::Update { pre: HEALTHY, post: &[ROOT, Row { version: 3, ..CHILD }] },
+        id: "changed-version", clause: ADVANCES,
+        input: Input::Update { pre: HEALTHY, post: &[ROOT, Row { version: 4, ..CHILD }], result: true },
         ..PARENT_CASE
     },
     ForbiddenParent => CaseSpec {
-        id: "forbidden-parent-change", clause: UNCHANGED,
-        input: Input::Update { pre: HEALTHY, post: &[ROOT, Row { parent: None, ..CHILD }] },
+        id: "forbidden-parent-change", clause: ADVANCES,
+        input: Input::Update { pre: HEALTHY, post: &[ROOT, Row { parent: None, ..CHILD }], result: true },
         ..PARENT_CASE
     },
     // FR-108's FSpec FR-180-AC-4 boundary cases: 0, 1000 (in range) and

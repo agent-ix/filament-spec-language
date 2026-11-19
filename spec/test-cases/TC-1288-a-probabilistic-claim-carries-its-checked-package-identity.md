@@ -15,7 +15,7 @@ Verify that the checked-package producer emits one local
 included `CheckedProbabilisticClaim`, writes one matching
 `probabilistic_claims` row, that the checked claim exposes the same
 producer-owned identity, and that the FR-421 causes carry it. Scope:
-FR-498-AC-1 to FR-498-AC-4.
+FR-498-AC-1 to FR-498-AC-8.
 
 ## Test Procedure
 
@@ -36,7 +36,9 @@ FR-498-AC-1 to FR-498-AC-4.
    written identically.
 3. Check an elapsed-time claim with an unsupported form and a punctual interval
    in a non-admitted form, each sharing its name with another claim, and read
-   the settled causes' `{node, occurrence}` locus.
+   the settled causes' `{node, occurrence}` locus, and FR-498-AC-8's nested and
+   root punctual events and a `TimedFormShape` cause's member path and FR-331
+   wire locus.
 4. Read the emitted package with the strict reader and check every row names
    a node of the emitted graph with that node's own `claim` occurrence.
 5. Emit FR-498-AC-5's three claims; read each claim node's body and path;
@@ -48,10 +50,18 @@ FR-498-AC-1 to FR-498-AC-4.
    over the `time dense` unit; read each `reward` and `delays` binding;
    rewrite `duration` on `Server::request` and the delay weight and compare
    every claim `node_id`; read each package with the strict reader.
+7. Emit FR-498-AC-7's `P95` and `A`; read each claim's `form`, `over`,
+   `activation` and `confidence` bindings; make each change of FR-498-AC-7
+   alone and compare both claims' `node_id`s and rows with the first
+   emission; make each spelling of FR-498-AC-7 and compare both claims'
+   `node_id`s and bodies; emit the second claim named `A` with `0.6` and with
+   `rational(2, 4)` and read each path and ordinal; read each package with the
+   strict reader.
 
 Tag the test `#[trace("FR-498-AC-1", "FR-498-AC-2", "FR-498-AC-3", "FR-498-AC-4", "TC-1288")]`
-and the step 5 and 6 tests `#[trace("TC-1288", "FR-498-AC-5")]` and
-`#[trace("TC-1288", "FR-498-AC-6")]`.
+and the step 5, 6 and 7 tests `#[trace("TC-1288", "FR-498-AC-5")]`,
+`#[trace("TC-1288", "FR-498-AC-6")]` and `#[trace("TC-1288", "FR-498-AC-7")]`;
+the step 3 test also carries `#[trace("TC-1288", "FR-498-AC-8")]`.
 Vectors are referenced by FSpec case ID, never copied.
 
 ## Expected Results
@@ -66,6 +76,10 @@ Vectors are referenced by FSpec case ID, never copied.
   and a changed token makes it differ; the identical twins have distinct
   identities.
 - Step 3: each cause carries the selected claim's `{node, occurrence}` locus
-  and no other claim's.
+  and no other claim's, and the member paths and wire loci FR-498-AC-8
+  states.
 - Step 4: the strict reader admits the package and every row joins its node
   and occurrence.
+- Steps 5 to 7: the bindings, paths, changed and unchanged `node_id`s and
+  ordinals FR-498-AC-5, FR-498-AC-6 and FR-498-AC-7 state; the strict reader
+  admits every package.

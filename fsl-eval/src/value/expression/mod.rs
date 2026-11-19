@@ -36,9 +36,13 @@ mod value_invariants;
 
 pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol_slot;
 pub(crate) use bare::post_targets as bare_post_targets;
-pub(crate) use evaluate::reader_source::projection_atom_reads;
+pub(crate) use evaluate::reader_source::{
+    package_constraint_reads, package_guard_reads, package_operation_footprint, package_term_reads,
+    ProjectedClause,
+};
 pub(crate) use bare::{
-    evaluate_state_graph_predicate as evaluate_bare_state_graph_predicate, StateGraphOver,
+    evaluate_state_graph_predicate as evaluate_bare_state_graph_predicate,
+    evaluate_terminal_predicate as evaluate_bare_terminal_predicate, StateGraphOver,
 };
 pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations};
 use evaluate::Machine;
@@ -352,7 +356,7 @@ pub fn evaluate_terminal_predicate(
     package: &CheckedPackage,
     predicate: &fsl_semantics::check::CheckedTerminalPredicate,
     current: &ObjectEnvironment,
-    self_object: filament_exact::ObjectReference,
+    self_object: Option<filament_exact::ObjectReference>,
     meter: &mut Meter,
 ) -> Result<Evaluation, InternalFault> {
     // An invariant's checked body reads no `pre(..)`, so every model read
@@ -370,7 +374,7 @@ pub fn evaluate_terminal_predicate(
     .run(
         predicate.body(),
         predicate.slots(),
-        vec![Value::Reference(self_object)],
+        self_object.into_iter().map(Value::Reference).collect(),
     )
 }
 

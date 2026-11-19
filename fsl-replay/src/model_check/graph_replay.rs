@@ -19,13 +19,13 @@ use crate::bounds::ReplayLimits;
 use crate::certificate::zone_certificate::{
     CertificateItem, CertifiedItem, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
-use crate::execute::{ReplayRefusal, recompile_with_temporal_selections, request_limits};
+use crate::execute::{recompile_with_temporal_selections, request_limits, ReplayRefusal};
 use crate::model_check::counterexample::ModelStep;
 use crate::model_check::graph_settle::{GraphReplayResult, GraphReplaySettlement};
 use crate::model_check::identity::StateGraphIdentity;
 use crate::model_check::limits::{ModelCheckLimit, ReachedLimit};
 use crate::model_check::replay::ModelTraceSubject;
-use crate::model_check::replay::{ModelTraceRefusal, fault, refused};
+use crate::model_check::replay::{fault, refused, ModelTraceRefusal};
 use crate::model_check::state_graph::{GraphEvidence, ModelPath, TrapClosure, WitnessPath};
 use crate::request::{ReplayRequest, ReplayRequestWire};
 use crate::result::{DisagreementCause, Verdict};
@@ -1373,25 +1373,22 @@ impl Loci<'_> {
         }
     }
 
-    /// The model of the `terminal when` predicate whose body is at `locus`.
-    /// The package route reads no terminal declaration: a package that holds
-    /// one is refused when its model-check input is built (QSL-2521 adds the
-    /// package form of a terminal row).
+    /// The model of the `terminal when` predicate whose body is at `locus`,
+    /// by selection identity, on either route (FR-940).
     fn terminal_at(
         self,
         locus: &filament_semantic_value::location::ExpressionLocation,
-    ) -> Result<Option<String>, ReplayRefusal> {
-        let Self::Source(package) = self else {
-            return Ok(None);
+    ) -> Result<Option<fsl_eval::simulation::model::TerminalModel>, ReplayRefusal> {
+        let source;
+        let input = match self {
+            Self::Source(package) => {
+                source = fsl_eval::simulation::model::ModelCheckInput::source(package);
+                &source
+            }
+            Self::Package(input) => &input.input(),
         };
-        let terminals = fsl_package::resolve_terminals(package)
-            .map_err(|_| fault("state-graph-undefined-terminal-resolution"))?;
-        Ok(terminals.iter().find_map(|terminal| {
-            let fsl_package::PackageTerminalDeclaration::When(predicate) = terminal.declaration
-            else {
-                return None;
-            };
-            (predicate.body().location() == locus).then(|| terminal.model.to_owned())
-        }))
+        input
+            .terminal_at(locus)
+            .map_err(|_| fault("state-graph-undefined-terminal-resolution"))
     }
 }

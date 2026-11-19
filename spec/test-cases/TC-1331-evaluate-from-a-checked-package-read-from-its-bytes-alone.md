@@ -19,7 +19,7 @@ relationships:
 ## Description
 
 Verify the bytes-only entry and its selected-monitor preparation boundary.
-Scope: FR-531-AC-1 through FR-531-AC-33. **R** is the package of FR-517.
+Scope: FR-531-AC-1 through FR-531-AC-35. **R** is the package of FR-517.
 The isolated bytes-only consumer test crate depends on `filament-contract-model`,
 `fsl-package` and `fsl-eval` only. Producer transport and selected-monitor
 preparation tests additionally obtain authentic final emissions, admitted model
@@ -147,6 +147,14 @@ file of the AC-34 unit; compare each data and clock entry, the `source_tuples`
 row, the union's `clock_payload` and the operation's `clock_parameters`; then
 feed the `/4` document and each malformed entry of AC-34 and expect `Malformed`
 with no partial read. Bind it `#[trace("TC-1331", "FR-531-AC-34")]`.
+
+**Requirement records (FR-531-AC-35).** Compile the AC-35 unit, emit it and
+compare each `requirement_items` row and `value_validity` record node with
+the record of `CheckedGraph::requirements()` at the same position; read the
+package bytes, build the `BarePackage` and compare `call_requirements` for
+`f`, `f2`, `sq` and `g` with `call_requirements_for` over the compiled unit;
+then remove `f2`'s second row and expect the strict reader's refusal with no
+`BarePackage`. Bind it `#[trace("TC-1331", "FR-531-AC-35")]`.
 
 ## Expected Results
 

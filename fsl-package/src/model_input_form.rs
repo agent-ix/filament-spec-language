@@ -8,7 +8,7 @@
 
 use filament_contract_model::{
     CheckedNodeId, CheckedNodeKind, CheckedNodeTag, CheckedSemanticNodeV2, CompositeTypeForm,
-    ModelForm, ProbabilisticForm, ScalarTypeForm, StateForm, TemporalForm,
+    ModelForm, ProbabilisticForm, ScalarTypeForm, StateForm,
 };
 
 use crate::BarePackage;
@@ -23,8 +23,6 @@ pub enum UnreadModelForm {
     State,
     /// A timed model, time source, clock place or timed clause.
     TimedModel,
-    /// A `terminal` declaration.
-    Terminal,
     /// A protocol declaration.
     Protocol,
     /// A hybrid model.
@@ -48,7 +46,6 @@ impl UnreadModelForm {
         match self {
             Self::State => "state",
             Self::TimedModel => "timed-model",
-            Self::Terminal => "terminal",
             Self::Protocol => "protocol",
             Self::Hybrid => "hybrid",
             Self::Variant => "variant",
@@ -68,7 +65,6 @@ fn unread(node: &CheckedSemanticNodeV2) -> Option<UnreadModelForm> {
         ) => None,
         CheckedNodeKind::State(_) => Some(UnreadModelForm::State),
         CheckedNodeKind::TimedModel(_) => Some(UnreadModelForm::TimedModel),
-        CheckedNodeKind::Temporal(TemporalForm::Terminal) => Some(UnreadModelForm::Terminal),
         CheckedNodeKind::Protocol(_) => Some(UnreadModelForm::Protocol),
         CheckedNodeKind::Hybrid(_) => Some(UnreadModelForm::Hybrid),
         CheckedNodeKind::CompositeType(CompositeTypeForm::Union)

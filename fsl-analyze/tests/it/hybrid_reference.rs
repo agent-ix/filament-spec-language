@@ -287,25 +287,39 @@ fn the_reference_provider_reads_its_method_options() {
     assert_eq!(coarse["record"]["result"], "proved", "{coarse}");
     assert_eq!(coarse["record"]["certification"], "certified", "{coarse}");
     assert_ne!(coarse["request"], default["request"]);
-    for (name, option) in [
-        ("ref-7c", json!({"step": "0"})),
-        ("ref-7d", json!({"colour": "blue"})),
+    // A published option with a value outside its domain: the provider's
+    // `check_options` refuses it before any solver step.
+    let bad_value = reference(
+        "ref-7c",
+        &braking_pair(),
+        json!([{"claim": "SlowEnough", "backend": "fsl-hybrid-reference",
+            "options": {"step": "0"}}]),
+    );
+    assert!(bad_value["record"].get("result").is_none(), "{bad_value}");
+    let text = bad_value.to_string();
+    for member in [
+        "invalid-request",
+        "invalid_capability",
+        "invalid-option-value",
+        "fsl-hybrid-reference",
+        "\"option\":\"step\"",
+        "\"value\":\"0\"",
     ] {
-        let item = reference(
-            name,
-            &braking_pair(),
-            json!([{"claim": "SlowEnough", "options": option}]),
-        );
-        assert!(item["record"].get("result").is_none(), "{item}");
-        let key = option
-            .as_object()
-            .and_then(|map| map.keys().next())
-            .cloned();
-        assert!(
-            item.to_string().contains(&key.unwrap_or_default()),
-            "{item}"
-        );
+        assert!(text.contains(member), "{member}: {bad_value}");
     }
+    // A name the descriptor does not publish: FR-967's `unknown-option`.
+    let unknown = reference(
+        "ref-7d",
+        &braking_pair(),
+        json!([{"claim": "SlowEnough", "backend": "fsl-hybrid-reference",
+            "options": {"colour": "blue"}}]),
+    );
+    assert!(unknown["record"].get("result").is_none(), "{unknown}");
+    let text = unknown.to_string();
+    for member in ["invalid-request", "unknown-option", "\"option\":\"colour\""] {
+        assert!(text.contains(member), "{member}: {unknown}");
+    }
+    assert!(!text.contains("invalid-option-value"), "{unknown}");
 }
 
 /// FR-1019-AC-8: the equality guard `v = 0` with the boundary invariant
@@ -364,7 +378,7 @@ fn a_claim_with_no_horizon_is_proved_inductively() {
 /// the trace's `end`.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-10")]
-#[ignore = "QSL-2533: the reference provider's `end`-cut traces are not implemented yet"]
+#[ignore = "QSL-2534: the reference provider's `end`-cut traces are not implemented yet"]
 fn a_violation_in_a_final_dwell_is_cut_by_end() {
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
          profile p = \"filament.temporal.infinite-trace/v1\";\n\

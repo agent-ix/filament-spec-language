@@ -40,11 +40,12 @@ re-reads the current value at each position and states a different claim.
 
 ### Decision: a trace run reads captures; it does not refuse them
 
-FR-337 "Capture observation" has the model checker refuse a clause whose
-conditions read a capture (`ModelCheckRefusal::CaptureRead`), because a
-letter of the product automaton is shared by the concurrent activations of
-an `on each` clause whose capture vectors differ. A trace evaluator has no
-such letter. It evaluates each activation separately, at its own position,
+FR-337 "Capture observation" has the model checker decide a clause whose
+conditions read keyable captures, by evaluating each obligation under its
+own capture vector and keying it with that vector (FR-338), and refuse one
+that reads an unkeyable capture (`ModelCheckRefusal::CaptureRead`), whose
+values admit no finite key. A trace evaluator needs neither: it has no
+product key, so every capture type is evaluated. It evaluates each activation separately, at its own position,
 with its own environment, so each activation's captures are a fixed
 binding of that one evaluation and the meaning is exactly FSpec FR-093's:
 immutable and evaluated once at the activation anchor. The run path
@@ -73,6 +74,10 @@ already carries.
 
 - For each activation FR-327 evaluates (position 0 for `on origin`, and each
   activating position for `on each`, after its `when` guard reads true),
+  and, for an `on origin` clause that holds a step identity read over a
+  protocol trace whose protocol has `activation on each`, each position of an
+  `activate` step (one obligation instance per protocol instance, FSpec FR-828
+  "Instance scope of an obligation"),
   the evaluator SHALL evaluate the clause's captures in source order, once,
   over the observation at the activation's position. The `over` parameter
   is bound as FR-330 binds it at that position (the `over` object of the

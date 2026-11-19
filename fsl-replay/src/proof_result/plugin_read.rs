@@ -38,7 +38,22 @@ pub fn read_plugin_hybrid_counterexample(
     entry: &Value,
     model: Option<&fsl_semantics::check::CheckedHybridModel>,
 ) -> Result<crate::hybrid_replay::HybridCounterexample, PluginResultRefusal> {
-    trace::read_hybrid_counterexample(entry, model)
+    trace::read_hybrid_counterexample(entry, model, None)
+}
+
+/// Read a provider counterexample with the graph and wire identity needed to
+/// resolve an undefined-evaluation term locus.
+pub fn read_plugin_hybrid_counterexample_over(
+    entry: &Value,
+    graph: &fsl_semantics::check::CheckedGraph,
+    claim: &fsl_semantics::check::CheckedHybridClaim,
+    wire: &fsl_semantics::check::wire_id::WireGraph,
+) -> Result<crate::hybrid_replay::HybridCounterexample, PluginResultRefusal> {
+    let model = graph
+        .hybrid_models()
+        .get(claim.model.get())
+        .ok_or_else(|| invalid("/counterexample/type".to_owned()))?;
+    trace::read_hybrid_counterexample(entry, Some(model), Some((graph, claim, wire)))
 }
 
 /// The largest FR-331 count, 2^53 - 1.

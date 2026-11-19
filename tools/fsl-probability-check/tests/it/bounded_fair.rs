@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Fair bounded proof bytes checked without analyzer linkage in a fresh process.
-use super::bounded::{alter_keys, document, mutate, proof, request_with, run};
+use super::bounded::{alter_keys, document, key, mutate, proof, request_with, run};
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -37,7 +37,7 @@ fn replace_source(request: &mut Value, source: &str) {
     request["byte_provision"][0][2] = json!(source.as_bytes());
 }
 
-#[trace("TC-1406", "FR-201-AC-47", "FR-201-AC-49")]
+#[trace("TC-1406", "FR-201-AC-47")]
 #[test]
 fn weak_strong_whole_each_preserve_actual_minimum_and_both_bounded_extrema() {
     for fairness in [
@@ -171,7 +171,7 @@ fn checked_set_normalizes_authored_order_and_duplicates_but_wire_set_is_strict()
     }
 }
 
-#[trace("TC-1406", "FR-201-AC-48", "FR-201-AC-49")]
+#[trace("TC-1406", "FR-201-AC-48")]
 #[test]
 fn inherited_operation_uses_declaring_model_identity_and_rejects_consumer_identity() {
     let mut domain: Value = serde_json::from_slice(DOMAIN).unwrap();
@@ -207,7 +207,7 @@ fn inherited_operation_uses_declaring_model_identity_and_rejects_consumer_identi
     assert_ne!(run(&consumer).0, 0);
 }
 
-#[trace("TC-1406", "FR-201-AC-47", "FR-201-AC-49")]
+#[trace("TC-1406", "FR-201-AC-47")]
 #[test]
 fn zero_horizon_and_legacy_bytes_keep_their_actual_context_and_closed_rows() {
     for (predicate, op, expected) in [("not m.delivered", ">=", "1"), ("m.delivered", "<=", "0")] {
@@ -300,4 +300,30 @@ fn zero_horizon_and_legacy_bytes_keep_their_actual_context_and_closed_rows() {
     }
     let false_rank = mutate(&request, |doc| doc["ranking"][0]["rank"] = json!(99));
     assert_eq!(run(&false_rank).1["rule"], "rank-broken");
+}
+
+/// FR-201-AC-49: every key of a bounded fair proof is FR-196's complete
+/// eight-member key, `on origin` writing null instance and activation.
+#[trace("TC-1406", "FR-201-AC-49")]
+#[test]
+#[ignore = "QSL-2151: eight-member product keys with instance and activation not emitted yet"]
+fn bounded_fair_keys_carry_all_eight_members() {
+    let src = source(
+        "fair weak Msg::send_a",
+        ">=",
+        "rational(19,20)",
+        2,
+        "m.delivered",
+    );
+    let request = proof(&src, SNAPSHOT);
+    let doc = document(&request);
+    for row in doc["values"].as_array().expect("values") {
+        let members = key(&row["state"]);
+        let members = members.as_array().expect("a key array");
+        assert_eq!(members.len(), 8, "{members:?}");
+        assert_eq!(members[2], Value::Null, "instance of an on origin claim");
+        assert_eq!(members[3], Value::Null, "activation of an on origin claim");
+    }
+    let (code, out) = run(&request);
+    assert_eq!(code, 0, "{out}");
 }

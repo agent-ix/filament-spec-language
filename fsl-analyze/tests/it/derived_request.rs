@@ -662,7 +662,7 @@ fn terminal_key(package: &CheckedPackage) -> (String, Option<filament_exact::Nod
         panic!("one selected model");
     };
     (
-        terminal.model().to_owned(),
+        terminal.package().to_owned(),
         terminal
             .occurrence()
             .map(|occurrence| occurrence.node().clone()),

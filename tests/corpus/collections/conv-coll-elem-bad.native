@@ -1,0 +1,3 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function f using v(s: Sequence<Boolean>[0,3]): Sequence<Integer>[0,3] pure { convert<Sequence<Integer>[0,3]>(s) }

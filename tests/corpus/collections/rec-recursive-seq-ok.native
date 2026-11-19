@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+record Tree { children: Sequence<Tree>[0,3]; }
+function f using v(t: Tree): Boolean pure { size(t.children)<=3 }

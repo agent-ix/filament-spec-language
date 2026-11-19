@@ -1,0 +1,13 @@
+# Pending operation parameter programs
+
+These desired outcomes are excluded from the runnable parameter directory. They do not contribute passing coverage. Evidence was produced from FSL base `f2b6c21a3` with the strict native-run-result reader.
+
+`QSL-1983/optional-parameter-present.native` asks whether the original `probeOptional` operation's `optionalN` parameter is present. The declaration is in `../models/workflow.population.json`: `typeRef` Tally (Integer bounds 0..5), `presence` optional, `nullable` false, `defaultKind` none, multiplicity 1..1. Its source currently refuses S3 `ill_typed/type-mismatch`. The ticket's current Done state is not changed by this versioned evidence. Materialize its workflow model using the same repository base and extension as `stage_parameter_models`; no complete model is duplicated here.
+
+`decimal-model/admission/decimal.native` imports the unchanged repository Decimal Meter fixture and uses a constant true clause. Intake refuses `invalid_model_binding/malformed-declaration` at Decimal-text constraint bounds (first reported `$.types[6].constraints[0]`). The request directly references the authoritative fixture. The remaining Meter programs preserve desired value and refusal outcomes, not accepted current behavior.
+
+`decimal-keyword-parameter.native` separately preserves access to Meter.adjust's parameter `by`: S1 currently refuses `invalid_syntax/unexpected-token`. Its model request also directly references the repository fixture. The parser refusal precedes model intake.
+
+[QSL-2583](https://linear.app/agent-ix/issue/QSL-2583) owns the native Decimal checked-type and scalar-alias support required by the original Decimal repros. It is related to completed QSL-2451; the evidence here is versioned to base `f2b6c21a3`, not a latest-main regression claim.
+
+`original-decimal-model/decimal.native` uses a legal parameter name, `delta`, in an original Workflow operation. Each small JSON extension in that directory applies to `examples/checked-handoff/model.semantic-ir.json`; it adds the declared population and operation, without duplicating the base model. Materialize the chosen extension as `workflow-model.json` next to its compile request. `workflow.native-decimal.json` declares native Decimal with policy precision 5, scale 2 and a Boolean result with required multiplicity. It passes model intake, but `delta >= 0.00` refuses S3 `ill_typed/operator-ineligible`. `workflow.decimal.json` adds a Decimal result type with canonical rational bounds 0 and 1; intake refuses `unsupported_construct/declaration-form`, naming `scalar=decimal` with no reader. FR-056's Decimal value types and AC-66/68 require these checked Decimal types. No spelling adaptation or intake widening is supplied by this corpus.

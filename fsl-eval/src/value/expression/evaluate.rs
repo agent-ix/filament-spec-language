@@ -2570,7 +2570,24 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 charge_element(self.meter)?;
                 retain_scalar(value.clone(), self.meter)?
             }
-            NodeKind::ConvertText(_, _) => return Err(unsupported_construct("text_conversion")),
+            NodeKind::ConvertText(target, _) => {
+                if matches!(target, ValueType::Float(_)) && !self.world.has_ieee_profile() {
+                    return Err(invariant("ieee-profile-unresolved"));
+                }
+                let source = self.pop()?;
+                let (value, loss) = text_conversion::convert(
+                    self.world.types(),
+                    &self.units,
+                    target,
+                    &source,
+                    self.meter,
+                )
+                .map_err(Halt::from)?;
+                if let Some(loss) = loss {
+                    self.record(node, loss)?;
+                }
+                value
+            }
             // FR-322: the payload arguments are evaluated and on the stack in
             // position order; the first stopped one never reaches here. Type
             // checking proved each payload against its position (FR-317), so
@@ -5149,6 +5166,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
 mod carried_sum;
 #[cfg(test)]
 mod invariants;
+mod text_conversion;
 
 pub(super) mod node_source;
 pub(super) mod reader_source;

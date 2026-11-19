@@ -4,12 +4,14 @@
 //! it; a `reject` fence refuses with exactly its named code and cause; a
 //! `pending` fence refuses with the code its expect comment records and
 //! fails the check once it passes. The fence extractor agrees with a second,
-//! simpler line count. The runner here covers stage `parse`; QSL-2047 adds
-//! the `check` and `compile` stages through the compile path.
+//! simpler line count. Every stage runs through its public library entry point.
 
+use fsl_command::command::{self, CheckInputs};
 use fsl_cst::Limits;
 use fsl_foundation::SourceIdentity;
+use fsl_replay::OutcomeDocument;
 use ix_trace_rs::trace;
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n";
@@ -108,34 +110,72 @@ fn line_count(text: &str) -> usize {
 /// The first refusal `fence` gives at its declared stage, as
 /// `<code>/<cause>`, or `None` when it passes.
 fn run_at_stage(fence: &Fence) -> Result<Option<String>, String> {
+    let stage = match fence.tag("stage") {
+        Some(stage @ ("parse" | "check" | "compile")) => stage,
+        other => return Err(format!("no declared stage: {other:?}")),
+    };
     let source = if fence.text.trim_start().starts_with("language ") {
         fence.text.clone()
     } else {
         format!("{HEADER}{}", fence.text)
     };
-    let parsed = fsl_cst::parse(
-        SourceIdentity {
-            authority: "test".into(),
-            identity: "test:doc-snippets".into(),
-        },
-        "fence.native",
-        source.as_bytes(),
-        Limits::default(),
-    )
-    .map_err(|error| format!("{error:?}"))?;
-    if let Some(first) = parsed.diagnostics().first() {
-        return Ok(Some(format!(
-            "{}/{}",
-            first.code.as_str(),
-            first.cause.as_str()
-        )));
-    }
-    match fence.tag("stage") {
-        Some("parse") => Ok(None),
-        Some(stage @ ("check" | "compile")) => {
-            Err(format!("the {stage} stage runner is not built yet"))
+    if stage == "parse" {
+        let parsed = fsl_cst::parse(
+            SourceIdentity {
+                authority: "test".into(),
+                identity: "test:doc-snippets".into(),
+            },
+            "fence.native",
+            source.as_bytes(),
+            Limits::default(),
+        )
+        .map_err(|error| format!("{error:?}"))?;
+        if let Some(first) = parsed.diagnostics().first() {
+            return Ok(Some(format!(
+                "{}/{}",
+                first.code.as_str(),
+                first.cause.as_str()
+            )));
         }
-        other => Err(format!("no declared stage: {other:?}")),
+        return Ok(None);
+    }
+    let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let program = directory.path().join("fence.native");
+    std::fs::write(&program, source).map_err(|error| error.to_string())?;
+    if stage == "check" {
+        return first_refusal(command::check_outcome(&program, &CheckInputs::default()).document());
+    }
+    let request = directory.path().join("compile.json");
+    let value = json!({"format":"native-compile/1","request":{
+        "models":[],"program":{"source":{
+            "file":"fence.native","authority":"test","identity":"test:doc-snippets",
+            "document":"fence","formal_revision":1
+        }}
+    }});
+    std::fs::write(
+        &request,
+        serde_json::to_vec(&value).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    match command::compile_outcome(&request) {
+        Ok(compiled) => first_refusal(compiled.document()),
+        Err(error) => first_refusal(&error.outcome_document(fsl_replay::Operation::Package)),
+    }
+}
+
+fn first_refusal(document: &OutcomeDocument) -> Result<Option<String>, String> {
+    let value: Value =
+        serde_json::from_slice(&document.to_bytes().map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    if value["category"] == "success" {
+        return Ok(None);
+    }
+    let first = &value["diagnostics"][0];
+    match (first["code"].as_str(), first["cause"].as_str()) {
+        (Some(code), Some(cause)) => Ok(Some(format!("{code}/{cause}"))),
+        _ => Err(format!(
+            "non-successful stage has no typed refusal: {value}"
+        )),
     }
 }
 
@@ -168,13 +208,13 @@ fn check(fence: &Fence) -> Result<(), String> {
 
 /// NFR-017-AC-5: the two counts agree, every fence declares one stage, and
 /// every fence behaves as declared at that stage.
-#[trace("TC-2242", "NFR-017-AC-5")]
 #[test]
-#[ignore = "QSL-2047: the README and docs fences do not declare their stages yet, and the check and compile stages have no runner"]
+#[trace("TC-2242", "NFR-017-AC-5")]
 fn every_fsl_fence_runs_at_its_declared_stage() {
     let mut total = 0;
     for file in documents() {
         let text = std::fs::read_to_string(&file).expect("a readable document");
+        assert_no_bare_fsl_excerpts(&file, &text);
         let found = fences(&text);
         assert_eq!(found.len(), line_count(&text), "{}", file.display());
         for fence in &found {
@@ -187,10 +227,7 @@ fn every_fsl_fence_runs_at_its_declared_stage() {
 
 /// NFR-017-AC-5: an FSL excerpt in a fence with no FSL info string is a
 /// miss: a bare fence whose first line opens an FSL declaration fails.
-#[trace("TC-2242", "NFR-017-AC-5")]
-#[test]
-#[ignore = "QSL-2047: the README's FSL excerpts are in fences with no info string"]
-fn fence_extraction_finds_every_fsl_excerpt() {
+fn assert_no_bare_fsl_excerpts(file: &Path, text: &str) {
     const KEYWORDS: [&str; 6] = [
         "type ",
         "invariant ",
@@ -200,22 +237,19 @@ fn fence_extraction_finds_every_fsl_excerpt() {
         "language ",
     ];
     let mut bare = Vec::new();
-    for file in documents() {
-        let text = std::fs::read_to_string(&file).expect("a readable document");
-        let lines: Vec<&str> = text.lines().collect();
-        let mut inside = false;
-        for (index, line) in lines.iter().enumerate() {
-            if line.trim_start().starts_with("```") {
-                if !inside
-                    && line.trim() == "```"
-                    && lines.get(index + 1).is_some_and(|next| {
-                        KEYWORDS.iter().any(|k| next.trim_start().starts_with(k))
-                    })
-                {
-                    bare.push(format!("{}:{}", file.display(), index + 1));
-                }
-                inside = !inside;
+    let lines: Vec<&str> = text.lines().collect();
+    let mut inside = false;
+    for (index, line) in lines.iter().enumerate() {
+        if line.trim_start().starts_with("```") {
+            if !inside
+                && line.trim() == "```"
+                && lines
+                    .get(index + 1)
+                    .is_some_and(|next| KEYWORDS.iter().any(|k| next.trim_start().starts_with(k)))
+            {
+                bare.push(format!("{}:{}", file.display(), index + 1));
             }
+            inside = !inside;
         }
     }
     assert!(
@@ -232,8 +266,8 @@ fn one(markdown: &str) -> Fence {
 
 /// NFR-017-AC-6: a deliberate syntax error passes only under its exact
 /// `reject` code and cause.
-#[trace("TC-2242", "NFR-017-AC-6")]
 #[test]
+#[trace("TC-2242", "NFR-017-AC-6")]
 fn reject_fences_refuse_with_the_named_code() {
     let body = "type Digit = Int[0, ;\n";
     let tagged = |info: &str| one(&format!("```{info}\n{body}```\n"));
@@ -254,9 +288,8 @@ fn reject_fences_refuse_with_the_named_code() {
 /// NFR-017-AC-7: a pending fence passes while it refuses as its expect
 /// comment records, and fails once it passes, names another code, or has no
 /// comment.
-#[trace("TC-2242", "NFR-017-AC-7")]
 #[test]
-#[ignore = "QSL-2047: the doc fence check is not built yet"]
+#[trace("TC-2242", "NFR-017-AC-7")]
 fn pending_fences_match_their_current_refusal() {
     let fence = |body: &str, after: &str| {
         one(&format!(
@@ -282,4 +315,26 @@ fn pending_fences_match_their_current_refusal() {
     ))
     .is_err());
     assert!(check(&fence(broken, "")).is_err());
+}
+
+/// NFR-017-AC-5/6: parsing admits an ill-typed body, while checking and
+/// compiling reject it; a well-typed function reaches both later stages.
+#[test]
+#[trace("TC-2242", "NFR-017-AC-5", "NFR-017-AC-6")]
+fn check_and_compile_fences_execute_the_language_stages() {
+    let valid = "function yes(): Boolean pure { true }";
+    let invalid = "function yes(): Boolean pure { 7 }";
+    let fence = |stage: &str, body: &str, refusal: &str| {
+        one(&format!("```fsl stage={stage} {refusal}\n{body}\n```\n"))
+    };
+    assert_eq!(check(&fence("parse", invalid, "")), Ok(()));
+    for stage in ["check", "compile"] {
+        assert_eq!(check(&fence(stage, valid, "")), Ok(()), "{stage}");
+        assert!(check(&fence(stage, invalid, "")).is_err(), "{stage}");
+        assert_eq!(
+            check(&fence(stage, invalid, "reject=ill_typed/type-mismatch")),
+            Ok(()),
+            "{stage}"
+        );
+    }
 }

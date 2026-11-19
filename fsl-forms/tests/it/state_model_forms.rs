@@ -3,7 +3,7 @@
 //! `bound L on M::p [N]`, run on real complete-V1 source through
 //! `fsl_cst::parse` and `build_unit` (TC-1054 row 1).
 
-use fsl_forms::{build_unit, DeclarationForm, ParsedUnit, PopulationBoundForm};
+use fsl_forms::{build_unit, DeclarationForm, ExprNode, ParsedUnit, PopulationBoundForm};
 use fsl_foundation::{SourceIdentity, Span};
 use ix_trace_rs::trace;
 
@@ -124,5 +124,37 @@ fn bound_stays_a_member_name_in_an_expression() {
     assert!(matches!(
         unit.forms()[1].form(),
         DeclarationForm::PopulationBound(_)
+    ));
+}
+
+#[trace("TC-456", "TC-1046", "FR-102-AC-3")]
+#[trace("TC-2158", "FR-763-AC-4")]
+#[test]
+fn a_qualified_edge_name_builds_a_reaches_form() {
+    let (text, unit) = build(
+        "invariant I using v on Config::ConfigVersion at current \
+         { reaches(self, self, Config::ConfigVersion::parent) }",
+    );
+    let DeclarationForm::StateClause(form) = unit.forms()[0].form() else {
+        panic!("a state clause");
+    };
+    let ExprNode::Reaches {
+        source,
+        target,
+        edge,
+        edge_span,
+    } = form.body.root_node()
+    else {
+        panic!("a reaches form");
+    };
+    assert_eq!(edge, "Config::ConfigVersion::parent");
+    assert_eq!(&text[edge_span.start..edge_span.end], edge);
+    assert!(matches!(
+        form.body.root().at(*source).node(),
+        ExprNode::SelfRef
+    ));
+    assert!(matches!(
+        form.body.root().at(*target).node(),
+        ExprNode::SelfRef
     ));
 }

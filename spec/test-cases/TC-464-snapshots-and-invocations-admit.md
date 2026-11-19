@@ -29,14 +29,14 @@ their document identity.
    complete `archive`.
 2. Re-serialize the same snapshot with other whitespace and reversed member
    order, and admit it with the same selection.
-3. Admit the changed-version invocation for `VersionUnchanged`, with its pre
+3. Admit the changed-version invocation for `VersionAdvances`, with its pre
    snapshot (`root` 1, `child` 2 with parent `root`) and its post snapshot
    (`child` 3), `result` `{"boolean": true}`.
 4. Repeat steps 1 and 3 in a process whose working directory is an empty
    temporary directory.
 5. Over TC-466 step 3's `probe` unit, admit the chain `a -> b -> c` pre
    snapshot for `ReachesTarget` with `PreCall { snapshot, self: a,
-   parameters: {target: a} }`; the same selection for `VersionUnchanged`;
+   parameters: {target: a} }`; the same selection for `VersionAdvances`;
    with a snapshot that says `post`; with no `target`; with `target`
    naming `ghost`; over the package variant where `Sub` specializes
    `ConfigVersion` and a second population `archive` has member type `Sub`

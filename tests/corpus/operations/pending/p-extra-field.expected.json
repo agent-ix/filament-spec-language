@@ -1,0 +1,9 @@
+{
+  "verb": "run",
+  "exit_code": 20,
+  "category": "refusal",
+  "last_stage": "S6a",
+  "code": "invalid_runtime_input",
+  "cause": "unknown-member",
+  "flips_with": "QSL-2575"
+}

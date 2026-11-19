@@ -1395,3 +1395,36 @@ mod tests {
         );
     }
 }
+
+/// FR-411, FR-940: the `terminal when` condition `predicate` on the package
+/// route, read from its admitted node and run through the shared evaluator at
+/// the state whose objects are `objects`, with `self` bound to `self_object`
+/// when the condition reads it. Like an invariant's, the condition reads no
+/// `pre(..)`, so every model read observes `objects`.
+///
+/// # Errors
+///
+/// An internal fault when the package's world does not read.
+pub(crate) fn evaluate_terminal_predicate(
+    package: &BarePackage<'_>,
+    predicate: &fsl_package::BareTerminalPredicate,
+    objects: &ObjectEnvironment,
+    self_object: Option<filament_exact::ObjectReference>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
+    let world = package
+        .world()
+        .map_err(|_| InternalFault::new("FR-940", "terminal-predicate-world"))?;
+    let bindings = if predicate.reads_self() {
+        vec![Value::Reference(self_object.ok_or_else(|| {
+            InternalFault::new("FR-124", "terminal-self-object")
+        })?)]
+    } else {
+        Vec::new()
+    };
+    Machine::from_bare_package(&world, objects, meter).run(
+        ReaderNode::root(predicate.projection()),
+        predicate.projection().frame_slots(),
+        bindings,
+    )
+}

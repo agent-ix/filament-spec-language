@@ -33,7 +33,7 @@ mutation per row and admit.
 | 6 | 1.5 | `populations` removed | `invalid_runtime_input`/`missing-member` |
 | 7 | 1.6 | an extra top-level member `note` | `invalid_runtime_input`/`unknown-member` |
 | 8 | 1.7 | blank `authority` in document and selection | `invalid_source_identity`/`blank-label`, `label` `authority` |
-| 10 | 2 | `Current` selecting `VersionUnchanged` | `wrong_snapshot`/`wrong-observation` |
+| 10 | 2 | `Current` selecting `VersionAdvances` | `wrong_snapshot`/`wrong-observation` |
 | 11 | 3 | the current snapshot's `observation` set to `pre` (and `anchor` removed) | `wrong_snapshot`/`wrong-observation` |
 | 12 | 3 | the selection's anchor `{handler, other}` | `wrong_snapshot`/`wrong-anchor`, naming both |
 | 13 | 4 | `model` identity of another package | `invalid_model_binding`/`wrong-model-selection` |
@@ -50,7 +50,7 @@ mutation per row and admit.
 | 24 | 8 | row 23 with `complete: true` | `dangling_reference`/`absent-target-in-complete-population`, naming `missing` and `config_history` |
 | 25 | 7 | healthy-parent plus a second population `ix://example/config-version/archive` over `ConfigVersion`, `complete: false`, that no reference names | admitted |
 | 26 | 11.3 | post `child.parent` absent | `frame_violation`/`unauthorized-change`, naming `child` and `parent` |
-| 27 | 11.3 | a package whose `attemptUpdate` frame modifies only `parent`, with the changed-version invocation (post `child.versionNumber` 3) | `frame_violation`/`unauthorized-change`, naming `child` and `versionNumber` |
+| 27 | 11.3 | a package whose `attemptUpdate` frame modifies only `parent`, with the changed-version invocation (post `child.versionNumber` 4) | `frame_violation`/`unauthorized-change`, naming `child` and `versionNumber` |
 | 28 | 11.4 | invocation `created: [{config_history, child}]` | `population_delta_mismatch`/`delta-disagreement` |
 | 29 | 1.3 over 1.6 | **Retired (no provision digest; row 4 retired).** | n/a |
 | 30 | 6.5 walk order | `root.versionNumber` `"-1"` and `child.versionNumber` `"1001"` together | `invalid_runtime_input`/`invalid-value` at `root` |
@@ -104,7 +104,7 @@ package whose operation declares an `Int[0, 1000]` parameter with `-1`, under
 default and `Witness` limits; admit the wrapping-debit invocation under
 `Witness`, and with `-1` in its pre snapshot.
 FR-106-AC-13: admit the wrapping debit under default limits, run it through
-`run_clause`'s `Clause` selection of `VersionUnchanged` and its `Frame`
+`run_clause`'s `Clause` selection of `VersionAdvances` and its `Frame`
 selection of `attemptUpdate`.
 
 ## Expected Results

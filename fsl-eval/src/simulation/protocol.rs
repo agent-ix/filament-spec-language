@@ -27,6 +27,7 @@ mod access;
 mod capacity;
 mod channel;
 mod compensation;
+mod cycle;
 mod fairness;
 mod footprint;
 mod identity;
@@ -1060,6 +1061,9 @@ pub struct ProtocolSystem<'a, M: MemoryModel> {
     memory: M,
     /// The per-channel queue occupancy bound supplied by model checking.
     channel_message_bound: Option<u64>,
+    /// An explicit delivery read set for cycle exploration; `None` keeps
+    /// the concrete transition system used by execution and replay.
+    delivery_reads: Option<BTreeSet<String>>,
     /// The model governing each `parallel`: its outermost `parallel`'s
     /// resolved model (FR-219, ADR-025 MM-3).
     governing: BTreeMap<fsl_semantics::check::ProtocolNodeId, fsl_foundation::MemoryModelName>,
@@ -1263,6 +1267,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             program,
             memory,
             channel_message_bound: None,
+            delivery_reads: None,
             governing,
             weak_ancestors,
             weak_parallel_paths,
@@ -2192,7 +2197,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     Verdict::Undecided(outcome) => {
                         if let Some(cause) = outcome.undefined_cause() {
                             TerminalClass::Undefined {
-                                model: self.protocol.name.clone(),
+                                model: super::model::TerminalModel::named(
+                                    self.protocol.name.clone(),
+                                ),
                                 cause,
                             }
                         } else if let ClauseOutcome::Incomplete(incomplete) = outcome {
@@ -2205,7 +2212,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                             });
                         } else {
                             TerminalClass::Undecided {
-                                model: self.protocol.name.clone(),
+                                model: super::model::TerminalModel::named(
+                                    self.protocol.name.clone(),
+                                ),
                             }
                         }
                     }
@@ -2252,7 +2261,9 @@ impl<'a, M: MemoryModel> TransitionSystem for ProtocolSystem<'a, M> {
         &self,
         state: &Self::State,
     ) -> Result<Expansion<Self::TransitionId, Self::State, Self::Finding>, ExpansionStop> {
-        Ok(self.expand_bounded(state)?.0)
+        let mut expansion = self.expand_bounded(state)?.0;
+        self.canonical_successors(&mut expansion)?;
+        Ok(expansion)
     }
 }
 
@@ -2274,6 +2285,26 @@ impl<M: MemoryModel> SubjectSystem for ProtocolSystem<'_, M> {
     ) -> Result<crate::simulation::StateKey, EncodingRefusal> {
         self.key_bytes(state)
             .map(crate::simulation::StateKey::from_canonical_bytes)
+    }
+
+    fn loop_state_key(
+        &self,
+        state: &Self::State,
+    ) -> Result<crate::simulation::StateKey, EncodingRefusal> {
+        // Checked temporal atoms currently have no delivery-index read form.
+        self.cycle_key(
+            state,
+            self.delivery_reads.as_ref().unwrap_or(&BTreeSet::new()),
+        )
+    }
+
+    fn concrete_cycle_step(
+        &self,
+        source: &Self::State,
+        transition: &Self::TransitionId,
+        target: &Self::State,
+    ) -> Result<Option<(Self::TransitionId, Self::State)>, ExpansionStop> {
+        ProtocolSystem::concrete_cycle_step(self, source, transition, target)
     }
 
     fn transition_key(&self, transition: &ProtocolTransition) -> Result<Vec<u8>, EncodingRefusal> {
@@ -2337,7 +2368,9 @@ impl<M: MemoryModel> SubjectSystem for ProtocolSystem<'_, M> {
         &self,
         state: &Self::State,
     ) -> Result<Bounded<Self::TransitionId, Self::State>, ExpansionStop> {
-        self.expand_bounded(state)
+        let (mut expansion, cut) = self.expand_bounded(state)?;
+        self.canonical_successors(&mut expansion)?;
+        Ok((expansion, cut))
     }
 
     /// Over a weak `parallel`, `transition` carrying `post`'s memory

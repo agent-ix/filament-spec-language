@@ -249,6 +249,7 @@ pub(crate) fn package(extra: &[(&str, &str)]) -> DomainPackage {
         }),
         optional_reference_field("Order", "trail", "Order"),
         optional_reference_field("Order", "parent", "Order"),
+        optional_reference_field("Person", "trail", "Person"),
         population("orders", "Order"),
         population("people", "Person"),
         operation("Order", "reroute", "target", "Order"),
@@ -388,9 +389,9 @@ fn c04_inverse_and_forward_ends_under_bidirectional_and_undirected_check() {
 
 /// FR-365-AC-1 (C05): the field-edge form checks as before: a field-edge
 /// `Reaches` node over the field `trail`.
-#[trace("TC-1046", "FR-365-AC-1")]
+#[trace("TC-1046", "FR-365-AC-1", "FR-104-AC-17")]
 #[test]
-fn c05_the_field_edge_form_still_checks() {
+fn an_unqualified_edge_still_resolves() {
     let declarations = invariant("Order", "reaches(self, self, trail)");
     let graph = check(&declarations).expect("the field-edge form checks");
     let body = graph.state_clause("I").expect("I is checked").body();
@@ -400,6 +401,92 @@ fn c05_the_field_edge_form_still_checks() {
             if edge == &FieldRef::new(object(&graph, "Order"), "trail")),
         "a field edge, not an end"
     );
+    assert_admitted(
+        &invariant("Order", "reaches(self, self, next)"),
+        "next",
+        "next",
+    );
+}
+
+#[trace("TC-456", "FR-104-AC-17", "TC-1046", "FR-365-AC-1")]
+#[test]
+fn a_qualified_edge_resolves_to_the_declared_edge() {
+    for (owner, qualifier) in [("Order", "Order"), ("Rush", "Order"), ("Rush", "Rush")] {
+        let graph = check(&invariant(
+            owner,
+            &format!("reaches(self, self, M::{qualifier}::trail)"),
+        ))
+        .expect("the qualified field edge checks");
+        let body = graph.state_clause("I").expect("I is checked").body();
+        assert_eq!(body.value_type(), &ValueType::Boolean);
+        assert!(matches!(body.kind(), NodeKind::Reaches { edge, .. }
+            if edge == &FieldRef::new(object(&graph, "Order"), "trail")));
+        assert_admitted(
+            &invariant(owner, &format!("reaches(self, self, M::{qualifier}::next)")),
+            "next",
+            "next",
+        );
+    }
+}
+
+#[trace("TC-1046", "FR-365-AC-2", "FR-104-AC-17")]
+#[test]
+fn a_qualified_edge_naming_an_unknown_edge_refuses_missing_name() {
+    for edge in [
+        "M::Order::noSuchEdge",
+        "M::Person::noSuchEdge",
+        "M::Person::next",
+        "Missing::Order::trail",
+        "M::Missing::trail",
+        "M::order::trail",
+        "M::Order::Trail",
+    ] {
+        let refusal = assert_refused(
+            &invariant("Order", &format!("reaches(self, self, {edge})")),
+            Code::MissingDeclaration,
+            "missing-name",
+            vec![],
+        );
+        let CheckCause::StateModel(model) = refusal.cause else {
+            panic!("a state model refusal");
+        };
+        assert_eq!(model.cause.code().category().exit_code(), 20);
+        assert_eq!(model.cause, CheckCause::MissingName(edge.to_owned()));
+    }
+}
+
+#[trace("TC-1046", "FR-365-AC-3", "FR-104-AC-17")]
+#[test]
+fn a_qualified_edge_of_another_type_refuses() {
+    for edge in ["M::Person::trail", "M::Rush::trail"] {
+        assert_refused(
+            &invariant("Order", &format!("reaches(self, self, {edge})")),
+            Code::IllTyped,
+            "operator-ineligible",
+            vec![],
+        );
+    }
+}
+
+#[trace("TC-1046", "FR-365-AC-2", "FR-104-AC-17")]
+#[test]
+fn a_qualified_edge_retains_member_ambiguity() {
+    for edge in ["M::Order::parent", "M::Order::twin"] {
+        let refusal = assert_refused(
+            &invariant("Order", &format!("reaches(self, self, {edge})")),
+            Code::AmbiguousDeclaration,
+            "ambiguous-name",
+            vec![],
+        );
+        let CheckCause::StateModel(model) = refusal.cause else {
+            panic!("a state model refusal");
+        };
+        let CheckCause::AmbiguousMember(ambiguous) = model.cause else {
+            panic!("an ambiguous member refusal");
+        };
+        assert_eq!(ambiguous.name, edge);
+        assert_eq!(ambiguous.candidates.len(), 2);
+    }
 }
 
 /// FR-365-AC-2 (C06): a name matching a field and an end, and a name matching

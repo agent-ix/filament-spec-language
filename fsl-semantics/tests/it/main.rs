@@ -31,6 +31,7 @@ mod child_composite;
 mod clock_places;
 mod collection_index;
 mod complete_value_lock;
+mod decimal_value_types;
 mod diagnostic_messages;
 #[cfg(feature = "test-support")]
 mod dimension_equivalence;
@@ -96,6 +97,7 @@ mod probabilistic_declarations;
 mod profile_defaults;
 mod quantities;
 mod rational_value_types;
+mod text_to_number;
 mod readme_first_rule_checks;
 #[cfg(feature = "test-support")]
 mod refinement_class_catalog;

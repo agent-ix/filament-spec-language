@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+model M = "test/orders";
+pre Before using v on M::Switch::set { flag }
+post After using v on M::Switch::set { self.on = flag }

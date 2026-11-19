@@ -1998,6 +1998,9 @@ fn tc_452_step_4_outcome_mapping_covers_every_category() {
 fn tc_786_sum_over_pos_is_sum_out_of_domain_exit_10_or_completes_exit_0() {
     use filament_exact::{CardinalityBound, CollectionType, Integer, IntegerInterval, Meter};
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    use filament_semantic_value::declaration::{
+        CompositeDeclaration, CompositeShape, FieldDeclaration, TypeEnvironment,
+    };
     use fsl_eval::value::CheckedPackageEvaluation;
     use fsl_forms::Expression;
     use fsl_semantics::check::PackageDeclarations;
@@ -2012,6 +2015,19 @@ fn tc_786_sum_over_pos_is_sum_out_of_domain_exit_10_or_completes_exit_0() {
         fsl_foundation::IdentityLimits::default(),
     );
     declarations.aliases = vec![("Pos".to_owned(), pos.clone())];
+    declarations.types = TypeEnvironment::new(
+        [CompositeDeclaration::new(
+            crate::fixture_node(1),
+            "PosHolder",
+            CompositeShape::Record(vec![FieldDeclaration::new(
+                "value",
+                pos.clone(),
+                filament_exact::Presence::Required,
+            )]),
+        )],
+        [],
+    )
+    .expect("the Pos holder type is valid");
     let graph = declarations
         .check(
             CheckMode::Linked,

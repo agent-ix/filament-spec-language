@@ -148,6 +148,37 @@ impl<'p> BarePackage<'p> {
         Some((declaration, members.as_slice()))
     }
 
+    /// The identity of the model selection whose population has `object` as a
+    /// member type: the selection that owns the type, which a declaration of
+    /// the model is named by on the package route (FR-940). `Ok(None)` when no
+    /// selected population ranges over it.
+    ///
+    /// # Errors
+    ///
+    /// An internal fault when populations of two selections range over it: the
+    /// package records no alias to say which selection the declaration is on,
+    /// and a type is declared by one package, so no admitted package does this.
+    pub fn selection_of_object(
+        &self,
+        object: &EffectiveId,
+    ) -> Result<Option<&str>, filament_semantic_value::catalog::InternalFault> {
+        let Ok(populations) = self.populations.as_ref() else {
+            return Ok(None);
+        };
+        let mut owners = populations
+            .values()
+            .filter(|(_, members)| members.contains(object))
+            .map(|(declaration, _)| declaration.package.as_str());
+        let first = owners.next();
+        if owners.any(|owner| Some(owner) != first) {
+            return Err(filament_semantic_value::catalog::InternalFault::new(
+                "FR-940",
+                "terminal-object-in-two-selections",
+            ));
+        }
+        Ok(first)
+    }
+
     /// The selected object declarations, or `Err` when their projection or
     /// the catalog was refused (FR-533 "Observation admission", step 3).
     pub(crate) fn object_declarations(

@@ -237,7 +237,7 @@ pub use refinement::{
 pub use terminal::{
     CheckedTerminal, CheckedTerminalPredicate, TerminalClauseDeclaration, TerminalClauseKind,
     TerminalDeclaration, TerminalKeys, TerminalMismatch, TerminalMode, TerminalNode,
-    TerminalRefusal,
+    TerminalRefusal, terminal_predicate_site,
 };
 mod type_form;
 mod type_invariant;
@@ -1010,6 +1010,11 @@ pub struct CheckedGraph {
     /// FSpec FR-491: the profile that declares FR-176's lattice, when the
     /// unit selects one.
     composition_lattice: Option<String>,
+    /// FR-753: S3-checked verification plans retained for S4 emission.
+    verification_plans: Vec<fsl_forms::VerificationPlanForm>,
+    /// FR-192: domain declaration keys resolved while S3 still has the
+    /// authored plan references and the admitted model declaration table.
+    verification_plan_domain_keys: Vec<Vec<Option<filament_checked::key::DeclarationKey>>>,
     /// FSpec FR-490: the model alias of each temporal clause's subject, by
     /// the clause's name.
     temporal_subject_aliases: BTreeMap<String, String>,
@@ -1181,6 +1186,8 @@ impl DebugWith for CheckedGraph {
             composition_forms,
             compositions,
             composition_lattice,
+            verification_plans,
+            verification_plan_domain_keys,
             temporal_subject_aliases,
             predicate_names,
             protocols,
@@ -1306,6 +1313,8 @@ impl DebugWith for CheckedGraph {
             .field("composition_forms", &composition_forms)
             .field("compositions", &compositions)
             .field("composition_lattice", &composition_lattice)
+            .field("verification_plans", &verification_plans)
+            .field("verification_plan_domain_keys", &verification_plan_domain_keys)
             .field("temporal_subject_aliases", &temporal_subject_aliases)
             .field("predicate_names", &predicate_names)
             .field("protocols", &Seq(protocols, table))
@@ -3971,6 +3980,7 @@ impl PackageDeclarations {
                     nodes_used = used;
                     terminals.push(CheckedTerminal {
                         model: terminal.model.clone(),
+                        package: terminal.package.clone(),
                         name: Some(terminal.name.clone()),
                         declaration,
                         occurrence: None,
@@ -3990,8 +4000,22 @@ impl PackageDeclarations {
             if *kind == AliasKind::Model
                 && !terminals.iter().any(|terminal| terminal.model == *alias)
             {
+                let Some(package) = models
+                    .iter()
+                    .find(|model| model.alias() == Some(alias.as_str()))
+                    .map(|model| model.selection().identity.clone())
+                else {
+                    refusals.push(CheckRefusal {
+                        location: Location::root(Origin::Expression),
+                        cause: CheckCause::InternalFault(Box::new(
+                            KeyFault::MissingAdmittedModel(alias.clone()),
+                        )),
+                    });
+                    return Err(refusals);
+                };
                 terminals.push(CheckedTerminal {
                     model: alias.clone(),
+                    package,
                     name: None,
                     declaration: TerminalDeclaration::None,
                     occurrence: None,
@@ -8031,6 +8055,27 @@ impl PackageDeclarations {
                 std::collections::hash_map::Entry::Occupied(_) => return Err(unkeyable()),
             }
         }
+        let verification_plan_domain_keys = self
+            .verification_plans
+            .iter()
+            .map(|plan| {
+                plan.steps
+                    .iter()
+                    .map(|step| {
+                        let (alias, object) = step
+                            .domain
+                            .name
+                            .split_once("::")
+                            .unwrap_or(("", step.domain.name.as_str()));
+                        let object = Identifier::new(object.to_owned()).ok()?;
+                        model_objects
+                            .get(alias)?
+                            .get(&object)
+                            .cloned()
+                    })
+                    .collect()
+            })
+            .collect();
         let mut graph = CheckedGraph {
             graph_identity: CheckedGraphIdentity::fresh(),
             source,
@@ -8091,6 +8136,8 @@ impl PackageDeclarations {
             composition_forms: self.compositions,
             compositions: Vec::new(),
             composition_lattice: self.composition_lattice,
+            verification_plans: self.verification_plans,
+            verification_plan_domain_keys,
             temporal_subject_aliases,
             predicate_names,
             model_names,
@@ -9170,6 +9217,12 @@ impl CheckedGraph {
         &self.package_name
     }
 
+    /// FR-753: the source-ordered verification plans that passed this
+    /// package's S3 name, applicability, bound and cycle checks.
+    pub fn verification_plans(&self) -> &[fsl_forms::VerificationPlanForm] {
+        &self.verification_plans
+    }
+
     /// The lowered nodes, for a test that re-keys one after the nodes bound
     /// to its old key were minted (FR-218-AC-9).
     #[cfg(any(test, feature = "test-support"))]
@@ -9220,6 +9273,26 @@ impl CheckedGraph {
         node: filament_exact::NodeKey,
     ) -> Option<&filament_checked::key::DeclarationKey> {
         self.model_correspondence.resolve(node)
+    }
+
+    /// FR-192: the source document that owns a checked plan declaration.
+    pub fn verification_plan_source(
+        &self,
+        name: &str,
+    ) -> Option<&fsl_foundation::source::provenance::RawSourceRef> {
+        self.source_owners.get(name)
+    }
+
+    /// FR-192: the domain key already resolved for a checked plan step.
+    pub fn verification_plan_domain_key(
+        &self,
+        plan_index: usize,
+        step_index: usize,
+    ) -> Option<&filament_checked::key::DeclarationKey> {
+        self.verification_plan_domain_keys
+            .get(plan_index)?
+            .get(step_index)?
+            .as_ref()
     }
 
     /// ADR-013 O-14/C-26 (PR #300 review finding 1): `node`'s own checked
