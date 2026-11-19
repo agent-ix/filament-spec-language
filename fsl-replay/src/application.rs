@@ -896,6 +896,9 @@ impl ApplicationRegistry {
     }
 
     /// Begin a call under the leaf's admission and permanent sealing rules.
+    ///
+    /// The caller's `limits` are forwarded unchanged; set `held` when an
+    /// enclosing application already owns live frames.
     pub fn begin_call<'a>(
         &mut self,
         selection: &CallableSelection,

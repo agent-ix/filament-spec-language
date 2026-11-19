@@ -70,12 +70,11 @@ pub struct PackageClosure<P, X> {
     /// Whether the caller already admitted its arguments (under its own
     /// supplied-value run), so `Begin` admits nothing more.
     pre_admitted: bool,
-    /// The configured evaluator call-stack bound, mirrored into the S6a
-    /// machine whose nested calls run within one scheduler transition. This
-    /// closure returns `Done` after that machine completes and never requests
-    /// a scheduler child, so the scheduler holds only the mirrored root frame.
+    /// The evaluator bound for direct package-adapter entry points. During a
+    /// scheduler transition, the S6a machine also receives that transition's
+    /// `LiveContext` clone so nested calls share the scheduler's count.
     session_limits: SessionLimits,
-    /// Peak from the S6a machine, which the external scheduler cannot see.
+    /// Optional high-water sink used by checked-package convenience callers.
     peak_live_occurrences: Option<Arc<AtomicU64>>,
     expression: PhantomData<fn() -> X>,
 }
