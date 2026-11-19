@@ -365,11 +365,11 @@ local read or a literal, and the connectives nested as FR-397 nests them.
   `T(l) <= T(g)`. This holds whoever wrote the expression. An author who
   spells the composition with `filament::value::ieee::numericEqual` and
   `filament::value::ieee::totalOrder` over locals or literals writes a
-  different in-process term: its connectives are source connectives, it
-  carries no ordering-part mark, and under FR-397 each intrinsic call
-  charges one `compare_ieee`. It still prints as the comparison, because it
-  computes the same Boolean value, and the atom text labels that value, not
-  the charges spent computing it.
+  different in-process term: its connectives are source connectives
+  (FR-265), and FR-397 "Ordering parts" charges it as the comparison it
+  spells, because the charge is read from the expression's shape. It prints
+  as the comparison, because it computes the same Boolean value with the
+  same charges.
 - **One checker `let`.** `let #ieee_operand = e in C(l, g)` (or `C=`), where
   exactly one of `l` and `g` reads that binder, prints with `T(e)` in place
   of that read, the lesser operand on the left: `T(l) < T(g)` or
