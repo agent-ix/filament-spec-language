@@ -27,7 +27,7 @@ fn first_rule_source() -> String {
 }
 
 /// Provenance: QSL-2265.
-#[trace("QSL-2265")]
+#[trace("FR-027-AC-9")]
 #[test]
 fn first_rule_readme_example_compiles_against_config_version() {
     let directory = tempfile::tempdir().expect("temporary compile directory");
