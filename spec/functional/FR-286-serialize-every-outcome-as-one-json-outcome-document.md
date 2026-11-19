@@ -79,8 +79,10 @@ the same document (FSpec FR-300-AC-3). The document's members are:
   on a `monitor` item for FR-283's `InsufficientData` (category undefined,
   reason `insufficient-data`), and on no item of any other category (FR-285).
 - `diagnostics`: each with its typed cause, catalog code, `Locus` (ADR-013
-  T-5, FR-095), message, `details` ("Diagnostic details") and, when the hint
-  catalog has a row for its code and cause, `hint` ("Fix hints"). A source `blank-label` cause also carries
+  T-5, FR-095), message, `details` ("Diagnostic details"), the `construct`,
+  `declaration`, `profile` and `text` a forms refusal names, and, when the
+  hint catalog has a row for its code and cause, `hint` ("Fix hints"); the
+  "Diagnostic members" table lists them. A source `blank-label` cause also carries
   `label`, exactly `authority` or `identity` from the source owner's typed
   `SourceLabel`. Every other source cause omits `label`, including
   `empty-path`. A source refusal with no region has `locus` `null`, never a
@@ -369,14 +371,16 @@ The outcome document's bytes.
 - The serialization shall write an `execute` outcome's completed value,
   undefined reason or exhausted limit as the `result` member, and `result`
   `null` on every other document.
-- `OutcomeDocument::to_bytes` shall return the RFC 8785 canonical encoding
-  of the document, its object members in ascending UTF-16 code-unit order at
-  every depth.
-- For an admitted request, and for a refusal naming one defect, the
-  serialization shall give byte-equal output for every permutation of the
-  request's object members.
+- Every writer of an FSL JSON document shall encode it through
+  `fsl_foundation::canonical_json::encode`, the RFC 8785 canonical encoding,
+  its object members in ascending UTF-16 code-unit order at every depth.
+- For an admitted request, and for a refusal whose named defect does not
+  depend on request order, the serialization shall give byte-equal output
+  for every permutation of the request's object members.
 - Every serialized outcome document shall validate against the published
   schema `urn:filament:outcome:1`.
+- The published schema shall declare every member path a writer of the
+  document can emit.
 - When the hint catalog has a row for a diagnostic's code and cause, the
   serialization shall write that row's text as the diagnostic's `hint`.
 - When the hint catalog has no row for a diagnostic's code and cause, the
@@ -436,35 +440,71 @@ An `analyze` document also carries FR-621's `aggregate` member and FR-635's
 `counterexample`, `replay`, `accounting`, `axes`) or, for a simulation item,
 FR-634's members. A clause-run and a `monitor` item carry FR-622's `axes`.
 
+### Diagnostic members
+
+A `diagnostics` entry is written by `OutcomeDiagnostic` and holds these
+members, and no other:
+
+| Member | Presence | Meaning |
+| --- | --- | --- |
+| `cause` | always, a string or `null` | the typed cause tag |
+| `code` | always | the catalog code |
+| `construct` | a forms refusal that names one | the refused construct's form |
+| `declaration` | a forms refusal that names one | the declaration that holds the construct |
+| `details` | always, an object or `null` | "Diagnostic details" |
+| `hint` | when the hint catalog has a row for the code and cause | "Fix hints" |
+| `label` | a source `blank-label` cause only | `authority` or `identity` |
+| `locus` | always, a `Locus` or `null` | FR-095 |
+| `message` | always | the human message |
+| `profile` | a forms refusal that names one | the profile that prohibits the construct |
+| `text` | a forms refusal that names one | the construct's source text |
+
 ### Fix hints
 
 A diagnostic MAY carry `hint`: one sentence, in the imperative, naming the
 change to the input that removes the refusal, for example `Declare the
 name, or import the package that declares it.` The member is a JSON string
-of 1 to 200 bytes of UTF-8 with no control character, ending in `.`. It is
-optional: a diagnostic whose code and cause have no catalog row has no
-`hint` member, never an empty or placeholder string.
+of 1 to 200 bytes of UTF-8 that holds no control character (U+0000 to
+U+001F, U+007F and U+0080 to U+009F) and ends in `.`. It is optional: a
+diagnostic whose code and cause have no catalog row has no `hint` member,
+never an empty or placeholder string.
 
 Every hint comes from one catalog keyed by the diagnostic's code and cause.
-The catalog lives in `fsl-foundation`'s diagnostic module, beside `Code`, as
-`fsl_foundation::diagnostic::hint::HINTS: &[HintRow]`, each
-`HintRow { code: Code, cause: Option<&'static str>, text: &'static str }`,
-with the lookup `hint_for(code: Code, cause: Option<&str>) -> Option<&'static
-str>`. A row whose `cause` is `None` matches a diagnostic with no cause and
-no other. `OutcomeDiagnostic` takes its `hint` from `hint_for` when it is
-built, through every constructor; no producer, consumer or driver writes,
-edits or removes a hint. The text is a function of the code and cause alone
-and holds no payload value: the message and the payload members already
-name the offending name, type, path or limit, and a static text keeps the
-document's bytes a function of the outcome and lets one reviewer read every
-hint in one place.
+The catalog lives in the crate that holds `OutcomeDiagnostic`, the outcome
+module of `fsl-replay`, as `fsl_replay::outcome::hint::HINTS: &[HintRow]`,
+each `HintRow { code: Code, cause: Option<&'static str>, text: &'static
+str }`, with the lookup `hint_for(code: Code, cause: Option<&str>) ->
+Option<&'static str>`. A row whose `cause` is `None` matches a diagnostic
+with no cause and no other. `OutcomeDiagnostic` takes its `hint` from
+`hint_for` when it is built, through every constructor; no producer,
+consumer or driver writes, edits or removes a hint. The text is a function
+of the code and cause alone and holds no payload value: the message and the
+payload members already name the offending name, type, path or limit, and a
+static text keeps the document's bytes a function of the outcome and lets
+one reviewer read every hint in one place. A row is written only when its
+text is true for every diagnostic that carries its code and cause: a key
+that several unrelated refusals share, such as `invalid-request` with no
+cause (a malformed request document, an output path that exists, a member
+given twice, an unknown option), has no row until those refusals carry
+distinct causes.
 
-The catalog is checked by `check_hint_catalog(rows, known) -> Result<(),
-HintCatalogError>`, run as a unit test of `fsl-foundation` so a catalog that
-fails it cannot merge. `known` is `diagnostic::catalog_pairs()`, every
-(code, cause) pair a typed FSL cause produces: each typed cause type lists
-its variants' `CatalogCode`s, and the function returns their union. The
-check refuses:
+Each crate that defines a typed cause exports the (code, cause) pairs its
+causes produce as `pub const CATALOG_PAIRS: &[CatalogCode]`, the union of
+its cause types' variants' `CatalogCode`s; `fsl-cst`, `fsl-forms`,
+`fsl-semantics`, `fsl-route`, `fsl-eval`, `fsl-package`, `fsl-source`,
+`fsl-replay`, `fsl-analyze`, `fsl-hybrid-reference`, `fsl-inspect` and
+`fsl-command` each do, and so does `fsl-foundation` for its own causes.
+Every one of these crates but the last four is a dependency of `fsl-replay`,
+and `fsl-command` depends, directly or through `fsl-analyze`, on all of
+them, so the aggregate `fsl_command::diagnostic_pairs()`, the union of every
+crate's `CATALOG_PAIRS`, is the one place that sees every pair. A typed
+cause added to a crate is added to that crate's `CATALOG_PAIRS` in the same
+change.
+
+The catalog is checked by `fsl_replay::outcome::hint::check_hint_catalog(rows,
+known) -> Result<(), HintCatalogError>`, run with `known` the aggregate
+`fsl_command::diagnostic_pairs()` as a test of `fsl-command`, so a catalog
+that fails it cannot merge. The check refuses:
 
 - `HintCatalogError::UnknownPair { code, cause }` for a row whose cause is
   not `None` and whose pair is not in `known`, such as a misspelled cause;
@@ -472,10 +512,12 @@ check refuses:
 - `HintCatalogError::DuplicatePair { code, cause }` for a second row of one
   pair;
 - `HintCatalogError::MalformedText { code, cause }` for a text outside the
-  form above (empty, over 200 bytes, a control character such as a line
-  feed, or no final `.`), since FR-865 writes it on one line.
+  form above: empty, over 200 bytes of UTF-8, holding a control character
+  such as a line feed, or with no final `.`. FR-865 writes the text on one
+  line. The byte length is checked here, because a JSON Schema `maxLength`
+  counts code points, not bytes.
 
-The catalog ships a row for at least each pair below. These are the
+The catalog ships a row for at least each of these 23 pairs. These are the
 refusals a new user most often meets, one or more per class of mistake:
 
 | Mistake | Code | Cause |
@@ -502,9 +544,10 @@ refusals a new user most often meets, one or more per class of mistake:
 | A run over its work budget | `stage_limit_exceeded` | `work-budget-exceeded` |
 | A request document member left out | `invalid_runtime_input` | `missing-member` |
 | A request document member the format does not have | `invalid_runtime_input` | `unknown-member` |
-| An unknown option or a malformed option value | `invalid-request` | none |
 | A file that does not exist or cannot be read | `io-error` | none |
 
+`io-error` has a row with no cause because every `io-error` diagnostic is a
+selected file that could not be opened or read, so one text fits them all.
 A row is added for a pair whenever a journey test of the CLI finds a
 refusal a user cannot act on from its message alone.
 
@@ -515,26 +558,44 @@ not extend, so it carries no `hint`.
 
 ### Canonical encoding and key order
 
-`OutcomeDocument::to_bytes` SHALL return the RFC 8785 (JCS) canonical
-encoding of the document, through `quire-canonical`: at every depth an
-object's members are written in ascending order of their names' UTF-16 code
-units, with no insignificant whitespace, and each number in RFC 8785's form.
-The order is a property of the bytes, not of the Rust type: a struct's field
-order, a map's insertion order and the order in which a request spelled its
-members never reach the output. A diagnostic is therefore written
-`{"cause", "code", "details", "hint", "label", "locus", "message"}` in that
-order, each present member in its place. The CLI's machine mode writes these
-bytes and a newline; re-encoding them through ix-cli-kit's `json` module
-(driver FR-002-AC-9) is the identity, so the library's bytes and the CLI's
-agree (FSpec FR-300-AC-3).
+Every JSON document FSL writes is encoded by one function,
+`fsl_foundation::canonical_json::encode<T: Serialize>(value: &T) ->
+Result<Vec<u8>, CanonicalJsonError>`, which writes the RFC 8785 (JCS)
+canonical encoding through `quire-canonical`. `OutcomeDocument::to_bytes`
+calls it, and so does every writer that builds a document as a
+`serde_json::Value`: the analyze document `fsl-analyze` assembles (with its
+`aggregate` and `registry`), the monitor events, summary and run document
+`fsl-command` writes, and the command-error envelope. No writer encodes a
+document through `serde_json::to_vec` or its own sort.
 
-The member order of an input request carries no meaning. For an admitted
-request, and for a refusal that names one defect, every permutation of the
-request's object members, at any depth, gives byte-equal output. A refusal
-that keeps several intake refusals lists them in FR-056's intake order, which
-follows the request's document order, so its bytes may change with a
-permutation; that order is the reader's report of where it met each defect,
-not a key order.
+RFC 8785 orders an object's members, at every depth, by their names'
+UTF-16 code units, writes no insignificant whitespace, and writes each
+number in its own form. The order is a property of the bytes, not of the
+Rust type: a struct's field order, a map's insertion order and the order in
+which a request spelled its members never reach the output. A diagnostic is
+therefore written with its members in the order of the "Diagnostic members"
+table: `cause`, `code`, `construct`, `declaration`, `details`, `hint`,
+`label`, `locus`, `message`, `profile`, `text`, each present member in its
+place.
+
+UTF-16 code-unit order and UTF-8 byte order agree for every key except one
+whose characters differ first at a supplementary character (U+10000 and
+above, a surrogate pair from 0xD800) against a character from U+E000 to
+U+FFFF: UTF-16 puts the supplementary character first, UTF-8 puts it last.
+Keys a program or request names, such as an FR-650 record's field names,
+can hold either. ix-cli-kit's `json` module orders keys by UTF-8 bytes, so
+the driver writes the bytes FSL's encoder returns, unchanged, and never
+re-encodes a document through a UTF-8-ordered writer.
+
+The member order of an input request carries no meaning wherever the
+refusal it gives does not depend on it. For an admitted request, and for a
+refusal whose named defect does not depend on request order, every
+permutation of the request's object members, at any depth, gives
+byte-equal output. Two kinds of refusal depend on request order by their
+own requirement and legitimately change with a permutation: a refusal that
+names the first defect in request order, such as FR-1031's refusal "at the
+first member in request order" within a row of its table, and a refusal that
+keeps several intake refusals in FR-056's intake order.
 
 ### Published schema
 
@@ -546,25 +607,49 @@ to dependants as `fsl_replay::outcome::OUTCOME_SCHEMA_1`, the file's text
 against the same bytes the library is tested against. A consumer that reads
 the document validates it against this schema; it does not keep a copy.
 
-- The schema describes every member at every depth: the document members of
-  the Description, the item members of each operation (the "Monitor documents
-  from clause runs" and "Analyze items and their counterexamples" tables, and
-  FR-621's and FR-634's members with `aggregate` and `registry` for
-  `analyze`), the diagnostic with `details` and `hint`, and each `result`
-  kind. A record whose spelling another requirement owns (an FSpec FR-331
+The schema describes every member every writer of the document emits, at
+every depth. The writers and the members each contributes:
+
+| Writer | Members |
+| --- | --- |
+| `OutcomeDocument` (every operation) | the root members `format`, `operation`, `last_stage`, `category`, `items`, `diagnostics`, `artifacts` and `result` of the Description; and `registry`, FR-635's registry, on an `execute` document of a call carrying `requirements`, whose `items` are FR-963's settled requirement items in FR-621's item spelling |
+| `OutcomeDiagnostic` | the "Diagnostic members" table, with `details` from "Diagnostic details" |
+| `OutcomeItem` (`prove`, `monitor`, clause runs) | `request_index`, `result`, `label`, `cause`, `diagnostic`, `basis`, `certification`, `measured`, `method`, `max_depth`, `seed`, `witness_samples`, `limits`, `limit_reached`, `position`, `counterexample`, `decisive`, `witness`, `evidence`, `certificate_document`, `count`, `min_count`, `clause`, `axes`, and the FR-990 protocol conformance members `obligations`, `closure`, `global`, `max_messages`, `projections`, `recording` and `replay` |
+| The `analyze` document (`fsl-analyze`) | the root `aggregate` (`status`, `gaps`, each gap `request_index`, `reason`, `result`) and `registry` (FR-635); each item's FR-621 members (`request_index`, `claim_name`, `request`, `category`, `record`, `certificate`, `counterexample`, `replay`, `accounting`, `exploration`, `axes`), `disposition` for a finite-replay item (FR-941), and `obligations`, `closure`, `global`, `projections` and `recording` (FR-990, FR-1032); the record's `settled_by`, `backend`, `non_zeno`, `memory_bound`, `trace` and `steps` |
+| A `simulation` item (FR-634) | FR-634's members in place of `record`, with `coverage` and `frontier` |
+| `check_fences` (`from_native_fences`) | FR-355's fence entries as `items` |
+| `result` | each kind of the Description: `completed`, `undefined`, `incomplete`, `parsed` (FR-663), `formatted`, `replayed` (FSpec FR-323 rows), `exported` (FSpec FR-817) |
+
+- A record whose spelling another requirement owns (an FSpec FR-331
   terminal record and its counterexample variants, an FR-650 run value, the
   FR-663 parse report, an FSpec FR-323 results row, the FSpec FR-817 export
-  outcome) is described by a `$defs` entry named after its owner, such as
-  `$defs/fspec-fr-331-terminal-record`, transcribed from that owner's
-  spelling; where the owner publishes its own schema, the entry is a `$ref`
-  to that schema's `$id`.
-- Every object it describes is closed (`unevaluatedProperties: false`), so a
-  member the type writes and the schema does not list fails validation.
+  outcome, FR-635's registry) is described by a `$defs` entry named after
+  its owner, such as `$defs/fspec-fr-331-terminal-record`, transcribed from
+  that owner's spelling; where the owner publishes its own schema, the
+  entry is a `$ref` to that schema's `$id`.
+- Every object whose member names the outcome fixes is closed
+  (`unevaluatedProperties: false`), so a member a writer emits and the
+  schema does not list fails validation. A map whose keys are names a
+  program or a request declares (an FR-650 record's `fields`, a
+  counterexample state's values keyed by declared names, an accounting
+  record's `limits` keyed by counter name) is described with
+  `propertyNames` for the form of its keys and `additionalProperties` for
+  the schema of its values, not as a closed object.
 - Members that depend on `operation` are selected by `if`/`then` on
   `operation`, so an `analyze` document without `aggregate` fails, and a
   `check` document with one fails.
-- `hint` is an optional diagnostic member with `minLength` 1, `maxLength`
-  200 and the pattern `^[^\u0000-\u001F]*\.$`.
+- `hint` is an optional diagnostic member with `minLength` 1 and the pattern
+  `^[^\u0000-\u001F\u007F-\u009F]*\.$`; its 200-byte bound is checked by
+  `check_hint_catalog`, since a schema counts code points.
+
+The schema is complete when no writer can emit a member it does not
+describe. A completeness test checks this from the writers' side: for each
+writer in the table it builds full-member values (every optional member
+present, every enum variant once, every `result` kind and `Counterexample`
+variant), encodes them, collects every member path (a JSON pointer with
+array indices and declared-name map keys replaced by `*`), and fails naming
+each path the schema does not declare. A writer member added without a
+schema change fails this test.
 
 The schema is versioned with the format. The file for `filament-outcome/1`
 changes in the same change as the outcome type: a new optional member, such
@@ -574,16 +659,39 @@ changed JSON kind, a new required member) is a new format,
 `filament-outcome/2`, with its own file `filament-outcome-2.schema.json` and
 `$id` `urn:filament:outcome:2`.
 
+### Golden corpus
+
 The schema is checked against a golden corpus,
-`fsl-replay/tests/fixtures/outcome-golden/`, one file per document an
-acceptance criterion of this requirement builds, named after the criterion
-(`FR-286-AC-2.json`, `FR-286-AC-5-2.json`), holding that document's exact
-`to_bytes` output. Together they hold at least one document of every
-operation, every `result` kind, every item verdict row and every
-`Counterexample` variant, and a diagnostic with and without `hint`, `label`
-and `details`. The corpus test rebuilds each document, compares its bytes
-with the file, checks the bytes are their own canonical re-encoding, and
-validates them against the schema.
+`fsl-command/tests/fixtures/outcome-golden/`, one file per golden document,
+named after the criterion or operation that builds it (`FR-286-AC-2.json`,
+`FR-286-AC-5-2.json`, `select-cancelled.json`), holding that document's
+exact encoded bytes. The corpus lives in `fsl-command`, the one crate that
+sees every writer, `fsl-analyze`'s and its own included. Its test rebuilds
+each document through the writer that builds it, compares the bytes with
+the file, checks they are their own RFC 8785 re-encoding, and validates
+them against the schema.
+
+The corpus holds at least one document of every `Operation`, each built the
+way that operation's outcome is built:
+
+| Operation | Builder |
+| --- | --- |
+| `parse` | `OutcomeDocument::from_parse` (FR-663) |
+| `format` | `OutcomeDocument::from_format` |
+| `check` | `OutcomeDocument::from_check`, and `from_native_fences` for a Markdown check |
+| `package` | `OutcomeDocument::from_package` |
+| `execute` | `OutcomeDocument::from_run`, a call with `requirements` among them (FR-963) |
+| `monitor` | `MonitorOutcome::document`, through `from_clause_runs` |
+| `analyze` | `AnalyzeOutcome::document`, a simulation item among them |
+| `prove` | `OutcomeDocument::settled(Operation::Prove, ..)` as `fsl_analyze::provider::run` builds it (FR-280) |
+| `replay` | `OutcomeDocument::from_replay` |
+| `inspect` | `fsl_command::command::inspect_handoff`, accepted and refused |
+| `export` | the export outcome builders ("Export outcomes") |
+| `select`, `check_fences`, `lower`, `generate`, `render` | `OutcomeDocument::from_stopped(operation, stopped)`, one cancelled (`Stopped::Cancelled(Requested)`), one at a stage limit (`Stopped::Limit`) and one faulted (`Stopped::Fault`) document each: every operation takes `&Cancel`, limits and can fault (FR-275, FR-276, FR-277), and these three stops are the documents these operations write today |
+
+A corpus coverage test checks the other direction: every member path the
+schema declares appears in at least one golden document, so no schema
+member goes untested against a real writer's bytes.
 
 ## Acceptance Criteria
 
@@ -613,12 +721,13 @@ validates them against the schema.
 | FR-286-AC-22 | The `export` outcome of FR-756-AC-1's counter serializes with `operation` `export`, `category` success, `last_stage` S4, `items` `[]`, `artifacts` `[]` and `result` `{"kind": "exported", "export": E}` with `E` equal to the run outcome's `export` member; the below-floor export of FR-1015-AC-1 serializes with category unsupported and the same `result` kind, the export under `export.output_bytes` 1 with category incomplete, and the export naming an existing output path with category refusal, `last_stage` `null` and `result` `null`. | Test (TC-2994) |
 | FR-286-AC-23 | The export of `SlowEnough` over `Braking` under `minimum_fidelity` `any` with `output` `{"file": "missing-directory/m.tla"}`, whose parent directory does not exist, exits `30` and serializes with `operation` `export`, `category` internal-failure, `last_stage` S4, `result` `null` and one diagnostic with `code` `output-failure`, `cause` `output-failure` and `details` `null`; no file is written. | Test (TC-3029) |
 | FR-286-AC-24 | The `check` outcome of FR-056-AC-73's package with three `DUPLICATE_PARAM` diagnostics serializes with category `refusal` and exactly three `diagnostics` entries in the reader's order, each with code `invalid_model_binding`, cause `malformed-declaration`, the locus of the unit's `model` declaration, `details` `null` and a message naming `DUPLICATE_PARAM` and that entry's own package pointer; the refusal's human message holds the three messages on three lines in that order and contains no ", and N more" suffix. Serializing it twice gives the same bytes. | Test (TC-3044) |
-| FR-286-AC-25 | Every file of `fsl-replay/tests/fixtures/outcome-golden/` equals the `to_bytes` output of the document its criterion builds and validates against `OUTCOME_SCHEMA_1` (`$id` `urn:filament:outcome:1`); the corpus holds a document of every operation, every `result` kind and every `Counterexample` variant. FR-286-AC-2's golden document fails validation with removing `/diagnostics/0/code` (an error at instance pointer `/diagnostics/0`, keyword `required`), with adding a member `fix` to `/diagnostics/0` (an error at `/diagnostics/0`, an unevaluated member `fix`), with `/category` set to `"violated"` (an error at `/category`) and with `/diagnostics/0/hint` set to `""` (an error at `/diagnostics/0/hint`); FR-520-AC-1's `analyze` document with `aggregate` removed fails at the root pointer, and FR-286-AC-1's `check` document with an `aggregate` member added fails at the root pointer. | Test (TC-3110) |
-| FR-286-AC-26 | `to_bytes` of each golden document equals its own RFC 8785 re-encoding through `quire-canonical`, and FR-286-AC-2's diagnostic is written with its members in the order `cause`, `code`, `details`, `hint`, `locus`, `message`. The canonical check refuses the bytes `{"code":"ill_typed","cause":"type-mismatch"}`, whose members are out of order, because their re-encoding differs from them. | Test (TC-3111) |
-| FR-286-AC-27 | FR-286-AC-5's `seven` `execute` request and FR-286-AC-18's request naming the parameter `zz`, each written with the members of every object reversed, give documents byte-equal to the documents of the requests as written; FR-056-AC-73's three-defect refusal keeps its three diagnostics in intake order. | Test (TC-3111) |
-| FR-286-AC-28 | FR-286-AC-2's `ill_typed`/`type-mismatch` diagnostic carries `hint` equal to `hint_for(Code::IllTyped, Some("type-mismatch"))`, a nonempty sentence ending in `.`; FR-286-AC-23's `output-failure`/`output-failure` diagnostic, a pair with no catalog row, has no `hint` member; FR-286-AC-15's blank-label source diagnostic built through `from_source_diagnostic` carries the hint its pair's row gives or none, the same through a compile, parse and format refusal. | Test (TC-3112) |
-| FR-286-AC-29 | `check_hint_catalog(HINTS, catalog_pairs())` returns `Ok`; with a row `(Code::IllTyped, Some("type-mistmatch"))` added it returns `Err(HintCatalogError::UnknownPair)` naming `ill_typed` and `type-mistmatch`; with a second `(Code::IllTyped, Some("type-mismatch"))` row added, `Err(DuplicatePair)`; with a row whose text holds a line feed, or does not end in `.`, `Err(MalformedText)` naming its pair. | Test (TC-3113) |
-| FR-286-AC-30 | `hint_for` returns a text for every pair of the "Fix hints" table, `invalid-request` and `io-error` with no cause included, and returns `None` for `(Code::OutputFailure, Some("output-failure"))`. | Test (TC-3113) |
+| FR-286-AC-25 | Every file of `fsl-command/tests/fixtures/outcome-golden/` equals the encoded bytes of the document its writer builds and validates against `OUTCOME_SCHEMA_1` (`$id` `urn:filament:outcome:1`). The corpus holds a document of every `Operation`, each built by the builder the "Golden corpus" table names (`select`, `check_fences`, `lower`, `generate` and `render` each cancelled, at a limit and faulted through `from_stopped`), every `result` kind and every `Counterexample` variant. FR-286-AC-2's golden document fails validation with removing `/diagnostics/0/code` (an error at instance pointer `/diagnostics/0`, keyword `required`), with adding a member `fix` to `/diagnostics/0` (an error at `/diagnostics/0`, an unevaluated member `fix`), with `/category` set to `"violated"` (an error at `/category`) and with `/diagnostics/0/hint` set to `""` (an error at `/diagnostics/0/hint`); FR-520-AC-1's `analyze` document with `aggregate` removed fails at the root pointer, and FR-286-AC-1's `check` document with an `aggregate` member added fails at the root pointer. | Test (TC-3110) |
+| FR-286-AC-26 | The bytes of every golden document, the `analyze` documents `fsl-analyze` assembles and the `monitor` and `execute` documents `fsl-command` writes included, equal their own RFC 8785 re-encoding through `quire-canonical`. FR-286-AC-2's diagnostic is written with its members in the order `cause`, `code`, `details`, `hint`, `locus`, `message`, and an `unsupported_construct`/`declaration-form` diagnostic carrying `construct`, `declaration`, `profile` and `text` in the order `cause`, `code`, `construct`, `declaration`, `details`, `hint`, `locus`, `message`, `profile`, `text`. The canonical check refuses the bytes `{"code":"ill_typed","cause":"type-mismatch"}`, whose members are out of order. `fsl_foundation::canonical_json::encode` of the object `{"\u{E000}": 1, "\u{1F600}": 2}` writes the `U+1F600` key first, by UTF-16 code units, where UTF-8 byte order would write it second. | Test (TC-3111) |
+| FR-286-AC-27 | FR-286-AC-5's `seven` `execute` request and FR-286-AC-18's request naming the parameter `zz`, each written with the members of every object reversed, give documents byte-equal to the documents of the requests as written, and so does a `refinement_transfer` request (FR-1031) with the one unknown member `zz`. The same request with two unknown members written `yy` then `zz` refuses naming `/refinement_transfer/yy`, and written `zz` then `yy` names `/refinement_transfer/zz`: FR-1031 refuses at the first member in request order, so this pair differs by design. FR-056-AC-73's three-defect refusal keeps its three diagnostics in intake order. | Test (TC-3111) |
+| FR-286-AC-28 | FR-286-AC-2's `ill_typed`/`type-mismatch` diagnostic carries `hint` equal to `hint_for(Code::IllTyped, Some("type-mismatch"))`, a nonempty sentence ending in `.`; the `io-error` diagnostic of FR-865-AC-4's `fsl run nosuch.json` carries `hint` equal to `hint_for(Code::IoError, None)`. FR-286-AC-23's `output-failure`/`output-failure` diagnostic, the cause-less `invalid-request` diagnostic of a malformed request document, and FR-286-AC-15's `invalid_source_identity`/`blank-label` diagnostic, pairs with no catalog row, have no `hint` member; the blank-label diagnostic has none through `from_source_diagnostic` and through a compile, a parse and a format refusal alike. | Test (TC-3112) |
+| FR-286-AC-29 | `check_hint_catalog(HINTS, fsl_command::diagnostic_pairs())` returns `Ok`, and `diagnostic_pairs()` holds every pair of the "Fix hints" table; with a row `(Code::IllTyped, Some("type-mistmatch"))` added it returns `Err(HintCatalogError::UnknownPair)` naming `ill_typed` and `type-mistmatch`; with a second `(Code::IllTyped, Some("type-mismatch"))` row added, `Err(DuplicatePair)`; with a row whose text holds a line feed, one holding U+0085, one that does not end in `.`, and one of 101 `é` and a final `.` (203 bytes, 102 code points), `Err(MalformedText)` naming its pair. | Test (TC-3113) |
+| FR-286-AC-30 | `hint_for` returns a text for every one of the 23 pairs of the "Fix hints" table, `io-error` with no cause included, and returns `None` for `(Code::OutputFailure, Some("output-failure"))` and for `(Code::InvalidRequest, None)`. | Test (TC-3113) |
+| FR-286-AC-31 | The schema completeness test passes over every writer of the "Published schema" table: the golden `execute` document of FR-963-AC-1's call with `requirements` and its root `registry`, an FR-990-AC-1 `analyze` item with `obligations`, `closure` and `global`, an FR-990-AC-3 item with `recording`, FR-634-AC-1's simulation item, a diagnostic with `construct`, `declaration`, `profile` and `text`, and an FR-650 record value whose `fields` hold the names `a` and `zz` all validate. Run against a copy of the schema with `max_messages` removed from the item definition, it fails naming `/items/*/max_messages`; the corpus coverage test run against a copy declaring a diagnostic member `unused` fails naming `/diagnostics/*/unused`. | Test (TC-3116) |
 
 ## Status
 
@@ -658,6 +767,13 @@ outcomes.
   writes the hint in text; FSpec FR-520 and
   [FR-644](FR-644-stream-observations-through-the-monitor-command.md) name
   this schema for the analyze result and the monitor summary's items.
+- [FR-963](FR-963-report-a-run-call-s-settled-requirement-items-in-the-run-outcome.md),
+  [FR-990](FR-990-report-per-obligation-and-global-conformance-results.md),
+  [FR-1032](FR-1032-bind-a-protocol-recording-to-the-analyze-request-by-document-identity.md),
+  [FR-634](FR-634-request-a-simulation-item.md) and
+  [FR-621](FR-621-write-the-analyze-result-as-one-outcome-document-per-request.md):
+  members the schema describes; [FR-1031](FR-1031-refuse-a-refinement-transfer-request-by-stage.md):
+  a refusal that depends on request order.
 
 ## Overlap
 

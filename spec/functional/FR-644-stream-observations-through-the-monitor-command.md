@@ -238,8 +238,9 @@ monitor is most likely to also prove over its model.
   `options.provider_limits`, and its production negotiator as `negotiate`;
   it refuses neither option on `monitor`.
 - Every event and summary `command::monitor` hands back shall validate
-  against its published schema, and its canonical encoding shall be RFC
-  8785's.
+  against its published schema.
+- The driver and `command::run` shall encode every event and summary
+  through FR-286's one encoder, `fsl_foundation::canonical_json::encode`.
 
 ### Published schemas
 
@@ -264,7 +265,16 @@ document and validates against FR-286's `urn:filament:outcome:1`.
   its `cancelled` exactly when the stream was cancelled, and its `items` and
   `registry` together or not at all.
 - `disposition` is described by a `$defs` entry transcribed from FR-267's
-  clause-run disposition spelling. The summary's `items` entries and
+  clause-run disposition spelling, for an event that names a clause. A
+  refusal event names none: its `clause` is `null`, `settled` `false`,
+  `basis` `unavailable`, and its `disposition` is one of two closed shapes.
+  A malformed record gives the request refusal `{"stage": "request",
+  "category": "refusal", "cause": "invalid-request", "member", "message"}`,
+  `member` the record member it names; a step FR-643 refuses (order,
+  admission, contradiction) gives FR-643's refusal record, the
+  `filament-outcome/1` document of the refusal, a `$ref` to
+  `urn:filament:outcome:1`. The schema selects the shape by `clause`:
+  `null` admits only these two, a clause name only FR-267's disposition. The summary's `items` entries and
   `registry` are FR-621's analyze item and FR-635's registry, and are a
   `$ref` into `urn:filament:outcome:1`, so one description serves the
   monitor summary and the analyze document.
@@ -298,7 +308,7 @@ is its own RFC 8785 re-encoding, and validates each event line against
 | FR-644-AC-9 | AC-1's stream with the recording provider in `providers` and no `items` calls neither the negotiator nor the provider, and its events and summary are byte-equal to the stream's with `providers` empty. | Test (TC-2984) |
 | FR-644-AC-10 | AC-8's request whose item names the unregistered backend `fsl.absent` settles that item `invalid-request` `unknown-backend` in the summary's `items`, calls no provider, still streams every record with AC-1's events, and exits 20; AC-8's request with a provider answering `unknown` settles the item `inconclusive` `solver-inconclusive` and exits 10 (the violation outranks it), and with every clause successful exits 22; two providers of one `BackendId` refuse `invalid-request` naming `providers`, exit 20, before any record is read and with no event. | Test (TC-2984) |
 | FR-644-AC-11 | AC-8's request with `cancel` fired before `monitor` is called settles the item `incomplete` with cause `cancelled{requested}` and sends no provider request; the driver's `fsl monitor monitor.json --provider-config providers.json --input records.jsonl` over AC-8's request and a configured test plugin writes AC-8's events and a summary carrying its `items`, and does not refuse `--provider-config`. | Test (TC-2984) |
-| FR-644-AC-12 | Every line of `fsl-command/tests/fixtures/monitor-golden/` equals the canonical encoding of the event or summary its stream gives, is its own RFC 8785 re-encoding, and validates against `MONITOR_EVENT_SCHEMA_1` or `MONITOR_SUMMARY_SCHEMA_1`. AC-7's record-2 event fails validation with `settlement` removed (an error at the root pointer, keyword `required`), with `/settlement/trigger` set to `"decide"` (an error at `/settlement/trigger`) and with a member `extra` added (an error at the root pointer); AC-7's record-0 event with a `settlement` added fails at the root pointer; AC-7's summary with a `ledger` added fails, and AC-8's summary with `registry` removed fails, each at the root pointer. | Test (TC-3115) |
+| FR-644-AC-12 | Every line of `fsl-command/tests/fixtures/monitor-golden/` equals the canonical encoding of the event or summary its stream gives, is its own RFC 8785 re-encoding, and validates against `MONITOR_EVENT_SCHEMA_1` or `MONITOR_SUMMARY_SCHEMA_1`. AC-7's record-2 event fails validation with `settlement` removed (an error at the root pointer, keyword `required`), with `/settlement/trigger` set to `"decide"` (an error at `/settlement/trigger`) and with a member `extra` added (an error at the root pointer); AC-7's record-0 event with a `settlement` added fails at the root pointer; AC-2's refusal event validates, and fails with `/disposition/member` removed (an error at `/disposition`) and with `clause` set to a clause name while its `disposition` stays the request refusal (an error at `/disposition`); AC-6's `through` refusal event validates; AC-7's summary with a `ledger` added fails, and AC-8's summary with `registry` removed fails, each at the root pointer. | Test (TC-3115) |
 
 ## Dependencies
 

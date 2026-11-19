@@ -26,6 +26,9 @@ FR-644-AC-12.
    `settlement` to its record-0 event. Validate each.
 3. Add a `ledger` to FR-644-AC-7's summary; remove `registry` from
    FR-644-AC-8's summary. Validate each.
+4. Validate FR-644-AC-2's refusal event and FR-644-AC-6's `through`
+   refusal event; remove `/disposition/member` from the AC-2 event; set
+   its `clause` to a clause name. Validate each.
 
 ## Expected Results
 
@@ -34,5 +37,7 @@ FR-644-AC-12.
 - Step 2: errors at the root pointer (keyword `required`),
   `/settlement/trigger`, the root pointer and the root pointer.
 - Step 3: both fail at the root pointer.
+- Step 4: both refusal events validate; the two mutations fail at
+  `/disposition`.
 
 Test: `fsl-command/tests/it/monitor_schema.rs::every_golden_monitor_line_validates_and_mutations_fail_at_their_pointer`.

@@ -11,15 +11,20 @@ relationships:
 ## Description
 
 Verify that the outcome schema `urn:filament:outcome:1` accepts every golden
-outcome document and rejects mutated documents at the named instance
-pointer. Scope: FR-286-AC-25.
+outcome document, that the corpus covers every operation, and that the
+schema rejects mutated documents at the named instance pointer. Scope:
+FR-286-AC-25.
 
 ## Test Procedure
 
 1. Rebuild the document of each file of
-   `fsl-replay/tests/fixtures/outcome-golden/` and compare its `to_bytes`
-   output with the file; validate each file against `OUTCOME_SCHEMA_1`.
-2. Check that the corpus holds a document of every `Operation`, every
+   `fsl-command/tests/fixtures/outcome-golden/` through the writer that
+   builds it and compare its encoded bytes with the file; validate each
+   file against `OUTCOME_SCHEMA_1`.
+2. Check that the corpus holds a document of every `Operation`, built by
+   the builder FR-286's "Golden corpus" table names (for `select`,
+   `check_fences`, `lower`, `generate` and `render`, a cancelled, a
+   limit-stopped and a faulted `from_stopped` document each), and of every
    `result` kind and every `Counterexample` variant.
 3. Mutate FR-286-AC-2's golden document four ways: remove
    `/diagnostics/0/code`; add a member `fix` to `/diagnostics/0`; set
@@ -37,4 +42,4 @@ pointer. Scope: FR-286-AC-25.
   `/diagnostics/0/hint` respectively.
 - Step 4: both fail with an error at the root pointer.
 
-Test: `fsl-replay/tests/it/outcome_schema.rs::every_golden_outcome_validates_and_mutations_fail_at_their_pointer`.
+Test: `fsl-command/tests/it/outcome_schema.rs::every_golden_outcome_validates_and_mutations_fail_at_their_pointer`.

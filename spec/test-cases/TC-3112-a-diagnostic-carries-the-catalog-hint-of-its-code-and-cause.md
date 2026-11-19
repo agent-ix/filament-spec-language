@@ -16,10 +16,13 @@ FR-286-AC-28.
 
 ## Test Procedure
 
-1. Serialize FR-286-AC-2's `check` refusal and read the `ill_typed`
+1. Encode FR-286-AC-2's `check` refusal and read the `ill_typed`
    diagnostic.
-2. Serialize FR-286-AC-23's export output failure.
-3. Project FR-286-AC-15's blank-label source diagnostic through
+2. Run `fsl run nosuch.json` through the command library and read the
+   `io-error` diagnostic.
+3. Encode FR-286-AC-23's export output failure, and the refusal of a
+   request document that is not JSON.
+4. Project FR-286-AC-15's blank-label source diagnostic through
    `from_source_diagnostic`, and through a compile, a parse and a format
    refusal.
 
@@ -27,8 +30,9 @@ FR-286-AC-28.
 
 - Step 1: `hint` equals `hint_for(Code::IllTyped, Some("type-mismatch"))`,
   is nonempty and ends in `.`.
-- Step 2: the `output-failure` diagnostic has no `hint` member.
-- Step 3: the four diagnostics carry the same `hint`, or all four none,
-  as the pair's catalog row gives.
+- Step 2: `hint` equals `hint_for(Code::IoError, None)`.
+- Step 3: neither the `output-failure` diagnostic nor the cause-less
+  `invalid-request` diagnostic has a `hint` member.
+- Step 4: none of the four diagnostics has a `hint` member.
 
-Test: `fsl-replay/tests/it/outcome_schema.rs::a_diagnostic_carries_the_catalog_hint_of_its_pair`.
+Test: `fsl-command/tests/it/outcome_schema.rs::a_diagnostic_carries_the_catalog_hint_of_its_pair`.
