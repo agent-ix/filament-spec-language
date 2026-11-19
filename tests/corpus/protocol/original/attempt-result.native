@@ -9,8 +9,8 @@ object Cell {
 protocol ResultRead using p over (cell: Cell) on origin {
   role Worker on Cell;
   run sequence Main {
-    attempt Read by Worker on Cell::flag contracts [] as (result: Boolean) { true };
-    check Gate using v { result = result };
+    attempt Read by Worker on Cell::flag contracts [] as (reading: Boolean) { true };
+    check Gate using v { reading = reading };
   }
   finish Done as (done: Boolean) { true };
 }

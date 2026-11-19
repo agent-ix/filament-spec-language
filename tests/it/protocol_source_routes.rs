@@ -664,7 +664,7 @@ fn original_attempt_result_read_requires_the_operation_result_type() {
     assert!(!accepted.package_bytes().is_empty());
     let wrong = directory.path().join("wrong-result.native");
     let text = std::fs::read_to_string(control).unwrap();
-    std::fs::write(&wrong, text.replace("result: Boolean", "result: Integer")).unwrap();
+    std::fs::write(&wrong, text.replace("reading: Boolean", "reading: Integer")).unwrap();
     let error = match command::compile_outcome(&write(directory.path(), &request(&wrong))) {
         Ok(_) => panic!("a mismatched Integer binder must not expose a Boolean operation result"),
         Err(error) => error,
