@@ -82,9 +82,10 @@ message never activates and does not count against the claim.
   has probability 0, and under every scheduler no scheduler activates. No
   activated run exists to violate it. Such an instance never makes the item `refuted` and never makes it `inconclusive`.
 - An activated instance's value SHALL be the conditioned value of FR-196
-  "Conditioned readings": under a workload the exact ratio of `Pr(E and act)`
-  to `Pr(act)`, and under every scheduler the optimum over the schedulers
-  that activate, by the reset construction. Its proof carries FR-201's
+  "Conditioned readings": under a workload that leaves no choice the exact
+  ratio of `Pr(E and act)` to `Pr(act)`, and under every scheduler or a
+  workload with free delays the optimum over the schedulers that activate,
+  by the reset construction. Its proof carries FR-201's
   `Conditional` certificate.
 
 ### Settling the item

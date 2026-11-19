@@ -304,7 +304,7 @@ fn probabilistic_on_each_reports_conditional_certificate_and_instance() {
     assert_eq!(label(item), "proved", "{item}");
     assert_eq!(item["certificate"]["kind"], "conditional", "{item}");
     let conditional = &item["certificate"]["document"]["conditional"];
-    assert_eq!(conditional["mode"], "workload", "{item}");
+    assert_eq!(conditional["mode"], "ratio", "{item}");
     // `m` activates at position 0, so at its initial key the numerator is the
     // `on origin` value and the denominator 1.
     let holds_value = |part: &str, value: Value| {

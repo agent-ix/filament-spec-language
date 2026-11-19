@@ -179,7 +179,9 @@ without it replays to several model states. Every other step has
 `ProductAction` is the following new closed semantic action type, owned with
 ProductKey in fsl-replay. The untimed build uses its first three members,
 `Identity`, `PostState` and `TerminalStutter`; the six delay, observation
-and race members exist in a timed product only (FR-204). The enum below is the
+and race members exist in a timed product only (FR-204). `Reset` is never an
+edge of the product: it names the action the reset process adds
+("Conditioned readings") where a certificate policy chooses it. The enum below is the
 `fsl-replay` form, whose `PostState` holds the canonical `ProductKey`; the
 builder's `ProductAction` holds the in-memory `ProbKey` in the same member. An edge's `action` is its operation projection;
 None alone SHALL NOT identify a delay or observation choice.
@@ -195,6 +197,7 @@ pub enum ProductAction {
     IdleObserve,                // clock-valued observation, no additional elapsed time
     WorkloadResolve { identity: ScheduledIdentity, delay: u64 }, // all-free workload race choice (FR-204)
     FreeDelays(Vec<FreeDelayRow>), // mixed given/free workload race: post-draw free delays (FR-204, ADR-026 SD-3)
+    Reset,                       // the reset process's step back to the instance's initial key ("Conditioned readings")
 }
 pub struct FreeDelayRow {
     pub given: Vec<(ScheduledIdentity, u64)>, // one drawn given-delay vector, digital units
@@ -205,8 +208,8 @@ pub struct FreeDelayRow {
 Canonical semantic action bodies use exactly `["identity",schedule]`,
 `["post-state",product_key]`, `["terminal-stutter"]`, `["delay"]`,
 `["enter-idle-delay"]`, `["idle-delay"]`, `["idle-observe"]`,
-`["workload-resolve",schedule,delay]` and
-`["free-delays",[[given,free],...]]` respectively, where `delay` is the digital
+`["workload-resolve",schedule,delay]`,
+`["free-delays",[[given,free],...]]` and `["reset"]` respectively, where `delay` is the digital
 unit count as a canonical unsigned decimal string, and where schedule uses the full existing schedule form below and product_key
 is a parsed full canonical key, not a local index/string wrapper. In
 `free-delays`, `given` and `free` are arrays of `[schedule,delay]` pairs, each
@@ -304,14 +307,18 @@ checker rederives every set below with its own graph code:
   positive probability; with a fairness set, none from which a fair
   continuation exists (FR-200). This is graph reachability, with no value
   computed, and is decided before any value is.
-- **Under a workload.** The value is `Pr(E and act) / Pr(act)`, or
-  `Ex(X · [act]) / Pr(act)` for an expectation or long-run form, both
-  computed exactly on this one product: the numerator is the form's value
+- **Under a workload that leaves no choice.** The value is
+  `Pr(E and act) / Pr(act)`, or `Ex(X · [act]) / Pr(act)` for an expectation
+  or long-run form, both computed exactly on this one Markov chain: the numerator is the form's value
   with every never-activating path valued 0, the denominator the
   reachability probability of the first activating states.
-- **Under every scheduler.** The value is the minimum over schedulers for a
-  `>=` bound, the maximum for a `<=` bound, of the conditional value over
-  the schedulers that activate with positive probability. It is computed by
+- **Under every scheduler, and under a workload with free delays.** The
+  value is the minimum for a `>=` bound, the maximum for a `<=` bound, of the
+  conditional value over the schedulers that activate with positive
+  probability; under a workload with free delays (FR-204's
+  `workload-minimum` and `workload-maximum`) the schedulers choose only the
+  free delays. The ratio of a separately optimised numerator and
+  denominator is not this optimum, so no ratio is formed here. It is computed by
   the reset construction of Baier, Klein, Klüppelholz and Märcker (TACAS
   2014). First the optimal value of the form from every first activating
   state, `post(s)`, is computed over the product read from activation on.
@@ -320,13 +327,30 @@ checker rederives every set below with its own graph code:
   `post(s)`, and an initial state that is active takes `post` as its value
   with no reset process; each waiting state from which no first activating
   state is reachable gets one edge of probability 1 back to the instance's
-  initial state in place of its own edges; and each maximal end component
-  of the waiting states, under the actions that keep a run among them,
-  gains one extra action leading back to the initial state. The value is the optimal expected terminal value of the reset
-  process at the initial state, over its schedulers that reach a terminal
-  state with probability 1; with a fairness set, the fair end components
-  of FR-200 replace the end components. The optimum is attained by a
-  scheduler that activates with positive probability.
+  initial state in place of its own edges; and each waiting state that lies
+  in an end component of the waiting states gains one extra action,
+  `ProductAction::Reset`, with one edge of probability 1 back to the initial
+  state. A terminal state of the reset process is a copy of its first
+  activating state: it keeps that state's key, has no edges and takes
+  `post`'s value at that key. The value is the optimal expected terminal
+  value of the reset process at the initial state over its **proper**
+  schedulers, those that reach a terminal state with probability 1; with a
+  fairness set, only fair schedulers count (FR-200). The optimum is attained
+  by a memoryless proper scheduler, which activates with positive
+  probability.
+- **Proper optimum without qualitative collapse.** A run that stays in a
+  waiting end component forever, by an ordinary action or by `Reset`, is
+  not proper. So no `Prob0` or `Prob1` set is computed in the reset
+  process, and its optimum is characterised by two conditions. The first is
+  a bound that every action respects at every waiting state: `x <= F(x)`
+  for a minimum and `F(y) <= y` for a maximum, `Reset` included, with no
+  ranking. By the submartingale argument it bounds every proper scheduler's
+  value. The second is a proper memoryless policy that attains the bound:
+  `x = F_policy(x)` at every waiting state, and a ranking under which every
+  waiting state has a successor of positive probability under the policy
+  with a smaller rank, so its chain reaches a terminal state with
+  probability 1. Staying forever has value 0 in the reset process but is
+  never proper, so it attains no minimum.
 
 A quantile over every scheduler is decided by ADR-028 XF-2's shifted reward,
 which already gives a never-activating scheduler no part in the bound; its

@@ -62,8 +62,8 @@ pub struct ProbabilityCertificate {
 }
 
 pub enum ConditionalCertificate {
-    Workload { numerator: Box<ProbabilityCertificate>, denominator: Box<ProbabilityCertificate> },
-    EveryScheduler { post: Box<ProbabilityCertificate>, reset: Box<ProbabilityCertificate> },
+    Ratio { numerator: Box<ProbabilityCertificate>, denominator: Box<ProbabilityCertificate> },  // a workload that leaves no choice
+    Optimum { post: Box<ProbabilityCertificate>, reset: Box<ProbabilityCertificate> },       // every scheduler, workload-minimum, workload-maximum
     Vacuous,
 }
 
@@ -82,10 +82,12 @@ pub enum CertificateCheck { Accepted { bound_side: Bound }, Rejected(Certificate
 The checker uses FR-338's `CertificateRejection{rule, at}`. FR-338's
 `CertificateRule` gains `InequalityFails` and `ThresholdMissed`; the checker
 also uses FR-169's `RankMissing` and `RankBroken` and FR-163's `Malformed`.
-FR-338's `CertificateLocus` gains `ProbabilisticProductState(ProductKey)`,
-the complete FR-196 product key; the checker also uses FR-163's
+FR-338's `CertificateLocus` gains `ProbabilisticProductState { key: ProductKey, part:
+Option<ConditionalPart> }`, the complete FR-196 product key and, inside a
+`Conditional` certificate, the part (`Numerator`, `Denominator`, `Post` or
+`Reset`) whose check failed; the checker also uses FR-163's
 `CertificateMember`. FSpec FR-331 writes the first as its probabilistic
-product state form `{product_key}` and the second as `{member}`.
+product state form `{product_key}`, with `part` when present, and the second as `{member}`.
 
 | Failure | `rule` | `at` |
 | --- | --- | --- |
@@ -94,9 +96,9 @@ product state form `{product_key}` and the second as `{member}`.
 | A non-target state with `x > 0` has no rank | `RankMissing` | `ProbabilisticProductState` of that state |
 | A ranked non-target state with `x > 0` has no successor of positive probability, `x > 0` and a smaller rank | `RankBroken` | `ProbabilisticProductState` of that state |
 | The conditions hold, but the initial state's value is not on the claim's side of the threshold | `ThresholdMissed` | `ProbabilisticProductState` of the initial state |
-| A `Lower` or `Exact` certificate without `ranking`, a lower bound on a maximum without `policy`, or a `LongRun` certificate without `components`, or a `Conditional` certificate without `conditional`, without a part its mode requires, or with a part that is not `Exact` | `Malformed` | `CertificateMember` naming `ranking`, `policy`, `components`, `conditional`, `numerator`, `denominator`, `post` or `reset` |
-| A `Workload` denominator of 0 at an initial key from which a first activating state is reachable, or a `Vacuous` certificate where one is reachable | `InequalityFails` | `ProbabilisticProductState` of the initial state |
-| A part of a `Conditional` certificate fails its own conditions; parts are checked in the order `numerator`, `denominator` or `post`, `reset`, and the first failing part is reported | that part's rule | that part's locus |
+| A `Lower` or `Exact` certificate without `ranking`, a lower bound on a maximum without `policy`, or a `LongRun` certificate without `components`, a `Conditional` certificate without `conditional`, with an unknown `mode`, without a part its mode requires or with a part that is not `Exact`, an `Optimum` `reset` without `policy` or `ranking`, or a `Ratio` certificate under an objective other than `workload` | `Malformed` | `CertificateMember` naming `ranking`, `policy`, `components`, `conditional`, `mode`, `numerator`, `denominator`, `post` or `reset` |
+| A `Ratio` denominator of 0 at an initial key from which a first activating state is reachable, or a `Vacuous` certificate where one is reachable | `InequalityFails` | `ProbabilisticProductState` of the initial state |
+| A part of a `Conditional` certificate fails its own conditions (for `reset`, FR-196's proper-optimum conditions); parts are checked in the order `numerator`, `denominator` or `post`, `reset`, and the first failing part is reported | that part's rule | that part's `ProbabilisticProductState` with `part` naming it |
 
 ## Behavior
 
@@ -583,39 +585,59 @@ ordinal, action-key transport, qualitative-set field or formula AST is added.
 A proof of a conditioned reading (FR-196 "Conditioned readings": an `on each`
 instance, or a quantile under a workload) SHALL carry a `Conditional`
 certificate in the general form, written in FSpec FR-412's `conditional`
-spelling. A quantile over every scheduler keeps the `Upper` certificate of
-"General checking conditions". The checker SHALL rebuild the product with its
-`instance` and `activation` members, the first activating states, the
-states from which they are reachable and, under every scheduler, the reset
+spelling. A quantile over every scheduler keeps its ADR-028 XF-2
+shifted-reward certificate of "General checking conditions": an `Upper`
+certificate for `max E[Y]` for the `>=` form, and a `Lower` or `Exact`
+certificate for `min E[X] >= 0` for the `<=` form. The checker SHALL
+rebuild the product with its `instance` and `activation` members, the first
+activating states, the states from which they are reachable and the reset
 process, by its own graph code, and read none of them from the certificate.
 
-- `Workload`: `numerator` and `denominator` are `Exact` certificates over
-  that one product and workload, for the form's value with every
-  never-activating path valued 0 and for the reachability of the first
-  activating states. The checker SHALL check each by this requirement's
-  conditions and compare, at each initial key, the numerator's value over
-  the denominator's with the threshold; at an initial key where the
-  denominator is 0 it SHALL confirm by its own reachability search that no
-  first activating state is reachable, and that instance holds vacuously.
-- `EveryScheduler`: `post` is an `Exact` certificate of the form's optimal
-  value from every first activating state, over the product read from
-  activation on, with the claim's optimization; `reset` is an `Exact`
-  reachability certificate over the reset process the checker rebuilt, with
-  each first activating state terminal at its `post` value, each step back
-  leading to its instance's own initial key, and the claim's optimization.
-  The checker SHALL check both, the ranking of `reset` showing that its
-  schedulers reach a terminal state with probability 1, and compare
-  `reset`'s value at each initial key from which a first activating state
-  is reachable with the threshold; every other initial key it SHALL confirm
-  vacuous by its own reachability search. With a fairness
-  set it SHALL use FR-200's fair end components in the reset process.
-- `Vacuous`, for a reading whose every instance is vacuous: the checker SHALL
-  accept it exactly when its own reachability search finds no first
-  activating state reachable from any initial key
-  (with a fairness set, none from which a fair continuation exists), with no
-  value read.
+- `Ratio`, only under a workload that leaves no choice (objective
+  `workload`): `numerator` and `denominator` are `Exact` certificates over
+  that one Markov chain, for the form's value with every never-activating
+  path valued 0 and for the reachability of the first activating states.
+  The checker SHALL check each by this requirement's conditions and compare,
+  at each initial key, the numerator's value over the denominator's with
+  the threshold. At an initial key where the denominator is 0 it SHALL
+  confirm by its own reachability search that no first activating state is
+  reachable, and that instance holds vacuously. A `Ratio` certificate
+  offered under every scheduler or under `workload-minimum` or
+  `workload-maximum` is rejected `Malformed` at `mode`, since the optimum of
+  a ratio is not the ratio of two optima.
+- `Optimum`, under every scheduler and under `workload-minimum` or
+  `workload-maximum`: `post` is an `Exact` certificate of the form's
+  optimal value from every first activating state, over the product read
+  from activation on, with the claim's optimization. `reset` is checked over
+  the reset process the checker rebuilt (FR-196), whose terminal copies take
+  `post`'s values at their keys and carry no rows of their own; `reset`
+  names only waiting states. The checker SHALL check `reset` by FR-196's
+  proper-optimum conditions and not by the qualitative-collapse conditions
+  of `Exact`: it computes no `Prob0` or `Prob1` set in the reset process.
+  - Its `values` SHALL satisfy, at every waiting state and under every
+    action including `Reset`, `x <= F(x)` for a minimum or `F(y) <= y` for a
+    maximum.
+  - Its `policy` SHALL give one choice per waiting state, a
+    `ProductAction` or `Reset`, with `x = F_policy(x)` there.
+  - Its `ranking` SHALL give every waiting state a successor of positive
+    probability under the policy with a smaller rank, terminal copies having
+    rank 0, so the policy is proper.
+  The checker SHALL compare `reset`'s value at each initial key from which
+  a first activating state is reachable with the threshold, and confirm
+  every other initial key vacuous by its own reachability search. With a
+  fairness set, only fair policies are proper, checked by FR-200's
+  fair-end-component condition on the policy's chain.
+- `Vacuous`, for a reading whose every instance is vacuous: the checker
+  SHALL accept it exactly when its own reachability search finds no first
+  activating state reachable from any initial key (with a fairness set,
+  none from which a fair continuation exists), with no value read.
 - A `Conditional` certificate settles the bound on either side, as `Exact`
   does; a `Vacuous` one settles it on the side of a proof.
+- A rejection in a part names that part. The `ProbabilisticProductState`
+  locus carries `part`, one of `numerator`, `denominator`, `post` and
+  `reset`, which FSpec FR-331 writes as `{product_key, part}`. Parts are
+  checked in the order `numerator`, `denominator`, or `post`, `reset`, and
+  the first failing part is reported.
 
 ### Verdict path
 
@@ -1242,8 +1264,9 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-49 | Independent bounded reconstruction checks exact targets, optimization, complete eight-member keys, actual monitor context and remaining-horizon ranks without producer linkage. Wrong identity/binding/receiver, goal, monitor, horizon, values/ranks, coverage or canonical transport cannot be accepted, with existing precise rule/locus. Numeric invariance introduces no fair-MEC, policy, key member or new vacuity outcome. | Test |
 | FR-201-AC-50 | Actual Requested/Deadline cancellation and byte/state/edge/work/storage/representation/arithmetic exhaustion during checked fairness/source declaration intake, structural identity traversal/encoding, canonical writing, raw/full-key admission and independent graph/arithmetic/rank checking retain typed causes without accepted truth. Earlier source refusals and unsupported/undefined evaluation remain distinct. External transition/private-reader and ordinary interpreter allocation boundaries are not claimed qualified. | Test |
 | FR-201-AC-51 | `fsl-probability-check`, run as a separate process with no `fsl-analyze` linkage, accepts an EN-5 `Exact` certificate for FR-201-AC-1, `Lower` and `Upper` certificates for a value-bounds proof of a cyclic DTMC eventual claim, a `LongRun` certificate for FR-201-AC-27, an unbounded fair eventual `Exact` certificate for `FairTerminates` over a cyclic MDP, a finite-horizon quantile certificate under every scheduler and a digital-clock certificate for FSpec FR-421-AC-1, each read from its bytes with the byte provision of an emitted package; each with one value altered is rejected with its FR-201 rule and locus. | Test (TC-2065) |
-| FR-201-AC-52 | Over FSpec FR-407-AC-18's model, written as an `on each (x: T) when (g)` claim, EN-5 emits for `probability >= rational(1, 2)` over every scheduler an `EveryScheduler` `Conditional` certificate (`post` 1 and `1/2` at the two first activating states, `reset` `1/2` at the initial state) that `fsl-probability-check` accepts with side `AtLeast`; with `reset`'s initial value `1/4` it is rejected `InequalityFails` at the initial state, and for `rational(3, 5)` `ThresholdMissed`. Under the workload choosing both actions with `1/2` each, the `Workload` certificate (numerator `3/8`, denominator `5/8`) is accepted at `rational(3, 5)`; with the denominator replaced by 1 it is rejected `InequalityFails`. | Test (TC-3061) |
-| FR-201-AC-53 | Over the variant where `g` is unreachable, a `Vacuous` certificate is accepted under both scheduler clauses, and over the model itself it is rejected `InequalityFails` at the initial state; a `Conditional` certificate without `conditional`, or a `Workload` one whose `numerator` is a `Lower` certificate, is rejected `Malformed` naming `conditional` or `numerator`. | Test (TC-3061) |
+| FR-201-AC-52 | Over FSpec FR-407-AC-18's model, written as an `on each (x: T) when (g)` claim, EN-5 emits for `probability >= rational(1, 2)` over every scheduler an `Optimum` `Conditional` certificate (`post` 1 and `1/2` at the two first activating states, `reset` `1/2` at the initial state with policy `b`) that `fsl-probability-check` accepts with side `AtLeast`; with `reset`'s initial value `1/4` it is rejected `InequalityFails` at the initial state with `part` `reset`, and for `rational(3, 5)` `ThresholdMissed`. Under the workload choosing both actions with `1/2` each, the `Ratio` certificate (numerator `3/8`, denominator `5/8`) is accepted at `rational(3, 5)`; with the denominator replaced by 1 it is rejected `InequalityFails` with `part` `denominator`. | Test (TC-3061) |
+| FR-201-AC-53 | Over the variant where `g` is unreachable, a `Vacuous` certificate is accepted under both scheduler clauses, and over the model itself it is rejected `InequalityFails` at the initial state; a `Conditional` certificate without `conditional` is rejected `Malformed` naming `conditional`, one whose `mode` is `"workload"` `Malformed` naming `mode`, a `Ratio` certificate offered under every scheduler `Malformed` naming `mode`, and a `Ratio` certificate whose `numerator` is a `Lower` certificate `Malformed` naming `numerator`. | Test (TC-3061) |
+| FR-201-AC-54 | Over FSpec FR-407-AC-18's model with the further action `stay` at `s0` (FR-196-AC-16), for `probability >= rational(1, 2)` over every scheduler, the `Optimum` certificate whose `reset` has `x(s0) = 1/2`, `x` at the state after `a` from which `g` is unreachable `1/2`, policy `b` at `s0` and ranks 1 and 2 is accepted: under `stay` and `Reset`, `1/2 <= 1/2`, under `a`, `1/2 <= 1/4 + (3/4)(1/2) = 5/8`, under `b`, `1/2 <= 1/2`. A `reset` with `x(s0) = 0` and policy `stay` is rejected `RankBroken` at `s0` with `part` `reset`, since `stay` has no successor of smaller rank; with policy `b` it is rejected `InequalityFails` at `s0`, since `F_b(x) = 1/2`. So the improper value 0 is never certified. For `<= rational(9, 10)` the `reset` with `y(s0) = 1` and policy `a` (`1/4 + (3/4)(1) = 1`) is accepted and the claim is refuted. | Test (TC-3061) |
 
 ## Dependencies
 

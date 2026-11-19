@@ -28,7 +28,7 @@ Tag the test `#[trace("TC-3062", "FR-741-AC-5")]`.
 
 ## Expected Results
 
-- At `9/10`: `proved`, certificate kind `conditional`, mode `workload`,
+- At `9/10`: `proved`, certificate kind `conditional`, mode `ratio`,
   numerator `391/400` and denominator 1 at `m`'s initial key; the document
   is accepted by `fsl-probability-check` in a separate process.
 - At `99/100`: `refuted`, counterexample `binding` null and `instance`
