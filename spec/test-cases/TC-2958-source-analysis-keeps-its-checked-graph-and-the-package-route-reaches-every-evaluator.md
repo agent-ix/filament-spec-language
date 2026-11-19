@@ -30,7 +30,8 @@ family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6 and FR-940-AC
    unit, delete the handoff directory's `sources/`, and analyze `Equal`
    (FR-940-AC-16) through the `package` selection; check its certificate.
 
-Test: `fsl-analyze/tests/it/analyze_package_selection.rs`.
+Tests: `fsl-analyze/tests/it/analyze_package_selection.rs` (steps 1 to 3) and
+`fsl-analyze/tests/it/hyper_wire.rs` (step 4).
 
 ## Expected Results
 

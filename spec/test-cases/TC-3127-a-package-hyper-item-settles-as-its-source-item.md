@@ -25,12 +25,14 @@ Scope: FR-940-AC-17 and FR-940-AC-19.
    handoff directory; check each certificate with FR-163's checker; evaluate
    each atom and conjunct at each explored joint state through the
    `ModelEvaluator` on both routes.
-3. Analyze `Equal` and `Partner` over test-only packages whose `Equal`
-   node has a slot renamed `slot_sc_sz`, two slots at level 0, a read rooted
-   in slots of `a` and `b`, or a `body` binding referencing an `expression`
-   node.
-4. Analyze a handoff directory whose package has the `hyperproperty` node's
-   `quantifiers` Tuple removed.
+3. Analyze `Equal`, the projection-aligned clause and `Partner` over
+   test-only packages the strict reader admits: `Equal`'s `slot_sc_sb`
+   renamed `slot_sc_sz`, `slot_sc_sb` written at level 0, a read rooted in
+   `slot_sc_sa` and `slot_sc_sb`, and a projection-aligned conjunct slot
+   renamed `opx_sa`; also analyze the unmodified projection-aligned clause.
+4. Analyze handoff directories whose package has `Equal`'s `body` binding
+   referencing the atom's `expression` node, or its `quantifiers` Tuple
+   removed.
 
 ## Expected Results
 
@@ -39,8 +41,11 @@ Scope: FR-940-AC-17 and FR-940-AC-19.
   certificates; `Equal` is `proved` and `certified` on both routes; no
   record is `unsupported`, no diagnostic is `not-yet-implemented`; equal
   values and charge logs per atom and conjunct.
-- Step 3: `Equal` settles `failed` with `MalformedNode` naming the node key
-  and no verdict; `Partner` settles as in step 2.
-- Step 4: a whole-request refusal at the request stage with the reader's
-  code, cause and pointer, `items` `[]`, `last_stage` `null`, exit 20, and no
+- Step 3: the modified clause settles `failed` with `MalformedNode` naming
+  its `hyperproperty` node key and no verdict; `Partner` and the unmodified
+  projection-aligned clause (an atom slot and a conjunct slot both at level
+  0) settle as in step 2.
+- Step 4: whole-request refusals at the request stage with the reader's
+  code, cause and pointer (`ill_typed`/`operator-ineligible` at the
+  `hyperproperty` node for the body case), `items` `[]`, `last_stage` `null`, exit 20, and no
   source compiled.

@@ -115,17 +115,37 @@ the counts of nodes by form. Every value is taken from the in-process checked
 unit and the request, never from the emitted bytes.
 
 The node counts cover every node of a counted form that the unit's emission
-holds, whichever declaration mints it. The `temporal/temporal_clause` count
-is the number of distinct node keys among the unit's checked temporal
-clauses and the body wrappers of its hyper clauses (FR-488 "The body"),
-because a wrapper is a `temporal_clause` node that no checked temporal
-clause names and a count of clauses alone would refuse every handoff of a
-unit with a hyper clause on `package.nodes`. The `claim/hyperproperty`
-count is the number of distinct `hyperproperty` node keys, and
-`Selection::check` counts that form in the package. The expected number of
-`temporal_bindings` rows adds, for each hyper clause whose profile is
-clock-configured, one row per quantifier (FR-488 "Clause names and clock
-bindings").
+holds, whichever declaration mints it. Each count is taken from the
+in-process semantic graph, never from the emitted bytes, and counts every
+node of its form by distinct node key, leaving none out:
+
+- **`temporal/temporal_clause`**: three declarations mint these nodes, and
+  structurally equal ones share a node (FSpec FR-322), so the count is the
+  number of distinct keys among:
+  - the unit's checked temporal clauses;
+  - its hybrid claims (FR-447);
+  - the body wrappers of its hyper clauses (FR-488 "The body").
+
+  A count of temporal clauses alone would refuse every handoff of a unit
+  with a hybrid claim or a hyper clause on `package.nodes`. A declaration
+  form that later mints a `temporal_clause` node joins this count when it is
+  added.
+- **`claim/hyperproperty`**: the number of distinct `hyperproperty` node
+  keys. `Selection::check` counts that form in the package.
+
+The expected number of `temporal_bindings` rows adds one row per quantifier
+for each hyper clause whose profile is clock-configured, keyed on its
+`hyperproperty` node with the quantifier's `trace` (FR-488 "Clause names and
+clock bindings"). Two parts disagree with FR-488 today:
+
+- The emitter writes one row per such clause, keyed on the body wrapper with
+  no `trace`.
+- The strict reader refuses a row keyed on a wrapper.
+
+So a clock-configured hyper clause emits no admitted package until the
+emitter writes the rows FR-488 states. The sidecar counts the rows FR-488
+states, never the emitter's current row. Remaining work: QSL-2631.
+
 
 `checked_handoff::Selection::read(bytes)` parses the sidecar and
 `Selection::check(&self, &CheckedPackageV2) -> Result<(), SelectionRefusal>`
@@ -424,7 +444,8 @@ the three directories. The packages hold:
 | FR-517-AC-22 | A writer given a unit whose equality rows name a node the package does not hold returns `Error::Unnameable` and writes nothing, as for `inventory.json`; the written file holds no source text, no digest and no member the encoding of FR-531 does not list. | Test (TC-1312) |
 | FR-517-AC-23 | The writer emits the required `identities/5` source-record, source-tuple, source-union, source-operation and source-object lists from the same final emission as the package: original opaque keys, final structural/type references, original member identities and order round-trip through native joins. The reader requires all five lists and refuses the old format or an omitted list; an `identities/4` or `identities/3` document is the old format and is refused; no optional compatibility path or source fallback supplies them. | Test (TC-1312) |
 | FR-517-AC-24 | `compile` over a directory `write` wrote returns a `CompiledHandoff` whose checked package emits the bytes of `checked-package.json` and whose admitted package passes `Selection::check`; the sidecar names the package name, the unit's file and the execution points the request gave. A directory whose `checked-package.json` is edited to other bytes the reader admits returns `Error::ReadBackDiffers`, one whose sidecar `unit` leaves the directory, and one whose `models/0.json` is a symbolic link to a file outside it, return `Error::Label`, and one whose sidecar is removed returns `Error::Read`; none returns a package. | Test (TC-1312) |
-| FR-517-AC-25 | `write` over a unit declaring the temporal clause `Bounded` and the hyper clause `Equal` (`forall trace a of M forall trace b of M { always holds(c.value @ a <= 3 and c.value @ b <= 3) }`) writes a sidecar whose `temporal/temporal_clause` count is 2 and whose `claim/hyperproperty` count is 1; `compile` over that directory returns a `CompiledHandoff` whose admitted package passes `Selection::check`, and a `native-compile/1` request carrying the `handoff` member over the unit exits 0. The same sidecar with the `temporal/temporal_clause` count set to 1 refuses the package on `package.nodes`, so the comparison can fail. | Test (TC-3128) |
+| FR-517-AC-25 | `write` over a unit declaring the temporal clause `Bounded` and the hyper clause `Equal` (`forall trace a of M forall trace b of M { always holds(c.value @ a <= 3 and c.value @ b <= 3) }`) writes a sidecar whose `temporal/temporal_clause` count is 2 and whose `claim/hyperproperty` count is 1; `compile` over that directory returns a `CompiledHandoff` whose admitted package passes `Selection::check`, and a `native-compile/1` request carrying the `handoff` member over the unit exits 0. A unit that adds a hybrid claim to `Bounded` and `Equal` writes a `temporal/temporal_clause` count of 3 and passes `Selection::check` the same way. The first sidecar with its `temporal/temporal_clause` count set to 1 refuses the package on `package.nodes`, so the comparison can fail. | Test (TC-3128) |
+| FR-517-AC-26 | `write` over a unit declaring the hyper clause `Ordered` under the event-position false-extension profile, with the quantifiers `forall trace a of M` and `forall trace b of M`, emits a package whose `temporal_bindings` hold exactly two rows for it. Both rows are keyed on its `hyperproperty` node at its `claim` occurrence, one with `trace` `a` and one with `trace` `b`, in quantifier order. No row is keyed on its body wrapper. The strict reader admits the package, the sidecar's expected binding count includes the two rows, and `Selection::check` passes. A package with one row keyed on the wrapper with no `trace` is refused by the strict reader at that row's `declaration`, so the emission check can fail. | Test (TC-3128) |
 
 ## Dependencies
 

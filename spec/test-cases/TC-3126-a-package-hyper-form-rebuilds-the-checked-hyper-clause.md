@@ -33,6 +33,9 @@ the engines read. Scope: FR-940-AC-16.
 ## Expected Results
 
 - Step 2: the two forms of each clause are equal.
+- Step 3: `Equal`'s copy group is the class `[a, b]` with the generator
+  `{first: 0, second: 1, atoms: [0]}`, and a clause whose body is
+  `always holds(c.value @ a <= 3)` alone has an empty copy group.
 - Step 3: name, span, profile, aliases, read object parameters, quantifier
   prefix with fairness sets, atom slots, conjunct count per part,
   `align skip`, form, copy-group classes, occurrence, formula arena, atom

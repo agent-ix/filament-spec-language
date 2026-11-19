@@ -441,19 +441,67 @@ the clause whose `claim` occurrence `claim` is, as `claim_name` resolves it
 | aliases | the `subjects` bindings, in order: each binding's name is the alias and its `model_root` reference the package identity it selects, read from `model_selections()` |
 | object parameters | the `parameters` bindings in order: the name, and the object type `T` of the `model` node it references; its alias is the alias of the trace variables whose atom slots read it (S3 refuses one parameter read under two aliases); a parameter no atom slot reads takes the first `subjects` alias whose package declares `T`, and reads nothing in any engine |
 | quantifier prefix | the `quantifiers` Tuple: per Group in order, `variable`, `quantifier` (`forall` or `exists`), `alias`, and the fairness set as the `temporal`/`fairness` nodes its references name, in order, each read as FR-337's fairness argument is read |
-| atom slots | the `value`/`parameter` slot nodes the atom terms read (FR-488 "Atom slots as parameter nodes"), slot `k` being the node at level `k`, the wrapper's `over` reference being slot 0; each slot's trace variable `t` and parameter `p` are decoded from its reserved name `slot_s<esc(p)>_s<esc(t)>` (FR-488 "Slot node names") |
+| atom slots | the `value`/`parameter` nodes named in the atom slot form `slot_s<esc(p)>_s<esc(t)>` that the wrapper's `over` and the atom terms reference (FR-488 "Atom slots as parameter nodes"), atom slot `k` being the one such node at level `k`, the wrapper's `over` reference being atom slot 0; the levels form one scope for the atom slots only, so each level from 0 to the highest names exactly one atom slot node; each slot's trace variable `t` and parameter `p` are decoded from its reserved name `slot_s<esc(p)>_s<esc(t)>` (FR-488 "Slot node names") |
 | body | the wrapper's `formula` reference, read as `formula_graph()` in pre-order as FR-515 reads a temporal clause's formula, operators, intervals and operands as FR-337 writes them |
 | atoms | each distinct `holds` operand node, numbered by first use in that pre-order (FR-532 "Atom index"), with its slot count; the component of each model read in it is the trace variable of the slots at the read's roots, which FR-488 "Clauses S4 does not emit" makes exist and agree for every read S4 writes, and an indexed reference literal takes the component of the read that encloses it |
-| `match` conjuncts | the `match` aggregate's terms in package order; a conjunct belongs to `μ_E` when a slot node it reads names an existential variable of the prefix in its decoded reserved name (`op_s<t>`, `rcv_s<t>`, `arg_s<t>_…`), and to `μ_U` otherwise, a constant conjunct included; its index within its part is its rank among the package-order conjuncts of that part, which is S3's index (FR-488 "Match conjuncts" writes them in source order) |
+| `match` conjuncts | the `match` aggregate's terms in package order; a conjunct belongs to `μ_E` when a slot node it reads names an existential variable of the prefix in its decoded reserved name (`op_s<t>`, `rcv_s<t>`, `arg_s<t>_s<T>_s<name>_s<p>`, FR-488 "Slot node names"), and to `μ_U` otherwise, a constant conjunct included; each conjunct has its own slot scope: its step-label slot nodes are numbered from level 0 in the order it reads them, independently of the atom slots and of every other conjunct, so a conjunct slot and an atom slot may both sit at level 0; its index within its part is its rank among the package-order conjuncts of that part, which is S3's index (FR-488 "Match conjuncts" writes them in source order) |
 | `align skip` | the `align_skip` references in order, each `state`/`operation_anchor` node read as the operation key it anchors |
 | form | FR-173's classification applied to the profile, prefix, fairness sets, `align skip` and body above |
-| copy group | FR-174's copy-swap detection applied to the prefix, fairness sets, `μ_U` and body above, the normal form sorting the operands of `and`, `or`, `=` and `!=` by the FR-322 node key of each operand's term in place of its checked encoding |
+| copy group | FR-174's copy-swap detection applied to the prefix, fairness sets, `μ_U` and body above, over the package normal form defined below ("The package normal form") |
 
 Each row of this table is a fact of FR-531's table of facts read from the
 bytes, so both implementations of the view return it ("Package forms of the
 source-checked evaluators"). The record charges nothing. It reads no source text, no `source_map` region
 other than the `declaration_region` of its row, no occurrence site label and
 no `NodeRef` path.
+
+#### The package normal form
+
+S3 decides copy-swap (FR-174 "Copy-swap detection") by encoding the body,
+each `holds` atom and the conjunction of `μ_U` in a normal form, once as
+written and once under the swap `σ` of two universal variables, and
+comparing the bytes. The source encoding names a model read by its operand
+and trace (`c.value @ a`). The package term has no `@`: the read is the
+atom slot node of (`p`, `t`). The term `σ(φ)` is not a term the package
+holds, because renaming a trace changes which slot node a read names, so
+the package normal form is computed as an encoding, never looked up as a
+node key.
+
+- The package normal form SHALL encode each term bottom-up from the
+  package nodes it references:
+  - An atom or conjunct slot node is encoded as its decoded pair (`p`,
+    `t`), or its decoded step-label read (`op`, `rcv` or `arg` with its
+    fields, and `t`). `σ` is applied to `t` before the encoding, and the
+    slot's level is not part of the encoding. The level is a position in
+    one term's slot list, and `σ` moves a read from one level to another.
+  - Every other node is encoded by its node tag, its operation identity or
+    literal value, and its operands' encodings in order. A local binder of an atom (a
+    `value`/`parameter` node at a level after the atom slots, FR-488 "The
+    body") is encoded by its level, which `σ` does not change.
+  - The operands of `and` and `or` (expression and temporal) are
+    flattened through nested `and` or `or` of the same operator. The
+    operands of `and`, `or`, `=` and `!=` are then sorted by their
+    encodings, after each operand is encoded under `σ` and before the parent
+    is encoded.
+  - The `match` conjunction is the `μ_U` conjuncts' encodings, sorted.
+  - An opaque node (a call, a select, an index or another node FR-174 does
+    not normalize) whose subtree reads a slot makes the clause not
+    swappable for that pair, as on the source route.
+- Two operands then have equal encodings exactly when the source route's
+  operands have equal checked encodings, because both encodings are
+  injective on structurally equal terms and each read of `x @ t` is a slot
+  of (`x`, `t`). The swappable relation, the classes and each generator's
+  atom exchange (equal encodings paired in atom-index order) are therefore
+  S3's, with S3's atoms renumbered by FR-532's atom index.
+- Worked example. AC-16's `Equal` has atom slots `slot_sc_sa` (level 0)
+  and `slot_sc_sb` (level 1) and one atom,
+  `and(<=(value(slot(c, a)), 3), <=(value(slot(c, b)), 3))`. Under
+  `σ = (a b)` the operands encode as `<=(value(slot(c, b)), 3)` and
+  `<=(value(slot(c, a)), 3)`. Sorting restores the written order, so the body
+  and atom encodings equal the plain ones. `a` and `b` form one class, with
+  the generator `{first: 0, second: 1, atoms: [0]}`. For the body
+  `always holds(c.value @ a <= 3)` alone, `σ` turns `slot(c, a)` into
+  `slot(c, b)`, the encodings differ, and there is no class.
 
 #### What a hyper form returns
 
@@ -471,9 +519,7 @@ no `NodeRef` path.
   and occurrence SHALL equal S3's checked clause for the package and the
   source it was compiled from. Its formula arena, atom indices and copy
   generators SHALL equal S3's after S3's atoms are renumbered by FR-532's
-  atom index. Copy-swap's swappable relation is independent of the operand
-  order, because either encoding is equal for two operands exactly when
-  their terms are structurally equal.
+  atom index. The copy group is equal to S3's by "The package normal form".
 - `CheckedHyperLetters::new`, `CheckedStepMatch::new` and
   `ProductClosureRequest` SHALL take the route's `ModelEvaluator` in place of
   a `CheckedPackage`, and SHALL read reference literals, component reads and
@@ -501,27 +547,61 @@ no `NodeRef` path.
   `unsupported_construct`/`not-yet-implemented`, for any fact this section
   lists.
 
+#### What changes on the source route
+
+Reading the hyper form on the source route changes what that route's
+hyper engines produce, and leaves S3 and S4 unchanged.
+
+- Unchanged:
+  - the emitted package bytes, every node key and the package identity;
+  - every verdict and record;
+  - every counterexample's traces;
+  - FR-163's product-state counts and rule outcomes.
+- Changed:
+  - atom indices, which follow FR-532's atom index in place of S3's arena
+    order;
+  - the body automaton's state numbering, built from the package normal
+    form;
+  - the product-state keys that hold those automaton states;
+  - the atom indices a refused or undefined letter names;
+  - the bytes of a product-closure certificate.
+- A fixture that pins any changed value is regenerated from the new form. A
+  fixture that pins the old value is not kept beside it.
+
 #### Refusals
 
 - A `package` selection whose bytes the strict reader refuses, or whose
   directory holds no `identities.json`, refuses the whole request at the
   request stage (FR-850 "Admission"): category refusal, the reader's code,
   cause and pointer, `items` `[]`, `last_stage` `null`, exit `20`, and no
-  engine runs and no source is compiled.
+  engine runs and no source is compiled. This covers every `hyperproperty`
+  node shape FSpec FR-402 "Reader order" refuses: for example, a
+  `behaviours` node whose `body` binding references no
+  `temporal`/`temporal_clause` node is refused `ill_typed`/
+  `operator-ineligible` at that node, and a wrapper with a non-empty fairness
+  argument `invalid_semantic_graph` at the argument. `hyper_clause_form`
+  never sees such a node.
 - An item whose occurrence `hyper_clause_form` finds no `claim`/
   `hyperproperty` node at, after `claim_name` returned it, is a view defect:
   the lookup returns `hyper-root-unresolved` at the triple (FR-488 "Outputs")
   and the item settles `failed` with that internal fault.
-- A `hyperproperty` node the strict reader admitted whose aggregate does not
-  read as FR-488 writes it is a reader defect, not an analysis outcome:
-  `hyper_clause_form` refuses it `MalformedNode` with the node key, and the
-  item settles `failed` with that internal fault, never a verdict. The cases
-  are: a `body` binding that references no `temporal`/`temporal_clause` node;
-  a slot node whose `name` is not in the reserved form or decodes to a trace
-  variable no quantifier Group declares; two slot nodes of one clause at one
-  level, or a level with no slot node below the highest; a model read whose
-  root slots name two trace variables; and a `match` term that references
-  neither an `expression` node nor a Boolean `value`/`literal` node.
+- The strict reader checks the `hyperproperty` aggregate's layout, its
+  subjects and quantifier Groups, its body wrapper's kind and fairness, but
+  not the slot nodes the wrapper and the `match` terms read. A
+  `hyperproperty` node the reader admitted whose slot nodes do not read as
+  FR-488 writes them is a writer defect, not an analysis outcome:
+  `hyper_clause_form` refuses it `MalformedNode` with the node key of the
+  `hyperproperty` node, and the item settles `failed` with that internal
+  fault, never a verdict. The cases are:
+  - an atom slot node (the wrapper's `over` or a free parameter of an atom
+    term) whose `name` is not in the form `slot_s<esc(p)>_s<esc(t)>`, or
+    decodes to a trace variable no quantifier Group declares or a parameter
+    no `parameters` binding names;
+  - two atom slot nodes at one level, or a level below the highest with no
+    atom slot node;
+  - a model read in an atom whose root slots name two trace variables;
+  - a conjunct slot node whose `name` is in no step-label form of FR-488
+    "Slot node names", or decodes to a trace variable no Group declares.
 - A clause FR-173 places in HP-4 settles `unsupported` V-8
   `unsupported-requested-capability` at negotiation (FR-173) on both
   routes, because the classification reads the same form.
@@ -545,10 +625,10 @@ no `NodeRef` path.
 | FR-940-AC-13 | Over FR-531-AC-35's unit, the `AdmittedPackageRead` of its emission and the `BarePackage` of its written bytes return equal `requirement_items()` and equal `value_validity_records_of` for `f`, `f2`, `sq` and `g`, and their rows equal `CheckedGraph::requirements()` position for position. For FR-961-AC-1's `Even` unit, the FR-331 request items written on the package route from these rows (claim, request index, kind, extent, result bound, path condition, candidates) equal the source route's for the same registry, and the linked engine settles each item with the source route's record; for RR-12's `f` with `n` an `Integer`, each item is `unbounded` with one `integer` domain at `n`'s parameter node and `finite_bound_available` true on both routes. A test-only view whose record of `f`'s `+` row lacks its one guard makes the package-route linked engine's record differ from the source route's (the guard `n >= 0 and n < 10` is no longer assumed), so the comparison can fail. | Test (TC-2620) |
 | FR-940-AC-14 | For FR-1033-AC-1's `SB` unit and its handoff directory, the protocol clause the package route builds for `SB` from the admitted `protocol` nodes and `protocol_locations` rows equals S3's FR-218 checked clause in every member; the subject built on each route for `subject.protocol` with `roles` `w` and `c` bound to `test/litmus` binds `w` to `M::Cell` and `c` to `M::Core` with the same selection, the same `over` universe and the same resolved model of `SB::Both` (`Sc` with no `memory`, `Tso` with the `tso` entry); a `roles` entry for `w` naming a model the package does not select settles `declined` with `invalid_runtime_input`/`wrong-role-mapping` naming `w` on both routes. A test-only package whose `SB::Both` `parallel` node carries `memory` `tso` makes the package-built clause differ from the source clause, so the comparison can fail. | Test (TC-3050) |
 | FR-940-AC-15 | For FR-397-AC-30's and FR-397-AC-31's bodies, the source form and the package form of the expression evaluator, given the same inputs and remaining budget, write equal outcomes and equal charge logs; a package form that charges every `numeric_equal` node one `compare_ieee` writes a log for `p < q` with entries the source form lacks, so the comparison can fail. | Test (TC-3077) |
-| FR-940-AC-16 | Over AC-4's Counter unit with the hyper clauses `Equal` (`forall trace a of M forall trace b of M { always holds(c.value @ a <= 3 and c.value @ b <= 3) }`, universal, copy-swap symmetric), `Partner` (forall-exists equality), `CanReachThree` (single existential) and a projection-aligned clause with an `align skip` list and a `match` block holding one universal and one existential conjunct, `hyper_clause_form` of each clause's `claim_name` occurrence returns equal records over the `AdmittedPackageRead` and over the `BarePackage` of its handoff directory, and the clause `of_package_form` rebuilds equals S3's checked clause in name, span, profile, aliases, read object parameters, quantifier prefix with fairness sets, atom slots, conjunct count per part, `align skip`, form, copy-group classes and occurrence, and in formula arena, atom indices and copy generators after S3's atoms are renumbered by FR-532's atom index; `condition` of every rebuilt atom is `None`. A test-only view that files the existential conjunct under `μ_U` makes the rebuilt clause differ from S3's, so the comparison can fail. | Test (TC-3126) |
+| FR-940-AC-16 | Over AC-4's Counter unit with the hyper clauses `Equal` (`forall trace a of M forall trace b of M { always holds(c.value @ a <= 3 and c.value @ b <= 3) }`, universal, copy-swap symmetric), `Partner` (forall-exists equality), `CanReachThree` (single existential) and a projection-aligned clause with an `align skip` list and a `match` block holding one universal and one existential conjunct, `hyper_clause_form` of each clause's `claim_name` occurrence returns equal records over the `AdmittedPackageRead` and over the `BarePackage` of its handoff directory, and the clause `of_package_form` rebuilds equals S3's checked clause in name, span, profile, aliases, read object parameters, quantifier prefix with fairness sets, atom slots, conjunct count per part, `align skip`, form, copy-group classes and occurrence, and in formula arena, atom indices and copy generators after S3's atoms are renumbered by FR-532's atom index; `condition` of every rebuilt atom is `None`. `Equal`'s rebuilt copy group is the class `[a, b]` with the generator `{first: 0, second: 1, atoms: [0]}` (FR-940 "The package normal form"), and that of a clause whose body is `always holds(c.value @ a <= 3)` alone is empty, on both routes. A test-only view that files the existential conjunct under `μ_U` makes the rebuilt clause differ from S3's, so the comparison can fail. | Test (TC-3126) |
 | FR-940-AC-17 | A `program` request and a `package` request over the handoff directory of AC-16's unit, written by its compile request's `handoff` member, with the items `Equal`, `Partner`, `CanReachThree` and the projection-aligned clause, and the same items over the unit with `Equal`'s bound lowered to `c.value @ b <= 2` so it refutes, give equal item records, counterexamples (one trace per copy; for `Partner` the exhausted witness set), copy-by-copy replays with `reproduced` `true` and product-closure certificates accepted by FR-163's checker; `Equal` settles `proved` with certification `certified` on both routes; no record is `unsupported` and no diagnostic is `not-yet-implemented`. Each atom and conjunct evaluated through the `ModelEvaluator` at each explored joint state gives the same value and charge log on both routes. | Test (TC-3127) |
 | FR-940-AC-18 | AC-17's `package` request run after the unit's source file is overwritten with bytes that are not a native unit and the handoff directory's `sources/` is deleted settles `Equal` `proved` with the record of AC-17's source request; FR-163's checker run on that route accepts the certificate with no source present. | Test (TC-2958) |
-| FR-940-AC-19 | Test-only packages of AC-16's unit, each admitted by the strict reader, in which `Equal`'s `hyperproperty` node has a slot node renamed `slot_sc_sz` (`z` declared by no Group), two slot nodes at level 0, a model read rooted in slots of `a` and `b`, or a `body` binding referencing an `expression` node, each settle the `Equal` item `failed` with `MalformedNode` naming that node key and no verdict, while a sibling `Partner` item settles as in AC-17; a handoff directory whose `checked-package.json` holds AC-16's bytes with the `hyperproperty` node's `quantifiers` Tuple removed refuses the whole request at the request stage with the reader's code, cause and pointer, `items` `[]`, `last_stage` `null`, exit `20`, compiling no source. | Test (TC-3127) |
+| FR-940-AC-19 | Test-only packages of AC-16's unit pass the strict reader, because it reads no slot node names or levels. Four variants change `Equal`: its slot node `slot_sc_sb` is renamed `slot_sc_sz` (`z` is declared by no Group); its slot node `slot_sc_sb` is written at level 0 in place of level 1, leaving two atom slot nodes at level 0 and none at level 1; the atom's `c.value` read is rewritten so its operand roots in both `slot_sc_sa` and `slot_sc_sb`; or a conjunct slot of the projection-aligned clause's `match` is renamed `opx_sa`. In each variant, `Equal` (or the projection-aligned clause in the last) settles `failed` with `MalformedNode` naming its `hyperproperty` node key and no verdict, while a sibling `Partner` item settles as in AC-17. The unmodified projection-aligned clause has one atom slot and one conjunct slot at level 0, and its item settles as in AC-17, so a level rule that does not separate atom slots from conjunct slots fails. A handoff directory whose package's `Equal` `body` binding references the atom's `expression` node, and one whose `quantifiers` Tuple is removed, each refuse the whole request at the request stage with the reader's code, cause and pointer (`ill_typed`/`operator-ineligible` at the `hyperproperty` node for the first), `items` `[]`, `last_stage` `null`, exit `20`, compiling no source. | Test (TC-3127) |
 
 ## Dependencies
 
