@@ -31,3 +31,12 @@ Not mergeable. FND-001 is high. The owner encoding (`deref` of the binder or dat
 | FND-002 | medium | AC-5's `i` (in `count(c in M::calls where i < size(c.q) and ref(c.q[i]) = self.r)`) and AC-6's `k` (in `ref(c.m[k].x)`) are not bound anywhere. TC-3084's fixture declares neither, and the clause position (refinement row, precondition or invariant) is not given. Whether the negative refuses at `i` depends on where `i` comes from. Bind them, for example as an operation parameter `i: Int[0, 1]` in a precondition | spec/functional/FR-1040-check-and-lower-clock-place-references-and-presence-in-population-forms.md:126 |
 | FND-003 | low | "FR-146's presence obligation" and "under FR-146's rules" are unqualified. In this repo, FR-146 is "write per-step simulation records for a refinement". The presence and guard rules are FSpec FR-146 "Accepted proof forms". Write "FSpec FR-146" | spec/functional/FR-1040-check-and-lower-clock-place-references-and-presence-in-population-forms.md:67 |
 | FND-004 | low | "`present(p)` of a guarded place SHALL lower to FSpec FR-322's `presence_read` ... the slot terms" covers the indexed read `present(x.q[i])`. FSpec FR-322 "Presence" says "The indexed read of an element (`self.q[i]`) is not a presence form in this version". Limit the bullet to binder-selected slots, or note the FSpec gap | spec/functional/FR-1040-check-and-lower-clock-place-references-and-presence-in-population-forms.md:68 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | a638e7be: AC-2, AC-3, AC-4 and the "Paths through a reference" and "Presence reads" bullets now write the owner as its `Reference<O>`-typed term with no `deref`, and FR-230 "Presence reads" is amended to match (self, other, a parameter or a population binder) |
+| FND-002 | fixed | `i` and `k` are bound as parameters of the operation `pick(i: Int[0, 1], k: Text)`, whose precondition holds the AC-5 forms and AC-6's Map form, and TC-3084's fixture declares it |
+| FND-003 | fixed | Both citations now read "FSpec FR-146" |
+| FND-004 | fixed | The presence bullet now says the slot terms are the binders of the slot quantifiers, and that indexed `present(x.q[i])` is not a presence form and is not added here |
