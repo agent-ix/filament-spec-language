@@ -254,7 +254,7 @@ fn only_over_a_population_lowers() {
         .node(population_node.admitted().expect("the population is resolved").clone())
         .expect("the population node exists");
     assert_eq!(population_node.semantic_form(), "population");
-    application_at(predicate, "filament.op.integer.eq");
+    application_at(predicate, "filament.op.reference.eq");
     let only_body = graph
         .node(only_body.admitted().expect("the only body is resolved").clone())
         .expect("the only body node exists");
