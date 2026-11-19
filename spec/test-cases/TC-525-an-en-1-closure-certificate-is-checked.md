@@ -13,7 +13,7 @@ relationships:
 Verify that `check_closure` accepts a safety proof's closure and rejects a
 missing initial state, a missing successor and a bad state.
 
-Scope: FR-338-AC-1 to FR-338-AC-7, FR-338-AC-10, FR-338-AC-16 and FR-338-AC-23 to FR-338-AC-25. Canonical translation-state cases below
+Scope: FR-338-AC-1 to FR-338-AC-7, FR-338-AC-10, FR-338-AC-16 and FR-338-AC-23 to FR-338-AC-26. Canonical translation-state cases below
 are prospective qualification procedures; this artifact claims no execution.
 
 ## Test Procedure
@@ -110,6 +110,9 @@ are prospective qualification procedures; this artifact claims no execution.
     product state (FR-338-AC-24).
 14. Replace one key with a well-formed key of another item context and verify
     `ShapeMismatch` at its product state before membership (FR-338-AC-25).
+15. Over FR-205-AC-10's `Echo` subject and claim, check the certificate of
+    cycle keys, then the same certificate with `s1`'s cycle key replaced by
+    `s2`'s raw `ProtocolKey` (FR-338-AC-26).
 
 Tag the tests `#[trace("TC-525", "FR-338-AC-n")]`.
 
@@ -169,3 +172,8 @@ Tag the tests `#[trace("TC-525", "FR-338-AC-n")]`.
   `InitialMissing` or `SuccessorMissing`.
 - Step 14: a foreign context key is rejected `ShapeMismatch` at its product
   state.
+- Step 15: the cycle-key certificate is accepted; the one holding `s2`'s raw
+  key is rejected `SuccessorMissing` at the product state of `Echo`'s
+  initial state, whose `send` successor's cycle key it lacks. The step fails
+  if the checker matches raw keys (it would then also need `s2` and reject
+  the first certificate) or accepts the raw key.

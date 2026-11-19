@@ -115,6 +115,20 @@ pub fn check_protocol_closure(
 ) -> Result<TemporalCertificateCheck, ClosureRefusal>; // check_closure's check over a protocol subject
 ```
 
+For `check_protocol_closure`, a `ProductStateRef`'s `model_state` SHALL be
+the protocol state's cycle key for the request's item (FR-205, "Cycle key"):
+the `ProtocolKey` of its canonical form over the message ordinals and
+delivery indices the item does not read, which keeps every identity the
+item reads. The
+checker SHALL canonicalise each recomputed initial state and successor before
+matching it against the certificate, so a closure over a `duplicate` and
+`lose` loop, or a `repeat` around `send` and `receive`, on an unread channel
+is finite, and a certificate that holds an
+uncanonicalised key for such a state is rejected `SuccessorMissing` at the
+predecessor that reaches it. An item that reads a channel's delivery index
+has no finite closure while a `duplicate` on that channel stays enabled, and
+settles only on EN-1's bounded result (FR-205).
+
 `ClosureRefusal` is the checker's refusal to check at all: the subject does
 not admit (FR-106), a root is unbounded, the item has no translation or no
 instance (FR-125), the subject has no initial state, a state or automaton
@@ -1017,6 +1031,7 @@ Note: a rejected certificate settles `inconclusive`, `CertificateRejected`
 | FR-338-AC-23 | TP-4 state identity. For an infinite-trace TP-4 clause, `PropertyAutomaton`'s run-local `StateId` is resolved through the automaton that issued it to a structural TP-4 state whose context-bound FR-338 key admits back to that state. Reaching one structural state through different first-discovery orders yields equal key octets even when the `StateId` values differ. | Test (TC-525) |
 | FR-338-AC-24 | TP-4 product keys. Over a TP-4 clause whose reached automaton states carry at least two distinct keys, the closure certificate's automaton keys are exactly the keys an independent replay of the engine reaches under the clause's context; the checker accepts the complete certificate, and rejects `InitialMissing` or `SuccessorMissing` a certificate in which one state's key is replaced by another's, two states' keys are swapped, every key is rotated, or a product state is dropped. | Test (TC-525) |
 | FR-338-AC-25 | TP-4 foreign context. A well-formed TP-4 key of another clause context in a product state is rejected `ShapeMismatch` at that `ProductState` before certificate membership is checked. | Test (TC-525) |
+| FR-338-AC-26 | Protocol cycle keys. Over FR-205-AC-10's `Echo` subject and the claim `always holds(c.v = 0)`, `check_protocol_closure` accepts the certificate whose protocol states are cycle keys, `s1`'s among them. The same certificate with `s1`'s cycle key replaced by `s2`'s raw `ProtocolKey` (delivery 1 queued, `next-delivery` 2) is rejected `SuccessorMissing` at the product state of `Echo`'s initial state, because the checker canonicalises the recomputed `send` successor to `s1`'s cycle key, which the certificate no longer holds. | Test (TC-525) |
 
 ## Dependencies
 

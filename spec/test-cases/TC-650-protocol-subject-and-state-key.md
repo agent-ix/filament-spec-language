@@ -12,7 +12,7 @@ relationships:
 
 Verify the protocol subject's construction and refusals, the thread paths and ordinals, binder removal and the canonical state key.
 
-Scope: FR-205-AC-1 to FR-205-AC-9.
+Scope: FR-205-AC-1 to FR-205-AC-15 (FR-205-AC-12 planned under QSL-2568).
 
 ## Test Procedure
 
@@ -52,6 +52,43 @@ Use ADR-027 §7's `Fill` unit (universe `{c}`, `c.v = 0`).
 
 9. Read `w`'s `roles` entry in every state of `Fill`; build FR-205-AC-9's
    two-alias variant with no role bindings and read both roles' entries.
+10. Build FR-205-AC-10's `Echo` subject. Take `send(Snd)` to `s1`; from
+    `s1` take `duplicate` then `lose` of delivery 0 to `s2`; separately,
+    also from `s1`, take `duplicate` then `lose` of delivery 1 to `s3`;
+    take a second `duplicate` from `s2`. Read each state's `ProtocolKey`
+    and cycle key for the claim `always holds(c.v = 0)`. Run EN-1 on it
+    with `max_depth` 8, and check a closure certificate of the cycle keys.
+11. Pair the enabled steps at `s1` and `s2` and compare their post-states'
+    cycle keys, model states and `receive` payloads; canonicalise an
+    `unordered` variant holding deliveries 1 and 3 of one message.
+12. Planned under QSL-2568 (FR-205-AC-12): repeat step 10's key reads and
+    EN-1 run for an item whose obligation reads the delivery index of
+    `Rcv`'s receive steps, and for an item that reads the message identity
+    of `Rcv`'s receive steps and no delivery index, and that item over
+    FR-205-AC-15's `Loop` for 0, 1 and 2 iterations.
+13. Re-concretise from `Echo`'s initial state the cycle-key path with
+    prefix `send`, `duplicate`, `lose` of the older copy and loop
+    `duplicate`, `lose` of the older copy; replay it through FR-217 for
+    `eventually holds(c.v = 1)` against the `scheduling adversarial`
+    package; replay it again with the loop's `duplicate` relabelled to
+    delivery 1.
+14. Read `Echo`'s post-send queue entry. On a `fifo` channel of capacity 2
+    with delivery `[2,2]`, take `send Snd`'s `count` 2 step. With capacity
+    2, overflow `block`, delivery `[3,3]`, in `parallel P { branch s send
+    Snd via ch; branch r receive Rcv via ch of Snd } join all`, take the
+    `count` 3 step, `receive`, then the continuation step. In `parallel P {
+    branch a sequence { send Snd via ch; attempt A }; branch b receive Rcv
+    via ch of Snd } join all`, take `fork`, `send`, `receive`, `attempt(A)`,
+    the join and `finish`. Read `queues` and `bounds` after each step.
+15. Reused branch path: run `repeat maximum 2 { parallel P { branch a send
+    Snd via ch; branch b receive Rcv via ch of Snd } join all }` through
+    both iterations; read each `send`'s message identity and each
+    `receive`'s delivery identity.
+16. Build FR-205-AC-15's `Loop` subject. Read the `ProtocolKey` and cycle
+    key of the state with the root at `Snd` after 0, 1 and 2 iterations,
+    and of the post-`send` states of iterations 1 and 2. Run EN-1 on
+    `always holds(c.v = 0)`; replay the lasso with an empty prefix and loop
+    `send(Snd)`, `receive(Rcv)` through FR-217.
 
 Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
 
@@ -89,3 +126,42 @@ Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
 - Step 9: `w`'s entry is `{"type":"model-binding","selection":"<M's
   identity>"}` in every state; the two-alias variant builds, with entries
   naming `M`'s and `N`'s identities (FR-205-AC-9).
+- Step 10: three different `ProtocolKey`s and, for the unread claim, one
+  cycle key (`s1`'s `ProtocolKey`); the second `duplicate` from `s2` carries
+  delivery index 2; EN-1 settles `Holds` (`proved`) and the certificate is
+  accepted. The step fails if the cycle key keeps the `next-delivery` bound
+  or the raw delivery index of an unread channel.
+- Step 11: the steps pair one to one (`duplicate`, `lose`, `receive`) with
+  equal cycle keys, model states and payloads, the paired `duplicate` steps
+  taking deliveries 1 and 2; the `unordered` copies become deliveries 0 and
+  1 with bound 2.
+- Step 12 (planned, QSL-2568): for the delivery-reading item, three
+  different cycle keys and `inconclusive` `BoundReached{depth: 8}`, never
+  `proved`; for the message-identity item, one cycle key and `Holds` over
+  `Echo`, and over `Loop` three cycle keys and `BoundReached{depth: 8}`.
+- Step 13: `duplicate` identities carry deliveries 1 then 2, `lose`
+  identities 0 then 1, post-state keys are concrete (`next-delivery` 2,
+  then 3), and no index repeats; the replay settles
+  `reproduced-with-evaluated-witness`. The relabelled replay refuses
+  `invalid_runtime_input`/`invalid-value` naming the loop's `duplicate` as
+  not enabled.
+- Step 14: the `Echo` entry is exactly `{message, delivery, payload}`. The
+  `[2,2]` step queues deliveries 0 and 1 of one message (ordinal 0), with
+  `next-delivery` 2 and `message-ordinal` 1. The `[3,3]` step queues
+  deliveries 0 and 1, leaves count 1 pending, `next-delivery` 2 and no
+  `message-ordinal` for `Snd`; the continuation appends delivery 2 of the
+  same message (ordinal 0), then `next-delivery` 3 and `message-ordinal` 1.
+  `message-ordinal` 1 for `Snd` on `a`'s path in every state from the
+  `send` until the instance is removed, including after `a` has completed
+  with no copy queued. The step fails if the continuation takes ordinal 1,
+  an index is reused, or the ordinal is dropped before the instance is
+  removed.
+- Step 15: both iterations' `a` has path `(0, P, a, 0)`; the first message
+  (ordinal 0) has been received when the second `send` runs, which takes
+  ordinal 1; the two `receive` steps bind deliveries of two different
+  messages. The step fails if both messages have ordinal 0.
+- Step 16: three different `ProtocolKey`s (`message-ordinal` 0 absent, 1, 2)
+  and one cycle key, the initial state's; the two post-`send` states have
+  one cycle key naming ordinal 0; EN-1 settles `Holds` (`proved`); the
+  replay closes the loop on cycle keys. The step fails if the cycle key
+  keeps the ordinal or a received message's `next-delivery`.
