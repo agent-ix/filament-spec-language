@@ -23,7 +23,7 @@ and that setting one bound changes nothing else. Scope: FR-931-AC-15.
    `PreparedRun::TlLowering`; run it through `execute_tl_lowering` unchanged.
 3. Prepare it again, copy the request's selection, stage limits, observation
    limits and accounting limits, set `s1.nodes` to 1 on
-   `clause_request_mut().limits` through `CallerLimits::set_bound`, and compare
+   `clause_request_mut().limits` through `SettingLimits::set_bound`, and compare
    every copied member except `s1.nodes`; then run it through
    `execute_tl_lowering`.
 4. Prepare it again, set `s1.nodes` to 1 and then to 50000, and run it.
