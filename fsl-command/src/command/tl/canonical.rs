@@ -231,7 +231,7 @@ impl CheckedExpression {
                         })
                         .collect::<Result<Vec<_>, _>>()?
                         .join(", ");
-                    (format!("{identity} {{{members}}}"), 10)
+                    (format!("{identity} {{ {members} }}"), 10)
                 }
                 NodeKind::Case { .. } => {
                     return Err(CanonicalError::UnsupportedCase);

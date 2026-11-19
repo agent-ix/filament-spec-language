@@ -360,7 +360,7 @@ fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
     );
     assert_eq!(
         value["tl_lowering"]["atoms"]["p1"],
-        "holds(ix://test:package-run:unit.native/Pair {left: 1, right: 2} = ix://test:package-run:unit.native/Pair {left: 1, right: 2})",
+        "holds(ix://test:package-run:unit.native/Pair { left: 1, right: 2 } = ix://test:package-run:unit.native/Pair { left: 1, right: 2 })",
         "{value}"
     );
 
