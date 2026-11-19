@@ -1,3 +1,4 @@
 language "ix:native" edition "1-draft";
 profile v = "filament.value.complete/v1";
-function f using v(): Integer pure { size(filter(x in sequence[-1,0,2,3]:x>0)) }
+function n using v(s: Sequence<Integer>[0,4]): Integer pure { size(filter(x in s:x>0)) }
+function f using v(): Integer pure { n(sequence[-1,0,2,3]) }

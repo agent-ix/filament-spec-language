@@ -1,3 +1,4 @@
 language "ix:native" edition "1-draft";
 profile v = "filament.value.complete/v1";
-function f using v(): Integer pure { size(bag[4,4]) }
+function n using v(s: Bag<Integer>[0,3]): Integer pure { size(s) }
+function f using v(): Integer pure { n(bag[4,4]) }

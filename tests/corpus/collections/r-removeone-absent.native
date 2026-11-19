@@ -1,3 +1,4 @@
 language "ix:native" edition "1-draft";
 profile v = "filament.value.complete/v1";
-function f using v(): Boolean pure { removeOne(sequence[1,2],3) = sequence[1,2] }
+function same using v(a: Sequence<Integer>[0,3],b: Sequence<Integer>[0,3]): Boolean pure { removeOne(a,3)=b }
+function f using v(): Boolean pure { same(sequence[1,2],sequence[1,2]) }
