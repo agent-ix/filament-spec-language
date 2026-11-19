@@ -79,7 +79,7 @@ pub enum ProbForm {
     Probability { bound: Bound, event: Event },
     Quantile { q: Rational, measure: BoundedMeasure, threshold: Bound },
     MeanOfFraction { bound: Bound, fraction: FractionMeasure },
-    LongRunFraction { bound: Bound, predicate: CheckedPredicate, weight: Option<Identifier> },
+    LongRunFraction { bound: Bound, predicate: CheckedPredicate, weight: Option<Weighting> },
 }
 pub enum Event {
     Formula { formula: CheckedTemporalFormula, horizon: u64 },
@@ -90,7 +90,8 @@ pub enum BoundedMeasure {
     Steps { from: CheckedPredicate, until: CheckedPredicate, within: u64 },
     Fraction(FractionMeasure),
 }
-pub struct FractionMeasure { pub predicate: CheckedPredicate, pub window: u64, pub weight: Option<Identifier> }
+pub struct FractionMeasure { pub predicate: CheckedPredicate, pub window: u64, pub weight: Option<Weighting> }
+pub enum Weighting { Reward(Identifier), Delay } // `weighted by R`, `weighted by delay`
 pub struct Confidence { pub alpha: Rational, pub beta: Rational, pub indifference: Rational }
 ```
 
@@ -188,7 +189,11 @@ FR-185 states (setting pending, QSL-883).
   `R` declared by at least one operation of the model; a step of an
   operation that declares no `R` contributes 0. `steps …` and `fraction holds(P) over [0, h]`
   SHALL be admitted with `h` a natural number, and `weighted by R` SHALL
-  name a reward.
+  name a reward, recorded as `Weighting::Reward(R)`. `weighted by delay` is
+  not a reward name: it is FSpec FR-407's delay weighting, which weights each
+  position by the delay of the step that leaves it, and S3 SHALL record it as
+  `Weighting::Delay` without looking up a reward. A claim weighted by delay
+  reads the subject's delays and no reward (FR-498).
 - Every declaration of a reward name by the operations of one model SHALL have
   one value type. If operations of the subject's model declare `R` with
   different value types, S3 SHALL refuse a claim that names `R`
@@ -265,7 +270,7 @@ FR-185 states (setting pending, QSL-883).
 
 ### Time positions
 
-- An `elapsed` measure, an `expected elapsed` claim and a time quantity used
+- An `elapsed` measure, an `expected elapsed` claim, a `weighted by delay` fraction or long-run fraction and a time quantity used
   as a horizon or interval bound (`within 5 ms`, `over [0, 5 ms]`,
   `[0 ms, 4 ms]`) SHALL be admitted over a timed subject (a subject whose
   model declares a time binding, FR-233 `ModelTime`), with the horizon or
@@ -273,9 +278,10 @@ FR-185 states (setting pending, QSL-883).
   exact rational.
 - Over a subject whose model declares no time binding, each of them SHALL be
   refused `ill_typed`/`type-mismatch`, located at the `elapsed` measure, at
-  `expected elapsed`'s quantity or at the time quantity, with a message
+  `expected elapsed`'s quantity, at the `delay` word of `weighted by delay`
+  or at the time quantity, with a message
   stating that the subject's model declares no time binding. There is no
-  elapsed time to measure, which is a type fact of the subject, not a missing
+  elapsed time to measure and no delay to weight by, which is a type fact of the subject, not a missing
   feature.
 - A claim under the timed profile (`filament.temporal.timed/v1`) over a timed
   subject SHALL be checked by that profile's operator admission (FR-326,
@@ -320,8 +326,8 @@ literal. No position refuses a quantity literal as not yet implemented.
 - Content is: the subject, which is the `model` alias as written and the
   domain package it selects; the profile; the scheduler (the workload's name,
   its model and its weights, or `every`); the fairness set; the `over` type;
-  the form, which is every bound, threshold, level, window, reward and
-  predicate; and each stated confidence parameter.
+  the form, which is every bound, threshold, level, window, reward,
+  weighting (a reward or the delay weighting) and predicate; and each stated confidence parameter.
 - Not content, so that a change to it leaves the normal form unchanged: the
   order in which a workload's weights, a fairness set's constraints and a
   reward's operations are written; the `over` binder's name; the operand order
@@ -356,6 +362,7 @@ literal. No position refuses a quantity literal as not yet implemented.
 | FR-186-AC-12 | Over the timed `Retx` subject (`time dense unit ms`) under the timed profile, `expected elapsed until holds(c.late) <= 3 ms`, the measure `elapsed from holds(not c.late) until holds(c.late) within 5 ms >= 1 ms` and the window `steps from holds(not c.late) until holds(c.late) within 5 ms >= 1` each check, the `expected elapsed` threshold recorded as 3 and each horizon as 5, in milliseconds. | Test (TC-2169) |
 | FR-186-AC-13 | A claim under the timed profile over the untimed service model is refused `invalid_timed_model`/`model-time-on-untimed-model` naming `Service`, at the `using` alias, and not `timed-event-profile`; under the timed profile over `Retx`, `probability >= 0.99 [ eventually[0 ms, 4 ms] holds(c.late) ]` checks. | Test (TC-2170) |
 | FR-186-AC-14 | For each quantity row of "Quantity positions" a quantity of the position's dimension checks and a quantity of length (`5 m`) is refused `ill_typed`/`unit-mismatch` naming `Length` at the literal; `fraction holds(P) over [0, 10] <= 5 ms` and `steps from holds(A) until holds(B) within 5 >= 5 ms` are refused `ill_typed`/`type-mismatch` at `5 ms`; no position refuses a quantity literal `not-yet-implemented`. | Test (TC-2171) |
+| FR-186-AC-15 | Over the timed `Retx` subject under the timed profile, `long_run_fraction holds(c.late) weighted by delay <= 0.5` checks as `LongRunFraction{AtMost(1/2), weight: Some(Weighting::Delay)}` and `probability >= 0.5 [fraction holds(c.late) over [0, 5 ms] weighted by delay <= rational(1, 2)]` checks with a `FractionMeasure` whose `weight` is `Some(Weighting::Delay)`; neither is refused `missing_declaration`/`missing-name`, although `Retx` declares no reward named `delay`; the weighted and the unweighted long-run claim have different normal forms. Over the untimed service model, `long_run_fraction holds(s.phase = Busy) weighted by delay >= 0.5` is refused `ill_typed`/`type-mismatch` located at the `delay` word, with a message stating that the subject's model declares no time binding, and not `missing-name`; `long_run_fraction holds(s.phase = Busy) weighted by duration >= 0.5` checks with `Some(Weighting::Reward(duration))`. | Test (TC-2168, TC-2169) |
 
 ## Dependencies
 
