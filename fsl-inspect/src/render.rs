@@ -2385,20 +2385,36 @@ mod tests {
 
     #[test]
     fn replay_text_faults_on_missing_results_and_row_labels() {
-        assert!(replay_result_lines(&serde_json::json!({"kind": "replayed"})).is_err());
-        assert!(
-            replay_result_lines(&serde_json::json!({
-                "kind": "replayed",
-                "results": [{"settlement": "inconclusive"}]
-            }))
-            .is_err()
-        );
-        assert!(
-            replay_result_lines(&serde_json::json!({
-                "kind": "replayed",
-                "results": [{"arm": "input"}]
-            }))
-            .is_err()
-        );
+        use fsl_replay::{Operation, OutcomeDocument, OutcomeStage};
+
+        let limits = RenderLimits::default();
+        let cancel = Cancel::new();
+        let render = |result| {
+            let document = OutcomeDocument::new(
+                Operation::Replay,
+                Some(OutcomeStage::S8),
+                Category::Success,
+            )
+            .with_raw_result_for_test(result);
+            render_outcome(
+                &document,
+                RenderForm::Text,
+                &RenderSources::from_sources([]),
+                limits,
+                &cancel,
+            )
+        };
+
+        assert!(render(serde_json::json!({"kind": "replayed"})).is_err());
+        assert!(render(serde_json::json!({
+            "kind": "replayed",
+            "results": [{"settlement": "inconclusive"}]
+        }))
+        .is_err());
+        assert!(render(serde_json::json!({
+            "kind": "replayed",
+            "results": [{"arm": "input"}]
+        }))
+        .is_err());
     }
 }

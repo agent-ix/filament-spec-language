@@ -2069,6 +2069,8 @@ enum OutcomeResult {
     Execute(ExecuteResult),
     Parsed(ParsedOutcome),
     Replayed(ReplayedOutcome),
+    #[cfg(feature = "test-support")]
+    Raw(serde_json::Value),
 }
 
 /// A replay outcome's `replayed` result: each entry is the row of the FSpec
@@ -2548,7 +2550,7 @@ impl OutcomeDocument {
                 let row = arm
                     .to_function_json()
                     .and_then(|row| serde_json::from_str(&row).map_err(Into::into));
-                Self::from_replay_row(arm, row)
+                Self::from_replay_row(arm, 0, row)
             }
             Err(refusal) => Self::from_replay_refusal(refusal),
         }
@@ -2558,7 +2560,26 @@ impl OutcomeDocument {
     /// row. Callers that need the row in a separate result document can encode
     /// it once and pass the parsed value here.
     pub fn from_replay_with_row(result: &ReplayResult, row: serde_json::Value) -> Self {
-        Self::from_replay_row(result, Ok(row))
+        Self::from_replay_row(result, 0, Ok(row))
+    }
+
+    /// An FR-286 internal-failure outcome when one FR-323 result row failed
+    /// to serialize. The row position identifies which row could not be
+    /// written; no partial replay result is retained.
+    pub fn from_replay_output_failure(
+        row_position: usize,
+        error: &crate::result::CauseCodecError,
+    ) -> Self {
+        replay_row_output_failure(row_position, error)
+    }
+
+    /// Supply a raw result solely to exercise malformed outcome handling in
+    /// downstream test targets.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn with_raw_result_for_test(mut self, result: serde_json::Value) -> Self {
+        self.result = Some(OutcomeResult::Raw(result));
+        self
     }
 
     /// The document of a refused replay.
@@ -2590,6 +2611,7 @@ impl OutcomeDocument {
 
     fn from_replay_row(
         arm: &ReplayResult,
+        row_position: usize,
         row: Result<serde_json::Value, crate::result::CauseCodecError>,
     ) -> Self {
         match row {
@@ -2602,13 +2624,7 @@ impl OutcomeDocument {
                 }));
                 document
             }
-            Err(_) => Self::new(Operation::Replay, None, Category::InternalFailure)
-                .with_diagnostics(vec![OutcomeDiagnostic::new(
-                    None,
-                    Code::OutputFailure.as_str(),
-                    None,
-                    "the replay result row did not serialize",
-                )]),
+            Err(error) => replay_row_output_failure(row_position, &error),
         }
     }
 
@@ -2786,6 +2802,23 @@ impl OutcomeDocument {
 /// The last stage a replay refusal reached: a recompile refusal's own spine
 /// stage, S8 for every other refusal (the replay itself refused), and none
 /// for a fault, whose stage is untyped.
+fn replay_row_output_failure(
+    row_position: usize,
+    error: &crate::result::CauseCodecError,
+) -> OutcomeDocument {
+    OutcomeDocument::new(
+        Operation::Replay,
+        None,
+        Category::InternalFailure,
+    )
+    .with_diagnostics(vec![OutcomeDiagnostic::new(
+        Some("output-failure"),
+        Code::OutputFailure.as_str(),
+        None,
+        format!("replay result row at position {row_position} did not serialize: {error}"),
+    )])
+}
+
 fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
     match refusal {
         ReplayRefusal::Recompile(refusal) => Some(refusal.stage().into()),
@@ -4283,21 +4316,31 @@ mod tests {
         assert_eq!(document["result"], Value::Null);
     }
 
-    /// An unwriteable replay row has no reached stage, and records its
-    /// output-failure diagnostic (FR-286).
+    /// An unwriteable replay row is an internal failure with no reached stage; its one
+    /// output-failure diagnostic names the failed row, and the result is null.
     #[test]
-    fn replay_row_encoding_failure_is_an_unstaged_output_failure() {
+    fn replay_row_encoding_failure_is_an_unstaged_output_failure_without_partial_result() {
         let result =
             ReplayResult::ProtocolAnalysis(crate::protocol_analysis::ProtocolReplayResult {
                 settlement: crate::protocol_analysis::ProtocolReplaySettlement::Reproduced,
             });
         let document = json_of(&OutcomeDocument::from_replay_row(
             &result,
+            2,
             Err(crate::result::CauseCodecError::Empty("result row")),
         ));
         assert_eq!(document["category"], "internal-failure");
         assert_eq!(document["last_stage"], Value::Null);
+        assert_eq!(document["result"], Value::Null);
         assert_eq!(document["diagnostics"][0]["code"], "output-failure");
+        assert_eq!(document["diagnostics"][0]["cause"], "output-failure");
+        assert!(
+            document["diagnostics"][0]["message"]
+                .as_str()
+                .expect("diagnostic message")
+                .contains("row at position 2"),
+            "{document}"
+        );
     }
 
     fn run_source(

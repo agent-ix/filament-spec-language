@@ -76,7 +76,10 @@ pub(super) fn run_bytes(
     let result = fsl_replay::replay(request, limits);
     match result {
         Ok(result) => {
-            let row = result.to_function_json().map_err(RunCause::ReplayOutput)?;
+            let row = result.to_function_json().map_err(|error| RunCause::ReplayOutput {
+                outcome: fsl_replay::OutcomeDocument::from_replay_output_failure(0, &error),
+                error,
+            })?;
             let row: Value = serde_json::from_str(&row).map_err(RunCause::Output)?;
             let outcome = fsl_replay::OutcomeDocument::from_replay_with_row(&result, row.clone());
             Ok(RunResult {
