@@ -366,7 +366,7 @@ fn holder(env: &TypeEnvironment, universe: &str, identity: &str) -> Value {
 #[trace("FSpec-TC-189", "FSpec-FR-144-AC-6")]
 #[trace("TC-1339", "FR-534-AC-1")]
 #[test]
-fn c06_reference_holders_are_keyed_and_ieee_elements_are_ineligible() {
+fn c06_reference_holders_and_ieee_elements_are_admitted() {
     let env = holder_environment();
     let holders = collection_type(
         CollectionKind::Set,
@@ -381,9 +381,6 @@ fn c06_reference_holders_are_keyed_and_ieee_elements_are_ineligible() {
     assert!(env.try_check_type(&hs_type).is_ok());
     assert!(equal(&env, &hs_type, &hs, &hs));
 
-    let ineligible = Err(IllTyped {
-        cause: IllTypedCause::OperatorIneligible,
-    });
     let floats = collection_type(
         CollectionKind::Set,
         ValueType::Float(FloatType::exact(IeeeWidth::Binary64)),
@@ -392,10 +389,7 @@ fn c06_reference_holders_are_keyed_and_ieee_elements_are_ineligible() {
     );
     let records = collection_type(CollectionKind::Bag, ValueType::Composite(key("F")), 0, 2);
     for declared in [floats, records] {
-        assert_eq!(
-            env.try_check_type(&ValueType::collection(declared)),
-            ineligible.map_err(filament_semantic_value::declaration::TypeCheckError::Refused)
-        );
+        assert!(env.try_check_type(&ValueType::collection(declared)).is_ok());
     }
 }
 
@@ -407,8 +401,7 @@ fn c06_reference_holders_are_keyed_and_ieee_elements_are_ineligible() {
 #[trace("FSpec-TC-194", "FSpec-FR-149-AC-26")]
 #[trace("FSpec-TC-189", "FSpec-FR-144-AC-6")]
 #[test]
-#[ignore = "QSL-2173: float set elements and set equality by bit identity not implemented yet"]
-fn c06b_float_sets_are_admitted_and_compare_members_by_bit_identity() {
+fn set_of_float64_compares_by_bit_identity() {
     use filament_exact::IeeeValue;
     let env = holder_environment();
     let floats = collection_type(
@@ -438,6 +431,24 @@ fn c06b_float_sets_are_admitted_and_compare_members_by_bit_identity() {
         &set(vec![plus_zero.clone()]),
         &set(vec![minus_zero.clone()])
     ));
+    let not_equal = env
+        .check_equality(
+            EqualityOperator::NotEqual,
+            EqualityOperand::typed(set_type.clone()),
+            EqualityOperand::typed(set_type.clone()),
+            &EnumMemberIndex::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        not_equal.evaluate(
+            &env,
+            &set(vec![plus_zero.clone()]),
+            &set(vec![minus_zero.clone()]),
+            &mut Meter::new(UNLIMITED),
+        ),
+        Outcome::Completed(true),
+        "sets containing +0 and -0 are not equal"
+    );
     assert!(equal(
         &env,
         &set_type,

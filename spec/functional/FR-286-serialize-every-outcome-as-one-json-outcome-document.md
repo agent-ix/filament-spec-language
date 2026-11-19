@@ -251,6 +251,22 @@ export outcome's `status`:
 | `refused` with `below-fidelity-floor` | unsupported | `21` |
 | `incomplete` (an `export.*` limit) | incomplete | `22` |
 | a mapper failure | internal-failure | `30` |
+| an output failure: the target file of an `assembled` export cannot be written | internal-failure | `30` |
+
+An output failure is the export's counterpart of FR-862's results-row
+output failure: the export was made, and writing its named file failed (a
+missing parent directory, a denied permission, a full device). The document
+carries one diagnostic with `code` `output-failure`, `cause`
+`output-failure` and `details` `null`, `result` `null`, and `last_stage` the
+greatest stage the export reached (S4 for an export of a checked package),
+not `null`: unlike a replay row, the failure follows a completed compile,
+and the stage tells a caller the program was checked and only the write
+failed. It is internal-failure, exit `30`, not refusal, because the request
+was admitted and well formed, and FR-285 ranks an output failure with every
+other failure of the implementation. A file found already at the path
+remains an admission refusal, exit `20`, whether it was found before the
+compile or when the file is created, so a caller tells a path conflict from
+a write failure by the code.
 
 Its `result` is `{"kind": "exported", "export": E}`, `E` the FSpec FR-817
 `filament.export-outcome/v1` document exactly as the run outcome's `export`
@@ -422,6 +438,7 @@ FR-634's members. A clause-run and a `monitor` item carry FR-622's `axes`.
 | FR-286-AC-20 | A `monitor` document of settled clause runs (`MonitorOutcome::document`, here with no records) has `last_stage` `S6a`; the whole-request refusal document of `MonitorRefusal::UnknownClause` has `S4` and of `MonitorRefusal::Observation` `S6a`, each with its refusal category. | Test (TC-2383) |
 | FR-286-AC-21 | The `replay` outcome of FR-862-AC-2's replay of `entry` serializes with `result` `{"kind": "replayed", "results": [R]}`, `R` equal to the one row of the `results` document `command::run` returns (`arm` `input`, `settlement` `reproduced-without-witness`); FR-862-AC-1's refused request serializes with `result` `null`. | Test (TC-2963) |
 | FR-286-AC-22 | The `export` outcome of FR-756-AC-1's counter serializes with `operation` `export`, `category` success, `last_stage` S4, `items` `[]`, `artifacts` `[]` and `result` `{"kind": "exported", "export": E}` with `E` equal to the run outcome's `export` member; the below-floor export of FR-1015-AC-1 serializes with category unsupported and the same `result` kind, the export under `export.output_bytes` 1 with category incomplete, and the export naming an existing output path with category refusal, `last_stage` `null` and `result` `null`. | Test (TC-2994) |
+| FR-286-AC-23 | The export of `SlowEnough` over `Braking` under `minimum_fidelity` `any` with `output` `{"file": "missing-directory/m.tla"}`, whose parent directory does not exist, exits `30` and serializes with `operation` `export`, `category` internal-failure, `last_stage` S4, `result` `null` and one diagnostic with `code` `output-failure`, `cause` `output-failure` and `details` `null`; no file is written. | Test (TC-3029) |
 
 ## Status
 

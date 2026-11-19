@@ -899,9 +899,11 @@ impl ItemSelection {
     }
 
     /// [`Self::unrouted`] without the witness sampling members, which a
-    /// state-graph claim reads (FR-628).
+    /// state-graph claim reads (FR-628). Its backend options are negotiated
+    /// against the candidates' published values, as for other temporal
+    /// claims (FR-243).
     fn unrouted_beyond_sampling(&self) -> bool {
-        self.unrouted_members(false)
+        self.unrouted_members(true)
     }
 
     fn unrouted_members(&self, options_negotiated: bool) -> bool {
@@ -1590,7 +1592,7 @@ fn resolve_one(
     );
     let candidates = if let Some(claim) = state_graph {
         registry.restrict_to_state_graph_form(
-            registry.restrict_to_timing(candidates, timed(package)),
+            registry.restrict_to_options_and_timing(candidates, &backend_options, timed(package)),
             fsl_route::StateGraphFormKind::of(claim.form()),
         )
     } else if kind == Capability::TemporalSatisfaction {
@@ -1721,24 +1723,6 @@ fn resolve_one(
         None
     };
     if let Some(claim) = state_graph {
-        if timed(package) {
-            // EN-6 lists no state-graph form and EN-1 reads no clocks, so a
-            // timed subject has no state-graph route yet (QSL-2305).
-            let mut detail = Map::new();
-            detail.insert("kind".to_owned(), json!(kind.to_wire()));
-            detail.insert(
-                "reason".to_owned(),
-                json!("a state-graph claim over a timed subject has no route (QSL-2305)"),
-            );
-            return ResolvedItem::Settled {
-                claim_name: Some(name.to_owned()),
-                record: Box::new(TerminalRecord::disposition_unsupported(
-                    index,
-                    fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
-                    detail,
-                )),
-            };
-        }
         if let Some(refused) = sampling_refusal(index, name, claim, &temporal) {
             return refused;
         }
@@ -3374,6 +3358,7 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     let index = record.remove("request_index").unwrap_or(Value::Null);
     let category = record.remove("category").unwrap_or(Value::Null);
     let counterexample = record.remove("counterexample");
+    let certificate_document = record.remove("certificate_document");
     let mut item = Map::new();
     item.insert("request_index".to_owned(), index);
     item.insert(
@@ -3382,15 +3367,24 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     );
     item.insert("request".to_owned(), request.unwrap_or(Value::Null));
     item.insert("category".to_owned(), category);
-    if let (Some(checker), Some(identity), Some("proved")) = (
+    if let (Some(checker), Some(identity), Some(result)) = (
         detail.as_ref().and_then(|detail| detail.checker),
         identity,
         record.get("result").and_then(Value::as_str),
     ) {
-        item.insert(
-            "certificate".to_owned(),
-            json!({"identity": identity, "checker": checker.as_str(), "accepted": true}),
-        );
+        if matches!(result, "proved" | "refuted") {
+            let mut certificate = json!({
+                "identity": identity,
+                "checker": checker.as_str(),
+                "accepted": result == "proved"
+            });
+            if let Some(document) = certificate_document {
+                if let Some(certificate) = certificate.as_object_mut() {
+                    certificate.insert("document".to_owned(), document);
+                }
+            }
+            item.insert("certificate".to_owned(), certificate);
+        }
     }
     let mut spelled = None;
     if let Some(mut counterexample) = counterexample {

@@ -45,6 +45,14 @@ pub const METHOD: &str = "method";
 /// EN-6's one `method` value, its default: zone search (FR-239).
 pub const METHOD_ZONES: &str = "zones";
 
+/// The timed state-graph forms EN-6 decides over its checked zone graph
+/// (FSpec FR-331, FR-390).
+pub const STATE_GRAPH_FORMS: [fsl_route::StateGraphFormKind; 3] = [
+    fsl_route::StateGraphFormKind::Possible,
+    fsl_route::StateGraphFormKind::AlwaysPossible,
+    fsl_route::StateGraphFormKind::UniquePath,
+];
+
 /// EN-6's routed descriptor, converted from [`ADVERTISED`], [`DOMAINS`],
 /// [`FAIRNESS_KINDS`] and [`REDUCTIONS`] by FR-288's conversion, and
 /// marked as deciding a `time dense` subject, so an item over one routes to
@@ -70,6 +78,7 @@ pub fn descriptor(origin: ProviderOrigin) -> Result<BackendDescriptor, Registrat
     .map(|descriptor| {
         descriptor
             .with_timed()
+            .with_state_graph_forms(STATE_GRAPH_FORMS)
             .with_option_values(METHOD, [METHOD_ZONES.to_owned()])
     })
 }

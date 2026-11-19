@@ -681,6 +681,9 @@ fn assert_equality_reader_outcomes(emission: &Emission, read: Read) {
                 let expected_schedule = match decision["schedule"].as_str() {
                     Some("plan") => filament_semantic_value::declaration::EqualitySchedule::Plan,
                     Some("text") => filament_semantic_value::declaration::EqualitySchedule::Text,
+                    Some("float") => {
+                        filament_semantic_value::declaration::EqualitySchedule::Float
+                    }
                     Some("enum") => filament_semantic_value::declaration::EqualitySchedule::Enum,
                     Some("quantity") => {
                         filament_semantic_value::declaration::EqualitySchedule::Quantity
@@ -701,6 +704,9 @@ fn assert_equality_reader_outcomes(emission: &Emission, read: Read) {
                     "decision {index}: {error:?}"
                 );
                 let (expected_witness, expected_at) = match decision["schedule"].as_str() {
+                    Some("float") => panic!(
+                        "the selected Float schedule must admit same-type, unconverted operands; decision {index}: {error:?}"
+                    ),
                     // IR currently reports its typed Text witness refusal;
                     // preserve the exact TextBounds node until IR-1209 lifts
                     // the Text equality schedule.
@@ -1976,7 +1982,6 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
         TemporalClockProfileMismatch,
         ProtocolResultInvariant,
         ProtocolResultsRequired,
-        FloatEqualityScheduleNotEmitted,
         NativeLiteralNotEmitted(&'static str),
     }
     fn classify(result: Result<Emission, EmitRefusal>) -> Seen {
@@ -2026,9 +2031,6 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             }
             Err(EmitRefusal::ProtocolResultInvariant) => Seen::ProtocolResultInvariant,
             Err(EmitRefusal::ProtocolResultsRequired) => Seen::ProtocolResultsRequired,
-            Err(EmitRefusal::FloatEqualityScheduleNotEmitted) => {
-                Seen::FloatEqualityScheduleNotEmitted
-            }
             Err(EmitRefusal::NativeLiteralNotEmitted { construct }) => {
                 Seen::NativeLiteralNotEmitted(construct)
             }

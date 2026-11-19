@@ -7,6 +7,7 @@ use filament_exact::ObjectReference;
 use filament_semantic_value::catalog::Category;
 use fsl_eval::simulation::model::{
     ModelSimState, ModelSimulationRequest, ModelSystem, PredicateReading, TerminalClass,
+    TimedSystem,
 };
 use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_semantics::check::{
@@ -14,15 +15,18 @@ use fsl_semantics::check::{
 };
 
 use crate::bounds::ReplayLimits;
-use crate::execute::{recompile_with_temporal_selections, request_limits, ReplayRefusal};
+use crate::execute::{ReplayRefusal, recompile_with_temporal_selections, request_limits};
 use crate::model_check::counterexample::ModelStep;
 use crate::model_check::graph_settle::{GraphReplayResult, GraphReplaySettlement};
 use crate::model_check::identity::StateGraphIdentity;
 use crate::model_check::limits::{ModelCheckLimit, ReachedLimit};
 use crate::model_check::replay::ModelTraceSubject;
-use crate::model_check::replay::{fault, refused, ModelTraceRefusal};
+use crate::model_check::replay::{ModelTraceRefusal, fault, refused};
 use crate::model_check::state_graph::{GraphEvidence, ModelPath, TrapClosure, WitnessPath};
 use crate::request::{ReplayRequest, ReplayRequestWire};
+use crate::certificate::zone_certificate::{
+    CertificateItem, CertifiedItem, ZoneCertificateRequest, ZoneCertificateVerdict,
+};
 use crate::result::{DisagreementCause, Verdict};
 use crate::witness::ReplaySource;
 use filament_exact::Cancel;
@@ -188,11 +192,89 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
         meter: request.accounting_limits(),
         emit: caller.spine.package.emit(),
     };
-    let system = ModelSystem::new(simulation).map_err(ReplayRefusal::Admission)?;
+    let system = ModelSystem::new(simulation.clone()).map_err(ReplayRefusal::Admission)?;
+    let timed = subject
+        .timed
+        .as_ref()
+        .map(|reading| {
+            TimedSystem::with_max_clocks(&system, &reading.model, reading.max_clocks)
+                .map_err(|refusal| refused(ModelTraceRefusal::TimedSubject(refusal)))
+        })
+        .transpose()?;
     let model_limits = caller.engines.model_check;
+    let state_graph_truth = if let (Some(claim), Some(certificate)) =
+        (claim, envelope.zone_certificate())
+    {
+        let reading = subject
+            .timed
+            .as_ref()
+            .ok_or(ReplayRefusal::ModelGraphMismatch {
+                member: "timed_subject",
+            })?;
+        let over = graph_over(&system, claim, envelope.family_payload())?;
+        let verdict = crate::check_zone_certificate(
+            ZoneCertificateRequest {
+                simulation,
+                model: &reading.model,
+                max_clocks: reading.max_clocks,
+                item: CertifiedItem::StateGraph { claim, over: over.as_ref() },
+            },
+            &certificate.obligation,
+            |obligation| match &obligation.kind {
+                fsl_route::deadlock::ObligationKind::StateGraphAuthored(occurrence) => {
+                    CertificateItem::StateGraph(occurrence)
+                }
+                _ => CertificateItem::Other,
+            },
+            certificate,
+            crate::CertificateCheckLimits::default(),
+            cancel,
+        )
+        .map_err(|_| ReplayRefusal::ModelGraphMismatch {
+            member: "zone_certificate",
+        })?;
+        match verdict {
+            ZoneCertificateVerdict::Accepted => Some(true),
+            ZoneCertificateVerdict::Rejected(rejection)
+                if matches!(
+                    rejection.rule,
+                    crate::CertificateRule::InitialMissing
+                        | crate::CertificateRule::SuccessorMissing
+                        | crate::CertificateRule::CountBroken
+                ) =>
+            {
+                Some(false)
+            }
+            _ => {
+                return Err(ReplayRefusal::ModelGraphMismatch {
+                    member: "zone_certificate",
+                });
+            }
+        }
+    } else if let (Some(claim), Some(timed_replay), Some(timed)) =
+        (claim, subject.timed.as_ref(), timed.as_ref())
+    {
+        if timed_replay.digital {
+            Some(digital_state_graph_truth(
+                &system,
+                timed,
+                claim,
+                envelope.family_payload(),
+                u64::try_from(model_limits.limits.max_states).unwrap_or(u64::MAX),
+                u64::try_from(model_limits.limits.max_transitions).unwrap_or(u64::MAX),
+                cancel,
+            )?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let result = if let Some(claim) = claim {
         replay_evidence(
             &system,
+            timed.as_ref(),
+            state_graph_truth,
             package,
             claim,
             envelope.family_payload(),
@@ -222,37 +304,24 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
 
 pub(super) type Position = (ModelSimState, StateKey);
 
+struct GraphPathReplay {
+    positions: Vec<Position>,
+    final_timed: Option<fsl_eval::simulation::model::TimedState>,
+}
+
 /// Replay typed graph evidence against the recompiled claim and its admitted
 /// model system. The facade performs package and identity admission first.
 pub(super) fn replay_evidence(
     system: &ModelSystem<'_>,
+    timed: Option<&TimedSystem<'_, '_>>,
+    state_graph_truth: Option<bool>,
     package: &fsl_package::CheckedPackage,
     claim: &CheckedStateGraphClaim,
     evidence: &GraphEvidence,
     max_states: usize,
     max_transitions: usize,
 ) -> Result<GraphReplayResult, ReplayRefusal> {
-    let over = match (claim.over(), evidence_over(evidence)) {
-        (None, None) => None,
-        (Some(parameter), Some(instance)) => {
-            let model_instance = system
-                .instances(&filament_exact::ValueType::Reference(
-                    parameter.object.clone(),
-                ))
-                .map_err(|_| refused(ModelTraceRefusal::OverBinding))?
-                .into_iter()
-                .find(|candidate| {
-                    candidate.population == instance.population && candidate.key == instance.key
-                })
-                .ok_or_else(|| refused(ModelTraceRefusal::OverBinding))?;
-            Some(
-                system
-                    .bound_reference(parameter.object.clone(), &model_instance)
-                    .map_err(|_| fault("state-graph-over-reference"))?,
-            )
-        }
-        _ => return Err(refused(ModelTraceRefusal::OverBinding)),
-    };
+    let over = graph_over(system, claim, evidence)?;
 
     let mut evaluated = Vec::new();
     let (settlement, closure_nodes, first_target) = match evidence {
@@ -265,11 +334,17 @@ pub(super) fn replay_evidence(
                 }));
             }
             let mut agrees = true;
+            if state_graph_truth == Some(false) {
+                agrees = false;
+            }
             for (index, (path, _source)) in paths.iter().enumerate() {
                 match path {
                     WitnessPath::Path(path) => {
-                        let positions = replay_path(system, path)?;
-                        let last = positions.last().ok_or_else(|| fault("path-has-initial"))?;
+                        let replayed = replay_graph_path(system, timed, path)?;
+                        let last = replayed
+                            .positions
+                            .last()
+                            .ok_or_else(|| fault("path-has-initial"))?;
                         let target = target_read(system, claim, &last.0, over.as_ref())?;
                         match target {
                             PredicateReading::True => evaluated.push((target_role(claim), true)),
@@ -313,7 +388,8 @@ pub(super) fn replay_evidence(
                     reason: "a product trap requires FR-181 replay",
                 }));
             }
-            let positions = replay_path(system, stem)?;
+            let replayed = replay_graph_path(system, timed, stem)?;
+            let positions = replayed.positions;
             let last = positions.last().ok_or_else(|| fault("trap-has-initial"))?;
             let (source, target) = from_target_roles(claim);
             if let Some(from) = source {
@@ -330,6 +406,16 @@ pub(super) fn replay_evidence(
                 return Err(refused(ModelTraceRefusal::HyperShape {
                     reason: "a possible trap has an empty stem",
                 }));
+            }
+            if timed.is_some() && state_graph_truth == Some(false) {
+                let reading = read_predicate(system, target, &last.0, over.as_ref())?;
+                let reproduced = matches!(reading, PredicateReading::False);
+                let settlement = if reproduced {
+                    GraphReplaySettlement::Reproduced
+                } else {
+                    inconclusive(Category::Violation, Category::Success)
+                };
+                return Ok(result(settlement, evaluated, None, None));
             }
             let (count, found, stopped) = explore_closure(
                 system,
@@ -358,7 +444,8 @@ pub(super) fn replay_evidence(
             second,
             ..
         } => {
-            let stem_positions = replay_path(system, stem)?;
+            let replayed_stem = replay_graph_path(system, timed, stem)?;
+            let stem_positions = replayed_stem.positions;
             let base = &stem_positions
                 .last()
                 .ok_or_else(|| fault("path-pair-has-stem-initial"))?
@@ -375,17 +462,56 @@ pub(super) fn replay_evidence(
                     ));
                 }
             }
-            let first_states = replay_steps(system, base.clone(), first)?;
-            let second_states = replay_steps(system, base.clone(), second)?;
-            let first_ok =
-                check_first_target(system, target, &first_states, over.as_ref(), &mut evaluated)?;
-            let second_ok = check_first_target(
+            let first_states = replay_graph_steps(
                 system,
-                target,
-                &second_states,
-                over.as_ref(),
-                &mut evaluated,
+                timed,
+                base.clone(),
+                replayed_stem.final_timed.clone(),
+                first,
             )?;
+            let second_states = replay_graph_steps(
+                system,
+                timed,
+                base.clone(),
+                replayed_stem.final_timed,
+                second,
+            )?;
+            let (first_ok, second_ok) = if matches!(claim.form(), StateGraphForm::UniquePath { .. })
+            {
+                (
+                    check_target_endpoint(
+                        system,
+                        target,
+                        &first_states,
+                        over.as_ref(),
+                        &mut evaluated,
+                    )?,
+                    check_target_endpoint(
+                        system,
+                        target,
+                        &second_states,
+                        over.as_ref(),
+                        &mut evaluated,
+                    )?,
+                )
+            } else {
+                (
+                    check_first_target(
+                        system,
+                        target,
+                        &first_states,
+                        over.as_ref(),
+                        &mut evaluated,
+                    )?,
+                    check_first_target(
+                        system,
+                        target,
+                        &second_states,
+                        over.as_ref(),
+                        &mut evaluated,
+                    )?,
+                )
+            };
             let differs = first != second;
             let settlement = if first_ok && second_ok && differs {
                 GraphReplaySettlement::Reproduced
@@ -397,12 +523,12 @@ pub(super) fn replay_evidence(
         GraphEvidence::Undefined {
             stem, undefined, ..
         } => {
-            let positions = replay_path(system, stem)?;
+            let replayed = replay_graph_path(system, timed, stem)?;
             let matches = replay_claim_undefined(
                 system,
                 package,
                 claim,
-                &positions,
+                &replayed.positions,
                 over.as_ref(),
                 undefined,
             )?;
@@ -510,7 +636,7 @@ fn replay_claim_undefined(
                     Ok(fsl_eval::simulation::ConstraintValue::Undefined { cause, .. })
                         if cause == undefined.cause =>
                     {
-                        return Ok(index + 1 == positions.len())
+                        return Ok(index + 1 == positions.len());
                     }
                     Ok(fsl_eval::simulation::ConstraintValue::Undefined { .. })
                     | Ok(fsl_eval::simulation::ConstraintValue::Boundary) => return Ok(false),
@@ -550,6 +676,113 @@ fn evidence_over(evidence: &GraphEvidence) -> Option<&fsl_eval::model_subject::M
         | GraphEvidence::PathPair { over, .. }
         | GraphEvidence::Undefined { over, .. } => over.as_ref(),
     }
+}
+
+fn graph_over(
+    system: &ModelSystem<'_>,
+    claim: &CheckedStateGraphClaim,
+    evidence: &GraphEvidence,
+) -> Result<Option<ObjectReference>, ReplayRefusal> {
+    match (claim.over(), evidence_over(evidence)) {
+        (None, None) => Ok(None),
+        (Some(parameter), Some(instance)) => {
+            let model_instance = system
+                .instances(&filament_exact::ValueType::Reference(parameter.object.clone()))
+                .map_err(|_| refused(ModelTraceRefusal::OverBinding))?
+                .into_iter()
+                .find(|candidate| {
+                    candidate.population == instance.population && candidate.key == instance.key
+                })
+                .ok_or_else(|| refused(ModelTraceRefusal::OverBinding))?;
+            system
+                .bound_reference(parameter.object.clone(), &model_instance)
+                .map(Some)
+                .map_err(|_| fault("state-graph-over-reference"))
+        }
+        _ => Err(refused(ModelTraceRefusal::OverBinding)),
+    }
+}
+
+fn digital_state_graph_truth(
+    system: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    claim: &CheckedStateGraphClaim,
+    evidence: &GraphEvidence,
+    max_states: u64,
+    max_transitions: u64,
+    cancel: &Cancel,
+) -> Result<bool, ReplayRefusal> {
+    let graph = crate::explore_digital_state_graph(
+        timed,
+        max_states,
+        max_transitions,
+        cancel,
+    )
+    .map_err(|_| ReplayRefusal::ModelGraphMismatch {
+        member: "digital_state_graph",
+    })?;
+    let over = graph_over(system, claim, evidence)?;
+    let read_values = |predicate: &fsl_semantics::check::CheckedStatePredicate| {
+        if predicate.is_constant_true() {
+            return Ok(vec![true; graph.nodes.len()]);
+        }
+        let body = predicate
+            .predicate_body()
+            .ok_or(ReplayRefusal::ModelGraphMismatch {
+                member: "digital_state_graph_predicate",
+            })?;
+        graph.nodes.iter().map(|node| {
+            let readings = system
+                .state_predicates_with_cancel(node.discrete(), &[(body, over.as_ref())], cancel)
+                .map_err(|_| ReplayRefusal::ModelGraphMismatch {
+                    member: "digital_state_graph_predicate",
+                })?;
+            match readings.as_slice() {
+                [PredicateReading::True] => Ok(true),
+                [PredicateReading::False] => Ok(false),
+                _ => Err(ReplayRefusal::ModelGraphMismatch {
+                    member: "digital_state_graph_predicate",
+                }),
+            }
+        }).collect::<Result<Vec<_>, _>>()
+    };
+    let (source, target) = match claim.form() {
+        StateGraphForm::Possible { target } => (None, target),
+        StateGraphForm::AlwaysPossible { from, target } => (Some(from), target),
+        StateGraphForm::UniquePath { from, to } => (Some(from), to),
+    };
+    let target_values = read_values(target)?;
+    let reaches_target = digital_predecessors(&graph, &target_values);
+    if let Some(source) = source {
+        let source_values = read_values(source)?;
+        Ok(source_values
+            .iter()
+            .zip(&reaches_target)
+            .all(|(is_source, reaches)| !is_source || *reaches))
+    } else {
+        Ok(graph.initials.iter().all(|initial| reaches_target[*initial]))
+    }
+}
+
+fn digital_predecessors(
+    graph: &crate::DigitalStateGraph,
+    target: &[bool],
+) -> Vec<bool> {
+    let mut reaches = target.to_vec();
+    let mut queue: VecDeque<usize> = reaches
+        .iter()
+        .enumerate()
+        .filter_map(|(index, yes)| yes.then_some(index))
+        .collect();
+    while let Some(node) = queue.pop_front() {
+        for edge in graph.edges.iter().filter(|edge| edge.to == node) {
+            if !reaches[edge.from] {
+                reaches[edge.from] = true;
+                queue.push_back(edge.from);
+            }
+        }
+    }
+    reaches
 }
 
 fn path_initial(path: &WitnessPath) -> usize {
@@ -661,6 +894,119 @@ pub(super) fn replay_path(
     replay_steps(system, state, &path.steps)
 }
 
+fn replay_graph_path(
+    system: &ModelSystem<'_>,
+    timed: Option<&TimedSystem<'_, '_>>,
+    path: &ModelPath,
+) -> Result<GraphPathReplay, ReplayRefusal> {
+    let Some(timed) = timed else {
+        return Ok(GraphPathReplay {
+            positions: replay_path(system, path)?,
+            final_timed: None,
+        });
+    };
+    let initials = timed.initial();
+    let state = initials
+        .get(path.initial as usize)
+        .cloned()
+        .ok_or_else(|| {
+            refused(ModelTraceRefusal::InitialState {
+                index: path.initial as usize,
+                count: initials.len(),
+            })
+        })?;
+    let (positions, final_timed) = replay_timed_steps(timed, state, &path.steps)?;
+    Ok(GraphPathReplay {
+        positions,
+        final_timed: Some(final_timed),
+    })
+}
+
+fn replay_graph_steps(
+    system: &ModelSystem<'_>,
+    timed: Option<&TimedSystem<'_, '_>>,
+    start: ModelSimState,
+    timed_start: Option<fsl_eval::simulation::model::TimedState>,
+    steps: &[ModelStep],
+) -> Result<Vec<Position>, ReplayRefusal> {
+    match (timed, timed_start) {
+        (Some(timed), Some(start)) => replay_timed_steps(timed, start, steps).map(|(path, _)| path),
+        (Some(_), None) => Err(fault("state-graph-timed-path-start")),
+        (None, None) => replay_steps(system, start, steps),
+        (None, Some(_)) => Err(fault("state-graph-untimed-path-start")),
+    }
+}
+
+fn replay_timed_steps(
+    timed: &TimedSystem<'_, '_>,
+    start: fsl_eval::simulation::model::TimedState,
+    steps: &[ModelStep],
+) -> Result<(Vec<Position>, fsl_eval::simulation::model::TimedState), ReplayRefusal> {
+    let key = timed
+        .state_key(&start)
+        .map_err(|_| fault("state-graph-timed-state-key"))?;
+    let mut positions = vec![(start.discrete().clone(), key)];
+    let mut current = start;
+    for (index, step) in steps.iter().enumerate() {
+        let delay = step
+            .delay
+            .as_ref()
+            .ok_or_else(|| refused(ModelTraceRefusal::MissingDelay { step: Some(index) }))?;
+        let delayed = timed
+            .delay(&current, delay)
+            .map_err(|_| fault("state-graph-timed-delay"))?
+            .ok_or_else(|| {
+                refused(ModelTraceRefusal::DelayNotAdmissible {
+                    step: Some(index),
+                    delay: delay.clone(),
+                    bar: if delay.numerator().is_negative() {
+                        super::replay::DelayBar::Negative
+                    } else if timed.tick_period().is_some() {
+                        super::replay::DelayBar::TickSource
+                    } else {
+                        super::replay::DelayBar::TimeInvariant("timed state invariant".to_owned())
+                    },
+                })
+            })?;
+        let successors = timed
+            .steps(&delayed)
+            .map_err(|_| fault("state-graph-timed-expansion"))?;
+        let mut enabled = false;
+        let mut reached = Vec::new();
+        let mut found = None;
+        for (transition, state) in successors {
+            if transition.transition() != &step.transition {
+                continue;
+            }
+            enabled = true;
+            let key = timed
+                .state_key(&state)
+                .map_err(|_| fault("state-graph-timed-state-key"))?;
+            reached.push(key.clone());
+            if key == step.post_state {
+                found = Some((state, key));
+                break;
+            }
+        }
+        let Some((state, key)) = found else {
+            if !enabled {
+                return Err(refused(ModelTraceRefusal::NotEnabled {
+                    step: index,
+                    transition: Box::new(step.transition.clone()),
+                }));
+            }
+            return Err(refused(ModelTraceRefusal::PostState {
+                step: index,
+                recorded: step.post_state.clone(),
+                reached,
+            }));
+        };
+        positions.push((state.discrete().clone(), key));
+        current = state;
+    }
+    Ok((positions, current))
+}
+
 fn replay_steps(
     system: &ModelSystem<'_>,
     start: ModelSimState,
@@ -672,6 +1018,11 @@ fn replay_steps(
     let key = StateKey::from_canonical_bytes(bytes);
     let mut positions = vec![(start, key)];
     for (index, step) in steps.iter().enumerate() {
+        if step.delay.is_some() {
+            return Err(refused(ModelTraceRefusal::UntimedDelay {
+                step: Some(index),
+            }));
+        }
         let current = positions
             .last()
             .ok_or_else(|| fault("state-graph-path-position"))?;
@@ -736,6 +1087,20 @@ fn check_first_target(
         }
     }
     Ok(false)
+}
+
+fn check_target_endpoint(
+    system: &ModelSystem<'_>,
+    target: &CheckedStatePredicate,
+    states: &[Position],
+    over: Option<&ObjectReference>,
+    evaluated: &mut Vec<(PredicateRole, bool)>,
+) -> Result<bool, ReplayRefusal> {
+    let Some((state, _)) = states.last() else {
+        return Err(fault("target-path-has-no-endpoint"));
+    };
+    let reading = read_predicate(system, target, state, over)?;
+    record_reading(target_role_from_predicate(target), reading, evaluated)
 }
 
 fn target_role_from_predicate(_predicate: &CheckedStatePredicate) -> PredicateRole {

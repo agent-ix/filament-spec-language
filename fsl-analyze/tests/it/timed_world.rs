@@ -244,6 +244,29 @@ pub(crate) fn world(document: &[u8], profiles: &str, body: &str) -> World {
     world_over(document, profiles, body, &["c"])
 }
 
+/// [`world`] checked under a distinct source identity, for equal names in
+/// separate checked packages.
+pub(crate) fn world_with_source_identity(
+    document: &[u8],
+    profiles: &str,
+    body: &str,
+    source_identity: &str,
+) -> World {
+    world_built_in_with_protocol_selection_and_source(
+        PACKAGE,
+        &[document],
+        profiles,
+        body,
+        &["c"],
+        &[],
+        &json!({}),
+        true,
+        CheckMode::Linked,
+        source_identity,
+        source_identity,
+    )
+}
+
 /// [`world`] checked under `mode`, for runtime undefinedness fixtures.
 pub(crate) fn world_with_mode(
     document: &[u8],
@@ -395,10 +418,39 @@ fn world_built_in_with_protocol_selection(
     select_protocol_profile: bool,
     mode: CheckMode,
 ) -> World {
+    world_built_in_with_protocol_selection_and_source(
+        package,
+        documents,
+        profiles,
+        body,
+        keys,
+        armed,
+        extra,
+        select_protocol_profile,
+        mode,
+        "fr-239",
+        "package",
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn world_built_in_with_protocol_selection_and_source(
+    package: &str,
+    documents: &[&[u8]],
+    profiles: &str,
+    body: &str,
+    keys: &[&str],
+    armed: &[&str],
+    extra: &Json,
+    select_protocol_profile: bool,
+    mode: CheckMode,
+    source_identity: &str,
+    checked_package: &str,
+) -> World {
     let packages = package_input(documents.iter().copied()).unwrap();
     let unit = unit_text(package, profiles, body);
     let parsed = fsl_cst::parse(
-        fsl_foundation::SourceIdentity::new("test", "fr-239"),
+        fsl_foundation::SourceIdentity::new("test", source_identity),
         "fr-239.native",
         unit.as_bytes(),
         fsl_cst::Limits::default(),
@@ -418,7 +470,7 @@ fn world_built_in_with_protocol_selection(
     .expect("the kept operation clauses parse");
     let mut declarations = PackageDeclarations::assemble(
         parsed.source().reference().clone(),
-        "package".to_owned(),
+        checked_package.to_owned(),
         built,
         models,
         Vec::new(),

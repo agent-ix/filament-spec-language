@@ -59,6 +59,12 @@ fn retx_with(
     timed_world::world(&document, PROFILES, &body)
 }
 
+fn retx_with_source_identity(source_identity: &str, claim: &str) -> World {
+    let document = retx_document(&[("send", &["late", "x"])]);
+    let body = retx_body(GUARD, true, "", claim);
+    timed_world::world_with_source_identity(&document, PROFILES, &body, source_identity)
+}
+
 fn retx_document(operations: &[(&str, &[&str])]) -> Vec<u8> {
     let mut document: serde_json::Value =
         serde_json::from_slice(&timed_world::document(&["x"], operations))
@@ -192,15 +198,18 @@ fn zero_delay_cycle_and_form_shape_settle_verdicts() {
     );
 }
 
-/// Two same-named claims in `claims`: each settles over its own product, and
-/// the two claims keep distinct occurrences, so each verdict is reported
-/// against its own `{node, occurrence}`.
-fn assert_each_timed_form_settles_for_its_claim(claims: &str) {
-    let world = retx(GUARD, true, "", claims);
-    let checked = world.package.graph().probabilistic_model().claims();
-    assert_eq!(checked.len(), 2);
+/// Equal-named claims in separate packages each settle over their own product
+/// and keep distinct `{node, occurrence}` identities.
+fn assert_each_timed_form_settles_for_its_claim(first: &str, second: &str) {
+    let worlds = [
+        retx_with_source_identity("fr-239-first", first),
+        retx_with_source_identity("fr-239-second", second),
+    ];
     let mut occurrences = Vec::new();
-    for claim in checked {
+    for world in &worlds {
+        let claims = world.package.graph().probabilistic_model().claims();
+        assert_eq!(claims.len(), 1);
+        let claim = &claims[0];
         let built = build_product(
             ProductRequest {
                 subject: ModelSubject {
@@ -216,9 +225,8 @@ fn assert_each_timed_form_settles_for_its_claim(claims: &str) {
             matches!(built, Ok(ProbBuild::Built(_))),
             "the timed form builds a product: {built:?}"
         );
-        occurrences.push(claim.occurrence().cloned());
+        occurrences.push(claim.occurrence().cloned().expect("package identity"));
     }
-    assert!(occurrences.iter().all(Option::is_some));
     assert_ne!(
         occurrences[0], occurrences[1],
         "each claim keeps its own identity"
@@ -231,11 +239,10 @@ fn assert_each_timed_form_settles_for_its_claim(claims: &str) {
 #[trace("FR-498-AC-3", "TC-1288")]
 #[test]
 fn timed_form_shape_names_the_selected_claim_among_equal_names() {
-    assert_each_timed_form_settles_for_its_claim(&format!(
-        "{}{}",
-        deadline_claim("Same", "under every scheduler", ">= 0.99", "always"),
-        deadline_claim("Same", "under every scheduler", ">= 0.5", "always"),
-    ));
+    assert_each_timed_form_settles_for_its_claim(
+        &deadline_claim("Same", "under every scheduler", ">= 0.99", "always"),
+        &deadline_claim("Same", "under every scheduler", ">= 0.5", "always"),
+    );
 }
 
 /// FR-498-AC-3 (TC-1288 step 3): the same for two same-named elapsed-time
@@ -251,7 +258,7 @@ fn timed_form_shape_names_the_selected_elapsed_claim_among_equal_names() {
              <= {threshold} ms }}\n"
         )
     };
-    assert_each_timed_form_settles_for_its_claim(&format!("{}{}", elapsed("1"), elapsed("2")));
+    assert_each_timed_form_settles_for_its_claim(&elapsed("1"), &elapsed("2"));
 }
 
 /// FR-204-AC-4: unbounded claims over a model with a zero-delay cycle are

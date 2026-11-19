@@ -1063,7 +1063,7 @@ fn a_safety_proof_carries_a_reachability_certificate() {
         .all(|pair| pair[0].from <= pair[1].from));
     assert_edges_cover(&four, &certificate);
     // `Idle`, the initial state with no invariant, is quiescent.
-    let admitted = &certificate.admitted;
+    let admitted = certificate.admitted.as_ref().unwrap();
     assert_eq!(admitted.start, 0);
     assert!(admitted.path.is_empty());
     assert_eq!(admitted.target, DivergentTarget::Quiescent(0));
@@ -1122,9 +1122,9 @@ fn a_locked_node_is_listed_with_its_edges() {
         assert!(node.locked);
         assert_eq!(node.zone.bound(1, 0), one);
     }
-    assert_eq!(certificate.admitted.target, DivergentTarget::Quiescent(0));
+    assert_eq!(certificate.admitted.as_ref().unwrap().target, DivergentTarget::Quiescent(0));
     assert!(certificate
-        .admitted
+        .admitted.as_ref().unwrap()
         .path
         .iter()
         .all(|&edge| !certificate.nodes[certificate.edges[edge].to].locked));
@@ -1140,7 +1140,7 @@ fn edge_index(certificate: &Certificate, edge: &CertEdge) -> usize {
 
 /// The witness's cycle, checked to close at the path's end.
 fn witness_cycle(certificate: &Certificate) -> Vec<&'static str> {
-    let admitted = &certificate.admitted;
+    let admitted = certificate.admitted.as_ref().unwrap();
     let DivergentTarget::Cycle(cycle) = &admitted.target else {
         panic!("a cycle witness: {admitted:?}");
     };
@@ -1295,7 +1295,7 @@ fn a_tick_source_admits_by_a_tick() {
         proved(deadlock(&world)),
     ] {
         assert_edges_cover(&world, &certificate);
-        let admitted = &certificate.admitted;
+        let admitted = certificate.admitted.as_ref().unwrap();
         assert!(
             !matches!(admitted.target, DivergentTarget::Quiescent(_)),
             "a tick source has no quiescent witness: {admitted:?}"

@@ -65,6 +65,9 @@ mod id_text;
 mod identity;
 mod limits;
 mod model_check;
+pub use model_check::digital_state_graph::{
+    explore_digital_state_graph, DigitalGraphEdge, DigitalGraphLimit, DigitalStateGraph,
+};
 mod monitor_plan;
 mod object_environment;
 mod outcome;
@@ -154,7 +157,8 @@ pub use certificate::zone_certificate::{
     check_zone_certificate, AcceptanceSet, CertEdge, CertNode, CertificateCheckLimits,
     CertificateItem, CertifiedItem, CheckerFault, ComponentReason, Components, DivergenceWitness,
     DivergentTarget, FairnessMember, ItemIdentity, NonZeno, ProductMark, RefinementIdentity, RefinementPart,
-    SilentMove, ZoneCertificate, ZoneCertificateRefusal, ZoneCertificateRequest, ZoneCertificateVerdict,
+    SilentMove, StateGraphCertificateForm, StateGraphPart, ZoneCertificate, ZoneCertificateRefusal,
+    ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 pub use certificate::{CertificateLocus, CertificateMember, CertificateRule, QueryPart};
 /// FR-322 "Operand index segments": a package's graph and its wire ids.

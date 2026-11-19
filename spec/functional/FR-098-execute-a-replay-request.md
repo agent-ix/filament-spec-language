@@ -198,6 +198,11 @@ list.
   and pointer tell this refusal apart from FSpec FR-323's refusal of a
   request carrying two targets (`invalid-value`). A frame or a state-clause
   target replays through its own entry (FR-116, FR-122).
+- When a decoded request's `state_clause` target resolves to a hybrid claim,
+  the executor SHALL replay the request's `HybridCounterexample` by FR-450
+  against the recompiled claim and its hybrid model, and write FSpec
+  FR-323's `hybrid` row (FR-750); the function-only target refusal above
+  does not apply to it.
 - When a decoded request carries the observed temporal counterexample arm
   with a `state_clause` target, the executor SHALL dispatch it through
   `fsl_replay::replay` to [FR-331](FR-331-replay-a-temporal-counterexample-over-an-observed-trace.md)

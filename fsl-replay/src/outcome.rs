@@ -955,6 +955,10 @@ pub struct OutcomeItem {
     /// witnesses (FR-628).
     #[serde(skip_serializing_if = "Option::is_none")]
     evidence: Option<serde_json::Value>,
+    /// A state-graph item's checker-accepted certificate document, carried
+    /// internally to the FR-286 item writer and nested under `certificate`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    certificate_document: Option<serde_json::Value>,
     /// The values an insufficient-data window held.
     #[serde(skip_serializing_if = "Option::is_none")]
     count: Option<u64>,
@@ -1332,6 +1336,7 @@ impl OutcomeItem {
             decisive: None,
             witness: None,
             evidence: None,
+            certificate_document: None,
             count: None,
             min_count: None,
             clause: None,
@@ -1414,6 +1419,13 @@ impl OutcomeItem {
         self
     }
 
+    /// Attach the accepted state-graph certificate's public document.
+    #[must_use]
+    pub fn with_graph_certificate_document(mut self, document: Option<serde_json::Value>) -> Self {
+        self.certificate_document = document;
+        self
+    }
+
     /// The item whose claim evaluated to an undefined value at `at` for
     /// `cause`: refuted, category violation, never labelled `undefined`.
     pub fn undefined_evaluation(
@@ -1443,6 +1455,7 @@ impl OutcomeItem {
             decisive: None,
             witness: None,
             evidence: None,
+            certificate_document: None,
             count: None,
             min_count: None,
             clause: None,
@@ -1501,6 +1514,7 @@ impl OutcomeItem {
             decisive: record.decisive,
             witness: record.witness,
             evidence: None,
+            certificate_document: None,
             count: record.count,
             min_count: record.min_count,
             basis: None,
