@@ -27,7 +27,8 @@ search for variable demand and mixed-criticality changes, time-divergent miss
 evidence, and release admission. This replaces the former
 `Unsupported(StopwatchRequired)` expectation.
 
-Scope: FR-249-AC-1 to FR-249-AC-6, FR-237-AC-7, FR-239-AC-6,
+Scope: FR-249-AC-1 to FR-249-AC-6, FR-249-AC-11, FR-249-AC-12,
+FR-237-AC-7, FR-237-AC-8, FR-239-AC-6,
 FR-235-AC-6, FR-128-AC-9, and FR-230-AC-7.
 
 ## Test Procedure
@@ -58,6 +59,19 @@ a two-job preemption scenario, a mixed-criticality task with distinct
    unresolved task set/task/operation, and ambiguous inherited operation.
 7. Check that a release without the timed facet is refused by the existing
    facet gate with FR-230-AC-7, not by task-product lowering.
+8. In step 4's overload refutation, replay each `queue_growth` mutation of
+   FR-249-AC-5 (`elapsed` 0, `iteration_shift` 0, `backlog_growth` 2,
+   growth-block template `demand` 2 to 1, two `identity_map` entries on one
+   destination) and the three-cycle finite `loop` in place of the witness.
+9. Analyze `SOnce` over the `Once` model of FR-249-AC-11 with `backend`
+   `en-6`, replay its counterexample, then replay it with the stutter delay
+   0, and replay the original record against the unguarded `OnceAgain` (`sporadic 1 ms`)
+   variant. Analyze the `OnceLocked` variant and its FR-417 time-lock item.
+10. Rerun the FR-249-AC-9 claim of TC-3008 with
+    `temporal.limits.max_task_product_work` set to the full run's expansion
+    count at the miss node plus one (FR-249-AC-12).
+11. Replay the FR-249-AC-9 counterexample with `loop` emptied through the
+    `ModelTrace` entry (FR-237-AC-8).
 
 Tag executable tests with the criterion IDs in scope, for example
 `#[trace("TC-704", "FR-249-AC-3")]`; a schema-only task-search check is not
@@ -85,3 +99,20 @@ evidence that the runtime provider implements the search semantics.
   unresolved declarations refuse at their specified locus; a non-dense
   model's release checks successfully and the lowering request receives the
   existing typed timed-model refusal.
+- Step 8: the overload refutation's `prefix` ends at the miss step and
+  `loop` is empty. Each witness mutation refuses
+  `invalid_runtime_input`/`invalid-value` at its `/queue_growth/...`
+  pointer; the three-cycle finite loop refuses at `/loop/<last>/post_state`.
+- Step 9: `SOnce` is refuted; `prefix[trace_position]` (index 2) is
+  `deadline-miss` of `s` job 0 at time 2 with `demand` 3 and `deadline` 2,
+  the prefix ends with `complete` of `s` job 0 at time 3, and `loop` is one
+  `terminal-stutter` step with positive delay that reproduces; the
+  zero-delay stutter refuses at `/loop/0/delay`, and the record over
+  `OnceAgain` refuses at `/loop/0/transition`. `OnceLocked` proves on the
+  closed certificate with the miss node `locked`, and its time-lock item
+  refutes.
+- Step 10: `incomplete`, `limit-reached{limit: work-limit}`, with
+  `task_search` nodes that include the miss state, no `counterexamples`
+  entry, never `refuted`.
+- Step 11: refused `malformed_wire` at `/loop` before any exploration; the
+  admitted-endpoint arm is not run.
