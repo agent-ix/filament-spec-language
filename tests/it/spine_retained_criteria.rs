@@ -54,6 +54,49 @@ fn spine_check(body: &str) -> Result<CheckedUnit, Box<CompileRefusal>> {
     .into_value())
 }
 
+#[test]
+#[trace("TC-3063", "FR-680-AC-8")]
+fn map_key_guards_refuse_unmatched_keys_at_the_lookup() {
+    for (body, index) in [
+        ("if contains(m,1) then m[2] else -1", "2"),
+        ("if contains(m,1) then m[k] else -1", "k"),
+        ("if contains(m,k) then m[1] else -1", "1"),
+        ("if contains(m,1) then -1 else m[1]", "1"),
+        ("if contains(n,1) then m[1] else -1", "1"),
+        ("if contains(m,1) or contains(m,2) then m[1] else -1", "1"),
+    ] {
+        let declaration = format!(
+            "function f using v(m: Map<Int[0,9],Integer>[0,3], n: Map<Int[0,9],Integer>[0,3], k: Int[0,9]): Integer pure {{ {body} }}"
+        );
+        let refusal = spine_check(&declaration)
+            .err()
+            .expect("unproved map presence must refuse");
+        assert_eq!(
+            refusal.code(),
+            fsl_foundation::Code::UndefinedExpression,
+            "{body}: {refusal}"
+        );
+        let CompileRefusal::Check { refusals, region } = refusal.as_ref() else {
+            panic!("expected a check refusal: {refusal:?}");
+        };
+        assert_eq!(
+            refusals[0].cause.cause(),
+            Some("unproved-presence"),
+            "{body}"
+        );
+        let text = format!("{HEADER}{declaration}\n");
+        let region = region.as_ref().expect("a located lookup refusal");
+        let start = usize::try_from(region.start()).unwrap();
+        let end = usize::try_from(region.end()).unwrap();
+        assert_eq!(&text[start..end], index, "{body}");
+        assert_eq!(
+            start,
+            text.rfind(&format!("m[{index}]")).unwrap() + 2,
+            "{body}"
+        );
+    }
+}
+
 /// FR-035-AC-2: nonchained comparisons, temporal syntax in a value argument,
 /// malformed family bodies and trailing garbage refuse at the parser with
 /// no successful unit, while a chained `and` of comparisons is admitted.

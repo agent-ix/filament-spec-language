@@ -5937,6 +5937,58 @@ const CAN_AFFORD: &str = "pre CanAfford using v on Config::ConfigVersion::withdr
 const DEBITED: &str = "post Debited using v on Config::ConfigVersion::withdraw \
     { self.versionNumber = pre(self.versionNumber) - amount }\n";
 
+/// Literal-key membership on an immutable operation parameter survives the
+/// precondition-to-postcondition transfer.
+#[trace("TC-3063", "FR-680-AC-8")]
+#[trace("TC-1416", "FR-577-AC-1")]
+#[test]
+fn a_literal_map_key_precondition_proves_the_postcondition_lookup() {
+    use crate::model_operations::{operation_parameter, wire_type, PACKAGE_IDENTITY};
+
+    let map_identity = format!("ix://{PACKAGE_IDENTITY}/IntegerMap");
+    let mut map = wire_type(
+        &map_identity,
+        "unused",
+        json!({
+            "keys": "ix://filament/native/Integer",
+            "values": "ix://filament/native/Integer",
+            "bound": {"lower": 0, "upper": 3},
+        }),
+    );
+    map["kind"] = json!("map");
+    let document = config_version_document(
+        operation(
+            "lookup",
+            json!([operation_parameter("lookup", "m", &map_identity)]),
+            Some("ix://filament/native/Integer"),
+            empty_frame(),
+        ),
+        vec![],
+        vec![map],
+        json!([]),
+    );
+    let pre = "pre HasKey using v on Config::ConfigVersion::lookup { contains(m,1) }\n";
+    let post = "post Lookup using v on Config::ConfigVersion::lookup { m[1] = m[1] }\n";
+    check(&document, &format!("{pre}{post}"))
+        .expect("the operation precondition proves both postcondition lookups present");
+    let second_pre = "pre HasOtherKey using v on Config::ConfigVersion::lookup { contains(m,2) }\n";
+    let both_post = "post LookupBoth using v on Config::ConfigVersion::lookup { m[1] = m[2] }\n";
+    for preconditions in [format!("{pre}{second_pre}"), format!("{second_pre}{pre}")] {
+        check(&document, &format!("{preconditions}{both_post}"))
+            .expect("conjoining preconditions retains both literal-key membership facts");
+    }
+    assert_eq!(
+        check(&document, post).err(),
+        Some(vec![(Code::UndefinedExpression, Some("unproved-presence"))]),
+        "the lookup requires the precondition's matching literal-key fact",
+    );
+    assert_eq!(
+        check(&document, &format!("{pre}{}", post.replace("m[1]", "m[2]"))).err(),
+        Some(vec![(Code::UndefinedExpression, Some("unproved-presence"))]),
+        "the transferred fact proves only its matching literal key",
+    );
+}
+
 #[trace("TC-1416", "FR-577-AC-1")]
 #[trace("TC-1416", "FR-577-AC-2")]
 #[trace("FSpec-TC-1360", "FSpec-FR-146-AC-17")]
