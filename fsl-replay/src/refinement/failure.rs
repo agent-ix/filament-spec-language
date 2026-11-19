@@ -106,6 +106,12 @@ pub enum RefinementFailure {
         /// The violated constraint of `F_A`.
         constraint: FairnessConstraint,
     },
+    /// The hidden candidate graph has no run satisfying this abstract
+    /// fairness constraint along the concrete lasso (FR-899).
+    HiddenUnfair {
+        /// The first violated constraint of `F_A` in source order.
+        constraint: FairnessConstraint,
+    },
     /// FR-379: a concrete protocol refinement refuses a label that every
     /// stable abstract candidate enables.
     RefusalNotPermitted {
@@ -165,7 +171,7 @@ impl RefinementFailure {
             | Self::Undefined { position, .. }
             | Self::RefusalNotPermitted { position, .. }
             | Self::TerminalSuccessMismatch { position, .. } => Some(*position),
-            Self::Divergence { .. } | Self::AbstractUnfair { .. } => None,
+            Self::Divergence { .. } | Self::AbstractUnfair { .. } | Self::HiddenUnfair { .. } => None,
         }
     }
 }

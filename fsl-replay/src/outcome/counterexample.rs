@@ -244,6 +244,9 @@ fn refinement(failure: &RefinementFailure) -> Result<Json, CounterexampleWireErr
         RefinementFailure::AbstractUnfair { constraint } => {
             json!({"kind": "AbstractUnfair", "constraint": canonical(constraint, "fairness")?})
         }
+        RefinementFailure::HiddenUnfair { constraint } => {
+            json!({"kind": "HiddenUnfair", "constraint": canonical(constraint, "fairness")?})
+        }
         RefinementFailure::RefusalNotPermitted { position, label } => json!({
             "kind": "RefusalNotPermitted",
             "position": position,
