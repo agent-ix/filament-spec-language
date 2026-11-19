@@ -296,12 +296,12 @@ the new message or copy the same position-based rank in both post-states, so
 the post-states have equal cycle keys. So for each step of `s` there is a
 step of `t` of the same kind, thread, node and channel, the same counted
 status (PB-3), and the same payload and binder value, whose identity differs
-only in a label of an unread channel and whose post-state has the same cycle
+only in a label of an unread channel or effect node and whose post-state has the same cycle
 key, and the converse holds. The two states carry the same model state, so
 every atom has the same truth (PB-2); they enable the same fairness classes
 and a matching step is taken in the same class, since channel steps are in
 no class (PA-2) and a `send` or `receive` step belongs to its thread's class
-whatever its labels. The item reads no identity of these channels, so no
+whatever its labels. The item reads no identity of these channels or effect nodes, so no
 obligation sees the difference. Hence a closed loop of cycle keys unrolls
 into an infinite concrete behaviour whose letters, distances and fairness
 readings equal the lasso's at every position, and every concrete behaviour
