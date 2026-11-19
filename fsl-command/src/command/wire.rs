@@ -270,12 +270,6 @@ pub(super) struct Request {
     pub package: Option<RunPackageSelection>,
     #[serde(default, deserialize_with = "from_object")]
     pub limits: Limits,
-    /// FSpec FR-823 value-evaluation accounting limits.
-    #[serde(default, deserialize_with = "from_object")]
-    pub accounting: Accounting,
-    /// FSpec FR-823 deadline for the selected synthesis.
-    #[serde(default, deserialize_with = "deadline")]
-    pub deadline_ms: Option<u64>,
     /// FR-100: a `1-draft` program's named call. Absent for a `0-draft`
     /// program.
     #[serde(default, deserialize_with = "from_object_opt")]

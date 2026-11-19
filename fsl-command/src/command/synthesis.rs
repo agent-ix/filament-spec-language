@@ -301,17 +301,21 @@ pub(super) fn search_integer_outcome(
             10
         }
         SearchDisposition::Incomplete { cause, value } => {
-            let setting = cause;
-            let limit = setting
-                .strip_prefix("synthesis.")
-                .expect("a synthesis search limit");
             document.status = "incomplete".to_owned();
-            document = document.with_cause(serde_json::json!({
-                "kind": "limit-reached",
-                "limit": limit,
-                "value": value,
-                "setting": setting,
-            }));
+            document = if cause == "deadline_ms" {
+                document.with_cause(serde_json::json!({"kind": "deadline"}))
+            } else {
+                let setting = cause;
+                let limit = setting
+                    .strip_prefix("synthesis.")
+                    .expect("a synthesis search limit");
+                document.with_cause(serde_json::json!({
+                    "kind": "limit-reached",
+                    "limit": limit,
+                    "value": value,
+                    "setting": setting,
+                }))
+            };
             22
         }
     };
@@ -326,6 +330,8 @@ fn integer_value(value: &Integer) -> Value {
 struct Selection {
     declaration: Option<String>,
     limits: SearchLimits,
+    accounting: super::wire::Accounting,
+    deadline_ms: Option<u64>,
 }
 
 /// Run the native-run/1 synthesis selection when present.
@@ -351,7 +357,7 @@ pub(super) fn run_bytes(
     let mut selection = read_selection(member)?;
     let request_bytes = serde_json::to_vec(&document).map_err(super::RunCause::Output)?;
     let request: super::wire::Request = super::request(&request_bytes)?;
-    selection.limits.deadline = request
+    selection.limits.deadline = selection
         .deadline_ms
         .and_then(|milliseconds| started.checked_add(Duration::from_millis(milliseconds)));
     if request.package.is_some() {
@@ -482,7 +488,7 @@ pub(super) fn run_bytes(
     }
     let node = serde_json::to_value(&claim.declaration).map_err(super::RunCause::Output)?;
     let checked_package = compiled.checked.package();
-    let mut meter = filament_exact::Meter::new(super::call_accounting(&request.accounting));
+    let mut meter = filament_exact::Meter::new(super::call_accounting(&selection.accounting));
     let mut evaluation_error = None;
     let (mut outcome, exit_code) = search_integer_outcome(
         &package_name,
@@ -597,7 +603,7 @@ fn read_selection(member: Value) -> super::Result<Selection> {
     };
     if let Some(key) = object
         .keys()
-        .find(|key| !["declaration", "limits"].contains(&key.as_str()))
+        .find(|key| !["declaration", "limits", "accounting", "deadline_ms"].contains(&key.as_str()))
     {
         return Err(refused(
             &format!("/request/synthesis/{key}"),
@@ -635,9 +641,36 @@ fn read_selection(member: Value) -> super::Result<Selection> {
         limits.max_work =
             Some(read_limit(object, "max_work", DEFAULT_MAX_WORK)?.unwrap_or(DEFAULT_MAX_WORK));
     }
+    let accounting = object
+        .get("accounting")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|error| {
+            refused(
+                "/request/synthesis/accounting",
+                format!("invalid accounting object: {error}"),
+            )
+        })?
+        .unwrap_or_default();
+    let deadline_ms = match object.get("deadline_ms") {
+        None => None,
+        Some(value) => value
+            .as_u64()
+            .filter(|value| *value <= 9_007_199_254_740_991)
+            .map(Some)
+            .ok_or_else(|| {
+                refused(
+                    "/request/synthesis/deadline_ms",
+                    "expected an integer from 0 to 9007199254740991",
+                )
+            })?,
+    };
     Ok(Selection {
         declaration,
         limits,
+        accounting,
+        deadline_ms,
     })
 }
 
