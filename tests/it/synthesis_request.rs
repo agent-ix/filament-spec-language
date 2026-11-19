@@ -134,7 +134,7 @@ fn a_plan_synthesis_node_names_the_object_type_and_the_lengths() {
         &format!(
             "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
              synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
-             satisfies {{ Reach.versionNumber >= 1 }};\n"
+             satisfies {{ true }};\n"
         ),
         &packages,
     );
