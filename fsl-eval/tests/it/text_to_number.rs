@@ -39,27 +39,27 @@ const DECLARATIONS: &str = "\
     dimension Time;\n\
     unit s : Time = rational(1, 1);\n\
     unit ms : Time = rational(1, 1000) * s;\n\
-    function integer using v(t: Text[0, 64; unicode-scalars]): Integer pure { convert<Integer>(t) }\n\
-    function bounded using v(t: Text[0, 64; unicode-scalars]): Int[0, 99] pure { convert<Int[0, 99]>(t) }\n\
-    function decimal_unbounded using v(t: Text[0, 64; unicode-scalars]): Decimal pure { convert<Decimal>(t) }\n\
-    function rational using v(t: Text[0, 64; unicode-scalars]): Rational[-9, 9; 1, 9] pure { convert<Rational[-9, 9; 1, 9]>(t) }\n\
-    function rational_unbounded using v(t: Text[0, 64; unicode-scalars]): Rational pure { convert<Rational>(t) }\n\
-    function decimal using v(t: Text[0, 64; unicode-scalars]): Decimal[0, 1000; 0, 2; nearest-even] pure { convert<Decimal[0, 1000; 0, 2; nearest-even]>(t) }\n\
-    function decimal_exact using v(t: Text[0, 64; unicode-scalars]): Decimal[0, 1000; 0, 2; exact] pure { convert<Decimal[0, 1000; 0, 2; exact]>(t) }\n\
-    function float using v(t: Text[0, 64; unicode-scalars]): Float64[nearest-even] pure { convert<Float64[nearest-even]>(t) }\n\
-    function float_zero using v(t: Text[0, 64; unicode-scalars]): Float64[toward-zero] pure { convert<Float64[toward-zero]>(t) }\n\
-    function float_positive using v(t: Text[0, 64; unicode-scalars]): Float64[toward-positive] pure { convert<Float64[toward-positive]>(t) }\n\
-    function float32 using v(t: Text[0, 64; unicode-scalars]): Float32[nearest-even] pure { convert<Float32[nearest-even]>(t) }\n\
-    function float32_zero using v(t: Text[0, 64; unicode-scalars]): Float32[toward-zero] pure { convert<Float32[toward-zero]>(t) }\n\
-    function float_exact using v(t: Text[0, 64; unicode-scalars]): Float64 pure { convert<Float64>(t) }\n\
-    function quantity using v(t: Text[0, 64; unicode-scalars]): Quantity<ms> pure { convert<Quantity<ms>>(t) }\n\
-    function nfkc using v(t: Text[0, 64; nfkc]): Integer pure { convert<Integer>(t) }\n\
-    function nfc using v(t: Text[0, 64; nfc]): Integer pure { convert<Integer>(t) }\n\
-    function string_integer using v(s: String): Integer pure { convert<Integer>(s) }\n\
-    function string_decimal using v(s: String): Decimal[0, 1000; 0, 2; nearest-even] pure { convert<Decimal[0, 1000; 0, 2; nearest-even]>(s) }\n\
-    function string_rational using v(s: String): Rational[-9, 9; 1, 9] pure { convert<Rational[-9, 9; 1, 9]>(s) }\n\
-    function string_float using v(s: String): Float64[nearest-even] pure { convert<Float64[nearest-even]>(s) }\n\
-    function string_quantity using v(s: String): Quantity<ms> pure { convert<Quantity<ms>>(s) }\
+    function convert_integer using v(t: Text[0, 64; unicode-scalars]): Integer pure { convert<Integer>(t) }\n\
+    function convert_bounded using v(t: Text[0, 64; unicode-scalars]): Int[0, 99] pure { convert<Int[0, 99]>(t) }\n\
+    function convert_decimal_unbounded using v(t: Text[0, 64; unicode-scalars]): Decimal pure { convert<Decimal>(t) }\n\
+    function convert_rational using v(t: Text[0, 64; unicode-scalars]): Rational[-9, 9; 1, 9] pure { convert<Rational[-9, 9; 1, 9]>(t) }\n\
+    function convert_rational_unbounded using v(t: Text[0, 64; unicode-scalars]): Rational pure { convert<Rational>(t) }\n\
+    function convert_decimal using v(t: Text[0, 64; unicode-scalars]): Decimal[0, 1000; 0, 2; nearest-even] pure { convert<Decimal[0, 1000; 0, 2; nearest-even]>(t) }\n\
+    function convert_decimal_exact using v(t: Text[0, 64; unicode-scalars]): Decimal[0, 1000; 0, 2; exact] pure { convert<Decimal[0, 1000; 0, 2; exact]>(t) }\n\
+    function convert_float using v(t: Text[0, 64; unicode-scalars]): Float64[nearest-even] pure { convert<Float64[nearest-even]>(t) }\n\
+    function convert_float_zero using v(t: Text[0, 64; unicode-scalars]): Float64[toward-zero] pure { convert<Float64[toward-zero]>(t) }\n\
+    function convert_float_positive using v(t: Text[0, 64; unicode-scalars]): Float64[toward-positive] pure { convert<Float64[toward-positive]>(t) }\n\
+    function convert_float32 using v(t: Text[0, 64; unicode-scalars]): Float32[nearest-even] pure { convert<Float32[nearest-even]>(t) }\n\
+    function convert_float32_zero using v(t: Text[0, 64; unicode-scalars]): Float32[toward-zero] pure { convert<Float32[toward-zero]>(t) }\n\
+    function convert_float_exact using v(t: Text[0, 64; unicode-scalars]): Float64 pure { convert<Float64>(t) }\n\
+    function convert_quantity using v(t: Text[0, 64; unicode-scalars]): Quantity<ms> pure { convert<Quantity<ms>>(t) }\n\
+    function convert_nfkc using v(t: Text[0, 64; nfkc]): Integer pure { convert<Integer>(t) }\n\
+    function convert_nfc using v(t: Text[0, 64; nfc]): Integer pure { convert<Integer>(t) }\n\
+    function convert_string_integer using v(s: String): Integer pure { convert<Integer>(s) }\n\
+    function convert_string_decimal using v(s: String): Decimal[0, 1000; 0, 2; nearest-even] pure { convert<Decimal[0, 1000; 0, 2; nearest-even]>(s) }\n\
+    function convert_string_rational using v(s: String): Rational[-9, 9; 1, 9] pure { convert<Rational[-9, 9; 1, 9]>(s) }\n\
+    function convert_string_float using v(s: String): Float64[nearest-even] pure { convert<Float64[nearest-even]>(s) }\n\
+    function convert_string_quantity using v(s: String): Quantity<ms> pure { convert<Quantity<ms>>(s) }\
 ";
 
 fn compile(source: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
@@ -223,7 +223,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     ] {
         let evaluation = call(
             &package,
-            "integer",
+            "convert_integer",
             text_value(text, TextProfile::UnicodeScalars),
         );
         assert_integer(&evaluation, expected);
@@ -231,7 +231,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
 
     let negative_bounded = call(
         &package,
-        "bounded",
+        "convert_bounded",
         text_value("-1", TextProfile::UnicodeScalars),
     );
     assert!(matches!(
@@ -242,7 +242,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     for (text, coefficient, scale) in [("1.50", 150_i64, 2), ("-0.5", -5_i64, 1), ("3", 3_i64, 0)] {
         let decimal = call(
             &package,
-            "decimal_unbounded",
+            "convert_decimal_unbounded",
             text_value(text, TextProfile::UnicodeScalars),
         );
         assert!(matches!(
@@ -255,7 +255,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
 
     let rational = call(
         &package,
-        "rational",
+        "convert_rational",
         text_value("2/4", TextProfile::UnicodeScalars),
     );
     assert_rational(
@@ -264,7 +264,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     );
     let unbounded_rational = call(
         &package,
-        "rational_unbounded",
+        "convert_rational_unbounded",
         text_value("6/4", TextProfile::UnicodeScalars),
     );
     assert_rational(
@@ -274,7 +274,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
 
     let decimal = call(
         &package,
-        "decimal",
+        "convert_decimal",
         text_value("1.50", TextProfile::UnicodeScalars),
     );
     assert!(
@@ -282,7 +282,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     );
     let decimal = call(
         &package,
-        "decimal",
+        "convert_decimal",
         text_value("1.5", TextProfile::UnicodeScalars),
     );
     assert!(
@@ -290,7 +290,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     );
     let rounded = call(
         &package,
-        "decimal",
+        "convert_decimal",
         text_value("1.555", TextProfile::UnicodeScalars),
     );
     assert!(
@@ -305,7 +305,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
 
     let strict_inexact = call(
         &package,
-        "decimal_exact",
+        "convert_decimal_exact",
         text_value("1.555", TextProfile::UnicodeScalars),
     );
     assert!(matches!(
@@ -314,7 +314,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     ));
     let strict_zeroes = call(
         &package,
-        "decimal_exact",
+        "convert_decimal_exact",
         text_value("1.500", TextProfile::UnicodeScalars),
     );
     assert!(matches!(
@@ -323,7 +323,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     ));
     let strict_retained = call(
         &package,
-        "decimal_exact",
+        "convert_decimal_exact",
         text_value("1.5", TextProfile::UnicodeScalars),
     );
     assert!(matches!(
@@ -332,7 +332,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     ));
     let strict_outside = call(
         &package,
-        "decimal_exact",
+        "convert_decimal_exact",
         text_value("10.01", TextProfile::UnicodeScalars),
     );
     assert!(matches!(
@@ -341,7 +341,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
     ));
     let tie = call(
         &package,
-        "decimal",
+        "convert_decimal",
         text_value("1.565", TextProfile::UnicodeScalars),
     );
     assert!(matches!(
@@ -362,7 +362,7 @@ fn conversion_charges_input_then_target_work_and_stops_on_denial() {
     let package = package();
     let (integer, meter) = call_with_meter(
         &package,
-        "integer",
+        "convert_integer",
         text_value("42", TextProfile::UnicodeScalars),
         LIMITS,
     );
@@ -378,7 +378,7 @@ fn conversion_charges_input_then_target_work_and_stops_on_denial() {
 
     let (rounded, meter) = call_with_meter(
         &package,
-        "decimal",
+        "convert_decimal",
         text_value("1.555", TextProfile::UnicodeScalars),
         LIMITS,
     );
@@ -402,7 +402,7 @@ fn conversion_charges_input_then_target_work_and_stops_on_denial() {
 
     let (strict, meter) = call_with_meter(
         &package,
-        "decimal_exact",
+        "convert_decimal_exact",
         text_value("1.555", TextProfile::UnicodeScalars),
         LIMITS,
     );
@@ -422,7 +422,7 @@ fn conversion_charges_input_then_target_work_and_stops_on_denial() {
 
     let (rounded_float, meter) = call_with_meter(
         &package,
-        "float",
+        "convert_float",
         text_value("0.1", TextProfile::UnicodeScalars),
         LIMITS,
     );
@@ -445,7 +445,7 @@ fn conversion_charges_input_then_target_work_and_stops_on_denial() {
     assert!(matches!(completed(&rounded_float), Value::Float(_)));
     let (infinity, meter) = call_with_meter(
         &package,
-        "float",
+        "convert_float",
         text_value("inf", TextProfile::UnicodeScalars),
         LIMITS,
     );
@@ -462,7 +462,7 @@ fn conversion_charges_input_then_target_work_and_stops_on_denial() {
 
     let (string_float, meter) = call_with_meter(
         &package,
-        "string_float",
+        "convert_string_float",
         Value::String("0.1".to_owned()),
         LIMITS,
     );
@@ -483,7 +483,7 @@ fn conversion_charges_input_then_target_work_and_stops_on_denial() {
 
     for (name, value, limits, denied) in [
         (
-            "integer",
+            "convert_integer",
             text_value("42", TextProfile::UnicodeScalars),
             ScalarLimits {
                 text_input_bytes: 0,
@@ -492,7 +492,7 @@ fn conversion_charges_input_then_target_work_and_stops_on_denial() {
             ChargePoint::TextInputBytes,
         ),
         (
-            "decimal",
+            "convert_decimal",
             text_value("1.555", TextProfile::UnicodeScalars),
             ScalarLimits {
                 decimal_digits: 3,
@@ -501,7 +501,7 @@ fn conversion_charges_input_then_target_work_and_stops_on_denial() {
             ChargePoint::DecimalRounding,
         ),
         (
-            "float",
+            "convert_float",
             text_value("0.1", TextProfile::UnicodeScalars),
             ScalarLimits {
                 integer_bits: 63,
@@ -539,32 +539,44 @@ fn malformed_numeric_text_is_undefined_and_profile_normalization_is_used() {
         undefined(
             &call(
                 &package,
-                "integer",
+                "convert_integer",
                 text_value(text, TextProfile::UnicodeScalars),
             ),
             Undefined::MalformedNumber,
         );
     }
     assert_integer(
-        &call(&package, "nfkc", text_value("５", TextProfile::Nfkc)),
+        &call(
+            &package,
+            "convert_nfkc",
+            text_value("５", TextProfile::Nfkc),
+        ),
         Integer::from(5_i64),
     );
     undefined(
-        &call(&package, "nfc", text_value("５", TextProfile::Nfc)),
+        &call(&package, "convert_nfc", text_value("５", TextProfile::Nfc)),
         Undefined::MalformedNumber,
     );
     undefined(
-        &call(&package, "string_integer", Value::String("５".to_owned())),
+        &call(
+            &package,
+            "convert_string_integer",
+            Value::String("５".to_owned()),
+        ),
         Undefined::MalformedNumber,
     );
     assert_integer(
-        &call(&package, "string_integer", Value::String("42".to_owned())),
+        &call(
+            &package,
+            "convert_string_integer",
+            Value::String("42".to_owned()),
+        ),
         Integer::from(42_i64),
     );
     assert!(matches!(
         completed(&call(
             &package,
-            "string_rational",
+            "convert_string_rational",
             Value::String("2/4".to_owned()),
         )),
         Value::Rational(value) if value == &Rational::new(Integer::from(1_i64), Integer::from(2_i64)).unwrap()
@@ -572,7 +584,7 @@ fn malformed_numeric_text_is_undefined_and_profile_normalization_is_used() {
     assert!(matches!(
         completed(&call(
             &package,
-            "string_decimal",
+            "convert_string_decimal",
             Value::String("1.50".to_owned()),
         )),
         Value::Decimal(value)
@@ -582,7 +594,7 @@ fn malformed_numeric_text_is_undefined_and_profile_normalization_is_used() {
     assert!(matches!(
         completed(&call(
             &package,
-            "string_float",
+            "convert_string_float",
             Value::String("0.1".to_owned()),
         )),
         Value::Float(value) if value.bits() == 0x3fb9_9999_9999_999a
@@ -590,21 +602,25 @@ fn malformed_numeric_text_is_undefined_and_profile_normalization_is_used() {
     assert!(matches!(
         completed(&call(
             &package,
-            "string_quantity",
+            "convert_string_quantity",
             Value::String("3 ms".to_owned()),
         )),
         Value::Quantity(value)
             if value.magnitude() == &Rational::from_integer(Integer::from(3_i64))
     ));
     undefined(
-        &call(&package, "string_float", Value::String("５".to_owned())),
+        &call(
+            &package,
+            "convert_string_float",
+            Value::String("５".to_owned()),
+        ),
         Undefined::MalformedNumber,
     );
     for text in [".5", "5.", "-0.00", "1.2.3", "1,5", "1e3", "3/4"] {
         undefined(
             &call(
                 &package,
-                "decimal_exact",
+                "convert_decimal_exact",
                 text_value(text, TextProfile::UnicodeScalars),
             ),
             Undefined::MalformedNumber,
@@ -616,7 +632,7 @@ fn malformed_numeric_text_is_undefined_and_profile_normalization_is_used() {
         undefined(
             &call(
                 &package,
-                "rational",
+                "convert_rational",
                 text_value(text, TextProfile::UnicodeScalars),
             ),
             Undefined::MalformedNumber,
@@ -635,7 +651,7 @@ fn range_and_quantity_unit_outcomes_are_typed() {
     let package = package();
     let outside = call(
         &package,
-        "bounded",
+        "convert_bounded",
         text_value("100", TextProfile::UnicodeScalars),
     );
     assert!(matches!(
@@ -645,7 +661,7 @@ fn range_and_quantity_unit_outcomes_are_typed() {
     for text in ["1/10", "10"] {
         let outside = call(
             &package,
-            "rational",
+            "convert_rational",
             text_value(text, TextProfile::UnicodeScalars),
         );
         assert!(matches!(
@@ -656,7 +672,7 @@ fn range_and_quantity_unit_outcomes_are_typed() {
 
     let quantity = call(
         &package,
-        "quantity",
+        "convert_quantity",
         text_value("3 ms", TextProfile::UnicodeScalars),
     );
     assert!(
@@ -665,7 +681,7 @@ fn range_and_quantity_unit_outcomes_are_typed() {
     for text in ["0.5", "2/4 ms"] {
         let quantity = call(
             &package,
-            "quantity",
+            "convert_quantity",
             text_value(text, TextProfile::UnicodeScalars),
         );
         assert!(
@@ -677,7 +693,7 @@ fn range_and_quantity_unit_outcomes_are_typed() {
         undefined(
             &call(
                 &package,
-                "quantity",
+                "convert_quantity",
                 text_value(text, TextProfile::UnicodeScalars),
             ),
             Undefined::MalformedNumber,
@@ -749,7 +765,7 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
     let package = package();
     let evaluation = call(
         &package,
-        "float",
+        "convert_float",
         text_value("0.1", TextProfile::UnicodeScalars),
     );
     assert!(
@@ -762,7 +778,7 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
     assert_eq!(ieee_flags(&evaluation), [IeeeFlag::Inexact]);
     let evaluation = call(
         &package,
-        "float",
+        "convert_float",
         text_value("2.5e-1", TextProfile::UnicodeScalars),
     );
     assert!(
@@ -778,7 +794,7 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
     ] {
         let evaluation = call(
             &package,
-            "float",
+            "convert_float",
             text_value(text, TextProfile::UnicodeScalars),
         );
         assert!(
@@ -789,7 +805,7 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
     }
     let overflow = call(
         &package,
-        "float",
+        "convert_float",
         text_value("1e309", TextProfile::UnicodeScalars),
     );
     assert!(matches!(
@@ -802,7 +818,7 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
     );
     let underflow = call(
         &package,
-        "float",
+        "convert_float",
         text_value("1e-400", TextProfile::UnicodeScalars),
     );
     assert!(matches!(
@@ -815,7 +831,7 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
     );
     let toward_zero_overflow = call(
         &package,
-        "float_zero",
+        "convert_float_zero",
         text_value("1e309", TextProfile::UnicodeScalars),
     );
     assert!(matches!(
@@ -828,7 +844,7 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
     );
     let toward_zero_inexact = call(
         &package,
-        "float_zero",
+        "convert_float_zero",
         text_value("0.1", TextProfile::UnicodeScalars),
     );
     assert!(matches!(
@@ -838,7 +854,7 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
     assert_eq!(ieee_flags(&toward_zero_inexact), [IeeeFlag::Inexact]);
     let toward_positive_underflow = call(
         &package,
-        "float_positive",
+        "convert_float_positive",
         text_value("1e-400", TextProfile::UnicodeScalars),
     );
     assert!(matches!(
@@ -849,7 +865,10 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
         ieee_flags(&toward_positive_underflow),
         [IeeeFlag::Underflow, IeeeFlag::Inexact]
     );
-    for (name, bits) in [("float32", 0x3dcc_cccd), ("float32_zero", 0x3dcc_cccc)] {
+    for (name, bits) in [
+        ("convert_float32", 0x3dcc_cccd),
+        ("convert_float32_zero", 0x3dcc_cccc),
+    ] {
         let result = call(
             &package,
             name,
@@ -863,7 +882,7 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
     }
     let exact_finite = call(
         &package,
-        "float_exact",
+        "convert_float_exact",
         text_value("0.25", TextProfile::UnicodeScalars),
     );
     assert!(
@@ -871,7 +890,7 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
     );
     let exact_inexact = call(
         &package,
-        "float_exact",
+        "convert_float_exact",
         text_value("0.1", TextProfile::UnicodeScalars),
     );
     assert!(matches!(
@@ -883,7 +902,7 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
     ));
     let exact_overflow = call(
         &package,
-        "float_exact",
+        "convert_float_exact",
         text_value("1e309", TextProfile::UnicodeScalars),
     );
     assert!(matches!(
@@ -899,7 +918,7 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
         undefined(
             &call(
                 &package,
-                "float",
+                "convert_float",
                 text_value(text, TextProfile::UnicodeScalars),
             ),
             Undefined::MalformedNumber,
