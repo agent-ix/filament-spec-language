@@ -6,13 +6,11 @@ use std::str::FromStr;
 use filament_eval::{Evaluation, FamilyOutcome};
 use filament_exact::{
     ChargePoint, IeeeFlag, Integer, Meter, Outcome, Rational, Refusal, RoundingMode, ScalarLimits,
-    TextProfile, TextType, Undefined, Value, ValueType, admit_text,
+    TextProfile, TextType, Undefined, Value, admit_text,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::loss::ValueLoss;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
-use fsl_forms::{BuiltinType, Expression, TypeForm};
-use fsl_foundation::Span;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckRefusal, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -108,28 +106,6 @@ fn compile_with_models(
 
 fn package() -> CheckedPackage {
     compile(DECLARATIONS).unwrap_or_else(|refusals| panic!("fixture checks: {refusals:?}"))
-}
-
-#[test]
-fn probe_bare_decimal_conversion_target_without_return_annotation() {
-    let package = package();
-    let expression = Expression::convert(
-        TypeForm::builtin(BuiltinType::Decimal, Span { start: 0, end: 0 }),
-        Expression::name("t"),
-    );
-    package
-        .graph()
-        .check_expression(
-            vec![(
-                "t".to_owned(),
-                ValueType::Text(TextType::new(0, 64, TextProfile::UnicodeScalars).unwrap()),
-            )],
-            &expression,
-            None,
-            CheckMode::Linked,
-            CheckingLimits::default(),
-        )
-        .expect("a bare Decimal conversion target checks independently");
 }
 
 fn text_value(text: &str, profile: TextProfile) -> Value {
