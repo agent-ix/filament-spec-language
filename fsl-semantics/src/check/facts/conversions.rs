@@ -46,7 +46,15 @@ impl Definedness<'_> {
             }
             _ => None,
         };
-        let literal_type = self.numeric_literal(operand).and_then(|value| match value {
+        let literal = self.numeric_literal(operand);
+        if let (Some(Value::Decimal(value)), ValueType::Decimal(target)) =
+            (&literal, node.value_type())
+        {
+            if target.contains(value) {
+                return Ok(());
+            }
+        }
+        let literal_type = literal.and_then(|value| match value {
             Value::Integer(value) => IntegerInterval::new(value.clone(), value)
                 .ok()
                 .map(ValueType::Int),
@@ -63,6 +71,14 @@ impl Definedness<'_> {
             }
             Value::Decimal(value) => {
                 let value = value.normalized();
+                if value.scale() == 0 {
+                    return IntegerInterval::new(
+                        value.coefficient().clone(),
+                        value.coefficient().clone(),
+                    )
+                    .ok()
+                    .map(ValueType::Int);
+                }
                 DecimalType::new(
                     value.coefficient().clone(),
                     value.coefficient().clone(),

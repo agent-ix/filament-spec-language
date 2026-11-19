@@ -167,6 +167,21 @@ fn range_narrowing_covers_integer_rational_and_decimal_targets() {
             "decimal(5,0)",
         ),
         (
+            "Decimal[0,20;0,0;exact]",
+            "Rational[5,9;1,1]",
+            "decimal(5,0)",
+        ),
+        (
+            "Decimal[0,900;2,2;exact]",
+            "Rational[0,9;1,10]",
+            "decimal(500,2)",
+        ),
+        (
+            "Decimal[0,90;1,1;exact]",
+            "Decimal[1,9;0,1;exact]",
+            "decimal(5,1)",
+        ),
+        (
             "Decimal[0,20;0,0;nearest-even]",
             "Decimal[0,9;0,0;nearest-even]",
             "decimal(5,0)",
