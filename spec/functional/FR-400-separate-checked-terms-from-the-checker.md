@@ -297,8 +297,8 @@ that slot: `CaseArm` one name per payload binder in position order, `Let`
 and `Query` the name of their slot, `Fold` the names of its accumulator
 and element slots, and `Seq` the name of its index slot. A slot the checker
 binds for itself (FR-397's IEEE ordering operand) carries the name the
-checker gave it. An in-process read SHALL take the name from the source
-identifier and a reader-backed read from the `name` of the binder's
+checker gave it (`#ieee_operand`). An in-process read SHALL take the name from the source
+identifier, or, for the checker's own slot, the name the checker gave it, and a reader-backed read from the `name` of the binder's
 `value`/`parameter` node (FSpec FR-322, FSpec FR-440), so both reads give a
 consumer such as FR-931's canonical printer the same names. The name is
 metadata of the binding site: evaluation and charging still read slots only.

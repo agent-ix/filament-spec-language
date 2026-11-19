@@ -1124,27 +1124,70 @@ fn case_binders_match_across_the_source_and_package_routes() {
     }
 }
 
-/// FR-931-AC-14: the checker's own `ieee_operand_<slot>` binder of an IEEE
-/// ordering never prints; the composition prints as the one comparison, the
-/// lesser operand on the left; an author's `ieee_operand_0` prints as
-/// written; both routes agree.
+/// FR-931-AC-14: the checker's own `#ieee_operand` binders of an IEEE
+/// ordering never print. With one bound operand the composition prints
+/// lesser-left; with two it keeps its source orientation. An author's
+/// `ieee_operand_0` around a comparison prints as written. Both routes agree.
 #[test]
 #[trace("TC-3039", "FR-931-AC-14")]
 #[ignore = "QSL-2562: IEEE ordering composition printing not implemented yet"]
 fn the_checker_ieee_operand_binder_never_prints() {
-    let expected = "holds(-float64(bits: 0x3ff0000000000000) < float64(bits: 0x0000000000000000))";
-    for leaf in [
-        expected,
-        "holds(float64(bits: 0x0000000000000000) > -float64(bits: 0x3ff0000000000000))",
-    ] {
-        let (from_source, from_package) = both_routes(leaf);
+    const A: &str = "float64(bits: 0x3ff0000000000000)";
+    const Z: &str = "float64(bits: 0x0000000000000000)";
+    let check = |leaf: String, expected: &str| {
+        let (from_source, from_package) = both_routes(&leaf);
         assert_eq!(from_source, expected, "{leaf}");
         assert_eq!(from_package, expected, "{leaf}");
-    }
-    let written = "holds(let ieee_operand_0 = c.versionNumber in ieee_operand_0 <= 2)";
-    let (from_source, from_package) = both_routes(written);
+        assert!(
+            !from_source.contains("let") && !from_source.contains('#'),
+            "{from_source}"
+        );
+    };
+    let one = format!("holds(-{A} < {Z})");
+    check(one.clone(), &one);
+    check(format!("holds({Z} > -{A})"), &one);
+    let greater = format!("holds(-{A} > -{Z})");
+    check(greater.clone(), &greater);
+    let lesser = format!("holds(-{Z} < -{A})");
+    check(lesser.clone(), &lesser);
+    assert_ne!(greater, lesser);
+
+    let written = format!("holds(let ieee_operand_0 = -{A} in ieee_operand_0 < {Z})");
+    let (from_source, from_package) = both_routes(&written);
     assert_eq!(from_source, written);
     assert_eq!(from_package, written);
+}
+
+/// FR-397-AC-29: the checker names each IEEE ordering operand binder
+/// `#ieee_operand`, outer (left operand) first, and binds no literal or
+/// local read; no parameter node name begins with `ieee_operand`.
+#[test]
+#[trace("TC-3039", "FR-397-AC-29")]
+#[ignore = "QSL-2562: `#ieee_operand` checker binder name not implemented yet"]
+fn the_checker_names_its_ieee_operand_binders_with_a_hash() {
+    for (body, binders) in [("-p < -q", 2), ("-p < q", 1), ("p < q", 0)] {
+        let unit = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             function lt using v(p: Float64[nearest-even], q: Float64[nearest-even]): Boolean pure {{ {body} }}\n"
+        );
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+        let compile = directory.path().join("compile.json");
+        std::fs::write(
+            &compile,
+            serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
+                "models": [], "program": {"source": source("unit.native")},
+                "output": {"package": "package.json"}}}))
+            .unwrap(),
+        )
+        .unwrap();
+        fsl_command::command::compile(&compile).expect("the unit compiles");
+        let package = std::fs::read_to_string(directory.path().join("package.json")).unwrap();
+        // The name is one text literal node however many binders share it.
+        assert_eq!(package.contains("\"#ieee_operand\""), binders > 0, "{body}");
+        assert!(!package.contains("\"ieee_operand_"), "{body}");
+    }
 }
 
 /// A driver can execute the value returned by the public preparation API.
