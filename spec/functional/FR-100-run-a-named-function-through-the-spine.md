@@ -288,13 +288,9 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
   builds `fsl-replay` with `quire-extraction` in its default build, so the
   driver's `run` verb always reaches this mode ([FR-662](FR-662-check-every-native-fence-of-a-markdown-specification.md)).
 - `package`: an optional closed selection of an existing `filament.checked-package/v2`
-  artifact, in place of `program`: `{file}`, a package file, or `{directory}`,
-  an FR-517 handoff directory. When present, FR-027's strict package reader
+  artifact by package-file path. When present, FR-027's strict package reader
   admits and executes that package without fallback to source compilation,
-  as FR-945 states for a `call` and FR-1039 for every run member; the
-  package's `lock` and name rows stand in for the program header, its
-  bindings and its names. A request needs exactly one of `program` and
-  `package`.
+  as FR-945 states.
 - `models`: zero or more `{format, source}` entries, each a
   `semantic-ir/2.0.0` domain package document or a `native-model-unit/1`
   model unit compiled to its document (FR-710), read and handed to spine
@@ -520,7 +516,6 @@ exits with that code's exit status:
 |---------|-------|------|-----------|------|
 | A declared edition other than `1-draft`, `0-draft` included | `profile` | `unknown_edition` | as FR-027 | 20 |
 | A `1-draft` function-run request carrying `selection`, `snapshots`, `invocations`, a set `validation_work` or `expression_steps`, `clauses`, `extraction`, or a model in a format other than `semantic-ir/2.0.0` and `native-model-unit/1`; or carrying none of `call`, `clause` (FR-312) and `items` (FR-651), or more than one | `request` | `invalid-request` | as FR-026 | 20 |
-| A request carrying neither `program` nor `package`, or both; or `package` beside `libraries`, `refinement_internals` or `integer_division` (FR-1039) | `request` | `invalid-request` | names `program`, or the second member; refused before any selected file is opened | 20 |
 | A clause-run request carrying `extraction` in a build without `quire-extraction` | `request` | `invalid-request` | names `extraction` | 20 |
 | A feature-enabled extraction request with `call` instead of `clause`, a package selection, or a clause-binding count other than one | `request` | `extraction-requires-run`; `extraction-package-conflict`; `extraction-clause-count` | as FR-031, produced by the FR-312 request reader; `{"actual": n}` for clause count | 20 |
 | A `call` that is not the closed object above; an argument `value` that is neither a JSON object nor a JSON integer in the signed 64-bit range (FR-650), naming `/call/arguments/<index>/value`; an `accounting` member that is not the closed counter object above or has a value that is not a JSON integer from 0 to `u64::MAX` | `request` | `invalid-request` | as FR-026 | 20 |
@@ -581,11 +576,7 @@ session's frame stack (FR-262), which already holds one frame per open call.
 
 - The run command shall read the program source's declared edition once,
   from its header, before any model or
-  library source is read, with FR-027's edition reader. A request that
-  selects `package` and no `program` has no header: the run command shall
-  read the edition from the admitted package's `lock` instead, and refuse
-  any edition other than `1-draft` with `unknown_edition` at stage
-  `profile`, naming the package (FR-1039). Only a `1-draft`
+  library source is read, with FR-027's edition reader. Only a `1-draft`
   program source reaches a runner.
 - If the program declares an edition other than `1-draft`, `0-draft`
   included, then the run command shall refuse with `unknown_edition` at
@@ -709,7 +700,6 @@ apply to it.
 | FR-100-AC-19 | Public signatures use the carriers in Typed public call and no fsl_eval path. The source, binding and object context are admitted through their actual owner APIs, with no copied/trusted substitute model view or second engine. The driver executes TC-792 through this reviewed public boundary and retains the absent/present and invalid-admission distinctions. | Test (TC-792) |
 | FR-100-AC-20 | Under `CheckMode::Linked`, `function d using v(n: Int[0, 9]): Integer pure decreases(n) { if n = 0 then 0 else d(n - 1) + 10 mod (n - 1) }` refuses `undefined_expression`/`unproved-nonzero` at `10 mod (n - 1)`, as its only refusal (the range of the divisor `n - 1` contains zero, and no exact nonzero guard excludes it), so no package is linked and `run` never calls it. Checked under `CheckMode::Kernel`, which records no nonzero obligation, and called through S6a: `d(1)` returns `Undefined` at the `Location` of `10 mod (n - 1)` with `frame_depth` 0; `d(2)` and `d(3)` return `Undefined` at that same `Location` with `frame_depth` 1 and 2; `d(0)` completes `0` with `frame_depth` 0; and `function e using v(n: Int[0, 9]): Integer pure { d(n) }` called with `1` returns `Undefined` at that `Location` with `frame_depth` 1. | Test (TC-444) |
 | FR-100-AC-21 | A completed function run's `spine-run-result/1` document carries no `axes` member. | Test (TC-1582) |
-| FR-100-AC-22 | A request whose `package` selects a checked package and which carries no `program` is admitted and runs its `call` from the package, the edition read from the package's `lock`; a request carrying neither `program` nor `package` refuses `invalid-request` at stage `request` naming `program`, exit 20, and one carrying `package` and `integer_division` refuses `invalid-request` naming `integer_division` before the package file is opened. | Test (TC-3019) |
 
 The typed-call acceptance criteria supplement all existing scalar oracles;
 FR-100-AC-13 is the QSL-656 accounting-object criterion.

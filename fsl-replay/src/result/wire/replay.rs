@@ -15,8 +15,6 @@ use serde_json::value::RawValue;
 use super::{CauseCodecError, CauseWire, RecordWire};
 use crate::{InputSettlement, ReplayResult, WitnessSettlement};
 
-mod arms;
-
 #[derive(Serialize)]
 struct ReplayWire {
     arm: &'static str,
@@ -35,13 +33,14 @@ struct ReplayWire {
 }
 
 impl ReplayResult {
-    /// Serialize a replay's complete typed result as its FSpec FR-323 `results`
-    /// row. This reads the settled owner value and runs no evaluation or
-    /// admission.
+    /// Serialize a function replay's complete typed result for the FR-323
+    /// per-item result envelope. This reads the settled owner value and runs
+    /// no evaluation or admission.
     ///
     /// # Errors
     ///
-    /// [`CauseCodecError`] for a value the strict witness codec cannot encode.
+    /// [`CauseCodecError`] for a value the strict witness codec cannot encode,
+    /// or a non-function replay arm with a different owning result contract.
     pub fn to_function_json(&self) -> Result<String, CauseCodecError> {
         let (arm, settlement, value, regions, record) = match self {
             Self::Input(result) => (
@@ -66,9 +65,15 @@ impl ReplayResult {
                 result.resolved_regions(),
                 result.record(),
             ),
-            Self::ObservedTemporal(result) => return arms::observed(self, result),
-            Self::ModelGraph(result) => return arms::model_graph(self, result),
-            Self::ProtocolAnalysis(result) => return arms::protocol_analysis(self, result),
+            Self::ObservedTemporal(_) => {
+                return Err(CauseCodecError::UnsupportedReplayArm("observed-temporal"))
+            }
+            Self::ModelGraph(_) => {
+                return Err(CauseCodecError::UnsupportedReplayArm("model-graph"))
+            }
+            Self::ProtocolAnalysis(_) => {
+                return Err(CauseCodecError::UnsupportedReplayArm("protocol-analysis"))
+            }
         };
         let wire = ReplayWire {
             arm,
@@ -89,7 +94,15 @@ impl ReplayResult {
                 })
                 .collect(),
             record: record.map(RecordWire::of).transpose()?,
-            limit: self.limit().map(limit_wire),
+            limit: self.limit().map(|record| LimitWire {
+                owner: crate::ResultLimit::from(&crate::spine::CallIncomplete {
+                    record: record.clone(),
+                    location: None,
+                }),
+                consumed: record.consumed.to_string(),
+                next_charge: record.next_charge.to_string(),
+                charge_point: record.charge_point.as_str(),
+            }),
             supplied: self.pre_call_limit().map(SuppliedWire::from),
         };
         Ok(serde_json::to_string(&wire)?)
@@ -136,19 +149,6 @@ impl From<ScalarLimits> for Charges {
             work_units: work_units.to_string(),
             result_units: result_units.to_string(),
         }
-    }
-}
-
-/// The `limit` member of a row an accounting limit stopped.
-fn limit_wire(record: &filament_exact::Incomplete) -> LimitWire {
-    LimitWire {
-        owner: crate::ResultLimit::from(&crate::spine::CallIncomplete {
-            record: record.clone(),
-            location: None,
-        }),
-        consumed: record.consumed.to_string(),
-        next_charge: record.next_charge.to_string(),
-        charge_point: record.charge_point.as_str(),
     }
 }
 

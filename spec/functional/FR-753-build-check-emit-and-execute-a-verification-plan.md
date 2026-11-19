@@ -28,9 +28,7 @@ registered engines and the request's limits.
 ## Outputs
 
 `DeclarationForm::VerificationPlan` at S2; a checked plan at S3; one emitted
-plan document per plan; one plan result per execution, selected by the run
-request's `verification_plan` member and written as the
-`filament.verification-plan-outcome/v1` document (FR-1038, FSpec FR-824).
+plan document per plan; one plan result per execution.
 
 ## Behavior
 

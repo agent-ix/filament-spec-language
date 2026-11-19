@@ -148,6 +148,7 @@ fn call(function: &str, arguments: Vec<CallArgument>) -> Call {
         accounting: default_accounting(1_000_000),
         supplied: Default::default(),
         backend: filament_eval::ExecutionBackendChoice::Interpreter,
+        live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
     }
 }
 

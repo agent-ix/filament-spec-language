@@ -49,7 +49,7 @@ fn every_code_maps_to_its_exit_class() {
         (Code::IoError, 20),
         (Code::InvalidRequest, 20),
         (Code::InvalidIdentifier, 20),
-        (Code::OutputFailure, 30),
+        (Code::OutputFailure, 20),
         (Code::UnsupportedProjection, 21),
         (Code::InvalidProjectionCorrespondence, 20),
         (Code::ExtractionRequiresRun, 20),

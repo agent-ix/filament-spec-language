@@ -931,14 +931,8 @@ pub enum RunCause {
     #[error("{}", .0.refusal)]
     Replay(Box<replay::ReplayFailure>),
     /// FR-862: the settled replay has no FR-323 per-item result encoding.
-    #[error("cannot serialize replay result: {error}")]
-    ReplayOutput {
-        /// The codec failure.
-        #[source]
-        error: fsl_replay::CauseCodecError,
-        /// The all-or-nothing outcome document for this failed row.
-        outcome: fsl_replay::OutcomeDocument,
-    },
+    #[error("cannot serialize replay result: {0}")]
+    ReplayOutput(#[source] fsl_replay::CauseCodecError),
     /// An item run violated an internal runtime invariant.
     #[error("an items run faulted")]
     ItemsFault,
@@ -1077,7 +1071,7 @@ impl RunCause {
             Self::ReplayRequest(_) => Code::InvalidRequest,
             Self::ReplayBytes { cause, .. } => cause.code(),
             Self::Replay(failure) => failure.refusal.code(),
-            Self::ReplayOutput { .. } => Code::OutputFailure,
+            Self::ReplayOutput(_) => Code::OutputFailure,
         }
     }
 
@@ -1105,7 +1099,7 @@ impl RunCause {
             Self::MonitorCancelled => filament_semantic_value::catalog::Category::Incomplete,
             Self::ReplayBytes { cause, .. } => cause.category(),
             Self::Replay(failure) => failure.outcome.category(),
-            Self::ReplayOutput { .. } => filament_semantic_value::catalog::Category::InternalFailure,
+            Self::ReplayOutput(_) => filament_semantic_value::catalog::Category::InternalFailure,
             _ => self.code().category(),
         }
     }
@@ -1152,7 +1146,6 @@ impl RunError {
             RunCause::AnalyzeRefused(refusal) => refusal.document(),
             RunCause::MonitorRefused(refusal) => refusal.document(),
             RunCause::Replay(failure) => failure.outcome.clone(),
-            RunCause::ReplayOutput { outcome, .. } => outcome.clone(),
             RunCause::Source(failure) => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::from_source_diagnostic(
                     &failure.diagnostic,
@@ -1233,6 +1226,7 @@ impl RunError {
             | RunCause::ReplayBytes { .. }
             | RunCause::UnknownRequirementClaim { .. }
             | RunCause::TemporalCorrection(_)
+            | RunCause::ReplayOutput(_)
             | RunCause::ItemsFault => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
                     match &self.cause {
@@ -3496,6 +3490,7 @@ fn prepare_complete_run(
         request.limits.supplied.unwrap_or_default(),
     );
     spine_call.wire_arguments = wire_arguments;
+    spine_call.live_occurrences = call.evaluation.live_occurrences();
     if let Some(file) = &call.snapshot {
         let limits = fsl_replay::spine::ObservationLimitsWire::resolve(None).map_err(|error| {
             RunCause::ClauseRequest {
@@ -3829,41 +3824,6 @@ mod tests {
             ))),
             sources: crate::Sources::default(),
         }
-    }
-
-    #[test]
-    #[trace("FR-862-AC-3", "TC-2443")]
-    fn replay_row_output_failure_projects_internal_failure_without_partial_result() {
-        let codec = fsl_replay::CauseCodecError::Empty("result row");
-        let error = RunError {
-            cause: RunCause::ReplayOutput {
-                outcome: fsl_replay::OutcomeDocument::from_replay_output_failure(1, &codec),
-                error: codec,
-            },
-            sources: crate::Sources::default(),
-        };
-        let outcome: serde_json::Value = serde_json::from_slice(
-            &error
-                .outcome_document(fsl_replay::Operation::Replay)
-                .to_bytes()
-                .expect("failure outcome JSON"),
-        )
-        .expect("outcome document");
-        assert_eq!(error.category().exit_code(), 30);
-        assert_eq!(outcome["category"], "internal-failure");
-        assert_eq!(outcome["last_stage"], serde_json::Value::Null);
-        assert_eq!(outcome["result"], serde_json::Value::Null);
-        assert_eq!(outcome["diagnostics"][0]["cause"], "output-failure");
-        assert!(
-            outcome["diagnostics"][0]["message"]
-                .as_str()
-                .expect("diagnostic message")
-                .contains("row at position 1"),
-            "{outcome}"
-        );
-        let command = error.value().expect("command error document");
-        assert_eq!(command["stage"], "output");
-        assert_eq!(command["code"], "output-failure");
     }
 
     /// FR-100 "Internal failure at S6a" (FND-013): the `CheckedInvariant`

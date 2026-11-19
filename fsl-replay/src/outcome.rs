@@ -2068,17 +2068,6 @@ pub enum ExecuteResult {
 enum OutcomeResult {
     Execute(ExecuteResult),
     Parsed(ParsedOutcome),
-    Replayed(ReplayedOutcome),
-    #[cfg(feature = "test-support")]
-    Raw(serde_json::Value),
-}
-
-/// A replay outcome's `replayed` result: each entry is the row of the FSpec
-/// FR-323 `results` document, unchanged and in row order (FR-286).
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-struct ReplayedOutcome {
-    kind: &'static str,
-    results: Vec<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -2546,85 +2535,46 @@ impl OutcomeDocument {
     /// or the refusal's category and diagnostic.
     pub fn from_replay(result: &Result<ReplayResult, ReplayRefusal>) -> Self {
         match result {
-            Ok(arm) => {
-                let row = arm
-                    .to_function_json()
-                    .and_then(|row| serde_json::from_str(&row).map_err(Into::into));
-                Self::from_replay_row(arm, 0, row)
+            Ok(ReplayResult::Witness(arm)) => {
+                Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category())
             }
-            Err(refusal) => Self::from_replay_refusal(refusal),
-        }
-    }
-
-    /// A successful replay outcome document with its already encoded result
-    /// row. Callers that need the row in a separate result document can encode
-    /// it once and pass the parsed value here.
-    pub fn from_replay_with_row(result: &ReplayResult, row: serde_json::Value) -> Self {
-        Self::from_replay_row(result, 0, Ok(row))
-    }
-
-    /// An FR-286 internal-failure outcome when one FR-323 result row failed
-    /// to serialize. The row position identifies which row could not be
-    /// written; no partial replay result is retained.
-    pub fn from_replay_output_failure(
-        row_position: usize,
-        error: &crate::result::CauseCodecError,
-    ) -> Self {
-        replay_row_output_failure(row_position, error)
-    }
-
-    /// Supply a raw result solely to exercise malformed outcome handling in
-    /// downstream test targets.
-    #[cfg(feature = "test-support")]
-    #[doc(hidden)]
-    pub fn with_raw_result_for_test(mut self, result: serde_json::Value) -> Self {
-        self.result = Some(OutcomeResult::Raw(result));
-        self
-    }
-
-    /// The document of a refused replay.
-    pub fn from_replay_refusal(refusal: &ReplayRefusal) -> Self {
-        Self::new(
-            Operation::Replay,
-            replay_stage(refusal),
-            refusal.code().category(),
-        )
-        .with_diagnostics(vec![OutcomeDiagnostic::new(
-            refusal.cause(),
-            refusal.code().as_str(),
-            match refusal {
-                ReplayRefusal::Package(_)
-                | ReplayRefusal::RefinementInternals { .. }
-                | ReplayRefusal::PackageSources(_)
-                | ReplayRefusal::DependencySources { .. }
-                | ReplayRefusal::DependencySelections(_)
-                | ReplayRefusal::Request(crate::ReplayRequestRefusal::PackageMember { .. }) => {
-                    refusal.pointer().map(|pointer| OutcomeLocus::Artifact {
+            Ok(ReplayResult::Input(arm)) => {
+                Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category())
+            }
+            Ok(ReplayResult::ObservedTemporal(arm)) => {
+                Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category())
+            }
+            Ok(ReplayResult::ProtocolAnalysis(arm)) => {
+                Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category())
+            }
+            Ok(ReplayResult::ModelGraph(arm)) => Self::new(
+                Operation::Replay,
+                Some(OutcomeStage::S8),
+                ReplayResult::ModelGraph(arm.clone()).category(),
+            ),
+            Err(refusal) => Self::new(
+                Operation::Replay,
+                replay_stage(refusal),
+                refusal.code().category(),
+            )
+            .with_diagnostics(vec![OutcomeDiagnostic::new(
+                refusal.cause(),
+                refusal.code().as_str(),
+                match refusal {
+                    ReplayRefusal::Package(_)
+                    | ReplayRefusal::RefinementInternals { .. }
+                    | ReplayRefusal::PackageSources(_)
+                    | ReplayRefusal::DependencySources { .. }
+                    | ReplayRefusal::DependencySelections(_)
+                    | ReplayRefusal::Request(crate::ReplayRequestRefusal::PackageMember {
+                        ..
+                    }) => refusal.pointer().map(|pointer| OutcomeLocus::Artifact {
                         pointer: pointer.into_owned(),
-                    })
-                }
-                _ => None,
-            },
-            refusal.to_string(),
-        )])
-    }
-
-    fn from_replay_row(
-        arm: &ReplayResult,
-        row_position: usize,
-        row: Result<serde_json::Value, crate::result::CauseCodecError>,
-    ) -> Self {
-        match row {
-            Ok(row) => {
-                let mut document =
-                    Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category());
-                document.result = Some(OutcomeResult::Replayed(ReplayedOutcome {
-                    kind: "replayed",
-                    results: vec![row],
-                }));
-                document
-            }
-            Err(error) => replay_row_output_failure(row_position, &error),
+                    }),
+                    _ => None,
+                },
+                refusal.to_string(),
+            )]),
         }
     }
 
@@ -2802,23 +2752,6 @@ impl OutcomeDocument {
 /// The last stage a replay refusal reached: a recompile refusal's own spine
 /// stage, S8 for every other refusal (the replay itself refused), and none
 /// for a fault, whose stage is untyped.
-fn replay_row_output_failure(
-    row_position: usize,
-    error: &crate::result::CauseCodecError,
-) -> OutcomeDocument {
-    OutcomeDocument::new(
-        Operation::Replay,
-        None,
-        Category::InternalFailure,
-    )
-    .with_diagnostics(vec![OutcomeDiagnostic::new(
-        Some("output-failure"),
-        Code::OutputFailure.as_str(),
-        None,
-        format!("replay result row at position {row_position} did not serialize: {error}"),
-    )])
-}
-
 fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
     match refusal {
         ReplayRefusal::Recompile(refusal) => Some(refusal.stage().into()),
@@ -3992,6 +3925,7 @@ mod tests {
                 accounting,
                 supplied: Default::default(),
                 backend: filament_eval::ExecutionBackendChoice::Interpreter,
+                live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
             };
             let outcome = run(
                 SourceIdentity::new("agent-ix", "test:outcome"),
@@ -4035,6 +3969,7 @@ mod tests {
             accounting: default_accounting(1_000_000),
             supplied: Default::default(),
             backend: filament_eval::ExecutionBackendChoice::Interpreter,
+            live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
         };
         let outcome = run(
             SourceIdentity::new("agent-ix", "test:outcome"),
@@ -4271,12 +4206,6 @@ mod tests {
             Vec::new(),
             charges,
         );
-        let row: Value = serde_json::from_str(
-            &ReplayResult::Input(arm.clone())
-                .to_function_json()
-                .expect("a row"),
-        )
-        .expect("the row is JSON");
         assert_eq!(
             json_of(&OutcomeDocument::from_replay(&Ok(ReplayResult::Input(arm)))),
             json!({
@@ -4287,7 +4216,7 @@ mod tests {
                 "items": [],
                 "diagnostics": [],
                 "artifacts": [],
-                "result": {"kind": "replayed", "results": [row]},
+                "result": null,
             })
         );
         let unknown = ReplayRefusal::UnknownFunction {
@@ -4304,43 +4233,6 @@ mod tests {
         assert_eq!(document["category"], "internal-failure");
         assert_eq!(document["last_stage"], Value::Null);
         assert_eq!(document["diagnostics"][0]["code"], "runtime_invariant");
-    }
-
-    /// FSpec FR-286-AC-21: a refused replay outcome has no result row.
-    #[trace("TC-2963", "FR-286-AC-21")]
-    #[test]
-    fn a_refused_replay_outcome_has_null_result() {
-        let refusal = ReplayRefusal::Request(crate::ReplayRequestRefusal::MissingReplayTarget);
-        let document = json_of(&OutcomeDocument::from_replay(&Err(refusal)));
-        assert_eq!(document["operation"], "replay");
-        assert_eq!(document["result"], Value::Null);
-    }
-
-    /// An unwriteable replay row is an internal failure with no reached stage; its one
-    /// output-failure diagnostic names the failed row, and the result is null.
-    #[test]
-    fn replay_row_encoding_failure_is_an_unstaged_output_failure_without_partial_result() {
-        let result =
-            ReplayResult::ProtocolAnalysis(crate::protocol_analysis::ProtocolReplayResult {
-                settlement: crate::protocol_analysis::ProtocolReplaySettlement::Reproduced,
-            });
-        let document = json_of(&OutcomeDocument::from_replay_row(
-            &result,
-            2,
-            Err(crate::result::CauseCodecError::Empty("result row")),
-        ));
-        assert_eq!(document["category"], "internal-failure");
-        assert_eq!(document["last_stage"], Value::Null);
-        assert_eq!(document["result"], Value::Null);
-        assert_eq!(document["diagnostics"][0]["code"], "output-failure");
-        assert_eq!(document["diagnostics"][0]["cause"], "output-failure");
-        assert!(
-            document["diagnostics"][0]["message"]
-                .as_str()
-                .expect("diagnostic message")
-                .contains("row at position 2"),
-            "{document}"
-        );
     }
 
     fn run_source(
@@ -4365,6 +4257,7 @@ mod tests {
                 accounting: default_accounting(1_000_000),
                 supplied: Default::default(),
                 backend: filament_eval::ExecutionBackendChoice::Interpreter,
+                live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
             },
             &ObjectEnvironment::default(),
             cancel,

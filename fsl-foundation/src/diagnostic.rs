@@ -331,15 +331,15 @@ impl Code {
     }
 
     /// This code's ADR-013 O-16 category, on FSpec FR-301's single-code
-    /// ladder: `runtime_invariant` (an internal fault, ADR-013 T-4) and
-    /// `output-failure` are internal failures; then unsupported before incomplete before invalid
+    /// ladder: `runtime_invariant` (an internal fault, ADR-013 T-4) is an
+    /// internal failure; then unsupported before incomplete before invalid
     /// or refused input. Exit codes come from a category
     /// ([`Category::exit_code`], FR-285), and this is the code-to-category
     /// map an exit derived from a `Code` uses. It is not [`category_of`],
     /// the refusal-record map, which gives `Refusal` for the unsupported
     /// and incomplete codes this ladder separates.
     pub fn category(self) -> Category {
-        if matches!(self, Self::RuntimeInvariant | Self::OutputFailure) {
+        if self == Self::RuntimeInvariant {
             Category::InternalFailure
         } else if self.is_unsupported() {
             Category::Unsupported

@@ -397,11 +397,9 @@ fn a_plan_leaves_the_package_identity_unchanged_and_emits_its_document() {
 /// and blocks `timely` naming `safe`, one disposition per node.
 #[test]
 #[trace("TC-2103", "FR-753-AC-4")]
-#[trace("TC-3018", "FR-1038-AC-1")]
-#[trace("FSpec-TC-2039", "FSpec-FR-824-AC-1")]
 #[ignore = "QSL-2236: verification plan execution not implemented yet"]
 fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
-    let (exit, value) = run(
+    let (_, value) = run(
         &format!("{MODEL_HEADER}{RELEASE_PLAN}"),
         true,
         (
@@ -416,84 +414,6 @@ fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
     assert_eq!(nodes["timely"]["status"], "blocked", "{value}");
     assert_eq!(nodes["timely"]["blocked_by"], "safe", "{value}");
     assert_eq!(nodes.as_object().map(|n| n.len()), Some(3), "{value}");
-    let outcome = &value["verification_plan"];
-    assert_eq!(
-        outcome["format"], "filament.verification-plan-outcome/v1",
-        "{value}"
-    );
-    assert_eq!(outcome["failed_steps"], json!(["safe"]), "{value}");
-    assert_eq!(outcome["inputs"]["seed"], 7, "{value}");
-    assert_eq!(exit, 22, "{value}");
-}
-
-/// FR-1038-AC-2, FSpec FR-824-AC-2/AC-3: the plan is selected by declared
-/// name, an omitted name runs the only plan, and bad selections or inputs
-/// refuse at their `/verification_plan` pointers.
-#[test]
-#[trace("TC-3018", "FR-1038-AC-2")]
-#[trace("FSpec-TC-2039", "FSpec-FR-824-AC-2")]
-#[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
-#[ignore = "QSL-2236: verification plan selection and request members not implemented yet"]
-fn the_verification_plan_member_selects_one_plan_or_refuses() {
-    let one = format!("{MODEL_HEADER}{RELEASE_PLAN}");
-    let (_, value) = run(
-        &one,
-        true,
-        ("verification_plan", json!({"emit": true, "execute": false})),
-    );
-    assert_eq!(value["verification_plan"]["plan"], "Release", "{value}");
-    let two = format!(
-        "{one}verify Other using v {{\n\
-           check only claim Always method model_based_test domain Config::ConfigVersion bound 5;\n\
-         }}\n"
-    );
-    for (unit, member, cause, pointer) in [
-        (
-            two.as_str(),
-            json!({}),
-            "missing-member",
-            "/verification_plan/plan",
-        ),
-        (
-            one.as_str(),
-            json!({"plan": "Nope"}),
-            "missing-name",
-            "/verification_plan/plan",
-        ),
-        (
-            one.as_str(),
-            json!({"plan": "Never"}),
-            "missing-name",
-            "/verification_plan/plan",
-        ),
-        (
-            one.as_str(),
-            json!({"plan": "Release", "seed": "7"}),
-            "wrong-value-kind",
-            "/verification_plan/seed",
-        ),
-        (
-            one.as_str(),
-            json!({"plan": "Release", "emit": false, "execute": false}),
-            "invalid-value",
-            "/verification_plan/execute",
-        ),
-        (
-            one.as_str(),
-            json!({"plan": "Release", "engine": "x"}),
-            "unknown-member",
-            "/verification_plan/engine",
-        ),
-    ] {
-        let (exit, value) = run(unit, true, ("verification_plan", member));
-        assert_eq!(exit, 20, "{value}");
-        refusal_names(&value, cause);
-        refusal_names(&value, pointer);
-        assert!(
-            value["verification_plan"].get("dispositions").is_none(),
-            "{value}"
-        );
-    }
 }
 
 fn pick(block: &str, objective: &str) -> String {
@@ -508,28 +428,19 @@ fn pick(block: &str, objective: &str) -> String {
 #[test]
 #[trace("TC-2104", "FR-754-AC-3")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-6")]
-#[trace("FSpec-TC-2038", "FSpec-FR-823-AC-1")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-7")]
 #[ignore = "QSL-2235: bounded synthesis run not implemented yet"]
 fn pick_finds_validates_exhausts_and_optimizes() {
     let synth = |unit: String| run(&unit, false, ("synthesis", json!({"declaration": "Pick"}))).1;
     let found = synth(pick("Pick * Pick = 49", ""));
     assert_eq!(found["synthesis"]["status"], "candidate", "{found}");
-    assert_eq!(
-        found["synthesis"]["candidate"],
-        json!({"type": "integer", "value": "7"}),
-        "{found}"
-    );
+    assert_eq!(found["synthesis"]["candidate"], 7, "{found}");
     assert_eq!(found["synthesis"]["check"], "validated", "{found}");
     let none = synth(pick("Pick * Pick = 50", ""));
     assert_eq!(none["synthesis"]["status"], "no-candidate", "{none}");
-    assert_eq!(none["synthesis"]["explored"]["visited"], 10, "{none}");
+    assert_eq!(none["synthesis"]["visited"], 10, "{none}");
     let optimal = synth(pick("Pick >= 3", "minimize Pick"));
-    assert_eq!(
-        optimal["synthesis"]["candidate"],
-        json!({"type": "integer", "value": "3"}),
-        "{optimal}"
-    );
+    assert_eq!(optimal["synthesis"]["candidate"], 3, "{optimal}");
     assert_eq!(optimal["synthesis"]["optimal"], true, "{optimal}");
 }
 
@@ -544,11 +455,11 @@ fn a_work_limited_synthesis_is_incomplete() {
         false,
         (
             "synthesis",
-            json!({"declaration": "Pick", "limits": {"max_work": 1}}),
+            json!({"declaration": "Pick", "limits": {"work": 1}}),
         ),
     );
     assert_eq!(value["synthesis"]["status"], "incomplete", "{value}");
-    refusal_names(&value["synthesis"]["cause"], "synthesis.max_work");
+    refusal_names(&value["synthesis"], "work");
 }
 
 fn reach(objective: &str, policy: Value) -> Value {

@@ -1094,57 +1094,6 @@ fn observed_temporal_replay_retains_short_incomplete_and_mismatched_values() {
         fsl_eval::temporal::TemporalOutcome::Undefined(undefined)
             if undefined.at.index() == 2 && undefined.cause == cause
     ));
-    let parity = replayed.parity().expect("the cause mismatch has parity");
-    let crate::ObservedTemporalKind::UndefinedEvaluation {
-        locus: fsl_eval::temporal::ObservedLocus::Atom(expected_locus),
-        ..
-    } = parity.expected()
-    else {
-        panic!("the packet's undefined-evaluation expectation is retained");
-    };
-    let expected_locus = expected_locus.index();
-    assert_eq!(
-        Some(expected_locus),
-        replayed.undefined_locus().map(|locus| locus.index())
-    );
-    let charges = replayed.charges();
-    let row = crate::ReplayResult::ObservedTemporal(replayed.clone())
-        .to_function_json()
-        .expect("the undefined-evaluation parity row serializes");
-    let row: serde_json::Value = serde_json::from_str(&row).expect("the result row is JSON");
-    assert_eq!(
-        row,
-        serde_json::json!({
-            "arm": "observed-temporal",
-            "settlement": "inconclusive",
-            "category": "violation",
-            "position": "2",
-            "outcome": {"kind": "undefined", "position": 2, "reason": "division-by-zero"},
-            "undefined_locus": replayed.undefined_locus().map(|locus| locus.index()),
-            "parity": {
-                "expected": {
-                    "kind": "undefined-evaluation",
-                    "locus": {"formula_node": expected_locus},
-                    "cause": "none-value",
-                },
-                "expected_position": "2",
-                "actual_locus": replayed.undefined_locus().map(|locus| locus.index()),
-            },
-            "charges": {
-                "integer_bits": charges.integer_bits.to_string(),
-                "decimal_digits": charges.decimal_digits.to_string(),
-                "scale_expansion": charges.scale_expansion.to_string(),
-                "text_input_bytes": charges.text_input_bytes.to_string(),
-                "text_scalars": charges.text_scalars.to_string(),
-                "normalized_scalars": charges.normalized_scalars.to_string(),
-                "unit_edges": charges.unit_edges.to_string(),
-                "value_occurrences": charges.value_occurrences.to_string(),
-                "work_units": charges.work_units.to_string(),
-                "result_units": charges.result_units.to_string(),
-            },
-        }),
-        "undefined-evaluation parity row"
-    );
     let insufficient = fsl_eval::temporal::TemporalOutcome::InsufficientData(
         fsl_eval::temporal::InsufficientDataEvaluation {
             at: fsl_eval::temporal::TemporalPosition::new(0),

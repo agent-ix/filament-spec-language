@@ -816,14 +816,6 @@ const NOT_EMITTED_BY_QSL: &[(CheckedNodeKind, &str)] = {
             "FSL's emitter refuses checked rewards as ProbabilisticModelNotEmitted (QSL-2440)",
         ),
         (
-            K::ScalarType(ScalarTypeForm::Bytes),
-            "no FSL source type spells Bytes, and a model field of it lowers no scalar node",
-        ),
-        (
-            K::ScalarType(ScalarTypeForm::JsonObject),
-            "no FSL source type spells JsonObject, and a model field of it lowers no scalar node",
-        ),
-        (
             K::ScalarType(ScalarTypeForm::CarriedQuantity),
             "lowering builds no carried-quantity scalar type node yet",
         ),
@@ -1028,13 +1020,6 @@ fn every_emitted_node_family_is_admitted() {
         ))
         .or_default()
         .push("not emitted: FSL lowers no dimension-equivalence node".to_owned());
-    // FSL lowers no finite-trace population node.
-    classified
-        .entry(CheckedNodeKind::BoundedDomain(
-            BoundedDomainForm::FiniteTracePopulation,
-        ))
-        .or_default()
-        .push("not emitted: FSL lowers no finite-trace population node".to_owned());
     // IR-1059: the tuple value type is an IR kind FSL's emitter does not write.
     classified
         .entry(CheckedNodeKind::Model(ModelForm::TupleValueType))

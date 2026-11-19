@@ -23,7 +23,6 @@ filament-semantic-value = { workspace = true }
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 fsl-cst = { path = "../fsl-cst" }
 fsl-forms = { path = "../fsl-forms" }
-fsl-replay = { path = "../fsl-replay", features = ["test-support"] }
 
 [lints.rust]
 unsafe_code = "forbid"

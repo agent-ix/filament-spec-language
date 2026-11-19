@@ -226,7 +226,7 @@ pub use call::{
     default_accounting, run, run_with_profile_catalog,
     run_with_profile_catalog_and_integer_division, Call, CallArgument, CallIncomplete, CallLocus,
     CallOutcome, CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument,
-    DEFAULT_WORK_UNITS,
+    DEFAULT_LIVE_OCCURRENCES, DEFAULT_WORK_UNITS,
 };
 pub(crate) use call::{run_reading, run_reading_with_integer_division};
 #[cfg(test)]
@@ -288,7 +288,6 @@ pub use native_result::{
     RefusalLocusRead, SourceRefRead, SpanRead, TemporalRecord, UndefinedLocusRead,
     UnsupportedDiagnostic,
 };
-pub(crate) use native_result::{replay_locus_wire, replay_outcome_wire};
 pub use protocol_proof::{
     ProtocolProofCause, ProtocolProofCorrespondence, ProtocolProofDisposition,
     ProtocolProofRequest, ProtocolProofResult,
