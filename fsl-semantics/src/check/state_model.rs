@@ -679,9 +679,9 @@ mod tests {
                 panic!("invalid arity {arity} must be refused");
             };
             assert!(matches!(
-                refusal.cause,
+                &refusal.cause,
                 CheckCause::IllTyped(IllTypedCause::TypeMismatch)
-            ));
+            ), "arity {arity} was refused as {:?}", refusal.cause);
         }
     }
 
