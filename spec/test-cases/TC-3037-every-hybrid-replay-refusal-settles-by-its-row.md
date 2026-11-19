@@ -43,8 +43,9 @@ trips. Scope: FR-750-AC-12, FR-750-AC-13 and FR-750-AC-14.
    `mode` `Halted`.
 5. Reproduce each `UndefinedCause` variant (division by zero, `drag` called
    with `s = 120`, a `Rational[0, 1]` result exceeded, a capture
-   `v0: Rational[0, 10]` initialized at 12), write it with `to_wire` and read
-   it back; read a `cause` `undefined`. Compare a provider claim at the
+   `v0: Rational[0, 10]` initialized at 12), write it with `to_wire(model, wire)`
+   and read it back through the same `WireGraph`; write FR-750-AC-7's
+   in-process `Unsupported` answer and read it with `read_entry`; read a `cause` `undefined`. Compare a provider claim at the
    reproduced position, locus and cause whose `time` contains the reproduced
    irrational instant, then one with another cause and one whose `time`
    excludes the instant.
@@ -80,7 +81,9 @@ trips. Scope: FR-750-AC-12, FR-750-AC-13 and FR-750-AC-14.
   (the checked-graph index resolves through the wire to another node, which
   is no term of `v`'s rate) and at `/diagnostic/detail/mode`.
 - Step 5: `division-by-zero`, `outside-parameter-range`,
-  `outside-result-range` and `outside-capture-range`, each read back to its
-  variant; `undefined` refused at `/kind/cause`; the containing claim settles
+  `outside-result-range` and `outside-capture-range`, each `locus` an
+  emitted-package node id decoded through the wire graph and each read back
+  to its variant; the `Unsupported` answer's `detail.locus` is the
+  division's emitted node id and reads back to the same site and term; `undefined` refused at `/kind/cause`; the containing claim settles
   `refuted`, the other two `inconclusive`,
   `ReplayParity(HybridTrace(NotReproduced{..}))`.

@@ -13,31 +13,37 @@ relationships:
 ## Description
 
 Verify that S3 never refuses a read of a protocol capture
-`wrong_snapshot`/`wrong-observation`, that a guard reading another role's
-state in place of a capture is refused `wrong-observation` at the read, and
-that FR-381's read classification is the only refusal of a capture read.
-Scope: FR-218-AC-48 and FR-381-AC-16.
+`wrong_snapshot`/`wrong-observation`, that a guard reading the `over` input or
+the activation binder in place of a capture keeps its own refusal, and that
+FR-381's read classification is the only refusal of a capture read. Scope:
+FR-218-AC-48 and FR-381-AC-16.
 
 ## Test Procedure
 
-1. Check a protocol whose activation captures
-   `capture amount: M::Money = input.amount;` with a `case when amount > 0`
-   guard at a decision owned by each role, and no `visible` entry.
-2. Replace one guard's `amount` with the field of another role's binder that
-   the capture would have snapshotted, at a decision of the first role.
-3. Add a capture that reads a capture written after it.
-4. In the refund template of TC-1057, guard a decision of each role on the
-   activation capture `amount`; add a capture reading itself, one reading a
-   later capture and a registration capture reading another template's
-   capture.
+1. Check TC-1057's `Refunds` with `profile S = "filament.state.graph/v1";`, a
+   second role `role Clerk on M::Node;`, and at the end of `run sequence Main`
+   `choice ByService by Service visible () { case pos when { order >= 0 }
+   check A using S { true }; case neg when { not (order >= 0) } check B using
+   S { true }; }` and `choice ByClerk by Clerk visible () { case pos when {
+   order >= 0 } check C using S { true }; case neg when { not (order >= 0) }
+   check D using S { true }; }`.
+2. Change `ByService`'s `pos` guard to `view.total >= 0`.
+3. Change `ByClerk`'s `pos` guard to `opened.ready`.
+4. Change the protocol capture to `capture order: M::Total = later;` followed
+   by `capture later: M::Total = view.total;`; then to
+   `capture order: M::Total = order;`; then to
+   `capture order: M::Total = target;`.
 
 ## Expected Results
 
-- Step 1: the protocol checks, with no refusal.
-- Step 2: `wrong_snapshot`/`wrong-observation` at the replaced read, reason
-  `other-role`.
-- Step 3: `missing_declaration`/`missing-name` with `read` `forward` at the
-  name written.
-- Step 4: the guards check with no `wrong_snapshot` refusal; the three
-  captures are refused `missing_declaration`/`missing-name` at the name
-  written with `read` `forward`, `forward` and `foreign`.
+- Step 1: the unit checks; both guards read `order` at a decision of each
+  role with an empty `visible` list, and no `wrong_snapshot` refusal occurs.
+- Step 2: `ill_typed`/`operator-ineligible` with span `view.total`, naming
+  `ByService` and slot `guard`.
+- Step 3: `wrong_snapshot`/`wrong-observation` with span `opened.ready`,
+  `node` `ByClerk`, `owner` `Clerk`, `read` `opened.ready`, `reason`
+  `ineligible-kind`.
+- Step 4: `missing_declaration`/`missing-name` with `stage`
+  `protocol-capture`: at `later` with `read` `forward`; at `order` in its own
+  initializer with `read` `forward`; at `target` with `owner` the protocol and
+  `read` `foreign`; none is `wrong_snapshot`.

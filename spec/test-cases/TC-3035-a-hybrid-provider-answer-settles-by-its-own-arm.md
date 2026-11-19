@@ -37,8 +37,9 @@ Scope: FR-750-AC-6 to FR-750-AC-11 and FR-1021-AC-3.
    `v = 1`; then a fixture answering `Solved` `Unknown(Some(trace))`.
 4. Replay the FR-450-AC-5 trace against
    `always [0, 12] holds(1 / (h.v - 5) != 0)`, write the counterexample by
-   `to_wire`, read it back through the plugin reader and replay it; write
-   one whose instant is irrational.
+   `to_wire(model, wire)`, read it back through the plugin reader and the
+   same `WireGraph` and replay it; write one whose instant is irrational;
+   read one whose `locus` is a node id the wire lacks.
 5. Analyze `TooSlow` refuted; build its replay request and execute it, then
    with a trace that does not reproduce.
 6. Call `read_entry` on a `refuted` entry naming counterexample 0 and 1
@@ -62,8 +63,10 @@ Scope: FR-750-AC-6 to FR-750-AC-11 and FR-1021-AC-3.
   fixture's complete counterexample; then `SolverInconclusive{trace,
   replay}`.
 - Step 4: `where` is `{"position": 0, "time": 15/2 as a point interval,
-  "locus": the division's term node}` with `cause` `division-by-zero`; it
-  reads back and reproduces; the irrational instant writes `lower < upper`
+  "locus": the division's emitted-package node id, not its checked-graph
+  index}` with `cause` `division-by-zero`; it decodes through the wire graph,
+  reads back and reproduces; the unknown node id is refused
+  `invalid_result`/`invalid-value` at `/kind/where/locus`; the irrational instant writes `lower < upper`
   rational ends containing it; no item settles `failed` for an unspelled
   counterexample.
 - Step 5: `replay` `{"target": {"state_clause": "TooSlow"}, "reproduced":
