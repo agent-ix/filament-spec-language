@@ -1026,7 +1026,6 @@ fn assembly_message(refusal: &AssemblyRefusal) -> String {
             format!("`{name}` names more than one candidate")
         }
         AssemblyCause::IllFormedBounds(_) => "a type's declared bounds are ill-formed".to_owned(),
-        AssemblyCause::FloatingType { .. } => "a floating type is not admitted".to_owned(),
         AssemblyCause::AliasCycle { edges } => format!(
             "the alias `{}` reaches itself",
             edges.first().map_or("", |(alias, _)| alias.as_str())
