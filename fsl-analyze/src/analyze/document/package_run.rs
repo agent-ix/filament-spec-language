@@ -21,7 +21,7 @@ use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::simulation::model::{PackageModelInput, PendingPackageForm};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
-use fsl_eval::model_subject::{CapacityBinding, ModelInstance, RoleBinding};
+use fsl_eval::model_subject::{CapacityBinding, RoleBinding};
 use fsl_package::{AnalysisView, BarePackage, CheckedNodeId, UnreadModelForm};
 use fsl_replay::TerminalRecord;
 use fsl_route::request::{ExtentClassification, ItemKind};
@@ -911,7 +911,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
     /// subject selected by this item.
     fn own_subject(
         &self,
-        index: RequestIndex,
+        _index: RequestIndex,
         selection: &ItemSelection,
     ) -> Result<SubjectSelection, PackageRunError> {
         let own = selection
