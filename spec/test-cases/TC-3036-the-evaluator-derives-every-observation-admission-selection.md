@@ -30,8 +30,10 @@ the relabelling case of FR-944-AC-4.
    arrival. Build the request for an event-position clause.
 2. Build the `fsl-eval` producer bundle with its constructor, admit it once as
    the caller, pass it by reference to two runs and compare their requests'
-   producer selections; scan `fsl-eval`'s shipped source for a static,
-   lazy, thread-local or locked holder of `StaticProducerBundle`;
+   producer selections; scan `fsl-eval`'s shipped source, and a fixture source holding
+   `static B: OnceLock<AdmittedStaticBundle>`, for a static, lazy,
+   thread-local or locked holder of `StaticProducerBundle` or
+   `AdmittedStaticBundle`;
    mutate a derived request (the binding source, the population identity, one
    record identity), each alone, before `admit` and run it through the
    evaluator; run a trace of `max_population_entries + 1` positions and a
@@ -72,8 +74,9 @@ the relabelling case of FR-944-AC-4.
   its event time as ingestion (interim rule) and no report carries it; the
   event-position request uses `EventPosition` anchors and range, owner unit
   `position/4`, and is `Available`.
-- Step 2: the bundle members and digests equal FR-944-AC-9's; both runs'
-  producer selections equal the passed bundle's; the scan finds no holder; each mutation ends `runtime_invariant`/
+- Step 2: the bundle members and digests equal FR-944-AC-9's; each request's
+  `producer` is a clone equal to the passed bundle; the scan finds no holder
+  in `fsl-eval` and reports the fixture's line; each mutation ends `runtime_invariant`/
   `established-invariant-broken`, invariant `observation-admission`, with the
   owner's refusal cause, exit `30`, no clause outcome; the two over-maximum
   traces refuse `stage_limit_exceeded` with `node-count-exceeded` and
