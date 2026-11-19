@@ -5,7 +5,7 @@ use ix_trace_rs::trace;
 
 use super::{checks, protocol_causes, refusals};
 use crate::check::protocol_obligation::{ObligationCause, ReadClass};
-use crate::check::refusal::{ProtocolAnchorCause, SlotKind};
+use crate::check::refusal::{ObservationReason, ProtocolAnchorCause, SlotKind};
 use crate::check::{CheckCause, CheckRefusal};
 
 const RUN: &str = "sequence Main { attempt Tried by R on M::Actor::op contracts [] \
@@ -58,25 +58,21 @@ fn a_guard_reading_over_refuses_at_the_read() {
     }
 }
 
-/// A choice owner cannot read the other role's mutable receive fact, even
-/// when the protocol also declares a capture. The refusal belongs to the
-/// foreign read, not to the capture declaration.
+/// The activation binder is not an eligible decision fact; both guard reads
+/// refuse `wrong-observation` at the read with the ineligible-kind reason.
 #[trace("FR-218-AC-17")]
 #[test]
-fn a_guard_cannot_read_foreign_mutable_state_beside_a_capture() {
-    let source = "record Plain { ready: Boolean; done: Boolean; }\n\
-        protocol Flow using pp over (input: M::Actor) on origin {\n\
-        capture saved: Boolean = input.ready;\n\
-        role R on M::Actor; role S on M::Actor;\n\
-        channel ch from R to S carries Plain ordering unordered delivery unknown capacity 2 overflow block;\n\
-        run sequence Main { send Tx via ch as (tx: Plain) { true };\n\
-        receive Rx via ch of Main::Tx as (rx: Plain) { true };\n\
-        choice Pick by R visible () { case yes when { rx.ready } sequence Yes { }\n\
-        case no when { not rx.ready } sequence No { } } }\n\
-        finish End as (outcome: Boolean) { true };\
-        }";
-    let (text, found) = refusals(source);
-    assert_eq!(found.len(), 2, "the capture itself is admitted: {found:?}");
+fn a_guard_reading_the_activation_binder_refuses_as_ineligible_kind() {
+    let source = protocol("", RUN)
+        .replace("on origin", "on each (tick: M::Actor)")
+        .replace(
+            "role R on M::Actor;",
+            "role R on M::Actor; role S on M::Actor;",
+        )
+        .replace("when { ready }", "when { tick.ready }")
+        .replace("when { not ready }", "when { not tick.ready }");
+    let (text, found) = refusals(&source);
+    assert_eq!(found.len(), 2, "both guard reads are refused: {found:?}");
     for (refusal, cause) in found.iter().zip(protocol_causes(&found)) {
         assert_eq!(
             (refusal.cause.code().as_str(), refusal.cause.cause()),
@@ -85,10 +81,10 @@ fn a_guard_cannot_read_foreign_mutable_state_beside_a_capture() {
         );
         assert!(matches!(cause,
             ProtocolAnchorCause::WrongObservation { owner, binder, field: Some(field), reason, .. }
-                if owner == "R" && binder == "rx" && field == "ready"
-                    && *reason == crate::check::refusal::ObservationReason::OtherRole));
+                if owner == "R" && binder == "tick" && field == "ready"
+                    && *reason == ObservationReason::IneligibleKind));
         let span = cause.span();
-        assert_eq!(&text[span.start..span.end], "rx.ready", "{cause:?}");
+        assert_eq!(&text[span.start..span.end], "tick.ready", "{cause:?}");
     }
 }
 
