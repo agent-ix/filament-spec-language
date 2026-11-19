@@ -63,6 +63,7 @@ fn decide(world: &World, seed: u64) -> StatisticalVerdict {
 fn clopper_pearson_coverage() {
     let world = world(CLAIM);
     let true_probability = ratio(1, 1);
+    assert_eq!(decide(&world, 7), decide(&world, 7));
     let mut covered = 0_u64;
 
     for seed in 0..1_024 {
