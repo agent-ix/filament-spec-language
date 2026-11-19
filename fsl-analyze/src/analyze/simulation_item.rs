@@ -182,7 +182,7 @@ pub struct SimulationItem {
 }
 
 /// Why a simulation item has no document.
-pub(super) enum SimulationFault {
+pub(crate) enum SimulationFault {
     /// The subject does not admit: the whole request refuses (FR-624).
     Binding(AdmissionFailure),
     /// An internal invariant broke.
@@ -260,7 +260,7 @@ fn coverage_value(coverage: &Coverage) -> Value {
 }
 
 /// FR-634: run `item` over the binding and write its item document.
-pub(super) fn simulate(
+pub(crate) fn simulate(
     package: &CheckedPackage,
     binding: &SubjectBinding<'_>,
     limits: &AnalyzeLimits,

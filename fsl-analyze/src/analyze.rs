@@ -44,10 +44,14 @@ mod items;
 mod protocol_item;
 mod reduction_item;
 mod refinement_item;
+<<<<<<< HEAD
 mod request;
 pub(crate) use request::dependency_packages;
+=======
+pub(crate) mod request;
+>>>>>>> 3a9467033c (Add verification plan coordinator and isolate model test integration)
 mod schedule_item;
-mod simulation_item;
+pub(crate) mod simulation_item;
 mod state_graph_item;
 mod timed_item;
 pub(crate) use request::analyze_bound;

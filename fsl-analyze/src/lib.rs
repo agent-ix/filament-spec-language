@@ -57,6 +57,7 @@ pub mod claim_family;
 pub mod contract_check;
 pub mod exact_probabilistic;
 pub mod model_check;
+pub mod plan;
 pub mod monitor;
 pub mod monitor_entries;
 pub mod monitor_plan;
