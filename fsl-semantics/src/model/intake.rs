@@ -4066,7 +4066,12 @@ fn read_decimal_domain(ctx: &NodeCtx<'_>, at: &str) -> Result<DecimalType, Model
         .value
         .get("decimal")
         .and_then(Value::as_object)
-        .ok_or_else(|| ctx.malformed_in("decimal", "missing or not an object"))?;
+        .ok_or_else(|| {
+            ctx.malformed_in(
+                "decimal",
+                "DECIMAL_POLICY_MISSING: missing or not an object",
+            )
+        })?;
     let precision = policy
         .get("precision")
         .and_then(Value::as_u64)
