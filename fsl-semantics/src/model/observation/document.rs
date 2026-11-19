@@ -1553,6 +1553,8 @@ pub(super) fn quantity_magnitude(
         | NativeKind::Bytes
         | NativeKind::JsonObject
         | NativeKind::Text
+        | NativeKind::Float32
+        | NativeKind::Float64
         | NativeKind::Quantity => Err(admission_record(
             Code::InvalidRuntimeInput,
             "wrong-value-kind",
