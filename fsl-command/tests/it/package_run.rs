@@ -121,6 +121,264 @@ fn a_package_only_call_runs_under_the_recorded_law_without_source() {
     names(&value, "program");
 }
 
+/// FR-1039: native-run's multi-selection wrapper executes each package call
+/// from the checked artifact after the source used to produce it is removed.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-1")]
+fn package_call_items_run_from_the_checked_artifact_without_source() {
+    let directory = tempfile::tempdir().unwrap();
+    compile(directory.path(), FLOOR_HALF);
+    let (exit, value) = run(
+        directory.path(),
+        json!({"models": [], "package": {"directory": "handoff"},
+        "items": {"selections": [
+            {"call": {"function": "half", "arguments": []}},
+            {"call": {"function": "twice", "arguments": [
+                {"parameter": "a", "value": -7}
+            ]}}
+        ]}}),
+    );
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(
+        value["items"][0]["result"]["outcome"]["value"],
+        json!({"integer": "-4"}),
+        "{value}"
+    );
+    assert_eq!(
+        value["items"][1]["result"]["outcome"]["value"],
+        json!({"integer": "-14"}),
+        "{value}"
+    );
+}
+
+/// FR-1039-AC-2: a package synthesis still refuses until QSL-2235 lowers the
+/// checked synthesis's S1-S3 records; the refusal precedes package reads.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-2")]
+fn package_synthesis_refusal_names_qsl_2235_before_reading_the_package() {
+    let directory = tempfile::tempdir().unwrap();
+    let (exit, value) = run(
+        directory.path(),
+        json!({"models": [], "package": {"file": "absent.json"},
+            "synthesis": {"selection": "planned"},
+            "call": {"function": "half", "arguments": []}}),
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    names(&value, "synthesis");
+    names(&value, "QSL-2235");
+    assert!(!value.to_string().contains("absent.json"), "{value}");
+}
+
+/// FR-1015: export over a checked package uses the request's exact source
+/// identity/version pair and does not need the source file to remain present.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-1")]
+#[trace("TC-3019", "FR-1039-AC-4")]
+fn package_export_uses_its_explicit_source_package_without_source_reads() {
+    let directory = tempfile::tempdir().unwrap();
+    compile(directory.path(), FLOOR_HALF);
+    let source_package = json!({"identity": "recorded:package-run-unit", "version": "7"});
+    let (exit, value) = run(
+        directory.path(),
+        json!({"models": [],
+            "package": {"file": "package.json", "source_package": source_package},
+            "export": {"profile": "filament.output.tla2/v1",
+                "obligations": ["not-a-claim"], "minimum_fidelity": "any"}}),
+    );
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(
+        value["export"]["package"]["source_package"], source_package,
+        "{value}"
+    );
+    assert!(value.get("source").is_none(), "{value}");
+}
+
+/// FR-1015: package export requires explicit source metadata before the
+/// package path is read; checked-package/v2 does not retain formal_revision.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-1")]
+#[trace("TC-3019", "FR-1039-AC-4")]
+fn package_export_without_source_package_refuses_before_package_read() {
+    let directory = tempfile::tempdir().unwrap();
+    let (exit, value) = run(
+        directory.path(),
+        json!({"models": [], "package": {"file": "absent.json"},
+            "export": {"profile": "filament.output.tla2/v1",
+                "obligations": ["not-a-claim"]}}),
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    names(&value, "missing-member");
+    names(&value, "/request/package/source_package");
+    assert!(!value.to_string().contains("absent.json"), "{value}");
+}
+
+/// FR-1015: package export reports a malformed source identity/version pair
+/// as a typed request refusal before the checked-package path is read.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-1")]
+#[trace("TC-3019", "FR-1039-AC-4")]
+fn package_export_with_malformed_source_package_refuses_before_package_read() {
+    let directory = tempfile::tempdir().unwrap();
+    for (source_package, cause, path) in [
+        (
+            json!(null),
+            "wrong-value-kind",
+            "/request/package/source_package",
+        ),
+        (
+            json!("not-an-object"),
+            "wrong-value-kind",
+            "/request/package/source_package",
+        ),
+        (
+            json!({"identity": 42, "version": "7"}),
+            "wrong-value-kind",
+            "/request/package/source_package/identity",
+        ),
+        (
+            json!({"identity": "recorded:package-run-unit", "version": false}),
+            "wrong-value-kind",
+            "/request/package/source_package/version",
+        ),
+        (
+            json!({"identity": "recorded:package-run-unit"}),
+            "missing-member",
+            "/request/package/source_package/version",
+        ),
+        (
+            json!({"identity": "", "version": "7"}),
+            "invalid-value",
+            "/request/package/source_package/identity",
+        ),
+        (
+            json!({"identity": "recorded:package-run-unit", "version": ""}),
+            "invalid-value",
+            "/request/package/source_package/version",
+        ),
+        (
+            json!({"identity": "recorded:package-run-unit", "version": "7", "digest": "sha256:abc"}),
+            "unknown-member",
+            "/request/package/source_package/digest",
+        ),
+    ] {
+        let (exit, value) = run(
+            directory.path(),
+            json!({"models": [],
+                "package": {"file": "absent.json", "source_package": source_package},
+                "export": {"profile": "filament.output.tla2/v1",
+                    "obligations": ["not-a-claim"]}}),
+        );
+        assert_eq!(exit, 20, "{value}");
+        assert_eq!(value["stage"], "request", "{value}");
+        names(&value, cause);
+        names(&value, path);
+        assert!(!value.to_string().contains("absent.json"), "{value}");
+    }
+}
+
+/// FR-650: the package owner admits a call snapshot and runs without looking
+/// for the source that produced the checked artifact.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-1")]
+fn package_call_snapshot_is_admitted_by_the_v2_package_owner() {
+    let directory = tempfile::tempdir().unwrap();
+    compile(directory.path(), FLOOR_HALF);
+    std::fs::write(
+        directory.path().join("snapshot.json"),
+        json!({"format": "filament.state.snapshot/v1",
+            "identity": {"authority": "test", "identity": "package-call-snapshot"},
+            "observation": "current",
+            "anchor": {"kind": "initialization", "name": "start"},
+            "populations": []})
+        .to_string(),
+    )
+    .unwrap();
+    let (exit, value) = run(
+        directory.path(),
+        json!({"models": [], "package": {"file": "package.json"},
+            "call": {"function": "half", "arguments": [], "snapshot": "snapshot.json"}}),
+    );
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(
+        value["outcome"]["value"],
+        json!({"integer": "-4"}),
+        "{value}"
+    );
+    assert!(value.get("source").is_none(), "{value}");
+}
+
+/// FR-931-AC-11/12: source TL atoms use one precedence-aware printer over
+/// checked expressions, retain the `holds(...)` wrapper, and use alias-free
+/// declaration identities for calls and enum literals.
+#[test]
+#[trace("FR-931-AC-11", "FR-931-AC-12")]
+fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut unit = crate::config_version_spine::spine::unit_text();
+    unit = unit.replace(
+        "profile v = \"filament.model.complete/v1\";",
+        "profile v = \"filament.model.complete/v1\";\n\
+         profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         import \"test/lib\" as library;",
+    );
+    unit.push_str(
+        "enum Mode { On, Off }\n\
+         record Pair { left: Integer; right: Integer; }\n\
+         temporal Canonical using inf over (x: Config::ConfigVersion) clock \"model-steps\" on origin { once[0,2] (holds(if library::positive(2) then Mode::On = Mode::On else Mode::Off = Mode::Off) and holds(Pair{left: 1, right: 2} = Pair{left: 1, right: 2})) }\n",
+    );
+    std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
+    std::fs::write(
+        directory.path().join("library.native"),
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         function positive using v(n: Int[0, 1000]): Boolean pure { n > 0 }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("model.semantic-ir.json"),
+        crate::config_version_spine::spine::DOMAIN_PACKAGE,
+    )
+    .unwrap();
+
+    let request = json!({"models": [{"format": "semantic-ir/2.0.0", "source": {
+        "file": "model.semantic-ir.json", "authority": "agent-ix",
+        "identity": "example/config-version", "document": "ConfigVersion",
+        "formal_revision": 1}}],
+        "libraries": [{"identity":"test/lib", "source":source("library.native")}],
+        "program": {"source": source("unit.native")},
+        "tl_lowering": {"clause": "Canonical"}});
+    let (exit, value) = run(directory.path(), request.clone());
+    assert_eq!(exit, 0, "{value}");
+    let atom = value["tl_lowering"]["atoms"]["p0"]
+        .as_str()
+        .expect("the atom has canonical checked text");
+    assert_eq!(
+        atom,
+        "holds(if ix://test/lib/positive(2) then ix://test:package-run:unit.native/Mode::On = ix://test:package-run:unit.native/Mode::On else ix://test:package-run:unit.native/Mode::Off = ix://test:package-run:unit.native/Mode::Off)",
+        "{value}"
+    );
+    assert_eq!(
+        value["tl_lowering"]["atoms"]["p1"],
+        "holds(ix://test:package-run:unit.native/Pair { left: 1, right: 2 } = ix://test:package-run:unit.native/Pair { left: 1, right: 2 })",
+        "{value}"
+    );
+
+    let renamed_unit = unit
+        .replace("model Config =", "model C =")
+        .replace("Config::", "C::")
+        .replace("as library", "as math")
+        .replace("library::", "math::");
+    std::fs::write(directory.path().join("unit.native"), renamed_unit).unwrap();
+    let (renamed_exit, renamed) = run(directory.path(), request);
+    assert_eq!(renamed_exit, 0, "{renamed}");
+    assert_eq!(
+        renamed["tl_lowering"]["atoms"],
+        value["tl_lowering"]["atoms"]
+    );
+}
+
 /// FR-100 "Request-file preparation for the driver": preparing a package
 /// request performs no call, and the prepared package call runs to the same
 /// value as `run`.

@@ -5767,10 +5767,10 @@ mod tests {
         }
 
         let missing_arguments = vec![
-            Value::Population(population_id),
+            Value::Population(population_id.clone()),
             Value::Reference(ObjectReference::new(
-                universe,
-                a,
+                universe.clone(),
+                a.clone(),
                 filament_exact::ObjectId::new("root".to_owned()).expect("non-empty key"),
             )),
         ];
@@ -5791,6 +5791,54 @@ mod tests {
                 assert_eq!(cause.catalog_code().cause(), "absent-key");
             }
             other => panic!("expected the ordinary absent-key result, got {other:?}"),
+        }
+
+        let undefined_expression = graph
+            .check_expression(
+                vec![
+                    ("p".to_owned(), ValueType::Population(Some(3))),
+                    ("r".to_owned(), ValueType::Reference(a.clone())),
+                ],
+                &Expression::lookup(
+                    TypeForm::name("M::A", SPAN),
+                    Expression::name("p".to_owned()),
+                    Expression::name("r".to_owned()),
+                    AbsenceMode::Undefined,
+                ),
+                None,
+                CheckMode::Linked,
+                CheckingLimits::default(),
+            )
+            .expect("lookup<M::A>(p, r) absent Undefined checks under the protocol context");
+        let undefined_arguments = vec![
+            Value::Population(population_id),
+            Value::Reference(ObjectReference::new(
+                universe,
+                a,
+                filament_exact::ObjectId::new("root".to_owned()).expect("non-empty key"),
+            )),
+        ];
+        let mut meter = Meter::new(fsl_semantics::check::SCALAR_LIMITS_UNLIMITED);
+        let undefined = Machine::with_pre(
+            graph.scope(),
+            graph,
+            &objects,
+            None,
+            Some(&reads),
+            &mut meter,
+            graph.dispatch_tables(),
+        )
+        .run(
+            undefined_expression.root(),
+            undefined_expression.slots(),
+            undefined_arguments,
+        )
+        .expect("the absent lookup returns its family result, never an `Err`");
+        match undefined.outcome {
+            FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause)) => {
+                assert_eq!(cause.undefined_record().reason.as_str(), "absent-key");
+            }
+            other => panic!("expected the ordinary absent-key undefined result, got {other:?}"),
         }
     }
 

@@ -32,9 +32,9 @@ pub use input::{
 mod operation_coverage;
 pub use operation_coverage::{
     model_operation_coverage, ModelOperation, ModelOperationCase, ModelOperationCoverage,
-    ModelOperationCoverageEntry, ModelOperationCoverageLimits, ModelOperationCoverageLimit,
-    ModelOperationCoverageReason, ModelOperationCoverageReasonKind,
-    ModelOperationCoverageStatus, ModelOperationCoverageSummaryStatus,
+    ModelOperationCoverageEntry, ModelOperationCoverageLimit, ModelOperationCoverageLimits,
+    ModelOperationCoverageReason, ModelOperationCoverageReasonKind, ModelOperationCoverageStatus,
+    ModelOperationCoverageSummaryStatus,
 };
 mod key_budget;
 mod letters;
@@ -567,6 +567,7 @@ pub struct ModelSystem<'a> {
     /// Each record's slots in declaration order, for its enumerated domain
     /// (FR-120, FR-215).
     pub(crate) record_orders: domain::RecordOrders,
+    tuple_positions: BTreeMap<filament_exact::NodeKey, Vec<Option<usize>>>,
     /// The element-count members of the pure-clock collections (FR-230
     /// "Initial element count"): each object type holding one, the member,
     /// and the collection's `min` and `max` (`None` with no declared
@@ -694,7 +695,9 @@ impl<'a> ModelSystem<'a> {
     }
 
     pub(crate) fn typing(&self) -> encode::Typing<'_> {
-        self.value_typing()
+        encode::Typing::with_variants(self.types, self.input.variant_types)
+            .with_enums(self.input.enums)
+            .with_tuple_positions(&self.tuple_positions)
             .with_clock_members(&self.clock_counts, &self.clock_bits)
             .with_names(&self.key_names)
             .with_state_fields(&self.fields)
@@ -1027,6 +1030,7 @@ impl<'a> ModelSystem<'a> {
         }
 
         let record_orders = domain::record_orders(types, &model.record_orders());
+        let tuple_positions = model.tuple_data_positions();
         let mut member_bounds = model.member_bounds();
         member_bounds.sort_by(|left, right| left.constraint.cmp(&right.constraint));
         // A field's bounds, read on each state; a parameter's and a result's
@@ -1069,6 +1073,7 @@ impl<'a> ModelSystem<'a> {
             probabilistic,
             member_bounds,
             record_orders,
+            tuple_positions,
             clock_counts: counts,
             clock_bits: bits,
             bounded: std::sync::OnceLock::new(),

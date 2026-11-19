@@ -279,10 +279,16 @@ impl PackagePlace {
             let previous = rows.last().map(|row| row.member_type.clone());
             let (member_type, identity) = self.members.get(index).cloned().unwrap_or_default();
             let (declaring_type, member_identity) = match step {
-                PlaceStep::Field(_) => (
-                    previous.unwrap_or_else(|| self.declaring.clone()),
-                    identity.unwrap_or_default(),
-                ),
+                PlaceStep::Field(name) => {
+                    let declaring = previous.unwrap_or_else(|| self.declaring.clone());
+                    let identity = name
+                        .parse::<u64>()
+                        .ok()
+                        .map(|position| format!("{declaring}/tuple/{position}"))
+                        .or(identity)
+                        .unwrap_or_default();
+                    (declaring, identity)
+                }
                 PlaceStep::Slot(shape) if shape.map => {
                     let parent = previous.unwrap_or_default();
                     (parent.clone(), format!("{parent}[key]"))
@@ -299,7 +305,7 @@ impl PackagePlace {
                 }
                 PlaceStep::Union(case) => {
                     let declaring = previous.unwrap_or_default();
-                    let identity = format!("{declaring}/union/{case}");
+                    let identity = identity.unwrap_or_else(|| format!("{declaring}/union/{case}"));
                     (declaring, identity)
                 }
             };
@@ -1686,10 +1692,9 @@ impl AdmittedModel {
     /// FR-230 "Places": every clock place of an object type of this
     /// package, in ascending declaration-key order of the object's fields
     /// and, below a field, of each record's fields. A field typed `Clock` is
-    /// one place, and a field of a package record type holds the places of
-    /// the record's fields. The FCD semantic IR admits `Clock` only as a
-    /// field type, so a package has no clock alias, clock union case,
-    /// optional clock or clock collection to place.
+    /// one place; records and tuples contribute their component places,
+    /// unions guard a payload place by its case, and collections contribute
+    /// one instance of each place per live element.
     pub(crate) fn clock_places(&self) -> &[PackagePlace] {
         &self.places
     }
@@ -1901,6 +1906,40 @@ impl AdmittedModel {
             ValueTypeRef::Native(_) | ValueTypeRef::Unit(_) => return,
         };
         match self.records.get(key) {
+            Some(DomainPackageRecord::TupleValueType(_)) if !visiting.contains(&key) => {
+                visiting.push(key);
+                let mut positions: Vec<_> = self
+                    .records
+                    .values()
+                    .filter_map(|record| match record {
+                        DomainPackageRecord::TuplePosition(position) if &position.owner == key => {
+                            Some(position)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                positions.sort_by_key(|position| position.ordinal);
+                for position in positions {
+                    let mut below = at.clone();
+                    below
+                        .path
+                        .push(PlaceStep::Field(position.ordinal.to_string()));
+                    let declared = self.rendered(&position.value_type);
+                    below
+                        .members
+                        .push((declared.clone(), Some(position.key.node.clone())));
+                    self.places_below(
+                        &position.value_type,
+                        below,
+                        declared,
+                        above || own,
+                        false,
+                        visiting,
+                        places,
+                    );
+                }
+                visiting.pop();
+            }
             // A variant type: each case whose payload is `Clock` is a place
             // guarded by the case.
             Some(DomainPackageRecord::Enum(variant_type)) => {
@@ -1917,10 +1956,11 @@ impl AdmittedModel {
                     if clock {
                         let mut below = at.clone();
                         below.path.push(PlaceStep::Union(case.case.clone()));
-                        below
-                            .members
-                            .push(("ix://filament/native/Clock".to_owned(), None));
-                        below.case = !below.optional && below.path.len() == 2;
+                        below.members.push((
+                            "ix://filament/native/Clock".to_owned(),
+                            Some(case.key.node.clone()),
+                        ));
+                        below.case = !below.optional;
                         below.optional = true;
                         places.push(below);
                     }
@@ -2297,14 +2337,30 @@ impl AdmittedModel {
     ) -> bool {
         use crate::model::domain_package::ValueTypeRef;
         match self.records.get(key) {
-            Some(DomainPackageRecord::RecordValueType(_)) if !visiting.contains(&key) => {
+            Some(
+                DomainPackageRecord::RecordValueType(_)
+                | DomainPackageRecord::TupleValueType(_)
+                | DomainPackageRecord::Enum(_),
+            ) if !visiting.contains(&key) => {
                 visiting.push(key);
                 let bears = self.records.values().any(|record| {
-                    let DomainPackageRecord::FieldMember(field) = record else {
-                        return false;
+                    let (owner, value_type) = match record {
+                        DomainPackageRecord::FieldMember(field) => {
+                            (&field.owner, &field.value_type)
+                        }
+                        DomainPackageRecord::TuplePosition(position) => {
+                            (&position.owner, &position.value_type)
+                        }
+                        DomainPackageRecord::Variant(case) => {
+                            let Some(payload) = &case.payload_type else {
+                                return false;
+                            };
+                            (&case.owner, payload)
+                        }
+                        _ => return false,
                     };
-                    &field.owner == key
-                        && match &field.value_type {
+                    owner == key
+                        && match value_type {
                             ValueTypeRef::Clock => true,
                             ValueTypeRef::Package(inner) => self.type_bears_clock(inner, visiting),
                             ValueTypeRef::Native(_) | ValueTypeRef::Unit(_) => false,

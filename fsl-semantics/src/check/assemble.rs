@@ -824,8 +824,7 @@ impl AssemblyCause {
             Self::Handle(_) | Self::NominalAdmission(_) => "established-invariant-broken",
             Self::UnsupportedLayerForm { form, .. } => form.refusal_cause(),
             Self::UnselectedModelConstruct(refusal) => refusal.family.refusal_cause(),
-            Self::TimedNotChecked(_)
-            | Self::SynthesisNotChecked { .. } => "not-yet-implemented",
+            Self::TimedNotChecked(_) | Self::SynthesisNotChecked { .. } => "not-yet-implemented",
         };
         CatalogCode::new(self.code().as_str(), cause)
     }
@@ -2209,6 +2208,9 @@ fn model_object_types(
         positions.sort_by_key(|position| position.ordinal);
         let mut elements = Vec::with_capacity(positions.len());
         for position in positions {
+            if clock_place_type(&position.value_type, &records) {
+                continue;
+            }
             match model_value_type(
                 &position.value_type,
                 Multiplicity {
@@ -2275,7 +2277,11 @@ fn model_object_types(
         let mut members = Vec::with_capacity(cases.len());
         for case in cases {
             let mut payload = Vec::new();
-            if let Some(payload_type) = &case.payload_type {
+            if let Some(payload_type) = case
+                .payload_type
+                .as_ref()
+                .filter(|payload| !clock_place_type(payload, &records))
+            {
                 match model_value_type(
                     payload_type,
                     Multiplicity {
@@ -2332,6 +2338,17 @@ fn model_object_types(
         ));
     }
     let mut model_records = record_renames(model, &records, &own_handles);
+    for record in &package.records {
+        let DomainPackageRecord::TupleValueType(tuple) = record else {
+            continue;
+        };
+        let Some(handle) = meaning_handles.get(&tuple.key) else {
+            continue;
+        };
+        let projection =
+            crate::model::domain_package::tuple_data_projection(&package.records, &tuple.key);
+        model_records.declare_tuple_positions(handle.clone(), projection);
+    }
     for (key, handle) in &own_handles {
         if matches!(records.get(key), Some(DomainPackageRecord::EventType(_))) {
             model_records.declare_event(handle.clone());
@@ -2797,6 +2814,17 @@ fn sequence_items<'r>(
     records: &BTreeMap<&DeclarationKey, &'r DomainPackageRecord>,
 ) -> &'r ValueTypeRef {
     unaliased(value_type, |key| records.get(key).copied()).map_or(value_type, |(items, _)| items)
+}
+
+/// A single clock place, read through aliases without crossing a collection.
+fn clock_place_type(
+    value_type: &ValueTypeRef,
+    records: &BTreeMap<&DeclarationKey, &DomainPackageRecord>,
+) -> bool {
+    matches!(
+        unaliased(value_type, |key| records.get(key).copied()),
+        Some((ValueTypeRef::Clock, 0))
+    )
 }
 
 /// `element` held by a member of `multiplicity`: itself for `[1, 1]`, else
