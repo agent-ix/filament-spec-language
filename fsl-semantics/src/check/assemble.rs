@@ -632,11 +632,6 @@ pub enum AssemblyCause {
         /// The synthesis declaration's authored name.
         name: String,
     },
-    /// A verification plan form whose FR-753 lowering is not installed yet.
-    VerificationPlanNotChecked {
-        /// The verification plan's authored name.
-        name: String,
-    },
 }
 
 impl AssemblyCause {
@@ -716,8 +711,7 @@ impl AssemblyCause {
             Self::UnsupportedLayerForm { .. }
             | Self::UnselectedModelConstruct(_)
             | Self::TimedNotChecked(_)
-            | Self::SynthesisNotChecked { .. }
-            | Self::VerificationPlanNotChecked { .. } => Code::UnsupportedConstruct,
+            | Self::SynthesisNotChecked { .. } => Code::UnsupportedConstruct,
         }
     }
 
@@ -831,8 +825,7 @@ impl AssemblyCause {
             Self::UnsupportedLayerForm { form, .. } => form.refusal_cause(),
             Self::UnselectedModelConstruct(refusal) => refusal.family.refusal_cause(),
             Self::TimedNotChecked(_)
-            | Self::SynthesisNotChecked { .. }
-            | Self::VerificationPlanNotChecked { .. } => "not-yet-implemented",
+            | Self::SynthesisNotChecked { .. } => "not-yet-implemented",
         };
         CatalogCode::new(self.code().as_str(), cause)
     }
