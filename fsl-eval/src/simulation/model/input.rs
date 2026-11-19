@@ -1251,6 +1251,17 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         None
     }
 
+    /// FR-531: the declaring type and operation selected by a package
+    /// protocol attempt's admitted operation anchor.
+    fn package_protocol_operation(&self, _anchor: &CheckedNodeId) -> Option<(EffectiveId, String)> {
+        None
+    }
+
+    /// FR-531: the exact object type selected by a package protocol role.
+    fn package_protocol_role_model(&self, _model: &CheckedNodeId) -> Option<EffectiveId> {
+        None
+    }
+
     /// The admitted node keys of the protocol `name`.
     fn protocol_node_keys(&self, name: &str) -> Option<&CheckedProtocolNodeKeys>;
 
@@ -2131,6 +2142,16 @@ impl ModelEvaluator for BarePackage<'_> {
 
     fn package_node_key(&self, node: &CheckedNodeId) -> Option<NodeKey> {
         self.node_key(node)
+    }
+
+    fn package_protocol_operation(&self, anchor: &CheckedNodeId) -> Option<(EffectiveId, String)> {
+        self.protocol_operation(anchor)
+            .ok()
+            .map(|operation| (operation.declaring, operation.operation))
+    }
+
+    fn package_protocol_role_model(&self, model: &CheckedNodeId) -> Option<EffectiveId> {
+        self.protocol_role_model(model).ok()
     }
 
     fn protocol_node_keys(&self, _name: &str) -> Option<&CheckedProtocolNodeKeys> {

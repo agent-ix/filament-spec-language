@@ -14,7 +14,7 @@ use fsl_package::protocol_view::{
 };
 
 use super::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
-use crate::simulation::model::{ModelCheckInput, ModelEvaluator, ProtocolDefinition};
+use crate::simulation::model::{ModelCheckInput, ModelEvaluator, OperationRef, ProtocolDefinition};
 use crate::value::{ProtocolSlot, ProtocolSlotEvaluation, ProtocolSuppliedValue, ProtocolSupply};
 
 /// One admitted package control in the normalized execution tree.
@@ -40,6 +40,8 @@ pub struct PackageControl {
     pub constraint: Option<ProtocolSlot>,
     /// The operation's operation-anchor identity, for an `attempt`.
     pub operation_anchor: Option<NodeKey>,
+    /// The declaring model type resolved by the package evaluator.
+    pub operation_declaring: Option<filament_exact::EffectiveId>,
     /// The admitted operation declaration's qualified path.
     pub operation_path: Option<Vec<String>>,
     /// The admitted operation declaration's name.
@@ -69,6 +71,8 @@ pub struct PackageRole {
     pub node: fsl_package::CheckedNodeId,
     /// The selected model type node.
     pub model: fsl_package::CheckedNodeId,
+    /// The selected model type's effective identity.
+    pub model_identity: filament_exact::EffectiveId,
     /// The FR-531 declaration identity of the selected model type.
     pub model_key: NodeKey,
     /// Whether this is a replicated role.
@@ -136,6 +140,12 @@ pub enum PackageProgramRefusal {
     /// A node referenced by the control tree has no package execution entry.
     #[error("the package control tree references an absent control")]
     UnknownControl,
+    /// An attempt has no package-resolved operation.
+    #[error("the package attempt {0:?} has no resolved operation")]
+    MissingOperation(ProtocolNodeId),
+    /// An attempt's role is absent from the package protocol.
+    #[error("the package protocol has no role node {0:?}")]
+    MissingRole(fsl_package::CheckedNodeId),
 }
 
 impl<'a> PackageProtocolProgram<'a> {
@@ -221,6 +231,7 @@ impl<'a> PackageProtocolProgram<'a> {
                 role,
                 binder,
                 operation_anchor,
+                operation_declaring,
                 operation_path,
                 operation_name,
                 ordering,
@@ -237,6 +248,7 @@ impl<'a> PackageProtocolProgram<'a> {
                         })
                         .collect::<Result<Vec<_>, _>>()?,
                     Vec::new(),
+                    None,
                     None,
                     None,
                     None,
@@ -269,6 +281,7 @@ impl<'a> PackageProtocolProgram<'a> {
                         None,
                         None,
                         None,
+                        None,
                         Vec::new(),
                     )
                 }
@@ -283,6 +296,10 @@ impl<'a> PackageProtocolProgram<'a> {
                     let anchor = input
                         .evaluator
                         .package_node_key(operation)
+                        .ok_or_else(|| PackageProgramRefusal::MissingIdentity(operation.clone()))?;
+                    let (operation_declaring, _) = input
+                        .evaluator
+                        .package_protocol_operation(operation)
                         .ok_or_else(|| PackageProgramRefusal::MissingIdentity(operation.clone()))?;
                     let operation_node = package_nodes.get(*operation).ok_or_else(|| {
                         PackageProgramRefusal::MissingIdentity((*operation).clone())
@@ -310,6 +327,7 @@ impl<'a> PackageProtocolProgram<'a> {
                         Some((*role).clone()),
                         Some((*binder).clone()),
                         Some(anchor),
+                        Some(operation_declaring),
                         Some(operation_path),
                         Some(operation_name),
                         *ordering,
@@ -373,6 +391,7 @@ impl<'a> PackageProtocolProgram<'a> {
                     memory_default: control.memory,
                     constraint,
                     operation_anchor,
+                    operation_declaring,
                     operation_path,
                     operation_name,
                     role,
@@ -393,10 +412,15 @@ impl<'a> PackageProtocolProgram<'a> {
                     .evaluator
                     .package_node_key(role.model)
                     .ok_or_else(|| PackageProgramRefusal::MissingIdentity(role.model.clone()))?;
+                let model_identity = input
+                    .evaluator
+                    .package_protocol_role_model(role.model)
+                    .ok_or_else(|| PackageProgramRefusal::MissingIdentity(role.model.clone()))?;
                 Ok(PackageRole {
                     name: role.path.last().cloned().unwrap_or_default(),
                     node: role.node.node_id.clone(),
                     model: role.model.clone(),
+                    model_identity,
                     model_key,
                     replicated: role.replicated,
                     maximum: role.maximum,
@@ -473,6 +497,40 @@ impl<'a> PackageProtocolProgram<'a> {
         self.evaluator
             .evaluate_package_protocol_slot(slot, supply, meter)
             .map(Some)
+    }
+
+    /// Resolve one admitted attempt to the model system's operation input.
+    pub(crate) fn operation_ref(
+        &self,
+        control: ProtocolNodeId,
+    ) -> Result<OperationRef<'_>, PackageProgramRefusal> {
+        let attempt = self
+            .controls
+            .get(&control)
+            .filter(|control| control.operation == ControlOperation::Attempt)
+            .ok_or(PackageProgramRefusal::MissingOperation(control))?;
+        let declaring = attempt
+            .operation_declaring
+            .clone()
+            .ok_or(PackageProgramRefusal::MissingOperation(control))?;
+        let name = attempt
+            .operation_name
+            .as_deref()
+            .ok_or(PackageProgramRefusal::MissingOperation(control))?;
+        let role_id = attempt
+            .role
+            .as_ref()
+            .ok_or(PackageProgramRefusal::MissingOperation(control))?;
+        let role = self
+            .roles
+            .iter()
+            .find(|candidate| candidate.node == *role_id)
+            .ok_or_else(|| PackageProgramRefusal::MissingRole(role_id.clone()))?;
+        Ok(OperationRef {
+            declaring,
+            name,
+            receiver: role.model_identity.clone(),
+        })
     }
 
     /// Build a package evaluator supply from the protocol's admitted binder

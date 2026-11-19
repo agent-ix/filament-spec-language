@@ -1203,6 +1203,23 @@ fn the_execution_view_reads_attempt_facts_from_package_nodes() {
     };
     assert_eq!(name(package, role), path(&["OrderFlow", "role", "Orders"]));
     assert!(node(package, operation).semantic_form == "operation_anchor");
+    let operation = fixture
+        .fsl_read
+        .protocol_operation(operation)
+        .expect("the attempt anchor resolves through the package identity rows");
+    let selected_role = execution
+        .roles
+        .iter()
+        .find(|candidate| candidate.node.node_id == *role)
+        .expect("the attempt role belongs to the protocol");
+    assert_eq!(
+        fixture
+            .fsl_read
+            .protocol_role_model(selected_role.model)
+            .expect("the static role model resolves through package identity rows"),
+        operation.declaring
+    );
+    assert!(!operation.operation.is_empty());
     assert!(!contracts.is_empty());
     assert!(node(package, binder).semantic_form == "parameter");
     assert_eq!(*ordering, None);
