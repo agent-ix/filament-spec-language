@@ -1208,8 +1208,10 @@ fn untimed_delay_names_missing_binding_and_duration_stays_a_reward() {
         "probabilistic Delay using inf on M over (s: M::Server) under Steady on origin \
          { long_run_fraction holds(s.phase = 1) weighted by delay >= 0.5 }\n",
     );
-    let refusals = crate::prob_world::World::try_new(&untimed_delay)
-        .expect_err("delay weighting requires a model-time binding");
+    let refusals = match crate::prob_world::World::try_new(&untimed_delay) {
+        Err(refusals) => refusals,
+        Ok(_) => panic!("delay weighting requires a model-time binding"),
+    };
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert!(matches!(
         &refusals[0].cause,
@@ -1222,10 +1224,12 @@ fn untimed_delay_names_missing_binding_and_duration_stays_a_reward() {
                 }
             )
     ));
-    let rendered = fsl_replay::spine::FrontEndFailure::Check {
-        refusals,
-        region: None,
-    }
+    let rendered = fsl_replay::spine::FrontEndFailure::Refused(Box::new(
+        fsl_replay::spine::CompileRefusal::Check {
+            refusals,
+            region: None,
+        },
+    ))
     .to_string();
     assert!(
         rendered.contains("the subject's model declares no time binding"),

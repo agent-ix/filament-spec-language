@@ -2500,6 +2500,9 @@ fn no_required_construct_settles_unsupported() {
                     ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
                 ProtocolSystem::new(model, &subject, Sc).is_ok()
             }
+            // These are package-route admission limits; the source-route
+            // counterparts exercised by this test are covered above.
+            Unsupported::PackageControl(_) | Unsupported::PackageReplicatedRole => true,
         }
     }
 
