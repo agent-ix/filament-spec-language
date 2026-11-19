@@ -166,12 +166,13 @@ pub fn evaluate_finite_hyper<T>(
     }
     let mut selected = Vec::with_capacity(quantifiers.len());
     let truth = quantify(population, quantifiers, 0, &mut selected, &mut body);
-    match truth {
-        Truth::False(false_tuples) => FiniteHyperOutcome::Refuted { false_tuples },
-        Truth::True if population.closure == FiniteTraceClosure::Closed => {
-            FiniteHyperOutcome::Proved
+    match (truth, population.closure) {
+        (Truth::False(false_tuples), FiniteTraceClosure::Closed) => {
+            FiniteHyperOutcome::Refuted { false_tuples }
         }
-        Truth::True | Truth::Incomplete => FiniteHyperOutcome::Inconclusive,
+        (Truth::False(_), FiniteTraceClosure::Open) => FiniteHyperOutcome::Inconclusive,
+        (Truth::True, FiniteTraceClosure::Closed) => FiniteHyperOutcome::Proved,
+        (Truth::True | Truth::Incomplete, _) => FiniteHyperOutcome::Inconclusive,
     }
 }
 
