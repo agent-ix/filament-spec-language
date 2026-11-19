@@ -442,7 +442,7 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
                     [only] => Some(only.clone()),
                     _ => None,
                 };
-                (quantifier.alias.to_string(), authority)
+                authority
             })
             .collect();
         declarations.push(Declaration {
