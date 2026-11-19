@@ -218,18 +218,24 @@ fn package_export_without_source_package_refuses_before_package_read() {
 #[trace("TC-3019", "FR-1039-AC-1")]
 fn package_export_with_malformed_source_package_refuses_before_package_read() {
     let directory = tempfile::tempdir().unwrap();
-    let (exit, value) = run(
-        directory.path(),
-        json!({"models": [],
-            "package": {"file": "absent.json", "source_package": "not-an-object"},
-            "export": {"profile": "filament.output.tla2/v1",
-                "obligations": ["not-a-claim"]}}),
-    );
-    assert_eq!(exit, 20, "{value}");
-    assert_eq!(value["stage"], "request", "{value}");
-    names(&value, "wrong-value-kind");
-    names(&value, "/request/package/source_package");
-    assert!(!value.to_string().contains("absent.json"), "{value}");
+    for source_package in [
+        json!("not-an-object"),
+        json!({"identity": 42, "version": "7"}),
+        json!({"identity": "recorded:package-run-unit", "version": false}),
+    ] {
+        let (exit, value) = run(
+            directory.path(),
+            json!({"models": [],
+                "package": {"file": "absent.json", "source_package": source_package},
+                "export": {"profile": "filament.output.tla2/v1",
+                    "obligations": ["not-a-claim"]}}),
+        );
+        assert_eq!(exit, 20, "{value}");
+        assert_eq!(value["stage"], "request", "{value}");
+        names(&value, "wrong-value-kind");
+        names(&value, "/request/package/source_package");
+        assert!(!value.to_string().contains("absent.json"), "{value}");
+    }
 }
 
 /// FR-650: the package owner admits a call snapshot and runs without looking
