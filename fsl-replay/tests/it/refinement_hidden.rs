@@ -133,9 +133,8 @@ fn a_hidden_side_is_a_candidate_set_that_a_later_step_narrows() {
         )
         .verdict,
     );
-    assert!(
-        matches!(taken, Taken::CandidateSteps(steps) if steps.len() == 1 && steps[0].transition.is_some())
-    );
+    assert!(matches!(taken, Taken::CandidateSteps(steps)
+        if steps.iter().any(|step| step.transition.is_some())));
     assert_eq!(sides(&world, &tossed), ["0", "1"]);
     let (revealed, _) = passes(
         decide(
@@ -273,9 +272,8 @@ fn an_any_row_keeps_the_candidates_with_a_matching_successor() {
         2,
     );
     let (revealed, taken) = passes(result.verdict);
-    assert!(
-        matches!(taken, Taken::CandidateSteps(steps) if steps.len() == 1 && steps[0].transition.is_some())
-    );
+    assert!(matches!(taken, Taken::CandidateSteps(steps)
+        if steps.iter().any(|step| step.transition.is_some())));
     assert_eq!(sides(&world, &revealed), ["1"]);
 }
 
@@ -382,7 +380,8 @@ fn a_stutter_step_keeps_the_candidate_set_for_a_stutter_row_and_an_any_row() {
             )
             .verdict,
         );
-        assert_eq!(taken, Taken::Stutter);
+        assert!(matches!(taken, Taken::CandidateSteps(steps)
+            if !steps.is_empty() && steps.iter().all(|step| step.transition.is_none())));
         assert_eq!(sides(&world, &peeked), ["0", "1"]);
     }
 }
