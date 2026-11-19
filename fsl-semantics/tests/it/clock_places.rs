@@ -2219,8 +2219,8 @@ fn a_population_clock_presence_read_uses_the_visited_reference() {
     let graph = check(
         &document,
         &format!(
-            "{UNITS}{DENSE}invariant CountPresent using v on Config::Call at current {{ \
-             count(c in Config::calls where present(c.v)) >= 0 }}\n"
+            "{UNITS}{DENSE}time invariant PopulationPresence when {{ \
+             exists(c in Config::calls : present(c.v)) }} {{ self.x <= 1 ms }}\n"
         ),
     )
     .unwrap_or_else(|refusals| panic!("population presence read checks: {refusals:?}"));
