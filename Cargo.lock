@@ -579,21 +579,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "filament-contract-ir"
-version = "0.1.5"
-source = "git+https://github.com/agent-ix/filament-contract-ir?rev=a461f0a1b18542b0a47e1e1676ef9015af48e8f4#a461f0a1b18542b0a47e1e1676ef9015af48e8f4"
-dependencies = [
- "filament-contract-model",
- "ix-trace-rs",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
 name = "filament-contract-model"
 version = "0.1.2"
-source = "git+https://github.com/agent-ix/filament-contract-ir?rev=a461f0a1b18542b0a47e1e1676ef9015af48e8f4#a461f0a1b18542b0a47e1e1676ef9015af48e8f4"
+source = "git+https://github.com/agent-ix/filament-contract-ir?rev=c9e52417889db09dcb1abe1015320448139269fb#c9e52417889db09dcb1abe1015320448139269fb"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
@@ -649,9 +637,8 @@ dependencies = [
 [[package]]
 name = "filament-observation"
 version = "0.1.1"
-source = "git+https://github.com/agent-ix/filament-observation?rev=d78f4d33699ca11921a3c4ee4973cb2def6160b0#d78f4d33699ca11921a3c4ee4973cb2def6160b0"
+source = "git+https://github.com/agent-ix/filament-observation?rev=5f67eb4c3abac582753901675d36eac91e093b1d#5f67eb4c3abac582753901675d36eac91e093b1d"
 dependencies = [
- "filament-contract-ir",
  "filament-exact",
  "filament-semantic-value",
  "quire-canonical",
@@ -717,7 +704,7 @@ source = "git+https://github.com/agent-ix/filament-specification?rev=551aa784719
 [[package]]
 name = "filament-verification-contracts"
 version = "0.2.1"
-source = "git+https://github.com/agent-ix/filament-verification-contracts?tag=v0.2.1#99942db336b1bad6c43617e6d272710b924fec86"
+source = "git+https://github.com/agent-ix/filament-verification-contracts?rev=2714219621cfbfabdd8d411c39d9109d956b85dd#2714219621cfbfabdd8d411c39d9109d956b85dd"
 dependencies = [
  "jsonschema 0.55.1",
  "quire-canonical",
