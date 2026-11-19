@@ -487,13 +487,13 @@ fn package_claims_resolve_through_the_claim_name_table() {
     assert_eq!(diagnostic["cause"], "ambiguous-name", "{diagnostic}");
 }
 
-/// FR-850, FR-940 (review round 1): an `invariant` state clause carries no
-/// name row in the package, so a request naming it over the package is never
-/// settled `unknown-claim` while the source route decides it; until the
-/// invariant family has a package form the request is refused whole, naming
-/// the item and the family.
+/// FR-850-AC-7, FR-940 (review round 1): an `invariant` state clause is
+/// named by its `claim_names` row, so a request naming it over the package
+/// is never settled `unknown-claim` while the source route decides it: it
+/// settles with the source route's document, member by member.
 #[trace("TC-2410", "FR-850-AC-5")]
 #[trace("TC-2958", "FR-940-AC-6")]
+#[trace("TC-2967", "FR-850-AC-7")]
 #[test]
 fn an_invariant_named_over_a_package_is_never_an_unknown_claim() {
     let items = json!([{"claim": "NotAboveThree"}]);
@@ -507,13 +507,15 @@ fn an_invariant_named_over_a_package_is_never_an_unknown_claim() {
         "{}",
         run.document()
     );
-    let diagnostic = first_diagnostic(&run);
-    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
-    let message = diagnostic["message"].as_str().unwrap_or_default();
-    assert!(
-        message.contains("items[0]") && message.contains("unnamed-claim"),
-        "{diagnostic}"
-    );
+    for member in ["items", "aggregate", "last_stage", "category", "registry"] {
+        assert_eq!(
+            run.document()[member],
+            source.document()[member],
+            "{member}: {}",
+            run.document()
+        );
+    }
+    assert_eq!(run.exit, source.exit);
 }
 
 /// FR-850 "Admission" (FSpec FR-520): an absent handoff directory, and a

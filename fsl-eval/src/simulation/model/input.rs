@@ -396,6 +396,43 @@ impl<'p> PackageModelInput<'p> {
             .find(|entry| entry.identity == *clause)
     }
 
+    /// FR-104 "Requirements", FR-940: the domain kinds of the
+    /// `operation-contract` record of the `invariant` state clause `entry`,
+    /// as S3 classifies them: the domains of its `self` parameter's type
+    /// within `position_limit`, then its context's population. `None` when
+    /// no single population of the selected domain packages covers the
+    /// context, so the record's other populations (those its body walks or
+    /// names) would decide the extent, and for a type that does not
+    /// classify.
+    pub fn invariant_domain_kinds(
+        &self,
+        entry: &StateClauseEntry,
+        position_limit: u64,
+    ) -> Option<Vec<fsl_foundation::bound::DomainKind>> {
+        let receiver = ValueType::Reference(entry.context.clone());
+        let mut kinds: Vec<fsl_foundation::bound::DomainKind> =
+            match fsl_semantics::family::classify_extent(
+                &[(entry.identity.clone(), &receiver)],
+                self.world.types(),
+                position_limit,
+            )
+            .ok()?
+            {
+                fsl_semantics::family::ClaimExtent::Bounded => Vec::new(),
+                fsl_semantics::family::ClaimExtent::Unbounded(domains) => {
+                    domains.iter().map(|(_, kind)| kind).collect()
+                }
+            };
+        // A domain package population declares no maximum, and the
+        // package route reads no authored bound, as for a temporal clause's
+        // populations ([`StateModel::overlapping_populations`]).
+        self.model
+            .covering_population(entry.context.clone())
+            .ok()??;
+        kinds.push(fsl_foundation::bound::DomainKind::Population);
+        Some(kinds)
+    }
+
     /// The package this input was built from.
     pub fn package(&self) -> &'p BarePackage<'p> {
         self.package

@@ -843,6 +843,21 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             .state_clause_at(&key)
             .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
         let claim = OccurrenceKey::new(clause.identity.clone(), clause.claim.clone());
+        // FR-290: the record's extent from its domain kinds, as S3 classifies
+        // the invariant's `operation-contract` record.
+        let kinds = input
+            .invariant_domain_kinds(
+                clause,
+                filament_semantic_value::checking::CheckingLimits::default().nodes(),
+            )
+            .ok_or_else(|| pending(PendingFamily::Declaration))?;
+        let extent = if kinds.is_empty() {
+            ExtentClassification::Bounded
+        } else {
+            ExtentClassification::Unbounded {
+                finite_bound_available: kinds.iter().all(|kind| kind.finite_kind().is_some()),
+            }
+        };
         let own_subject = self.own_subject(index, selection)?;
         let kind = match selection.kind.as_deref() {
             Some(label) => match Capability::from_wire(label) {
@@ -884,7 +899,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             request_index: index,
             claim,
             kind,
-            extent: ExtentClassification::Bounded,
+            extent,
             backend: named,
             candidates: candidate_list(&candidates),
             options: options(selection, backend_options),
