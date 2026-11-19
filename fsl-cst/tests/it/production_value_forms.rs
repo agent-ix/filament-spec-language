@@ -1120,3 +1120,32 @@ fn incomplete_aggregates_and_unwrapped_boolean_thresholds_refuse_locally() {
         refused(&temporal(formula), marker, width);
     }
 }
+
+#[test]
+#[trace("FSpec-FR-339-AC-1")]
+fn mixed_criticality_switch_keeps_taskset_and_trigger_operation_source() {
+    let declaration = "mode Tasks hi on Plant::raise;";
+    let source = unit(declaration);
+    let parsed = accepted(&source);
+    let root = parsed.cst().root();
+    assert_eq!(
+        children(&source, &parsed, root, Production::Declaration),
+        [declaration]
+    );
+    let words = parsed
+        .cst()
+        .tokens()
+        .iter()
+        .filter(|token| ["Tasks", "Plant", "raise"].contains(&token.spelling()))
+        .map(|token| {
+            (
+                token.spelling(),
+                &source[token.span().start..token.span().end],
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        words,
+        [("Tasks", "Tasks"), ("Plant", "Plant"), ("raise", "raise")]
+    );
+}
