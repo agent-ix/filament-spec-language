@@ -40,6 +40,10 @@ pub struct PackageControl {
     pub constraint: Option<ProtocolSlot>,
     /// The operation's operation-anchor identity, for an `attempt`.
     pub operation_anchor: Option<NodeKey>,
+    /// The admitted operation declaration's qualified path.
+    pub operation_path: Option<Vec<String>>,
+    /// The admitted operation declaration's name.
+    pub operation_name: Option<String>,
     /// The attempt's role node identity.
     pub role: Option<fsl_package::CheckedNodeId>,
     /// The attempt result binder node identity.
@@ -149,6 +153,18 @@ impl<'a> PackageProtocolProgram<'a> {
         form: ProtocolExecutionView<'a>,
         memory: ResolvedMemory,
     ) -> Result<Self, PackageProgramRefusal> {
+        let package =
+            input
+                .admitted_package()
+                .ok_or_else(|| PackageProgramRefusal::UnknownProtocol {
+                    name: form.name.clone(),
+                })?;
+        let package_nodes: BTreeMap<_, _> = package
+            .resolved_graph()
+            .nodes
+            .iter()
+            .map(|node| (node.node_id.clone(), node))
+            .collect();
         if !form.channels.is_empty() || !form.queues.is_empty() {
             return Err(PackageProgramRefusal::Unsupported(
                 ControlOperation::Channel,
@@ -187,69 +203,112 @@ impl<'a> PackageProtocolProgram<'a> {
         let mut controls = BTreeMap::new();
         for control in &form.controls {
             let name = control.path.last().cloned().unwrap_or_default();
-            let (children, branches, role, binder, operation_anchor, ordering, contracts) =
-                match &control.body {
-                    ControlBody::Sequence { children } => (
-                        children
-                            .iter()
-                            .map(|child| {
-                                id_by_node
-                                    .get(*child)
-                                    .copied()
-                                    .ok_or(PackageProgramRefusal::UnknownControl)
-                            })
-                            .collect::<Result<Vec<_>, _>>()?,
-                        Vec::new(),
-                        None,
-                        None,
-                        None,
-                        None,
-                        Vec::new(),
-                    ),
-                    ControlBody::Parallel { branches, join } => {
-                        if join.policy != ParallelJoinPolicy::All {
-                            return Err(PackageProgramRefusal::Unsupported(control.operation));
-                        }
-                        let branches = branches
-                            .iter()
-                            .map(|(label, body)| {
-                                id_by_node
-                                    .get(*body)
-                                    .copied()
-                                    .map(|id| ((*label).to_owned(), id))
-                                    .ok_or(PackageProgramRefusal::UnknownControl)
-                            })
-                            .collect::<Result<Vec<_>, _>>()?;
-                        let children = branches.iter().map(|(_, id)| *id).collect();
-                        (children, branches, None, None, None, None, Vec::new())
+            let (
+                children,
+                branches,
+                role,
+                binder,
+                operation_anchor,
+                operation_path,
+                operation_name,
+                ordering,
+                contracts,
+            ) = match &control.body {
+                ControlBody::Sequence { children } => (
+                    children
+                        .iter()
+                        .map(|child| {
+                            id_by_node
+                                .get(*child)
+                                .copied()
+                                .ok_or(PackageProgramRefusal::UnknownControl)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                    Vec::new(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Vec::new(),
+                ),
+                ControlBody::Parallel { branches, join } => {
+                    if join.policy != ParallelJoinPolicy::All {
+                        return Err(PackageProgramRefusal::Unsupported(control.operation));
                     }
-                    ControlBody::Attempt {
-                        role,
-                        operation,
-                        ordering,
-                        contracts,
-                        binder,
-                        ..
-                    } => {
-                        let anchor =
-                            input.evaluator.package_node_key(operation).ok_or_else(|| {
-                                PackageProgramRefusal::MissingIdentity(operation.clone())
-                            })?;
-                        (
-                            Vec::new(),
-                            Vec::new(),
-                            Some((*role).clone()),
-                            Some((*binder).clone()),
-                            Some(anchor),
-                            *ordering,
-                            contracts
+                    let branches = branches
+                        .iter()
+                        .map(|(label, body)| {
+                            id_by_node
+                                .get(*body)
+                                .copied()
+                                .map(|id| ((*label).to_owned(), id))
+                                .ok_or(PackageProgramRefusal::UnknownControl)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let children = branches.iter().map(|(_, id)| *id).collect();
+                    (
+                        children,
+                        branches,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        Vec::new(),
+                    )
+                }
+                ControlBody::Attempt {
+                    role,
+                    operation,
+                    ordering,
+                    contracts,
+                    binder,
+                    ..
+                } => {
+                    let anchor = input
+                        .evaluator
+                        .package_node_key(operation)
+                        .ok_or_else(|| PackageProgramRefusal::MissingIdentity(operation.clone()))?;
+                    let operation_node = package_nodes.get(*operation).ok_or_else(|| {
+                        PackageProgramRefusal::MissingIdentity((*operation).clone())
+                    })?;
+                    let operation_path = operation_node
+                        .declaration
+                        .as_ref()
+                        .map(|declaration| {
+                            declaration
+                                .qualified_name
                                 .iter()
-                                .map(|contract| (*contract).clone())
-                                .collect(),
-                        )
-                    }
-                    _ => return Err(PackageProgramRefusal::Unsupported(control.operation)),
-                };
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .filter(|path| !path.is_empty())
+                        .ok_or_else(|| {
+                            PackageProgramRefusal::MissingIdentity((*operation).clone())
+                        })?;
+                    let operation_name = operation_path.last().cloned().ok_or_else(|| {
+                        PackageProgramRefusal::MissingIdentity((*operation).clone())
+                    })?;
+                    (
+                        Vec::new(),
+                        Vec::new(),
+                        Some((*role).clone()),
+                        Some((*binder).clone()),
+                        Some(anchor),
+                        Some(operation_path),
+                        Some(operation_name),
+                        *ordering,
+                        contracts
+                            .iter()
+                            .map(|contract| (*contract).clone())
+                            .collect(),
+                    )
+                }
+                _ => return Err(PackageProgramRefusal::Unsupported(control.operation)),
+            };
             let constraint = if matches!(&control.body, ControlBody::Attempt { .. }) {
                 Some(
                     input
@@ -284,6 +343,8 @@ impl<'a> PackageProtocolProgram<'a> {
                     memory_default: control.memory,
                     constraint,
                     operation_anchor,
+                    operation_path,
+                    operation_name,
                     role,
                     binder,
                     ordering,
