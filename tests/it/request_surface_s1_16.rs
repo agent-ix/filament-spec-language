@@ -898,7 +898,7 @@ fn model_based_test_request_rules() {
     refusal_names(&mbt(unknown), "Nothing");
 
     let bounded_unit = format!(
-        "{VALUE_HEADER}predicate Small using v (value: Int[0, 5]): Boolean {{ value <= 3 }}\n"
+        "{VALUE_HEADER}predicate Small using v (x: Int[0, 5]): Boolean {{ x <= 3 }}\n"
     );
     let (_, bounded_value) = run(
         &bounded_unit,
