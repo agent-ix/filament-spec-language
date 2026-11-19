@@ -392,7 +392,11 @@ pub fn check_in(
     .expect("the unit assembles");
     declarations
         .with_unwritten_refinements()
-        .check(mode, CheckingLimits::default())
+        .check(
+            mode,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .map_err(|refusals| format!("{refusals:?}"))
 }
 
