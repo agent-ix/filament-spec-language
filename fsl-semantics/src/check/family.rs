@@ -4303,7 +4303,11 @@ mod locus_tests {
         assert_eq!(&text[start..end], "1", "the node whose entry failed");
         let (unit, _) = sum_unit();
         assert!(unit
-            .check(CheckMode::Linked, CheckingLimits::new(5_000))
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::new(5_000),
+                &crate::check::test_support::ZeroRewardEvaluator
+            )
             .is_ok());
     }
 
@@ -4429,7 +4433,11 @@ mod locus_tests {
     ) -> (StageLimitCause, Option<SourceRegion>) {
         let regions = unit.regions();
         let refusals = unit
-            .check(CheckMode::Linked, limits)
+            .check(
+                CheckMode::Linked,
+                limits,
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect_err("the limit stops package checking");
         let [refusal] = refusals.as_slice() else {
             panic!("one refusal, got {refusals:?}");

@@ -93,6 +93,7 @@ fn node_identity(body: &str) -> filament_exact::NodeKey {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("{body}: the package checks: {refusals:?}"));
     let [clause] = graph.temporal_clauses() else {

@@ -29,7 +29,13 @@ pub(super) fn check_on_small_stack(
 ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
     std::thread::Builder::new()
         .stack_size(STACK)
-        .spawn(move || declarations(form, levels).check(CheckMode::Linked, limits))
+        .spawn(move || {
+            declarations(form, levels).check(
+                CheckMode::Linked,
+                limits,
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
+        })
         .expect("the check thread spawns")
         .join()
         .expect("the check completes on a 512 KiB stack")

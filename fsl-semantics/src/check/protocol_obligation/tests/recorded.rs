@@ -591,6 +591,7 @@ fn a_template_over_two_populations_refuses_its_operation() {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
         )
         .expect_err("an operation over two populations refuses");
     let causes = obligation_causes(&found);

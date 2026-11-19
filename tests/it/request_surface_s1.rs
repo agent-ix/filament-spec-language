@@ -5,15 +5,15 @@
 //! (FR-664) and the compile request's `handoff` member (FR-665). The
 //! driver's verbs over these surfaces are tested in the driver repository.
 
-use crate::command_harness::{Output, run_file};
-use crate::support::config_version_spine::{Case, spine};
+use crate::command_harness::{run_file, Output};
+use crate::support::config_version_spine::{spine, Case};
 use filament_exact::Cancel;
 use fsl_cst::Limits;
 use fsl_foundation::SourceIdentity;
+use fsl_replay::spine::{parse, ParseRequest};
 use fsl_replay::OutcomeDocument;
-use fsl_replay::spine::{ParseRequest, parse};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 const HEADER: &str =
@@ -873,12 +873,10 @@ fn version_emits_the_build_inventory_and_kind_selects_one_list() {
     for list in lists {
         assert!(document[list].is_array(), "{list}: {document}");
     }
-    assert!(
-        document["editions"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("1-draft"))
-    );
+    assert!(document["editions"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("1-draft")));
     let features: Vec<String> = fsl_semantics::library::bundle::CapabilityId::complete_inventory()
         .iter()
         .map(|id| id.as_str().to_owned())
@@ -1017,8 +1015,8 @@ fn every_listed_profile_is_accepted_by_a_header() {
 #[test]
 #[trace("TC-1742", "FR-661-AC-3")]
 fn version_includes_provider_backed_registry_consumers() {
-    use fsl_foundation::BackendId;
     use fsl_foundation::bound::DomainKind;
+    use fsl_foundation::BackendId;
     use fsl_route::{Candidate, ManifestMembers, ProviderOrigin, Registry};
 
     let base = Registry::new();

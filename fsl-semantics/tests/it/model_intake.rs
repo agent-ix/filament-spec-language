@@ -2604,6 +2604,7 @@ fn a_port_role_on_a_shared_alias_is_its_own_units_packages_port() {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("both protocols check: {refusals:?}"));
     for (protocol, package) in [("Pa", A), ("Pb", B)] {
@@ -2729,6 +2730,7 @@ fn systems_part_port_allocation_records() {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("the protocol checks: {refusals:?}"));
     let protocol = checked
@@ -2799,6 +2801,7 @@ fn a_map_keyed_by_an_unbounded_package_rational_is_refused() {
                 .check(
                     CheckMode::Linked,
                     filament_semantic_value::checking::CheckingLimits::default(),
+                    &crate::reward_evaluator::ZeroRewardEvaluator,
                 )
                 .err()
                 .is_some_and(|refusals| {
@@ -2819,7 +2822,8 @@ fn a_map_keyed_by_an_unbounded_package_rational_is_refused() {
     assert!(bounded
         .check(
             CheckMode::Linked,
-            filament_semantic_value::checking::CheckingLimits::default()
+            filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator
         )
         .is_ok());
 }

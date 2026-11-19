@@ -3596,7 +3596,11 @@ fn quantity_refusals(declarations: &str, limits: CheckingLimits, at: &str) -> Ve
     let regions = package.regions();
     let span = last(&text, at);
     package
-        .check(CheckMode::Linked, limits)
+        .check(
+            CheckMode::Linked,
+            limits,
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("the quantity literal refuses")
         .iter()
         .map(|refusal| {
@@ -3791,7 +3795,11 @@ fn quantity_literal_refusals_name_the_name_and_the_limit() {
         let mut refusals = assemble(&source)
             .1
             .expect("the unit assembles")
-            .check(CheckMode::Linked, limits)
+            .check(
+                CheckMode::Linked,
+                limits,
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect_err("the quantity literal refuses");
         assert_eq!(refusals.len(), 1, "{declarations}: {refusals:?}");
         refusals.remove(0).cause

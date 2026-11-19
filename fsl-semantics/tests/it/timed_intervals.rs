@@ -562,6 +562,7 @@ fn a_checked_timed_clause_reaches_package_check() {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect("FR-370 carries the checked timed interval through S4");
 }

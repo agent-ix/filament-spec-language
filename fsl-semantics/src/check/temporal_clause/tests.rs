@@ -1041,7 +1041,11 @@ fn a_converted_duration_bound_past_the_rational_bits_ceiling_is_a_limit() {
     let text = timestamped_source("count over past[0 ms, 255 s] >= 1");
     let within = |bits| CheckingLimits::default().with_rational_bits(bits);
     let refusals = assemble(&text)
-        .check(CheckMode::Linked, within(16))
+        .check(
+            CheckMode::Linked,
+            within(16),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("the converted bound is past the ceiling");
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
@@ -1055,7 +1059,11 @@ fn a_converted_duration_bound_past_the_rational_bits_ceiling_is_a_limit() {
     let expected = crate::check::region::region(&package.source, None, first(&text, "255 s"));
     assert_eq!(limit.region, expected);
     assemble(&text)
-        .check(CheckMode::Linked, within(18))
+        .check(
+            CheckMode::Linked,
+            within(18),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("within the ceiling: {refusals:?}"));
 }
 

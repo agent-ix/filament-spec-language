@@ -1209,7 +1209,11 @@ mod tests {
             let unit = unit();
             let regions = unit.regions();
             let refusals = unit
-                .check(CheckMode::Linked, limits)
+                .check(
+                    CheckMode::Linked,
+                    limits,
+                    &crate::check::test_support::ZeroRewardEvaluator,
+                )
                 .expect_err("the limit stops checking");
             let [refusal] = refusals.as_slice() else {
                 panic!("one refusal, got {refusals:?}");
@@ -1243,6 +1247,7 @@ mod tests {
             let Err(refusals) = unit.check(
                 CheckMode::Linked,
                 CheckingLimits::default().with_work_budget(budget),
+                &crate::check::test_support::ZeroRewardEvaluator,
             ) else {
                 continue;
             };
@@ -1279,6 +1284,7 @@ mod tests {
                 .check(
                     CheckMode::Linked,
                     CheckingLimits::default().with_work_budget(budget),
+                    &crate::check::test_support::ZeroRewardEvaluator,
                 )
                 .expect_err("lowering spends past the budget");
             let [refusal] = refusals.as_slice() else {
@@ -1368,7 +1374,11 @@ mod tests {
         // isolation too, but Typer's package-wide counter, seeded at g1's
         // final 3, crosses 4 on g2's second node.
         let refusals = declarations
-            .check(CheckMode::Linked, CheckingLimits::new(g1_count + 1))
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::new(g1_count + 1),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect_err("g2's Typer walk crosses the package-wide node bound");
         let [refusal] = refusals.as_slice() else {
             panic!("one refusal, got {refusals:?}");

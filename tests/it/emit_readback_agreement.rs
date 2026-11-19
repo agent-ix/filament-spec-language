@@ -45,7 +45,11 @@ fn without_regions(value: &Value) -> Value {
 fn verdict(bytes: &[u8], document: &[u8]) -> Result<(), String> {
     let mut evidence = filament_contract_model::CheckedPackageEvidence::new();
     let wire: Value = serde_json::from_slice(bytes).expect("the package is JSON");
-    for feature in wire["lock"]["required_features"].as_array().into_iter().flatten() {
+    for feature in wire["lock"]["required_features"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
         evidence.support_feature(feature.as_str().expect("feature name").to_owned());
     }
     evidence
@@ -69,13 +73,22 @@ fn verdict(bytes: &[u8], document: &[u8]) -> Result<(), String> {
 fn format_then_emit_reads_back_the_same_package() {
     let model = crate::support::spine_model::unit();
     let document = crate::support::spine_model::DOCUMENT;
-    let packages = fsl_semantics::model::intake::package_input([document])
-        .expect("the domain fixture admits");
+    let packages =
+        fsl_semantics::model::intake::package_input([document]).expect("the domain fixture admits");
     for (name, original) in [
-        ("spine-compile.native", include_str!("../fixtures/spine-compile.native")),
+        (
+            "spine-compile.native",
+            include_str!("../fixtures/spine-compile.native"),
+        ),
         ("spine-model.native", model.as_str()),
-        ("spine-run.native", include_str!("../fixtures/spine-run.native")),
-        ("value-format.native", include_str!("../fixtures/value-format.native")),
+        (
+            "spine-run.native",
+            include_str!("../fixtures/spine-run.native"),
+        ),
+        (
+            "value-format.native",
+            include_str!("../fixtures/value-format.native"),
+        ),
     ] {
         let source = SourceIdentity::new("test", name);
         let parsed = fsl_cst::parse(
@@ -94,7 +107,11 @@ fn format_then_emit_reads_back_the_same_package() {
             without_regions(&wire["semantic_graph"])
         };
         assert_eq!(graph(&after), graph(&before), "{name}");
-        assert_eq!(verdict(&after, document), verdict(&before, document), "{name}");
+        assert_eq!(
+            verdict(&after, document),
+            verdict(&before, document),
+            "{name}"
+        );
         assert_eq!(verdict(&before, document), Ok(()), "{name}");
     }
 }

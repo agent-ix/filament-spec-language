@@ -2939,7 +2939,8 @@ fn a_reference_to_clock_is_refused_in_every_type_position() {
                 declarations
                     .check(
                         CheckMode::Linked,
-                        filament_semantic_value::checking::CheckingLimits::default()
+                        filament_semantic_value::checking::CheckingLimits::default(),
+                        &crate::reward_evaluator::ZeroRewardEvaluator
                     )
                     .expect_err("Reference<Clock> is refused")
             ),
@@ -3234,7 +3235,11 @@ fn a_value_type_bound_to_clock_by_target_types_a_clock_place() {
         document["constructs"]
             .as_array_mut()
             .expect("constructs")
-            .push(wire_construct("clock_value_type", meaning::VALUE_TYPE, json!({})));
+            .push(wire_construct(
+                "clock_value_type",
+                meaning::VALUE_TYPE,
+                json!({}),
+            ));
     });
     let graph = check(&document, &format!("{UNITS}{DENSE}"))
         .unwrap_or_else(|refusals| panic!("a clock-bound value type checks: {refusals:?}"));

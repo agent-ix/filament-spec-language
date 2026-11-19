@@ -762,7 +762,6 @@ fn an_export_outcome_document_has_operation_export() {
     assert_eq!(document["result"]["kind"], "exported", "{document}");
 }
 
-
 /// FR-865-AC-7: an export outcome renders as its header, target, bytes
 /// written and output path, and no other line.
 #[test]

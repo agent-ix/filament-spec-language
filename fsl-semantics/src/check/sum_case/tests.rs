@@ -431,6 +431,7 @@ fn nesting_is_bounded_only_by_the_node_ceiling() {
         .check(
             CheckMode::Linked,
             CheckingLimits::default().with_nodes(needed - 1),
+            &crate::check::test_support::ZeroRewardEvaluator,
         )
         .expect_err("one node short");
     let [refusal] = refusals.as_slice() else {
