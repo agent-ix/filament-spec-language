@@ -65,6 +65,10 @@ pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/5";
 pub struct BarePackage<'p> {
     dependency_views: Vec<BarePackage<'p>>,
     package: &'p CheckedPackageV2,
+    /// The exact bytes that admitted `package`, when this value was built
+    /// from a reader-backed handoff. A bare package made directly from a
+    /// checked object has no byte witness.
+    canonical_bytes: Option<&'p [u8]>,
     /// The package's identity, its admitted `name()` (FR-940 `identity`).
     identity: fsl_semantics::library::LibraryName,
     supply: Option<BareSupply<'p>>,
@@ -109,6 +113,7 @@ impl<'p> BarePackage<'p> {
             dependency_views: Vec::new(),
             identity: fsl_semantics::library::LibraryName::of_package(package),
             package,
+            canonical_bytes: None,
             supply: None,
             joined: None,
             projections: BTreeMap::new(),
@@ -148,6 +153,21 @@ impl<'p> BarePackage<'p> {
     /// Authenticated package views of the unique library closure.
     pub fn dependency_views(&self) -> &[BarePackage<'p>] {
         &self.dependency_views
+    }
+
+    /// The bare package and exact input bytes from one successful reader
+    /// handoff. The bytes are retained by the read that admitted this exact
+    /// package; callers cannot provide a mismatched slice.
+    pub fn from_admitted_read(read: &'p crate::AdmittedPackageRead<'_>) -> Self {
+        let mut bare = Self::new(read.admitted());
+        bare.canonical_bytes = Some(read.canonical_bytes());
+        bare
+    }
+
+    /// The exact canonical bytes admitted for this package, when available.
+    /// A value constructed with [`Self::new`] has no retained input bytes.
+    pub fn canonical_bytes(&self) -> Option<&[u8]> {
+        self.canonical_bytes
     }
 
     /// The admitted package's identity (FR-940 `identity`).

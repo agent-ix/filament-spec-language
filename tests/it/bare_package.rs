@@ -15,6 +15,23 @@ use super::temporal_package_route::{
 };
 use fsl_command::checked_handoff::{evidence, write, Corpus};
 
+#[trace("TC-2624", "FR-944-AC-2")]
+#[test]
+fn bare_reader_route_keeps_the_exact_admitted_package_bytes() {
+    let built = recipe("fixed_sample");
+    let read = built.read(&built.emission);
+    let bare = BarePackage::from_admitted_read(&read);
+
+    assert_eq!(bare.package().name(), read.admitted().name());
+    assert_eq!(
+        bare.canonical_bytes(),
+        Some(built.emission.package().bytes())
+    );
+    assert!(BarePackage::new(read.admitted())
+        .canonical_bytes()
+        .is_none());
+}
+
 use super::bare_equality::tc1070 as population_fixture;
 
 /// The requests of the matrix: one per truth outcome, activation state and
