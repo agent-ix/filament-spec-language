@@ -867,10 +867,9 @@ pub(crate) fn ctl_request(ws: &Workspace, claims: &str, items: Value) -> std::pa
     )
 }
 
-/// FR-640-AC-12 (TC-2243), analyze and replay half: an event-position hyper
-/// clause whose two traces range over two models carries one clock row per
-/// trace, so it compiles, analyzes to a verdict and, when refuted, replays
-/// under the two rows' configurations; it is never `not-yet-implemented`.
+/// FR-640-AC-12 (TC-2243): an event-position hyper clause whose two traces
+/// range over two models carries one clock row per trace, analyzes to a
+/// counterexample and replays it under both rows' configurations.
 #[trace("TC-2243", "FR-640-AC-12")]
 #[test]
 fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
@@ -903,11 +902,8 @@ fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
         item["record"]["diagnostic"]["cause"], "not-yet-implemented",
         "{item}"
     );
-    let verdict = label(&item);
-    assert!(matches!(verdict, "proved" | "refuted"), "{item}");
-    if verdict == "refuted" {
-        assert_eq!(item["replay"]["reproduced"], true, "{item}");
-    }
+    assert_eq!(label(&item), "refuted", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
 /// [`refinement_request`] with every item's `abstract_subject` removed, so
