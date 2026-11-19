@@ -22,6 +22,7 @@ use crate::model_world::World;
 struct Recording {
     calls: RefCell<Vec<usize>>,
     items: RefCell<Vec<ClaimItem>>,
+    refuse: bool,
 }
 
 impl Negotiate for Recording {
@@ -32,6 +33,14 @@ impl Negotiate for Recording {
     ) -> (Disposition, Option<Diagnostic>) {
         self.calls.borrow_mut().push(item.request_index.get());
         self.items.borrow_mut().push(item.clone());
+        if self.refuse {
+            return (
+                Disposition::Unsupported,
+                Some(Diagnostic::new(
+                    NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                )),
+            );
+        }
         match candidates {
             CandidateOutcome::Candidates(set) if set.candidates().len() == 1 => {
                 (Disposition::Supported(set.candidates()[0].clone()), None)
@@ -518,4 +527,94 @@ fn contract_method_negotiates_an_operation_contract_item() {
         record.diagnostic(),
         Some(NegotiationOutcome::UnsupportedRequestedCapability.code())
     );
+}
+
+#[trace("FR-753-AC-5", "TC-3028")]
+#[test]
+fn probability_methods_keep_their_evidence_and_only_statistical_consumes_seed() {
+    let model = crate::prob_world::service(
+        "probabilistic P95 using ev on M over (s: M::Server) under Steady on origin \
+         with alpha 0.01, beta 0.01, indifference 0.01 \
+         { quantile 0.95 of (accumulate duration from holds(s.phase = 1) \
+         until holds(s.phase = 2) within 10) <= 2 }",
+    );
+    let world = crate::prob_world::World::new(&model);
+    let template = crate::clause_item::world();
+    let mut plan = plan(
+        &template,
+        &[
+            ("exact", "probabilistic_exact"),
+            ("statistical", "probabilistic_statistical"),
+        ],
+        &[],
+    );
+    plan.package = world.package.graph().package_name().into();
+    let claim = world.package.graph().probabilistic_model().claims()[0]
+        .occurrence()
+        .expect("claim occurrence");
+    for (node, evidence) in plan.nodes.iter_mut().zip(["exact", "statistical"]) {
+        node.claim.node = serde_json::from_value(
+            serde_json::to_value(fsl_semantics::check::wire_id::structural_id(claim.node()))
+                .expect("identity"),
+        )
+        .expect("plan identity");
+        node.claim.occurrence.ordinal = claim.origin().ordinal();
+        node.method.kind = "probabilistic-satisfaction".into();
+        node.method.evidence_kind = vec![evidence.into()];
+    }
+    let inputs = PlanInputs {
+        bindings: plan
+            .nodes
+            .iter()
+            .map(|node| (node.name.clone(), world.binding()))
+            .collect(),
+        provision: world.provision.clone(),
+        seed: Some(7),
+        max_trace_length: None,
+        max_value_bits: None,
+    };
+    let negotiate = Recording {
+        refuse: true,
+        ..Recording::default()
+    };
+    let result = execute_plan(
+        &world.package,
+        &plan,
+        &inputs,
+        &Engines::fsl().expect("native manifests"),
+        &negotiate,
+        &AnalyzeLimits::unbounded(),
+        &Cancel::new(),
+    )
+    .expect("probability routes")
+    .into_value();
+    assert_eq!(result.dispositions.len(), 2);
+    let items = negotiate.items.borrow();
+    assert_eq!(items.len(), 2);
+    for (item, evidence, seed, backend) in [
+        (&items[0], fsl_route::EvidenceKind::Exact, None, "en-5"),
+        (
+            &items[1],
+            fsl_route::EvidenceKind::Statistical,
+            Some(7),
+            "en-4",
+        ),
+    ] {
+        assert_eq!(
+            item.kind,
+            fsl_semantics::check::Capability::ProbabilisticSatisfaction
+        );
+        let Some(fsl_analyze::analyze::ItemForm::Probabilistic(form)) = &item.form else {
+            panic!("probabilistic item");
+        };
+        assert_eq!(form.evidence, evidence);
+        assert_eq!(form.seed, seed);
+        assert_eq!(
+            item.candidates
+                .iter()
+                .map(|candidate| candidate.id().as_str())
+                .collect::<Vec<_>>(),
+            [backend]
+        );
+    }
 }

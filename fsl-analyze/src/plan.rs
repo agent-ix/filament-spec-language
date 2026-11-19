@@ -481,6 +481,29 @@ impl Execution<'_> {
             _ => return Err(fault("unknown-plan-method")),
         };
         let key = claim(package, node).ok_or_else(|| fault("unknown-plan-claim"))?;
+        if let Some(ItemForm::Probabilistic(probability)) = &mut form {
+            if probability.evidence == EvidenceKind::Statistical
+                && package
+                    .graph()
+                    .probabilistic_model()
+                    .claims()
+                    .iter()
+                    .any(|claim| {
+                        claim.occurrence() == Some(&key)
+                            && matches!(
+                                claim.form,
+                                fsl_semantics::check::ProbForm::LongRunFraction { .. }
+                            )
+                    })
+            {
+                // FR-189 admits only the regenerative estimator for a
+                // long-run fraction; a fixed-sample test cannot decide it.
+                probability.method =
+                    Some(fsl_replay::statistical::StatisticalMethod::Regenerative {
+                        min_cycles: 1,
+                    });
+            }
+        }
         let fairness = package
             .graph()
             .temporal_clauses()
